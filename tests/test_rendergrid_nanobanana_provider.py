@@ -7,6 +7,7 @@ from bot.services.rendergrid_nano_banana_provider import (
     RenderGridNanoBananaProvider,
     RenderGridProviderError,
 )
+from bot.services.rendergrid_service import REFERENCE_IDENTITY_MARKER
 
 
 def _provider(model: str = "nano-banana-2") -> RenderGridNanoBananaProvider:
@@ -21,7 +22,7 @@ def _provider(model: str = "nano-banana-2") -> RenderGridNanoBananaProvider:
     )
 
 
-def test_rendergrid_payload_preserves_model_settings_and_reference_urls():
+def test_rendergrid_payload_hands_references_to_verified_client():
     provider = _provider("nano-banana-pro")
     payload = provider._build_payload(
         prompt="Put this person in a studio portrait",
@@ -34,8 +35,60 @@ def test_rendergrid_payload_preserves_model_settings_and_reference_urls():
     assert payload["aspect_ratio"] == "4:3"
     assert payload["resolution"] == "4K"
     assert payload["reference_images"] == ["https://cdn.example/ref.png"]
-    assert "authoritative visual references" in payload["prompt"]
-    assert "Put this person in a studio portrait" in payload["prompt"]
+    assert payload["prompt"] == "Put this person in a studio portrait"
+
+
+def test_rendergrid_verified_client_uses_image_urls_and_identity_lock():
+    provider = _provider("nano-banana-2")
+    provider.client._request = AsyncMock(
+        return_value={"id": "creation-ref", "status": "queued"}
+    )
+    reference_url = "https://cdn.example/ref.png"
+
+    result = asyncio.run(
+        provider.client.generate_image(
+            {
+                "model": "nano-banana-2",
+                "prompt": "Keep the same person",
+                "reference_images": [reference_url],
+            },
+            idempotency_key="external-ref",
+        )
+    )
+
+    assert result["id"] == "creation-ref"
+    sent = provider.client._request.await_args.kwargs["json_body"]
+    assert sent["image_urls"] == [reference_url]
+    assert "reference_images" not in sent
+    assert REFERENCE_IDENTITY_MARKER in sent["prompt"]
+    assert "Keep the same person" in sent["prompt"]
+
+
+def test_rendergrid_verified_client_uses_file_ids_for_local_uploads():
+    provider = _provider("nano-banana-pro")
+    provider.client._upload_local_reference = AsyncMock(return_value="file-ref-1")
+    provider.client._request = AsyncMock(
+        return_value={"id": "creation-local", "status": "queued"}
+    )
+    reference_url = "https://tanyapi.chillcreative.ru/uploads/ref.png"
+
+    result = asyncio.run(
+        provider.client.generate_image(
+            {
+                "model": "nano-banana-pro",
+                "prompt": "Keep the same face",
+                "reference_images": [reference_url],
+            },
+            idempotency_key="local-ref",
+        )
+    )
+
+    assert result["id"] == "creation-local"
+    provider.client._upload_local_reference.assert_awaited_once_with(reference_url)
+    sent = provider.client._request.await_args.kwargs["json_body"]
+    assert sent["image_file_ids"] == ["file-ref-1"]
+    assert "image_urls" not in sent
+    assert "reference_images" not in sent
 
 
 def test_rendergrid_auto_ratio_is_not_sent_to_provider():
@@ -58,38 +111,28 @@ def test_rendergrid_polling_never_goes_below_documented_floor():
 
 def test_rendergrid_generate_returns_existing_bot_image_bytes_contract():
     provider = _provider("nano-banana-2")
-    provider._request = AsyncMock(
-        side_effect=[
-            {"id": "creation-1", "status": "queued"},
-            {
-                "id": "creation-1",
-                "status": "completed",
-                "result_urls": ["https://cdn.example/result.png"],
-            },
-        ]
+    provider.client.generate_image = AsyncMock(
+        return_value={"id": "creation-1", "status": "queued"}
+    )
+    provider.client.wait_for_creation = AsyncMock(
+        return_value={
+            "id": "creation-1",
+            "status": "completed",
+            "result_urls": ["https://cdn.example/result.png"],
+        }
     )
     provider._download_result = AsyncMock(return_value=(b"png-bytes", "image/png"))
 
-    async def run():
-        original_sleep = asyncio.sleep
-
-        async def no_wait(_delay):
-            return None
-
-        asyncio.sleep = no_wait
-        try:
-            return await provider.generate_image(
-                "Create a portrait",
-                "1:1",
-                "2K",
-                ["https://cdn.example/ref.png"],
-                "png",
-            )
-        finally:
-            asyncio.sleep = original_sleep
-            await provider.close()
-
-    result = asyncio.run(run())
+    result = asyncio.run(
+        provider.generate_image(
+            "Create a portrait",
+            "1:1",
+            "2K",
+            ["https://cdn.example/ref.png"],
+            "png",
+        )
+    )
+    asyncio.run(provider.close())
 
     assert result is not None
     assert result["image_bytes"] == b"png-bytes"
@@ -101,7 +144,7 @@ def test_rendergrid_generate_returns_existing_bot_image_bytes_contract():
 
 def test_rendergrid_technical_failure_returns_none_for_kie_fallback():
     provider = _provider()
-    provider._request = AsyncMock(
+    provider.client.generate_image = AsyncMock(
         side_effect=RenderGridProviderError("upstream unavailable", status=503)
     )
 
@@ -115,7 +158,7 @@ def test_rendergrid_technical_failure_returns_none_for_kie_fallback():
 
 def test_rendergrid_policy_failure_is_terminal_not_provider_fallback():
     provider = _provider()
-    provider._request = AsyncMock(
+    provider.client.generate_image = AsyncMock(
         side_effect=RenderGridProviderError(
             "content blocked by safety policy",
             status=400,
@@ -137,14 +180,14 @@ def test_nanobanana_wiring_is_internal_and_uses_kie_as_rendergrid_fallback():
     root = Path(__file__).resolve().parents[1]
     services_init = (root / "bot/services/__init__.py").read_text(encoding="utf-8")
 
-    assert 'NANOBANANA_RENDERGRID_ENABLED' in services_init
-    assert 'NANOBANANA2_RENDERGRID_ENABLED' in services_init
-    assert 'NANOBANANAPRO_RENDERGRID_ENABLED' in services_init
-    assert 'RENDERGRID_NANO_BANANA_2_MODEL' in services_init
-    assert 'RENDERGRID_NANO_BANANA_PRO_MODEL' in services_init
-    assert 'service.primary_provider = RenderGridNanoBananaProvider(' in services_init
-    assert 'service.fallback_provider = kie_provider' in services_init
+    assert "NANOBANANA_RENDERGRID_ENABLED" in services_init
+    assert "NANOBANANA2_RENDERGRID_ENABLED" in services_init
+    assert "NANOBANANAPRO_RENDERGRID_ENABLED" in services_init
+    assert "RENDERGRID_NANO_BANANA_2_MODEL" in services_init
+    assert "RENDERGRID_NANO_BANANA_PRO_MODEL" in services_init
+    assert "service.primary_provider = RenderGridNanoBananaProvider(" in services_init
+    assert "service.fallback_provider = kie_provider" in services_init
 
-    # Provider migration is intentionally below the UI/handler layer.
+    # Provider migration stays below the UI/handler layer.
     assert "bot/handlers" not in services_init
     assert "InlineKeyboard" not in services_init

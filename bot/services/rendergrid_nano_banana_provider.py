@@ -1,27 +1,28 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
 from typing import Any
-from urllib.parse import quote, urlparse
+from urllib.parse import urlparse
 from uuid import uuid4
 
 import aiohttp
 
 from bot.services.media_input_utils import image_sources_to_provider_safe_png_urls
+from bot.services.rendergrid_service import (
+    MIN_CREATION_POLL_INTERVAL_SECONDS,
+    REFERENCE_IDENTITY_INSTRUCTION,
+    REFERENCE_IDENTITY_MARKER,
+    RenderGridClient,
+    RenderGridError,
+)
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_BASE_URL = "https://api.rendergrid.io/api/public/v1"
-MIN_POLL_INTERVAL_SECONDS = 5.0
+MIN_POLL_INTERVAL_SECONDS = MIN_CREATION_POLL_INTERVAL_SECONDS
 DEFAULT_GENERATION_TIMEOUT_SECONDS = 600.0
-DEFAULT_REQUEST_TIMEOUT_SECONDS = 60.0
-RETRYABLE_STATUS_CODES = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
-TERMINAL_STATUSES = frozenset({"completed", "failed"})
 POLICY_MARKERS = (
     "safety",
     "policy",
@@ -30,39 +31,54 @@ POLICY_MARKERS = (
     "blocked",
     "content violation",
 )
-REFERENCE_GUIDANCE = (
-    "Use the provided reference image(s) as authoritative visual references. "
-    "Preserve the identity and distinctive characteristics of any person, product, "
-    "object, clothing, or scene that the user's request intends to keep. Do not "
-    "replace a referenced subject with a lookalike or invented substitute unless "
-    "the user explicitly asks for that change."
-)
 REFERENCE_ONLY_PROMPT = (
     "Create the requested image using the provided reference image(s) as the visual source."
 )
+RenderGridProviderError = RenderGridError
 
 
-@dataclass(slots=True)
-class RenderGridProviderError(RuntimeError):
-    message: str
-    status: int | None = None
-    code: str | None = None
-    payload: Any = None
-    retry_after: float | None = None
+class _NanoBananaRenderGridClient(RenderGridClient):
+    def __init__(
+        self,
+        *args: Any,
+        reference_guidance_enabled: bool = True,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self.reference_guidance_enabled = bool(reference_guidance_enabled)
 
-    def __str__(self) -> str:
-        return self.message
+    def _prepare_generation_payload(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        prepared = dict(payload)
+        prompt = str(prepared.get("prompt") or "").strip()
+        references = self._normalize_reference_images(
+            prepared.get("image_urls")
+            if prepared.get("image_urls") is not None
+            else prepared.get("reference_images")
+        )
+        if references:
+            prepared["image_urls"] = references
+            prepared.pop("reference_images", None)
+            if (
+                self.reference_guidance_enabled
+                and REFERENCE_IDENTITY_MARKER not in prompt
+            ):
+                prepared["prompt"] = (
+                    f"{REFERENCE_IDENTITY_INSTRUCTION}\n\nUser request:\n{prompt}"
+                )
+        else:
+            prepared.pop("image_urls", None)
+            prepared.pop("reference_images", None)
+        return prepared
 
 
 class RenderGridNanoBananaProvider:
-    """Nano Banana adapter for RenderGrid with the bot's existing sync result contract.
+    """Nano Banana 2/Pro adapter backed by the verified RenderGrid client.
 
-    The public bot flow expects image bytes for synchronous providers. RenderGrid itself is
-    asynchronous, so this adapter creates a RenderGrid creation, polls it no faster than the
-    documented five-second floor, downloads the first result image, and returns ``image_bytes``.
-    Technical failures return ``None`` so the existing Nano Banana service transparently falls
-    through to its queued KIE path. Explicit provider policy refusals are returned as a terminal
-    non-retryable result and are not hidden behind a provider switch.
+    Local bot uploads are uploaded to RenderGrid `/uploads` and sent as
+    `image_file_ids`; truly remote references are sent as `image_urls`. This is
+    the same reference contract that passed the isolated RenderGrid bot test.
+    Technical failures return None so the existing Nano Banana services fall
+    back to KIE without any user-facing flow changes.
     """
 
     def __init__(
@@ -83,177 +99,117 @@ class RenderGridNanoBananaProvider:
         self.base_url = (
             base_url
             or os.getenv("RENDERGRID_BASE_URL", "")
-            or DEFAULT_BASE_URL
+            or "https://api.rendergrid.io/api/public/v1"
         ).rstrip("/")
         self.request_timeout_seconds = float(
             request_timeout_seconds
             if request_timeout_seconds is not None
-            else os.getenv("RENDERGRID_TIMEOUT_SECONDS", DEFAULT_REQUEST_TIMEOUT_SECONDS)
+            else os.getenv("RENDERGRID_TIMEOUT_SECONDS", "60")
         )
         self.generation_timeout_seconds = float(
             generation_timeout_seconds
             if generation_timeout_seconds is not None
             else os.getenv(
                 "RENDERGRID_GENERATION_TIMEOUT_SECONDS",
-                DEFAULT_GENERATION_TIMEOUT_SECONDS,
+                str(DEFAULT_GENERATION_TIMEOUT_SECONDS),
             )
         )
-        configured_poll_interval = float(
+        requested_poll = float(
             poll_interval_seconds
             if poll_interval_seconds is not None
-            else os.getenv("RENDERGRID_POLL_INTERVAL_SECONDS", MIN_POLL_INTERVAL_SECONDS)
+            else os.getenv(
+                "RENDERGRID_POLL_INTERVAL_SECONDS",
+                str(MIN_POLL_INTERVAL_SECONDS),
+            )
         )
-        self.poll_interval_seconds = max(
-            MIN_POLL_INTERVAL_SECONDS,
-            configured_poll_interval,
-        )
-        self.max_retries = max(0, int(max_retries))
+        self.poll_interval_seconds = max(MIN_POLL_INTERVAL_SECONDS, requested_poll)
         self.max_references = max(1, int(max_references))
         self.reference_guidance_enabled = bool(reference_guidance_enabled)
-        self._session: aiohttp.ClientSession | None = None
+        self.client = _NanoBananaRenderGridClient(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            timeout_seconds=self.request_timeout_seconds,
+            max_retries=max_retries,
+            reference_guidance_enabled=self.reference_guidance_enabled,
+        )
+        self._download_session: aiohttp.ClientSession | None = None
 
     @property
     def configured(self) -> bool:
-        return bool(self.api_key and self.model_name)
-
-    async def _get_session(self) -> aiohttp.ClientSession:
-        if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=self.request_timeout_seconds)
-            )
-        return self._session
-
-    def _headers(self, *, idempotency_key: str | None = None) -> dict[str, str]:
-        if not self.api_key:
-            raise RenderGridProviderError("RENDERGRID_API_KEY is not configured")
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        }
-        if idempotency_key:
-            headers["Idempotency-Key"] = idempotency_key
-        return headers
+        return bool(self.api_key and self.model_name and self.client.configured)
 
     @staticmethod
-    def _decode_payload(raw: str) -> Any:
-        if not raw:
-            return {}
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            return {"message": raw}
-
-    @staticmethod
-    def _error_details(payload: Any, status: int) -> tuple[str, str | None]:
-        if isinstance(payload, Mapping):
-            error = payload.get("error")
-            if isinstance(error, Mapping):
-                message = str(
-                    error.get("message")
-                    or error.get("detail")
-                    or payload.get("message")
-                    or f"RenderGrid request failed ({status})"
-                )
-                code = error.get("code") or payload.get("code")
-                return message, str(code) if code is not None else None
-            if isinstance(error, str) and error.strip():
-                return error.strip(), str(payload.get("code") or "") or None
-            message = str(
-                payload.get("message")
-                or payload.get("detail")
-                or f"RenderGrid request failed ({status})"
-            )
-            code = payload.get("code")
-            return message, str(code) if code is not None else None
-        return f"RenderGrid request failed ({status})", None
-
-    @staticmethod
-    def _retry_after_seconds(response: aiohttp.ClientResponse, attempt: int) -> float:
-        raw = response.headers.get("Retry-After", "").strip()
-        if raw:
-            try:
-                return max(0.0, min(float(raw), 30.0))
-            except ValueError:
-                pass
-        return min(2.0**attempt, 8.0)
-
-    async def _request(
-        self,
-        method: str,
-        path: str,
-        *,
-        json_body: Mapping[str, Any] | None = None,
-        idempotency_key: str | None = None,
-    ) -> Any:
-        session = await self._get_session()
-        url = f"{self.base_url}/{path.lstrip('/')}"
-        last_error: RenderGridProviderError | None = None
-
-        for attempt in range(self.max_retries + 1):
-            try:
-                async with session.request(
-                    method.upper(),
-                    url,
-                    headers=self._headers(idempotency_key=idempotency_key),
-                    json=dict(json_body) if json_body is not None else None,
-                ) as response:
-                    raw = await response.text()
-                    payload = self._decode_payload(raw)
-                    if 200 <= response.status < 300:
-                        return payload
-
-                    message, code = self._error_details(payload, response.status)
-                    retry_after = self._retry_after_seconds(response, attempt)
-                    last_error = RenderGridProviderError(
-                        message=message,
-                        status=response.status,
-                        code=code,
-                        payload=payload,
-                        retry_after=retry_after,
-                    )
-                    if (
-                        response.status not in RETRYABLE_STATUS_CODES
-                        or attempt >= self.max_retries
-                    ):
-                        raise last_error
-                    await asyncio.sleep(retry_after)
-            except RenderGridProviderError:
-                raise
-            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-                last_error = RenderGridProviderError(
-                    message=f"RenderGrid network error: {type(exc).__name__}",
-                    payload={"exception": type(exc).__name__},
-                )
-                if attempt >= self.max_retries:
-                    raise last_error from exc
-                await asyncio.sleep(min(2.0**attempt, 8.0))
-
-        if last_error is not None:
-            raise last_error
-        raise RenderGridProviderError("RenderGrid request failed")
-
-    @staticmethod
-    def _extract_creation_id(payload: Any) -> str | None:
+    def _creation_id(payload: Any) -> str | None:
         if not isinstance(payload, Mapping):
             return None
         for key in ("id", "creation_id", "task_id"):
             value = str(payload.get(key) or "").strip()
             if value:
                 return value
-        return RenderGridNanoBananaProvider._extract_creation_id(payload.get("data"))
+        return RenderGridNanoBananaProvider._creation_id(payload.get("data"))
 
     @staticmethod
-    def _extract_status(payload: Any) -> str:
+    def _status(payload: Any) -> str:
         if not isinstance(payload, Mapping):
             return ""
-        status = str(payload.get("status") or payload.get("state") or "").strip().lower()
-        if status:
-            return status
-        return RenderGridNanoBananaProvider._extract_status(payload.get("data"))
+        value = str(payload.get("status") or payload.get("state") or "").strip().lower()
+        return value or RenderGridNanoBananaProvider._status(payload.get("data"))
+
+    def _normalize_references(self, image_input: list[str] | None) -> list[str]:
+        if not image_input:
+            return []
+        normalized = image_sources_to_provider_safe_png_urls(
+            list(image_input)[: self.max_references]
+        )
+        references: list[str] = []
+        seen: set[str] = set()
+        for source in normalized:
+            if not isinstance(source, str):
+                raise TypeError("RenderGrid reference source must be a public image URL")
+            value = source.strip()
+            parsed = urlparse(value)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise ValueError(
+                    "RenderGrid reference source is not publicly fetchable through HTTP(S)"
+                )
+            if value not in seen:
+                seen.add(value)
+                references.append(value)
+        if image_input and not references:
+            raise ValueError("RenderGrid received references but none are usable")
+        return references
 
     @staticmethod
-    def _extract_result_urls(payload: Any) -> list[str]:
+    def _normalize_resolution(resolution: str) -> str:
+        value = str(resolution or "2K").strip().upper()
+        value = {"BASIC": "2K", "HIGH": "4K"}.get(value, value)
+        return value if value in {"1K", "2K", "4K"} else "2K"
+
+    def _build_payload(
+        self,
+        *,
+        prompt: str,
+        aspect_ratio: str,
+        resolution: str,
+        references: list[str],
+    ) -> dict[str, Any]:
+        provider_prompt = str(prompt or "").strip()
+        if not provider_prompt and references:
+            provider_prompt = REFERENCE_ONLY_PROMPT
+        payload: dict[str, Any] = {
+            "model": self.model_name,
+            "prompt": provider_prompt,
+            "resolution": self._normalize_resolution(resolution),
+        }
+        ratio = str(aspect_ratio or "").strip()
+        if ratio and ratio.lower() != "auto":
+            payload["aspect_ratio"] = ratio
+        if references:
+            payload["reference_images"] = references
+        return payload
+
+    @staticmethod
+    def _result_urls(payload: Any) -> list[str]:
         if not isinstance(payload, Mapping):
             return []
         for key in ("result_urls", "urls", "images", "outputs"):
@@ -272,7 +228,7 @@ class RenderGridNanoBananaProvider:
                     urls.append(value)
             if urls:
                 return urls
-        return RenderGridNanoBananaProvider._extract_result_urls(payload.get("data"))
+        return RenderGridNanoBananaProvider._result_urls(payload.get("data"))
 
     @staticmethod
     def _failure_text(payload: Any) -> str:
@@ -293,91 +249,20 @@ class RenderGridNanoBananaProvider:
         value = f"{code or ''} {message or ''}".lower()
         return any(marker in value for marker in POLICY_MARKERS)
 
-    def _normalize_references(self, image_input: list[str] | None) -> list[str]:
-        if not image_input:
-            return []
-        normalized_sources = image_sources_to_provider_safe_png_urls(
-            list(image_input)[: self.max_references]
-        )
-        references: list[str] = []
-        for source in normalized_sources:
-            if not isinstance(source, str):
-                raise TypeError("RenderGrid reference source must be a public image URL")
-            value = source.strip()
-            parsed = urlparse(value)
-            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-                raise ValueError(
-                    "RenderGrid reference source is not publicly fetchable through HTTP(S)"
-                )
-            references.append(value)
-        if image_input and not references:
-            raise ValueError("RenderGrid received references but none are usable")
-        return references
-
-    @staticmethod
-    def _normalize_resolution(resolution: str) -> str:
-        value = str(resolution or "2K").strip().upper()
-        aliases = {"BASIC": "2K", "HIGH": "4K"}
-        value = aliases.get(value, value)
-        return value if value in {"1K", "2K", "4K"} else "2K"
-
-    def _build_payload(
-        self,
-        *,
-        prompt: str,
-        aspect_ratio: str,
-        resolution: str,
-        references: list[str],
-    ) -> dict[str, Any]:
-        provider_prompt = str(prompt or "").strip()
-        if not provider_prompt and references:
-            provider_prompt = REFERENCE_ONLY_PROMPT
-        if references and self.reference_guidance_enabled:
-            provider_prompt = f"{REFERENCE_GUIDANCE}\n\nUser request:\n{provider_prompt}"
-
-        payload: dict[str, Any] = {
-            "model": self.model_name,
-            "prompt": provider_prompt,
-            "resolution": self._normalize_resolution(resolution),
-        }
-        ratio = str(aspect_ratio or "").strip()
-        if ratio and ratio.lower() != "auto":
-            payload["aspect_ratio"] = ratio
-        if references:
-            payload["reference_images"] = references
-        return payload
-
-    async def _wait_for_creation(self, creation_id: str) -> dict[str, Any]:
-        deadline = asyncio.get_running_loop().time() + self.generation_timeout_seconds
-        encoded_creation_id = quote(creation_id, safe="")
-        while True:
-            creation = await self._request("GET", f"/creations/{encoded_creation_id}")
-            if not isinstance(creation, dict):
-                raise RenderGridProviderError(
-                    "RenderGrid returned an invalid creation response",
-                    payload=creation,
-                )
-            status = self._extract_status(creation)
-            if status in TERMINAL_STATUSES:
-                return creation
-            if asyncio.get_running_loop().time() >= deadline:
-                raise TimeoutError(f"RenderGrid creation {creation_id} timed out")
-            await asyncio.sleep(self.poll_interval_seconds)
-
     async def _download_result(self, url: str) -> tuple[bytes, str]:
-        session = await self._get_session()
-        async with session.get(
-            url,
-            timeout=aiohttp.ClientTimeout(total=self.request_timeout_seconds),
-        ) as response:
+        if self._download_session is None or self._download_session.closed:
+            self._download_session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=self.request_timeout_seconds)
+            )
+        async with self._download_session.get(url) as response:
             if response.status != 200:
-                raise RenderGridProviderError(
+                raise RenderGridError(
                     f"RenderGrid result download failed ({response.status})",
                     status=response.status,
                 )
             content = await response.read()
             if not content:
-                raise RenderGridProviderError("RenderGrid result download is empty")
+                raise RenderGridError("RenderGrid result download is empty")
             return content, response.content_type or "image/png"
 
     async def generate_image(
@@ -388,13 +273,8 @@ class RenderGridNanoBananaProvider:
         image_input: list[str] | None = None,
         output_format: str = "png",
     ) -> dict[str, Any] | None:
-        del output_format  # RenderGrid model output format stays provider-controlled.
+        del output_format
         if not self.configured:
-            logger.info(
-                "RenderGrid Nano Banana disabled at runtime: model=%s configured=%s",
-                self.model_name,
-                self.configured,
-            )
             return None
 
         started_at = asyncio.get_running_loop().time()
@@ -407,10 +287,6 @@ class RenderGridNanoBananaProvider:
                 references=references,
             )
             if not str(payload.get("prompt") or "").strip():
-                logger.warning(
-                    "RenderGrid Nano Banana request has neither prompt nor references: model=%s",
-                    self.model_name,
-                )
                 return {
                     "error": "Nano Banana request has neither prompt nor reference image",
                     "provider": "rendergrid",
@@ -420,41 +296,29 @@ class RenderGridNanoBananaProvider:
 
             logger.info(
                 "Nano Banana provider request: provider=rendergrid model=%s refs=%s "
-                "aspect_ratio=%s resolution=%s prompt_len=%s",
+                "reference_contract=image_urls_or_file_ids aspect_ratio=%s resolution=%s prompt_len=%s",
                 self.model_name,
                 len(references),
                 aspect_ratio,
                 payload.get("resolution"),
                 len(str(prompt or "")),
             )
-            accepted = await self._request(
-                "POST",
-                "/images/generate",
-                json_body=payload,
+            accepted = await self.client.generate_image(
+                payload,
                 idempotency_key=str(uuid4()),
             )
-            if not isinstance(accepted, dict):
-                raise RenderGridProviderError(
-                    "RenderGrid returned an invalid generation response",
-                    payload=accepted,
+            creation_id = self._creation_id(accepted)
+            final = accepted
+            if creation_id and self._status(accepted) not in {"completed", "failed"}:
+                final = await self.client.wait_for_creation(
+                    creation_id,
+                    timeout_seconds=self.generation_timeout_seconds,
+                    poll_interval_seconds=self.poll_interval_seconds,
                 )
 
-            creation_id = self._extract_creation_id(accepted)
-            final = accepted
-            if creation_id and self._extract_status(accepted) not in TERMINAL_STATUSES:
-                final = await self._wait_for_creation(creation_id)
-
-            status = self._extract_status(final)
-            if status == "failed":
+            if self._status(final) == "failed":
                 reason = self._failure_text(final) or "RenderGrid generation failed"
                 if self._is_policy_failure(reason):
-                    logger.warning(
-                        "Nano Banana provider policy refusal: provider=rendergrid model=%s "
-                        "creation_id=%s reason=%s",
-                        self.model_name,
-                        creation_id or "none",
-                        reason[:500],
-                    )
                     return {
                         "error": reason,
                         "provider": "rendergrid",
@@ -462,23 +326,22 @@ class RenderGridNanoBananaProvider:
                         "creation_id": creation_id,
                         "retryable": False,
                     }
-                raise RenderGridProviderError(reason, payload=final)
+                raise RenderGridError(reason, payload=final)
 
-            result_urls = self._extract_result_urls(final)
+            result_urls = self._result_urls(final)
             if not result_urls:
-                raise RenderGridProviderError(
+                raise RenderGridError(
                     "RenderGrid completed without result_urls",
                     payload=final,
                 )
             image_bytes, mime_type = await self._download_result(result_urls[0])
-            latency = asyncio.get_running_loop().time() - started_at
             logger.info(
                 "Nano Banana provider success: provider=rendergrid model=%s refs=%s "
                 "creation_id=%s latency_seconds=%.2f bytes=%s",
                 self.model_name,
                 len(references),
                 creation_id or "none",
-                latency,
+                asyncio.get_running_loop().time() - started_at,
                 len(image_bytes),
             )
             return {
@@ -490,13 +353,10 @@ class RenderGridNanoBananaProvider:
                 "result_url": result_urls[0],
                 "retryable": False,
             }
-        except (RenderGridProviderError, ValueError, TypeError, TimeoutError) as exc:
-            latency = asyncio.get_running_loop().time() - started_at
-            status = exc.status if isinstance(exc, RenderGridProviderError) else None
-            code = exc.code if isinstance(exc, RenderGridProviderError) else None
-            if isinstance(exc, RenderGridProviderError) and self._is_policy_failure(
-                str(exc), code
-            ):
+        except (RenderGridError, ValueError, TypeError, TimeoutError) as exc:
+            status = exc.status if isinstance(exc, RenderGridError) else None
+            code = exc.code if isinstance(exc, RenderGridError) else None
+            if isinstance(exc, RenderGridError) and self._is_policy_failure(str(exc), code):
                 return {
                     "error": str(exc),
                     "provider": "rendergrid",
@@ -510,11 +370,11 @@ class RenderGridNanoBananaProvider:
                 self.model_name,
                 status,
                 code,
-                latency,
+                asyncio.get_running_loop().time() - started_at,
                 exc,
             )
             return None
 
     async def close(self) -> None:
-        if self._session is not None and not self._session.closed:
-            await self._session.close()
+        if self._download_session is not None and not self._download_session.closed:
+            await self._download_session.close()
