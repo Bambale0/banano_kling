@@ -13,8 +13,6 @@ import aiohttp
 from bot.services.media_input_utils import image_sources_to_provider_safe_png_urls
 from bot.services.rendergrid_service import (
     MIN_CREATION_POLL_INTERVAL_SECONDS,
-    REFERENCE_IDENTITY_INSTRUCTION,
-    REFERENCE_IDENTITY_MARKER,
     RenderGridClient,
     RenderGridError,
 )
@@ -40,15 +38,6 @@ RenderGridProviderError = RenderGridError
 
 
 class _NanoBananaRenderGridClient(RenderGridClient):
-    def __init__(
-        self,
-        *args: Any,
-        reference_guidance_enabled: bool = True,
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(*args, **kwargs)
-        self.reference_guidance_enabled = bool(reference_guidance_enabled)
-
     def _prepare_generation_payload(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         prepared = dict(payload)
         prompt = str(prepared.get("prompt") or "").strip()
@@ -60,13 +49,7 @@ class _NanoBananaRenderGridClient(RenderGridClient):
         if references:
             prepared["image_urls"] = references
             prepared.pop("reference_images", None)
-            if (
-                self.reference_guidance_enabled
-                and REFERENCE_IDENTITY_MARKER not in prompt
-            ):
-                prepared["prompt"] = (
-                    f"{REFERENCE_IDENTITY_INSTRUCTION}\n\nUser request:\n{prompt}"
-                )
+            prepared["prompt"] = prompt
         else:
             prepared.pop("image_urls", None)
             prepared.pop("reference_images", None)
@@ -98,7 +81,6 @@ class RenderGridNanoBananaProvider:
         poll_interval_seconds: float | None = None,
         max_retries: int = 2,
         max_references: int = 8,
-        reference_guidance_enabled: bool = True,
     ) -> None:
         self.api_key = str(api_key or "").strip()
         self.model_name = str(model_name or "").strip()
@@ -130,13 +112,11 @@ class RenderGridNanoBananaProvider:
         )
         self.poll_interval_seconds = max(MIN_POLL_INTERVAL_SECONDS, requested_poll)
         self.max_references = max(1, int(max_references))
-        self.reference_guidance_enabled = bool(reference_guidance_enabled)
         self.client = _NanoBananaRenderGridClient(
             api_key=self.api_key,
             base_url=self.base_url,
             timeout_seconds=self.request_timeout_seconds,
             max_retries=max_retries,
-            reference_guidance_enabled=self.reference_guidance_enabled,
         )
         self._download_session: aiohttp.ClientSession | None = None
 

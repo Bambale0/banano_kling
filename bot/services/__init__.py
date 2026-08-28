@@ -99,11 +99,6 @@ def _configure_nanobanana_routing() -> None:
         "RENDERGRID_BASE_URL",
         "https://api.rendergrid.io/api/public/v1",
     ).strip().rstrip("/")
-    reference_guidance_enabled = _env_flag(
-        "RENDERGRID_REFERENCE_GUIDANCE_ENABLED",
-        True,
-    )
-
     def configure_rendergrid_or_kie(
         *,
         enabled: bool,
@@ -133,7 +128,6 @@ def _configure_nanobanana_routing() -> None:
             model_name=provider_model,
             base_url=rendergrid_base_url,
             max_references=8,
-            reference_guidance_enabled=reference_guidance_enabled,
         )
         service.fallback_provider = kie_provider
         logger.info(

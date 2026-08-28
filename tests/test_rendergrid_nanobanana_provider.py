@@ -7,7 +7,6 @@ from bot.services.rendergrid_nano_banana_provider import (
     RenderGridNanoBananaProvider,
     RenderGridProviderError,
 )
-from bot.services.rendergrid_service import REFERENCE_IDENTITY_MARKER
 
 
 def _provider(model: str = "nano-banana-2") -> RenderGridNanoBananaProvider:
@@ -38,18 +37,19 @@ def test_rendergrid_payload_hands_references_to_verified_client():
     assert payload["prompt"] == "Put this person in a studio portrait"
 
 
-def test_rendergrid_verified_client_uses_image_urls_and_identity_lock():
+def test_rendergrid_verified_client_uses_image_urls_and_preserves_user_prompt():
     provider = _provider("nano-banana-2")
     provider.client._request = AsyncMock(
         return_value={"id": "creation-ref", "status": "queued"}
     )
     reference_url = "https://cdn.example/ref.png"
+    user_prompt = "Keep the same person"
 
     result = asyncio.run(
         provider.client.generate_image(
             {
                 "model": "nano-banana-2",
-                "prompt": "Keep the same person",
+                "prompt": user_prompt,
                 "reference_images": [reference_url],
             },
             idempotency_key="external-ref",
@@ -60,8 +60,9 @@ def test_rendergrid_verified_client_uses_image_urls_and_identity_lock():
     sent = provider.client._request.await_args.kwargs["json_body"]
     assert sent["image_urls"] == [reference_url]
     assert "reference_images" not in sent
-    assert REFERENCE_IDENTITY_MARKER in sent["prompt"]
-    assert "Keep the same person" in sent["prompt"]
+    assert sent["prompt"] == user_prompt
+    assert "[REFERENCE IDENTITY LOCK]" not in sent["prompt"]
+    assert "User request:" not in sent["prompt"]
 
 
 def test_rendergrid_verified_client_uses_file_ids_for_local_uploads():
