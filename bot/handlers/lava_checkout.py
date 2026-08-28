@@ -67,6 +67,17 @@ _BLOCKED_EMAILS = {
 }
 
 
+class _CallbackDataProxy:
+    """Delegate a callback while replacing only its routing payload."""
+
+    def __init__(self, callback: types.CallbackQuery, data: str) -> None:
+        self._callback = callback
+        self.data = data
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._callback, name)
+
+
 def _extract_email_candidate(value: Any) -> str:
     raw = str(value or "").translate(_EMAIL_IGNORED_CHARACTERS).strip()
     if raw.lower().startswith("mailto:"):
@@ -136,8 +147,8 @@ def parse_lava_checkout_callback(value: Any) -> tuple[str, str]:
         if payload.startswith(prefix):
             return mode, payload.removeprefix(prefix)
 
-    # Old already-sent buttons used buy_lava_<package>. Keep them working without
-    # restoring the removed intermediate provider screen.
+    # Old already-sent buttons used buy_lava_<package>. They historically opened
+    # SBP, so keep them working by routing them to FreeKassa below.
     return LAVA_CHECKOUT_SBP, payload
 
 
@@ -155,7 +166,8 @@ def _payment_options_keyboard(
     package_id: str,
     *,
     stars: bool,
-    direct_rub: bool,
+    lava_card: bool,
+    freekassa_sbp: bool,
     crypto: bool,
     freekassa: bool,
 ) -> types.InlineKeyboardMarkup:
@@ -167,14 +179,15 @@ def _payment_options_keyboard(
             text="🇷🇺 РФ — KASSA (резерв)",
             callback_data=f"buy_freekassa_{package_id}",
         )
-    if direct_rub:
+    if lava_card:
         builder.button(
             text="💳 Картой",
             callback_data=f"buy_lava_card_{package_id}",
         )
+    if freekassa_sbp:
         builder.button(
             text="⚡ СБП",
-            callback_data=f"buy_lava_sbp_{package_id}",
+            callback_data=f"freekassa_sbp_{package_id}",
         )
     if stars:
         builder.button(
@@ -231,6 +244,28 @@ def _checkout_title(mode: str) -> str:
     return "⚡ <b>Оплата по СБП</b>"
 
 
+async def _route_legacy_sbp_to_freekassa(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+    package_id: str,
+) -> None:
+    """Move already-sent Lava SBP buttons to the current FreeKassa flow."""
+
+    if not freekassa_service.api_enabled:
+        await callback.message.edit_text(
+            "СБП временно недоступна. Выберите другой способ оплаты.",
+            reply_markup=get_back_keyboard("menu_topup"),
+        )
+        await callback.answer()
+        return
+
+    # Import lazily so the payment routers remain independent during startup.
+    from bot.handlers.freekassa_payments import initiate_freekassa_payment
+
+    proxy = _CallbackDataProxy(callback, f"freekassa_sbp_{package_id}")
+    await initiate_freekassa_payment(proxy, state)
+
+
 @router.callback_query(F.data.startswith("choose_pay_"))
 async def show_direct_payment_methods(
     callback: types.CallbackQuery,
@@ -245,16 +280,19 @@ async def show_direct_payment_methods(
         return
 
     lava_offer_id, lava_currency = _package_lava_offer_config(package)
-    has_direct_rub = bool(
+    has_lava_card = bool(
         lava_service.enabled
         and lava_offer_id
         and str(lava_currency or "").upper() == "RUB"
     )
+    has_freekassa_sbp = bool(freekassa_service.api_enabled)
     has_freekassa = bool(freekassa_service.enabled)
     has_stars = bool(config.TELEGRAM_STARS_ENABLED)
     has_crypto = bool(cryptobot_service.enabled)
 
-    if not any((has_direct_rub, has_freekassa, has_stars, has_crypto)):
+    if not any(
+        (has_lava_card, has_freekassa_sbp, has_freekassa, has_stars, has_crypto)
+    ):
         await callback.message.edit_text(
             "❌ Способы оплаты временно недоступны. Обратитесь в поддержку.",
             reply_markup=get_back_keyboard("menu_topup"),
@@ -289,7 +327,8 @@ async def show_direct_payment_methods(
         reply_markup=_payment_options_keyboard(
             package_id,
             stars=has_stars,
-            direct_rub=has_direct_rub,
+            lava_card=has_lava_card,
+            freekassa_sbp=has_freekassa_sbp,
             crypto=has_crypto,
             freekassa=has_freekassa,
         ),
@@ -303,7 +342,12 @@ async def handle_lava_checkout_entry(
     callback: types.CallbackQuery,
     state: FSMContext,
 ) -> None:
-    """Collect the buyer email for the selected card or SBP method."""
+    """Route legacy SBP to FreeKassa; collect email only for Lava card."""
+
+    mode, package_id = parse_lava_checkout_callback(callback.data)
+    if mode == LAVA_CHECKOUT_SBP:
+        await _route_legacy_sbp_to_freekassa(callback, state, package_id)
+        return
 
     if not lava_service.enabled:
         await callback.message.edit_text(
@@ -313,7 +357,6 @@ async def handle_lava_checkout_entry(
         await callback.answer()
         return
 
-    mode, package_id = parse_lava_checkout_callback(callback.data)
     _, error = _validate_lava_package(package_id)
     if error:
         await callback.message.edit_text(
@@ -374,6 +417,16 @@ async def create_lava_checkout(
     state_data = await state.get_data()
     package_id = str(state_data.get("lava_checkout_package_id") or "").strip()
     mode = str(state_data.get("lava_checkout_mode") or LAVA_CHECKOUT_SBP).strip()
+
+    # Never finish an old in-flight Lava SBP checkout after the provider switch.
+    if mode == LAVA_CHECKOUT_SBP:
+        await state.clear()
+        await message.answer(
+            "СБП теперь оформляется через KASSA. Выберите СБП ещё раз — пакет сохранён.",
+            reply_markup=get_back_keyboard(f"choose_pay_{package_id}"),
+        )
+        return
+
     package, error = _validate_lava_package(package_id)
     if error:
         await state.clear()
