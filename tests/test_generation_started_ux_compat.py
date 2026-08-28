@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from bot import miniapp as miniapp_module
 from bot.handlers.generation_started_ux_compat import (
     _FriendlyMessageProxy,
     build_generation_started_text,
     sanitize_generation_started_text,
 )
+from bot import miniapp as miniapp_module
 
 
 class _FakeMessage:
