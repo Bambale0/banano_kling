@@ -6,7 +6,7 @@ import logging
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 from urllib.parse import quote, urlparse
 from uuid import uuid4
 
@@ -110,7 +110,7 @@ class RenderGridNanoBananaProvider:
         self.max_retries = max(0, int(max_retries))
         self.max_references = max(1, int(max_references))
         self.reference_guidance_enabled = bool(reference_guidance_enabled)
-        self._session: Optional[aiohttp.ClientSession] = None
+        self._session: aiohttp.ClientSession | None = None
 
     @property
     def configured(self) -> bool:
@@ -302,7 +302,7 @@ class RenderGridNanoBananaProvider:
         references: list[str] = []
         for source in normalized_sources:
             if not isinstance(source, str):
-                raise ValueError("RenderGrid reference source must be a public image URL")
+                raise TypeError("RenderGrid reference source must be a public image URL")
             value = source.strip()
             parsed = urlparse(value)
             if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -387,7 +387,7 @@ class RenderGridNanoBananaProvider:
         resolution: str = "2K",
         image_input: list[str] | None = None,
         output_format: str = "png",
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         del output_format  # RenderGrid model output format stays provider-controlled.
         if not self.configured:
             logger.info(
