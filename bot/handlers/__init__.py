@@ -19,7 +19,6 @@ from bot.services.publication_scope_postgres_compat import (
 from . import trends_compat as trends_compat_module
 from .feed_model_filter_compat import install_feed_model_filter_compat
 from .feed_model_filter_compat import router as feed_model_filter_compat_router
-from .generation_started_ux_compat import install_generation_started_ux
 from .miniapp_launch_revision_compat import install_miniapp_launch_revision_compat
 from .miniapp_regression_safety import install_miniapp_regression_safety
 from .miniapp_video_continuity_compat import install_miniapp_video_continuity_compat
@@ -152,7 +151,6 @@ install_seedance_25_public_release()
 install_seedance_25_client_compat()
 install_seedance_25_telegram_compat()
 install_seedance_25_new_priority()
-install_generation_started_ux(generation_module)
 install_miniapp_video_continuity_compat()
 install_trend_seedance_25_compat()
 generation_router = Router()
