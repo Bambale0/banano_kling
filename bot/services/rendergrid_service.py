@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import json
+import mimetypes
 import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlparse
 from uuid import uuid4
 
 import aiohttp
+
+from bot.services.media_input_utils import resolve_local_upload_path
 
 DEFAULT_RENDERGRID_BASE_URL = "https://api.rendergrid.io/api/public/v1"
 MIN_CREATION_POLL_INTERVAL_SECONDS = 5.0
@@ -163,12 +167,18 @@ class RenderGridClient:
     def _prepare_generation_payload(cls, payload: Mapping[str, Any]) -> dict[str, Any]:
         prepared = dict(payload)
         prompt = str(prepared.get("prompt") or "").strip()
-        references = cls._normalize_reference_images(prepared.get("reference_images"))
+        references = cls._normalize_reference_images(
+            prepared.get("image_urls")
+            if prepared.get("image_urls") is not None
+            else prepared.get("reference_images")
+        )
         if references:
-            prepared["reference_images"] = references
+            prepared["image_urls"] = references
+            prepared.pop("reference_images", None)
             if REFERENCE_IDENTITY_MARKER not in prompt:
                 prepared["prompt"] = f"{REFERENCE_IDENTITY_INSTRUCTION}\n\nUser request:\n{prompt}"
         else:
+            prepared.pop("image_urls", None)
             prepared.pop("reference_images", None)
         return prepared
 
@@ -228,6 +238,47 @@ class RenderGridClient:
             raise last_error
         raise RenderGridError("RenderGrid request failed")
 
+    async def _upload_local_reference(self, source: str) -> str | None:
+        local_path = resolve_local_upload_path(source)
+        if not local_path:
+            return None
+
+        try:
+            file_bytes = await asyncio.to_thread(Path(local_path).read_bytes)
+            filename = os.path.basename(local_path) or "reference.png"
+            content_type = mimetypes.guess_type(filename)[0] or "image/png"
+            form = aiohttp.FormData()
+            form.add_field(
+                "file",
+                file_bytes,
+                filename=filename,
+                content_type=content_type,
+            )
+            form.add_field("kind", "image")
+            timeout = aiohttp.ClientTimeout(total=self.timeout_seconds)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(
+                    f"{self.base_url}/uploads",
+                    headers={"Authorization": f"Bearer {self.api_key}", "Accept": "application/json"},
+                    data=form,
+                ) as response:
+                    raw = await response.text()
+                    payload = self._decode_payload(raw)
+                    if response.status < 200 or response.status >= 300:
+                        message, code = self._error_details(payload, response.status)
+                        raise RenderGridError(message, response.status, code, payload)
+                    file_id = payload.get("file_id") if isinstance(payload, dict) else None
+                    if not file_id:
+                        raise RenderGridError("RenderGrid upload returned no file_id", payload=payload)
+                    return str(file_id)
+        except RenderGridError:
+            raise
+        except (OSError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            raise RenderGridError(
+                f"RenderGrid reference upload failed: {type(exc).__name__}",
+                payload={"exception": type(exc).__name__},
+            ) from exc
+
     async def generate_image(
         self,
         payload: Mapping[str, Any],
@@ -244,6 +295,21 @@ class RenderGridClient:
             raise ValueError("RenderGrid prompt is required")
 
         prepared_payload = self._prepare_generation_payload(payload)
+        image_urls = prepared_payload.pop("image_urls", None)
+        if image_urls:
+            local_file_ids = [
+                file_id
+                for image_url in image_urls
+                if (file_id := await self._upload_local_reference(image_url))
+            ]
+            if local_file_ids:
+                if len(local_file_ids) != len(image_urls):
+                    raise RenderGridError(
+                        "RenderGrid references must be all local uploads or all public URLs"
+                    )
+                prepared_payload["image_file_ids"] = local_file_ids
+            else:
+                prepared_payload["image_urls"] = image_urls
         key = (idempotency_key or str(uuid4())).strip()
         result = await self._request(
             "POST",

@@ -56,10 +56,33 @@ def test_rendergrid_reference_generation_keeps_reference_and_locks_identity():
             "model": "nano-banana-2",
             "prompt": expected_prompt,
             "aspect_ratio": "1:1",
-            "reference_images": [reference_url],
+            "image_urls": [reference_url],
         },
         idempotency_key="ref-request",
     )
+
+
+def test_rendergrid_reference_generation_uses_file_ids_for_local_uploads():
+    client = RenderGridClient(api_key="rg_live_test")
+    client._upload_local_reference = AsyncMock(return_value="file-ref-1")
+    client._request = AsyncMock(return_value={"id": "creation-ref", "status": "queued"})
+
+    result = asyncio.run(
+        client.generate_image(
+            {
+                "model": "nano-banana-2",
+                "prompt": "Keep the same person",
+                "reference_images": ["https://tanyapi.chillcreative.ru/uploads/ref.png"],
+            },
+            idempotency_key="local-ref-request",
+        )
+    )
+
+    assert result["id"] == "creation-ref"
+    client._upload_local_reference.assert_awaited_once()
+    client._request.assert_awaited_once()
+    assert client._request.await_args.kwargs["json_body"]["image_file_ids"] == ["file-ref-1"]
+    assert "image_urls" not in client._request.await_args.kwargs["json_body"]
 
 
 def test_rendergrid_reference_generation_rejects_non_public_reference_path():
