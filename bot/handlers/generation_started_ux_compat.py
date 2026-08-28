@@ -44,7 +44,7 @@ def build_generation_started_text(
     model_label: str,
     aspect_ratio: str = "",
     launched_count: int = 1,
-    unit_cost: float | int | None = None,
+    unit_cost: float | None = None,
     reference_count: int | None = None,
 ) -> str:
     """Build the single public contract for a successfully launched generation."""
