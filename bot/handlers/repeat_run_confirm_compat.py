@@ -11,6 +11,8 @@ from __future__ import annotations
 from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
 
+from .generation_started_ux_compat import install_generation_started_ux
+
 router = Router()
 _INSTALLED = False
 
@@ -22,6 +24,12 @@ def install_repeat_run_confirm_compat(generation_module) -> None:
     if _INSTALLED:
         return
     _INSTALLED = True
+
+    # The repeat compatibility hook is initialized for every production bot
+    # process before generation routing is exposed. Reuse it to install the
+    # provider-agnostic public "generation started" UX without editing the
+    # legacy generation monolith or the top-level handlers package contract.
+    install_generation_started_ux(generation_module)
 
     @router.callback_query(F.data.startswith("repeat_run_confirm_"))
     async def repeat_run_confirm_compat(
