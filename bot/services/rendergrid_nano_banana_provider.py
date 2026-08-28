@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 
 MIN_POLL_INTERVAL_SECONDS = MIN_CREATION_POLL_INTERVAL_SECONDS
 DEFAULT_GENERATION_TIMEOUT_SECONDS = 600.0
+TECHNICAL_FALLBACK_HTTP_STATUSES = frozenset({408, 425, 429, 500, 502, 503, 504})
+FOUR_K_VALIDATION_HTTP_STATUSES = frozenset({400, 422})
 POLICY_MARKERS = (
     "safety",
     "policy",
@@ -79,6 +81,10 @@ class RenderGridNanoBananaProvider:
     the same reference contract that passed the isolated RenderGrid bot test.
     Technical failures return None so the existing Nano Banana services fall
     back to KIE without any user-facing flow changes.
+
+    Provider-side request/validation failures are different from technical
+    outages: they stay on RenderGrid and are returned as terminal results. This
+    prevents an invalid 4K RenderGrid payload from silently changing provider.
     """
 
     def __init__(
@@ -249,6 +255,54 @@ class RenderGridNanoBananaProvider:
         value = f"{code or ''} {message or ''}".lower()
         return any(marker in value for marker in POLICY_MARKERS)
 
+    @staticmethod
+    def _is_technical_fallback_error(exc: Exception) -> bool:
+        if isinstance(exc, TimeoutError):
+            return True
+        if isinstance(exc, (ValueError, TypeError)):
+            # Local media conversion/transport incompatibilities may still use
+            # the existing KIE path rather than dropping a user reference.
+            return True
+        if not isinstance(exc, RenderGridError):
+            return False
+        if exc.code == "CREATION_FAILED":
+            return False
+        return exc.status is None or exc.status in TECHNICAL_FALLBACK_HTTP_STATUSES
+
+    async def _create_rendergrid_generation(
+        self,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            return await self.client.generate_image(
+                payload,
+                idempotency_key=str(uuid4()),
+            )
+        except RenderGridError as exc:
+            if (
+                payload.get("resolution") != "4K"
+                or exc.status not in FOUR_K_VALIDATION_HTTP_STATUSES
+                or self._is_policy_failure(str(exc), exc.code)
+            ):
+                raise
+
+            # RenderGrid deployments have exposed both canonical upper-case and
+            # lower-case enum spellings for 4K. A request validation failure is
+            # retried once inside RenderGrid before any fallback decision.
+            retry_payload = dict(payload)
+            retry_payload["resolution"] = "4k"
+            logger.warning(
+                "RenderGrid 4K validation retry: model=%s status=%s code=%s "
+                "resolution=4K->4k provider=rendergrid",
+                self.model_name,
+                exc.status,
+                exc.code,
+            )
+            return await self.client.generate_image(
+                retry_payload,
+                idempotency_key=str(uuid4()),
+            )
+
     async def _download_result(self, url: str) -> tuple[bytes, str]:
         if self._download_session is None or self._download_session.closed:
             self._download_session = aiohttp.ClientSession(
@@ -303,10 +357,7 @@ class RenderGridNanoBananaProvider:
                 payload.get("resolution"),
                 len(str(prompt or "")),
             )
-            accepted = await self.client.generate_image(
-                payload,
-                idempotency_key=str(uuid4()),
-            )
+            accepted = await self._create_rendergrid_generation(payload)
             creation_id = self._creation_id(accepted)
             final = accepted
             if creation_id and self._status(accepted) not in {"completed", "failed"}:
@@ -326,12 +377,17 @@ class RenderGridNanoBananaProvider:
                         "creation_id": creation_id,
                         "retryable": False,
                     }
-                raise RenderGridError(reason, payload=final)
+                raise RenderGridError(
+                    reason,
+                    code="CREATION_FAILED",
+                    payload=final,
+                )
 
             result_urls = self._result_urls(final)
             if not result_urls:
                 raise RenderGridError(
                     "RenderGrid completed without result_urls",
+                    code="CREATION_FAILED",
                     payload=final,
                 )
             image_bytes, mime_type = await self._download_result(result_urls[0])
@@ -364,6 +420,26 @@ class RenderGridNanoBananaProvider:
                     "http_status": status,
                     "retryable": False,
                 }
+
+            if not self._is_technical_fallback_error(exc):
+                logger.warning(
+                    "Nano Banana RenderGrid request rejected without provider switch: "
+                    "model=%s status=%s code=%s resolution=%s latency_seconds=%.2f error=%s",
+                    self.model_name,
+                    status,
+                    code,
+                    self._normalize_resolution(resolution),
+                    asyncio.get_running_loop().time() - started_at,
+                    exc,
+                )
+                return {
+                    "error": str(exc),
+                    "provider": "rendergrid",
+                    "provider_model": self.model_name,
+                    "http_status": status,
+                    "retryable": False,
+                }
+
             logger.warning(
                 "Nano Banana provider technical failure: provider=rendergrid model=%s "
                 "status=%s code=%s latency_seconds=%.2f error=%s; fallback=kie",
