@@ -142,6 +142,56 @@ def test_rendergrid_generate_returns_existing_bot_image_bytes_contract():
     assert result["retryable"] is False
 
 
+def test_rendergrid_4k_validation_retries_lowercase_inside_rendergrid():
+    provider = _provider("nano-banana-pro")
+    provider.client.generate_image = AsyncMock(
+        side_effect=[
+            RenderGridProviderError("invalid resolution", status=422),
+            {
+                "id": "creation-4k",
+                "status": "completed",
+                "result_urls": ["https://cdn.example/result-4k.png"],
+            },
+        ]
+    )
+    provider._download_result = AsyncMock(return_value=(b"4k-bytes", "image/png"))
+
+    result = asyncio.run(
+        provider.generate_image("Create a portrait", "1:1", "4K", [], "png")
+    )
+    asyncio.run(provider.close())
+
+    assert result is not None
+    assert result["provider"] == "rendergrid"
+    assert result["image_bytes"] == b"4k-bytes"
+    assert provider.client.generate_image.await_count == 2
+    first_payload = provider.client.generate_image.await_args_list[0].args[0]
+    second_payload = provider.client.generate_image.await_args_list[1].args[0]
+    assert first_payload["resolution"] == "4K"
+    assert second_payload["resolution"] == "4k"
+
+
+def test_rendergrid_4k_validation_failure_never_silently_switches_to_kie():
+    provider = _provider("nano-banana-pro")
+    provider.client.generate_image = AsyncMock(
+        side_effect=[
+            RenderGridProviderError("invalid resolution", status=422),
+            RenderGridProviderError("invalid resolution", status=422),
+        ]
+    )
+
+    result = asyncio.run(
+        provider.generate_image("Create a portrait", "1:1", "4K", [], "png")
+    )
+    asyncio.run(provider.close())
+
+    assert result is not None
+    assert result["provider"] == "rendergrid"
+    assert result["http_status"] == 422
+    assert result["retryable"] is False
+    assert provider.client.generate_image.await_count == 2
+
+
 def test_rendergrid_technical_failure_returns_none_for_kie_fallback():
     provider = _provider()
     provider.client.generate_image = AsyncMock(
@@ -154,6 +204,23 @@ def test_rendergrid_technical_failure_returns_none_for_kie_fallback():
     asyncio.run(provider.close())
 
     assert result is None
+
+
+def test_rendergrid_request_validation_is_terminal_not_kie_fallback():
+    provider = _provider()
+    provider.client.generate_image = AsyncMock(
+        side_effect=RenderGridProviderError("invalid request", status=422)
+    )
+
+    result = asyncio.run(
+        provider.generate_image("Create a portrait", "1:1", "2K", [], "png")
+    )
+    asyncio.run(provider.close())
+
+    assert result is not None
+    assert result["provider"] == "rendergrid"
+    assert result["http_status"] == 422
+    assert result["retryable"] is False
 
 
 def test_rendergrid_policy_failure_is_terminal_not_provider_fallback():
