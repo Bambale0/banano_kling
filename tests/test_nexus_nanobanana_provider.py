@@ -273,13 +273,24 @@ async def test_nano_banana_pro_preserves_nexus_task_after_kie_create_fails(monke
     assert nexus.calls == 1
 
 
-def test_branch_routing_keeps_kie_primary_and_nexus_fallback_for_2_and_pro() -> None:
+def test_branch_routing_supports_legacy_kie_nexus_and_rendergrid_kie_modes() -> None:
     source = Path("bot/services/__init__.py").read_text(encoding="utf-8")
 
+    # Legacy mode remains available when RenderGrid is disabled.
     assert 'model_name="nano-banana-2"' in source
     assert 'model_name="nano-banana-pro"' in source
     assert "nano_banana_2_service.primary_provider = banana2_kie" in source
     assert "nano_banana_pro_service.primary_provider = banana_pro_kie" in source
-    assert "nano_banana_2_service.fallback_provider = NexusImageProvider(" in source
-    assert "nano_banana_pro_service.fallback_provider = NexusImageProvider(" in source
-    assert "Nano Banana 2 Lite is intentionally untouched" in source
+    assert "NexusImageProvider(" in source
+    assert "if not banana2_managed:" in source
+    assert "if not banana_pro_managed:" in source
+
+    # Tech mode switches only the internal provider chain to RenderGrid -> KIE.
+    assert 'global_rendergrid_enabled = _env_flag("NANOBANANA_RENDERGRID_ENABLED", False)' in source
+    assert '"NANOBANANA2_RENDERGRID_ENABLED"' in source
+    assert '"NANOBANANAPRO_RENDERGRID_ENABLED"' in source
+    assert "service.primary_provider = RenderGridNanoBananaProvider(" in source
+    assert "service.fallback_provider = kie_provider" in source
+
+    # Nano Banana 2 Lite keeps its dedicated KIE Market path.
+    assert "Nano Banana 2 Lite remains" in source
