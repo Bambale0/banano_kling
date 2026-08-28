@@ -1168,7 +1168,7 @@ async def _start_image_generation_task(
         if runtime_img_service in BANANA_IMAGE_SERVICES and reference_images
         else ""
     )
-    banana_provider_prompt = effective_prompt or prompt
+    banana_provider_prompt = prompt
 
     local_task_id = f"img_{uuid.uuid4().hex[:12]}"
     request_snapshot = {
