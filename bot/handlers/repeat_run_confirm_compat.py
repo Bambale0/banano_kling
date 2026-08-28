@@ -12,6 +12,7 @@ from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
 
 from .generation_started_ux_compat import install_generation_started_ux
+from .image_generation_fsm_compat import install_image_generation_fsm_compat
 
 router = Router()
 _INSTALLED = False
@@ -30,6 +31,11 @@ def install_repeat_run_confirm_compat(generation_module) -> None:
     # provider-agnostic public "generation started" UX without editing the
     # legacy generation monolith or the top-level handlers package contract.
     install_generation_started_ux(generation_module)
+
+    # The same priority router can accept another reference while the image flow
+    # is waiting for a prompt. The runtime patch also releases the real FSM as
+    # soon as the local img_* task exists, before a synchronous provider wait.
+    install_image_generation_fsm_compat(generation_module, router)
 
     @router.callback_query(F.data.startswith("repeat_run_confirm_"))
     async def repeat_run_confirm_compat(
