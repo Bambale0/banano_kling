@@ -13,6 +13,7 @@ from aiogram.fsm.context import FSMContext
 
 from .generation_started_ux_compat import install_generation_started_ux
 from .image_generation_fsm_compat import install_image_generation_fsm_compat
+from .pinterest_prompt_softening_compat import install_pinterest_prompt_softening
 
 router = Router()
 _INSTALLED = False
@@ -36,6 +37,11 @@ def install_repeat_run_confirm_compat(generation_module) -> None:
     # is waiting for a prompt. The runtime patch also releases the real FSM as
     # soon as the local img_* task exists, before a synchronous provider wait.
     install_image_generation_fsm_compat(generation_module, router)
+
+    # Pinterest still keeps its scene/identity reference roles, but the model
+    # receives them as concise secondary guidance instead of a long pseudo-system
+    # contract that can overpower the actual creative request.
+    install_pinterest_prompt_softening()
 
     @router.callback_query(F.data.startswith("repeat_run_confirm_"))
     async def repeat_run_confirm_compat(
