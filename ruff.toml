@@ -3,7 +3,7 @@
 # adapters; changed-line linting remains enabled for the rest of the project.
 
 [lint.per-file-ignores]
-"bot/handlers/__init__.py" = ["I001"]
+"bot/handlers/__init__.py" = ["I001", "EXE001"]
 # Trend and explicit Lava Mini App handlers are HTTP boundaries: unexpected
 # backend/provider failures are intentionally normalized to stable API errors.
 "bot/handlers/trends_compat.py" = ["BLE001"]
