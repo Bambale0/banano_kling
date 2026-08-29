@@ -1,14 +1,9 @@
-"""Unify user-facing confirmation after a generation has actually started.
+"""Unify user-facing generation lifecycle feedback.
 
-The production generation handlers already expose useful trace identifiers, while the
-Mini App notifier historically only spoke for queued tasks. Fast provider responses
-(including Pinterest repeat runs) could therefore complete without any visible
-"started" acknowledgement at all.
-
-This compatibility layer keeps provider, billing and persistence logic untouched. It
-normalizes the outbound start message, preserves the local/provider IDs used for support
-and log tracing, and broadens the Mini App acknowledgement to all successful launches
-(queued or already done).
+The production generation handlers expose useful trace identifiers and persist
+all task states in ``generation_tasks``.  This compatibility layer normalizes
+the start summary and attaches a provider-agnostic Telegram progress indicator
+to every generation without changing provider, billing or persistence logic.
 """
 
 from __future__ import annotations
@@ -20,6 +15,13 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from aiogram import BaseMiddleware
+
+from bot.generation_progress import (
+    build_progress_line,
+    ensure_progress_line,
+    extract_task_ids,
+    track_generation_progress,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +55,8 @@ def build_generation_started_text(
 
     lines = [
         "🚀 <b>Генерация запущена</b>",
+        build_progress_line(),
+        "",
         f"• Модель: <code>{html.escape(str(model_label))}</code>",
     ]
     if aspect_ratio:
@@ -137,11 +141,11 @@ def sanitize_generation_started_text(
             compact.append("Обычно результат приходит в течение 1–3 минут.")
         compact.append("Я пришлю его сюда сразу после готовности.")
 
-    return "\n".join(compact)
+    return ensure_progress_line("\n".join(compact))
 
 
 class _FriendlyMessageProxy:
-    """Forward a Message unchanged except for generation-start answer text."""
+    """Forward a Message unchanged except for generation lifecycle feedback."""
 
     def __init__(self, message: Any, *, reference_count: int | None = None) -> None:
         self._message = message
@@ -160,13 +164,27 @@ class _FriendlyMessageProxy:
         )
 
     async def answer(self, text: Any, **kwargs: Any) -> Any:
-        return await self._message.answer(
-            sanitize_generation_started_text(
-                text,
-                reference_count=self._reference_count,
-            ),
-            **kwargs,
+        normalized = sanitize_generation_started_text(
+            text,
+            reference_count=self._reference_count,
         )
+        sent = await self._message.answer(normalized, **kwargs)
+        if isinstance(normalized, str) and _GENERATION_STARTED_MARKER in normalized:
+            task_ids = extract_task_ids(normalized)
+            from_user = getattr(self._message, "from_user", None)
+            chat = getattr(self._message, "chat", None)
+            bot = getattr(self._message, "bot", None)
+            message_id = getattr(sent, "message_id", None)
+            if task_ids and from_user and chat and bot and message_id:
+                track_generation_progress(
+                    bot,
+                    chat_id=chat.id,
+                    message_id=message_id,
+                    telegram_id=from_user.id,
+                    task_ids=task_ids,
+                    text=normalized,
+                )
+        return sent
 
 
 Handler = Callable[[Any, dict[str, Any]], Awaitable[Any]]
@@ -231,10 +249,19 @@ def _install_miniapp_started_notifier() -> None:
             provider_task_id=provider_task_id,
         )
         try:
-            await app["bot"].send_message(
+            sent = await app["bot"].send_message(
                 chat_id=telegram_id,
                 text=text,
                 parse_mode="HTML",
+            )
+            task_ids = [local_task_id, provider_task_id]
+            track_generation_progress(
+                app["bot"],
+                chat_id=telegram_id,
+                message_id=sent.message_id,
+                telegram_id=telegram_id,
+                task_ids=task_ids,
+                text=text,
             )
             logger.info(
                 "Mini App generation start notified: telegram_id=%s status=%s local_task_id=%s provider_task_id=%s",
