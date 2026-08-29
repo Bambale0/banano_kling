@@ -8,6 +8,7 @@ rules to a short visual-reference hint.
 
 from __future__ import annotations
 
+import importlib
 import logging
 from functools import wraps
 from typing import Any
@@ -47,9 +48,9 @@ def _soft_runtime_prompt(
         "- Image 1 = SCENE_REFERENCE. Use its visual setup: pose, composition, "
         "camera, clothing, lighting, background and mood. Natural adjustments are "
         "allowed when needed for the user's anatomy and likeness.\n"
-        "- Image 2 = USER_IDENTITY_REFERENCE. Keep that person clearly recognizable, "
-        "including their own face, apparent age, skin tone, hair color/length and "
-        "natural build.\n"
+        "- Image 2 = USER_IDENTITY_REFERENCE. This is the only identity anchor. "
+        "Keep that person clearly recognizable, including their own face, apparent "
+        "age, skin tone, hair color/length and natural build.\n"
         "- Images 3..N, when present, are extra likeness evidence only.\n"
         "- Create a new natural photograph of the user in the Pinterest visual "
         "setup. Do not copy or blend the scene person's identity.\n"
@@ -66,7 +67,7 @@ def _soft_provider_payload(
 ) -> tuple[str, list[str]]:
     """Reorder Pinterest refs for Nano Banana Pro with concise role guidance."""
 
-    from bot.services import nano_banana_pro_service as service
+    service = importlib.import_module("bot.services.nano_banana_pro_service")
 
     refs = list(image_input or [])
     raw_prompt = str(prompt or "")
@@ -87,9 +88,9 @@ def _soft_provider_payload(
         f"{service.PINTEREST_PROVIDER_SAFE_MARKER}\n"
         f"{PINTEREST_REFERENCE_GUIDANCE_MARKER}\n"
         "Reference guidance for the two images sent to the provider:\n"
-        "- Image 1 = USER_IDENTITY_REFERENCE. Keep this person recognizable and "
-        "use their own facial features, age impression, skin tone, hair color/length "
-        "and natural build.\n"
+        "- Image 1 = USER_IDENTITY_REFERENCE. This is the only identity anchor. "
+        "Keep this person recognizable and use their own facial features, age "
+        "impression, skin tone, hair color/length and natural build.\n"
         "- Image 2 = SCENE_REFERENCE. Use its pose, composition, camera, clothing, "
         "lighting, background and overall photographic mood.\n"
         "- No Images 3..N are sent to the provider; extra user photos remain "
@@ -137,8 +138,8 @@ def install_pinterest_prompt_softening() -> None:
     from bot import pinterest_trend_api as pinterest_api
     from bot.handlers import pinterest_flow_contract_compat as legacy
     from bot.handlers import trend_route_compat
-    from bot.services import nano_banana_pro_service as banana_pro
 
+    banana_pro = importlib.import_module("bot.services.nano_banana_pro_service")
     original_legacy_detector = legacy._is_pinterest_prompt
 
     def detects_soft_pinterest_prompt(prompt: str | None) -> bool:
