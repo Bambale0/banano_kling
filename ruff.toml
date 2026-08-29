@@ -4,6 +4,9 @@
 
 [lint.per-file-ignores]
 "bot/handlers/__init__.py" = ["I001"]
+# Trend Mini App handlers are HTTP boundaries: every unexpected runtime/provider
+# failure is intentionally normalized through _miniapp_error_response.
+"bot/handlers/trends_compat.py" = ["BLE001"]
 "bot/services/partner_approval_service.py" = ["SIM117"]
 "bot/handlers/seedance_25_fullstack.py" = [
   "BLE001",
