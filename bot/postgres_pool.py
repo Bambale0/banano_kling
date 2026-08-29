@@ -88,6 +88,18 @@ async def _ensure_performance_indexes(conn) -> None:
         _PERFORMANCE_INDEXES_READY = True
 
 
+async def _prepare_pool(pool: AsyncConnectionPool) -> None:
+    """Prepare schema/indexes before concurrent application traffic can use the pool."""
+    raw_conn = await pool.getconn(timeout=_pool_timeout())
+    try:
+        await legacy._ensure_postgres_helpers(raw_conn)
+        await _ensure_performance_indexes(raw_conn)
+    finally:
+        with suppress(legacy.psycopg.Error):
+            await raw_conn.rollback()
+        await pool.putconn(raw_conn)
+
+
 async def _get_postgres_pool() -> AsyncConnectionPool:
     """Return one bounded pool per process instead of opening a socket per query."""
     global _POOL
@@ -118,7 +130,13 @@ async def _get_postgres_pool() -> AsyncConnectionPool:
             open=False,
             name="banano-kling-postgres",
         )
-        await pool.open()
+        try:
+            await pool.open()
+            await _prepare_pool(pool)
+        except Exception:
+            await pool.close(timeout=_pool_timeout())
+            raise
+
         _POOL = pool
         _POOL_DSN = dsn
         logger.info(
@@ -168,6 +186,8 @@ class PostgresPoolConnect:
 
         prepared = False
         try:
+            # These are no-ops after pool startup, but keep the adapter safe if a
+            # future test or alternate bootstrap path injects an already-open pool.
             await legacy._ensure_postgres_helpers(raw_conn)
             await _ensure_performance_indexes(raw_conn)
             prepared = True
