@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -38,6 +37,7 @@ def test_admin_has_resolution_tier_editor_and_refreshes_runtime() -> None:
     assert "admin_banana_quality_4K" in source
     assert 'price_target="image_quality"' in source
     assert "refresh_quality_pricing" in source
+    assert "_refresh_loaded_miniapp_catalog" in source
 
 
 def test_compat_is_installed_before_admin_router_is_exposed() -> None:
