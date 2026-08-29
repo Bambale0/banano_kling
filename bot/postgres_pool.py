@@ -15,6 +15,15 @@ logger = logging.getLogger(__name__)
 _POOL: AsyncConnectionPool | None = None
 _POOL_DSN: str | None = None
 _POOL_LOCK: asyncio.Lock | None = None
+_PERFORMANCE_INDEXES_READY = False
+_PERFORMANCE_INDEXES_LOCK: asyncio.Lock | None = None
+
+_PERFORMANCE_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_generation_history_user_id ON generation_history(user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_transactions_user_status_created ON transactions(user_id, status, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_users_referred_by ON users(referred_by)",
+    "CREATE INDEX IF NOT EXISTS idx_partner_withdrawals_user_created ON partner_withdrawals(user_id, created_at DESC)",
+)
 
 
 def _positive_int(name: str, default: int, *, minimum: int = 1) -> int:
@@ -54,6 +63,29 @@ def _get_pool_lock() -> asyncio.Lock:
     if _POOL_LOCK is None:
         _POOL_LOCK = asyncio.Lock()
     return _POOL_LOCK
+
+
+def _get_performance_indexes_lock() -> asyncio.Lock:
+    global _PERFORMANCE_INDEXES_LOCK
+    if _PERFORMANCE_INDEXES_LOCK is None:
+        _PERFORMANCE_INDEXES_LOCK = asyncio.Lock()
+    return _PERFORMANCE_INDEXES_LOCK
+
+
+async def _ensure_performance_indexes(conn) -> None:
+    """Install indexes used by admin user/partner lookups once per process."""
+    global _PERFORMANCE_INDEXES_READY
+    if _PERFORMANCE_INDEXES_READY:
+        return
+
+    async with _get_performance_indexes_lock():
+        if _PERFORMANCE_INDEXES_READY:
+            return
+        async with conn.cursor() as cursor:
+            for statement in _PERFORMANCE_INDEXES:
+                await cursor.execute(statement)
+        await conn.commit()
+        _PERFORMANCE_INDEXES_READY = True
 
 
 async def _get_postgres_pool() -> AsyncConnectionPool:
@@ -137,6 +169,7 @@ class PostgresPoolConnect:
         prepared = False
         try:
             await legacy._ensure_postgres_helpers(raw_conn)
+            await _ensure_performance_indexes(raw_conn)
             prepared = True
             self._conn = PooledPostgresConnection(raw_conn, pool)
             return self._conn
