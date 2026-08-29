@@ -26,7 +26,7 @@ class _FakeMessage:
     def chat(self) -> Any:
         return SimpleNamespace(id=self.chat_id)
 
-    def model_copy(self, *, update: dict[str, Any]) -> "_FakeMessage":
+    def model_copy(self, *, update: dict[str, Any]) -> _FakeMessage:
         return _FakeMessage(
             text=str(update.get("text", self.text)),
             user_id=self.user_id,
