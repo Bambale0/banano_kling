@@ -24,6 +24,12 @@ def test_postgres_adapter_uses_bounded_async_pool() -> None:
     assert "from bot.postgres_pool import connect as postgres_connect" in db_source
 
 
+def test_pool_is_prepared_before_application_can_observe_it() -> None:
+    source = _read("bot/postgres_pool.py")
+
+    assert source.index("await _prepare_pool(pool)") < source.index("_POOL = pool")
+
+
 def test_postgres_pool_preserves_legacy_rollback_on_close() -> None:
     source = _read("bot/postgres_pool.py")
     close_block = source.split("async def close(self) -> None:", 1)[1].split(
