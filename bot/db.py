@@ -59,7 +59,7 @@ def backend_name() -> str:
 
 def connect(database_path: str | None = None, *args, **kwargs):
     if is_postgres():
-        from bot.postgres_aiosqlite import connect as postgres_connect
+        from bot.postgres_pool import connect as postgres_connect
 
         return postgres_connect(*args, **kwargs)
 
