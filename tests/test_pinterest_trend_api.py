@@ -64,7 +64,7 @@ def test_measurements_are_optional_but_bounded():
     with pytest.raises(TrendRunValidationError):
         _measurement({"height_cm": 50}, "height_cm", minimum=120, maximum=230)
     with pytest.raises(TrendRunValidationError):
-        _measurement({"weight_kg": "abc"}, "weight_kg", minimum=30, maximum=250)
+        _measurement({"weight_kg": "abc"}, minimum=30, maximum=250)
 
 
 def test_augmented_prompt_keeps_reference_roles_and_identity_unambiguous():
@@ -74,17 +74,23 @@ def test_augmented_prompt_keeps_reference_roles_and_identity_unambiguous():
         weight_kg=55,
     )
 
+    assert prompt.startswith("Create a realistic portrait.")
     assert "Image 1 = SCENE_REFERENCE" in prompt
     assert "Image 2 = USER_IDENTITY_REFERENCE" in prompt
     assert "only identity anchor" in prompt
     assert "identity from USER_IDENTITY_REFERENCE always wins" in prompt
-    assert "Do NOT copy the face, identity" in prompt
-    assert "Do NOT beautify, redesign, replace, average, or blend" in prompt
-    assert "Follow the requested transformation as literally as possible" in prompt
-    assert "Prefer faithful execution over artistic reinterpretation" in prompt
+    assert "Do not copy or blend the scene person's identity" in prompt
     assert "height 165 cm" in prompt
     assert "weight 55 kg" in prompt
-    assert "never render these numbers" in prompt
+    assert "approximate body-scale hint" in prompt
+
+    # The role contract must stay semantic and subordinate to the creative task,
+    # rather than reintroducing the pseudo-system wall that the model followed too literally.
+    assert "Do NOT copy the face, identity" not in prompt
+    assert "Do NOT beautify, redesign, replace, average, or blend" not in prompt
+    assert "Follow the requested transformation as literally as possible" not in prompt
+    assert "Prefer faithful execution over artistic reinterpretation" not in prompt
+    assert "STRICT IDENTITY PRESERVATION CONTRACT" not in prompt
 
 
 async def test_pinterest_run_is_hard_locked_to_banana_pro_2k():
