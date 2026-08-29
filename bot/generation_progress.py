@@ -1,13 +1,9 @@
 """Provider-agnostic Telegram progress indicator for generation tasks.
 
-Every generation is persisted in ``generation_tasks``.  This module uses that
-single source of truth instead of inventing provider-specific percentages:
-while a task is pending/processing it animates an indeterminate bar, then
-switches the same Telegram message to a terminal completed/failed state.
-
-A small durable notification ledger also lets a background worker cover flows
-that do not have an explicit start notifier (for example a newly added video,
-audio or character model) without duplicating messages from handlers that do.
+Every generation is persisted in ``generation_tasks``. This module uses that
+single source of truth instead of inventing provider-specific percentages. A
+small durable ledger also prevents duplicate progress messages when a concrete
+handler and the universal fallback worker see the same task.
 """
 
 from __future__ import annotations
@@ -16,8 +12,9 @@ import asyncio
 import html
 import logging
 import re
-from datetime import datetime, timedelta
-from typing import Any, Iterable
+from collections.abc import Iterable
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 
@@ -47,7 +44,7 @@ _ACTIVITY_FRAMES = (
     "▱▰▱▱▱▱▱▱",
 )
 _POLL_SECONDS = 12.0
-_MAX_POLLS = 600  # 2 hours; watchdog owns long-running recovery after that.
+_MAX_POLLS = 600
 _AUTO_NOTIFY_GRACE_SECONDS = 6
 _AUTO_NOTIFY_LOOKBACK_MINUTES = 15
 _AUTO_NOTIFY_SCAN_SECONDS = 3.0
@@ -69,11 +66,7 @@ def build_progress_line(status: str = "pending", *, frame: int = 0) -> str:
 
 
 def ensure_progress_line(text: str) -> str:
-    """Add the public progress line once to an existing start notification."""
-
-    if not isinstance(text, str) or not text:
-        return text
-    if _PROGRESS_PREFIX in text:
+    if not isinstance(text, str) or not text or _PROGRESS_PREFIX in text:
         return text
     lines = text.splitlines()
     insert_at = 1 if lines else 0
@@ -102,37 +95,27 @@ def _terminal_text(text: str, status: str) -> str:
     normalized = str(status or "").strip().lower()
     updated = _replace_progress_line(text, build_progress_line(normalized))
     if normalized == "completed":
-        updated = updated.replace(
-            "🚀 <b>Генерация запущена</b>",
-            "✅ <b>Генерация готова</b>",
-            1,
-        )
-        updated = updated.replace(
-            "Обычно результат приходит в течение 1–3 минут.",
-            "Результат готов.",
-            1,
-        )
-        updated = updated.replace(
-            "Я пришлю его сюда сразу после готовности.",
-            "Он уже доступен в чате и истории генераций.",
-            1,
+        replacements = (
+            ("🚀 <b>Генерация запущена</b>", "✅ <b>Генерация готова</b>"),
+            ("Обычно результат приходит в течение 1–3 минут.", "Результат готов."),
+            (
+                "Я пришлю его сюда сразу после готовности.",
+                "Он уже доступен в чате и истории генераций.",
+            ),
         )
     elif normalized == "failed":
-        updated = updated.replace(
-            "🚀 <b>Генерация запущена</b>",
-            "⚠️ <b>Генерация не завершилась</b>",
-            1,
+        replacements = (
+            ("🚀 <b>Генерация запущена</b>", "⚠️ <b>Генерация не завершилась</b>"),
+            ("Обычно результат приходит в течение 1–3 минут.", "Задача завершилась с ошибкой."),
+            (
+                "Я пришлю его сюда сразу после готовности.",
+                "Можно повторить запуск — детали ошибки бот покажет отдельным сообщением.",
+            ),
         )
-        updated = updated.replace(
-            "Обычно результат приходит в течение 1–3 минут.",
-            "Задача завершилась с ошибкой.",
-            1,
-        )
-        updated = updated.replace(
-            "Я пришлю его сюда сразу после готовности.",
-            "Можно повторить запуск — детали ошибки бот покажет отдельным сообщением.",
-            1,
-        )
+    else:
+        return updated
+    for source, target in replacements:
+        updated = updated.replace(source, target, 1)
     return updated
 
 
@@ -196,9 +179,7 @@ async def find_generation_progress_notification(
             normalized,
         )
         row = await cursor.fetchone()
-    if not row:
-        return None
-    return int(row["chat_id"]), int(row["message_id"])
+    return (int(row["chat_id"]), int(row["message_id"])) if row else None
 
 
 async def remember_generation_progress_notification(
@@ -234,7 +215,6 @@ async def _lookup_generation_status(
 ) -> str | None:
     if not task_ids:
         return None
-
     direct_placeholders = ",".join("?" for _ in task_ids)
     alias_clauses = " OR ".join("request_data LIKE ?" for _ in task_ids)
     sql = (
@@ -245,15 +225,12 @@ async def _lookup_generation_status(
     if alias_clauses:
         sql += f" OR {alias_clauses}"
     sql += ") ORDER BY id DESC LIMIT 1"
-    params: list[Any] = [telegram_id, *task_ids, *(f"%{task_id}%" for task_id in task_ids)]
-
+    params: list[Any] = [telegram_id, *task_ids, *(f"%{item}%" for item in task_ids)]
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
         cursor = await db.execute(sql, tuple(params))
         row = await cursor.fetchone()
-    if not row:
-        return None
-    return str(row["status"] or "pending").strip().lower()
+    return str(row["status"] or "pending").strip().lower() if row else None
 
 
 async def _safe_edit(bot: Any, chat_id: int, message_id: int, text: str) -> bool:
@@ -307,20 +284,13 @@ async def _watch_progress(
                     _terminal_text(base_text, status),
                 )
                 return
-
             if status is None:
                 missing_polls += 1
                 if missing_polls >= 10:
-                    logger.info(
-                        "Generation progress tracker stopped without task row: telegram_id=%s task_ids=%s",
-                        telegram_id,
-                        task_ids,
-                    )
                     return
             else:
                 missing_polls = 0
-
-            if poll_index > 0:
+            if poll_index:
                 progress_text = _replace_progress_line(
                     base_text,
                     build_progress_line(status or "pending", frame=poll_index),
@@ -349,17 +319,13 @@ def track_generation_progress(
     task_ids: Iterable[Any],
     text: str,
 ) -> None:
-    """Start one lightweight tracker for an already-sent progress message."""
-
     normalized_ids = _clean_task_ids(task_ids)
     if not normalized_ids or not chat_id or not message_id or not telegram_id:
         return
-
     key = (int(chat_id), int(message_id))
     previous = _TRACKERS.pop(key, None)
     if previous and not previous.done():
         previous.cancel()
-
     task = asyncio.create_task(
         _watch_progress(
             bot,
@@ -384,24 +350,20 @@ def _generic_task_text(row: Any) -> str:
         "audio": "Аудио",
         "character": "Персонаж",
     }.get(task_type, "Генерация")
-    return "\n".join(
-        [
-            "🚀 <b>Генерация запущена</b>",
-            build_progress_line(),
-            "",
-            f"• Тип: <code>{type_label}</code>",
-            f"• Модель: <code>{model}</code>",
-            f"• ID задачи: <code>{task_id}</code>",
-            "",
-            "Обычно результат приходит в течение 1–3 минут.",
-            "Я пришлю его сюда сразу после готовности.",
-        ]
+    return (
+        "🚀 <b>Генерация запущена</b>\n"
+        f"{build_progress_line()}\n\n"
+        f"• Тип: <code>{type_label}</code>\n"
+        f"• Модель: <code>{model}</code>\n"
+        f"• ID задачи: <code>{task_id}</code>\n\n"
+        "Обычно результат приходит в течение 1–3 минут.\n"
+        "Я пришлю его сюда сразу после готовности."
     )
 
 
 async def _pending_generation_rows() -> list[Any]:
     await ensure_generation_progress_schema()
-    now = datetime.utcnow()
+    now = datetime.now(UTC).replace(tzinfo=None)
     earliest = now - timedelta(minutes=_AUTO_NOTIFY_LOOKBACK_MINUTES)
     grace_cutoff = now - timedelta(seconds=_AUTO_NOTIFY_GRACE_SECONDS)
     async with db_backend.connect(DATABASE_PATH) as db:
@@ -427,7 +389,6 @@ async def _cover_unnotified_generation(bot: Any, row: Any) -> None:
     telegram_id = int(row["telegram_id"] or 0)
     if not task_id or not telegram_id:
         return
-
     existing = await find_generation_progress_notification([task_id])
     text = _generic_task_text(row)
     if existing:
@@ -442,7 +403,6 @@ async def _cover_unnotified_generation(bot: Any, row: Any) -> None:
                 text=text,
             )
         return
-
     try:
         sent = await bot.send_message(
             chat_id=telegram_id,
@@ -464,7 +424,6 @@ async def _cover_unnotified_generation(bot: Any, row: Any) -> None:
             task_id,
         )
         return
-
     await remember_generation_progress_notification(
         [task_id],
         chat_id=telegram_id,
@@ -484,8 +443,7 @@ async def generation_progress_worker(bot: Any) -> None:
     await ensure_generation_progress_schema()
     while True:
         try:
-            rows = await _pending_generation_rows()
-            for row in rows:
+            for row in await _pending_generation_rows():
                 await _cover_unnotified_generation(bot, row)
         except asyncio.CancelledError:
             raise
