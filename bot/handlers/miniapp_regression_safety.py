@@ -215,10 +215,23 @@ async def _secure_create_payment(
             )
 
     miniapp_module = _get_miniapp_module()
-    payload = miniapp_module._validate_init_data(
-        body.get("init_data", ""),
-        config.BOT_TOKEN,
-    )
+    try:
+        payload = miniapp_module._validate_init_data(
+            body.get("init_data", ""),
+            config.BOT_TOKEN,
+        )
+    except ValueError as exc:
+        error_messages = {
+            "Missing init_data": "Откройте Mini App из Telegram и попробуйте снова.",
+            "Missing Telegram hash": "Откройте Mini App из Telegram и попробуйте снова.",
+            "Invalid Telegram signature": "Откройте Mini App заново из Telegram.",
+            "Expired Telegram session": "Сессия Telegram истекла. Откройте Mini App заново из Telegram.",
+            "Missing Telegram user": "Откройте Mini App заново из Telegram.",
+        }
+        return web.json_response(
+            {"ok": False, "error": error_messages.get(str(exc), str(exc))},
+            status=401,
+        )
     telegram_id = int(payload["user"]["id"])
 
     customer_email = submitted_email or await _get_saved_payment_email(telegram_id)

@@ -921,6 +921,17 @@ from bot.services.referral_service import (
 
 _referral_code_from_start_param = referral_code_from_start_param
 
+# Троттлинг повторных попыток активации реферального кода из Mini App.
+# Раньше каждое открытие Mini App с реферальным start_param у незанятого
+# пользователя запускало process_referral_click (несколько SELECT + запись
+# referral_event + COMMIT), даже когда код уже упирался в лимиты реферера
+# (daily/hourly) или был недоступен. Это создавало лишнюю нагрузку на DB
+# и задерживало bootstrap. Пропускаем повторные попытки в течение окна.
+_MINIAPP_REFERRAL_THROTTLE_SECONDS = 3600
+# Скользящий кеш последней попытки: (telegram_id, referral_code) -> monotonic()
+_mini_app_referral_last_attempt: dict[tuple[int, str], float] = {}
+_MINIAPP_REFERRAL_LAST_ATTEMPT_MAX = 10000
+
 
 async def _activate_start_param_referral(
     app: web.Application,
@@ -938,6 +949,51 @@ async def _activate_start_param_referral(
                 start_param,
             )
         return
+
+    # Пропускаем повторные попытки в течение окна троттлинга: первый клик
+    # всё равно обрабатывается, но повторные открытия Mini App с тем же кодом
+    # не гоняют process_referral_click и не пишут referral_event зазря.
+    attempt_key = (telegram_id, referral_code)
+    now = time.monotonic()
+    last_attempt = _mini_app_referral_last_attempt.get(attempt_key)
+    if (
+        last_attempt is not None
+        and (now - last_attempt) < _MINIAPP_REFERRAL_THROTTLE_SECONDS
+    ):
+        logger.debug(
+            "Mini App referral attempt skipped (throttled): user_id=%s code=%s",
+            telegram_id,
+            referral_code,
+        )
+        return
+    _mini_app_referral_last_attempt[attempt_key] = now
+    if len(_mini_app_referral_last_attempt) > _MINIAPP_REFERRAL_LAST_ATTEMPT_MAX:
+        _mini_app_referral_last_attempt.clear()
+
+    # Не запускаем process_referral_click для пользователя, который уже
+    # привязан к рефереру (привязка могла произойти параллельно — в /start
+    # или в соседнем bootstrap-запросе).
+    try:
+        async with db_backend.connect(DATABASE_PATH) as _db:
+            _db.row_factory = db_backend.Row
+            _cursor = await _db.execute(
+                "SELECT referred_by FROM users WHERE telegram_id = ?",
+                (telegram_id,),
+            )
+            _ref_row = await _cursor.fetchone()
+            if _ref_row and _ref_row["referred_by"]:
+                logger.debug(
+                    "Mini App referral skipped (already attached): user_id=%s referred_by=%s",
+                    telegram_id,
+                    _ref_row["referred_by"],
+                )
+                return
+    except Exception:
+        logger.exception(
+            "Failed to check Mini App referral state for user_id=%s start_param=%s",
+            telegram_id,
+            start_param,
+        )
 
     try:
         logger.info(
@@ -1120,6 +1176,37 @@ async def _get_state(app: web.Application, telegram_id: int):
     dp = app["dp"]
     bot = app["bot"]
     return dp.fsm.get_context(bot=bot, chat_id=telegram_id, user_id=telegram_id)
+
+
+# ---------------------------------------------------------------------------
+# Кешированный bot.get_me()
+# ---------------------------------------------------------------------------
+# get_me() выполняет полный round-trip в Telegram API. Раньше каждое открытие
+# Mini App (bootstrap) дёргало его отдельно — это добавляло задержку и лишнюю
+# нагрузку на webhook-процесс. Успешный результат кешируем на время TTL.
+_BOT_ME_CACHE_TTL_SECONDS = 3600
+
+_bot_me_cache: Any | None = None
+_bot_me_cache_ts: float | None = None
+
+
+async def _cached_bot_me(app: web.Application) -> Any:
+    """Возвращает результат bot.get_me() с процессным кешем (TTL 1 час).
+
+    Ошибки НЕ кешируются: исключения пробрасываются в вызывающий код
+    (как и при прямом get_me()), а следующая попытка повторится.
+    """
+    global _bot_me_cache, _bot_me_cache_ts
+    if (
+        _bot_me_cache is not None
+        and _bot_me_cache_ts is not None
+        and time.monotonic() - _bot_me_cache_ts < _BOT_ME_CACHE_TTL_SECONDS
+    ):
+        return _bot_me_cache
+    me = await app["bot"].get_me()
+    _bot_me_cache = me
+    _bot_me_cache_ts = time.monotonic()
+    return me
 
 
 def _guess_extension(filename: str, content_type: str, fallback_ext: str) -> str:
@@ -2583,7 +2670,7 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
         telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         user = ctx["user"]
         telegram_user = ctx["payload"]["user"]
-        me = await request.app["bot"].get_me()
+        me = await _cached_bot_me(request.app)
         profile_link = (
             build_profile_link(me.username, user.referral_code)
             if me.username and user.referral_code
