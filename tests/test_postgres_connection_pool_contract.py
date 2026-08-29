@@ -40,6 +40,18 @@ def test_pool_dependency_is_installed_with_binary_psycopg() -> None:
     assert "psycopg[binary,pool]" in requirements
 
 
+def test_hot_admin_lookup_indexes_are_installed() -> None:
+    source = _read("bot/postgres_pool.py")
+
+    for index_name in (
+        "idx_generation_history_user_id",
+        "idx_transactions_user_status_created",
+        "idx_users_referred_by",
+        "idx_partner_withdrawals_user_created",
+    ):
+        assert index_name in source
+
+
 class _FakeRawConnection:
     def __init__(self) -> None:
         self.rollback_calls = 0
@@ -73,15 +85,16 @@ async def test_connector_returns_checked_out_connection_to_pool(monkeypatch) -> 
     async def fake_get_pool():
         return pool
 
-    async def fake_helpers(_raw) -> None:
+    async def fake_prepare(_raw) -> None:
         return None
 
     monkeypatch.setattr(postgres_pool, "_get_postgres_pool", fake_get_pool)
     monkeypatch.setattr(
         postgres_pool.legacy,
         "_ensure_postgres_helpers",
-        fake_helpers,
+        fake_prepare,
     )
+    monkeypatch.setattr(postgres_pool, "_ensure_performance_indexes", fake_prepare)
 
     connector = postgres_pool.connect()
     connection = await connector
