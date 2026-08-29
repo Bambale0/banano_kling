@@ -48,7 +48,11 @@ async def test_dynamic_product_lookup_includes_hidden_lava_products(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_lava_rub_invoice_keeps_dynamic_amount_and_hosted_checkout(monkeypatch) -> None:
+@pytest.mark.parametrize("payment_method", ["CARD", "SBP"])
+async def test_lava_rub_invoice_pins_requested_pay2me_method(
+    monkeypatch,
+    payment_method: str,
+) -> None:
     from bot.services.lava_service import LavaService
 
     service = LavaService("test-key")
@@ -67,16 +71,16 @@ async def test_lava_rub_invoice_keeps_dynamic_amount_and_hosted_checkout(monkeyp
         offer_id="rub-offer",
         currency="RUB",
         amount=100,
+        payment_provider="PAY2ME",
+        payment_method=payment_method,
         buyer_language="RU",
     )
 
     assert result["ok"] is True
     assert captured["payload"]["currency"] == "RUB"
     assert captured["payload"]["amount"] == 100.0
-    # Lava hosted checkout chooses Card / SBP for RUB; forcing a provider here
-    # would remove that choice and can make SBP disappear.
-    assert "paymentMethod" not in captured["payload"]
-    assert "paymentProvider" not in captured["payload"]
+    assert captured["payload"]["paymentProvider"] == "PAY2ME"
+    assert captured["payload"]["paymentMethod"] == payment_method
 
 
 @pytest.mark.asyncio
@@ -109,7 +113,32 @@ async def test_lava_recovers_dynamic_rub_amount_from_miniapp_package_context(
     assert captured["payload"]["amount"] == 250.0
 
 
-def test_miniapp_preserves_package_context_for_lava_dynamic_price() -> None:
+def test_miniapp_explicit_lava_methods_are_installed() -> None:
+    source = _read("bot/handlers/miniapp_lava_payment_methods_compat.py")
+    handlers = _read("bot/handlers/__init__.py")
+
+    assert '"lava_card": "CARD"' in source
+    assert '"lava_sbp": "SBP"' in source
+    assert 'payment_provider="PAY2ME"' in source
+    assert "payment_method=payment_method" in source
+    assert 'provider="lava"' in source
+    assert "install_miniapp_lava_payment_methods()" in handlers
+
+
+def test_miniapp_payment_ui_has_separate_card_and_sbp_actions() -> None:
+    source = _read("frontend/miniapp-v0/components/balance-sheet.tsx")
+    types_source = _read("frontend/miniapp-v0/lib/types.ts")
+
+    assert "handleTopup(pkg.id, 'lava_card')" in source
+    assert "handleTopup(pkg.id, 'lava_sbp')" in source
+    assert "Картой" in source
+    assert "СБП" in source
+    assert "Карта / СБП" not in source
+    assert "'lava_card'" in types_source
+    assert "'lava_sbp'" in types_source
+
+
+def test_legacy_lava_route_still_preserves_dynamic_package_context() -> None:
     source = _read("bot/miniapp.py")
     lava_block = source.split('if provider == "lava":', 1)[1].split(
         'if provider != "yookassa":', 1
