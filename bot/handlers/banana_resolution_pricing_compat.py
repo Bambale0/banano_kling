@@ -10,7 +10,6 @@ from bot.quality_pricing import QUALITY_COSTS, refresh_quality_pricing
 from bot.services.preset_manager import preset_manager
 from bot.states import AdminStates
 
-
 router = Router()
 _BANANA_MODEL_KEYS = ("nano-banana-pro", "banana_2")
 _BANANA_LEGACY_KEYS = ("banana_pro", "nanobanana", "banana_2")
