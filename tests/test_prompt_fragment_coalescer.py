@@ -12,9 +12,17 @@ from bot.states import GenerationStates
 class FakeState:
     def __init__(self, state_name: str):
         self.state_name = state_name
+        self.data: dict[str, object] = {}
 
     async def get_state(self) -> str:
         return self.state_name
+
+    async def get_data(self) -> dict[str, object]:
+        return dict(self.data)
+
+    async def update_data(self, data: dict[str, object]) -> dict[str, object]:
+        self.data.update(data)
+        return dict(self.data)
 
 
 class FakeMessage:
