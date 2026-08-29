@@ -64,7 +64,7 @@ def test_measurements_are_optional_but_bounded():
     with pytest.raises(TrendRunValidationError):
         _measurement({"height_cm": 50}, "height_cm", minimum=120, maximum=230)
     with pytest.raises(TrendRunValidationError):
-        _measurement({"weight_kg": "abc"}, minimum=30, maximum=250)
+        _measurement({"weight_kg": "abc"}, "weight_kg", minimum=30, maximum=250)
 
 
 def test_augmented_prompt_keeps_reference_roles_and_identity_unambiguous():
