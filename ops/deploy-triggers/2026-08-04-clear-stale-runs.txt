@@ -1,2 +1,2 @@
-trigger=tanya-trends-pinterest-cache-final-2026-08-22
-purpose=cancel intermediate runs and deploy the final Trends/Pinterest repair with revisioned Telegram Mini App launch URLs and observable CI/deploy statuses
+trigger=tanya-pinterest-prompt-concurrency-final-2026-08-29
+purpose=cancel stale queued and pending production runs after merging Pinterest guidance and prompt concurrency fixes, then deploy the current tanyapi revision
