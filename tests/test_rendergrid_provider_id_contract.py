@@ -6,7 +6,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from bot.handlers.rendergrid_provider_id_compat import install_rendergrid_provider_id_compat
+from bot.handlers.rendergrid_provider_id_compat import (
+    install_rendergrid_provider_id_compat,
+)
 from bot.services.rendergrid_nano_banana_provider import RenderGridNanoBananaProvider
 
 miniapp_module = importlib.import_module("bot.miniapp")
