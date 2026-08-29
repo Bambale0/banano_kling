@@ -1,2 +1,2 @@
-trigger=tanya-pinterest-prompt-concurrency-final-2026-08-29
-purpose=cancel stale queued and pending production runs after merging Pinterest guidance and prompt concurrency fixes, then deploy the current tanyapi revision
+trigger=tanya-force-cancel-stale-production-runs-2026-08-29
+purpose=force-cancel stale queued or pending GitHub Actions runs that survive normal cancellation, then deploy the current tanyapi revision containing Pinterest guidance and prompt concurrency fixes
