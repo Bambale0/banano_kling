@@ -1,0 +1,403 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+CANONICAL_CONF="/etc/nginx/sites-enabled/banano-kling.conf"
+SITES_ENABLED="/etc/nginx/sites-enabled"
+TG_PORT="1888"
+VK_PORT="1777"
+
+if [[ $EUID -ne 0 ]]; then
+  echo "Запусти от root: sudo bash $0"
+  exit 1
+fi
+
+if [[ ! -e "$CANONICAL_CONF" ]]; then
+  echo "Не найден канонический конфиг: $CANONICAL_CONF"
+  exit 1
+fi
+
+for command in python3 nginx systemctl curl grep find tail cut tr mktemp; do
+  if ! command -v "$command" >/dev/null 2>&1; then
+    echo "Не найдена команда: $command"
+    exit 1
+  fi
+done
+
+TS="$(date +%Y%m%d-%H%M%S)"
+BACKUP_DIR="/root/nginx-backups/lava-routes-$TS"
+DISABLED_DIR="$BACKUP_DIR/disabled-from-sites-enabled"
+mkdir -p "$DISABLED_DIR"
+
+# Сохраняем содержимое канонического файла с разыменованием симлинка.
+cp -L "$CANONICAL_CONF" "$BACKUP_DIR/banano-kling.conf.contents"
+
+TG_HEADERS="$(mktemp)"
+VK_HEADERS="$(mktemp)"
+
+cleanup_temp() {
+  rm -f "$TG_HEADERS" "$VK_HEADERS"
+}
+
+restore() {
+  local rc=$?
+  trap - ERR
+  cleanup_temp
+  echo "Откатываю nginx-конфигурацию из $BACKUP_DIR"
+
+  if [[ -f "$BACKUP_DIR/banano-kling.conf.contents" ]]; then
+    cat "$BACKUP_DIR/banano-kling.conf.contents" > "$CANONICAL_CONF"
+  fi
+
+  shopt -s nullglob
+  for disabled in "$DISABLED_DIR"/*; do
+    mv -f "$disabled" "$SITES_ENABLED/$(basename "$disabled")"
+  done
+  shopt -u nullglob
+
+  nginx -t || true
+  systemctl reload nginx || true
+  exit "$rc"
+}
+
+trap restore ERR
+
+python3 - "$CANONICAL_CONF" "$TG_PORT" "$VK_PORT" <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+tg_port = sys.argv[2]
+vk_port = sys.argv[3]
+text = path.read_text(encoding="utf-8")
+
+SERVER_START_RE = re.compile(r"(?m)^[ \t]*server[ \t]*\{")
+SERVER_NAME_RE = re.compile(r"(?m)^[ \t]*server_name[ \t]+([^;]+);")
+HTTPS_LISTEN_RE = re.compile(
+    r"(?m)^[ \t]*listen[ \t]+(?:\[[^\]]+\]:)?443(?:[ \t;]|$)"
+)
+LOCATION_START_RE = re.compile(
+    r"(?m)^[ \t]*location[ \t]+(?:=[ \t]+)?/lava/webhook(?:[ \t]+|\{)"
+)
+PROXY_RE = re.compile(
+    r"(?m)^(?P<indent>[ \t]*)proxy_pass[ \t]+"
+    r"http://127\.0\.0\.1:\d+(?:/[^;]*)?;"
+    r"(?P<tail>[ \t]*(?:#.*)?)$"
+)
+ROUTE_HEADER_RE = re.compile(
+    r'(?m)^(?P<indent>[ \t]*)add_header[ \t]+X-Lava-Route[ \t]+'
+    r'(?:"[^"]*"|[^;]+)[ \t]+always;'
+    r'(?P<tail>[ \t]*(?:#.*)?)$'
+)
+
+
+def matching_brace(source: str, opening_index: int) -> int:
+    depth = 0
+    quote: str | None = None
+    escaped = False
+    in_comment = False
+
+    for index in range(opening_index, len(source)):
+        char = source[index]
+
+        if in_comment:
+            if char == "\n":
+                in_comment = False
+            continue
+
+        if escaped:
+            escaped = False
+            continue
+
+        if char == "\\":
+            escaped = True
+            continue
+
+        if quote:
+            if char == quote:
+                quote = None
+            continue
+
+        if char in {"'", '"'}:
+            quote = char
+            continue
+
+        if char == "#":
+            in_comment = True
+            continue
+
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return index
+
+    raise RuntimeError("Не удалось найти закрывающую фигурную скобку")
+
+
+def ensure_route_header(location: str, route_label: str) -> str:
+    replacement_count = 0
+
+    def replace_header(match: re.Match[str]) -> str:
+        nonlocal replacement_count
+        replacement_count += 1
+        return (
+            f'{match.group("indent")}add_header X-Lava-Route '
+            f'"{route_label}" always;{match.group("tail")}'
+        )
+
+    location = ROUTE_HEADER_RE.sub(replace_header, location, count=1)
+    if replacement_count:
+        return location
+
+    proxy_match = PROXY_RE.search(location)
+    if not proxy_match:
+        raise RuntimeError("Нельзя добавить X-Lava-Route: proxy_pass не найден")
+
+    insert_at = proxy_match.end()
+    indent = proxy_match.group("indent")
+    header = f'\n{indent}add_header X-Lava-Route "{route_label}" always;'
+    return location[:insert_at] + header + location[insert_at:]
+
+
+def patch_existing_lava_location(
+    block: str,
+    port: str,
+    domain: str,
+    route_label: str,
+) -> tuple[str, int]:
+    patched = 0
+    search_from = 0
+
+    while True:
+        location_match = LOCATION_START_RE.search(block, search_from)
+        if not location_match:
+            break
+
+        opening = block.find("{", location_match.start(), location_match.end() + 2)
+        if opening == -1:
+            raise RuntimeError(
+                f"{domain}: у location /lava/webhook нет открывающей скобки"
+            )
+
+        closing = matching_brace(block, opening)
+        location = block[location_match.start(): closing + 1]
+        replacement_count = 0
+
+        def replace_proxy(match: re.Match[str]) -> str:
+            nonlocal replacement_count
+            replacement_count += 1
+            return (
+                f"{match.group('indent')}proxy_pass "
+                f"http://127.0.0.1:{port};{match.group('tail')}"
+            )
+
+        new_location = PROXY_RE.sub(replace_proxy, location, count=1)
+        if replacement_count != 1:
+            raise RuntimeError(
+                f"{domain}: внутри location /lava/webhook не найден "
+                "однозначный proxy_pass"
+            )
+
+        new_location = ensure_route_header(new_location, route_label)
+        block = block[: location_match.start()] + new_location + block[closing + 1 :]
+        patched += 1
+        search_from = location_match.start() + len(new_location)
+
+    return block, patched
+
+
+def ensure_lava_location(
+    block: str,
+    port: str,
+    domain: str,
+    route_label: str,
+) -> tuple[str, int, bool]:
+    block, count = patch_existing_lava_location(
+        block,
+        port,
+        domain,
+        route_label,
+    )
+    if count > 1:
+        raise RuntimeError(
+            f"{domain}: в одном HTTPS server-блоке найдено несколько "
+            f"location /lava/webhook: {count}"
+        )
+    if count == 1:
+        return block, 1, False
+
+    closing = block.rfind("}")
+    if closing == -1:
+        raise RuntimeError(f"{domain}: не найдена закрывающая скобка server-блока")
+
+    location = (
+        "\n    # Lava payment webhook — managed by fix_lava_nginx_routes.sh\n"
+        "    location = /lava/webhook {\n"
+        f"        proxy_pass http://127.0.0.1:{port};\n"
+        f'        add_header X-Lava-Route "{route_label}" always;\n'
+        "        proxy_http_version 1.1;\n"
+        "        proxy_set_header Host $host;\n"
+        "        proxy_set_header X-Real-IP $remote_addr;\n"
+        "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+        "        proxy_set_header X-Forwarded-Proto $scheme;\n"
+        "    }\n"
+    )
+    block = block[:closing].rstrip() + "\n" + location + block[closing:]
+    return block, 1, True
+
+
+parts: list[str] = []
+cursor = 0
+patched_by_domain = {
+    "tanyapi.chillcreative.ru": 0,
+    "tanyavk.chillcreative.ru": 0,
+    "devtanyapi.chillcreative.ru": 0,
+}
+inserted_by_domain = {domain: False for domain in patched_by_domain}
+
+for server_match in SERVER_START_RE.finditer(text):
+    if server_match.start() < cursor:
+        continue
+
+    opening = text.find("{", server_match.start(), server_match.end())
+    closing = matching_brace(text, opening)
+    block = text[server_match.start(): closing + 1]
+
+    parts.append(text[cursor: server_match.start()])
+
+    names: set[str] = set()
+    for name_match in SERVER_NAME_RE.finditer(block):
+        names.update(name_match.group(1).split())
+
+    domain: str | None = None
+    port: str | None = None
+    route_label: str | None = None
+    if HTTPS_LISTEN_RE.search(block):
+        if "tanyapi.chillcreative.ru" in names:
+            domain, port, route_label = (
+                "tanyapi.chillcreative.ru",
+                tg_port,
+                f"telegram-{tg_port}",
+            )
+        elif "tanyavk.chillcreative.ru" in names:
+            domain, port, route_label = (
+                "tanyavk.chillcreative.ru",
+                vk_port,
+                f"vk-{vk_port}",
+            )
+        elif "devtanyapi.chillcreative.ru" in names:
+            domain, port, route_label = (
+                "devtanyapi.chillcreative.ru",
+                tg_port,
+                f"telegram-{tg_port}",
+            )
+
+    if domain and port and route_label:
+        block, count, inserted = ensure_lava_location(
+            block,
+            port,
+            domain,
+            route_label,
+        )
+        patched_by_domain[domain] += count
+        inserted_by_domain[domain] = inserted_by_domain[domain] or inserted
+
+    parts.append(block)
+    cursor = closing + 1
+
+parts.append(text[cursor:])
+
+for required in ("tanyapi.chillcreative.ru", "tanyavk.chillcreative.ru"):
+    if patched_by_domain[required] != 1:
+        raise RuntimeError(
+            f"Ожидался ровно один HTTPS location /lava/webhook для {required}, "
+            f"найдено: {patched_by_domain[required]}"
+        )
+
+path.write_text("".join(parts), encoding="utf-8")
+
+print("Маршруты в каноническом конфиге:")
+for domain, port, route_label in (
+    ("tanyapi.chillcreative.ru", tg_port, f"telegram-{tg_port}"),
+    ("tanyavk.chillcreative.ru", vk_port, f"vk-{vk_port}"),
+    ("devtanyapi.chillcreative.ru", tg_port, f"telegram-{tg_port}"),
+):
+    if patched_by_domain[domain]:
+        action = "добавлен" if inserted_by_domain[domain] else "обновлён"
+        print(
+            f"  {domain}/lava/webhook -> 127.0.0.1:{port} "
+            f"({action}, X-Lava-Route={route_label})"
+        )
+PY
+
+# banano-kling.conf содержит полноценные HTTPS server-блоки Tanya-доменов.
+# Убираем из sites-enabled остальные файлы, повторно объявляющие эти домены.
+mapfile -d '' DUPLICATE_CONFIGS < <(
+  find "$SITES_ENABLED" -maxdepth 1 \( -type f -o -type l \) -print0 |
+    while IFS= read -r -d '' file; do
+      [[ "$file" == "$CANONICAL_CONF" ]] && continue
+      if grep -Eq 'server_name[^;]*(tanyapi\.chillcreative\.ru|devtanyapi\.chillcreative\.ru|tanyavk\.chillcreative\.ru)' "$file" 2>/dev/null; then
+        printf '%s\0' "$file"
+      fi
+    done
+)
+
+for duplicate in "${DUPLICATE_CONFIGS[@]:-}"; do
+  [[ -n "$duplicate" ]] || continue
+  echo "Отключаю дублирующий nginx-конфиг: $duplicate"
+  mv "$duplicate" "$DISABLED_DIR/$(basename "$duplicate")"
+done
+
+echo
+echo "Проверяю nginx..."
+NGINX_TEST_OUTPUT="$(nginx -t 2>&1)" || {
+  printf '%s\n' "$NGINX_TEST_OUTPUT"
+  false
+}
+printf '%s\n' "$NGINX_TEST_OUTPUT"
+
+if nginx -T 2>&1 | grep -Eq 'conflicting server name "(tanyapi|devtanyapi|tanyavk)\.chillcreative\.ru"'; then
+  echo "Остались конфликтующие server_name для Tanya-доменов:"
+  nginx -T 2>&1 | grep -E 'conflicting server name "(tanyapi|devtanyapi|tanyavk)\.chillcreative\.ru"' || true
+  false
+fi
+
+systemctl reload nginx
+
+echo
+echo "nginx перезагружен без конфликтов Tanya-доменов."
+
+echo
+echo "Проверяю Telegram-маршрут:"
+TG_HTTP="$(curl -sS -D "$TG_HEADERS" -o /dev/null -w '%{http_code}' \
+  -X POST 'https://tanyapi.chillcreative.ru/lava/webhook' \
+  -H 'Content-Type: application/json' \
+  --data '{"test":"tg-route-probe"}')"
+TG_ROUTE="$(grep -i '^X-Lava-Route:' "$TG_HEADERS" | tail -n 1 | cut -d: -f2- | tr -d '\r ')"
+echo "HTTP $TG_HTTP, X-Lava-Route=${TG_ROUTE:-missing}"
+
+echo "Проверяю VK-маршрут:"
+VK_HTTP="$(curl -sS -D "$VK_HEADERS" -o /dev/null -w '%{http_code}' \
+  -X POST 'https://tanyavk.chillcreative.ru/lava/webhook' \
+  -H 'Content-Type: application/json' \
+  --data '{"test":"vk-route-probe"}')"
+VK_ROUTE="$(grep -i '^X-Lava-Route:' "$VK_HEADERS" | tail -n 1 | cut -d: -f2- | tr -d '\r ')"
+echo "HTTP $VK_HTTP, X-Lava-Route=${VK_ROUTE:-missing}"
+
+[[ "$TG_HTTP" == "200" ]]
+[[ "$VK_HTTP" == "200" ]]
+[[ "$TG_ROUTE" == "telegram-$TG_PORT" ]]
+[[ "$VK_ROUTE" == "vk-$VK_PORT" ]]
+
+cleanup_temp
+trap - ERR
+
+echo
+echo "OK: tanyapi /lava/webhook подтверждён через маршрут telegram-$TG_PORT."
+echo "OK: tanyavk /lava/webhook подтверждён через маршрут vk-$VK_PORT."
+echo "Отключённые дубли сохранены в: $DISABLED_DIR"
+echo "Полная резервная копия: $BACKUP_DIR"
