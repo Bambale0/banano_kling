@@ -42,7 +42,53 @@ jobs:
             gh api --method POST \
               "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/cancel" \
               >/dev/null 2>&1 || true
+
+            # GitHub may leave queued workflow runs stuck after the regular
+            # cancellation request. Give cancellation a short grace period,
+            # then force-cancel only the same stale run if it is still active.
+            sleep 2
+            current_status="$(
+              gh api \
+                "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" \
+                --jq '.status' \
+                2>/dev/null || true
+            )"
+            if [ -n "$current_status" ] && [ "$current_status" != completed ]; then
+              echo "Force-cancelling stale run id=$run_id status=$current_status"
+              gh api --method POST \
+                "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/force-cancel" \
+                >/dev/null 2>&1 || true
+            fi
           done < stale-runs.tsv
+
+          # Do not report success while an older queued/pending workflow still
+          # owns a concurrency slot. Wait briefly for GitHub to settle state.
+          for _ in $(seq 1 10); do
+            remaining="$(
+              for status in queued in_progress waiting requested pending; do
+                gh api \
+                  "repos/${GITHUB_REPOSITORY}/actions/runs?status=${status}&per_page=100" \
+                  --jq ".workflow_runs[] | select(.id != ${CURRENT_RUN_ID} and .head_sha != \"${CURRENT_SHA}\") | .id" \
+                  2>/dev/null || true
+              done | sort -u
+            )"
+            [ -z "$remaining" ] && break
+            echo "Waiting for stale runs to leave the scheduler: $remaining"
+            sleep 2
+          done
+
+          remaining="$(
+            for status in queued in_progress waiting requested pending; do
+              gh api \
+                "repos/${GITHUB_REPOSITORY}/actions/runs?status=${status}&per_page=100" \
+                --jq ".workflow_runs[] | select(.id != ${CURRENT_RUN_ID} and .head_sha != \"${CURRENT_SHA}\") | .id" \
+                2>/dev/null || true
+            done | sort -u
+          )"
+          if [ -n "$remaining" ]; then
+            echo "::error::Stale workflow runs are still active after force-cancel: $remaining"
+            exit 1
+          fi
 
           echo 'Remaining runs for current commit:'
           gh api \
