@@ -3,7 +3,7 @@
 import type { ComponentType } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Banana, CreditCard, Gift, Loader2, Mail, Receipt, Sparkles, Star, X } from 'lucide-react'
+import { Banana, CreditCard, Gift, Loader2, Mail, QrCode, Receipt, Sparkles, Star, X } from 'lucide-react'
 import { useApp } from '@/lib/app-context'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
@@ -30,6 +30,10 @@ function normalizeCustomerEmail(value: string) {
 
 function isValidCustomerEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value)
+}
+
+function isLavaProvider(provider: PaymentProvider) {
+  return provider === 'lava' || provider === 'lava_card' || provider === 'lava_sbp'
 }
 
 export function BalanceSheet() {
@@ -120,7 +124,7 @@ export function BalanceSheet() {
       const payment = await createPayment({
         packageId,
         provider,
-        customerEmail: provider === 'lava' && customerEmailValid
+        customerEmail: isLavaProvider(provider) && customerEmailValid
           ? normalizedCustomerEmail
           : undefined,
       })
@@ -145,7 +149,13 @@ export function BalanceSheet() {
 
       if (payment.payment_url) {
         openExternalPayment(payment.payment_url)
-        toast.message('Открыта страница оплаты')
+        toast.message(
+          provider === 'lava_sbp'
+            ? 'Открыта оплата через СБП'
+            : provider === 'lava_card'
+              ? 'Открыта оплата картой'
+              : 'Открыта страница оплаты',
+        )
         return
       }
 
@@ -153,7 +163,7 @@ export function BalanceSheet() {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Не удалось создать платёж'
       toast.error(message)
-      if (provider === 'lava' && message.toLowerCase().includes('почт')) {
+      if (isLavaProvider(provider) && message.toLowerCase().includes('почт')) {
         focusCustomerEmail()
       }
     } finally {
@@ -264,7 +274,8 @@ export function BalanceSheet() {
                     const starsPrice = pkg.price_stars ?? pkg.price_rub
                     const lavaConfigured = Boolean(pkg.lava_offer_id)
                     const starsLoading = loadingPayment === `${pkg.id}:telegram_stars`
-                    const lavaLoading = loadingPayment === `${pkg.id}:lava`
+                    const cardLoading = loadingPayment === `${pkg.id}:lava_card`
+                    const sbpLoading = loadingPayment === `${pkg.id}:lava_sbp`
                     return (
                       <div
                         key={pkg.id}
@@ -301,16 +312,28 @@ export function BalanceSheet() {
 
                         <div className="mt-4 grid grid-cols-2 gap-2">
                           <Button
-                            onClick={() => handleTopup(pkg.id, 'lava')}
-                            disabled={Boolean(loadingPayment)}
-                            className="col-span-2 w-full bg-gold text-primary-foreground hover:bg-gold/90"
+                            onClick={() => handleTopup(pkg.id, 'lava_card')}
+                            disabled={Boolean(loadingPayment) || !lavaConfigured}
+                            className="w-full bg-gold text-primary-foreground hover:bg-gold/90"
                           >
-                            {lavaLoading ? (
+                            {cardLoading ? (
                               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                             ) : (
                               <CreditCard className="mr-2 h-4 w-4" />
                             )}
-                            Карта / СБП
+                            Картой
+                          </Button>
+                          <Button
+                            onClick={() => handleTopup(pkg.id, 'lava_sbp')}
+                            disabled={Boolean(loadingPayment) || !lavaConfigured}
+                            className="w-full bg-gold text-primary-foreground hover:bg-gold/90"
+                          >
+                            {sbpLoading ? (
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                              <QrCode className="mr-2 h-4 w-4" />
+                            )}
+                            СБП
                           </Button>
                           <Button
                             onClick={() => handleTopup(pkg.id, 'telegram_stars')}
@@ -326,7 +349,7 @@ export function BalanceSheet() {
                           </Button>
                           {lavaConfigured ? (
                             <p className="col-span-2 px-1 text-center text-[11px] text-muted-foreground">
-                              Доступна оплата банковской картой и через СБП.
+                              Карта и СБП открываются отдельными способами оплаты.
                             </p>
                           ) : null}
                         </div>
@@ -336,21 +359,13 @@ export function BalanceSheet() {
                 </div>
               </div>
 
-              <div className="grid gap-3 md:grid-cols-2">
-                <Button
-                  onClick={() => toast.success('Статистика обновлена', { description: 'Карточки выше показывают расходы, баланс и активность по задачам.' })}
-                  variant="outline"
-                  className="border-border/50 bg-secondary/20 text-foreground hover:bg-secondary/40"
-                >
-                  Обновить статистику
-                </Button>
-                <Button
-                  onClick={() => handleTopup(paymentPackages[0]?.id || 'mini', 'lava')}
-                  className="bg-gold hover:bg-gold/90 text-primary-foreground"
-                >
-                  Пополнить картой / СБП
-                </Button>
-              </div>
+              <Button
+                onClick={() => toast.success('Статистика обновлена', { description: 'Карточки выше показывают расходы, баланс и активность по задачам.' })}
+                variant="outline"
+                className="w-full border-border/50 bg-secondary/20 text-foreground hover:bg-secondary/40"
+              >
+                Обновить статистику
+              </Button>
             </div>
           </motion.div>
         </>
