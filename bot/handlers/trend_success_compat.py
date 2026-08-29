@@ -1,9 +1,9 @@
 """Exact, idempotent success metrics for curated trends.
 
 ``uses_count`` is an accepted-launch counter and therefore cannot truthfully be
-presented as completed generations.  This compatibility layer records the
+presented as completed generations. This compatibility layer records the
 trend/task relation once and derives the public success count by joining that
-relation with ``generation_tasks.status = 'completed'``.  Callback retries do
+relation with ``generation_tasks.status = 'completed'``. Callback retries do
 not increment anything, because one task can only contribute one joined row.
 """
 
@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Awaitable, Callable
 from functools import wraps
 from typing import Any
 
@@ -97,10 +96,21 @@ async def register_trend_generation_run(
         return bool(cursor.rowcount)
 
 
-async def get_trend_success_counts(trend_ids: list[int] | tuple[int, ...]) -> dict[int, int]:
-    normalized = sorted({int(value) for value in trend_ids if int(value) > 0})
+async def get_trend_success_counts(
+    trend_ids: list[int] | tuple[int, ...],
+) -> dict[int, int]:
+    normalized_ids: set[int] = set()
+    for value in trend_ids:
+        try:
+            trend_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if trend_id > 0:
+            normalized_ids.add(trend_id)
+    normalized = sorted(normalized_ids)
     if not normalized:
         return {}
+
     await ensure_trend_generation_run_schema()
     placeholders = ",".join("?" for _ in normalized)
     async with db_backend.connect(DATABASE_PATH) as db:
@@ -172,7 +182,10 @@ def _install_database_enrichment() -> None:
         trend_ids = [int(item.get("id") or 0) for item in prompts if _is_trend(item)]
         counts = await get_trend_success_counts(trend_ids)
         return [
-            _public_counter_description(item, counts.get(int(item.get("id") or 0), 0))
+            _public_counter_description(
+                item,
+                counts.get(int(item.get("id") or 0), 0),
+            )
             if _is_trend(item)
             else item
             for item in prompts
