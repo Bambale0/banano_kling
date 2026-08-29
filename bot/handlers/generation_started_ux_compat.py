@@ -18,8 +18,11 @@ from aiogram import BaseMiddleware
 
 from bot.generation_progress import (
     build_progress_line,
+    ensure_generation_progress_worker,
     ensure_progress_line,
     extract_task_ids,
+    find_generation_progress_notification,
+    remember_generation_progress_notification,
     track_generation_progress,
 )
 
@@ -144,6 +147,61 @@ def sanitize_generation_started_text(
     return ensure_progress_line("\n".join(compact))
 
 
+async def _reuse_or_send_progress_message(
+    bot: Any,
+    *,
+    chat_id: int,
+    telegram_id: int,
+    task_ids: list[str],
+    text: str,
+    send: Callable[[], Awaitable[Any]],
+) -> Any:
+    existing = await find_generation_progress_notification(task_ids)
+    if existing:
+        existing_chat_id, existing_message_id = existing
+        try:
+            sent = await bot.edit_message_text(
+                chat_id=existing_chat_id,
+                message_id=existing_message_id,
+                text=text,
+                parse_mode="HTML",
+            )
+            await remember_generation_progress_notification(
+                task_ids,
+                chat_id=existing_chat_id,
+                message_id=existing_message_id,
+            )
+            track_generation_progress(
+                bot,
+                chat_id=existing_chat_id,
+                message_id=existing_message_id,
+                telegram_id=telegram_id,
+                task_ids=task_ids,
+                text=text,
+            )
+            return sent
+        except Exception:
+            logger.debug("Unable to reuse existing generation progress message", exc_info=True)
+
+    sent = await send()
+    message_id = getattr(sent, "message_id", None)
+    if message_id:
+        await remember_generation_progress_notification(
+            task_ids,
+            chat_id=chat_id,
+            message_id=message_id,
+        )
+        track_generation_progress(
+            bot,
+            chat_id=chat_id,
+            message_id=message_id,
+            telegram_id=telegram_id,
+            task_ids=task_ids,
+            text=text,
+        )
+    return sent
+
+
 class _FriendlyMessageProxy:
     """Forward a Message unchanged except for generation lifecycle feedback."""
 
@@ -168,23 +226,24 @@ class _FriendlyMessageProxy:
             text,
             reference_count=self._reference_count,
         )
-        sent = await self._message.answer(normalized, **kwargs)
-        if isinstance(normalized, str) and _GENERATION_STARTED_MARKER in normalized:
-            task_ids = extract_task_ids(normalized)
-            from_user = getattr(self._message, "from_user", None)
-            chat = getattr(self._message, "chat", None)
-            bot = getattr(self._message, "bot", None)
-            message_id = getattr(sent, "message_id", None)
-            if task_ids and from_user and chat and bot and message_id:
-                track_generation_progress(
-                    bot,
-                    chat_id=chat.id,
-                    message_id=message_id,
-                    telegram_id=from_user.id,
-                    task_ids=task_ids,
-                    text=normalized,
-                )
-        return sent
+        if not isinstance(normalized, str) or _GENERATION_STARTED_MARKER not in normalized:
+            return await self._message.answer(normalized, **kwargs)
+
+        task_ids = extract_task_ids(normalized)
+        from_user = getattr(self._message, "from_user", None)
+        chat = getattr(self._message, "chat", None)
+        bot = getattr(self._message, "bot", None)
+        if not task_ids or not from_user or not chat or not bot:
+            return await self._message.answer(normalized, **kwargs)
+
+        return await _reuse_or_send_progress_message(
+            bot,
+            chat_id=chat.id,
+            telegram_id=from_user.id,
+            task_ids=task_ids,
+            text=normalized,
+            send=lambda: self._message.answer(normalized, **kwargs),
+        )
 
 
 Handler = Callable[[Any, dict[str, Any]], Awaitable[Any]]
@@ -248,20 +307,19 @@ def _install_miniapp_started_notifier() -> None:
             local_task_id=local_task_id,
             provider_task_id=provider_task_id,
         )
+        task_ids = [value for value in (local_task_id, provider_task_id) if value]
         try:
-            sent = await app["bot"].send_message(
-                chat_id=telegram_id,
-                text=text,
-                parse_mode="HTML",
-            )
-            task_ids = [local_task_id, provider_task_id]
-            track_generation_progress(
+            await _reuse_or_send_progress_message(
                 app["bot"],
                 chat_id=telegram_id,
-                message_id=sent.message_id,
                 telegram_id=telegram_id,
                 task_ids=task_ids,
                 text=text,
+                send=lambda: app["bot"].send_message(
+                    chat_id=telegram_id,
+                    text=text,
+                    parse_mode="HTML",
+                ),
             )
             logger.info(
                 "Mini App generation start notified: telegram_id=%s status=%s local_task_id=%s provider_task_id=%s",
@@ -282,11 +340,16 @@ def _install_miniapp_started_notifier() -> None:
     miniapp_module._generation_started_ux_notifier_installed = True
 
 
+async def _start_generation_progress_worker(bot: Any) -> None:
+    ensure_generation_progress_worker(bot)
+
+
 def install_generation_started_ux(generation_module: Any) -> None:
-    """Install the Telegram normalizer and Mini App/Pinterest start notifier once."""
+    """Install the Telegram normalizer, notifier and universal progress worker once."""
 
     if not getattr(generation_module, "_generation_started_ux_middleware_installed", False):
         generation_module.router.message.middleware(GenerationStartedUxMiddleware())
+        generation_module.router.startup.register(_start_generation_progress_worker)
         generation_module._generation_started_ux_middleware_installed = True
 
     _install_miniapp_started_notifier()
