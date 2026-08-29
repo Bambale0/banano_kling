@@ -15,6 +15,7 @@ import type { PaymentProvider } from '@/lib/types'
 type TelegramPaymentBridge = {
   openInvoice?: (url: string, callback?: (status: string) => void) => void
   openLink?: (url: string, options?: { try_instant_view?: boolean }) => void
+  platform?: string
 }
 
 function getTelegramPaymentBridge(): TelegramPaymentBridge | null {
@@ -34,6 +35,18 @@ function isValidCustomerEmail(value: string) {
 
 function isLavaProvider(provider: PaymentProvider) {
   return provider === 'lava' || provider === 'lava_card' || provider === 'lava_sbp'
+}
+
+function isIOSPaymentWebView() {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') return false
+
+  const webApp = getTelegramPaymentBridge()
+  if (webApp?.platform?.toLowerCase() === 'ios') return true
+
+  const userAgent = navigator.userAgent || ''
+  const isAppleMobile = /iPad|iPhone|iPod/i.test(userAgent)
+  const isTouchMac = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1
+  return isAppleMobile || isTouchMac
 }
 
 export function BalanceSheet() {
@@ -79,8 +92,16 @@ export function BalanceSheet() {
   }
 
   const openExternalPayment = (url: string) => {
-    const webApp = getTelegramPaymentBridge()
+    // Telegram iOS runs Mini Apps inside WKWebView. After the awaited payment
+    // creation request, opening a new window can lose the original user gesture
+    // and iOS silently blocks the popup. Same-window navigation is not subject
+    // to that popup gate and keeps the payment flow reliable on iPhone/iPad.
+    if (isIOSPaymentWebView()) {
+      window.location.assign(url)
+      return
+    }
 
+    const webApp = getTelegramPaymentBridge()
     if (webApp?.openLink) {
       try {
         webApp.openLink(url)
