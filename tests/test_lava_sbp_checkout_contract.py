@@ -2,8 +2,6 @@ from pathlib import Path
 
 import pytest
 
-from bot.services.lava_service import LavaService
-
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -14,6 +12,8 @@ def _read(path: str) -> str:
 
 @pytest.mark.asyncio
 async def test_dynamic_product_lookup_includes_hidden_lava_products(monkeypatch) -> None:
+    from bot.services.lava_service import LavaService
+
     service = LavaService("test-key")
     calls: list[tuple[str, str, dict | None]] = []
 
@@ -49,6 +49,8 @@ async def test_dynamic_product_lookup_includes_hidden_lava_products(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_lava_rub_invoice_keeps_dynamic_amount_and_hosted_checkout(monkeypatch) -> None:
+    from bot.services.lava_service import LavaService
+
     service = LavaService("test-key")
     captured: dict = {}
 
@@ -81,6 +83,8 @@ async def test_lava_rub_invoice_keeps_dynamic_amount_and_hosted_checkout(monkeyp
 async def test_lava_recovers_dynamic_rub_amount_from_miniapp_package_context(
     monkeypatch,
 ) -> None:
+    from bot.services.lava_service import LavaService
+
     service = LavaService("test-key")
     captured: dict = {}
 
