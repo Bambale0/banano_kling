@@ -244,7 +244,7 @@ async def _record_response_task(response: Any, trend: Any, user: Any) -> None:
 
 
 def _install_trend_api_hooks() -> None:
-    import bot.trend_api as trend_api
+    from bot import trend_api
 
     if getattr(trend_api, "_trend_success_metrics_installed", False):
         return
