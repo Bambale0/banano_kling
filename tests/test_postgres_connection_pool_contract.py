@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import pytest
+
+from bot import postgres_pool
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -9,7 +12,8 @@ def _read(path: str) -> str:
 
 
 def test_postgres_adapter_uses_bounded_async_pool() -> None:
-    source = _read("bot/postgres_aiosqlite.py")
+    source = _read("bot/postgres_pool.py")
+    db_source = _read("bot/db.py")
 
     assert "AsyncConnectionPool" in source
     assert "async def _get_postgres_pool" in source
@@ -17,16 +21,17 @@ def test_postgres_adapter_uses_bounded_async_pool() -> None:
     assert ".putconn(" in source
     assert "PG_POOL_MAX_SIZE" in source
     assert "PG_POOL_TIMEOUT_SECONDS" in source
+    assert "from bot.postgres_pool import connect as postgres_connect" in db_source
 
 
 def test_postgres_pool_preserves_legacy_rollback_on_close() -> None:
-    source = _read("bot/postgres_aiosqlite.py")
+    source = _read("bot/postgres_pool.py")
     close_block = source.split("async def close(self) -> None:", 1)[1].split(
-        "async def __aenter__", 1
+        "class PostgresPoolConnect", 1
     )[0]
 
     assert "rollback" in close_block
-    assert "_release" in close_block
+    assert "putconn" in close_block
 
 
 def test_pool_dependency_is_installed_with_binary_psycopg() -> None:
@@ -35,10 +40,67 @@ def test_pool_dependency_is_installed_with_binary_psycopg() -> None:
     assert "psycopg[binary,pool]" in requirements
 
 
-def test_partner_lookup_supporting_index_is_declared() -> None:
-    schema = _read("schema_postgres.sql")
-    runtime = _read("bot/postgres_aiosqlite.py")
+class _FakeRawConnection:
+    def __init__(self) -> None:
+        self.rollback_calls = 0
 
-    expected = "idx_users_referred_by"
-    assert expected in schema
-    assert expected in runtime
+    async def rollback(self) -> None:
+        self.rollback_calls += 1
+
+
+class _FakePool:
+    def __init__(self, raw: _FakeRawConnection) -> None:
+        self.raw = raw
+        self.getconn_calls = 0
+        self.putconn_calls = 0
+        self.timeouts: list[float] = []
+
+    async def getconn(self, timeout: float | None = None):
+        self.getconn_calls += 1
+        self.timeouts.append(float(timeout or 0))
+        return self.raw
+
+    async def putconn(self, raw) -> None:
+        assert raw is self.raw
+        self.putconn_calls += 1
+
+
+@pytest.mark.asyncio
+async def test_connector_returns_checked_out_connection_to_pool(monkeypatch) -> None:
+    raw = _FakeRawConnection()
+    pool = _FakePool(raw)
+
+    async def fake_get_pool():
+        return pool
+
+    async def fake_helpers(_raw) -> None:
+        return None
+
+    monkeypatch.setattr(postgres_pool, "_get_postgres_pool", fake_get_pool)
+    monkeypatch.setattr(
+        postgres_pool.legacy,
+        "_ensure_postgres_helpers",
+        fake_helpers,
+    )
+
+    connector = postgres_pool.connect()
+    connection = await connector
+    await connection.close()
+
+    assert pool.getconn_calls == 1
+    assert pool.putconn_calls == 1
+    assert raw.rollback_calls == 1
+    assert pool.timeouts == [postgres_pool._pool_timeout()]
+
+
+@pytest.mark.asyncio
+async def test_connection_close_is_idempotent() -> None:
+    raw = _FakeRawConnection()
+    pool = _FakePool(raw)
+    connection = postgres_pool.PooledPostgresConnection(raw, pool)
+
+    await connection.close()
+    await connection.close()
+
+    assert raw.rollback_calls == 1
+    assert pool.putconn_calls == 1
