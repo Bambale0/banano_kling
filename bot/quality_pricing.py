@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_QUALITY = "2K"
 _LEGACY_FALLBACK_COSTS = {"1K": 2.5, "2K": 2.5, "4K": 3.5}
 QUALITY_COSTS: dict[str, float] = {}
