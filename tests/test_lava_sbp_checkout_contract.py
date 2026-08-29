@@ -1,3 +1,4 @@
+# ruff: noqa: I001
 from pathlib import Path
 
 import pytest
@@ -136,6 +137,18 @@ def test_miniapp_payment_ui_has_separate_card_and_sbp_actions() -> None:
     assert "Карта / СБП" not in source
     assert "'lava_card'" in types_source
     assert "'lava_sbp'" in types_source
+
+
+def test_miniapp_ios_payment_uses_same_window_navigation() -> None:
+    source = _read("frontend/miniapp-v0/components/balance-sheet.tsx")
+
+    assert "webApp?.platform?.toLowerCase() === 'ios'" in source
+    assert "navigator.maxTouchPoints > 1" in source
+    ios_branch = source.split("if (isIOSPaymentWebView())", 1)[1].split(
+        "const webApp = getTelegramPaymentBridge()", 1
+    )[0]
+    assert "window.location.assign(url)" in ios_branch
+    assert "window.open" not in ios_branch
 
 
 def test_legacy_lava_route_still_preserves_dynamic_package_context() -> None:
