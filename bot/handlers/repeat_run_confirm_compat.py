@@ -14,6 +14,7 @@ from aiogram.fsm.context import FSMContext
 from .generation_started_ux_compat import install_generation_started_ux
 from .image_generation_fsm_compat import install_image_generation_fsm_compat
 from .pinterest_prompt_softening_compat import install_pinterest_prompt_softening
+from .rendergrid_provider_id_compat import install_rendergrid_provider_id_compat
 
 router = Router()
 _INSTALLED = False
@@ -32,6 +33,11 @@ def install_repeat_run_confirm_compat(generation_module) -> None:
     # provider-agnostic public "generation started" UX without editing the
     # legacy generation monolith or the top-level handlers package contract.
     install_generation_started_ux(generation_module)
+
+    # RenderGrid returns its native trace as creation_id on synchronous image
+    # completions. Normalize it into the common provider_task_id contract and
+    # keep local/provider IDs separate in the Mini App/Pinterest start notice.
+    install_rendergrid_provider_id_compat()
 
     # The same priority router can accept another reference while the image flow
     # is waiting for a prompt. The runtime patch also releases the real FSM as
