@@ -19,6 +19,7 @@ import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
+from uuid import uuid4
 
 from aiogram import BaseMiddleware
 from aiogram.exceptions import TelegramAPIError
@@ -48,6 +49,7 @@ PROMPT_FRAGMENT_MAX_CHARS = max(
     4096,
     int(os.getenv("PROMPT_FRAGMENT_MAX_CHARS", "64000")),
 )
+_PROMPT_SUBMIT_TOKEN_KEY = "_prompt_fragment_submit_token"
 
 # Only states whose free-form text is a prompt-like field. Numeric settings,
 # names, IDs, payment/admin inputs, etc. intentionally remain immediate.
@@ -66,6 +68,7 @@ PROMPT_TEXT_STATES = {
 }
 
 Handler = Callable[[Any, dict[str, Any]], Awaitable[Any]]
+PromptKey = tuple[int, int, str]
 
 
 @dataclass
@@ -100,12 +103,15 @@ class PromptFragmentCoalescingMiddleware(BaseMiddleware):
         self.quiet_seconds = max(0.01, float(quiet_seconds))
         self.long_quiet_seconds = max(self.quiet_seconds, float(long_quiet_seconds))
         self.max_chars = max(4096, int(max_chars))
-        self._pending: dict[tuple[int, int, str], _PendingPrompt] = {}
-        self._inflight: set[tuple[int, int, str]] = set()
+        self._pending: dict[PromptKey, _PendingPrompt] = {}
+        # One chat/user/state key may be reused by a new generation while an older
+        # synchronous provider adapter is still awaiting its result. Track the
+        # submit session token rather than locking the key until provider completion.
+        self._inflight: dict[PromptKey, str] = {}
         self._lock = asyncio.Lock()
 
     @staticmethod
-    def _event_key(event: Any, state_name: str) -> tuple[int, int, str] | None:
+    def _event_key(event: Any, state_name: str) -> PromptKey | None:
         user = getattr(event, "from_user", None)
         chat = getattr(event, "chat", None)
         user_id = getattr(user, "id", None)
@@ -125,13 +131,14 @@ class PromptFragmentCoalescingMiddleware(BaseMiddleware):
             return event
         return model_copy(update={"text": text, "entities": []})
 
-    async def _cancel_pending(self, key: tuple[int, int, str]) -> None:
+    async def _cancel_pending(self, key: PromptKey) -> None:
         pending = self._pending.pop(key, None)
         if pending and pending.task and not pending.task.done():
             pending.task.cancel()
 
-    async def _flush(self, key: tuple[int, int, str], version: int) -> None:
+    async def _flush(self, key: PromptKey, version: int) -> None:
         pending: _PendingPrompt | None = None
+        submit_token: str | None = None
         try:
             async with self._lock:
                 current = self._pending.get(key)
@@ -150,7 +157,6 @@ class PromptFragmentCoalescingMiddleware(BaseMiddleware):
                 if current is None or current.version != version:
                     return
                 pending = self._pending.pop(key)
-                self._inflight.add(key)
 
             fsm = pending.data.get("state")
             if fsm is not None:
@@ -181,6 +187,17 @@ class PromptFragmentCoalescingMiddleware(BaseMiddleware):
                     )
                 return
 
+            # Mark only this submit session as inflight. PR #128 clears the real
+            # image FSM immediately after the local img_* task is created. A user
+            # can then start another flow with the same chat/user/state key; its
+            # FSM data no longer carries this token, so it must not be discarded
+            # while the older provider call is still waiting for the final image.
+            submit_token = uuid4().hex
+            if fsm is not None:
+                await fsm.update_data({_PROMPT_SUBMIT_TOKEN_KEY: submit_token})
+            async with self._lock:
+                self._inflight[key] = submit_token
+
             logger.info(
                 "Prompt fragments coalesced: user=%s state=%s parts=%s chars=%s",
                 key[1],
@@ -210,9 +227,14 @@ class PromptFragmentCoalescingMiddleware(BaseMiddleware):
                     )
         finally:
             async with self._lock:
-                self._inflight.discard(key)
+                # An older provider completion must not release the newer submit
+                # that may already own the same chat/user/state key.
+                if submit_token is not None and self._inflight.get(key) == submit_token:
+                    self._inflight.pop(key, None)
                 current = self._pending.get(key)
-                if current and current.version == version:
+                # Versions restart for a newly-created pending object, so compare
+                # object identity rather than a version number across sessions.
+                if pending is not None and current is pending:
                     self._pending.pop(key, None)
 
     async def __call__(
@@ -244,15 +266,26 @@ class PromptFragmentCoalescingMiddleware(BaseMiddleware):
             return await handler(event, data)
 
         async with self._lock:
-            if key in self._inflight:
+            inflight_token = self._inflight.get(key)
+
+        if inflight_token is not None:
+            fsm_data = await fsm.get_data()
+            if fsm_data.get(_PROMPT_SUBMIT_TOKEN_KEY) == inflight_token:
                 logger.info(
-                    "Duplicate prompt message ignored while generation submit is in-flight: user=%s state=%s chars=%s",
+                    "Duplicate prompt message ignored within the same generation submit: user=%s state=%s chars=%s",
                     key[1],
                     state_name,
                     len(text),
                 )
                 return None
+            logger.info(
+                "New prompt session accepted while an older provider request is still running: user=%s state=%s chars=%s",
+                key[1],
+                state_name,
+                len(text),
+            )
 
+        async with self._lock:
             pending = self._pending.get(key)
             if pending is None:
                 pending = _PendingPrompt(
