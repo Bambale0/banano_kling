@@ -33,16 +33,12 @@ def test_task_ids_include_local_and_provider_trace() -> None:
 
 
 def test_terminal_progress_reuses_same_message_contract() -> None:
-    source = "\n".join(
-        [
-            "🚀 <b>Генерация запущена</b>",
-            build_progress_line(),
-            "",
-            "• ID задачи: <code>img_123</code>",
-            "",
-            "Обычно результат приходит в течение 1–3 минут.",
-            "Я пришлю его сюда сразу после готовности.",
-        ]
+    source = (
+        "🚀 <b>Генерация запущена</b>\n"
+        f"{build_progress_line()}\n\n"
+        "• ID задачи: <code>img_123</code>\n\n"
+        "Обычно результат приходит в течение 1–3 минут.\n"
+        "Я пришлю его сюда сразу после готовности."
     )
     completed = _terminal_text(source, "completed")
     assert "✅ <b>Генерация готова</b>" in completed
