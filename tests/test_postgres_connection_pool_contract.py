@@ -57,6 +57,10 @@ def test_hot_admin_lookup_indexes_are_installed() -> None:
     ):
         assert index_name in source
 
+    assert "async def _table_has_columns" in source
+    assert "to_regclass(%s)" in source
+    assert "Skipping performance index for legacy schema" in source
+
 
 class _FakeRawConnection:
     def __init__(self) -> None:
