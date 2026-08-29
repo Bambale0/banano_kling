@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from types import ModuleType
 
 from aiogram import F, Router, types
@@ -34,6 +35,20 @@ def _quality_costs() -> dict[str, float]:
 
 def _format_cost(value: float) -> str:
     return f"{float(value):g}"
+
+
+def _refresh_loaded_miniapp_catalog() -> None:
+    """Keep already-imported Mini App model metadata in sync with live tariffs."""
+    miniapp = sys.modules.get("bot.miniapp")
+    if miniapp is None:
+        return
+    models = getattr(miniapp, "IMAGE_MODELS", ())
+    quality_costs = {quality: QUALITY_COSTS[quality] for quality in ("1K", "2K", "4K")}
+    for model in models:
+        if not isinstance(model, dict) or model.get("id") not in {"banana_pro", "banana_2"}:
+            continue
+        model["cost"] = QUALITY_COSTS["2K"]
+        model["quality_costs"] = dict(quality_costs)
 
 
 def _banana_quality_keyboard() -> types.InlineKeyboardMarkup:
@@ -145,6 +160,7 @@ def _patched_update_price_value(target: str, key: str, field: str, value):
     if not preset_manager.update_price_config(price_config):
         raise RuntimeError("price config reload failed")
     refresh_quality_pricing(price_config)
+    _refresh_loaded_miniapp_catalog()
     return old_value
 
 
@@ -228,3 +244,4 @@ def install_banana_resolution_pricing(admin_module: ModuleType) -> None:
     admin_module._update_price_value = _patched_update_price_value
     admin_module._banana_resolution_pricing_installed = True
     refresh_quality_pricing(preset_manager.get_price_config())
+    _refresh_loaded_miniapp_catalog()
