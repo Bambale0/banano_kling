@@ -46,9 +46,7 @@ async def test_dynamic_product_lookup_includes_hidden_lava_products(monkeypatch)
     )
 
     assert resolved == "rub-offer"
-    assert calls == [
-        ("GET", "/api/v2/products", {"feedVisibility": "ALL"})
-    ]
+    assert calls == [("GET", "/api/v2/products", {"feedVisibility": "ALL"})]
 
 
 @pytest.mark.asyncio
@@ -81,11 +79,39 @@ async def test_lava_rub_invoice_keeps_dynamic_amount_and_hosted_checkout(monkeyp
     assert "paymentProvider" not in captured["payload"]
 
 
-def test_miniapp_passes_package_rub_price_to_lava_dynamic_invoice() -> None:
+@pytest.mark.asyncio
+async def test_lava_recovers_dynamic_rub_amount_from_miniapp_package_context(
+    monkeypatch,
+) -> None:
+    service = LavaService("test-key")
+    captured: dict = {}
+
+    async def fake_request(method, path, payload=None, params=None):
+        captured.update({"payload": payload})
+        return {"ok": True, "id": "invoice-2", "paymentUrl": "https://pay.lava.test/2"}
+
+    monkeypatch.setattr(service, "_request", fake_request)
+    monkeypatch.setattr(
+        "bot.services.preset_manager.preset_manager.get_package",
+        lambda package_id: {"id": package_id, "price_rub": 250},
+    )
+
+    result = await service.create_invoice(
+        email="buyer@gmail.com",
+        offer_id="dynamic-product",
+        currency="RUB",
+        client_utm={"package_id": "pack_250"},
+    )
+
+    assert result["ok"] is True
+    assert captured["payload"]["amount"] == 250.0
+
+
+def test_miniapp_preserves_package_context_for_lava_dynamic_price() -> None:
     source = _read("bot/miniapp.py")
     lava_block = source.split('if provider == "lava":', 1)[1].split(
         'if provider != "yookassa":', 1
     )[0]
 
-    assert 'amount=float(package["price_rub"])' in lava_block
-    assert 'currency=lava_currency' in lava_block
+    assert '"package_id": str(package_id)' in lava_block
+    assert "currency=lava_currency" in lava_block
