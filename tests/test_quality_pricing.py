@@ -10,7 +10,6 @@ from bot.quality_pricing import (
     refresh_quality_pricing,
 )
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
