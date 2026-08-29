@@ -130,12 +130,14 @@ async def _get_postgres_pool() -> AsyncConnectionPool:
             open=False,
             name="banano-kling-postgres",
         )
+        ready = False
         try:
             await pool.open()
             await _prepare_pool(pool)
-        except Exception:
-            await pool.close(timeout=_pool_timeout())
-            raise
+            ready = True
+        finally:
+            if not ready:
+                await pool.close(timeout=_pool_timeout())
 
         _POOL = pool
         _POOL_DSN = dsn
