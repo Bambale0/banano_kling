@@ -43,9 +43,13 @@ def _refresh_loaded_miniapp_catalog() -> None:
     if miniapp is None:
         return
     models = getattr(miniapp, "IMAGE_MODELS", ())
-    quality_costs = {quality: QUALITY_COSTS[quality] for quality in ("1K", "2K", "4K")}
+    quality_costs = {
+        quality: QUALITY_COSTS[quality] for quality in ("1K", "2K", "4K")
+    }
     for model in models:
-        if not isinstance(model, dict) or model.get("id") not in {"banana_pro", "banana_2"}:
+        if not isinstance(model, dict):
+            continue
+        if model.get("id") not in {"banana_pro", "banana_2"}:
             continue
         model["cost"] = QUALITY_COSTS["2K"]
         model["quality_costs"] = dict(quality_costs)
@@ -187,7 +191,7 @@ async def admin_banana_quality_prices(
     await callback.answer()
 
 
-@router.callback_query(F.data.in_(set(_QUALITY_CALLBACKS)))
+@router.callback_query(F.data.regexp(r"^admin_banana_quality_(1K|2K|4K)$"))
 async def admin_banana_quality_value(
     callback: types.CallbackQuery, state: FSMContext
 ) -> None:
