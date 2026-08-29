@@ -1,5 +1,6 @@
 'use client'
 
+import { GenerationPendingVisual } from '@/components/generation-pending-visual'
 import { useApp } from '@/lib/app-context'
 import type { Task } from '@/lib/types'
 import { cn, isHttpUrl } from '@/lib/utils'
@@ -29,7 +30,7 @@ export function TaskCard({ task, index }: TaskCardProps) {
   const statusConfig = {
     pending: {
       icon: Clock,
-      label: 'В обработке',
+      label: 'Генерируется',
       className: 'bg-gold/15 text-gold border-gold/30',
     },
     completed: {
@@ -59,30 +60,28 @@ export function TaskCard({ task, index }: TaskCardProps) {
       transition={{ delay: index * 0.05, duration: 0.3 }}
       onClick={() => selectTask(task)}
       className={cn(
-        "w-full group relative overflow-hidden rounded-2xl text-left",
-        "bg-card/55 border border-border/50",
-        "transition-all duration-300 ease-out",
-        "hover:bg-card hover:border-border hover:shadow-lg hover:shadow-background/50",
-        "active:scale-[0.99]",
-        "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        "text-left"
+        'w-full group relative overflow-hidden rounded-2xl text-left',
+        'bg-card/55 border border-border/50',
+        'transition-all duration-300 ease-out',
+        'hover:bg-card hover:border-border hover:shadow-lg hover:shadow-background/50',
+        'active:scale-[0.99]',
+        'focus:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        'text-left',
       )}
     >
-      <div className={cn(
-        "relative aspect-[4/3] w-full overflow-hidden",
-        "bg-secondary/80 flex items-center justify-center",
-        task.status === 'pending' && "pulse-soft"
-      )}>
-        {thumbnailUrl ? (
-          <img 
+      <div className="relative aspect-[4/3] w-full overflow-hidden bg-secondary/80 flex items-center justify-center">
+        {task.status === 'pending' ? (
+          <GenerationPendingVisual type={task.type} />
+        ) : thumbnailUrl ? (
+          <img
             src={thumbnailUrl}
-            alt="" 
+            alt=""
             className="w-full h-full object-cover"
           />
         ) : (
           <TypeIcon className={cn(
-            "w-7 h-7",
-            task.type === 'image' ? "text-gold/70" : task.type === 'audio' || task.type === 'character' ? "text-success/70" : "text-cyan/70"
+            'w-7 h-7',
+            task.type === 'image' ? 'text-gold/70' : task.type === 'audio' || task.type === 'character' ? 'text-success/70' : 'text-cyan/70',
           )} />
         )}
       </div>
@@ -104,10 +103,10 @@ export function TaskCard({ task, index }: TaskCardProps) {
 
         <div className="flex items-center justify-between gap-1">
           <span className={cn(
-            "inline-flex min-w-0 items-center gap-1 rounded-full border px-1.5 py-0.5",
-            "text-[9px] font-medium",
+            'inline-flex min-w-0 items-center gap-1 rounded-full border px-1.5 py-0.5',
+            'text-[9px] font-medium',
             status.className,
-            task.status === 'pending' && "animate-pulse"
+            task.status === 'pending' && 'animate-pulse',
           )}>
             <StatusIcon className="w-3 h-3" />
             {status.label}
