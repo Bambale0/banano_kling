@@ -1075,32 +1075,17 @@ async def _get_user_context(app: web.Application, init_data: str, start_param_fa
     # Извлекаем реферальный код из start_param до создания пользователя
     # и передаём в get_or_create_user (как в /start), чтобы привязка была атомарной
     referral_code = referral_code_from_start_param(resolved_start_param) or None
-    # Проверяем, был ли у пользователя уже реферал до Mini App сессии
-    # чтобы не спамить партнёру уведомлениями при каждом открытии
-    _is_new_referral_visit = True
-    try:
-        if referral_code:
-            async with db_backend.connect(DATABASE_PATH) as _db:
-                _db.row_factory = db_backend.Row
-                _cursor = await _db.execute(
-                    "SELECT referred_by FROM users WHERE telegram_id = ? AND referred_by IS NOT NULL",
-                    (telegram_id,),
-                )
-                if await _cursor.fetchone():
-                    _is_new_referral_visit = False
-    except Exception:
-        _is_new_referral_visit = True
-
     user = await get_or_create_user(telegram_id, referral_code=referral_code)
 
     try:
-        await update_user_profile(
-            telegram_id,
-            username=telegram_user.get("username"),
-            first_name=telegram_user.get("first_name"),
-            last_name=telegram_user.get("last_name"),
-            photo_url=telegram_user.get("photo_url"),
-        )
+        profile_updates = {
+            "username": telegram_user.get("username"),
+            "first_name": telegram_user.get("first_name"),
+            "last_name": telegram_user.get("last_name"),
+            "photo_url": telegram_user.get("photo_url"),
+        }
+        if any(getattr(user, field) != value for field, value in profile_updates.items()):
+            await update_user_profile(telegram_id, **profile_updates)
     except Exception:
         logger.exception("Unable to sync Mini App profile for %s", telegram_id)
 
@@ -1111,57 +1096,25 @@ async def _get_user_context(app: web.Application, init_data: str, start_param_fa
             telegram_user.get("username"),
             list(payload.keys()),
         )
-    if referral_code and user.referred_by and _is_new_referral_visit:
-        logger.info(
-            "Mini App referral notification (new): user_id=%s code=%s referrer_id=%s",
-            telegram_id,
-            referral_code,
-            user.referred_by,
-        )
-        # Уведомляем реферрера, если привязка произошла через get_or_create_user
-        try:
-            referrer = await get_user_by_referral_code(referral_code)
-            if referrer and referrer.telegram_id != telegram_id:
-                from types import SimpleNamespace
-                referred_sn = SimpleNamespace(
-                    id=telegram_id,
-                    username=telegram_user.get("username"),
-                    first_name=telegram_user.get("first_name"),
-                    last_name=telegram_user.get("last_name"),
-                    full_name=" ".join(
-                        str(telegram_user.get(key) or "").strip()
-                        for key in ("first_name", "last_name")
-                        if str(telegram_user.get(key) or "").strip()
-                    ),
-                )
-                sent = await _notify_partner_about_new_referral(
-                    app["bot"],
-                    referrer_telegram_id=referrer.telegram_id,
-                    referred=referred_sn,
-                )
-                if sent:
-                    logger.info(
-                        "Mini App get_or_create_user referral notify: user_id=%s code=%s",
-                        telegram_id, referral_code,
-                    )
-        except Exception:
-            logger.exception(
-                "Failed to notify partner about miniapp referral: user_id=%s code=%s",
-                telegram_id,
-                referral_code,
-            )
-    elif referral_code:
+    if referral_code and not user.referred_by and not user.has_paid:
         logger.info(
             "Mini App referral not applied (fallback): user_id=%s code=%s",
             telegram_id,
             referral_code,
         )
-        # Fallback на старый путь для уведомления
         await _activate_start_param_referral(
             app,
             telegram_id=telegram_id,
             telegram_user=telegram_user,
             start_param=resolved_start_param,
+        )
+    elif referral_code:
+        logger.debug(
+            "Mini App referral fallback skipped: user_id=%s code=%s referred_by=%s has_paid=%s",
+            telegram_id,
+            referral_code,
+            user.referred_by,
+            user.has_paid,
         )
     elif start_param_fallback and not payload.get("start_param"):
         logger.info(
