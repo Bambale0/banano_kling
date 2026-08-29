@@ -1,4 +1,3 @@
-# ruff: noqa: I001
 """Add explicit Lava Card and SBP payment methods to the Mini App checkout."""
 
 from __future__ import annotations
