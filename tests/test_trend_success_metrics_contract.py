@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -79,7 +80,7 @@ async def test_failed_launch_does_not_register_success_candidate(monkeypatch) ->
 
 
 def test_success_count_query_uses_completed_generation_rows() -> None:
-    source = open("bot/handlers/trend_success_compat.py", encoding="utf-8").read()
+    source = Path("bot/handlers/trend_success_compat.py").read_text(encoding="utf-8")
     assert "task_id TEXT PRIMARY KEY" in source
     assert "JOIN generation_tasks g ON g.task_id = r.task_id" in source
     assert "g.status = 'completed'" in source
