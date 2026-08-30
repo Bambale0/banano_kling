@@ -113,15 +113,18 @@ async def test_lava_recovers_dynamic_rub_amount_from_miniapp_package_context(
     assert captured["payload"]["amount"] == 250.0
 
 
-def test_miniapp_legacy_lava_actions_route_to_freekassa_checkout() -> None:
+def test_miniapp_separate_lava_actions_send_method_selectors() -> None:
     source = _read("bot/handlers/miniapp_lava_payment_methods_compat.py")
     handlers = _read("bot/handlers/__init__.py")
 
-    assert '"lava_card": FREEKASSA_CARD_RUB_METHOD_ID' in source
-    assert '"lava_sbp": FREEKASSA_SBP_METHOD_ID' in source
-    assert "freekassa_service.create_payment" in source
-    assert 'provider="freekassa"' in source
-    assert "miniapp_module.lava_service.create_invoice" not in source
+    assert '"lava_card": (None, "CARD")' in source
+    assert '"lava_sbp": ("PAY2ME", "SBP")' in source
+    assert '"requested_payment_method": payment_method' in source
+    assert "payment_provider=payment_provider" in source
+    assert "payment_method=payment_method" in source
+    assert "_allow_amount_fallback=False" in source
+    assert 'provider="lava"' in source
+    assert "freekassa_service.create_payment" not in source
     assert "install_miniapp_lava_payment_methods()" in handlers
 
 

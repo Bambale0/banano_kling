@@ -1,4 +1,4 @@
-"""Route Mini App Card/SBP actions through the active RUB checkout provider."""
+"""Add separate Lava Card and SBP actions to the Mini App checkout."""
 
 from __future__ import annotations
 
@@ -8,27 +8,12 @@ from typing import Any
 from aiohttp import web
 
 from bot.services.lava_service import normalize_lava_customer_email
-from bot.services.freekassa_service import (
-    FREEKASSA_CARD_RUB_METHOD_ID,
-    FREEKASSA_SBP_METHOD_ID,
-    freekassa_service,
-)
 
 
 _LAVA_MINIAPP_METHODS = {
-    "lava_card": FREEKASSA_CARD_RUB_METHOD_ID,
-    "lava_sbp": FREEKASSA_SBP_METHOD_ID,
+    "lava_card": (None, "CARD"),
+    "lava_sbp": ("PAY2ME", "SBP"),
 }
-
-
-def _request_ip(request: web.Request) -> str:
-    real_ip = str(request.headers.get("X-Real-IP") or "").strip()
-    if real_ip:
-        return real_ip
-    forwarded = str(request.headers.get("X-Forwarded-For") or "").strip()
-    if forwarded:
-        return forwarded.split(",", 1)[0].strip()
-    return str(request.remote or "").strip()
 
 
 def _payment_error_message(result: Any, *, default: str = "Failed to create payment") -> str:
@@ -44,7 +29,7 @@ def _payment_error_message(result: Any, *, default: str = "Failed to create paym
 
 
 def install_miniapp_lava_payment_methods() -> None:
-    """Keep legacy Mini App actions working after RUB checkout moved to KASSA."""
+    """Handle separate Lava UI actions with Lava PAY2ME method selectors."""
 
     import bot.miniapp as miniapp_module
 
@@ -60,9 +45,10 @@ def install_miniapp_lava_payment_methods() -> None:
         try:
             body = await request.json()
             raw_provider = str(body.get("provider") or "").strip().lower()
-            payment_system_id = _LAVA_MINIAPP_METHODS.get(raw_provider)
-            if not payment_system_id:
+            lava_method = _LAVA_MINIAPP_METHODS.get(raw_provider)
+            if not lava_method:
                 return await current_create_payment(request)
+            payment_provider, payment_method = lava_method
 
             package_id = body.get("package_id")
             if not package_id:
@@ -85,9 +71,20 @@ def install_miniapp_lava_payment_methods() -> None:
                     {"ok": False, "error": "Package not found"}, status=404
                 )
 
-            if not freekassa_service.api_enabled:
+            if not miniapp_module.lava_service.enabled:
                 return web.json_response(
-                    {"ok": False, "error": "KASSA временно недоступна"},
+                    {"ok": False, "error": "Lava not configured"}, status=500
+                )
+
+            offer_id, lava_currency = miniapp_module._miniapp_package_lava_offer_config(
+                package
+            )
+            if not offer_id:
+                return web.json_response(
+                    {
+                        "ok": False,
+                        "error": "Lava offer is not configured for package",
+                    },
                     status=500,
                 )
 
@@ -127,18 +124,41 @@ def install_miniapp_lava_payment_methods() -> None:
                     telegram_id,
                 )
 
-            customer_ip = _request_ip(request)
-            if not customer_ip:
+            result = await miniapp_module.lava_service.create_invoice(
+                email=customer_email,
+                offer_id=offer_id,
+                currency=lava_currency,
+                payment_provider=payment_provider,
+                payment_method=payment_method,
+                buyer_language="RU",
+                _allow_amount_fallback=False,
+                client_utm={
+                    "telegram_id": str(telegram_id),
+                    "order_id": order_id,
+                    "package_id": str(package_id),
+                    "requested_payment_method": payment_method,
+                },
+            )
+
+            if not result or not result.get("ok"):
                 return web.json_response(
-                    {"ok": False, "error": "Не удалось определить IP для оплаты"},
-                    status=400,
+                    {"ok": False, "error": _payment_error_message(result)},
+                    status=500,
                 )
 
-            created = await miniapp_module.create_transaction(
+            payment_id = miniapp_module.lava_service.extract_invoice_id(result)
+            payment_url = miniapp_module.lava_service.extract_payment_url(result)
+            if not payment_id or not payment_url:
+                return web.json_response(
+                    {"ok": False, "error": "Failed to get Lava payment link"},
+                    status=500,
+                )
+
+            await miniapp_module.create_transaction(
                 order_id=order_id,
                 user_id=user.id,
-                payment_id=order_id,
-                provider="freekassa",
+                payment_id=payment_id,
+                provider="lava",
                 credits=total_credits,
                 amount_rub=float(package["price_rub"]),
                 status="pending",
@@ -146,39 +166,6 @@ def install_miniapp_lava_payment_methods() -> None:
                 promo_code=promo.code if promo and promo_bonus > 0 else None,
                 promo_bonus_credits=promo_bonus,
             )
-            if not created:
-                return web.json_response(
-                    {"ok": False, "error": "Payment already exists"},
-                    status=409,
-                )
-
-            result = await freekassa_service.create_payment(
-                amount_rub=float(package["price_rub"]),
-                order_id=order_id,
-                description=f"Покупка {total_credits} бананов ({package['name']})",
-                return_url=miniapp_module.config.YOOKASSA_RETURN_URL
-                or miniapp_module.config.mini_app_url,
-                notification_url=miniapp_module.config.freekassa_notification_url,
-                email=customer_email,
-                customer_ip=customer_ip,
-                payment_system_id=payment_system_id,
-            )
-
-            if not result or not result.get("ok"):
-                await miniapp_module.update_transaction_status(order_id, "failed")
-                return web.json_response(
-                    {"ok": False, "error": _payment_error_message(result)},
-                    status=500,
-                )
-
-            payment_id = str(result.get("payment_id") or "").strip()
-            payment_url = str(result.get("payment_url") or "").strip()
-            if not payment_id or not payment_url:
-                await miniapp_module.update_transaction_status(order_id, "failed")
-                return web.json_response(
-                    {"ok": False, "error": "Failed to get KASSA payment link"},
-                    status=500,
-                )
 
             return web.json_response(
                 {
