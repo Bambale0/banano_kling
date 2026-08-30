@@ -1,4 +1,4 @@
-"""Add explicit Lava Card and SBP payment methods to the Mini App checkout."""
+"""Add separate Lava Card and SBP actions to the Mini App checkout."""
 
 from __future__ import annotations
 
@@ -29,11 +29,13 @@ def _payment_error_message(result: Any, *, default: str = "Failed to create paym
 
 
 def install_miniapp_lava_payment_methods() -> None:
-    """Handle explicit Lava payment methods without breaking legacy ``lava``.
+    """Handle separate Lava UI actions while using Lava's public invoice contract.
 
-    The legacy Mini App provider value ``lava`` keeps the hosted-checkout path.
-    New UI controls use ``lava_card`` and ``lava_sbp`` so the backend can pin the
-    exact Lava contract: PAY2ME + CARD or PAY2ME + SBP.
+    The Mini App exposes separate Card/SBP actions, but Lava's public v3 invoice
+    contract does not document a ``paymentMethod`` selector. Which RUB methods
+    are available on the hosted checkout is controlled by the creator account's
+    API-channel payment settings. The requested action is kept in UTM metadata
+    for diagnostics without sending unsupported invoice fields.
     """
 
     import bot.miniapp as miniapp_module
@@ -132,14 +134,12 @@ def install_miniapp_lava_payment_methods() -> None:
                 email=customer_email,
                 offer_id=offer_id,
                 currency=lava_currency,
-                payment_provider="PAY2ME",
-                payment_method=payment_method,
                 buyer_language="RU",
                 client_utm={
                     "telegram_id": str(telegram_id),
                     "order_id": order_id,
                     "package_id": str(package_id),
-                    "payment_method": payment_method,
+                    "requested_payment_method": payment_method,
                 },
             )
 
