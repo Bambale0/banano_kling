@@ -11,7 +11,7 @@ permissions:
   statuses: write
 
 concurrency:
-  group: tanya-production-v3
+  group: tanya-production-v4
   cancel-in-progress: true
 
 jobs:
