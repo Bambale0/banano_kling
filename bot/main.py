@@ -66,6 +66,7 @@ from bot.handlers.payments import (
     handle_yookassa_webhook,
     reconcile_lava_pending_transactions,
 )
+from bot.handlers.freekassa_payments import setup_freekassa_routes
 from bot.browser_auth import setup_browser_auth_routes
 from bot.feed_reference_media import setup_feed_reference_media_routes
 from bot.miniapp import setup_miniapp_routes
@@ -4538,6 +4539,7 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
     setup_browser_auth_routes(app)
     setup_feed_reference_media_routes(app)
     setup_miniapp_routes(app)
+    setup_freekassa_routes(app)
 
     # Вебхук Telegram
     async def telegram_webhook_handler(request: web.Request) -> web.Response:
