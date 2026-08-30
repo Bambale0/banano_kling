@@ -11,6 +11,10 @@ from __future__ import annotations
 from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
 
+from bot.services.trend_success_postgres_compat import (
+    install_trend_success_postgres_compat,
+)
+
 from .generation_started_ux_compat import install_generation_started_ux
 from .image_generation_fsm_compat import install_image_generation_fsm_compat
 from .pinterest_prompt_softening_compat import install_pinterest_prompt_softening
@@ -39,6 +43,11 @@ def install_repeat_run_confirm_compat(generation_module) -> None:
     # completions. Normalize it into the common provider_task_id contract and
     # keep local/provider IDs separate in the Mini App/Pinterest start notice.
     install_rendergrid_provider_id_compat()
+
+    # The PostgreSQL compatibility adapter intentionally ignores CREATE/ALTER
+    # statements issued through its aiosqlite-style execute() method. Install
+    # the raw-cursor schema bootstrap before trend metrics can query the table.
+    install_trend_success_postgres_compat()
 
     # A trend launch and its generation task are linked exactly once. Public
     # success counters are then derived from completed generation_tasks rows,
