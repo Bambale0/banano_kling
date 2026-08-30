@@ -1,10 +1,13 @@
-"""Add explicit Lava Card and SBP payment methods to the Mini App checkout."""
+"""Expose separate Lava Card and SBP actions in the Mini App checkout."""
 
 from __future__ import annotations
 
 from functools import wraps
+from typing import Any
 
 from aiohttp import web
+
+from bot.services.lava_service import normalize_lava_customer_email
 
 
 _LAVA_MINIAPP_METHODS = {
@@ -13,12 +16,44 @@ _LAVA_MINIAPP_METHODS = {
 }
 
 
-def install_miniapp_lava_payment_methods() -> None:
-    """Handle explicit Lava payment methods without breaking legacy ``lava``.
+def _payment_error_message(result: Any, *, default: str = "Не удалось создать платёж") -> str:
+    """Extract a human-readable Lava message from arbitrarily nested JSON."""
 
-    The legacy Mini App provider value ``lava`` keeps the hosted-checkout path.
-    New UI controls use ``lava_card`` and ``lava_sbp`` so the backend can pin the
-    exact Lava contract: PAY2ME + CARD or PAY2ME + SBP.
+    if isinstance(result, str):
+        message = result.strip()
+        if message and message.lower() != "[object object]":
+            return message
+        return default
+
+    if isinstance(result, dict):
+        for key in ("error", "message", "Message", "detail", "description", "raw"):
+            if key not in result:
+                continue
+            message = _payment_error_message(result.get(key), default="")
+            if message:
+                return message
+        for value in result.values():
+            message = _payment_error_message(value, default="")
+            if message:
+                return message
+
+    if isinstance(result, (list, tuple)):
+        for value in result:
+            message = _payment_error_message(value, default="")
+            if message:
+                return message
+
+    return default
+
+
+def install_miniapp_lava_payment_methods() -> None:
+    """Handle separate Card/SBP actions without relying on undocumented fields.
+
+    Lava exposes available RUB payment methods on its hosted checkout according
+    to the creator account's API-channel payment settings. The current public
+    ``POST /api/v3/invoice`` contract doesn't document ``paymentMethod``, so the
+    Mini App keeps distinct Card/SBP actions while invoice creation stays on the
+    supported contract. The requested action is preserved in UTM metadata.
     """
 
     import bot.miniapp as miniapp_module
@@ -92,37 +127,51 @@ def install_miniapp_lava_payment_methods() -> None:
             )
             total_credits = miniapp_module.total_package_credits(package, promo_bonus)
 
-            customer_email = str(body.get("customer_email") or "").strip()
+            raw_customer_email = str(body.get("customer_email") or "").strip()
+            customer_email = normalize_lava_customer_email(raw_customer_email)
             if not customer_email:
-                customer_email = miniapp_module.config.LAVA_DEFAULT_EMAIL
+                return web.json_response(
+                    {
+                        "ok": False,
+                        "error": "Укажите действующую почту для оплаты картой или через СБП",
+                    },
+                    status=400,
+                )
 
             result = await miniapp_module.lava_service.create_invoice(
                 email=customer_email,
                 offer_id=offer_id,
                 currency=lava_currency,
-                payment_provider="PAY2ME",
-                payment_method=payment_method,
+                amount=float(package["price_rub"]),
                 buyer_language="RU",
                 client_utm={
                     "telegram_id": str(telegram_id),
                     "order_id": order_id,
                     "package_id": str(package_id),
-                    "payment_method": payment_method,
+                    "requested_payment_method": payment_method,
                 },
             )
 
             if not result or not result.get("ok"):
+                message = _payment_error_message(result)
+                miniapp_module.logger.warning(
+                    "Lava invoice rejected user=%s package=%s requested_method=%s: %s",
+                    telegram_id,
+                    package_id,
+                    payment_method,
+                    message,
+                )
                 return web.json_response(
-                    {"ok": False, "error": result or "Failed to create payment"},
-                    status=500,
+                    {"ok": False, "error": message},
+                    status=502,
                 )
 
             payment_id = miniapp_module.lava_service.extract_invoice_id(result)
             payment_url = miniapp_module.lava_service.extract_payment_url(result)
             if not payment_id or not payment_url:
                 return web.json_response(
-                    {"ok": False, "error": "Failed to get Lava payment link"},
-                    status=500,
+                    {"ok": False, "error": "Lava не вернула ссылку на оплату"},
+                    status=502,
                 )
 
             await miniapp_module.create_transaction(
@@ -153,7 +202,7 @@ def install_miniapp_lava_payment_methods() -> None:
         except Exception as exc:
             return miniapp_module._miniapp_error_response(
                 exc,
-                log_message="Mini App explicit Lava payment creation failed",
+                log_message="Mini App Lava payment creation failed",
             )
 
     miniapp_module.miniapp_create_payment = create_payment_with_explicit_lava_method
