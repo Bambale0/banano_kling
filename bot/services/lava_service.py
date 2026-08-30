@@ -208,6 +208,7 @@ class LavaService:
         periodicity: str | None = None,
         client_utm: dict[str, Any] | None = None,
         _allow_product_fallback: bool = True,
+        _allow_amount_fallback: bool = True,
     ) -> dict[str, Any]:
         customer_email = normalize_lava_customer_email(email)
         normalized_currency = str(currency or "RUB").strip().upper() or "RUB"
@@ -225,7 +226,11 @@ class LavaService:
             }
 
         resolved_amount = amount
-        if resolved_amount is None and normalized_currency == "RUB":
+        if (
+            resolved_amount is None
+            and _allow_amount_fallback
+            and normalized_currency == "RUB"
+        ):
             resolved_amount = _rub_amount_from_package_context(client_utm)
 
         payload: dict[str, Any] = {
@@ -251,6 +256,26 @@ class LavaService:
             return response
 
         error_text = _lava_error_text(response)
+        if resolved_amount is not None and "not dynamic price" in error_text.lower():
+            logger.info(
+                "Retrying Lava invoice without dynamic amount: offer_id=%s currency=%s",
+                offer_id,
+                normalized_currency,
+            )
+            return await self.create_invoice(
+                email=customer_email,
+                offer_id=offer_id,
+                currency=normalized_currency,
+                amount=None,
+                payment_provider=payment_provider,
+                payment_method=payment_method,
+                buyer_language=buyer_language,
+                periodicity=periodicity,
+                client_utm=client_utm,
+                _allow_product_fallback=_allow_product_fallback,
+                _allow_amount_fallback=False,
+            )
+
         if "Product with offer id" not in error_text:
             return response
 
@@ -278,6 +303,7 @@ class LavaService:
             periodicity=periodicity,
             client_utm=client_utm,
             _allow_product_fallback=False,
+            _allow_amount_fallback=False,
         )
 
     async def resolve_offer_id_from_product_id(
