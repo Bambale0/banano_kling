@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Handlers for the Telegram bot.
 """
@@ -17,6 +16,8 @@ from bot.services.publication_scope_postgres_compat import (
 )
 
 from . import trends_compat as trends_compat_module
+from .banana_resolution_pricing_compat import install_banana_resolution_pricing
+from .banana_resolution_pricing_compat import router as banana_resolution_pricing_router
 from .feed_model_filter_compat import install_feed_model_filter_compat
 from .feed_model_filter_compat import router as feed_model_filter_compat_router
 from .miniapp_launch_revision_compat import install_miniapp_launch_revision_compat
@@ -95,6 +96,7 @@ from .trend_seedance_25_compat import install_trend_seedance_25_compat
 install_repeat_lookup_compat(generation_module, repeat_result_compat_module)
 install_repeat_run_confirm_compat(generation_module)
 install_pinterest_flow_contract_compat(generation_module)
+install_banana_resolution_pricing(admin_module)
 
 # Partner applications and moderation handlers must run before the legacy admin
 # router. Existing partners continue to use partner_agreed_at as the financial
@@ -102,6 +104,7 @@ install_pinterest_flow_contract_compat(generation_module)
 admin_router = Router()
 admin_router.include_router(partner_approval_admin_router)
 admin_router.include_router(admin_user_ban_router)
+admin_router.include_router(banana_resolution_pricing_router)
 admin_router.include_router(admin_module.router)
 
 # Keep payment safety fixes without changing the established user-facing flow.
@@ -202,6 +205,7 @@ common_router.include_router(legacy_common_router)
 
 __all__ = [
     "admin_router",
+    "banana_resolution_pricing_router",
     "batch_generation_router",
     "common_router",
     "feed_model_filter_compat_router",
