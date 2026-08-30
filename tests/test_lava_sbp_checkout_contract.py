@@ -48,42 +48,6 @@ async def test_dynamic_product_lookup_includes_hidden_lava_products(monkeypatch)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("payment_method", ["CARD", "SBP"])
-async def test_lava_rub_invoice_pins_requested_pay2me_method(
-    monkeypatch,
-    payment_method: str,
-) -> None:
-    from bot.services.lava_service import LavaService
-
-    service = LavaService("test-key")
-    captured: dict = {}
-
-    async def fake_request(method, path, payload=None, params=None):
-        captured.update(
-            {"method": method, "path": path, "payload": payload, "params": params}
-        )
-        return {"ok": True, "id": "invoice-1", "paymentUrl": "https://pay.lava.test/1"}
-
-    monkeypatch.setattr(service, "_request", fake_request)
-
-    result = await service.create_invoice(
-        email="buyer@gmail.com",
-        offer_id="rub-offer",
-        currency="RUB",
-        amount=100,
-        payment_provider="PAY2ME",
-        payment_method=payment_method,
-        buyer_language="RU",
-    )
-
-    assert result["ok"] is True
-    assert captured["payload"]["currency"] == "RUB"
-    assert captured["payload"]["amount"] == 100.0
-    assert captured["payload"]["paymentProvider"] == "PAY2ME"
-    assert captured["payload"]["paymentMethod"] == payment_method
-
-
-@pytest.mark.asyncio
 async def test_lava_recovers_dynamic_rub_amount_from_miniapp_package_context(
     monkeypatch,
 ) -> None:
@@ -113,16 +77,28 @@ async def test_lava_recovers_dynamic_rub_amount_from_miniapp_package_context(
     assert captured["payload"]["amount"] == 250.0
 
 
-def test_miniapp_explicit_lava_methods_are_installed() -> None:
+def test_miniapp_lava_actions_use_documented_invoice_contract() -> None:
     source = _read("bot/handlers/miniapp_lava_payment_methods_compat.py")
     handlers = _read("bot/handlers/__init__.py")
 
     assert '"lava_card": "CARD"' in source
     assert '"lava_sbp": "SBP"' in source
-    assert 'payment_provider="PAY2ME"' in source
-    assert "payment_method=payment_method" in source
+    assert 'amount=float(package["price_rub"])' in source
+    assert '"requested_payment_method": payment_method' in source
+    assert 'payment_provider="PAY2ME"' not in source
+    assert "payment_method=payment_method" not in source
     assert 'provider="lava"' in source
     assert "install_miniapp_lava_payment_methods()" in handlers
+
+
+def test_lava_errors_are_flattened_before_json_response() -> None:
+    source = _read("bot/handlers/miniapp_lava_payment_methods_compat.py")
+    payment_api = _read("frontend/miniapp-v0/lib/payment-api.ts")
+
+    assert "def _payment_error_message" in source
+    assert '{"ok": False, "error": result or "Failed to create payment"}' not in source
+    assert "paymentErrorMessage(statusPayload.error)" in payment_api
+    assert "[object object]" in payment_api.lower()
 
 
 def test_miniapp_payment_ui_has_separate_card_and_sbp_actions() -> None:
