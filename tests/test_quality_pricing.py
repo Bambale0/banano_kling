@@ -1,22 +1,24 @@
-"""Characterization tests for quality pricing (P2-NEW, P3-04).
+"""Regression tests for config-driven Banana image resolution pricing."""
 
-These are characterization tests — they pin the ACTUAL behavior
-so we can safely refactor. If the business logic changes, update
-the assertions deliberately.
+import json
+from pathlib import Path
 
-Covers:
-- QUALITY_COSTS values are numeric and non-negative
-- All supported resolution keys resolve correctly
-- Default quality fallback
-- Labels match costs
-"""
+from bot.quality_pricing import (
+    DEFAULT_QUALITY,
+    QUALITY_COSTS,
+    QUALITY_LABELS,
+    refresh_quality_pricing,
+)
 
-from bot.quality_pricing import QUALITY_COSTS, DEFAULT_QUALITY, QUALITY_LABELS
+ROOT = Path(__file__).resolve().parents[1]
 
 
-class TestQualityCostsAreNumeric:
-    """Fractional credit prices are supported by the current tariff model."""
+def _configured_quality_costs() -> dict[str, float]:
+    payload = json.loads((ROOT / "data" / "price.json").read_text(encoding="utf-8"))
+    return payload["costs_reference"]["image_quality_costs"]
 
+
+class TestQualityCostsAreConfigDriven:
     def test_all_costs_are_numeric(self):
         for quality, cost in QUALITY_COSTS.items():
             assert isinstance(cost, (int, float)) and not isinstance(cost, bool), (
@@ -24,25 +26,39 @@ class TestQualityCostsAreNumeric:
                 "expected a numeric tariff"
             )
 
-    def test_2k_cost(self):
-        assert QUALITY_COSTS["2K"] == 2.5
-        assert QUALITY_COSTS["2k"] == 2.5
-
-    def test_4k_cost(self):
-        assert QUALITY_COSTS["4K"] == 3.5
-        assert QUALITY_COSTS["4k"] == 3.5
+    def test_prices_match_tariff_config(self):
+        configured = _configured_quality_costs()
+        assert configured == {"1K": 2.5, "2K": 5, "4K": 7}
+        for quality, expected in configured.items():
+            assert QUALITY_COSTS[quality] == expected
+            assert QUALITY_COSTS[quality.lower()] == expected
 
     def test_default_quality_is_2k(self):
         assert DEFAULT_QUALITY == "2K"
 
+    def test_refresh_mutates_existing_mapping_in_place(self):
+        mapping_id = id(QUALITY_COSTS)
+        labels_id = id(QUALITY_LABELS)
+        try:
+            refreshed = refresh_quality_pricing(
+                {
+                    "costs_reference": {
+                        "image_quality_costs": {"1K": 1.5, "2K": 4, "4K": 8}
+                    }
+                }
+            )
+            assert refreshed == {"1K": 1.5, "2K": 4.0, "4K": 8.0}
+            assert id(QUALITY_COSTS) == mapping_id
+            assert id(QUALITY_LABELS) == labels_id
+            assert QUALITY_COSTS["2K"] == 4
+            assert QUALITY_LABELS["4K"] == "4K качество — 8 🍌"
+        finally:
+            refresh_quality_pricing()
+
 
 class TestQualityCostsInvariants:
-    """Business invariants that should always hold."""
-
     def test_4k_not_cheaper_than_2k(self):
-        assert QUALITY_COSTS["4K"] >= QUALITY_COSTS["2K"], (
-            "4K should not be cheaper than 2K"
-        )
+        assert QUALITY_COSTS["4K"] >= QUALITY_COSTS["2K"]
 
     def test_no_negative_costs(self):
         for cost in QUALITY_COSTS.values():
@@ -53,29 +69,30 @@ class TestQualityCostsInvariants:
         assert set(QUALITY_COSTS.keys()) == expected_keys
 
     def test_labels_match_costs(self):
-        """Labels should display the correct cost values."""
         for quality, label in QUALITY_LABELS.items():
             cost = QUALITY_COSTS.get(quality)
             assert cost is not None, f"Label {quality} has no matching cost"
-            assert str(cost) in label, (
-                f"Label for {quality}: '{label}' doesn't display cost {cost}"
-            )
+            assert f"{float(cost):g}" in label
 
 
 class TestQualityCostEdgeCases:
-    """Edge cases for quality cost lookups."""
-
-    def test_unknown_quality_default_2(self):
-        """Unknown quality keys should default to 2 (not silent None/float)."""
-        # This mimics the behavior in generation.py: QUALITY_COSTS.get(img_quality, 2)
-        for unknown_key in ["", "HD", "8K", "auto", "1080p"]:
-            cost = QUALITY_COSTS.get(unknown_key, 2)
-            assert isinstance(cost, int), (
-                f"Fallback for {unknown_key!r} should be int, got {type(cost).__name__}"
+    def test_invalid_config_values_fall_back_safely(self):
+        try:
+            refresh_quality_pricing(
+                {
+                    "costs_reference": {
+                        "image_quality_costs": {"1K": -1, "2K": "bad", "4K": False}
+                    }
+                }
             )
-            assert cost == 2
+            assert QUALITY_COSTS["1K"] == 2.5
+            assert QUALITY_COSTS["2K"] == 2.5
+            assert QUALITY_COSTS["4K"] == 3.5
+        finally:
+            refresh_quality_pricing()
 
     def test_quality_pricing_module_imports_cleanly(self):
-        """Module import should not raise (no circular imports)."""
-        import bot.quality_pricing  # noqa: F811
+        import bot.quality_pricing
+
         assert hasattr(bot.quality_pricing, "QUALITY_COSTS")
+        assert hasattr(bot.quality_pricing, "refresh_quality_pricing")
