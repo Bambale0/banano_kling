@@ -49,7 +49,7 @@ async def test_dynamic_product_lookup_includes_hidden_lava_products(monkeypatch)
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("payment_method", ["CARD", "SBP"])
-async def test_lava_rub_invoice_pins_requested_pay2me_method(
+async def test_lava_service_can_forward_optional_provider_fields(
     monkeypatch,
     payment_method: str,
 ) -> None:
@@ -113,14 +113,15 @@ async def test_lava_recovers_dynamic_rub_amount_from_miniapp_package_context(
     assert captured["payload"]["amount"] == 250.0
 
 
-def test_miniapp_explicit_lava_methods_are_installed() -> None:
+def test_miniapp_separate_lava_actions_use_public_invoice_contract() -> None:
     source = _read("bot/handlers/miniapp_lava_payment_methods_compat.py")
     handlers = _read("bot/handlers/__init__.py")
 
     assert '"lava_card": "CARD"' in source
     assert '"lava_sbp": "SBP"' in source
-    assert 'payment_provider="PAY2ME"' in source
-    assert "payment_method=payment_method" in source
+    assert '"requested_payment_method": payment_method' in source
+    assert 'payment_provider="PAY2ME"' not in source
+    assert "payment_method=payment_method" not in source
     assert 'provider="lava"' in source
     assert "install_miniapp_lava_payment_methods()" in handlers
 
