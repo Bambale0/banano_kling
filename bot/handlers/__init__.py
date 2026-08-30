@@ -14,6 +14,7 @@ from bot.services.prompt_fragment_coalescer import PromptFragmentCoalescingMiddl
 from bot.services.publication_scope_postgres_compat import (
     install_publication_scope_postgres_compat,
 )
+from bot.services.referral_antifraud_disabled import disable_referral_antifraud
 
 from . import trends_compat as trends_compat_module
 from .banana_resolution_pricing_compat import install_banana_resolution_pricing
@@ -48,6 +49,10 @@ from .trends_compat import router as trends_compat_router
 
 install_publication_scope_postgres_compat()
 install_publication_scope_compat()
+# Referral blocklists, rate limits and burst auto-bans are intentionally off in
+# production. Install the override before admin/common/generation import and
+# before any user-facing referral handler can run.
+disable_referral_antifraud()
 
 from . import admin as admin_module
 from . import common as common_module
