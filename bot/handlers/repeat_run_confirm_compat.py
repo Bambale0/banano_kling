@@ -15,6 +15,7 @@ from .generation_started_ux_compat import install_generation_started_ux
 from .image_generation_fsm_compat import install_image_generation_fsm_compat
 from .pinterest_prompt_softening_compat import install_pinterest_prompt_softening
 from .rendergrid_provider_id_compat import install_rendergrid_provider_id_compat
+from .trend_success_compat import install_trend_success_compat
 
 router = Router()
 _INSTALLED = False
@@ -38,6 +39,11 @@ def install_repeat_run_confirm_compat(generation_module) -> None:
     # completions. Normalize it into the common provider_task_id contract and
     # keep local/provider IDs separate in the Mini App/Pinterest start notice.
     install_rendergrid_provider_id_compat()
+
+    # A trend launch and its generation task are linked exactly once. Public
+    # success counters are then derived from completed generation_tasks rows,
+    # so provider callback retries cannot inflate the metric.
+    install_trend_success_compat()
 
     # The same priority router can accept another reference while the image flow
     # is waiting for a prompt. The runtime patch also releases the real FSM as
