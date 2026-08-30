@@ -145,6 +145,15 @@ jobs:
           set -Eeuo pipefail
           PROJECT_DIR="$1"
           EXPECTED_SHA="$2"
+          RUNTIME_PRICE_FILE="data/price.json"
+          runtime_price_backup=""
+
+          cleanup_runtime_price_backup() {
+            if [ -n "${runtime_price_backup:-}" ] && [ -f "$runtime_price_backup" ]; then
+              rm -f "$runtime_price_backup"
+            fi
+          }
+          trap cleanup_runtime_price_backup EXIT
 
           command -v git >/dev/null
           command -v docker >/dev/null
@@ -163,10 +172,30 @@ jobs:
           }
 
           git update-index -q --refresh || true
-          if ! git diff --quiet || ! git diff --cached --quiet; then
-            echo "Tracked local changes block automatic deployment:" >&2
+          if ! git diff --cached --quiet; then
+            echo "Staged local changes block automatic deployment:" >&2
             git status --short >&2
             exit 1
+          fi
+
+          dirty_paths="$(git diff --name-only --diff-filter=ACDMRTUXB)"
+          other_dirty_paths="$(
+            printf '%s\n' "$dirty_paths" \
+              | sed '/^$/d' \
+              | grep -vxF "$RUNTIME_PRICE_FILE" \
+              || true
+          )"
+          if [ -n "$other_dirty_paths" ]; then
+            echo "Tracked local changes outside $RUNTIME_PRICE_FILE block automatic deployment:" >&2
+            printf '%s\n' "$other_dirty_paths" >&2
+            git status --short >&2
+            exit 1
+          fi
+
+          if printf '%s\n' "$dirty_paths" | grep -qxF "$RUNTIME_PRICE_FILE"; then
+            runtime_price_backup="$(mktemp)"
+            cp -- "$RUNTIME_PRICE_FILE" "$runtime_price_backup"
+            echo "Preserving runtime pricing from $RUNTIME_PRICE_FILE"
           fi
 
           git fetch --prune origin tanyapi
@@ -179,6 +208,13 @@ jobs:
           git switch tanyapi
           git reset --hard "$EXPECTED_SHA"
           [ "$(git rev-parse HEAD)" = "$EXPECTED_SHA" ]
+
+          if [ -n "$runtime_price_backup" ]; then
+            cp -- "$runtime_price_backup" "$RUNTIME_PRICE_FILE"
+            rm -f "$runtime_price_backup"
+            runtime_price_backup=""
+            echo "Restored runtime pricing to $RUNTIME_PRICE_FILE"
+          fi
 
           run_root() {
             if [ "$(id -u)" -eq 0 ]; then
@@ -292,6 +328,15 @@ jobs:
           set -Eeuo pipefail
           PROJECT_DIR="$1"
           EXPECTED_SHA="$2"
+          RUNTIME_PRICE_FILE="data/price.json"
+          runtime_price_backup=""
+
+          cleanup_runtime_price_backup() {
+            if [ -n "${runtime_price_backup:-}" ] && [ -f "$runtime_price_backup" ]; then
+              rm -f "$runtime_price_backup"
+            fi
+          }
+          trap cleanup_runtime_price_backup EXIT
 
           command -v git >/dev/null
           command -v docker >/dev/null
@@ -310,10 +355,30 @@ jobs:
           }
 
           git update-index -q --refresh || true
-          if ! git diff --quiet || ! git diff --cached --quiet; then
-            echo "Tracked local changes block automatic deployment:" >&2
+          if ! git diff --cached --quiet; then
+            echo "Staged local changes block automatic deployment:" >&2
             git status --short >&2
             exit 1
+          fi
+
+          dirty_paths="$(git diff --name-only --diff-filter=ACDMRTUXB)"
+          other_dirty_paths="$(
+            printf '%s\n' "$dirty_paths" \
+              | sed '/^$/d' \
+              | grep -vxF "$RUNTIME_PRICE_FILE" \
+              || true
+          )"
+          if [ -n "$other_dirty_paths" ]; then
+            echo "Tracked local changes outside $RUNTIME_PRICE_FILE block automatic deployment:" >&2
+            printf '%s\n' "$other_dirty_paths" >&2
+            git status --short >&2
+            exit 1
+          fi
+
+          if printf '%s\n' "$dirty_paths" | grep -qxF "$RUNTIME_PRICE_FILE"; then
+            runtime_price_backup="$(mktemp)"
+            cp -- "$RUNTIME_PRICE_FILE" "$runtime_price_backup"
+            echo "Preserving runtime pricing from $RUNTIME_PRICE_FILE"
           fi
 
           git fetch --prune origin tanyapi
@@ -327,6 +392,13 @@ jobs:
           git reset --hard "$EXPECTED_SHA"
           actual_sha="$(git rev-parse HEAD)"
           [ "$actual_sha" = "$EXPECTED_SHA" ]
+
+          if [ -n "$runtime_price_backup" ]; then
+            cp -- "$runtime_price_backup" "$RUNTIME_PRICE_FILE"
+            rm -f "$runtime_price_backup"
+            runtime_price_backup=""
+            echo "Restored runtime pricing to $RUNTIME_PRICE_FILE"
+          fi
 
           bash scripts/deploy_backend_docker.sh deploy
           bash scripts/deploy_backend_docker.sh status
