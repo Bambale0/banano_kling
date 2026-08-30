@@ -1,11 +1,6 @@
-from pathlib import Path
-
-
-WORKFLOW = Path(".github/workflows/deploy-production.yml")
-
-
 def _source() -> str:
-    return WORKFLOW.read_text(encoding="utf-8")
+    with open(".github/workflows/deploy-production.yml", encoding="utf-8") as workflow:
+        return workflow.read()
 
 
 def test_production_deploy_preserves_only_runtime_price_file() -> None:
