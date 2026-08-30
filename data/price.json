@@ -75,16 +75,21 @@
     "image_models": {
       "gemini_2_5_flash": 5,
       "gemini_3_pro": 5,
-      "banana_2": 2.5,
+      "banana_2": 5,
       "nano-banana-2-lite": 1,
       "z_image_turbo": 5,
       "seedream": 4,
       "seedream_45": 1.5,
       "flux_pro": 2,
-      "nano-banana-pro": 2.5,
+      "nano-banana-pro": 5,
       "seedream_edit": 1.5,
       "grok_imagine_i2i": 2,
       "wan_27": 2
+    },
+    "image_quality_costs": {
+      "1K": 2.5,
+      "2K": 5,
+      "4K": 7
     },
     "video_models": {
       "v3_std": {
@@ -267,9 +272,9 @@
       "kling_v3_omni": 8,
       "z_image_turbo_lora": 3,
       "wanx_lora": 15,
-      "nanobanana": 2.5,
-      "banana_pro": 2.5,
-      "banana_2": 2.5,
+      "nanobanana": 5,
+      "banana_pro": 5,
+      "banana_2": 5,
       "nano-banana-2-lite": 1,
       "seedream": 4,
       "seedream_edit": 1.5,
@@ -281,9 +286,9 @@
     "base_costs": {
       "gemini_2_5_flash": 5,
       "gemini_3_pro": 5,
-      "banana_2": 2.5,
+      "banana_2": 5,
       "nano-banana-2-lite": 1,
-      "nano-banana-pro": 2.5,
+      "nano-banana-pro": 5,
       "seedream": 4,
       "seedream_edit": 1.5,
       "grok_imagine_i2i": 3,
