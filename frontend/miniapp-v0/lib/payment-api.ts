@@ -1,6 +1,36 @@
 import type { CreatePaymentResponse, PaymentProvider } from './types'
 import { getApiBasePath, getInitData, getStartParamFallback } from './api'
 
+function paymentErrorMessage(value: unknown): string {
+  if (typeof value === 'string') {
+    const message = value.trim()
+    if (message && message.toLowerCase() !== '[object object]') return message
+    return ''
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const message = paymentErrorMessage(item)
+      if (message) return message
+    }
+    return ''
+  }
+
+  if (value && typeof value === 'object') {
+    const source = value as Record<string, unknown>
+    for (const key of ['error', 'message', 'Message', 'detail', 'description', 'raw']) {
+      const message = paymentErrorMessage(source[key])
+      if (message) return message
+    }
+    for (const item of Object.values(source)) {
+      const message = paymentErrorMessage(item)
+      if (message) return message
+    }
+  }
+
+  return ''
+}
+
 export async function createPayment(payload: {
   packageId: string
   provider: PaymentProvider
@@ -38,9 +68,9 @@ export async function createPayment(payload: {
     throw new Error('Платёжный сервис вернул некорректный ответ')
   }
 
-  const statusPayload = data as { ok?: boolean; error?: string }
+  const statusPayload = data as { ok?: boolean; error?: unknown }
   if (!response.ok || statusPayload.ok === false) {
-    throw new Error(statusPayload.error || 'Не удалось создать платёж')
+    throw new Error(paymentErrorMessage(statusPayload.error) || 'Не удалось создать платёж')
   }
 
   return data as CreatePaymentResponse
