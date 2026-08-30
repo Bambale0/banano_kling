@@ -19,10 +19,26 @@ _PERFORMANCE_INDEXES_READY = False
 _PERFORMANCE_INDEXES_LOCK: asyncio.Lock | None = None
 
 _PERFORMANCE_INDEXES = (
-    "CREATE INDEX IF NOT EXISTS idx_generation_history_user_id ON generation_history(user_id)",
-    "CREATE INDEX IF NOT EXISTS idx_transactions_user_status_created ON transactions(user_id, status, created_at DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_users_referred_by ON users(referred_by)",
-    "CREATE INDEX IF NOT EXISTS idx_partner_withdrawals_user_created ON partner_withdrawals(user_id, created_at DESC)",
+    (
+        "generation_history",
+        ("user_id",),
+        "CREATE INDEX IF NOT EXISTS idx_generation_history_user_id ON generation_history(user_id)",
+    ),
+    (
+        "transactions",
+        ("user_id", "status", "created_at"),
+        "CREATE INDEX IF NOT EXISTS idx_transactions_user_status_created ON transactions(user_id, status, created_at DESC)",
+    ),
+    (
+        "users",
+        ("referred_by",),
+        "CREATE INDEX IF NOT EXISTS idx_users_referred_by ON users(referred_by)",
+    ),
+    (
+        "partner_withdrawals",
+        ("user_id", "created_at"),
+        "CREATE INDEX IF NOT EXISTS idx_partner_withdrawals_user_created ON partner_withdrawals(user_id, created_at DESC)",
+    ),
 )
 
 
@@ -72,8 +88,29 @@ def _get_performance_indexes_lock() -> asyncio.Lock:
     return _PERFORMANCE_INDEXES_LOCK
 
 
+async def _table_has_columns(
+    cursor,
+    table_name: str,
+    required_columns: tuple[str, ...],
+) -> bool:
+    """Return whether a relation on the active search path has all required columns."""
+    await cursor.execute(
+        """
+        SELECT attname
+        FROM pg_attribute
+        WHERE attrelid = to_regclass(%s)
+          AND attnum > 0
+          AND NOT attisdropped
+        """,
+        (table_name,),
+    )
+    rows = await cursor.fetchall()
+    available_columns = {str(row[0]) for row in rows}
+    return set(required_columns).issubset(available_columns)
+
+
 async def _ensure_performance_indexes(conn) -> None:
-    """Install indexes used by admin user/partner lookups once per process."""
+    """Install supported indexes used by admin user/partner lookups once per process."""
     global _PERFORMANCE_INDEXES_READY
     if _PERFORMANCE_INDEXES_READY:
         return
@@ -82,7 +119,18 @@ async def _ensure_performance_indexes(conn) -> None:
         if _PERFORMANCE_INDEXES_READY:
             return
         async with conn.cursor() as cursor:
-            for statement in _PERFORMANCE_INDEXES:
+            for table_name, required_columns, statement in _PERFORMANCE_INDEXES:
+                if not await _table_has_columns(
+                    cursor,
+                    table_name,
+                    required_columns,
+                ):
+                    logger.info(
+                        "Skipping performance index for legacy schema: table=%s columns=%s",
+                        table_name,
+                        ",".join(required_columns),
+                    )
+                    continue
                 await cursor.execute(statement)
         await conn.commit()
         _PERFORMANCE_INDEXES_READY = True

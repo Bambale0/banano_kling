@@ -93,7 +93,12 @@ export interface PaymentPackage {
   description?: string
 }
 
-export type PaymentProvider = 'telegram_stars' | 'yookassa' | 'lava'
+export type PaymentProvider =
+  | 'telegram_stars'
+  | 'yookassa'
+  | 'lava'
+  | 'lava_card'
+  | 'lava_sbp'
 
 export interface CreatePaymentResponse {
   ok: true

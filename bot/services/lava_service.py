@@ -69,6 +69,27 @@ def _lava_error_text(response: dict[str, Any]) -> str:
     return raw if isinstance(raw, str) else ""
 
 
+def _rub_amount_from_package_context(client_utm: dict[str, Any] | None) -> float | None:
+    """Recover a Mini App dynamic Lava amount from the package pricing source."""
+
+    if not isinstance(client_utm, dict):
+        return None
+    package_id = str(client_utm.get("package_id") or "").strip()
+    if not package_id:
+        return None
+
+    from bot.services.preset_manager import preset_manager
+
+    package = preset_manager.get_package(package_id)
+    if not isinstance(package, dict):
+        return None
+    try:
+        amount = float(package.get("price_rub"))
+    except (TypeError, ValueError):
+        return None
+    return amount if amount > 0 else None
+
+
 class LavaService:
     """lava.top Public API client.
 
@@ -189,11 +210,12 @@ class LavaService:
         _allow_product_fallback: bool = True,
     ) -> dict[str, Any]:
         customer_email = normalize_lava_customer_email(email)
+        normalized_currency = str(currency or "RUB").strip().upper() or "RUB"
         if not customer_email:
             logger.error(
                 "Blocked Lava invoice without a real customer email: offer_id=%s currency=%s",
                 offer_id,
-                currency,
+                normalized_currency,
             )
             return {
                 "ok": False,
@@ -202,13 +224,17 @@ class LavaService:
                 "error": "Для оплаты Lava требуется реальная почта покупателя",
             }
 
+        resolved_amount = amount
+        if resolved_amount is None and normalized_currency == "RUB":
+            resolved_amount = _rub_amount_from_package_context(client_utm)
+
         payload: dict[str, Any] = {
             "email": customer_email,
             "offerId": offer_id,
-            "currency": currency,
+            "currency": normalized_currency,
         }
-        if amount is not None:
-            payload["amount"] = float(amount)
+        if resolved_amount is not None:
+            payload["amount"] = float(resolved_amount)
         if payment_provider:
             payload["paymentProvider"] = payment_provider
         if payment_method:
@@ -230,7 +256,7 @@ class LavaService:
 
         resolved_offer_id = await self.resolve_offer_id_from_product_id(
             product_id=offer_id,
-            currency=currency,
+            currency=normalized_currency,
         )
         if not resolved_offer_id or resolved_offer_id == offer_id:
             return response
@@ -239,13 +265,13 @@ class LavaService:
             "Resolved Lava productId=%s to offerId=%s for currency=%s",
             offer_id,
             resolved_offer_id,
-            currency,
+            normalized_currency,
         )
         return await self.create_invoice(
             email=customer_email,
             offer_id=resolved_offer_id,
-            currency=currency,
-            amount=amount,
+            currency=normalized_currency,
+            amount=resolved_amount,
             payment_provider=payment_provider,
             payment_method=payment_method,
             buyer_language=buyer_language,
@@ -268,7 +294,11 @@ class LavaService:
         max_pages = 20
 
         for _ in range(max_pages):
-            response = await self._request("GET", next_path)
+            response = await self._request(
+                "GET",
+                next_path,
+                params={"feedVisibility": "ALL"},
+            )
             if not response.get("ok"):
                 return None
 
@@ -359,7 +389,6 @@ class LavaService:
         value = self._find_first(response, ("contractId", "contract_id"))
         if value:
             return str(value)
-        # Если contractId нет на верхнем уровне, пробуем внутри data / result
         for container_name in ("data", "result"):
             container = response.get(container_name)
             if isinstance(container, dict):

@@ -20,6 +20,7 @@ from . import trends_compat as trends_compat_module
 from .feed_model_filter_compat import install_feed_model_filter_compat
 from .feed_model_filter_compat import router as feed_model_filter_compat_router
 from .miniapp_launch_revision_compat import install_miniapp_launch_revision_compat
+from .miniapp_lava_payment_methods_compat import install_miniapp_lava_payment_methods
 from .miniapp_regression_safety import install_miniapp_regression_safety
 from .miniapp_video_continuity_compat import install_miniapp_video_continuity_compat
 from .own_profile_feed_compat import install_own_profile_feed_compat
@@ -185,6 +186,9 @@ install_miniapp_regression_safety()
 # Route safety must wrap add_post before trend/miniapp routes are registered.
 # The trend route itself must be inserted before Mini App's API catch-all.
 install_trend_route_compat()
+# Mini App checkout keeps legacy `lava`, while explicit UI choices route Card
+# and SBP to the exact Lava PAY2ME payment method.
+install_miniapp_lava_payment_methods()
 common_router = Router()
 common_router.include_router(partner_approval_user_router)
 common_router.include_router(trend_video_compat_router)
