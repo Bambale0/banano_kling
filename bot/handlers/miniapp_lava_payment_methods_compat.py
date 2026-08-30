@@ -3,14 +3,29 @@
 from __future__ import annotations
 
 from functools import wraps
+from typing import Any
 
 from aiohttp import web
+
+from bot.services.lava_service import normalize_lava_customer_email
 
 
 _LAVA_MINIAPP_METHODS = {
     "lava_card": "CARD",
     "lava_sbp": "SBP",
 }
+
+
+def _payment_error_message(result: Any, *, default: str = "Failed to create payment") -> str:
+    if isinstance(result, str) and result.strip():
+        return result.strip()
+    if isinstance(result, dict):
+        for key in ("error", "message", "Message", "raw"):
+            value = result.get(key)
+            message = _payment_error_message(value, default="")
+            if message:
+                return message
+    return default
 
 
 def install_miniapp_lava_payment_methods() -> None:
@@ -92,9 +107,26 @@ def install_miniapp_lava_payment_methods() -> None:
             )
             total_credits = miniapp_module.total_package_credits(package, promo_bonus)
 
-            customer_email = str(body.get("customer_email") or "").strip()
+            raw_customer_email = str(body.get("customer_email") or "").strip()
+            customer_email = normalize_lava_customer_email(raw_customer_email)
             if not customer_email:
-                customer_email = miniapp_module.config.LAVA_DEFAULT_EMAIL
+                return web.json_response(
+                    {
+                        "ok": False,
+                        "error": "Укажите действующую почту для оплаты картой или через СБП",
+                    },
+                    status=400,
+                )
+
+            try:
+                from bot.handlers.miniapp_regression_safety import _save_payment_email
+
+                customer_email = await _save_payment_email(telegram_id, customer_email)
+            except Exception:
+                miniapp_module.logger.exception(
+                    "Failed to save Mini App Lava payment email user=%s",
+                    telegram_id,
+                )
 
             result = await miniapp_module.lava_service.create_invoice(
                 email=customer_email,
@@ -113,7 +145,7 @@ def install_miniapp_lava_payment_methods() -> None:
 
             if not result or not result.get("ok"):
                 return web.json_response(
-                    {"ok": False, "error": result or "Failed to create payment"},
+                    {"ok": False, "error": _payment_error_message(result)},
                     status=500,
                 )
 
