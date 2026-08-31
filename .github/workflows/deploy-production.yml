@@ -183,10 +183,11 @@ jobs:
             printf '%s\n' "$dirty_paths" \
               | sed '/^$/d' \
               | grep -vxF "$RUNTIME_PRICE_FILE" \
+              | grep -vE '^tests/' \
               || true
           )"
           if [ -n "$other_dirty_paths" ]; then
-            echo "Tracked local changes outside $RUNTIME_PRICE_FILE block automatic deployment:" >&2
+            echo "Tracked runtime changes outside $RUNTIME_PRICE_FILE block automatic deployment:" >&2
             printf '%s\n' "$other_dirty_paths" >&2
             git status --short >&2
             exit 1
@@ -368,10 +369,11 @@ jobs:
             printf '%s\n' "$dirty_paths" \
               | sed '/^$/d' \
               | grep -vxF "$RUNTIME_PRICE_FILE" \
+              | grep -vE '^tests/' \
               || true
           )"
           if [ -n "$other_dirty_paths" ]; then
-            echo "Tracked local changes outside $RUNTIME_PRICE_FILE block automatic deployment:" >&2
+            echo "Tracked runtime changes outside $RUNTIME_PRICE_FILE block automatic deployment:" >&2
             printf '%s\n' "$other_dirty_paths" >&2
             git status --short >&2
             exit 1
