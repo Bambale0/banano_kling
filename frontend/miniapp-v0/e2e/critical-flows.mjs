@@ -369,26 +369,17 @@ try {
   })
   await page.getByText('Curated Video', { exact: true }).waitFor()
 
-  // Payment E2E: email -> explicit Card/SBP provider -> Telegram WebApp.openLink.
+  // Payment E2E: email -> unified Lava checkout -> Telegram WebApp.openLink.
   await page.locator('header button').last().click()
-  await page.getByLabel('Почта для карты и СБП').fill('Buyer2026@Mail.ru')
+  await page.getByLabel('Почта для оплаты Lava').fill('Buyer2026@Mail.ru')
 
-  await page.getByRole('button', { name: 'Картой', exact: true }).click()
+  await page.getByRole('button', { name: 'Lava — карта / СБП', exact: true }).click()
   await page.waitForFunction(() => (
     Array.isArray(window.__openedLinks)
       && window.__openedLinks.length >= 1
       && window.__openedLinks[0] === 'https://pay.example/e2e'
   ))
-  assert.equal(paymentPayload?.provider, 'lava_card')
-  assert.equal(paymentPayload?.customer_email, 'buyer2026@mail.ru')
-
-  await page.getByRole('button', { name: 'СБП', exact: true }).click()
-  await page.waitForFunction(() => (
-    Array.isArray(window.__openedLinks)
-      && window.__openedLinks.length >= 2
-      && window.__openedLinks[1] === 'https://pay.example/e2e'
-  ))
-  assert.equal(paymentPayload?.provider, 'lava_sbp')
+  assert.equal(paymentPayload?.provider, 'lava')
   assert.equal(paymentPayload?.customer_email, 'buyer2026@mail.ru')
   await page.getByRole('button', { name: 'Закрыть пополнение' }).click()
 
