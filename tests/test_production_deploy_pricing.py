@@ -36,3 +36,12 @@ def test_runtime_price_is_restored_after_exact_sha_reset():
 
     assert first_restore > first_reset
     assert second_restore > second_reset
+
+
+def test_test_only_server_drift_does_not_block_exact_sha_deploy():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    assert workflow.count("grep -vE '^tests/'") == 2
+    assert workflow.count(
+        'echo "Tracked runtime changes outside $RUNTIME_PRICE_FILE block automatic deployment:"'
+    ) == 2
