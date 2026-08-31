@@ -3,11 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import html
-import hashlib
-import hmac
 import logging
-import re
-import time
 from decimal import Decimal
 from typing import Any
 
@@ -20,8 +16,6 @@ from aiohttp import web
 from bot.config import config
 from bot.database import (
     create_miniapp_notification,
-    create_transaction,
-    get_or_create_user,
     get_telegram_id_by_user_id,
     get_transaction_by_order,
     update_transaction_payment_id,
@@ -46,8 +40,6 @@ from bot.payment_utils import (
 )
 from bot.services.cryptobot_service import cryptobot_service
 from bot.services.freekassa_service import (
-    FREEKASSA_CARD_RUB_METHOD_ID,
-    FREEKASSA_SBP_METHOD_ID,
     freekassa_service,
     normalize_amount,
 )
@@ -61,71 +53,29 @@ FREEKASSA_RECONCILE_INTERVAL_SECONDS = 5 * 60
 FREEKASSA_RECONCILE_BATCH_SIZE = 100
 FREEKASSA_BOT_RETURN_URL = "https://t.me/Neuromixx_bot"
 FREEKASSA_CHECKOUT_PATH = "/freekassa/checkout"
-_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 
-def _checkout_signature(order_id: str, method_id: int) -> str:
-    message = f"{order_id}:{method_id}".encode("utf-8")
-    return hmac.new(
-        freekassa_service.secret_word_2.encode("utf-8"),
-        message,
-        hashlib.sha256,
-    ).hexdigest()
+class _CallbackDataProxy:
+    """Delegate a callback while replacing only its routing payload."""
 
+    def __init__(self, callback: types.CallbackQuery, data: str) -> None:
+        self._callback = callback
+        self.data = data
 
-def _checkout_url(order_id: str, method_id: int) -> str:
-    host = config.WEBHOOK_HOST.rstrip("/")
-    signature = _checkout_signature(order_id, method_id)
-    return f"{host}{FREEKASSA_CHECKOUT_PATH}?o={order_id}&i={method_id}&s={signature}"
-
-
-def _valid_checkout_signature(order_id: str, method_id: int, signature: str) -> bool:
-    return hmac.compare_digest(signature, _checkout_signature(order_id, method_id))
-
-
-def _checkout_form(order_id: str, method_id: int, signature: str, error: str = "") -> str:
-    action = html.escape(FREEKASSA_CHECKOUT_PATH, quote=True)
-    error_html = f'<p class="error">{html.escape(error)}</p>' if error else ""
-    return f"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>KASSA</title>
-<style>body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#101116;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}}main{{width:min(88vw,420px);padding:28px;border:1px solid #343641;border-radius:22px;background:#1b1d24}}h1{{margin:0 0 10px}}p{{color:#b8bbc6;line-height:1.45}}label{{display:block;margin:24px 0 8px}}input{{box-sizing:border-box;width:100%;padding:14px;border:1px solid #454854;border-radius:12px;background:#111218;color:#fff;font-size:16px}}button{{width:100%;margin-top:18px;padding:15px;border:0;border-radius:12px;background:#ffbf32;color:#17130a;font-size:16px;font-weight:700}}.error{{color:#ff7979}}</style></head>
-<body><main><h1>KASSA</h1><p>Укажите реальную почту для создания платежа и получения чека.</p>{error_html}
-<form method="post" action="{action}"><input type="hidden" name="o" value="{html.escape(order_id, quote=True)}"><input type="hidden" name="i" value="{method_id}"><input type="hidden" name="s" value="{html.escape(signature, quote=True)}"><label for="email">Email</label><input id="email" name="email" type="email" autocomplete="email" required><button type="submit">Перейти к оплате</button></form></main></body></html>"""
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._callback, name)
 
 
 async def handle_freekassa_checkout(request: web.Request) -> web.Response:
-    values = request.query if request.method == "GET" else await request.post()
-    order_id = str(values.get("o") or "").strip()
-    signature = str(values.get("s") or "").strip()
-    try:
-        method_id = int(values.get("i") or 0)
-    except (TypeError, ValueError):
-        method_id = 0
-    if method_id not in {FREEKASSA_CARD_RUB_METHOD_ID, FREEKASSA_SBP_METHOD_ID} or not order_id or not _valid_checkout_signature(order_id, method_id, signature):
-        raise web.HTTPForbidden(text="Invalid checkout link")
-    transaction = await get_transaction_by_order(order_id)
-    if not transaction or transaction.provider != "freekassa" or transaction.status != "pending":
-        raise web.HTTPNotFound(text="Payment is not available")
-    if request.method == "GET":
-        return web.Response(text=_checkout_form(order_id, method_id, signature), content_type="text/html")
-
-    email = str(values.get("email") or "").strip()
-    if not _EMAIL_RE.fullmatch(email):
-        return web.Response(text=_checkout_form(order_id, method_id, signature, "Проверьте email."), content_type="text/html", status=400)
-    customer_ip = _request_ip(request)
-    if not customer_ip:
-        return web.Response(text=_checkout_form(order_id, method_id, signature, "Не удалось определить IP."), content_type="text/html", status=400)
-    result = await freekassa_service.create_payment(
-        amount_rub=transaction.amount_rub,
-        order_id=order_id,
-        email=email,
-        customer_ip=customer_ip,
-        payment_system_id=method_id,
+    logger.info("Blocked disabled FreeKassa checkout request path=%s", request.path)
+    return web.Response(
+        text="""<!doctype html><html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Оплата отключена</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#101116;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{width:min(88vw,420px);padding:28px;border:1px solid #343641;border-radius:18px;background:#1b1d24}p{color:#b8bbc6;line-height:1.45}</style></head>
+<body><main><h1>Оплата отключена</h1><p>Этот способ оплаты больше не используется. Вернитесь в бота и выберите оплату через Lava.</p></main></body></html>""",
+        content_type="text/html",
+        status=410,
     )
-    if not result.get("ok"):
-        return web.Response(text=_checkout_form(order_id, method_id, signature, "KASSA временно не создала платёж. Попробуйте ещё раз."), content_type="text/html", status=502)
-    await update_transaction_payment_id(order_id, str(result["payment_id"]))
-    raise web.HTTPSeeOther(location=str(result["payment_url"]))
 
 
 def _payment_return_page(*, title: str, message: str) -> str:
@@ -235,35 +185,6 @@ def _provider_keyboard(
     return builder.as_markup()
 
 
-def _confirmation_keyboard(
-    payment_url: str, order_id: str
-) -> types.InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.button(text="💳 Перейти к оплате", url=payment_url)
-    builder.button(
-        text="✅ Проверить оплату",
-        callback_data=f"check_freekassa_{order_id}",
-    )
-    builder.button(text="❌ Отмена", callback_data="cancel_payment")
-    builder.adjust(1)
-    return builder.as_markup()
-
-
-def _freekassa_method_keyboard(package_id: str) -> types.InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.button(
-        text="💳 Карта РФ — KASSA",
-        callback_data=f"freekassa_card_{package_id}",
-    )
-    builder.button(
-        text="⚡ СБП — KASSA",
-        callback_data=f"freekassa_sbp_{package_id}",
-    )
-    builder.button(text="◀️ Назад", callback_data=f"choose_pay_{package_id}")
-    builder.adjust(1)
-    return builder.as_markup()
-
-
 def _request_ip(request: web.Request) -> str:
     real_ip = str(request.headers.get("X-Real-IP") or "").strip()
     if real_ip:
@@ -355,10 +276,15 @@ async def choose_freekassa_method(callback: types.CallbackQuery):
     if not preset_manager.get_package(package_id):
         await callback.answer("Пакет не найден", show_alert=True)
         return
+    builder = InlineKeyboardBuilder()
+    builder.button(text="💳 Картой", callback_data=f"buy_lava_card_{package_id}")
+    builder.button(text="⚡ СБП", callback_data=f"buy_lava_sbp_{package_id}")
+    builder.button(text="◀️ Назад", callback_data=f"choose_pay_{package_id}")
+    builder.adjust(1)
     await callback.message.edit_text(
-        "🌍 <b>KASSA — выберите способ оплаты</b>\n\n"
-        "Почту для чека платёжная страница запросит после перехода.",
-        reply_markup=_freekassa_method_keyboard(package_id),
+        "💳 <b>Выберите способ оплаты Lava</b>\n\n"
+        "Карта и СБП оформляются через Lava.",
+        reply_markup=builder.as_markup(),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -370,83 +296,22 @@ async def choose_freekassa_method(callback: types.CallbackQuery):
 async def initiate_freekassa_payment(
     callback: types.CallbackQuery, state: FSMContext
 ):
-    """Create a signed KASSA checkout for the explicitly selected method."""
+    """Keep old FreeKassa/YooKassa buttons working by routing them to Lava."""
 
-    if not freekassa_service.api_enabled:
-        await callback.message.edit_text(
-            "KASSA временно недоступна. Попробуйте другой способ оплаты.",
-            reply_markup=get_back_keyboard("menu_topup"),
-        )
-        await callback.answer()
-        return
-
+    target_mode = "card"
     if callback.data.startswith("freekassa_sbp_"):
         prefix = "freekassa_sbp_"
-        payment_system_id = FREEKASSA_SBP_METHOD_ID
-        payment_method_label = "СБП"
+        target_mode = "sbp"
     elif callback.data.startswith("freekassa_card_"):
         prefix = "freekassa_card_"
-        payment_system_id = FREEKASSA_CARD_RUB_METHOD_ID
-        payment_method_label = "карта РФ"
     else:
         prefix = "buy_yookassa_"
-        payment_system_id = FREEKASSA_CARD_RUB_METHOD_ID
-        payment_method_label = "карта РФ"
     package_id = callback.data.replace(prefix, "", 1)
-    package = preset_manager.get_package(package_id)
-    if not package:
-        await callback.answer("Пакет не найден", show_alert=True)
-        return
 
-    promo = await _get_selected_promo(state)
-    package_bonus = package_bonus_credits(package)
-    promo_bonus = _promo_bonus_for_package(promo, package)
-    total_credits = total_package_credits(package, promo_bonus)
-    order_id = f"{callback.from_user.id}_{int(time.time() * 1000)}_{package_id}"
+    from bot.handlers.lava_checkout import handle_lava_checkout_entry
 
-    user = await get_or_create_user(callback.from_user.id)
-    created = await create_transaction(
-        order_id=order_id,
-        user_id=user.id,
-        payment_id=order_id,
-        provider="freekassa",
-        credits=total_credits,
-        amount_rub=float(package["price_rub"]),
-        status="pending",
-        promo_code_id=promo.id if promo and promo_bonus > 0 else None,
-        promo_code=promo.code if promo and promo_bonus > 0 else None,
-        promo_bonus_credits=promo_bonus,
-    )
-    if not created:
-        await callback.message.edit_text(
-            "Не удалось сохранить платёж. Выберите пакет и попробуйте ещё раз.",
-            reply_markup=get_back_keyboard("menu_topup"),
-        )
-        await callback.answer()
-        return
-
-    payment_url = _checkout_url(order_id, payment_system_id)
-
-    bonus_text = ""
-    if package_bonus > 0:
-        bonus_text += f"\n• Бонус пакета: <code>{package_bonus}</code> бананов"
-    if promo and promo_bonus > 0:
-        bonus_text += (
-            f"\n• Промокод <code>{html.escape(promo.code)}</code>: "
-            f"+<code>{promo_bonus}</code> бананов"
-        )
-
-    await callback.message.edit_text(
-        "💳 <b>Оплата через KASSA</b>\n"
-        f"• Способ: <code>{payment_method_label}</code>\n"
-        f"• Пакет: <code>{html.escape(str(package['name']))}</code>\n"
-        f"• Бананов: <code>{total_credits}</code>{bonus_text}\n"
-        f"• Сумма: <code>{package['price_rub']}</code> ₽\n\n"
-        "Нажмите кнопку ниже. После оплаты бананы начислятся автоматически.",
-        reply_markup=_confirmation_keyboard(payment_url, order_id),
-        parse_mode="HTML",
-    )
-    await callback.answer()
+    proxy = _CallbackDataProxy(callback, f"buy_lava_{target_mode}_{package_id}")
+    await handle_lava_checkout_entry(proxy, state)
 
 
 @router.callback_query(F.data.startswith("check_freekassa_"))

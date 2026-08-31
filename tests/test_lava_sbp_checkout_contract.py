@@ -153,6 +153,34 @@ def test_text_bot_sbp_uses_lava_checkout_not_freekassa() -> None:
     assert "_allow_amount_fallback=False" in source
 
 
+def test_old_freekassa_callbacks_are_routed_to_lava_checkout() -> None:
+    source = _read("bot/handlers/freekassa_payments.py")
+    callback_block = source.split(
+        "async def initiate_freekassa_payment", 1
+    )[1].split("@router.callback_query(F.data.startswith(\"check_freekassa_\"))", 1)[0]
+
+    assert (
+        'proxy = _CallbackDataProxy(callback, f"buy_lava_{target_mode}_{package_id}")'
+        in callback_block
+    )
+    assert "await handle_lava_checkout_entry(proxy, state)" in callback_block
+    assert "freekassa_service.create_payment" not in callback_block
+    assert "provider=\"freekassa\"" not in callback_block
+    assert "_checkout_url(" not in callback_block
+
+
+def test_freekassa_checkout_endpoint_no_longer_creates_payments() -> None:
+    source = _read("bot/handlers/freekassa_payments.py")
+    checkout_block = source.split("async def handle_freekassa_checkout", 1)[1].split(
+        "def _payment_return_page", 1
+    )[0]
+
+    assert "status=410" in checkout_block
+    assert "freekassa_service.create_payment" not in checkout_block
+    assert "HTTPSeeOther" not in checkout_block
+    assert "Этот способ оплаты больше не используется" in checkout_block
+
+
 def test_miniapp_ios_payment_uses_same_window_navigation() -> None:
     source = _read("frontend/miniapp-v0/components/balance-sheet.tsx")
 
