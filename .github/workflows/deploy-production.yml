@@ -192,7 +192,9 @@ jobs:
             exit 1
           fi
 
-          if printf '%s\n' "$dirty_paths" | grep -qxF "$RUNTIME_PRICE_FILE"; then
+          # Production pricing is mutable runtime state managed by admins.
+          # Preserve it on every deploy, not only when Git currently marks it dirty.
+          if [ -f "$RUNTIME_PRICE_FILE" ]; then
             runtime_price_backup="$(mktemp)"
             cp -- "$RUNTIME_PRICE_FILE" "$runtime_price_backup"
             echo "Preserving runtime pricing from $RUNTIME_PRICE_FILE"
@@ -375,7 +377,9 @@ jobs:
             exit 1
           fi
 
-          if printf '%s\n' "$dirty_paths" | grep -qxF "$RUNTIME_PRICE_FILE"; then
+          # Production pricing is mutable runtime state managed by admins.
+          # Preserve it on every deploy, not only when Git currently marks it dirty.
+          if [ -f "$RUNTIME_PRICE_FILE" ]; then
             runtime_price_backup="$(mktemp)"
             cp -- "$RUNTIME_PRICE_FILE" "$runtime_price_backup"
             echo "Preserving runtime pricing from $RUNTIME_PRICE_FILE"
