@@ -14,6 +14,8 @@ _LAVA_MINIAPP_METHODS = {
     "lava_card": ("rub", None, "CARD"),
     "lava_sbp": ("rub", "PAY2ME", "SBP"),
     "lava_foreign": ("foreign", None, None),
+    "lava_foreign_card": ("foreign", "UNLIMIT", "CARD"),
+    "lava_foreign_paypal": ("foreign", "PAYPAL", None),
 }
 
 

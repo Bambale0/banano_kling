@@ -104,6 +104,8 @@ export type PaymentProvider =
   | 'lava_card'
   | 'lava_sbp'
   | 'lava_foreign'
+  | 'lava_foreign_card'
+  | 'lava_foreign_paypal'
 
 export interface CreatePaymentResponse {
   ok: true

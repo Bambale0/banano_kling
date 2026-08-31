@@ -36,10 +36,20 @@ router = Router()
 LAVA_CHECKOUT_SBP = "sbp"
 LAVA_CHECKOUT_CARD = "card"
 LAVA_CHECKOUT_FOREIGN = "foreign"
+LAVA_CHECKOUT_FOREIGN_CARD = "foreign_card"
+LAVA_CHECKOUT_FOREIGN_PAYPAL = "foreign_paypal"
+LAVA_CHECKOUT_FOREIGN_MODES = {
+    LAVA_CHECKOUT_FOREIGN,
+    LAVA_CHECKOUT_FOREIGN_CARD,
+    LAVA_CHECKOUT_FOREIGN_PAYPAL,
+}
 
 LAVA_RUB_SBP_PAYMENT_PROVIDER = "PAY2ME"
 LAVA_RUB_SBP_PAYMENT_METHOD = "SBP"
 LAVA_RUB_CARD_PAYMENT_METHOD = "CARD"
+LAVA_FOREIGN_CARD_PAYMENT_PROVIDER = "UNLIMIT"
+LAVA_FOREIGN_CARD_PAYMENT_METHOD = "CARD"
+LAVA_FOREIGN_PAYPAL_PAYMENT_PROVIDER = "PAYPAL"
 
 # Backward-compatible names used by existing tests and integrations.
 LAVA_RUB_PAYMENT_PROVIDER = LAVA_RUB_SBP_PAYMENT_PROVIDER
@@ -132,7 +142,13 @@ def parse_lava_checkout_callback(value: Any) -> tuple[str, str]:
     """Return checkout mode and package ID from current and legacy callbacks."""
 
     payload = str(value or "").removeprefix("buy_lava_")
-    for mode in (LAVA_CHECKOUT_SBP, LAVA_CHECKOUT_CARD, LAVA_CHECKOUT_FOREIGN):
+    for mode in (
+        LAVA_CHECKOUT_FOREIGN_PAYPAL,
+        LAVA_CHECKOUT_FOREIGN_CARD,
+        LAVA_CHECKOUT_SBP,
+        LAVA_CHECKOUT_CARD,
+        LAVA_CHECKOUT_FOREIGN,
+    ):
         prefix = f"{mode}_"
         if payload.startswith(prefix):
             return mode, payload.removeprefix(prefix)
@@ -145,6 +161,14 @@ def parse_lava_checkout_callback(value: Any) -> tuple[str, str]:
 def _lava_checkout_params(mode: str) -> tuple[str | None, str, str]:
     if mode == LAVA_CHECKOUT_CARD:
         return None, LAVA_RUB_CARD_PAYMENT_METHOD, "Картой"
+    if mode == LAVA_CHECKOUT_FOREIGN_CARD:
+        return (
+            LAVA_FOREIGN_CARD_PAYMENT_PROVIDER,
+            LAVA_FOREIGN_CARD_PAYMENT_METHOD,
+            "Зарубежная карта",
+        )
+    if mode == LAVA_CHECKOUT_FOREIGN_PAYPAL:
+        return LAVA_FOREIGN_PAYPAL_PAYMENT_PROVIDER, "", "PayPal"
     if mode == LAVA_CHECKOUT_FOREIGN:
         return None, "", "Зарубежная оплата и СНГ"
     return (
@@ -188,8 +212,12 @@ def _payment_options_keyboard(
             f" · ${lava_foreign_price_usd:g}" if lava_foreign_price_usd else ""
         )
         builder.button(
-            text=f"🌍 Зарубежная оплата и СНГ{price_suffix}",
-            callback_data=f"buy_lava_foreign_{package_id}",
+            text=f"🌍 Зарубежная карта{price_suffix}",
+            callback_data=f"buy_lava_foreign_card_{package_id}",
+        )
+        builder.button(
+            text=f"🌍 PayPal{price_suffix}",
+            callback_data=f"buy_lava_foreign_paypal_{package_id}",
         )
     if stars:
         builder.button(
@@ -226,7 +254,7 @@ def _package_lava_checkout_offer_config(
     package: dict[str, Any],
     mode: str,
 ) -> tuple[str, str]:
-    if mode == LAVA_CHECKOUT_FOREIGN:
+    if mode in LAVA_CHECKOUT_FOREIGN_MODES:
         return _package_lava_foreign_offer_config(package)
     return _package_lava_offer_config(package)
 
@@ -242,7 +270,7 @@ def _validate_lava_package(
     offer_id, currency = _package_lava_checkout_offer_config(package, mode)
     if not offer_id:
         return None, "Этот способ оплаты пока недоступен для выбранного пакета."
-    expected_currency = "USD" if mode == LAVA_CHECKOUT_FOREIGN else "RUB"
+    expected_currency = "USD" if mode in LAVA_CHECKOUT_FOREIGN_MODES else "RUB"
     if str(currency or "").upper() != expected_currency:
         logger.error(
             "Blocked Lava checkout with unexpected currency: package=%s mode=%s currency=%s expected=%s",
@@ -258,6 +286,10 @@ def _validate_lava_package(
 def _checkout_title(mode: str) -> str:
     if mode == LAVA_CHECKOUT_CARD:
         return "💳 <b>Оплата картой</b>"
+    if mode == LAVA_CHECKOUT_FOREIGN_CARD:
+        return "🌍 <b>Зарубежная карта</b>"
+    if mode == LAVA_CHECKOUT_FOREIGN_PAYPAL:
+        return "🌍 <b>PayPal</b>"
     if mode == LAVA_CHECKOUT_FOREIGN:
         return "🌍 <b>Зарубежная оплата и СНГ</b>"
     return "⚡ <b>Оплата по СБП</b>"

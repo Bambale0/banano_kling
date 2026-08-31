@@ -151,6 +151,8 @@ def test_miniapp_separate_lava_actions_send_method_selectors() -> None:
     assert '"lava_card": ("rub", None, "CARD")' in source
     assert '"lava_sbp": ("rub", "PAY2ME", "SBP")' in source
     assert '"lava_foreign": ("foreign", None, None)' in source
+    assert '"lava_foreign_card": ("foreign", "UNLIMIT", "CARD")' in source
+    assert '"lava_foreign_paypal": ("foreign", "PAYPAL", None)' in source
     assert "_miniapp_package_lava_foreign_offer_config(package)" in source
     assert '"requested_payment_method": payment_method' in source
     assert "payment_provider=payment_provider" in source
@@ -167,24 +169,32 @@ def test_miniapp_payment_ui_has_separate_card_and_sbp_actions() -> None:
 
     assert "handleTopup(pkg.id, 'lava_card')" in source
     assert "handleTopup(pkg.id, 'lava_sbp')" in source
-    assert "handleTopup(pkg.id, 'lava_foreign')" in source
+    assert "handleTopup(pkg.id, 'lava_foreign_card')" in source
+    assert "handleTopup(pkg.id, 'lava_foreign_paypal')" in source
     assert "Картой" in source
     assert "СБП" in source
     assert "Зарубежная оплата и СНГ" in source
+    assert "Зарубежная карта" in source
+    assert "PayPal" in source
     assert "Карта / СБП" not in source
     assert "'lava_card'" in types_source
     assert "'lava_sbp'" in types_source
     assert "'lava_foreign'" in types_source
+    assert "'lava_foreign_card'" in types_source
+    assert "'lava_foreign_paypal'" in types_source
 
 
 def test_text_bot_sbp_uses_lava_checkout_not_freekassa() -> None:
     source = _read("bot/handlers/lava_checkout.py")
 
     assert 'callback_data=f"buy_lava_sbp_{package_id}"' in source
-    assert 'callback_data=f"buy_lava_foreign_{package_id}"' in source
+    assert 'callback_data=f"buy_lava_foreign_card_{package_id}"' in source
+    assert 'callback_data=f"buy_lava_foreign_paypal_{package_id}"' in source
     assert "Зарубежная оплата и СНГ" in source
+    assert "Зарубежная карта" in source
+    assert "PayPal" in source
     assert "_package_lava_foreign_offer_config(package)" in source
-    assert 'expected_currency = "USD" if mode == LAVA_CHECKOUT_FOREIGN else "RUB"' in source
+    assert 'expected_currency = "USD" if mode in LAVA_CHECKOUT_FOREIGN_MODES else "RUB"' in source
     assert 'callback_data=f"freekassa_sbp_{package_id}"' not in source
     assert "freekassa_service" not in source
     assert "СБП теперь оформляется через KASSA" not in source
