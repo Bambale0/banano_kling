@@ -3,7 +3,7 @@ def _source() -> str:
         return workflow.read()
 
 
-def test_production_deploy_preserves_only_runtime_price_file() -> None:
+def test_production_deploy_preserves_runtime_price_and_blocks_runtime_drift() -> None:
     source = _source()
 
     # Both deployment paths (SSH and the nuromix fallback) must preserve the
@@ -12,12 +12,13 @@ def test_production_deploy_preserves_only_runtime_price_file() -> None:
     assert source.count('echo "Preserving runtime pricing from $RUNTIME_PRICE_FILE"') == 2
     assert source.count('echo "Restored runtime pricing to $RUNTIME_PRICE_FILE"') == 2
 
-    # Staged edits are never accepted, and any unstaged tracked edit other than
-    # data/price.json must still abort deployment.
+    # Staged edits are never accepted. Unstaged runtime/config/code edits still
+    # abort deployment, while test-only drift may be discarded by exact-SHA reset.
     assert source.count("if ! git diff --cached --quiet; then") == 2
     assert source.count('grep -vxF "$RUNTIME_PRICE_FILE"') == 2
+    assert source.count("grep -vE '^tests/'") == 2
     assert source.count(
-        'Tracked local changes outside $RUNTIME_PRICE_FILE block automatic deployment:'
+        'Tracked runtime changes outside $RUNTIME_PRICE_FILE block automatic deployment:'
     ) == 2
 
 
