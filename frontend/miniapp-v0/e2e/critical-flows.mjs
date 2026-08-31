@@ -371,7 +371,7 @@ try {
 
   // Payment E2E: email -> explicit Card/SBP provider -> Telegram WebApp.openLink.
   await page.locator('header button').last().click()
-  await page.getByLabel('Почта для карты и СБП').fill('Buyer2026@Mail.ru')
+  await page.getByLabel('Почта для оплаты Lava').fill('Buyer2026@Mail.ru')
 
   await page.getByRole('button', { name: 'Картой', exact: true }).click()
   await page.waitForFunction(() => (
