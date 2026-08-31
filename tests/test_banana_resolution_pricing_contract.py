@@ -14,9 +14,9 @@ def test_banana_resolution_prices_live_in_price_config() -> None:
     config = json.loads(_read("data/price.json"))
     costs = config["costs_reference"]
 
-    assert costs["image_quality_costs"] == {"1K": 2.5, "2K": 5, "4K": 7}
-    assert costs["image_models"]["nano-banana-pro"] == 5
-    assert costs["image_models"]["banana_2"] == 5
+    assert costs["image_quality_costs"] == {"1K": 1.5, "2K": 1.5, "4K": 2}
+    assert costs["image_models"]["nano-banana-pro"] == 1.5
+    assert costs["image_models"]["banana_2"] == 1.5
 
 
 def test_runtime_quality_pricing_is_config_driven() -> None:

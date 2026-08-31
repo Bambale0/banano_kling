@@ -182,7 +182,7 @@ FREEPIK_BASE_URL = "https://api.freepik.com/v1"
 | **Fallback** | `NANO_BANANA_PRO_FALLBACK_API_KEY` → `api.apiyi.com` (Gemini-compat, модель `gemini-3-pro-image-preview`) |
 | **Эндпоинт KIE** | `POST /api/v1/jobs/createTask` |
 | **Загрузка файлов** | Через `KieFileUploadService` → `/api/file-stream-upload` |
-| **Цена** | 5🍌 |
+| **Цена** | 1.5🍌 для 1K/2K, 2🍌 для 4K |
 
 #### 2.2.2. Nano Banana 2 (banana_2 / nano_banana_2)
 
@@ -193,7 +193,7 @@ FREEPIK_BASE_URL = "https://api.freepik.com/v1"
 | **Сервис** | `NanoBanana2Service.create_task()` |
 | **Primary** | `KIE_AI_API_KEY` → `https://api.kie.ai` |
 | **Fallback** | `NANOBANANA2_FALLBACK_API_KEY` → `api.apiyi.com` (Gemini-compat, модель `gemini-3.1-flash-image-preview`) |
-| **Цена** | 5🍌 |
+| **Цена** | 1.5🍌 для 1K/2K, 2🍌 для 4K |
 
 #### 2.2.3. GPT Image 2 (flux_pro)
 
@@ -446,8 +446,8 @@ NON_KLING_MODELS = {
 
 | internal_id | стоимость (🍌) |
 |---|---|
-| `nanobanana`, `banana_pro`, `banana_2` | 5 |
-| `nano_banana`, `nano_banana_pro`, `nano_banana_2` | 5 |
+| `nanobanana`, `banana_pro`, `banana_2` | 1.5 для 1K/2K, 2 для 4K |
+| `nano_banana`, `nano_banana_pro`, `nano_banana_2` | 1.5 для 1K/2K, 2 для 4K |
 | `seedream`, `seedream_edit` | 4 |
 | `grok_imagine_i2i`, `grok` | 3 |
 | `gpt_image_2`, `gpt_image` | 5 |

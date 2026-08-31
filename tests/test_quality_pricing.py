@@ -28,7 +28,7 @@ class TestQualityCostsAreConfigDriven:
 
     def test_prices_match_tariff_config(self):
         configured = _configured_quality_costs()
-        assert configured == {"1K": 2.5, "2K": 5, "4K": 7}
+        assert configured == {"1K": 1.5, "2K": 1.5, "4K": 2}
         for quality, expected in configured.items():
             assert QUALITY_COSTS[quality] == expected
             assert QUALITY_COSTS[quality.lower()] == expected
