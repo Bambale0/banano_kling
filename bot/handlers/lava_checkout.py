@@ -33,7 +33,6 @@ from bot.states import PaymentStates
 logger = logging.getLogger(__name__)
 router = Router()
 
-LAVA_CHECKOUT_RUB = "rub"
 LAVA_CHECKOUT_SBP = "sbp"
 LAVA_CHECKOUT_CARD = "card"
 LAVA_CHECKOUT_FOREIGN = "foreign"
@@ -146,30 +145,22 @@ def parse_lava_checkout_callback(value: Any) -> tuple[str, str]:
     for mode in (
         LAVA_CHECKOUT_FOREIGN_PAYPAL,
         LAVA_CHECKOUT_FOREIGN_CARD,
+        LAVA_CHECKOUT_SBP,
+        LAVA_CHECKOUT_CARD,
         LAVA_CHECKOUT_FOREIGN,
     ):
         prefix = f"{mode}_"
         if payload.startswith(prefix):
             return mode, payload.removeprefix(prefix)
 
-    rub_prefix = f"{LAVA_CHECKOUT_RUB}_"
-    if payload.startswith(rub_prefix):
-        return LAVA_CHECKOUT_RUB, payload.removeprefix(rub_prefix)
-
-    # Already-sent Card/SBP buttons are compatibility aliases. They now open the
-    # same unrestricted RUB invoice so Lava can show every enabled payment method.
-    for legacy_mode in (LAVA_CHECKOUT_SBP, LAVA_CHECKOUT_CARD):
-        prefix = f"{legacy_mode}_"
-        if payload.startswith(prefix):
-            return LAVA_CHECKOUT_RUB, payload.removeprefix(prefix)
-
-    # Old buy_lava_<package> callbacks also use the unified RUB checkout.
-    return LAVA_CHECKOUT_RUB, payload
+    # Old already-sent buttons used buy_lava_<package>. They historically opened
+    # SBP, so keep them working as Lava SBP.
+    return LAVA_CHECKOUT_SBP, payload
 
 
 def _lava_checkout_params(mode: str) -> tuple[str | None, str, str]:
-    if mode in {LAVA_CHECKOUT_RUB, LAVA_CHECKOUT_CARD, LAVA_CHECKOUT_SBP}:
-        return None, "", "Lava — все способы"
+    if mode == LAVA_CHECKOUT_CARD:
+        return None, LAVA_RUB_CARD_PAYMENT_METHOD, "Картой"
     if mode == LAVA_CHECKOUT_FOREIGN_CARD:
         return (
             LAVA_FOREIGN_CARD_PAYMENT_PROVIDER,
@@ -180,20 +171,25 @@ def _lava_checkout_params(mode: str) -> tuple[str | None, str, str]:
         return LAVA_FOREIGN_PAYPAL_PAYMENT_PROVIDER, "", "PayPal"
     if mode == LAVA_CHECKOUT_FOREIGN:
         return None, "", "Зарубежная оплата и СНГ"
-    return None, "", "Lava — все способы"
+    return (
+        LAVA_RUB_SBP_PAYMENT_PROVIDER,
+        LAVA_RUB_SBP_PAYMENT_METHOD,
+        "СБП",
+    )
 
 
 def _payment_options_keyboard(
     package_id: str,
     *,
     stars: bool,
-    lava_rub: bool,
+    lava_card: bool,
+    lava_sbp: bool,
     lava_foreign: bool,
     lava_foreign_price_usd: float | None,
     crypto: bool,
     freekassa: bool,
 ) -> types.InlineKeyboardMarkup:
-    """Show one Lava checkout per currency plus other enabled payment providers."""
+    """Show every enabled payment method as an independent option."""
 
     builder = InlineKeyboardBuilder()
     if freekassa:
@@ -201,18 +197,27 @@ def _payment_options_keyboard(
             text="🇷🇺 РФ — KASSA (резерв)",
             callback_data=f"buy_freekassa_{package_id}",
         )
-    if lava_rub:
+    if lava_card:
         builder.button(
-            text="💳 Lava — карта / СБП",
-            callback_data=f"buy_lava_rub_{package_id}",
+            text="💳 Картой",
+            callback_data=f"buy_lava_card_{package_id}",
+        )
+    if lava_sbp:
+        builder.button(
+            text="⚡ СБП",
+            callback_data=f"buy_lava_sbp_{package_id}",
         )
     if lava_foreign:
         price_suffix = (
             f" · ${lava_foreign_price_usd:g}" if lava_foreign_price_usd else ""
         )
         builder.button(
-            text=f"🌍 USD{price_suffix}",
-            callback_data=f"buy_lava_foreign_{package_id}",
+            text=f"🌍 Зарубежная карта{price_suffix}",
+            callback_data=f"buy_lava_foreign_card_{package_id}",
+        )
+        builder.button(
+            text=f"🌍 PayPal{price_suffix}",
+            callback_data=f"buy_lava_foreign_paypal_{package_id}",
         )
     if stars:
         builder.button(
@@ -256,7 +261,7 @@ def _package_lava_checkout_offer_config(
 
 def _validate_lava_package(
     package_id: str,
-    mode: str = LAVA_CHECKOUT_RUB,
+    mode: str = LAVA_CHECKOUT_SBP,
 ) -> tuple[dict[str, Any] | None, str | None]:
     package = preset_manager.get_package(package_id)
     if not package:
@@ -279,13 +284,15 @@ def _validate_lava_package(
 
 
 def _checkout_title(mode: str) -> str:
+    if mode == LAVA_CHECKOUT_CARD:
+        return "💳 <b>Оплата картой</b>"
     if mode == LAVA_CHECKOUT_FOREIGN_CARD:
         return "🌍 <b>Зарубежная карта</b>"
     if mode == LAVA_CHECKOUT_FOREIGN_PAYPAL:
         return "🌍 <b>PayPal</b>"
     if mode == LAVA_CHECKOUT_FOREIGN:
         return "🌍 <b>Зарубежная оплата и СНГ</b>"
-    return "💳 <b>Оплата через Lava</b>"
+    return "⚡ <b>Оплата по СБП</b>"
 
 
 @router.callback_query(F.data.startswith("choose_pay_"))
@@ -307,6 +314,8 @@ async def show_direct_payment_methods(
         and lava_offer_id
         and str(lava_currency or "").upper() == "RUB"
     )
+    has_lava_card = has_lava_rub
+    has_lava_sbp = has_lava_rub
     lava_foreign_offer_id, lava_foreign_currency = _package_lava_foreign_offer_config(
         package
     )
@@ -325,7 +334,8 @@ async def show_direct_payment_methods(
 
     if not any(
         (
-            has_lava_rub,
+            has_lava_card,
+            has_lava_sbp,
             has_lava_foreign,
             has_freekassa,
             has_stars,
@@ -368,7 +378,8 @@ async def show_direct_payment_methods(
         reply_markup=_payment_options_keyboard(
             package_id,
             stars=has_stars,
-            lava_rub=has_lava_rub,
+            lava_card=has_lava_card,
+            lava_sbp=has_lava_sbp,
             lava_foreign=has_lava_foreign,
             lava_foreign_price_usd=lava_foreign_price_usd,
             crypto=has_crypto,
@@ -384,7 +395,7 @@ async def handle_lava_checkout_entry(
     callback: types.CallbackQuery,
     state: FSMContext,
 ) -> None:
-    """Collect buyer email before opening the Lava hosted checkout."""
+    """Collect buyer email for Lava Card and Lava SBP checkout."""
 
     mode, package_id = parse_lava_checkout_callback(callback.data)
     if not lava_service.enabled:
@@ -412,8 +423,7 @@ async def handle_lava_checkout_entry(
     await state.set_state(PaymentStates.waiting_lava_email)
     await callback.message.edit_text(
         "📧 <b>Введите электронную почту</b>\n\n"
-        f"Способ оплаты: <b>{method_label}</b>\n"
-        "Карту, СБП и другие доступные способы выберете на странице Lava.\n\n"
+        f"Способ оплаты: <b>{method_label}</b>\n\n"
         "Почта нужна для оформления платежа и уведомления об оплате.\n\n"
         "Пример: <code>name2026@gmail.com</code>\n"
         "Цифры в адресе разрешены. Не вводите чужую или тестовую почту.",
@@ -455,7 +465,7 @@ async def create_lava_checkout(
 
     state_data = await state.get_data()
     package_id = str(state_data.get("lava_checkout_package_id") or "").strip()
-    mode = str(state_data.get("lava_checkout_mode") or LAVA_CHECKOUT_RUB).strip()
+    mode = str(state_data.get("lava_checkout_mode") or LAVA_CHECKOUT_SBP).strip()
 
     package, error = _validate_lava_package(package_id, mode)
     if error:
@@ -558,7 +568,7 @@ async def create_lava_checkout(
             f"+<code>{promo_bonus}</code> бананов"
         )
     bonus_text = "\n" + "\n".join(bonus_lines) if bonus_lines else ""
-    if mode in LAVA_CHECKOUT_FOREIGN_MODES and package.get("price_usd"):
+    if mode == LAVA_CHECKOUT_FOREIGN and package.get("price_usd"):
         amount_text = f"<code>${float(package['price_usd']):g}</code>"
     else:
         amount_text = f"<code>{package['price_rub']}</code> ₽"

@@ -115,38 +115,6 @@ async def test_lava_service_can_forward_optional_provider_fields(
 
 
 @pytest.mark.asyncio
-async def test_lava_service_omits_payment_selectors_for_unrestricted_checkout(
-    monkeypatch,
-) -> None:
-    from bot.services.lava_service import LavaService
-
-    service = LavaService("test-key")
-    captured: dict = {}
-
-    async def fake_request(method, path, payload=None, params=None):
-        captured.update(
-            {"method": method, "path": path, "payload": payload, "params": params}
-        )
-        return {"ok": True, "id": "invoice-all", "paymentUrl": "https://pay.lava.test/all"}
-
-    monkeypatch.setattr(service, "_request", fake_request)
-
-    result = await service.create_invoice(
-        email="buyer@gmail.com",
-        offer_id="rub-offer",
-        currency="RUB",
-        amount=100,
-        buyer_language="RU",
-    )
-
-    assert result["ok"] is True
-    assert captured["payload"]["currency"] == "RUB"
-    assert captured["payload"]["amount"] == 100.0
-    assert "paymentProvider" not in captured["payload"]
-    assert "paymentMethod" not in captured["payload"]
-
-
-@pytest.mark.asyncio
 async def test_lava_recovers_dynamic_rub_amount_from_miniapp_package_context(
     monkeypatch,
 ) -> None:
@@ -176,12 +144,12 @@ async def test_lava_recovers_dynamic_rub_amount_from_miniapp_package_context(
     assert captured["payload"]["amount"] == 250.0
 
 
-def test_miniapp_legacy_lava_actions_use_unrestricted_rub_checkout() -> None:
+def test_miniapp_separate_lava_actions_send_method_selectors() -> None:
     source = _read("bot/handlers/miniapp_lava_payment_methods_compat.py")
     handlers = _read("bot/handlers/__init__.py")
 
-    assert '"lava_card": ("rub", None, None)' in source
-    assert '"lava_sbp": ("rub", None, None)' in source
+    assert '"lava_card": ("rub", None, "CARD")' in source
+    assert '"lava_sbp": ("rub", "PAY2ME", "SBP")' in source
     assert '"lava_foreign": ("foreign", None, None)' in source
     assert '"lava_foreign_card": ("foreign", "UNLIMIT", "CARD")' in source
     assert '"lava_foreign_paypal": ("foreign", "PAYPAL", None)' in source
@@ -195,19 +163,20 @@ def test_miniapp_legacy_lava_actions_use_unrestricted_rub_checkout() -> None:
     assert "install_miniapp_lava_payment_methods()" in handlers
 
 
-def test_miniapp_payment_ui_uses_single_unrestricted_lava_action() -> None:
+def test_miniapp_payment_ui_has_separate_card_and_sbp_actions() -> None:
     source = _read("frontend/miniapp-v0/components/balance-sheet.tsx")
     types_source = _read("frontend/miniapp-v0/lib/types.ts")
 
-    assert "handleTopup(pkg.id, 'lava')" in source
-    assert "handleTopup(pkg.id, 'lava_card')" not in source
-    assert "handleTopup(pkg.id, 'lava_sbp')" not in source
-    assert "handleTopup(pkg.id, 'lava_foreign')" in source
-    assert "Lava — карта / СБП" in source
-    assert "На странице Lava будут показаны доступные способы оплаты" in source
-    assert "USD" in source
+    assert "handleTopup(pkg.id, 'lava_card')" in source
+    assert "handleTopup(pkg.id, 'lava_sbp')" in source
+    assert "handleTopup(pkg.id, 'lava_foreign_card')" in source
+    assert "handleTopup(pkg.id, 'lava_foreign_paypal')" in source
+    assert "Картой" in source
+    assert "СБП" in source
+    assert "Зарубежная оплата и СНГ" in source
+    assert "Зарубежная карта" in source
     assert "PayPal" in source
-    assert "'lava'" in types_source
+    assert "Карта / СБП" not in source
     assert "'lava_card'" in types_source
     assert "'lava_sbp'" in types_source
     assert "'lava_foreign'" in types_source
@@ -215,16 +184,14 @@ def test_miniapp_payment_ui_uses_single_unrestricted_lava_action() -> None:
     assert "'lava_foreign_paypal'" in types_source
 
 
-def test_text_bot_rub_uses_single_unrestricted_lava_checkout() -> None:
+def test_text_bot_sbp_uses_lava_checkout_not_freekassa() -> None:
     source = _read("bot/handlers/lava_checkout.py")
 
-    assert 'callback_data=f"buy_lava_rub_{package_id}"' in source
-    assert 'callback_data=f"buy_lava_sbp_{package_id}"' not in source
-    assert 'callback_data=f"buy_lava_card_{package_id}"' not in source
-    assert 'return None, "", "Lava — все способы"' in source
-    assert 'callback_data=f"buy_lava_foreign_{package_id}"' in source
+    assert 'callback_data=f"buy_lava_sbp_{package_id}"' in source
+    assert 'callback_data=f"buy_lava_foreign_card_{package_id}"' in source
+    assert 'callback_data=f"buy_lava_foreign_paypal_{package_id}"' in source
     assert "Зарубежная оплата и СНГ" in source
-    assert "🌍 USD" in source
+    assert "Зарубежная карта" in source
     assert "PayPal" in source
     assert "_package_lava_foreign_offer_config(package)" in source
     assert 'expected_currency = "USD" if mode in LAVA_CHECKOUT_FOREIGN_MODES else "RUB"' in source

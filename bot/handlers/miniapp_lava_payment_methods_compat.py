@@ -1,4 +1,4 @@
-"""Keep Mini App Lava payment IDs compatible with unified checkout."""
+"""Add separate Lava Card and SBP actions to the Mini App checkout."""
 
 from __future__ import annotations
 
@@ -11,12 +11,8 @@ from bot.services.lava_service import normalize_lava_customer_email
 
 
 _LAVA_MINIAPP_METHODS = {
-    # Canonical and cached legacy RUB provider IDs all use the same unrestricted
-    # invoice. Lava's hosted checkout decides which enabled methods are available
-    # for the merchant/currency instead of the bot forcing Card or SBP.
-    "lava": ("rub", None, None),
-    "lava_card": ("rub", None, None),
-    "lava_sbp": ("rub", None, None),
+    "lava_card": ("rub", None, "CARD"),
+    "lava_sbp": ("rub", "PAY2ME", "SBP"),
     "lava_foreign": ("foreign", None, None),
     "lava_foreign_card": ("foreign", "UNLIMIT", "CARD"),
     "lava_foreign_paypal": ("foreign", "PAYPAL", None),
@@ -36,7 +32,7 @@ def _payment_error_message(result: Any, *, default: str = "Failed to create paym
 
 
 def install_miniapp_lava_payment_methods() -> None:
-    """Handle Lava UI actions without forcing a RUB payment method."""
+    """Handle separate Lava UI actions with Lava PAY2ME method selectors."""
 
     import bot.miniapp as miniapp_module
 
@@ -122,7 +118,7 @@ def install_miniapp_lava_payment_methods() -> None:
                 return web.json_response(
                     {
                         "ok": False,
-                        "error": "Укажите действующую почту для оплаты через Lava",
+                        "error": "Укажите действующую почту для оплаты картой или через СБП",
                     },
                     status=400,
                 )
@@ -196,7 +192,7 @@ def install_miniapp_lava_payment_methods() -> None:
         except Exception as exc:
             return miniapp_module._miniapp_error_response(
                 exc,
-                log_message="Mini App Lava payment creation failed",
+                log_message="Mini App explicit Lava payment creation failed",
             )
 
     miniapp_module.miniapp_create_payment = create_payment_with_explicit_lava_method
