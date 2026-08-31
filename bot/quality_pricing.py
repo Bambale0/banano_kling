@@ -5,7 +5,9 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_QUALITY = "2K"
-_LEGACY_FALLBACK_COSTS = {"1K": 2.5, "2K": 2.5, "4K": 3.5}
+# Safe defaults for a clean install or malformed runtime config.
+# Production values are admin-managed in data/price.json and take precedence.
+_LEGACY_FALLBACK_COSTS = {"1K": 1.5, "2K": 1.5, "4K": 2.0}
 QUALITY_COSTS: dict[str, float] = {}
 QUALITY_LABELS: dict[str, str] = {}
 SEEDREAM_5_PRO_QUALITY_COSTS = {
