@@ -212,12 +212,8 @@ def _payment_options_keyboard(
             f" · ${lava_foreign_price_usd:g}" if lava_foreign_price_usd else ""
         )
         builder.button(
-            text=f"🌍 Зарубежная карта{price_suffix}",
-            callback_data=f"buy_lava_foreign_card_{package_id}",
-        )
-        builder.button(
-            text=f"🌍 PayPal{price_suffix}",
-            callback_data=f"buy_lava_foreign_paypal_{package_id}",
+            text=f"🌍 USD{price_suffix}",
+            callback_data=f"buy_lava_foreign_{package_id}",
         )
     if stars:
         builder.button(
