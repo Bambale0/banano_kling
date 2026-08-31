@@ -141,6 +141,18 @@ def test_miniapp_payment_ui_has_separate_card_and_sbp_actions() -> None:
     assert "'lava_sbp'" in types_source
 
 
+def test_text_bot_sbp_uses_lava_checkout_not_freekassa() -> None:
+    source = _read("bot/handlers/lava_checkout.py")
+
+    assert 'callback_data=f"buy_lava_sbp_{package_id}"' in source
+    assert 'callback_data=f"freekassa_sbp_{package_id}"' not in source
+    assert "freekassa_service" not in source
+    assert "СБП теперь оформляется через KASSA" not in source
+    assert "payment_provider=payment_provider" in source
+    assert "payment_method=payment_method" in source
+    assert "_allow_amount_fallback=False" in source
+
+
 def test_miniapp_ios_payment_uses_same_window_navigation() -> None:
     source = _read("frontend/miniapp-v0/components/balance-sheet.tsx")
 
