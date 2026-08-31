@@ -85,9 +85,9 @@ class TestQualityCostEdgeCases:
                     }
                 }
             )
-            assert QUALITY_COSTS["1K"] == 2.5
-            assert QUALITY_COSTS["2K"] == 2.5
-            assert QUALITY_COSTS["4K"] == 3.5
+            assert QUALITY_COSTS["1K"] == 1.5
+            assert QUALITY_COSTS["2K"] == 1.5
+            assert QUALITY_COSTS["4K"] == 2.0
         finally:
             refresh_quality_pricing()
 
