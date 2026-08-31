@@ -98,7 +98,7 @@ export const mockImageModels: ImageModel[] = [
     id: 'banana_pro',
     label: 'Nano Banana Pro',
     description: 'Универсальная модель для качественных изображений',
-    cost: 2.5,
+    cost: 1.5,
     ratios: [
       '1:1',
       '16:9',
@@ -114,13 +114,13 @@ export const mockImageModels: ImageModel[] = [
     requires_reference: false,
     max_references: 14,
     qualities: ['1K', '2K', '4K'],
-    quality_costs: { '1K': 2.5, '2K': 2.5, '4K': 3.5 },
+    quality_costs: { '1K': 1.5, '2K': 1.5, '4K': 2 },
   },
   {
     id: 'banana_2',
     label: 'Nano Banana 2',
     description: 'Новая версия Nano Banana с улучшенной детализацией и цветопередачей',
-    cost: 2.5,
+    cost: 1.5,
     ratios: [
       '1:1',
       '16:9',
@@ -136,7 +136,7 @@ export const mockImageModels: ImageModel[] = [
     requires_reference: false,
     max_references: 14,
     qualities: ['1K', '2K', '4K'],
-    quality_costs: { '1K': 2.5, '2K': 2.5, '4K': 3.5 },
+    quality_costs: { '1K': 1.5, '2K': 1.5, '4K': 2 },
   },
   {
     id: 'seedream_edit',
