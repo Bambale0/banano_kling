@@ -1,4 +1,4 @@
-"""Keep legacy Mini App Lava payment IDs compatible with unified checkout."""
+"""Keep Mini App Lava payment IDs compatible with unified checkout."""
 
 from __future__ import annotations
 
@@ -11,9 +11,10 @@ from bot.services.lava_service import normalize_lava_customer_email
 
 
 _LAVA_MINIAPP_METHODS = {
-    # Cached Mini App bundles can still send these old RUB provider IDs. Do not
-    # restrict the invoice: Lava's hosted checkout should display every enabled
-    # payment method that is available for the merchant/currency.
+    # Canonical and cached legacy RUB provider IDs all use the same unrestricted
+    # invoice. Lava's hosted checkout decides which enabled methods are available
+    # for the merchant/currency instead of the bot forcing Card or SBP.
+    "lava": ("rub", None, None),
     "lava_card": ("rub", None, None),
     "lava_sbp": ("rub", None, None),
     "lava_foreign": ("foreign", None, None),
@@ -35,7 +36,7 @@ def _payment_error_message(result: Any, *, default: str = "Failed to create paym
 
 
 def install_miniapp_lava_payment_methods() -> None:
-    """Handle legacy Lava UI actions without forcing a RUB payment method."""
+    """Handle Lava UI actions without forcing a RUB payment method."""
 
     import bot.miniapp as miniapp_module
 
