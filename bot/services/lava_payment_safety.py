@@ -246,14 +246,63 @@ def _allowed_webhook_ips() -> set[str]:
     return {item.strip() for item in configured.split(",") if item.strip()}
 
 
+def _expected_foreign_amount_usd(order_id: Any) -> float | None:
+    """Resolve the USD price of the package encoded in a Lava order id.
+
+    Foreign Lava invoices are paid in USD while transactions.amount_rub
+    keeps the RUB price, so the expected USD amount has to be recovered
+    from the package id embedded in the order id
+    (``{telegram_id}_{timestamp}_{package_id}``).
+    """
+
+    raw = str(order_id or "").strip()
+    parts = raw.split("_", 2)
+    if len(parts) < 3 or not parts[2].strip():
+        return None
+
+    from bot.services.preset_manager import preset_manager
+
+    package = preset_manager.get_package(parts[2].strip())
+    if not isinstance(package, dict):
+        return None
+    try:
+        amount = float(package.get("price_usd"))
+    except (TypeError, ValueError):
+        return None
+    return amount if amount > 0 else None
+
+
 def _payload_amount_matches(transaction: Any, payload: dict[str, Any]) -> bool:
+    """Match a webhook amount against the invoice currency.
+
+    RUB invoices store the expected amount in ``transactions.amount_rub``.
+    Foreign USD invoices deliver the USD amount in the webhook, so the
+    expected value is resolved from the package encoded in the order id.
+    Unknown currencies still fail closed.
+    """
+
+    currency = str(payload.get("currency") or "").strip().upper()
     try:
         webhook_amount = float(payload.get("amount"))
-        expected_amount = float(getattr(transaction, "amount_rub", 0))
     except (TypeError, ValueError):
         return False
-    currency = str(payload.get("currency") or "").strip().upper()
-    return abs(webhook_amount - expected_amount) < 0.01 and currency == "RUB"
+
+    if currency == "RUB":
+        try:
+            expected_amount = float(getattr(transaction, "amount_rub", 0))
+        except (TypeError, ValueError):
+            return False
+        return abs(webhook_amount - expected_amount) < 0.01
+
+    if currency == "USD":
+        expected_usd = _expected_foreign_amount_usd(
+            getattr(transaction, "order_id", None)
+        )
+        return (
+            expected_usd is not None and abs(webhook_amount - expected_usd) < 0.01
+        )
+
+    return False
 
 
 async def _lookup_lava_transaction(

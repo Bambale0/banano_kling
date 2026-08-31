@@ -65,7 +65,7 @@ def test_invoice_item_extraction_supports_nested_pages():
     assert [item["id"] for item in items] == ["invoice-1", "invoice-2"]
 
 
-def test_webhook_amount_and_currency_must_match_transaction():
+def test_webhook_amount_and_currency_must_match_transaction(monkeypatch):
     transaction = SimpleNamespace(amount_rub=500)
     assert safety._payload_amount_matches(
         transaction,
@@ -78,6 +78,48 @@ def test_webhook_amount_and_currency_must_match_transaction():
     assert not safety._payload_amount_matches(
         transaction,
         {"amount": 500.0, "currency": "USD"},
+    )
+    assert not safety._payload_amount_matches(
+        transaction,
+        {"amount": 500.0, "currency": "EUR"},
+    )
+
+
+def test_foreign_usd_webhook_matches_package_price_usd(monkeypatch):
+    from bot.services import preset_manager as preset_manager_module
+
+    transaction = SimpleNamespace(
+        order_id="123456_1788214737781_pro",
+        amount_rub=1087.0,
+    )
+    monkeypatch.setattr(
+        preset_manager_module.preset_manager,
+        "get_package",
+        lambda package_id: (
+            {"id": "pro", "price_rub": 1087.0, "price_usd": 15.0}
+            if package_id == "pro"
+            else None
+        ),
+    )
+
+    # USD amount equal to the package price_usd is accepted.
+    assert safety._payload_amount_matches(
+        transaction,
+        {"amount": 15.0, "currency": "USD"},
+    )
+    # A wrong USD amount is still rejected.
+    assert not safety._payload_amount_matches(
+        transaction,
+        {"amount": 14.0, "currency": "USD"},
+    )
+    # Unknown package or malformed order id fails closed.
+    assert not safety._payload_amount_matches(
+        SimpleNamespace(order_id="123456_1788214737781_unknown", amount_rub=1.0),
+        {"amount": 15.0, "currency": "USD"},
+    )
+    assert not safety._payload_amount_matches(
+        SimpleNamespace(order_id="nonsense", amount_rub=1.0),
+        {"amount": 15.0, "currency": "USD"},
     )
 
 

@@ -19,7 +19,7 @@ The invoice creation wrapper persists the mapping before the payment link is sho
 - Without configured credentials, only Lava's documented source IP is accepted and the event is always verified against the invoice API.
 - `payment.success` is completed only after the invoice API reports a successful status.
 - Temporary `in_progress`, lookup failures, and database failures return `503`, allowing Lava to retry delivery.
-- Amount and currency must match the local transaction.
+- Amount and currency must match the local transaction: RUB webhooks are compared against `transactions.amount_rub`, USD (foreign) webhooks against the package `price_usd` resolved from the package id encoded in the order id. Unknown currencies are rejected.
 - Raw headers, Basic credentials, request bodies, and buyer email are not logged.
 
 ## Environment variables
