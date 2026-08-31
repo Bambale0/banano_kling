@@ -294,6 +294,19 @@ def _miniapp_package_lava_offer_config(package: dict[str, Any]) -> tuple[str, st
     return config.lava_offer_id_for_package(package_id), "RUB"
 
 
+def _miniapp_package_lava_foreign_offer_config(
+    package: dict[str, Any],
+) -> tuple[str, str]:
+    offer_id = str(package.get("lava_foreign_offer_id") or "").strip()
+    if offer_id:
+        currency = (
+            str(package.get("lava_foreign_currency") or "USD").strip().upper() or "USD"
+        )
+        return offer_id, currency
+    product_id = str(package.get("lava_foreign_product_id") or "").strip()
+    return product_id, "USD" if product_id else ""
+
+
 IMAGE_MODELS = (
     {
         "id": "nano-banana-2-lite",

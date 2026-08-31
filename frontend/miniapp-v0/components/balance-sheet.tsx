@@ -3,7 +3,7 @@
 import type { ComponentType } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Banana, CreditCard, Gift, Loader2, Mail, QrCode, Receipt, Sparkles, Star, X } from 'lucide-react'
+import { Banana, CreditCard, Gift, Globe2, Loader2, Mail, QrCode, Receipt, Sparkles, Star, X } from 'lucide-react'
 import { useApp } from '@/lib/app-context'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
@@ -34,7 +34,7 @@ function isValidCustomerEmail(value: string) {
 }
 
 function isLavaProvider(provider: PaymentProvider) {
-  return provider === 'lava' || provider === 'lava_card' || provider === 'lava_sbp'
+  return provider === 'lava' || provider === 'lava_card' || provider === 'lava_sbp' || provider === 'lava_foreign'
 }
 
 function isIOSPaymentWebView() {
@@ -175,6 +175,8 @@ export function BalanceSheet() {
             ? 'Открыта оплата через СБП'
             : provider === 'lava_card'
               ? 'Открыта оплата картой'
+              : provider === 'lava_foreign'
+                ? 'Открыта зарубежная оплата'
               : 'Открыта страница оплаты',
         )
         return
@@ -255,7 +257,7 @@ export function BalanceSheet() {
               </div>
 
               <label className="block space-y-2" htmlFor="payment-customer-email">
-                <span className="text-sm font-medium text-foreground">Почта для карты и СБП</span>
+                <span className="text-sm font-medium text-foreground">Почта для оплаты Lava</span>
                 <div className="relative">
                   <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <input
@@ -297,6 +299,8 @@ export function BalanceSheet() {
                     const starsLoading = loadingPayment === `${pkg.id}:telegram_stars`
                     const cardLoading = loadingPayment === `${pkg.id}:lava_card`
                     const sbpLoading = loadingPayment === `${pkg.id}:lava_sbp`
+                    const foreignLoading = loadingPayment === `${pkg.id}:lava_foreign`
+                    const foreignConfigured = Boolean(pkg.lava_foreign_offer_id || pkg.lava_foreign_product_id)
                     return (
                       <div
                         key={pkg.id}
@@ -324,6 +328,11 @@ export function BalanceSheet() {
                             <p className="mt-1 text-xs text-muted-foreground">
                               Stars: {starsPrice}⭐
                             </p>
+                            {foreignConfigured && pkg.price_usd ? (
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                Зарубежная оплата и СНГ: ${pkg.price_usd}
+                              </p>
+                            ) : null}
                           </div>
                           <div className="text-right">
                             <p className="text-xl font-semibold text-foreground">{pkg.price_rub}₽</p>
@@ -368,9 +377,23 @@ export function BalanceSheet() {
                             )}
                             Stars
                           </Button>
+                          {foreignConfigured ? (
+                            <Button
+                              onClick={() => handleTopup(pkg.id, 'lava_foreign')}
+                              disabled={Boolean(loadingPayment)}
+                              className="col-span-2 w-full bg-secondary text-foreground hover:bg-secondary/80"
+                            >
+                              {foreignLoading ? (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              ) : (
+                                <Globe2 className="mr-2 h-4 w-4" />
+                              )}
+                              Зарубежная оплата и СНГ
+                            </Button>
+                          ) : null}
                           {lavaConfigured ? (
                             <p className="col-span-2 px-1 text-center text-[11px] text-muted-foreground">
-                              Карта и СБП открываются отдельными способами оплаты.
+                              Карта, СБП и зарубежная оплата открываются отдельными способами.
                             </p>
                           ) : null}
                         </div>

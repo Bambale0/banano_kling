@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,36 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
+
+
+def test_lava_foreign_usd_packages_are_configured() -> None:
+    config = json.loads(_read("data/price.json"))
+    packages = {item["credits"]: item for item in config["packages"]}
+    expected = {
+        50: (
+            "639bf625-d76d-41a2-8e10-c66613d20ee1",
+            "61c4022f-18e5-4d8c-bda4-6d3659d77b9d",
+        ),
+        100: (
+            "9df9801c-5c2a-4721-94b4-10651ad7124f",
+            "17040120-096e-4d54-807e-1e997854258c",
+        ),
+        200: (
+            "94feb699-912e-4d45-b1ed-e7790e8a8d1a",
+            "49e4d77f-6391-438a-b01c-bf70b5d7184e",
+        ),
+        500: (
+            "cb5e3be8-2f65-4730-b3ba-67b7aee65601",
+            "faaa883c-a03b-4c00-9c19-e87620eda155",
+        ),
+    }
+
+    for credits, (product_id, offer_id) in expected.items():
+        package = packages[credits]
+        assert package["lava_foreign_product_id"] == product_id
+        assert package["lava_foreign_offer_id"] == offer_id
+        assert package["lava_foreign_currency"] == "USD"
+        assert package["price_usd"] > 0
 
 
 @pytest.mark.asyncio
@@ -117,8 +148,10 @@ def test_miniapp_separate_lava_actions_send_method_selectors() -> None:
     source = _read("bot/handlers/miniapp_lava_payment_methods_compat.py")
     handlers = _read("bot/handlers/__init__.py")
 
-    assert '"lava_card": (None, "CARD")' in source
-    assert '"lava_sbp": ("PAY2ME", "SBP")' in source
+    assert '"lava_card": ("rub", None, "CARD")' in source
+    assert '"lava_sbp": ("rub", "PAY2ME", "SBP")' in source
+    assert '"lava_foreign": ("foreign", None, None)' in source
+    assert "_miniapp_package_lava_foreign_offer_config(package)" in source
     assert '"requested_payment_method": payment_method' in source
     assert "payment_provider=payment_provider" in source
     assert "payment_method=payment_method" in source
@@ -134,17 +167,24 @@ def test_miniapp_payment_ui_has_separate_card_and_sbp_actions() -> None:
 
     assert "handleTopup(pkg.id, 'lava_card')" in source
     assert "handleTopup(pkg.id, 'lava_sbp')" in source
+    assert "handleTopup(pkg.id, 'lava_foreign')" in source
     assert "Картой" in source
     assert "СБП" in source
+    assert "Зарубежная оплата и СНГ" in source
     assert "Карта / СБП" not in source
     assert "'lava_card'" in types_source
     assert "'lava_sbp'" in types_source
+    assert "'lava_foreign'" in types_source
 
 
 def test_text_bot_sbp_uses_lava_checkout_not_freekassa() -> None:
     source = _read("bot/handlers/lava_checkout.py")
 
     assert 'callback_data=f"buy_lava_sbp_{package_id}"' in source
+    assert 'callback_data=f"buy_lava_foreign_{package_id}"' in source
+    assert "Зарубежная оплата и СНГ" in source
+    assert "_package_lava_foreign_offer_config(package)" in source
+    assert 'expected_currency = "USD" if mode == LAVA_CHECKOUT_FOREIGN else "RUB"' in source
     assert 'callback_data=f"freekassa_sbp_{package_id}"' not in source
     assert "freekassa_service" not in source
     assert "СБП теперь оформляется через KASSA" not in source

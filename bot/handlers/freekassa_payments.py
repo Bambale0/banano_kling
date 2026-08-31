@@ -273,12 +273,18 @@ async def choose_payment_method_freekassa(
 @router.callback_query(F.data.startswith("buy_freekassa_"))
 async def choose_freekassa_method(callback: types.CallbackQuery):
     package_id = callback.data.replace("buy_freekassa_", "", 1)
-    if not preset_manager.get_package(package_id):
+    package = preset_manager.get_package(package_id)
+    if not package:
         await callback.answer("Пакет не найден", show_alert=True)
         return
     builder = InlineKeyboardBuilder()
     builder.button(text="💳 Картой", callback_data=f"buy_lava_card_{package_id}")
     builder.button(text="⚡ СБП", callback_data=f"buy_lava_sbp_{package_id}")
+    if package.get("lava_foreign_offer_id") or package.get("lava_foreign_product_id"):
+        builder.button(
+            text="🌍 Зарубежная оплата и СНГ",
+            callback_data=f"buy_lava_foreign_{package_id}",
+        )
     builder.button(text="◀️ Назад", callback_data=f"choose_pay_{package_id}")
     builder.adjust(1)
     await callback.message.edit_text(

@@ -11,8 +11,9 @@ from bot.services.lava_service import normalize_lava_customer_email
 
 
 _LAVA_MINIAPP_METHODS = {
-    "lava_card": (None, "CARD"),
-    "lava_sbp": ("PAY2ME", "SBP"),
+    "lava_card": ("rub", None, "CARD"),
+    "lava_sbp": ("rub", "PAY2ME", "SBP"),
+    "lava_foreign": ("foreign", None, None),
 }
 
 
@@ -48,7 +49,7 @@ def install_miniapp_lava_payment_methods() -> None:
             lava_method = _LAVA_MINIAPP_METHODS.get(raw_provider)
             if not lava_method:
                 return await current_create_payment(request)
-            payment_provider, payment_method = lava_method
+            offer_kind, payment_provider, payment_method = lava_method
 
             package_id = body.get("package_id")
             if not package_id:
@@ -76,9 +77,15 @@ def install_miniapp_lava_payment_methods() -> None:
                     {"ok": False, "error": "Lava not configured"}, status=500
                 )
 
-            offer_id, lava_currency = miniapp_module._miniapp_package_lava_offer_config(
-                package
-            )
+            if offer_kind == "foreign":
+                (
+                    offer_id,
+                    lava_currency,
+                ) = miniapp_module._miniapp_package_lava_foreign_offer_config(package)
+            else:
+                offer_id, lava_currency = miniapp_module._miniapp_package_lava_offer_config(
+                    package
+                )
             if not offer_id:
                 return web.json_response(
                     {
@@ -136,7 +143,8 @@ def install_miniapp_lava_payment_methods() -> None:
                     "telegram_id": str(telegram_id),
                     "order_id": order_id,
                     "package_id": str(package_id),
-                    "requested_payment_method": payment_method,
+                    "payment_mode": offer_kind,
+                    "requested_payment_method": payment_method or offer_kind,
                 },
             )
 

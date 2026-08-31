@@ -35,7 +35,10 @@
       "bonus_credits": 0,
       "popular": true,
       "description": "Лучшее соотношение цена/количество",
-      "price_usd": 7.7
+      "price_usd": 7.7,
+      "lava_foreign_product_id": "639bf625-d76d-41a2-8e10-c66613d20ee1",
+      "lava_foreign_offer_id": "61c4022f-18e5-4d8c-bda4-6d3659d77b9d",
+      "lava_foreign_currency": "USD"
     },
     {
       "id": "pro",
@@ -46,7 +49,10 @@
       "lava_currency": "RUB",
       "bonus_credits": 0,
       "description": "Для активных пользователей",
-      "price_usd": 15.4
+      "price_usd": 15.4,
+      "lava_foreign_product_id": "9df9801c-5c2a-4721-94b4-10651ad7124f",
+      "lava_foreign_offer_id": "17040120-096e-4d54-807e-1e997854258c",
+      "lava_foreign_currency": "USD"
     },
     {
       "id": "studio",
@@ -57,7 +63,10 @@
       "lava_currency": "RUB",
       "bonus_credits": 0,
       "description": "Для частой генерации",
-      "price_usd": 29.5
+      "price_usd": 29.5,
+      "lava_foreign_product_id": "94feb699-912e-4d45-b1ed-e7790e8a8d1a",
+      "lava_foreign_offer_id": "49e4d77f-6391-438a-b01c-bf70b5d7184e",
+      "lava_foreign_currency": "USD"
     },
     {
       "id": "business",
@@ -68,28 +77,31 @@
       "lava_currency": "RUB",
       "bonus_credits": 0,
       "description": "Выгодно для регулярной работы",
-      "price_usd": 75.0
+      "price_usd": 75.0,
+      "lava_foreign_product_id": "cb5e3be8-2f65-4730-b3ba-67b7aee65601",
+      "lava_foreign_offer_id": "faaa883c-a03b-4c00-9c19-e87620eda155",
+      "lava_foreign_currency": "USD"
     }
   ],
   "costs_reference": {
     "image_models": {
       "gemini_2_5_flash": 5,
       "gemini_3_pro": 5,
-      "banana_2": 5,
+      "banana_2": 1.5,
       "nano-banana-2-lite": 1,
       "z_image_turbo": 5,
       "seedream": 4,
       "seedream_45": 1.5,
       "flux_pro": 2,
-      "nano-banana-pro": 5,
+      "nano-banana-pro": 1.5,
       "seedream_edit": 1.5,
       "grok_imagine_i2i": 2,
       "wan_27": 2
     },
     "image_quality_costs": {
-      "1K": 2.5,
-      "2K": 5,
-      "4K": 7
+      "1K": 1.5,
+      "2K": 1.5,
+      "4K": 2
     },
     "video_models": {
       "v3_std": {
@@ -272,9 +284,9 @@
       "kling_v3_omni": 8,
       "z_image_turbo_lora": 3,
       "wanx_lora": 15,
-      "nanobanana": 5,
-      "banana_pro": 5,
-      "banana_2": 5,
+      "nanobanana": 1.5,
+      "banana_pro": 1.5,
+      "banana_2": 1.5,
       "nano-banana-2-lite": 1,
       "seedream": 4,
       "seedream_edit": 1.5,
@@ -286,9 +298,9 @@
     "base_costs": {
       "gemini_2_5_flash": 5,
       "gemini_3_pro": 5,
-      "banana_2": 5,
+      "banana_2": 1.5,
       "nano-banana-2-lite": 1,
-      "nano-banana-pro": 5,
+      "nano-banana-pro": 1.5,
       "seedream": 4,
       "seedream_edit": 1.5,
       "grok_imagine_i2i": 3,

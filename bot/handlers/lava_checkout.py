@@ -15,6 +15,7 @@ from bot.config import config
 from bot.database import create_transaction, get_or_create_user
 from bot.handlers.payments import (
     _get_selected_promo,
+    _package_lava_foreign_offer_config,
     _package_lava_offer_config,
     _promo_bonus_for_package,
 )
@@ -34,6 +35,7 @@ router = Router()
 
 LAVA_CHECKOUT_SBP = "sbp"
 LAVA_CHECKOUT_CARD = "card"
+LAVA_CHECKOUT_FOREIGN = "foreign"
 
 LAVA_RUB_SBP_PAYMENT_PROVIDER = "PAY2ME"
 LAVA_RUB_SBP_PAYMENT_METHOD = "SBP"
@@ -130,7 +132,7 @@ def parse_lava_checkout_callback(value: Any) -> tuple[str, str]:
     """Return checkout mode and package ID from current and legacy callbacks."""
 
     payload = str(value or "").removeprefix("buy_lava_")
-    for mode in (LAVA_CHECKOUT_SBP, LAVA_CHECKOUT_CARD):
+    for mode in (LAVA_CHECKOUT_SBP, LAVA_CHECKOUT_CARD, LAVA_CHECKOUT_FOREIGN):
         prefix = f"{mode}_"
         if payload.startswith(prefix):
             return mode, payload.removeprefix(prefix)
@@ -143,6 +145,8 @@ def parse_lava_checkout_callback(value: Any) -> tuple[str, str]:
 def _lava_checkout_params(mode: str) -> tuple[str | None, str, str]:
     if mode == LAVA_CHECKOUT_CARD:
         return None, LAVA_RUB_CARD_PAYMENT_METHOD, "Картой"
+    if mode == LAVA_CHECKOUT_FOREIGN:
+        return None, "", "Зарубежная оплата и СНГ"
     return (
         LAVA_RUB_SBP_PAYMENT_PROVIDER,
         LAVA_RUB_SBP_PAYMENT_METHOD,
@@ -156,6 +160,8 @@ def _payment_options_keyboard(
     stars: bool,
     lava_card: bool,
     lava_sbp: bool,
+    lava_foreign: bool,
+    lava_foreign_price_usd: float | None,
     crypto: bool,
     freekassa: bool,
 ) -> types.InlineKeyboardMarkup:
@@ -176,6 +182,14 @@ def _payment_options_keyboard(
         builder.button(
             text="⚡ СБП",
             callback_data=f"buy_lava_sbp_{package_id}",
+        )
+    if lava_foreign:
+        price_suffix = (
+            f" · ${lava_foreign_price_usd:g}" if lava_foreign_price_usd else ""
+        )
+        builder.button(
+            text=f"🌍 Зарубежная оплата и СНГ{price_suffix}",
+            callback_data=f"buy_lava_foreign_{package_id}",
         )
     if stars:
         builder.button(
@@ -208,19 +222,34 @@ def _format_lava_error(response: dict[str, Any] | None) -> str:
     return str(error or "payment provider did not create an invoice")[:700]
 
 
-def _validate_lava_package(package_id: str) -> tuple[dict[str, Any] | None, str | None]:
+def _package_lava_checkout_offer_config(
+    package: dict[str, Any],
+    mode: str,
+) -> tuple[str, str]:
+    if mode == LAVA_CHECKOUT_FOREIGN:
+        return _package_lava_foreign_offer_config(package)
+    return _package_lava_offer_config(package)
+
+
+def _validate_lava_package(
+    package_id: str,
+    mode: str = LAVA_CHECKOUT_SBP,
+) -> tuple[dict[str, Any] | None, str | None]:
     package = preset_manager.get_package(package_id)
     if not package:
         return None, "Пакет не найден."
 
-    offer_id, currency = _package_lava_offer_config(package)
+    offer_id, currency = _package_lava_checkout_offer_config(package, mode)
     if not offer_id:
         return None, "Этот способ оплаты пока недоступен для выбранного пакета."
-    if str(currency or "").upper() != "RUB":
+    expected_currency = "USD" if mode == LAVA_CHECKOUT_FOREIGN else "RUB"
+    if str(currency or "").upper() != expected_currency:
         logger.error(
-            "Blocked non-RUB Lava checkout: package=%s currency=%s",
+            "Blocked Lava checkout with unexpected currency: package=%s mode=%s currency=%s expected=%s",
             package_id,
+            mode,
             currency,
+            expected_currency,
         )
         return None, "Этот способ оплаты пока недоступен для выбранного пакета."
     return package, None
@@ -229,6 +258,8 @@ def _validate_lava_package(package_id: str) -> tuple[dict[str, Any] | None, str 
 def _checkout_title(mode: str) -> str:
     if mode == LAVA_CHECKOUT_CARD:
         return "💳 <b>Оплата картой</b>"
+    if mode == LAVA_CHECKOUT_FOREIGN:
+        return "🌍 <b>Зарубежная оплата и СНГ</b>"
     return "⚡ <b>Оплата по СБП</b>"
 
 
@@ -253,11 +284,32 @@ async def show_direct_payment_methods(
     )
     has_lava_card = has_lava_rub
     has_lava_sbp = has_lava_rub
+    lava_foreign_offer_id, lava_foreign_currency = _package_lava_foreign_offer_config(
+        package
+    )
+    has_lava_foreign = bool(
+        lava_service.enabled
+        and lava_foreign_offer_id
+        and str(lava_foreign_currency or "").upper() == "USD"
+    )
+    try:
+        lava_foreign_price_usd = float(package.get("price_usd") or 0) or None
+    except (TypeError, ValueError):
+        lava_foreign_price_usd = None
     has_freekassa = False
     has_stars = bool(config.TELEGRAM_STARS_ENABLED)
     has_crypto = bool(cryptobot_service.enabled)
 
-    if not any((has_lava_card, has_lava_sbp, has_freekassa, has_stars, has_crypto)):
+    if not any(
+        (
+            has_lava_card,
+            has_lava_sbp,
+            has_lava_foreign,
+            has_freekassa,
+            has_stars,
+            has_crypto,
+        )
+    ):
         await callback.message.edit_text(
             "❌ Способы оплаты временно недоступны. Обратитесь в поддержку.",
             reply_markup=get_back_keyboard("menu_topup"),
@@ -281,6 +333,8 @@ async def show_direct_payment_methods(
     bonus_text = ("\n" + "\n".join(bonus_lines)) if bonus_lines else ""
 
     amount_parts = [f"<code>{package['price_rub']}</code>₽"]
+    if has_lava_foreign and lava_foreign_price_usd:
+        amount_parts.append(f"<code>${lava_foreign_price_usd:g}</code>")
     if has_stars:
         amount_parts.append(f"<code>{package_stars_amount(package)}</code>⭐")
 
@@ -294,6 +348,8 @@ async def show_direct_payment_methods(
             stars=has_stars,
             lava_card=has_lava_card,
             lava_sbp=has_lava_sbp,
+            lava_foreign=has_lava_foreign,
+            lava_foreign_price_usd=lava_foreign_price_usd,
             crypto=has_crypto,
             freekassa=has_freekassa,
         ),
@@ -318,7 +374,7 @@ async def handle_lava_checkout_entry(
         await callback.answer()
         return
 
-    _, error = _validate_lava_package(package_id)
+    _, error = _validate_lava_package(package_id, mode)
     if error:
         await callback.message.edit_text(
             f"{error} Выберите другой способ оплаты или напишите в поддержку.",
@@ -379,7 +435,7 @@ async def create_lava_checkout(
     package_id = str(state_data.get("lava_checkout_package_id") or "").strip()
     mode = str(state_data.get("lava_checkout_mode") or LAVA_CHECKOUT_SBP).strip()
 
-    package, error = _validate_lava_package(package_id)
+    package, error = _validate_lava_package(package_id, mode)
     if error:
         await state.clear()
         await message.answer(
@@ -388,7 +444,7 @@ async def create_lava_checkout(
         )
         return
 
-    offer_id, _ = _package_lava_offer_config(package)
+    offer_id, lava_currency = _package_lava_checkout_offer_config(package, mode)
     payment_provider, payment_method, method_label = _lava_checkout_params(mode)
 
     promo = await _get_selected_promo(state)
@@ -400,9 +456,9 @@ async def create_lava_checkout(
     result = await lava_service.create_invoice(
         email=email,
         offer_id=offer_id,
-        currency="RUB",
+        currency=lava_currency,
         payment_provider=payment_provider,
-        payment_method=payment_method,
+        payment_method=payment_method or None,
         buyer_language="RU",
         _allow_amount_fallback=False,
         client_utm={
@@ -415,8 +471,9 @@ async def create_lava_checkout(
     if not result.get("ok"):
         await state.clear()
         logger.error(
-            "Lava RUB/%s invoice creation failed: user=%s package=%s status=%s error=%s",
-            payment_method,
+            "Lava %s/%s invoice creation failed: user=%s package=%s status=%s error=%s",
+            lava_currency,
+            payment_method or mode,
             message.from_user.id,
             package_id,
             result.get("status"),
@@ -479,12 +536,16 @@ async def create_lava_checkout(
             f"+<code>{promo_bonus}</code> бананов"
         )
     bonus_text = "\n" + "\n".join(bonus_lines) if bonus_lines else ""
+    if mode == LAVA_CHECKOUT_FOREIGN and package.get("price_usd"):
+        amount_text = f"<code>${float(package['price_usd']):g}</code>"
+    else:
+        amount_text = f"<code>{package['price_rub']}</code> ₽"
 
     await message.answer(
         f"{_checkout_title(mode)}\n"
         f"• Пакет: <code>{html.escape(str(package['name']))}</code>\n"
         f"• Бананов: <code>{total_credits}</code>{bonus_text}\n"
-        f"• Сумма: <code>{package['price_rub']}</code> ₽\n"
+        f"• Сумма: {amount_text}\n"
         f"• Почта: <code>{html.escape(email)}</code>\n\n"
         "Проверьте данные и перейдите к оплате.",
         reply_markup=get_payment_confirmation_keyboard(payment_url, order_id),

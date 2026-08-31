@@ -85,9 +85,13 @@ export interface PaymentPackage {
   name: string
   credits: number
   price_rub: number
+  price_usd?: number
   price_stars?: number
   lava_offer_id?: string
   lava_currency?: string
+  lava_foreign_product_id?: string
+  lava_foreign_offer_id?: string
+  lava_foreign_currency?: string
   bonus_credits?: number
   popular?: boolean
   description?: string
@@ -99,6 +103,7 @@ export type PaymentProvider =
   | 'lava'
   | 'lava_card'
   | 'lava_sbp'
+  | 'lava_foreign'
 
 export interface CreatePaymentResponse {
   ok: true

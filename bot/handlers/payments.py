@@ -66,6 +66,17 @@ def _package_lava_offer_config(package: dict) -> tuple[str, str]:
     return config.lava_offer_id_for_package(package_id), "RUB"
 
 
+def _package_lava_foreign_offer_config(package: dict) -> tuple[str, str]:
+    offer_id = str(package.get("lava_foreign_offer_id") or "").strip()
+    if offer_id:
+        currency = (
+            str(package.get("lava_foreign_currency") or "USD").strip().upper() or "USD"
+        )
+        return offer_id, currency
+    product_id = str(package.get("lava_foreign_product_id") or "").strip()
+    return product_id, "USD" if product_id else ""
+
+
 def _is_ignored_telegram_error(error: Exception) -> bool:
     error_msg = str(error).lower()
     return (
