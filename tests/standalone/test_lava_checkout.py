@@ -1,17 +1,14 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
 from bot.handlers.lava_checkout import (
-    LAVA_CHECKOUT_CARD,
-    LAVA_CHECKOUT_SBP,
+    LAVA_CHECKOUT_FOREIGN,
+    LAVA_CHECKOUT_RUB,
     LAVA_RUB_CARD_PAYMENT_METHOD,
     LAVA_RUB_PAYMENT_METHOD,
     LAVA_RUB_PAYMENT_PROVIDER,
     _payment_options_keyboard,
-    handle_lava_checkout_entry,
     normalize_lava_customer_email,
     parse_lava_checkout_callback,
 )
@@ -58,23 +55,26 @@ def test_lava_email_rejects_placeholders_and_invalid_values(value):
 @pytest.mark.parametrize(
     ("callback_data", "expected"),
     [
-        ("buy_lava_sbp_start", (LAVA_CHECKOUT_SBP, "start")),
-        ("buy_lava_card_optimal", (LAVA_CHECKOUT_CARD, "optimal")),
-        ("buy_lava_pro", (LAVA_CHECKOUT_SBP, "pro")),
+        ("buy_lava_rub_start", (LAVA_CHECKOUT_RUB, "start")),
+        ("buy_lava_sbp_start", (LAVA_CHECKOUT_RUB, "start")),
+        ("buy_lava_card_optimal", (LAVA_CHECKOUT_RUB, "optimal")),
+        ("buy_lava_pro", (LAVA_CHECKOUT_RUB, "pro")),
+        ("buy_lava_foreign_pro", (LAVA_CHECKOUT_FOREIGN, "pro")),
     ],
 )
-def test_lava_callbacks_support_direct_methods_and_legacy_buttons(
+def test_lava_callbacks_route_rub_legacy_buttons_to_unified_checkout(
     callback_data, expected
 ):
     assert parse_lava_checkout_callback(callback_data) == expected
 
 
-def test_payment_menu_routes_card_to_lava_and_sbp_to_freekassa():
+def test_payment_menu_shows_one_lava_rub_checkout() -> None:
     keyboard = _payment_options_keyboard(
         "studio",
         stars=True,
-        lava_card=True,
-        freekassa_sbp=True,
+        lava_rub=True,
+        lava_foreign=False,
+        lava_foreign_price_usd=None,
         crypto=True,
         freekassa=False,
     )
@@ -83,28 +83,23 @@ def test_payment_menu_routes_card_to_lava_and_sbp_to_freekassa():
     callbacks = [button.callback_data for button in buttons if button.callback_data]
 
     assert labels == [
-        "💳 Картой",
-        "⚡ СБП",
+        "💳 Lava — карта / СБП",
         "⭐ Stars",
         "₿ Криптовалюта",
         "◀️ Назад",
     ]
-    assert "buy_lava_card_studio" in callbacks
-    assert "freekassa_sbp_studio" in callbacks
+    assert "buy_lava_rub_studio" in callbacks
+    assert "buy_lava_card_studio" not in callbacks
     assert "buy_lava_sbp_studio" not in callbacks
-    assert not any(
-        provider in label.lower()
-        for label in labels
-        for provider in ("lava", "freekassa", "cryptobot")
-    )
 
 
-def test_payment_menu_does_not_restore_lava_sbp_when_freekassa_api_is_off():
+def test_payment_menu_can_show_foreign_lava_checkout_separately() -> None:
     keyboard = _payment_options_keyboard(
-        "studio",
+        "pro",
         stars=False,
-        lava_card=True,
-        freekassa_sbp=False,
+        lava_rub=True,
+        lava_foreign=True,
+        lava_foreign_price_usd=15.4,
         crypto=False,
         freekassa=False,
     )
@@ -112,74 +107,13 @@ def test_payment_menu_does_not_restore_lava_sbp_when_freekassa_api_is_off():
     labels = [button.text for button in buttons]
     callbacks = [button.callback_data for button in buttons if button.callback_data]
 
-    assert labels == ["💳 Картой", "◀️ Назад"]
-    assert "buy_lava_card_studio" in callbacks
-    assert not any("sbp" in callback for callback in callbacks)
-
-
-def test_payment_menu_lists_freekassa_reserve_separately_from_direct_sbp():
-    keyboard = _payment_options_keyboard(
-        "start",
-        stars=True,
-        lava_card=True,
-        freekassa_sbp=True,
-        crypto=False,
-        freekassa=True,
-    )
-    labels = [button.text for row in keyboard.inline_keyboard for button in row]
-    callbacks = [
-        button.callback_data
-        for row in keyboard.inline_keyboard
-        for button in row
-        if button.callback_data
-    ]
-
     assert labels == [
-        "🇷🇺 РФ — KASSA (резерв)",
-        "💳 Картой",
-        "⚡ СБП",
-        "⭐ Stars",
+        "💳 Lava — карта / СБП",
+        "🌍 USD · $15.4",
         "◀️ Назад",
     ]
-    assert "buy_freekassa_start" in callbacks
-    assert "freekassa_sbp_start" in callbacks
-    assert "buy_lava_sbp_start" not in callbacks
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("legacy_callback", "expected_package"),
-    [
-        ("buy_lava_sbp_start", "start"),
-        ("buy_lava_pro", "pro"),
-    ],
-)
-async def test_legacy_lava_sbp_buttons_are_migrated_to_freekassa(
-    monkeypatch, legacy_callback, expected_package
-):
-    from bot.handlers import freekassa_payments, lava_checkout
-
-    routed = {}
-
-    async def fake_initiate(callback, state):
-        routed["data"] = callback.data
-        routed["state"] = state
-
-    monkeypatch.setattr(
-        freekassa_payments,
-        "initiate_freekassa_payment",
-        fake_initiate,
-    )
-    monkeypatch.setattr(lava_checkout.freekassa_service, "api_enabled", True)
-
-    callback = SimpleNamespace(data=legacy_callback)
-    state = object()
-    await handle_lava_checkout_entry(callback, state)
-
-    assert routed == {
-        "data": f"freekassa_sbp_{expected_package}",
-        "state": state,
-    }
+    assert "buy_lava_rub_pro" in callbacks
+    assert "buy_lava_foreign_pro" in callbacks
 
 
 @pytest.mark.asyncio
@@ -212,7 +146,7 @@ async def test_lava_service_rejects_placeholder_email_before_api_call(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_lava_invoice_payload_uses_real_email_rub_and_sbp(monkeypatch):
+async def test_lava_invoice_payload_can_use_explicit_sbp_for_legacy_integrations(monkeypatch):
     service = LavaService(api_key="test-key")
     captured = {}
 
@@ -258,7 +192,7 @@ async def test_lava_invoice_payload_uses_real_email_rub_and_sbp(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_lava_invoice_payload_uses_card_method(monkeypatch):
+async def test_lava_invoice_payload_can_use_card_for_legacy_integrations(monkeypatch):
     service = LavaService(api_key="test-key")
     captured = {}
 
@@ -300,3 +234,32 @@ async def test_lava_invoice_payload_uses_card_method(monkeypatch):
         "clientUtm": {"telegram_id": "123", "payment_mode": "card"},
     }
     assert "paymentProvider" not in captured["payload"]
+
+
+@pytest.mark.asyncio
+async def test_unified_lava_invoice_omits_provider_and_method(monkeypatch):
+    service = LavaService(api_key="test-key")
+    captured = {}
+
+    async def fake_request(method, path, payload=None, params=None):
+        captured["payload"] = payload
+        return {
+            "ok": True,
+            "id": "invoice-unified-1",
+            "paymentUrl": "https://pay.example/invoice-unified-1",
+        }
+
+    monkeypatch.setattr(service, "_request", fake_request)
+
+    result = await service.create_invoice(
+        email="customer2026@gmail.com",
+        offer_id="offer-rub-1",
+        currency="RUB",
+        buyer_language="RU",
+        client_utm={"telegram_id": "123", "payment_mode": "rub"},
+    )
+
+    assert result["ok"] is True
+    assert captured["payload"]["currency"] == "RUB"
+    assert "paymentProvider" not in captured["payload"]
+    assert "paymentMethod" not in captured["payload"]
