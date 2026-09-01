@@ -6,18 +6,32 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "deploy-production.yml"
 
 
-def test_both_production_paths_always_preserve_runtime_price_file():
+def test_both_production_paths_preserve_runtime_price_by_default():
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
-    unconditional_guard = 'if [ -f "$RUNTIME_PRICE_FILE" ]; then'
+    preserve_guard = (
+        'if [ "$preserve_runtime_price" = true ] && [ -f "$RUNTIME_PRICE_FILE" ]; then'
+    )
     dirty_only_guard = (
         'if printf \'%s\\n\' "$dirty_paths" | grep -qxF "$RUNTIME_PRICE_FILE"; then'
     )
 
-    assert workflow.count(unconditional_guard) == 2
+    assert workflow.count(preserve_guard) == 2
     assert dirty_only_guard not in workflow
     assert workflow.count('cp -- "$RUNTIME_PRICE_FILE" "$runtime_price_backup"') == 2
     assert workflow.count('cp -- "$runtime_price_backup" "$RUNTIME_PRICE_FILE"') == 2
+
+
+def test_versioned_price_change_is_applied_instead_of_preserved():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    change_guard = (
+        'if ! git diff --quiet HEAD "$EXPECTED_SHA" -- "$RUNTIME_PRICE_FILE"; then'
+    )
+
+    assert workflow.count(change_guard) == 2
+    assert workflow.count("preserve_runtime_price=false") == 2
+    assert workflow.count('echo "Applying versioned pricing from $RUNTIME_PRICE_FILE"') == 2
 
 
 def test_runtime_price_is_restored_after_exact_sha_reset():
