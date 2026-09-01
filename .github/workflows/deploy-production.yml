@@ -201,7 +201,9 @@ jobs:
           }
 
           preserve_runtime_price=true
-          if ! git diff --quiet HEAD "$EXPECTED_SHA" -- "$RUNTIME_PRICE_FILE"; then
+          if ! cmp -s \
+            <(git show "HEAD:$RUNTIME_PRICE_FILE") \
+            <(git show "$EXPECTED_SHA:$RUNTIME_PRICE_FILE"); then
             preserve_runtime_price=false
             echo "Applying versioned pricing from $RUNTIME_PRICE_FILE"
           fi
@@ -393,7 +395,9 @@ jobs:
           }
 
           preserve_runtime_price=true
-          if ! git diff --quiet HEAD "$EXPECTED_SHA" -- "$RUNTIME_PRICE_FILE"; then
+          if ! cmp -s \
+            <(git show "HEAD:$RUNTIME_PRICE_FILE") \
+            <(git show "$EXPECTED_SHA:$RUNTIME_PRICE_FILE"); then
             preserve_runtime_price=false
             echo "Applying versioned pricing from $RUNTIME_PRICE_FILE"
           fi

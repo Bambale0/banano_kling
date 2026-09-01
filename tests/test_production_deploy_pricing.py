@@ -25,11 +25,12 @@ def test_both_production_paths_preserve_runtime_price_by_default():
 def test_versioned_price_change_is_applied_instead_of_preserved():
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
-    change_guard = (
-        'if ! git diff --quiet HEAD "$EXPECTED_SHA" -- "$RUNTIME_PRICE_FILE"; then'
-    )
+    current_blob = '<(git show "HEAD:$RUNTIME_PRICE_FILE")'
+    expected_blob = '<(git show "$EXPECTED_SHA:$RUNTIME_PRICE_FILE")'
 
-    assert workflow.count(change_guard) == 2
+    assert workflow.count("if ! cmp -s \\") == 2
+    assert workflow.count(current_blob) == 2
+    assert workflow.count(expected_blob) == 2
     assert workflow.count("preserve_runtime_price=false") == 2
     assert workflow.count('echo "Applying versioned pricing from $RUNTIME_PRICE_FILE"') == 2
 
