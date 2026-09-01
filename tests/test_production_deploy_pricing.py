@@ -31,8 +31,10 @@ def test_versioned_price_change_is_applied_instead_of_preserved():
     assert workflow.count("if ! cmp -s \\") == 2
     assert workflow.count(current_blob) == 2
     assert workflow.count(expected_blob) == 2
-    assert workflow.count("preserve_runtime_price=false") == 2
-    assert workflow.count('echo "Applying versioned pricing from $RUNTIME_PRICE_FILE"') == 2
+    assert workflow.count('get("force_apply_runtime_price") is True') == 2
+    assert workflow.count('if [ "$force_apply_runtime_price" = true ]; then') == 2
+    assert workflow.count("preserve_runtime_price=false") == 4
+    assert workflow.count('echo "Applying versioned pricing from $RUNTIME_PRICE_FILE"') == 4
 
 
 def test_runtime_price_is_restored_after_exact_sha_reset():

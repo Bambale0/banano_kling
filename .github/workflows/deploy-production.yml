@@ -201,7 +201,14 @@ jobs:
           }
 
           preserve_runtime_price=true
-          if ! cmp -s \
+          force_apply_runtime_price="$(
+            git show "$EXPECTED_SHA:$RUNTIME_PRICE_FILE" \
+              | python3 -c 'import json, sys; print("true" if json.load(sys.stdin).get("force_apply_runtime_price") is True else "false")'
+          )"
+          if [ "$force_apply_runtime_price" = true ]; then
+            preserve_runtime_price=false
+            echo "Applying versioned pricing from $RUNTIME_PRICE_FILE"
+          elif ! cmp -s \
             <(git show "HEAD:$RUNTIME_PRICE_FILE") \
             <(git show "$EXPECTED_SHA:$RUNTIME_PRICE_FILE"); then
             preserve_runtime_price=false
@@ -395,7 +402,14 @@ jobs:
           }
 
           preserve_runtime_price=true
-          if ! cmp -s \
+          force_apply_runtime_price="$(
+            git show "$EXPECTED_SHA:$RUNTIME_PRICE_FILE" \
+              | python3 -c 'import json, sys; print("true" if json.load(sys.stdin).get("force_apply_runtime_price") is True else "false")'
+          )"
+          if [ "$force_apply_runtime_price" = true ]; then
+            preserve_runtime_price=false
+            echo "Applying versioned pricing from $RUNTIME_PRICE_FILE"
+          elif ! cmp -s \
             <(git show "HEAD:$RUNTIME_PRICE_FILE") \
             <(git show "$EXPECTED_SHA:$RUNTIME_PRICE_FILE"); then
             preserve_runtime_price=false
