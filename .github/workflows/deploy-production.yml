@@ -193,20 +193,26 @@ jobs:
             exit 1
           fi
 
-          # Production pricing is mutable runtime state managed by admins.
-          # Preserve it on every deploy, not only when Git currently marks it dirty.
-          if [ -f "$RUNTIME_PRICE_FILE" ]; then
-            runtime_price_backup="$(mktemp)"
-            cp -- "$RUNTIME_PRICE_FILE" "$runtime_price_backup"
-            echo "Preserving runtime pricing from $RUNTIME_PRICE_FILE"
-          fi
-
           git fetch --prune origin tanyapi
           remote_sha="$(git rev-parse origin/tanyapi)"
           [ "$remote_sha" = "$EXPECTED_SHA" ] || {
             echo "Production branch moved: expected=$EXPECTED_SHA origin/tanyapi=$remote_sha" >&2
             exit 1
           }
+
+          preserve_runtime_price=true
+          if ! git diff --quiet HEAD "$EXPECTED_SHA" -- "$RUNTIME_PRICE_FILE"; then
+            preserve_runtime_price=false
+            echo "Applying versioned pricing from $RUNTIME_PRICE_FILE"
+          fi
+
+          # Production pricing is mutable runtime state managed by admins.
+          # Preserve it unless the deployed commit intentionally changes it.
+          if [ "$preserve_runtime_price" = true ] && [ -f "$RUNTIME_PRICE_FILE" ]; then
+            runtime_price_backup="$(mktemp)"
+            cp -- "$RUNTIME_PRICE_FILE" "$runtime_price_backup"
+            echo "Preserving runtime pricing from $RUNTIME_PRICE_FILE"
+          fi
 
           git switch tanyapi
           git reset --hard "$EXPECTED_SHA"
@@ -379,20 +385,26 @@ jobs:
             exit 1
           fi
 
-          # Production pricing is mutable runtime state managed by admins.
-          # Preserve it on every deploy, not only when Git currently marks it dirty.
-          if [ -f "$RUNTIME_PRICE_FILE" ]; then
-            runtime_price_backup="$(mktemp)"
-            cp -- "$RUNTIME_PRICE_FILE" "$runtime_price_backup"
-            echo "Preserving runtime pricing from $RUNTIME_PRICE_FILE"
-          fi
-
           git fetch --prune origin tanyapi
           remote_sha="$(git rev-parse origin/tanyapi)"
           [ "$remote_sha" = "$EXPECTED_SHA" ] || {
             echo "Production branch moved: expected=$EXPECTED_SHA origin/tanyapi=$remote_sha" >&2
             exit 1
           }
+
+          preserve_runtime_price=true
+          if ! git diff --quiet HEAD "$EXPECTED_SHA" -- "$RUNTIME_PRICE_FILE"; then
+            preserve_runtime_price=false
+            echo "Applying versioned pricing from $RUNTIME_PRICE_FILE"
+          fi
+
+          # Production pricing is mutable runtime state managed by admins.
+          # Preserve it unless the deployed commit intentionally changes it.
+          if [ "$preserve_runtime_price" = true ] && [ -f "$RUNTIME_PRICE_FILE" ]; then
+            runtime_price_backup="$(mktemp)"
+            cp -- "$RUNTIME_PRICE_FILE" "$runtime_price_backup"
+            echo "Preserving runtime pricing from $RUNTIME_PRICE_FILE"
+          fi
 
           git switch tanyapi
           git reset --hard "$EXPECTED_SHA"

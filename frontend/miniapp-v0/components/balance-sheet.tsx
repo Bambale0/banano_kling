@@ -341,9 +341,9 @@ export function BalanceSheet() {
                             <p className="mt-1 text-xs text-muted-foreground">
                               Stars: {starsPrice}⭐
                             </p>
-                            {foreignConfigured && pkg.price_usd ? (
+                            {foreignConfigured ? (
                               <p className="mt-1 text-xs text-muted-foreground">
-                                Зарубежная оплата и СНГ: ${pkg.price_usd}
+                                Зарубежная оплата и СНГ
                               </p>
                             ) : null}
                           </div>

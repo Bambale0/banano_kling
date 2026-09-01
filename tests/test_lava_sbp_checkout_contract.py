@@ -13,28 +13,28 @@ def _read(path: str) -> str:
 
 def test_lava_foreign_usd_packages_are_configured() -> None:
     config = json.loads(_read("data/price.json"))
-    packages = {item["credits"]: item for item in config["packages"]}
+    packages = {item["id"]: item for item in config["packages"]}
     expected = {
-        500: (
+        "optimal": (
             "639bf625-d76d-41a2-8e10-c66613d20ee1",
             "61c4022f-18e5-4d8c-bda4-6d3659d77b9d",
         ),
-        1000: (
+        "pro": (
             "9df9801c-5c2a-4721-94b4-10651ad7124f",
             "17040120-096e-4d54-807e-1e997854258c",
         ),
-        2000: (
+        "studio": (
             "94feb699-912e-4d45-b1ed-e7790e8a8d1a",
             "49e4d77f-6391-438a-b01c-bf70b5d7184e",
         ),
-        5000: (
+        "business": (
             "cb5e3be8-2f65-4730-b3ba-67b7aee65601",
             "faaa883c-a03b-4c00-9c19-e87620eda155",
         ),
     }
 
-    for credits, (product_id, offer_id) in expected.items():
-        package = packages[credits]
+    for package_id, (product_id, offer_id) in expected.items():
+        package = packages[package_id]
         assert package["lava_foreign_product_id"] == product_id
         assert package["lava_foreign_offer_id"] == offer_id
         assert package["lava_foreign_currency"] == "USD"

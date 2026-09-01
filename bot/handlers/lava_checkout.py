@@ -208,15 +208,12 @@ def _payment_options_keyboard(
             callback_data=f"buy_lava_sbp_{package_id}",
         )
     if lava_foreign:
-        price_suffix = (
-            f" · ${lava_foreign_price_usd:g}" if lava_foreign_price_usd else ""
-        )
         builder.button(
-            text=f"🌍 Зарубежная карта{price_suffix}",
+            text="🌍 Зарубежная карта",
             callback_data=f"buy_lava_foreign_card_{package_id}",
         )
         builder.button(
-            text=f"🌍 PayPal{price_suffix}",
+            text="🌍 PayPal",
             callback_data=f"buy_lava_foreign_paypal_{package_id}",
         )
     if stars:
@@ -365,8 +362,6 @@ async def show_direct_payment_methods(
     bonus_text = ("\n" + "\n".join(bonus_lines)) if bonus_lines else ""
 
     amount_parts = [f"<code>{package['price_rub']}</code>₽"]
-    if has_lava_foreign and lava_foreign_price_usd:
-        amount_parts.append(f"<code>${lava_foreign_price_usd:g}</code>")
     if has_stars:
         amount_parts.append(f"<code>{package_stars_amount(package)}</code>⭐")
 
