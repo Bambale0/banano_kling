@@ -1,4 +1,4 @@
-"""Add separate Lava Card and SBP actions to the Mini App checkout."""
+"""Add explicit Lava methods and payment compatibility guards."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from typing import Any
 
 from aiohttp import web
 
+from bot.services.freekassa_service import freekassa_service
 from bot.services.lava_service import normalize_lava_customer_email
 
 
@@ -31,10 +32,30 @@ def _payment_error_message(result: Any, *, default: str = "Failed to create paym
     return default
 
 
+def _install_freekassa_reserve_button() -> None:
+    """Expose the existing KASSA reserve button when FreeKassa is configured."""
+
+    from bot.handlers import lava_checkout as lava_checkout_module
+
+    current_keyboard = lava_checkout_module._payment_options_keyboard
+    if getattr(current_keyboard, "_freekassa_reserve_compat", False):
+        return
+
+    @wraps(current_keyboard)
+    def payment_options_with_freekassa(*args: Any, **kwargs: Any):
+        kwargs["freekassa"] = bool(freekassa_service.enabled)
+        return current_keyboard(*args, **kwargs)
+
+    payment_options_with_freekassa._freekassa_reserve_compat = True
+    lava_checkout_module._payment_options_keyboard = payment_options_with_freekassa
+
+
 def install_miniapp_lava_payment_methods() -> None:
-    """Handle separate Lava UI actions with Lava PAY2ME method selectors."""
+    """Handle explicit Lava UI actions and keep FreeKassa as Telegram reserve."""
 
     import bot.miniapp as miniapp_module
+
+    _install_freekassa_reserve_button()
 
     if getattr(miniapp_module, "_lava_payment_methods_compat_installed", False):
         return

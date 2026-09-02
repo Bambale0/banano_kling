@@ -203,32 +203,36 @@ def test_text_bot_sbp_uses_lava_checkout_not_freekassa() -> None:
     assert "_allow_amount_fallback=False" in source
 
 
-def test_old_freekassa_callbacks_are_routed_to_lava_checkout() -> None:
+def test_freekassa_is_reserve_without_replacing_primary_lava() -> None:
     source = _read("bot/handlers/freekassa_payments.py")
+    compat = _read("bot/handlers/miniapp_lava_payment_methods_compat.py")
     callback_block = source.split(
         "async def initiate_freekassa_payment", 1
     )[1].split("@router.callback_query(F.data.startswith(\"check_freekassa_\"))", 1)[0]
 
-    assert (
-        'proxy = _CallbackDataProxy(callback, f"buy_lava_{target_mode}_{package_id}")'
-        in callback_block
-    )
-    assert "await handle_lava_checkout_entry(proxy, state)" in callback_block
-    assert "freekassa_service.create_payment" not in callback_block
-    assert "provider=\"freekassa\"" not in callback_block
-    assert "_checkout_url(" not in callback_block
+    assert 'text="🇷🇺 РФ — KASSA (резерв)"' in source
+    assert 'callback_data=f"freekassa_card_{package_id}"' in source
+    assert 'callback_data=f"freekassa_sbp_{package_id}"' in source
+    assert 'provider="freekassa"' in callback_block
+    assert "create_transaction(" in callback_block
+    assert "_checkout_url(order_id, payment_system_id)" in callback_block
+    assert "handle_lava_checkout_entry" not in callback_block
+    assert 'kwargs["freekassa"] = bool(freekassa_service.enabled)' in compat
 
 
-def test_freekassa_checkout_endpoint_no_longer_creates_payments() -> None:
+def test_freekassa_checkout_creates_only_signed_card_or_sbp_payments() -> None:
     source = _read("bot/handlers/freekassa_payments.py")
     checkout_block = source.split("async def handle_freekassa_checkout", 1)[1].split(
         "def _payment_return_page", 1
     )[0]
 
-    assert "status=410" in checkout_block
-    assert "freekassa_service.create_payment" not in checkout_block
-    assert "HTTPSeeOther" not in checkout_block
-    assert "Этот способ оплаты больше не используется" in checkout_block
+    assert "FREEKASSA_CARD_RUB_METHOD_ID" in checkout_block
+    assert "FREEKASSA_SBP_METHOD_ID" in checkout_block
+    assert "_valid_checkout_signature" in checkout_block
+    assert "freekassa_service.create_payment" in checkout_block
+    assert "payment_system_id=method_id" in checkout_block
+    assert "HTTPSeeOther" in checkout_block
+    assert "status=410" not in checkout_block
 
 
 def test_miniapp_ios_payment_uses_same_window_navigation() -> None:
