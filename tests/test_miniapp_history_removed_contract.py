@@ -1,9 +1,7 @@
-from __future__ import annotations
-
-from pathlib import Path
+import pathlib
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = pathlib.Path(__file__).resolve().parents[1]
 MINIAPP_COMPONENTS = ROOT / "frontend" / "miniapp-v0" / "components"
 
 
