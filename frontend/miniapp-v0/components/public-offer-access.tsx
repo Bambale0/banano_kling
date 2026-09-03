@@ -30,32 +30,31 @@ export function PublicOfferAccess() {
   }, [activeTab, activeWorkspace, isBalanceOpen])
 
   useEffect(() => {
-    if (!open || offerText || loading) return
+    if (!open || offerText) return
     let cancelled = false
-    setLoading(true)
-    setError('')
 
-    void fetch(OFFER_TEXT_URL, { cache: 'force-cache' })
-      .then((response) => {
+    const loadOffer = async () => {
+      setLoading(true)
+      setError('')
+      try {
+        const response = await fetch(OFFER_TEXT_URL, { cache: 'force-cache' })
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        return response.text()
-      })
-      .then((text) => {
+        const text = await response.text()
         if (!cancelled) setOfferText(text)
-      })
-      .catch(() => {
+      } catch {
         if (!cancelled) {
           setError('Не удалось загрузить оферту. Закройте окно и попробуйте ещё раз.')
         }
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setLoading(false)
-      })
+      }
+    }
 
+    void loadOffer()
     return () => {
       cancelled = true
     }
-  }, [loading, offerText, open])
+  }, [offerText, open])
 
   useEffect(() => {
     if (!context) setOpen(false)
