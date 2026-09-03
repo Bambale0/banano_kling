@@ -26,10 +26,11 @@ def test_desktop_navigation_is_compact_and_centered() -> None:
     assert "lg:py-1.5" in navigation
 
 
-def test_desktop_studio_uses_denser_grids() -> None:
+def test_desktop_studio_uses_compact_actions_without_history_grid() -> None:
     quick_actions = _read("quick-action-grid.tsx")
-    history = _read("task-history-list.tsx")
+    studio = _read("tabs/studio-tab.tsx")
 
     assert "lg:max-w-[920px]" in quick_actions
-    assert "md:grid-cols-3" in history
-    assert "xl:grid-cols-4" in history
+    assert "TaskHistoryList" not in studio
+    assert "Ваши работы" not in studio
+    assert "Готовые работы остаются в чате с ботом" in studio
