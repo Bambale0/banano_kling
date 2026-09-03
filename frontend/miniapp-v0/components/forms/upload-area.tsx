@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { UploadedFile } from '@/lib/types'
 import { cn } from '@/lib/utils'
-import { Upload, X, Loader2, Video, Music, Plus, ImageIcon } from 'lucide-react'
+import { Upload, X, Loader2, Video, Music } from 'lucide-react'
 import { sendMiniAppClientLog } from '@/lib/api'
 
 interface UploadAreaProps {
@@ -13,6 +13,8 @@ interface UploadAreaProps {
   accept: string
   required?: boolean
   onUpload?: (file: File) => Promise<UploadedFile>
+  // Kept temporarily for source compatibility with older forms. The Mini App no longer
+  // exposes a persistent reference library; only files selected for the current run are shown.
   libraryFiles?: UploadedFile[]
   libraryLabel?: string
 }
@@ -58,49 +60,6 @@ function matchesAcceptedType(file: File, accept: string) {
   return true
 }
 
-function MediaPreview({
-  file,
-  className,
-  onPreviewFailed,
-}: {
-  file: UploadedFile
-  className: string
-  onPreviewFailed?: (file: UploadedFile) => void
-}) {
-  const [previewFailed, setPreviewFailed] = useState(false)
-
-  if (file.type === 'image' && !previewFailed) {
-    return (
-      <img
-        src={file.preview_url || file.url}
-        alt=""
-        className={className}
-        onError={() => {
-          setPreviewFailed(true)
-          sendMiniAppClientLog('reference-preview-failed', {
-            reference_id: file.id,
-            reference_name: file.name,
-            reference_url: file.preview_url || file.url,
-          })
-          onPreviewFailed?.(file)
-        }}
-      />
-    )
-  }
-
-  return (
-    <div className={cn(className, 'flex items-center justify-center bg-secondary')}>
-      {file.type === 'audio' ? (
-        <Music className="h-4 w-4 text-cyan" />
-      ) : file.type === 'video' ? (
-        <Video className="h-4 w-4 text-cyan" />
-      ) : (
-        <ImageIcon className="h-4 w-4 text-muted-foreground" />
-      )}
-    </div>
-  )
-}
-
 export function UploadArea({
   files,
   onFilesChange,
@@ -108,14 +67,11 @@ export function UploadArea({
   accept,
   required,
   onUpload,
-  libraryFiles = [],
-  libraryLabel = 'Сохранённые референсы',
 }: UploadAreaProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const filesRef = useRef(files)
   const [isDragging, setIsDragging] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
-  const [failedLibraryUrls, setFailedLibraryUrls] = useState<Set<string>>(() => new Set())
 
   useEffect(() => {
     filesRef.current = files
@@ -212,25 +168,6 @@ export function UploadArea({
   }
 
   const canUploadMore = files.length < maxFiles
-  const availableLibraryFiles = libraryFiles.filter(
-    (item) => item.url && !failedLibraryUrls.has(item.url) && !files.some((selected) => selected.url === item.url)
-  )
-
-  const handleLibraryPreviewFailed = useCallback((file: UploadedFile) => {
-    if (!file.url) return
-    setFailedLibraryUrls((current) => {
-      if (current.has(file.url)) return current
-      const next = new Set(current)
-      next.add(file.url)
-      return next
-    })
-  }, [])
-
-  const handleAddFromLibrary = (file: UploadedFile) => {
-    if (!canUploadMore || failedLibraryUrls.has(file.url)) return
-    publishFiles([...filesRef.current, { ...file, id: `${file.id}_${Date.now()}` }])
-    setUploadError(null)
-  }
 
   return (
     <div className="space-y-3" aria-busy={files.some((file) => file.uploading)}>
@@ -297,36 +234,6 @@ export function UploadArea({
         </div>
       )}
 
-      {availableLibraryFiles.length > 0 && (
-        <div className="space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">{libraryLabel}</p>
-            <span className="text-[11px] text-muted-foreground">Можно добавить без повторной загрузки</span>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {availableLibraryFiles.slice(0, Math.max(0, maxFiles - files.length) + 8).map((file) => (
-              <button
-                key={file.id}
-                type="button"
-                onClick={() => handleAddFromLibrary(file)}
-                className={cn(
-                  'inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-xs transition-all duration-200',
-                  'border-border/50 bg-secondary/40 text-foreground hover:border-gold/40 hover:bg-secondary/70'
-                )}
-              >
-                <MediaPreview
-                  file={file}
-                  className="h-7 w-7 rounded object-cover"
-                  onPreviewFailed={handleLibraryPreviewFailed}
-                />
-                <span className="max-w-[120px] truncate">{file.name}</span>
-                <Plus className="h-3.5 w-3.5 text-gold" />
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
       {files.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {files.map((file) => (
@@ -343,8 +250,16 @@ export function UploadArea({
                   <div className="w-full h-full flex items-center justify-center">
                     <Loader2 className="w-4 h-4 text-muted-foreground animate-spin" />
                   </div>
+                ) : file.type === 'image' ? (
+                  <img src={file.preview_url || file.url} alt="" className="w-full h-full object-cover" />
                 ) : (
-                  <MediaPreview file={file} className="h-full w-full object-cover" />
+                  <div className="w-full h-full flex items-center justify-center">
+                    {file.type === 'audio' ? (
+                      <Music className="w-4 h-4 text-cyan" />
+                    ) : (
+                      <Video className="w-4 h-4 text-cyan" />
+                    )}
+                  </div>
                 )}
               </div>
 
