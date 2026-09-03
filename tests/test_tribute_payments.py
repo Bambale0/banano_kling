@@ -136,7 +136,7 @@ async def test_new_tribute_purchase_uses_existing_atomic_completion(monkeypatch:
     async def fake_complete(order_id: str, bot=None):
         recorded["completed_order_id"] = order_id
         recorded["bot"] = bot
-        return {"action": "completed"}
+        return {"ok": True, "already_completed": False}
 
     monkeypatch.setattr(tribute, "get_or_create_user", fake_user)
     monkeypatch.setattr(tribute, "get_transaction_by_order", fake_transaction)
@@ -167,3 +167,41 @@ async def test_new_tribute_purchase_uses_existing_atomic_completion(monkeypatch:
     assert recorded["bot"] is fake_bot
     assert result["credits"] == 25
     assert result["duplicate"] is False
+
+
+@pytest.mark.asyncio
+async def test_atomic_race_reports_duplicate_without_second_credit(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_user(_telegram_id: int):
+        return SimpleNamespace(id=99)
+
+    async def fake_transaction(_order_id: str):
+        return SimpleNamespace(
+            provider="tribute",
+            user_id=99,
+            credits=50,
+            status="pending",
+        )
+
+    async def fake_complete(_order_id: str, bot=None):
+        return {"ok": True, "already_completed": True}
+
+    monkeypatch.setattr(tribute, "get_or_create_user", fake_user)
+    monkeypatch.setattr(tribute, "get_transaction_by_order", fake_transaction)
+    monkeypatch.setattr(tribute, "_complete_transaction", fake_complete)
+
+    result = await tribute._credit_tribute_purchase(
+        SimpleNamespace(app={}),
+        {
+            "telegram_user_id": 12345,
+            "purchase_id": 8003,
+            "transaction_id": 9003,
+        },
+        tribute.TributeProduct(
+            product_id=3,
+            package_id="optimal",
+            web_link=tribute.TRIBUTE_PACKAGE_LINKS["optimal"],
+        ),
+    )
+
+    assert result["duplicate"] is True
+    assert result["order_id"] == "tribute:8003"
