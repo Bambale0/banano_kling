@@ -14,15 +14,16 @@ from bot.services.media_input_utils import image_sources_to_provider_safe_png_ur
 logger = logging.getLogger(__name__)
 
 SEEDANCE_IDENTITY_SOURCE_LOCK = """IDENTITY / SOURCE LOCK:
-Use the uploaded source image as the primary identity and character reference.
-Preserve the same recognizable person: face geometry, eyes, nose, lips, skin tone, hair, body proportions, outfit, and distinctive marks.
-Do not replace the person with a different actor, lookalike, or invented character.
+Use all uploaded source images as identity, character, object, scene, and style references.
+Preserve recognizable people when present: face geometry, eyes, nose, lips, skin tone, hair, body proportions, outfit, and distinctive marks.
+Do not replace a referenced person with a different actor, lookalike, or invented character.
 Do not add extra people unless the user explicitly asks for multiple people.
-The first-frame image is the exact starting frame and must anchor the video."""
+Reference images guide identity and visual consistency only. Do not force any reference image to become the literal opening frame.
+Start the video from the scene and action described by the user's prompt."""
 
 
 def prepare_seedance_prompt(prompt: str, *, max_length: int) -> str:
-    """Append only the Seedance identity lock and preserve it in full."""
+    """Append only the Seedance identity/reference lock and preserve it in full."""
     if SEEDANCE_IDENTITY_SOURCE_LOCK in prompt:
         return prompt[:max_length]
 
@@ -129,14 +130,15 @@ class SeedanceService(KlingService):
         reference_video_urls = _clean_unique_urls(reference_video_urls)
         reference_audio_urls = _clean_unique_urls(reference_audio_urls)
 
-        # Old repeat payloads could contain the same image in both first_frame_url
-        # and reference_image_urls. It is one first-frame scenario, not a mixed
-        # scenario, so remove exact duplicates before enforcing exclusivity.
-        frame_urls = {url for url in (first_frame_url, last_frame_url) if url}
-        if frame_urls and reference_image_urls:
-            reference_image_urls = [
-                url for url in reference_image_urls if url not in frame_urls
-            ]
+        # Backward compatibility: older Telegram/Mini App callers still know the
+        # ``first_frame_url`` argument. Seedance's public product contract is now
+        # reference-only, so downgrade that old field into an ordinary reference
+        # before validating or building the provider payload.
+        if first_frame_url:
+            reference_image_urls = _clean_unique_urls(
+                [first_frame_url, *reference_image_urls]
+            )
+            first_frame_url = None
 
         has_first_last = bool(first_frame_url or last_frame_url)
         has_multimodal_refs = bool(
@@ -145,7 +147,7 @@ class SeedanceService(KlingService):
         if has_first_last and has_multimodal_refs:
             return self._build_error(
                 "invalid_seedance_scenario",
-                "Seedance 2.0 does not allow first/last-frame inputs together with multimodal references in one task.",
+                "Seedance 2.0 does not allow last-frame inputs together with multimodal references in one task.",
             )
 
         frame_fields: list[str] = []
