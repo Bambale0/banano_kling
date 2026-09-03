@@ -22,6 +22,14 @@ logger = logging.getLogger(__name__)
 TRIBUTE_WEBHOOK_PATH = "/tribute/webhook"
 TRIBUTE_API_BASE = "https://tribute.tg/api/v1"
 TRIBUTE_PRODUCT_CACHE_TTL_SECONDS = 10 * 60
+TRIBUTE_PACKAGE_LINKS: dict[str, str] = {
+    "mini": "https://web.tribute.tg/p/Dxi",
+    "start": "https://web.tribute.tg/p/Dxn",
+    "optimal": "https://web.tribute.tg/p/Dxm",
+    "pro": "https://web.tribute.tg/p/Dxo",
+    "studio": "https://web.tribute.tg/p/Dxp",
+    "business": "https://web.tribute.tg/p/Dxq",
+}
 
 _PRODUCT_CACHE: dict[int, "TributeProduct"] = {}
 _PRODUCT_CACHE_EXPIRES_AT = 0.0
@@ -69,15 +77,10 @@ def verify_tribute_signature(raw_body: bytes, signature: str, api_key: str | Non
 
 
 def _configured_tribute_links() -> dict[str, str]:
-    result: dict[str, str] = {}
-    for package_id in ("mini", "start", "optimal", "pro", "studio", "business"):
-        package = preset_manager.get_package(package_id)
-        if not package:
-            continue
-        link = _normalize_web_link(package.get("tribute_url"))
-        if link:
-            result[link] = package_id
-    return result
+    return {
+        _normalize_web_link(web_link): package_id
+        for package_id, web_link in TRIBUTE_PACKAGE_LINKS.items()
+    }
 
 
 def _product_from_api_row(row: dict[str, Any], configured_links: dict[str, str]) -> TributeProduct | None:
