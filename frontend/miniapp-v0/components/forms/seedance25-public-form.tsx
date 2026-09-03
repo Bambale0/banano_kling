@@ -244,7 +244,7 @@ function SectionTitle({ eyebrow, title, hint }: { eyebrow?: string; title: strin
 }
 
 export function Seedance25PublicForm({ model, credits, isAdmin, onQueued, onSavedReference }: Props) {
-  const [scenario, setScenario] = useState<Seedance25Scenario>('text')
+  const [scenario, setScenario] = useState<Seedance25Scenario>('multimodal')
   const [resolution, setResolution] = useState<Seedance25Resolution>('720p')
   const [ratio, setRatio] = useState<(typeof RATIOS)[number]>('adaptive')
   const [duration, setDuration] = useState(5)
@@ -438,7 +438,7 @@ export function Seedance25PublicForm({ model, credits, isAdmin, onQueued, onSave
         <SectionTitle
           eyebrow="Шаг 1"
           title="Что хотите сделать?"
-          hint="Выберите понятный сценарий — форма покажет только нужные поля"
+          hint="По умолчанию выбран режим по референсам; текстовый режим можно включить вручную"
         />
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {SCENARIOS.map((item) => (
