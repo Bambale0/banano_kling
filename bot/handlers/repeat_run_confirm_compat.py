@@ -16,6 +16,7 @@ from bot.services.trend_success_postgres_compat import (
 )
 
 from .generation_started_ux_compat import install_generation_started_ux
+from .image_failure_ux_compat import install_image_failure_ux
 from .image_generation_fsm_compat import install_image_generation_fsm_compat
 from .pinterest_prompt_softening_compat import install_pinterest_prompt_softening
 from .rendergrid_provider_id_compat import install_rendergrid_provider_id_compat
@@ -40,8 +41,8 @@ def install_repeat_run_confirm_compat(generation_module) -> None:
     install_generation_started_ux(generation_module)
 
     # RenderGrid returns its native trace as creation_id on synchronous image
-    # completions. Normalize it into the common provider_task_id contract and
-    # keep local/provider IDs separate in the Mini App/Pinterest start notice.
+    # results. Normalize it into the common provider_task_id contract and keep
+    # the id even when the provider returns a terminal failure.
     install_rendergrid_provider_id_compat()
 
     # The PostgreSQL compatibility adapter intentionally ignores CREATE/ALTER
@@ -58,6 +59,11 @@ def install_repeat_run_confirm_compat(generation_module) -> None:
     # is waiting for a prompt. The runtime patch also releases the real FSM as
     # soon as the local img_* task exists, before a synchronous provider wait.
     install_image_generation_fsm_compat(generation_module, router)
+
+    # The legacy image handler drops provider failure details after a synchronous
+    # launch. Install this after the FSM wrapper so it can enrich the final
+    # launch result and replace generic refund text with reason + ids + retry.
+    install_image_failure_ux(generation_module)
 
     # Pinterest still keeps its scene/identity reference roles, but the model
     # receives them as concise secondary guidance instead of a long pseudo-system
