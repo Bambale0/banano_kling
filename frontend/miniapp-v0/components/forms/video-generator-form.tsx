@@ -40,20 +40,6 @@ function getVideoModelPerSecondCost(model: VideoModel | undefined, duration: num
   return getVideoModelCost(model, duration, quality) / Math.max(duration, 1)
 }
 
-function preferredVideoScenario(model?: VideoModel): ScenarioType {
-  if (model?.supports.includes('imgtxt')) return 'imgtxt'
-  return model?.supports[0] || 'text'
-}
-
-function preferredVeoGenerationType(model?: VideoModel): string {
-  if (!model?.veo_generation_types?.length) return 'TEXT_2_VIDEO'
-  if (model.veo_generation_types.includes('REFERENCE_2_VIDEO')) return 'REFERENCE_2_VIDEO'
-  if (model.veo_generation_types.includes('FIRST_AND_LAST_FRAMES_2_VIDEO')) {
-    return 'FIRST_AND_LAST_FRAMES_2_VIDEO'
-  }
-  return model.veo_generation_types[0]
-}
-
 const HIDDEN_FROM_COMMON_VIDEO_LIST = new Set([
   'avatar_std',
   'avatar_pro',
@@ -123,12 +109,12 @@ export function VideoGeneratorForm({
 }: VideoGeneratorFormProps) {
   const formatPerSecondCost = (raw: number) => Number(raw.toFixed(2)).toString()
   const [selectedModel, setSelectedModel] = useState(models.find((item) => !['motion_control', 'motion_control_v26', 'motion_control_v30'].includes(item.id))?.id || models[0]?.id || '')
-  const [selectedScenario, setSelectedScenario] = useState<ScenarioType>('imgtxt')
+  const [selectedScenario, setSelectedScenario] = useState<ScenarioType>('text')
   const [selectedRatio, setSelectedRatio] = useState('16:9')
   const [selectedDuration, setSelectedDuration] = useState(5)
   const [grokMode, setGrokMode] = useState('normal')
   const [grokResolution, setGrokResolution] = useState('480p')
-  const [veoGenerationType, setVeoGenerationType] = useState('REFERENCE_2_VIDEO')
+  const [veoGenerationType, setVeoGenerationType] = useState('TEXT_2_VIDEO')
   const [veoTranslation, setVeoTranslation] = useState(true)
   const [veoResolution, setVeoResolution] = useState('720p')
   const [veoSeed, setVeoSeed] = useState('')
@@ -174,7 +160,6 @@ export function VideoGeneratorForm({
 
   const model = useMemo(() => models.find(m => m.id === selectedModel), [models, selectedModel])
 
-  const isSeedance2 = selectedModel === 'seedance_2'
   const isGeminiOmni = selectedModel === 'gemini_omni'
   const isOmniAudio = selectedModel === 'gemini_omni_audio' || (isGeminiOmni && selectedScenario === 'audio')
   const isOmniCharacter = selectedModel === 'gemini_omni_character' || (isGeminiOmni && selectedScenario === 'character')
@@ -229,10 +214,11 @@ export function VideoGeneratorForm({
   const omniOverQuota = isOmniVideo && omniInputUnits > 7
   const omniHasVideoReference = isOmniVideo && omniVideoCount > 0
   
+  // Check if scenario is supported
   const scenarioSupported = model?.supports.includes(selectedScenario) ?? false
   
-  const needsStartImage = ((selectedScenario === 'imgtxt' && !isOmniVideo && !isSeedance2) || selectedScenario === 'character') && startImage.length === 0
-  const needsPhotoReference = isSeedance2 && selectedScenario === 'imgtxt' && photoReferences.length === 0
+  // Validation
+  const needsStartImage = ((selectedScenario === 'imgtxt' && !isOmniVideo) || selectedScenario === 'character') && startImage.length === 0
   const needsVideoRef = selectedScenario === 'video' && !isOmniVideo && videoReferences.length === 0
   const needsAvatarImage = selectedScenario === 'avatar' && startImage.length === 0
   const needsAvatarAudio = selectedScenario === 'avatar' && audioReference.length === 0
@@ -243,7 +229,6 @@ export function VideoGeneratorForm({
     canAfford &&
     scenarioSupported &&
     !needsStartImage &&
-    !needsPhotoReference &&
     !needsVideoRef &&
     !needsAvatarImage &&
     !needsAvatarAudio &&
@@ -272,18 +257,13 @@ export function VideoGeneratorForm({
     },
   ]
 
+  // consume requested Avatar service
   useEffect(() => {
     const requestedModel = getStorageItem('miniapp_requested_video_model')
     const requestedScenario = getStorageItem('miniapp_requested_video_scenario')
     if (requestedModel && models.some((item) => item.id === requestedModel)) {
       setSelectedModel(requestedModel)
-      const requestedMeta = models.find((item) => item.id === requestedModel)
-      setSelectedScenario(
-        requestedScenario ? requestedScenario as ScenarioType : preferredVideoScenario(requestedMeta)
-      )
-      if (requestedMeta?.veo_generation_types?.length) {
-        setVeoGenerationType(preferredVeoGenerationType(requestedMeta))
-      }
+      if (requestedScenario) setSelectedScenario(requestedScenario as ScenarioType)
       removeStorageItem('miniapp_requested_video_model')
       removeStorageItem('miniapp_requested_video_scenario')
     }
@@ -313,22 +293,18 @@ export function VideoGeneratorForm({
     onPromptPresetConsumed?.()
   }, [models, onPromptPresetConsumed, promptPreset])
 
+  // selected model is hidden motion: switch to first visible video model
   useEffect(() => {
     if (HIDDEN_FROM_COMMON_VIDEO_LIST.has(selectedModel)) {
       const nextModel = visibleModels[0]
-      if (nextModel) {
-        setSelectedModel(nextModel.id)
-        setSelectedScenario(preferredVideoScenario(nextModel))
-        if (nextModel.veo_generation_types?.length) {
-          setVeoGenerationType(preferredVeoGenerationType(nextModel))
-        }
-      }
+      if (nextModel) setSelectedModel(nextModel.id)
     }
   }, [selectedModel, visibleModels])
 
+  // Reset scenario if not supported
   useEffect(() => {
     if (model && !model.supports.includes(selectedScenario)) {
-      setSelectedScenario(preferredVideoScenario(model))
+      setSelectedScenario(model.supports[0] || 'text')
     }
   }, [model, selectedScenario])
 
@@ -338,6 +314,7 @@ export function VideoGeneratorForm({
     }
   }, [model, selectedRatio])
 
+  // Reset duration if not available
   useEffect(() => {
     if (model && !model.durations.includes(selectedDuration)) {
       setSelectedDuration(model.durations[0] || 5)
@@ -353,7 +330,7 @@ export function VideoGeneratorForm({
       setGrokResolution(model.grok_resolutions[0])
     }
     if (model.veo_generation_types?.length && !model.veo_generation_types.includes(veoGenerationType)) {
-      setVeoGenerationType(preferredVeoGenerationType(model))
+      setVeoGenerationType(model.veo_generation_types[0])
     }
     if (model.veo_resolutions?.length && !model.veo_resolutions.includes(veoResolution)) {
       setVeoResolution(model.veo_resolutions[0])
@@ -383,20 +360,15 @@ export function VideoGeneratorForm({
     }
 
     setSelectedModel(modelId)
-    setSelectedScenario(preferredVideoScenario(nextModel))
+    setSelectedScenario((current) =>
+      nextModel.supports.includes(current) ? current : nextModel.supports[0] || 'text'
+    )
     setSelectedRatio((current) =>
       nextModel.ratios.includes(current) ? current : nextModel.ratios[0] || '16:9'
     )
     setSelectedDuration((current) =>
       nextModel.durations.includes(current) ? current : nextModel.durations[0] || 5
     )
-    if (nextModel.veo_generation_types?.length) {
-      setVeoGenerationType(preferredVeoGenerationType(nextModel))
-    }
-    setStartImage([])
-    setPhotoReferences([])
-    setVideoReferences([])
-    setAudioReference([])
 
     if (nextModel.id === 'grok_imagine') {
       setSelectedScenario('imgtxt')
@@ -406,6 +378,8 @@ export function VideoGeneratorForm({
       setSelectedDuration((current) =>
         nextModel.durations.includes(current) ? current : nextModel.durations[0] || 6
       )
+      setVideoReferences([])
+      setAudioReference([])
     } else if (nextModel.id === 'grok_imagine_v15') {
       setSelectedScenario('imgtxt')
       setSelectedRatio((current) =>
@@ -414,6 +388,9 @@ export function VideoGeneratorForm({
       setSelectedDuration((current) =>
         nextModel.durations.includes(current) ? current : nextModel.durations[0] || 1
       )
+      setPhotoReferences([])
+      setVideoReferences([])
+      setAudioReference([])
     }
   }
 
@@ -446,7 +423,7 @@ export function VideoGeneratorForm({
       omniCharacterName,
       omniCharacterAudioIds: parsedOmniCharacterAudioIds,
       prompt,
-      startImage: isOmniAudio || isSeedance2 ? null : startImage[0]?.url || null,
+      startImage: isOmniAudio ? null : startImage[0]?.url || null,
       references: isOmniAudio || isOmniCharacter || (model?.max_image_references ?? 8) === 0 ? [] : photoReferences.map(r => r.url),
       videoReferences: isOmniVideo || (model?.max_video_references ?? 0) > 0 ? videoReferences.map(r => r.url) : [],
       audioReference: selectedScenario === 'avatar' ? audioReference[0]?.url || null : null,
@@ -562,7 +539,7 @@ export function VideoGeneratorForm({
                 ))}
               </div>
               <p>
-                Video принимает текст, фото-референсы, один видео-референс, один Audio ID и до трёх Character ID. Доступны 4/6/8/10 сек, 16:9 или 9:16, 720p/1080p/4k и seed для повторяемого результата.
+                Video принимает текст, стартовое изображение, фото-референсы, один видео-референс, один Audio ID и до трёх Character ID. Доступны 4/6/8/10 сек, 16:9 или 9:16, 720p/1080p/4k и seed для повторяемого результата.
               </p>
             </div>
           ) : null}
@@ -932,14 +909,14 @@ export function VideoGeneratorForm({
           </div>
         ) : null}
 
-        {!isSeedance2 && (selectedScenario === 'imgtxt' || selectedScenario === 'character' || selectedScenario === 'avatar') && (
+        {(selectedScenario === 'imgtxt' || selectedScenario === 'character' || selectedScenario === 'avatar') && (
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground">
               {selectedScenario === 'character'
                 ? 'Изображение персонажа'
                 : selectedScenario === 'avatar'
                   ? 'Фото аватара'
-                  : 'Фото для видео'}
+                  : 'Стартовое изображение'}
               {isOmniVideo ? (
                 <span className="text-xs text-muted-foreground ml-2">(опционально)</span>
               ) : (
@@ -954,7 +931,7 @@ export function VideoGeneratorForm({
               required={!isOmniVideo}
               onUpload={onUploadImageReference}
               libraryFiles={savedImageReferences}
-              libraryLabel="Сохранённые фото"
+              libraryLabel="Сохранённые стартовые кадры"
             />
           </div>
         )}
@@ -969,16 +946,16 @@ export function VideoGeneratorForm({
                 <span className="text-destructive ml-1">*</span>
               )}
             </label>
-            <UploadArea
-              files={videoReferences}
-              onFilesChange={setVideoReferences}
-              maxFiles={isOmniVideo ? 1 : model?.max_video_references || 5}
-              accept="video/*"
-              required={!isOmniVideo}
-              onUpload={onUploadVideoReference}
-              libraryFiles={savedVideoReferences}
-              libraryLabel="Сохранённые видео-референсы"
-            />
+          <UploadArea
+            files={videoReferences}
+            onFilesChange={setVideoReferences}
+            maxFiles={isOmniVideo ? 1 : model?.max_video_references || 5}
+            accept="video/*"
+            required={!isOmniVideo}
+            onUpload={onUploadVideoReference}
+            libraryFiles={savedVideoReferences}
+            libraryLabel="Сохранённые видео-референсы"
+          />
           </div>
         )}
 
@@ -1003,27 +980,17 @@ export function VideoGeneratorForm({
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground">
               Фото-референсы
-              {isSeedance2 && selectedScenario === 'imgtxt' ? (
-                <span className="text-destructive ml-1">*</span>
-              ) : (
-                <span className="text-xs text-muted-foreground ml-2">(опционально)</span>
-              )}
+              <span className="text-xs text-muted-foreground ml-2">(опционально)</span>
             </label>
             <UploadArea
               files={photoReferences}
               onFilesChange={setPhotoReferences}
               maxFiles={model?.max_image_references || 8}
               accept="image/*"
-              required={isSeedance2 && selectedScenario === 'imgtxt'}
               onUpload={onUploadImageReference}
               libraryFiles={savedImageReferences}
               libraryLabel="Сохранённые image-референсы"
             />
-            {isSeedance2 && selectedScenario === 'imgtxt' ? (
-              <p className="text-xs text-muted-foreground">
-                Все загруженные фото идут в Seedance как обычные референсы. Отдельного первого кадра нет.
-              </p>
-            ) : null}
           </div>
         ) : null}
 
@@ -1118,7 +1085,7 @@ export function VideoGeneratorForm({
                         ? 'Character ID'
                   : selectedScenario === 'video'
                     ? 'Видео-режим активен'
-                    : 'Фото-референсы'}
+                    : 'Фото-референсы опциональны'}
             </p>
           </div>
         </div>
@@ -1153,16 +1120,7 @@ export function VideoGeneratorForm({
           <div className="flex items-center gap-2 p-3 rounded-xl bg-cyan/10 border border-cyan/30">
             <AlertCircle className="w-4 h-4 text-cyan flex-shrink-0" />
             <p className="text-xs text-cyan">
-              Загрузите фото для видео
-            </p>
-          </div>
-        )}
-
-        {needsPhotoReference && (
-          <div className="flex items-center gap-2 p-3 rounded-xl bg-cyan/10 border border-cyan/30">
-            <AlertCircle className="w-4 h-4 text-cyan flex-shrink-0" />
-            <p className="text-xs text-cyan">
-              Загрузите хотя бы один фото-референс
+              Загрузите стартовое изображение
             </p>
           </div>
         )}
