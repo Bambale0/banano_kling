@@ -240,9 +240,13 @@ async def _credit_tribute_purchase(request: web.Request, payload: dict[str, Any]
 
     bot = request.app.get("bot")
     result = await _complete_transaction(order_id, bot=bot)
+    if not result.get("ok") and not result.get("already_completed"):
+        raise RuntimeError(
+            f"Could not complete Tribute transaction: {result.get('reason') or 'unknown reason'}"
+        )
     return {
         "status": "ok",
-        "duplicate": result.get("action") == "already_completed",
+        "duplicate": bool(result.get("already_completed")),
         "order_id": order_id,
         "credits": credits,
     }
