@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import html
 import hashlib
 import hmac
+import html
 import logging
 import re
 import time
@@ -65,9 +65,9 @@ _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 
 def _checkout_signature(order_id: str, method_id: int) -> str:
-    message = f"{order_id}:{method_id}".encode("utf-8")
+    message = f"{order_id}:{method_id}".encode()
     return hmac.new(
-        freekassa_service.secret_word_2.encode("utf-8"),
+        freekassa_service.secret_word_2.encode(),
         message,
         hashlib.sha256,
     ).hexdigest()
