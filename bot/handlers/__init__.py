@@ -28,6 +28,8 @@ from .miniapp_video_continuity_compat import install_miniapp_video_continuity_co
 from .own_profile_feed_compat import install_own_profile_feed_compat
 from .pinterest_flow_contract_compat import install_pinterest_flow_contract_compat
 from .profile_feed_deeplink_compat import install_profile_feed_deeplink_compat
+from .public_offer_compat import install_public_offer_compat
+from .public_offer_compat import router as public_offer_compat_router
 
 # Publication scope must be installed before generation/common/miniapp import
 # their database and keyboard functions. This keeps the established flow while
@@ -116,6 +118,7 @@ admin_router.include_router(admin_module.router)
 install_lava_binding_schema_compat()
 install_lava_payment_safety(payments_module)
 install_lava_invoice_compat(payments_module, lava_checkout_module)
+install_public_offer_compat(payments_module)
 legacy_payments_router = payments_module.router
 lava_checkout_router = lava_checkout_module.router
 legacy_common_router = common_module.router
@@ -206,6 +209,7 @@ common_router.include_router(feed_model_filter_compat_router)
 common_router.include_router(notification_campaigns_router)
 common_router.include_router(repeat_result_compat_router)
 common_router.include_router(support_router)
+common_router.include_router(public_offer_compat_router)
 common_router.include_router(legacy_common_router)
 
 __all__ = [
@@ -222,6 +226,7 @@ __all__ = [
     "payments_router",
     "prompt_analyzer_v2_router",
     "publication_scope_compat_router",
+    "public_offer_compat_router",
     "repeat_result_compat_router",
     "repeat_run_confirm_compat_router",
     "seedance_25_fullstack_router",
