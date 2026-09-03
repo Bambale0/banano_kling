@@ -13,30 +13,6 @@ from bot.services.media_input_utils import image_sources_to_provider_safe_png_ur
 
 logger = logging.getLogger(__name__)
 
-SEEDANCE_IDENTITY_SOURCE_LOCK = """IDENTITY / SOURCE LOCK:
-Use all uploaded source images as identity, character, object, scene, and style references.
-Preserve recognizable people when present: face geometry, eyes, nose, lips, skin tone, hair, body proportions, outfit, and distinctive marks.
-Do not replace a referenced person with a different actor, lookalike, or invented character.
-Do not add extra people unless the user explicitly asks for multiple people.
-Reference images guide identity and visual consistency only. Do not force any reference image to become the literal opening frame.
-Start the video from the scene and action described by the user's prompt."""
-
-
-def prepare_seedance_prompt(prompt: str, *, max_length: int) -> str:
-    """Append only the Seedance identity/reference lock and preserve it in full."""
-    if SEEDANCE_IDENTITY_SOURCE_LOCK in prompt:
-        return prompt[:max_length]
-
-    separator = "\n\n"
-    user_prompt_limit = max(
-        0,
-        max_length - len(separator) - len(SEEDANCE_IDENTITY_SOURCE_LOCK),
-    )
-    return (
-        f"{prompt[:user_prompt_limit]}{separator}"
-        f"{SEEDANCE_IDENTITY_SOURCE_LOCK}"
-    )[:max_length]
-
 
 def _clean_unique_urls(values: Iterable[str] | None) -> list[str]:
     """Normalize reference URLs without changing their user supplied order."""
@@ -214,12 +190,8 @@ class SeedanceService(KlingService):
         except (TypeError, ValueError):
             normalized_duration = 5
 
-        seedance_prompt = prepare_seedance_prompt(
-            prompt,
-            max_length=self.MAX_PROMPT_LENGTH,
-        )
         input_data: dict[str, Any] = {
-            "prompt": seedance_prompt,
+            "prompt": prompt[: self.MAX_PROMPT_LENGTH],
             "duration": max(
                 self.MIN_DURATION,
                 min(normalized_duration, self.MAX_DURATION),

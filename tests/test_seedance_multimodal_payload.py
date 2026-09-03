@@ -4,17 +4,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from bot.handlers import seedance_multimodal_compat
+from bot.handlers.generation import _seedance_media_inputs
 from bot.handlers.seedance_multimodal_compat import (
     SEEDANCE_MODELS,
     accept_seedance_photo_reference,
 )
-from bot.handlers import seedance_multimodal_compat
-from bot.handlers.generation import _seedance_media_inputs
-from bot.services.seedance_service import (
-    SEEDANCE_IDENTITY_SOURCE_LOCK,
-    SeedanceService,
-    prepare_seedance_prompt,
-)
+from bot.services.seedance_service import SeedanceService
 from bot.video_reference_policy import apply_video_reference_cost
 
 
@@ -65,33 +61,31 @@ def test_seedance_combines_identity_image_and_motion_video() -> None:
         "https://cdn.test/dance.mp4"
     ]
     assert "first_frame_url" not in payload["input"]
-    prepared_prompt = payload["input"]["prompt"]
-    assert prompt in prepared_prompt
-    assert prepared_prompt.endswith(SEEDANCE_IDENTITY_SOURCE_LOCK)
-    assert "вымышленные совершеннолетние персонажи" not in prepared_prompt
+    assert payload["input"]["prompt"] == prompt
     assert "@image1" in payload["input"]["prompt"]
     assert "@image2" in payload["input"]["prompt"]
     assert "@image3" in payload["input"]["prompt"]
     assert "@video1" in payload["input"]["prompt"]
-    assert "IDENTITY AND REFERENCE ROLE LOCK" not in payload["input"]["prompt"]
 
 
-def test_seedance_appends_identity_source_lock_once() -> None:
-    prompt = "Animate the uploaded person waving to the camera."
+def test_seedance_passes_user_prompt_through_unchanged() -> None:
+    service = CaptureSeedanceService()
+    prompt = "  Animate the uploaded person, then change the outfit.  "
 
-    prepared = prepare_seedance_prompt(prompt, max_length=20_000)
+    asyncio.run(service.generate_video(prompt=prompt))
 
-    assert f"{prompt}\n\n{SEEDANCE_IDENTITY_SOURCE_LOCK}" in prepared
-    assert prepared.endswith(SEEDANCE_IDENTITY_SOURCE_LOCK)
-    assert prepared.count(SEEDANCE_IDENTITY_SOURCE_LOCK) == 1
-    assert prepare_seedance_prompt(prepared, max_length=20_000) == prepared
+    assert service.last_payload["input"]["prompt"] == prompt
 
 
-def test_seedance_preserves_complete_identity_lock_at_prompt_limit() -> None:
-    prepared = prepare_seedance_prompt("x" * 25_000, max_length=20_000)
+def test_seedance_truncates_prompt_only_at_provider_limit() -> None:
+    service = CaptureSeedanceService()
+    prompt = "x" * 25_000
 
-    assert len(prepared) == 20_000
-    assert prepared.endswith(SEEDANCE_IDENTITY_SOURCE_LOCK)
+    asyncio.run(service.generate_video(prompt=prompt))
+
+    provider_prompt = service.last_payload["input"]["prompt"]
+    assert provider_prompt == prompt[: service.MAX_PROMPT_LENGTH]
+    assert len(provider_prompt) == 20_000
 
 
 def test_seedance_normalizes_duplicate_first_frame_from_old_repeat_payload() -> None:

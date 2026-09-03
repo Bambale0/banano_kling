@@ -8,10 +8,7 @@ from bot.handlers.seedance_multimodal_compat import (
     default_video_type,
     reference_only_seedance_media_inputs,
 )
-from bot.services.seedance_service import (
-    SEEDANCE_IDENTITY_SOURCE_LOCK,
-    SeedanceService,
-)
+from bot.services.seedance_service import SeedanceService
 
 
 def test_video_flow_defaults_to_photo_text_without_overriding_explicit_modes():
@@ -57,8 +54,9 @@ async def test_seedance_provider_downgrades_legacy_first_frame_to_reference(monk
     monkeypatch.setattr(service, "_prepare_image_urls", fake_prepare)
     monkeypatch.setattr(service, "_kie_post", fake_post)
 
+    prompt = "A person walks through a city"
     result = await service.generate_video(
-        prompt="A person walks through a city",
+        prompt=prompt,
         duration=15,
         first_frame_url="https://files.example/person.png",
         reference_image_urls=["https://files.example/style.png"],
@@ -66,15 +64,9 @@ async def test_seedance_provider_downgrades_legacy_first_frame_to_reference(monk
 
     assert result == {"task_id": "seedance-test"}
     provider_input = captured["payload"]["input"]
+    assert provider_input["prompt"] == prompt
     assert "first_frame_url" not in provider_input
     assert provider_input["reference_image_urls"] == [
         "https://files.example/person.png",
         "https://files.example/style.png",
     ]
-
-
-def test_seedance_prompt_lock_does_not_force_reference_into_opening_frame():
-    lock = SEEDANCE_IDENTITY_SOURCE_LOCK.lower()
-    assert "exact starting frame" not in lock
-    assert "literal opening frame" in lock
-    assert "do not force" in lock
