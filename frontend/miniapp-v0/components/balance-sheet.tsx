@@ -18,6 +18,15 @@ type TelegramPaymentBridge = {
   platform?: string
 }
 
+const TRIBUTE_LINKS: Record<string, string> = {
+  mini: 'https://web.tribute.tg/p/Dxi',
+  start: 'https://web.tribute.tg/p/Dxn',
+  optimal: 'https://web.tribute.tg/p/Dxm',
+  pro: 'https://web.tribute.tg/p/Dxo',
+  studio: 'https://web.tribute.tg/p/Dxp',
+  business: 'https://web.tribute.tg/p/Dxq',
+}
+
 function getTelegramPaymentBridge(): TelegramPaymentBridge | null {
   if (typeof window === 'undefined') return null
   return ((window as Window & {
@@ -149,6 +158,18 @@ export function BalanceSheet() {
     const loadingKey = `${packageId}:${provider}`
     setLoadingPayment(loadingKey)
     try {
+      if (provider === ('tribute' as PaymentProvider)) {
+        const tributeUrl = TRIBUTE_LINKS[selectedPackage.id]
+        if (!tributeUrl) {
+          throw new Error('Tribute пока недоступен для этого пакета')
+        }
+        openExternalPayment(tributeUrl)
+        toast.message('Открыта оплата через Tribute', {
+          description: 'После подтверждения Tribute бананы начислятся автоматически.',
+        })
+        return
+      }
+
       const payment = await createPayment({
         packageId,
         provider,
@@ -311,7 +332,9 @@ export function BalanceSheet() {
                     const pricePerBanana = Math.round(pkg.price_rub / pkg.credits)
                     const starsPrice = pkg.price_stars ?? pkg.price_rub
                     const lavaConfigured = Boolean(pkg.lava_offer_id)
+                    const tributeConfigured = Boolean(TRIBUTE_LINKS[pkg.id])
                     const starsLoading = loadingPayment === `${pkg.id}:telegram_stars`
+                    const tributeLoading = loadingPayment === `${pkg.id}:tribute`
                     const cardLoading = loadingPayment === `${pkg.id}:lava_card`
                     const sbpLoading = loadingPayment === `${pkg.id}:lava_sbp`
                     const foreignLoading = loadingPayment === `${pkg.id}:lava_foreign`
@@ -347,12 +370,9 @@ export function BalanceSheet() {
                             <p className="mt-2 text-xs text-muted-foreground">
                               {pkg.credits}🍌 • около {pricePerBanana}₽ за банан
                             </p>
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              Stars: {starsPrice}⭐
-                            </p>
-                            {foreignConfigured ? (
+                            {foreignConfigured || tributeConfigured ? (
                               <p className="mt-1 text-xs text-muted-foreground">
-                                Зарубежная оплата и СНГ
+                                Доступна международная оплата
                               </p>
                             ) : null}
                           </div>
@@ -388,16 +408,16 @@ export function BalanceSheet() {
                             СБП
                           </Button>
                           <Button
-                            onClick={() => handleTopup(pkg.id, 'telegram_stars')}
-                            disabled={Boolean(loadingPayment)}
+                            onClick={() => handleTopup(pkg.id, 'tribute' as PaymentProvider)}
+                            disabled={Boolean(loadingPayment) || !tributeConfigured}
                             className="col-span-2 w-full bg-secondary text-foreground hover:bg-secondary/80"
                           >
-                            {starsLoading ? (
+                            {tributeLoading ? (
                               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                             ) : (
-                              <Star className="mr-2 h-4 w-4" />
+                              <Globe2 className="mr-2 h-4 w-4" />
                             )}
-                            Stars
+                            Tribute · международная оплата
                           </Button>
                           {foreignConfigured ? (
                             <>
@@ -465,6 +485,19 @@ export function BalanceSheet() {
                               Карта, СБП и зарубежная оплата открываются отдельными способами.
                             </p>
                           ) : null}
+                          <Button
+                            onClick={() => handleTopup(pkg.id, 'telegram_stars')}
+                            disabled={Boolean(loadingPayment)}
+                            variant="outline"
+                            className="col-span-2 w-full border-border/40 bg-background/10 text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
+                          >
+                            {starsLoading ? (
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                              <Star className="mr-2 h-4 w-4" />
+                            )}
+                            Stars · {starsPrice}⭐
+                          </Button>
                         </div>
                       </div>
                     )
