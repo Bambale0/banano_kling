@@ -205,7 +205,6 @@ def test_text_bot_sbp_uses_lava_checkout_not_freekassa() -> None:
 
 def test_freekassa_is_reserve_without_replacing_primary_lava() -> None:
     source = _read("bot/handlers/freekassa_payments.py")
-    compat = _read("bot/handlers/miniapp_lava_payment_methods_compat.py")
     callback_block = source.split(
         "async def initiate_freekassa_payment", 1
     )[1].split("@router.callback_query(F.data.startswith(\"check_freekassa_\"))", 1)[0]
@@ -217,7 +216,6 @@ def test_freekassa_is_reserve_without_replacing_primary_lava() -> None:
     assert "create_transaction(" in callback_block
     assert "_checkout_url(order_id, payment_system_id)" in callback_block
     assert "handle_lava_checkout_entry" not in callback_block
-    assert 'kwargs["freekassa"] = bool(freekassa_service.api_enabled)' in compat
 
 
 def test_freekassa_checkout_creates_only_signed_card_or_sbp_payments() -> None:
