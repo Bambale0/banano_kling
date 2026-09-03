@@ -7,7 +7,11 @@ from typing import Any
 
 from aiohttp import web
 
-from bot.services.freekassa_service import freekassa_service
+from bot.services.freekassa_service import (
+    FREEKASSA_CARD_RUB_METHOD_ID,
+    FREEKASSA_SBP_METHOD_ID,
+    freekassa_service,
+)
 from bot.services.lava_service import normalize_lava_customer_email
 
 
@@ -17,6 +21,10 @@ _LAVA_MINIAPP_METHODS = {
     "lava_foreign": ("foreign", None, None),
     "lava_foreign_card": ("foreign", "UNLIMIT", "CARD"),
     "lava_foreign_paypal": ("foreign", "PAYPAL", None),
+}
+_FREEKASSA_MINIAPP_METHODS = {
+    "freekassa_card": FREEKASSA_CARD_RUB_METHOD_ID,
+    "freekassa_sbp": FREEKASSA_SBP_METHOD_ID,
 }
 
 
@@ -43,19 +51,119 @@ def _install_freekassa_reserve_button() -> None:
 
     @wraps(current_keyboard)
     def payment_options_with_freekassa(*args: Any, **kwargs: Any):
-        kwargs["freekassa"] = bool(freekassa_service.enabled)
+        kwargs["freekassa"] = bool(freekassa_service.api_enabled)
         return current_keyboard(*args, **kwargs)
 
     payment_options_with_freekassa._freekassa_reserve_compat = True
     lava_checkout_module._payment_options_keyboard = payment_options_with_freekassa
 
 
+def _install_freekassa_package_flag(miniapp_module: Any) -> None:
+    """Expose only a boolean availability flag to the Mini App bootstrap."""
+
+    current_payload = miniapp_module._payment_package_payload
+    if getattr(current_payload, "_freekassa_reserve_compat", False):
+        return
+
+    @wraps(current_payload)
+    def payment_package_with_freekassa(package: dict[str, Any]) -> dict[str, Any]:
+        payload = current_payload(package)
+        payload["freekassa_enabled"] = bool(freekassa_service.api_enabled)
+        return payload
+
+    payment_package_with_freekassa._freekassa_reserve_compat = True
+    miniapp_module._payment_package_payload = payment_package_with_freekassa
+
+
+async def _create_freekassa_miniapp_checkout(
+    request: web.Request,
+    body: dict[str, Any],
+    raw_provider: str,
+    payment_system_id: int,
+    miniapp_module: Any,
+) -> web.Response:
+    """Create our pending order and return the signed local FreeKassa checkout."""
+
+    if not freekassa_service.api_enabled:
+        return web.json_response(
+            {"ok": False, "error": "KASSA временно недоступна"}, status=503
+        )
+
+    package_id = body.get("package_id")
+    if not package_id:
+        return web.json_response(
+            {"ok": False, "error": "package_id is required"}, status=400
+        )
+
+    telegram_id, ctx = await miniapp_module._get_user_context(
+        request.app,
+        body.get("init_data", ""),
+        body.get("start_param_fallback"),
+    )
+    user = ctx["user"]
+    package = miniapp_module.preset_manager.get_package(package_id)
+    if not package:
+        return web.json_response(
+            {"ok": False, "error": "Package not found"}, status=404
+        )
+
+    promo_code = body.get("promo_code")
+    promo = (
+        await miniapp_module.get_promo_code_by_code(promo_code, active_only=True)
+        if promo_code
+        else None
+    )
+    promo_bonus = (
+        miniapp_module.get_promo_bonus_for_credits(package["credits"]) if promo else 0
+    )
+    total_credits = miniapp_module.total_package_credits(package, promo_bonus)
+    order_id = f"{telegram_id}_{int(miniapp_module.time.time() * 1000)}_{package_id}"
+
+    created = await miniapp_module.create_transaction(
+        order_id=order_id,
+        user_id=user.id,
+        payment_id=order_id,
+        provider="freekassa",
+        credits=total_credits,
+        amount_rub=float(package["price_rub"]),
+        status="pending",
+        promo_code_id=promo.id if promo and promo_bonus > 0 else None,
+        promo_code=promo.code if promo and promo_bonus > 0 else None,
+        promo_bonus_credits=promo_bonus,
+    )
+    if not created:
+        return web.json_response(
+            {"ok": False, "error": "Не удалось сохранить платёж. Попробуйте ещё раз."},
+            status=500,
+        )
+
+    # Import lazily: this compatibility module is imported before all payment
+    # routers, while the checkout handler itself is fully initialized before
+    # install_miniapp_lava_payment_methods() is called.
+    from bot.handlers.freekassa_payments import _checkout_url
+
+    payment_url = _checkout_url(order_id, payment_system_id)
+    return web.json_response(
+        {
+            "ok": True,
+            "provider": raw_provider,
+            "order_id": order_id,
+            "payment_id": order_id,
+            "payment_url": payment_url,
+            "credits": total_credits,
+            "promo_bonus_credits": promo_bonus,
+            "promo_code": promo.code if promo and promo_bonus > 0 else "",
+        }
+    )
+
+
 def install_miniapp_lava_payment_methods() -> None:
-    """Handle explicit Lava UI actions and keep FreeKassa as Telegram reserve."""
+    """Handle explicit Lava actions and keep FreeKassa as a real reserve."""
 
     import bot.miniapp as miniapp_module
 
     _install_freekassa_reserve_button()
+    _install_freekassa_package_flag(miniapp_module)
 
     if getattr(miniapp_module, "_lava_payment_methods_compat_installed", False):
         return
@@ -69,6 +177,17 @@ def install_miniapp_lava_payment_methods() -> None:
         try:
             body = await request.json()
             raw_provider = str(body.get("provider") or "").strip().lower()
+
+            freekassa_method = _FREEKASSA_MINIAPP_METHODS.get(raw_provider)
+            if freekassa_method is not None:
+                return await _create_freekassa_miniapp_checkout(
+                    request,
+                    body,
+                    raw_provider,
+                    freekassa_method,
+                    miniapp_module,
+                )
+
             lava_method = _LAVA_MINIAPP_METHODS.get(raw_provider)
             if not lava_method:
                 return await current_create_payment(request)
@@ -213,7 +332,7 @@ def install_miniapp_lava_payment_methods() -> None:
         except Exception as exc:
             return miniapp_module._miniapp_error_response(
                 exc,
-                log_message="Mini App explicit Lava payment creation failed",
+                log_message="Mini App explicit payment creation failed",
             )
 
     miniapp_module.miniapp_create_payment = create_payment_with_explicit_lava_method
