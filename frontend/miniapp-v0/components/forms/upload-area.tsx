@@ -58,7 +58,15 @@ function matchesAcceptedType(file: File, accept: string) {
   return true
 }
 
-function MediaPreview({ file, className }: { file: UploadedFile; className: string }) {
+function MediaPreview({
+  file,
+  className,
+  onPreviewFailed,
+}: {
+  file: UploadedFile
+  className: string
+  onPreviewFailed?: (file: UploadedFile) => void
+}) {
   const [previewFailed, setPreviewFailed] = useState(false)
 
   if (file.type === 'image' && !previewFailed) {
@@ -74,6 +82,7 @@ function MediaPreview({ file, className }: { file: UploadedFile; className: stri
             reference_name: file.name,
             reference_url: file.preview_url || file.url,
           })
+          onPreviewFailed?.(file)
         }}
       />
     )
@@ -106,6 +115,7 @@ export function UploadArea({
   const filesRef = useRef(files)
   const [isDragging, setIsDragging] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
+  const [failedLibraryUrls, setFailedLibraryUrls] = useState<Set<string>>(() => new Set())
 
   useEffect(() => {
     filesRef.current = files
@@ -203,11 +213,21 @@ export function UploadArea({
 
   const canUploadMore = files.length < maxFiles
   const availableLibraryFiles = libraryFiles.filter(
-    (item) => item.url && !files.some((selected) => selected.url === item.url)
+    (item) => item.url && !failedLibraryUrls.has(item.url) && !files.some((selected) => selected.url === item.url)
   )
 
+  const handleLibraryPreviewFailed = useCallback((file: UploadedFile) => {
+    if (!file.url) return
+    setFailedLibraryUrls((current) => {
+      if (current.has(file.url)) return current
+      const next = new Set(current)
+      next.add(file.url)
+      return next
+    })
+  }, [])
+
   const handleAddFromLibrary = (file: UploadedFile) => {
-    if (!canUploadMore) return
+    if (!canUploadMore || failedLibraryUrls.has(file.url)) return
     publishFiles([...filesRef.current, { ...file, id: `${file.id}_${Date.now()}` }])
     setUploadError(null)
   }
@@ -294,7 +314,11 @@ export function UploadArea({
                   'border-border/50 bg-secondary/40 text-foreground hover:border-gold/40 hover:bg-secondary/70'
                 )}
               >
-                <MediaPreview file={file} className="h-7 w-7 rounded object-cover" />
+                <MediaPreview
+                  file={file}
+                  className="h-7 w-7 rounded object-cover"
+                  onPreviewFailed={handleLibraryPreviewFailed}
+                />
                 <span className="max-w-[120px] truncate">{file.name}</span>
                 <Plus className="h-3.5 w-3.5 text-gold" />
               </button>
