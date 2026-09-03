@@ -11,7 +11,8 @@ permissions:
   statuses: write
 
 concurrency:
-  group: tanya-production-v5
+  # v6 intentionally abandons the stale v5 lock held by an offline self-hosted fallback.
+  group: tanya-production-v6
   cancel-in-progress: true
 
 jobs:
