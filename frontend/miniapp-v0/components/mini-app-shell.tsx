@@ -13,6 +13,7 @@ import { ClientErrorBoundary } from './client-error-boundary'
 import { MiniAppLoader } from './mini-app-loader'
 import { TelegramOpenGate } from './telegram-open-gate'
 import { PartnerApprovalSheet } from './partner-approval-sheet'
+import { PublicOfferAccess } from './public-offer-access'
 
 const TaskDetailPanel = dynamic(() =>
   import('./task-detail-panel').then((module) => module.TaskDetailPanel),
@@ -82,6 +83,7 @@ function MiniAppBody({ children }: MiniAppShellProps) {
           <TaskDetailPanel />
           <BalanceSheet />
           {activeWorkspace === 'partners' ? <PartnerApprovalSheet /> : <WorkspaceSheet />}
+          <PublicOfferAccess />
         </>
       )}
       <Toaster richColors position="top-center" />
