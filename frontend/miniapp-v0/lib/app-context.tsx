@@ -164,7 +164,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [videoPromptPreset, setVideoPromptPreset] = useState<VideoPromptPreset | null>(null)
   const [trendToRun, setTrendToRun] = useState<PromptItem | null>(null)
   const [viewedProfileCode, setViewedProfileCode] = useState<string | null>(null)
-  const [activeTab, setActiveTabState] = useState(5)
+  const [activeTab, setActiveTabState] = useState(1)
   const pollRef = useRef<number | null>(null)
   const handledStartParamRef = useRef<string | null>(null)
 
