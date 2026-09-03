@@ -69,7 +69,7 @@ def test_pinterest_catalog_is_a_strict_startup_and_list_requirement():
     assert "lastrowid" not in catalog_source
 
 
-def test_referral_launch_preserves_trends_as_default_tab():
+def test_referral_launch_opens_trends_while_regular_launch_defaults_to_photo():
     start_params = (ROOT / "frontend/miniapp-v0/lib/start-params.ts").read_text(
         encoding="utf-8"
     )
@@ -77,7 +77,7 @@ def test_referral_launch_preserves_trends_as_default_tab():
         encoding="utf-8"
     )
 
-    assert "useState(5)" in app_context
+    assert "useState(1)" in app_context
     assert "if (raw.startsWith('ref_')) return null" in start_params
     assert "if (startTarget.kind === 'ref')" in app_context
     referral_branch = app_context.split("if (startTarget.kind === 'ref')", 1)[1].split(
@@ -85,6 +85,7 @@ def test_referral_launch_preserves_trends_as_default_tab():
     )[0]
     assert "setActiveTabState(5)" in referral_branch
     assert "setActiveTabState(0)" not in referral_branch
+    assert "setActiveTabState(1)" not in referral_branch
 
     # Explicit navigation deep-links must remain supported.
     for prefix in (
