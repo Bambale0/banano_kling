@@ -12,12 +12,15 @@ describe('Mini App Studio cleanup contract', () => {
     expect(studio).toContain('Готовые работы остаются в чате с ботом')
   })
 
-  it('does not expose the persistent saved-reference gallery', () => {
+  it('keeps the reusable saved-reference picker', () => {
     const uploadArea = read('components/forms/upload-area.tsx')
 
-    expect(uploadArea).not.toContain('availableLibraryFiles')
-    expect(uploadArea).not.toContain('handleAddFromLibrary')
-    expect(uploadArea).not.toContain('Можно добавить без повторной загрузки')
+    expect(uploadArea).toContain('availableLibraryFiles')
+    expect(uploadArea).toContain('handleAddFromLibrary')
+    expect(uploadArea).toContain('Можно добавить без повторной загрузки')
+    expect(uploadArea).toContain("libraryLabel = 'Сохранённые референсы'")
+    expect(uploadArea).toContain('file.preview_url || file.url')
+    expect(uploadArea).toContain("reference-preview-failed")
     expect(uploadArea).toContain('files.map((file)')
   })
 })
