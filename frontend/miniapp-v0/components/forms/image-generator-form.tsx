@@ -9,7 +9,9 @@ import { ModelSelect } from './model-select'
 import { RatioSelect } from './ratio-select'
 import { QualitySelect } from './quality-select'
 import { UploadArea } from './upload-area'
-import { Banana, Sparkles, Loader2, AlertCircle, Palette, Shirt, Mountain, Sparkle, ScanFace } from 'lucide-react'
+import { Banana, Sparkles, Loader2, AlertCircle, Palette, Shirt, Mountain, Sparkle, ScanFace, ImageIcon, Type } from 'lucide-react'
+
+type ImageScenario = 'imgtxt' | 'text'
 
 interface ImageGeneratorFormProps {
   models: ImageModel[]
@@ -44,6 +46,7 @@ export function ImageGeneratorForm({
   credits,
 }: ImageGeneratorFormProps) {
   const [selectedModel, setSelectedModel] = useState(models[0]?.id || '')
+  const [selectedScenario, setSelectedScenario] = useState<ImageScenario>('imgtxt')
   const [selectedRatio, setSelectedRatio] = useState('1:1')
   const [selectedQuality, setSelectedQuality] = useState('basic')
   const [selectedCount, setSelectedCount] = useState(1)
@@ -64,7 +67,8 @@ export function ImageGeneratorForm({
   const cost = unitCost * selectedCount
   const canAfford = credits >= cost
   const isFeedRemix = sourceFeedGenId !== null
-  const needsReference = Boolean(model?.requires_reference) && references.length === 0
+  const requiresReferenceMode = Boolean(model?.requires_reference)
+  const needsReference = selectedScenario === 'imgtxt' && !isFeedRemix && references.length === 0
   const referencesUploading = references.some((reference) => reference.uploading)
   const hasPrompt = prompt.trim().length > 0 || isFeedRemix
   const isValid = hasPrompt && canAfford && !needsReference && !referencesUploading
@@ -121,6 +125,7 @@ export function ImageGeneratorForm({
       setSelectedRatio(promptPreset.ratio)
     }
     setReferences(promptPreset.initialReferences || [])
+    setSelectedScenario('imgtxt')
     onPromptPresetConsumed?.()
   }, [models, onPromptPresetConsumed, promptPreset])
 
@@ -144,6 +149,9 @@ export function ImageGeneratorForm({
     if (!(model.supports_nsfw_mode || model.id === 'grok_imagine_i2i')) {
       setNsfwEnabled(false)
     }
+    if (model.requires_reference) {
+      setSelectedScenario('imgtxt')
+    }
   }, [model, selectedQuality, selectedRatio])
 
   const toggleChange = (chipId: string, insert: string) => {
@@ -165,6 +173,11 @@ export function ImageGeneratorForm({
     setReferences(nextReferences)
   }
 
+  const handleScenarioChange = (scenario: ImageScenario) => {
+    if (scenario === 'text' && requiresReferenceMode) return
+    setSelectedScenario(scenario)
+  }
+
   const handleSubmit = useCallback(async () => {
     if (!isValid) return
     await onSubmit({
@@ -177,18 +190,20 @@ export function ImageGeneratorForm({
       promptId: selectedPromptId,
       sourceFeedGenId,
       prompt,
-      references: references.map(r => r.url),
+      references: selectedScenario === 'imgtxt' ? references.map(r => r.url) : [],
     })
     setPrompt('')
     setSelectedPromptId(null)
     setSourceFeedGenId(null)
     setRemixTitle('')
     setReferences([])
+    setSelectedScenario('imgtxt')
     setActiveChanges(new Set())
   }, [
     isValid,
     onSubmit,
     selectedModel,
+    selectedScenario,
     selectedRatio,
     selectedQuality,
     selectedCount,
@@ -213,8 +228,46 @@ export function ImageGeneratorForm({
               cost: m.cost,
             }))}
             value={selectedModel}
-            onChange={setSelectedModel}
+            onChange={(modelId) => {
+              setSelectedModel(modelId)
+              setSelectedScenario('imgtxt')
+            }}
           />
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-foreground">Сценарий</label>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => handleScenarioChange('imgtxt')}
+              className={cn(
+                'flex min-h-16 items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium transition-all duration-200',
+                selectedScenario === 'imgtxt'
+                  ? 'border-gold/50 bg-gold/15 text-gold'
+                  : 'border-border/50 bg-secondary/50 text-muted-foreground hover:bg-secondary hover:text-foreground'
+              )}
+            >
+              <ImageIcon className="h-4 w-4" />
+              Фото + Текст
+            </button>
+            <button
+              type="button"
+              disabled={requiresReferenceMode}
+              onClick={() => handleScenarioChange('text')}
+              className={cn(
+                'flex min-h-16 items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium transition-all duration-200',
+                selectedScenario === 'text'
+                  ? 'border-cyan/50 bg-cyan/15 text-cyan'
+                  : requiresReferenceMode
+                    ? 'cursor-not-allowed border-border/30 bg-secondary/20 text-muted-foreground/40'
+                    : 'border-border/50 bg-secondary/50 text-muted-foreground hover:bg-secondary hover:text-foreground'
+              )}
+            >
+              <Type className="h-4 w-4" />
+              Текст → Фото
+            </button>
+          </div>
         </div>
 
         <div className="grid gap-3 lg:grid-cols-2">
@@ -248,7 +301,7 @@ export function ImageGeneratorForm({
             <div className="space-y-2">
               <label className="text-sm font-medium text-foreground">Режим</label>
               <div className="rounded-xl border border-border/50 bg-secondary/40 px-4 py-3 text-sm text-muted-foreground">
-                Стандартный режим модели
+                {selectedScenario === 'imgtxt' ? 'Фото + Текст' : 'Текст → Фото'}
               </div>
             </div>
           )}
@@ -328,7 +381,7 @@ export function ImageGeneratorForm({
 
           <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
             <div className="rounded-xl bg-background/40 px-3 py-2 text-muted-foreground">
-              Режим: <span className="text-foreground">{model?.requires_reference ? 'Edit / reference' : 'Text / image mix'}</span>
+              Режим: <span className="text-foreground">{selectedScenario === 'imgtxt' ? 'Фото + Текст' : 'Текст → Фото'}</span>
             </div>
             <div className="rounded-xl bg-background/40 px-3 py-2 text-muted-foreground">
               Формат: <span className="text-foreground">{selectedRatio} • {selectedCount}x</span>
@@ -336,33 +389,34 @@ export function ImageGeneratorForm({
           </div>
         </div>
 
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-foreground">
-            Референсы
-            {model?.requires_reference && (
-              <span className="text-destructive ml-1">*</span>
-            )}
-          </label>
-          <UploadArea
-            files={references}
-            onFilesChange={handleReferencesChange}
-            maxFiles={model?.max_references || 4}
-            accept="image/*"
-            required={model?.requires_reference}
-            onUpload={onUploadReference}
-            libraryFiles={savedReferences.filter((item) => item.type === 'image')}
-            libraryLabel="Сохранённые фото-референсы"
-          />
-          <p className="text-xs text-muted-foreground">
-            {isFeedRemix
-              ? references.length > 0
-                ? 'Выбранные файлы заменят или дополнят исходные референсы перед повтором.'
-                : 'Можно запустить без нового файла: исходные приватные референсы восстановятся автоматически.'
-              : model?.requires_reference
-                ? 'Для этой модели нужен хотя бы один исходник или референс.'
-                : 'Можно добавить референсы для стиля, композиции или сохранения деталей.'}
-          </p>
-        </div>
+        {selectedScenario === 'imgtxt' ? (
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-foreground">
+              Фото-референсы<span className="text-destructive ml-1">*</span>
+            </label>
+            <UploadArea
+              files={references}
+              onFilesChange={handleReferencesChange}
+              maxFiles={model?.max_references || 4}
+              accept="image/*"
+              required
+              onUpload={onUploadReference}
+              libraryFiles={savedReferences.filter((item) => item.type === 'image')}
+              libraryLabel="Сохранённые фото-референсы"
+            />
+            <p className="text-xs text-muted-foreground">
+              {isFeedRemix
+                ? references.length > 0
+                  ? 'Выбранные файлы заменят или дополнят исходные референсы перед повтором.'
+                  : 'Можно запустить без нового файла: исходные приватные референсы восстановятся автоматически.'
+                : 'По умолчанию работаем по фото. Загрузите хотя бы один референс или вручную переключитесь на «Текст → Фото».'}
+            </p>
+          </div>
+        ) : (
+          <div className="rounded-xl border border-border/50 bg-secondary/30 px-4 py-3 text-xs text-muted-foreground">
+            Режим без референсов выбран вручную. В генерацию уйдёт только текстовый промпт.
+          </div>
+        )}
 
         <div className="space-y-2">
           {isFeedRemix && (
@@ -448,10 +502,12 @@ export function ImageGeneratorForm({
             </p>
           </div>
           <div className="rounded-xl bg-secondary/40 p-3">
-            <p className="text-muted-foreground mb-1">Файлы</p>
-            <p className="text-foreground font-medium">{references.length} / {model?.max_references || 0}</p>
+            <p className="text-muted-foreground mb-1">Режим</p>
+            <p className="text-foreground font-medium">
+              {selectedScenario === 'imgtxt' ? 'Фото + Текст' : 'Текст → Фото'}
+            </p>
             <p className="text-muted-foreground mt-1">
-              {model?.requires_reference ? 'Минимум 1 обязателен' : 'Опционально'}
+              {selectedScenario === 'imgtxt' ? `${references.length} реф.` : 'Без референсов'}
             </p>
           </div>
         </div>
@@ -477,7 +533,7 @@ export function ImageGeneratorForm({
           <div className="flex items-center gap-2 p-3 rounded-xl bg-gold/10 border border-gold/30">
             <AlertCircle className="w-4 h-4 text-gold flex-shrink-0" />
             <p className="text-xs text-gold">
-              Загрузите референс для этой модели
+              Загрузите хотя бы один фото-референс
             </p>
           </div>
         )}
