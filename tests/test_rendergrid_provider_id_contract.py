@@ -60,6 +60,30 @@ def test_rendergrid_creation_id_is_exposed_as_common_provider_task_id() -> None:
     assert result["provider_task_id"] == "rg-creation-123"
 
 
+def test_rendergrid_terminal_failure_keeps_creation_id_for_support() -> None:
+    provider = _provider()
+    provider.client.generate_image = AsyncMock(
+        return_value={"id": "rg-creation-failed-123", "status": "queued"}
+    )
+    provider.client.wait_for_creation = AsyncMock(
+        return_value={
+            "id": "rg-creation-failed-123",
+            "status": "failed",
+            "error": "Provider could not complete this image",
+        }
+    )
+
+    result = asyncio.run(
+        provider.generate_image("Create a portrait", "1:1", "2K", [], "png")
+    )
+    asyncio.run(provider.close())
+
+    assert result is not None
+    assert result["error"] == "Provider could not complete this image"
+    assert result["creation_id"] == "rg-creation-failed-123"
+    assert result["provider_task_id"] == "rg-creation-failed-123"
+
+
 @pytest.mark.asyncio
 async def test_done_launch_shows_local_and_rendergrid_provider_ids_separately() -> None:
     bot = _FakeBot()
