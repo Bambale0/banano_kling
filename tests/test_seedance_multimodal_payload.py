@@ -7,7 +7,6 @@ import pytest
 from bot.handlers.seedance_multimodal_compat import (
     SEEDANCE_MODELS,
     accept_seedance_photo_reference,
-    seedance_needs_multimodal_promotion,
 )
 from bot.handlers import seedance_multimodal_compat
 from bot.handlers.generation import _seedance_media_inputs
@@ -109,8 +108,8 @@ def test_seedance_normalizes_duplicate_first_frame_from_old_repeat_payload() -> 
 
     assert result["task_id"] == "seedance-test-task"
     payload = service.last_payload["input"]
-    assert payload["first_frame_url"] == image_url
-    assert "reference_image_urls" not in payload
+    assert "first_frame_url" not in payload
+    assert payload["reference_image_urls"] == [image_url]
 
 
 def test_seedance_uses_current_documented_limits() -> None:
@@ -141,35 +140,8 @@ def test_seedance_uses_current_documented_limits() -> None:
     ]
 
 
-def test_legacy_image_led_seedance_state_is_promoted_only_when_video_refs_exist() -> None:
-    assert "seedance_2" in SEEDANCE_MODELS
-    assert seedance_needs_multimodal_promotion(
-        {
-            "v_model": "seedance_2",
-            "v_type": "imgtxt",
-            "v_image_url": "https://cdn.test/person.jpg",
-            "v_reference_videos": ["https://cdn.test/dance.mp4"],
-        }
-    )
-    assert not seedance_needs_multimodal_promotion(
-        {
-            "v_model": "seedance_2",
-            "v_type": "imgtxt",
-            "v_image_url": "https://cdn.test/person.jpg",
-            "v_reference_videos": [],
-        }
-    )
-    assert not seedance_needs_multimodal_promotion(
-        {
-            "v_model": "v3_pro",
-            "v_type": "imgtxt",
-            "v_reference_videos": ["https://cdn.test/dance.mp4"],
-        }
-    )
-
-
 @pytest.mark.asyncio
-async def test_seedance_photo_refreshes_media_step_after_upload(monkeypatch) -> None:
+async def test_seedance_photo_is_stored_only_as_reference(monkeypatch) -> None:
     data = {
         "v_model": "seedance_2",
         "v_type": "imgtxt",
@@ -181,18 +153,15 @@ async def test_seedance_photo_refreshes_media_step_after_upload(monkeypatch) -> 
         get_data=AsyncMock(return_value=data),
         update_data=AsyncMock(),
     )
-    message = SimpleNamespace(answer=AsyncMock())
-    show_media = AsyncMock()
+    message = SimpleNamespace(
+        from_user=SimpleNamespace(id=12345),
+        answer=AsyncMock(),
+    )
     show_creation = AsyncMock()
     monkeypatch.setattr(
         seedance_multimodal_compat.generation_module,
         "_save_reference_image_from_message",
         AsyncMock(return_value=("https://cdn.test/person.jpg", None)),
-    )
-    monkeypatch.setattr(
-        seedance_multimodal_compat.generation_module,
-        "_show_video_media_screen",
-        show_media,
     )
     monkeypatch.setattr(
         seedance_multimodal_compat.generation_module,
@@ -203,10 +172,11 @@ async def test_seedance_photo_refreshes_media_step_after_upload(monkeypatch) -> 
     await accept_seedance_photo_reference(message, state)
 
     state.update_data.assert_awaited_once_with(
-        v_image_url="https://cdn.test/person.jpg"
+        v_image_url=None,
+        reference_images=["https://cdn.test/person.jpg"],
+        video_flow_step="configure",
     )
-    show_media.assert_awaited_once_with(message, state, edit=False)
-    show_creation.assert_not_awaited()
+    show_creation.assert_awaited_once_with(message, state, edit=False)
 
 
 def test_seedance_transport_keeps_primary_photo_with_video_reference() -> None:
