@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from functools import wraps
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from aiogram import F, Router, types
 from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup
@@ -60,7 +61,7 @@ def _wrap_keyboard(factory: Callable[..., Any]) -> Callable[..., Any]:
     def wrapped(*args: Any, **kwargs: Any):
         return _with_public_offer(factory(*args, **kwargs))
 
-    setattr(wrapped, "_public_offer_wrapped", True)
+    wrapped._public_offer_wrapped = True  # type: ignore[attr-defined]
     return wrapped
 
 
@@ -117,8 +118,8 @@ async def show_public_offer(callback: types.CallbackQuery):
             caption="📜 Публичная оферта",
             reply_markup=reply_markup,
         )
-    except Exception as exc:
-        logger.exception("Failed to send bundled public offer PDF: %s", exc)
+    except Exception:
+        logger.exception("Failed to send bundled public offer PDF")
         await _send_offer_text(callback, reply_markup)
 
     await callback.answer()
