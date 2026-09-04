@@ -1,0 +1,46 @@
+name: Refresh Mini App lockfile
+
+on:
+  push:
+    branches:
+      - feature/tanyapi-prodamus-payform
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-lock:
+    if: ${{ !contains(github.event.head_commit.message, '[lockbot]') }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/tanyapi-prodamus-payform
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/miniapp-v0/package-lock.json
+
+      - name: Refresh locked browser dependency
+        working-directory: frontend/miniapp-v0
+        run: npm install --package-lock-only --ignore-scripts --no-audit --fund=false
+
+      - name: Verify patched browserslist lock
+        working-directory: frontend/miniapp-v0
+        run: |
+          node -e "const l=require('./package-lock.json'); const v=l.packages['node_modules/browserslist']?.version; if (v !== '4.28.7') { throw new Error('expected browserslist 4.28.7, got '+v) }"
+
+      - name: Commit lockfile
+        run: |
+          if git diff --quiet -- frontend/miniapp-v0/package-lock.json; then
+            echo 'Lockfile already current'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add frontend/miniapp-v0/package-lock.json
+          git commit -m 'fix(miniapp): refresh patched browserslist lock [lockbot]'
+          git push origin HEAD:feature/tanyapi-prodamus-payform
