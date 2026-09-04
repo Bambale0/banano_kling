@@ -5529,7 +5529,7 @@ async def credit_feed_prompt_repeat(
             WHERE id = ?
               AND type IN ('image', 'video')
               AND status = 'completed'
-              AND is_public_feed = 1
+              AND (is_public_feed = 1 OR COALESCE(is_profile_visible, 0) = 1)
             LIMIT 1
             """,
             (int(source_generation_id),),
