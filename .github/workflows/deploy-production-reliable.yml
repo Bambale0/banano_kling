@@ -1,0 +1,269 @@
+name: Deploy — Tanya production reliable
+
+on:
+  push:
+    branches: [tanyapi]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  statuses: write
+
+jobs:
+  verify_ci:
+    name: Verify exact release CI
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - name: Require production branch and verified code
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [ "$GITHUB_REF" = "refs/heads/tanyapi" ] || {
+            echo "::error::Production deploy is allowed only from refs/heads/tanyapi"
+            exit 1
+          }
+
+          # Recovery path: if this commit changes deploy workflow files only,
+          # an already-green parent CI verifies the application code unchanged.
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            before="$(jq -r '.before // empty' "$GITHUB_EVENT_PATH")"
+            if [ -n "$before" ] && [ "$before" != "0000000000000000000000000000000000000000" ]; then
+              changed="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${before}...${GITHUB_SHA}" --jq '.files[].filename')"
+              non_deploy="$(printf '%s\n' "$changed" | grep -Ev '^\.github/workflows/deploy-production[^/]*\.ya?ml$' || true)"
+              if [ -n "$changed" ] && [ -z "$non_deploy" ]; then
+                parent_run="$(
+                  gh api --method GET \
+                    "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs" \
+                    -f head_sha="$before" -f event=push -f branch=tanyapi -F per_page=10 \
+                    --jq '.workflow_runs | sort_by(.created_at) | last // {}'
+                )"
+                parent_status="$(jq -r '.status // empty' <<< "$parent_run")"
+                parent_conclusion="$(jq -r '.conclusion // empty' <<< "$parent_run")"
+                if [ "$parent_status" = completed ] && [ "$parent_conclusion" = success ]; then
+                  echo "Application code is unchanged; parent CI is green: $before"
+                  exit 0
+                fi
+              fi
+            fi
+          fi
+
+          deadline=$((SECONDS + 2700))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            run="$(
+              gh api --method GET \
+                "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs" \
+                -f head_sha="$GITHUB_SHA" -f event=push -f branch=tanyapi -F per_page=10 \
+                --jq '.workflow_runs | sort_by(.created_at) | last // {}'
+            )"
+            status="$(jq -r '.status // empty' <<< "$run")"
+            conclusion="$(jq -r '.conclusion // empty' <<< "$run")"
+            run_id="$(jq -r '.id // empty' <<< "$run")"
+            echo "CI ${run_id:-missing}: status=${status:-missing} conclusion=${conclusion:-pending}"
+            if [ "$status" = completed ]; then
+              [ "$conclusion" = success ] || {
+                echo "::error::Exact CI failed with conclusion=$conclusion"
+                exit 1
+              }
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::Timed out waiting for exact CI for $GITHUB_SHA"
+          exit 1
+
+  deploy:
+    name: GitHub runner — reliable SSH production deploy
+    needs: verify_ci
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    env:
+      PROD_SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+      PROD_SSH_USER: ${{ secrets.PROD_SSH_USER }}
+      PROD_SSH_PORT: ${{ secrets.PROD_SSH_PORT }}
+      PROD_SSH_PRIVATE_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+      PROD_SSH_KNOWN_HOSTS: ${{ secrets.PROD_SSH_KNOWN_HOSTS }}
+      PROD_PROJECT_PATH: ${{ secrets.PROD_PROJECT_PATH }}
+    steps:
+      - name: Require SSH production configuration
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for name in PROD_SSH_HOST PROD_SSH_PRIVATE_KEY PROD_SSH_KNOWN_HOSTS; do
+            [ -n "${!name:-}" ] || {
+              echo "::error::$name is not configured"
+              exit 1
+            }
+          done
+
+      - name: Configure pinned SSH
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          install -d -m 0700 "$HOME/.ssh"
+          printf '%s\n' "$PROD_SSH_PRIVATE_KEY" | tr -d '\r' > "$HOME/.ssh/production_key"
+          printf '%s\n' "$PROD_SSH_KNOWN_HOSTS" | tr -d '\r' > "$HOME/.ssh/known_hosts"
+          chmod 0600 "$HOME/.ssh/production_key" "$HOME/.ssh/known_hosts"
+          ssh-keygen -y -f "$HOME/.ssh/production_key" >/dev/null
+
+      - name: Deploy exact tanyapi commit
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          deploy_user="${PROD_SSH_USER:-root}"
+          deploy_port="${PROD_SSH_PORT:-22}"
+          deploy_path="${PROD_PROJECT_PATH:-/root/tanya/banano_kling}"
+          printf -v quoted_path '%q' "$deploy_path"
+          printf -v quoted_sha '%q' "$GITHUB_SHA"
+
+          ssh \
+            -i "$HOME/.ssh/production_key" \
+            -p "$deploy_port" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o IdentitiesOnly=yes \
+            -o ServerAliveInterval=20 \
+            -o ServerAliveCountMax=6 \
+            -o StrictHostKeyChecking=yes \
+            "$deploy_user@$PROD_SSH_HOST" \
+            "bash -s -- $quoted_path $quoted_sha" <<'REMOTE'
+          set -Eeuo pipefail
+          PROJECT_DIR="$1"
+          EXPECTED_SHA="$2"
+          RUNTIME_PRICE_FILE="data/price.json"
+          runtime_price_backup=""
+
+          cleanup() {
+            if [ -n "${runtime_price_backup:-}" ] && [ -f "$runtime_price_backup" ]; then
+              rm -f "$runtime_price_backup"
+            fi
+          }
+          trap cleanup EXIT
+
+          command -v git >/dev/null
+          command -v docker >/dev/null
+          command -v flock >/dev/null
+          command -v curl >/dev/null
+
+          exec 9>/var/lock/banano-kling-production-deploy.lock
+          flock -w 300 9 || {
+            echo "Timed out waiting for production deployment lock" >&2
+            exit 1
+          }
+
+          cd "$PROJECT_DIR"
+          [ -d .git ] || { echo "Git repository not found: $PROJECT_DIR" >&2; exit 1; }
+
+          git update-index -q --refresh || true
+          if ! git diff --cached --quiet; then
+            echo "Staged local changes block deployment" >&2
+            git status --short >&2
+            exit 1
+          fi
+
+          dirty_paths="$(git diff --name-only --diff-filter=ACDMRTUXB)"
+          other_dirty_paths="$(
+            printf '%s\n' "$dirty_paths" \
+              | sed '/^$/d' \
+              | grep -vxF "$RUNTIME_PRICE_FILE" \
+              | grep -vE '^tests/' \
+              || true
+          )"
+          if [ -n "$other_dirty_paths" ]; then
+            echo "Tracked runtime changes block deployment:" >&2
+            printf '%s\n' "$other_dirty_paths" >&2
+            git status --short >&2
+            exit 1
+          fi
+
+          git fetch --prune origin tanyapi
+          remote_sha="$(git rev-parse origin/tanyapi)"
+          [ "$remote_sha" = "$EXPECTED_SHA" ] || {
+            echo "Production branch moved: expected=$EXPECTED_SHA origin/tanyapi=$remote_sha" >&2
+            exit 1
+          }
+
+          preserve_runtime_price=true
+          if git cat-file -e "$EXPECTED_SHA:$RUNTIME_PRICE_FILE" 2>/dev/null; then
+            force_apply_runtime_price="$(
+              git show "$EXPECTED_SHA:$RUNTIME_PRICE_FILE" \
+                | python3 -c 'import json, sys; print("true" if json.load(sys.stdin).get("force_apply_runtime_price") is True else "false")'
+            )"
+            if [ "$force_apply_runtime_price" = true ]; then
+              preserve_runtime_price=false
+            elif git cat-file -e "HEAD:$RUNTIME_PRICE_FILE" 2>/dev/null && ! cmp -s \
+              <(git show "HEAD:$RUNTIME_PRICE_FILE") \
+              <(git show "$EXPECTED_SHA:$RUNTIME_PRICE_FILE"); then
+              preserve_runtime_price=false
+            fi
+          else
+            preserve_runtime_price=false
+          fi
+
+          if [ "$preserve_runtime_price" = true ] && [ -f "$RUNTIME_PRICE_FILE" ]; then
+            runtime_price_backup="$(mktemp)"
+            cp -- "$RUNTIME_PRICE_FILE" "$runtime_price_backup"
+            echo "Preserving runtime pricing"
+          else
+            echo "Applying versioned runtime pricing"
+          fi
+
+          git switch tanyapi
+          git reset --hard "$EXPECTED_SHA"
+          [ "$(git rev-parse HEAD)" = "$EXPECTED_SHA" ]
+
+          if [ -n "$runtime_price_backup" ]; then
+            cp -- "$runtime_price_backup" "$RUNTIME_PRICE_FILE"
+            rm -f "$runtime_price_backup"
+            runtime_price_backup=""
+          fi
+
+          run_root() {
+            if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo -n "$@"; fi
+          }
+
+          run_root bash scripts/deploy_backend_docker.sh deploy
+          run_root bash scripts/deploy_backend_docker.sh status
+
+          health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' banano-kling-bot)"
+          revision="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' banano-kling-bot)"
+          [ "$health" = healthy ]
+          [ "$revision" = "$EXPECTED_SHA" ]
+
+          if ! docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' banano-kling-bot \
+            | grep -Eq '^TRIBUTE_API_KEY=.+$'; then
+            echo "TRIBUTE_API_KEY is missing in production container" >&2
+            exit 42
+          fi
+          echo "Tribute runtime key: configured"
+
+          run_root bash scripts/deploy_miniapp_local.sh "$EXPECTED_SHA"
+
+          curl -fsS --max-time 20 https://api.chillcreative.ru/healthz >/dev/null
+          live_frontend_revision="$(curl -fsS --max-time 20 "https://tanyapp.xn--e1aikcel5c5a.online/mini-app/revision.txt?revision=${EXPECTED_SHA}")"
+          [ "$live_frontend_revision" = "$EXPECTED_SHA" ]
+
+          tribute_http="$(curl -sS --max-time 20 -o /tmp/tribute-probe.json -w '%{http_code}' \
+            -X POST https://api.chillcreative.ru/tribute/webhook \
+            -H 'Content-Type: application/json' --data '{}')"
+          if [ "$tribute_http" != 401 ]; then
+            echo "Tribute webhook probe returned HTTP $tribute_http (expected 401 for unsigned request)" >&2
+            cat /tmp/tribute-probe.json >&2 || true
+            exit 43
+          fi
+          rm -f /tmp/tribute-probe.json
+
+          echo "deployed_sha=$(git rev-parse HEAD)"
+          echo "container_revision=$revision"
+          echo "container_health=$health"
+          echo "miniapp_revision=$live_frontend_revision"
+          echo "tribute_webhook_probe=401"
+          REMOTE
+
+      - name: Remove SSH key
+        if: always()
+        shell: bash
+        run: rm -f "$HOME/.ssh/production_key"
