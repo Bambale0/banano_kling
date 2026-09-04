@@ -38,7 +38,7 @@ jobs:
           git diff --check
       - name: Run targeted checks
         run: |
-          python -m pip install -q -r requirements.txt
+          python -m pip install -q -r requirements.txt pytest pytest-asyncio ruff
           python -m pytest -q tests/test_prodamus_payments.py
           python -m ruff check bot/handlers/prodamus_payments.py tests/test_prodamus_payments.py
       - name: Commit patch
