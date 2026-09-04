@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from bot.handlers.miniapp_video_continuity_compat import (
     _video_remix_link,
     enrich_video_repeat_body,
@@ -82,3 +84,47 @@ def test_video_share_converts_miniapp_post_link_to_remix_link() -> None:
     assert _video_remix_link(payload) == (
         "https://t.me/NeuromixBot/app?startapp=remix_123_PARTNER"
     )
+
+
+def test_regular_image_to_video_repeat_restores_private_start_frame() -> None:
+    source_task = {
+        "prompt": "animate this frame",
+        "model": "seedance_1_5_pro",
+        "duration": 10,
+        "aspect_ratio": "16:9",
+        "request_data": {
+            "v_type": "imgtxt",
+            "v_image_url": "https://example.test/private-start.jpg",
+        },
+    }
+
+    restored = enrich_video_repeat_body(
+        {
+            "v_model": "seedance_1_5_pro",
+            "v_type": "imgtxt",
+            "source_feed_gen_id": 91,
+            "v_image_url": None,
+        },
+        source_task,
+    )
+
+    assert restored["v_image_url"] == "https://example.test/private-start.jpg"
+
+
+def test_feed_repeat_form_allows_server_restored_private_start_frame() -> None:
+    form_path = (
+        Path(__file__).resolve().parents[1]
+        / "frontend"
+        / "miniapp-v0"
+        / "components"
+        / "forms"
+        / "video-generator-form.tsx"
+    )
+    source = form_path.read_text(encoding="utf-8")
+
+    assert "const startImageRestoredByRepeat" in source
+    assert "selectedScenario === 'imgtxt' && Boolean(sourceFeedGenId)" in source
+    assert "!startImageRestoredByRepeat" in source
+    assert "const startImageOptional = isOmniVideo || startImageRestoredByRepeat" in source
+    assert "required={!startImageOptional}" in source
+    assert "Без нового кадра будет использован исходный кадр генерации" in source

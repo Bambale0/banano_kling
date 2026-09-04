@@ -217,8 +217,14 @@ export function VideoGeneratorForm({
   // Check if scenario is supported
   const scenarioSupported = model?.supports.includes(selectedScenario) ?? false
   
+  // A feed repeat can restore the original private start frame on the server.
+  // Keep fresh image-to-video generations strict, while allowing the repeat request
+  // to reach the server even when that private frame is intentionally hidden in UI.
+  const startImageRestoredByRepeat = selectedScenario === 'imgtxt' && Boolean(sourceFeedGenId)
+  const startImageOptional = isOmniVideo || startImageRestoredByRepeat
+
   // Validation
-  const needsStartImage = ((selectedScenario === 'imgtxt' && !isOmniVideo) || selectedScenario === 'character') && startImage.length === 0
+  const needsStartImage = ((selectedScenario === 'imgtxt' && !startImageRestoredByRepeat && !isOmniVideo) || selectedScenario === 'character') && startImage.length === 0
   const needsVideoRef = selectedScenario === 'video' && !isOmniVideo && videoReferences.length === 0
   const needsAvatarImage = selectedScenario === 'avatar' && startImage.length === 0
   const needsAvatarAudio = selectedScenario === 'avatar' && audioReference.length === 0
@@ -917,7 +923,7 @@ export function VideoGeneratorForm({
                 : selectedScenario === 'avatar'
                   ? 'Фото аватара'
                   : 'Стартовое изображение'}
-              {isOmniVideo ? (
+              {startImageOptional ? (
                 <span className="text-xs text-muted-foreground ml-2">(опционально)</span>
               ) : (
                 <span className="text-destructive ml-1">*</span>
@@ -928,11 +934,16 @@ export function VideoGeneratorForm({
               onFilesChange={setStartImage}
               maxFiles={1}
               accept="image/*"
-              required={!isOmniVideo}
+              required={!startImageOptional}
               onUpload={onUploadImageReference}
               libraryFiles={savedImageReferences}
               libraryLabel="Сохранённые стартовые кадры"
             />
+            {startImageRestoredByRepeat && startImage.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                Без нового кадра будет использован исходный кадр генерации.
+              </p>
+            ) : null}
           </div>
         )}
 
