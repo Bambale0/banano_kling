@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from bot.handlers import prodamus_payments as prodamus
 from bot.handlers import tribute_payments as tribute
 
 
@@ -74,6 +76,43 @@ def test_payload_amount_and_currency_must_match_resolved_product() -> None:
         tribute._validate_payload_against_product(
             {"amount": 500, "currency": "USD"}, product
         )
+
+
+def test_text_bot_keeps_tribute_and_prodamus_together(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PRODAMUS_PAYFORM_URL", "https://example.payform.ru/")
+    monkeypatch.setenv("PRODAMUS_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("PRODAMUS_SYS", "test-system")
+
+    tribute_markup = tribute.build_tribute_payment_method_keyboard(
+        "mini",
+        has_crypto=False,
+        has_lava=True,
+        has_stars=True,
+    )
+    combined_markup = prodamus._decorate_payment_keyboard(tribute_markup, "mini")
+
+    buttons = [button for row in combined_markup.inline_keyboard for button in row]
+    tribute_button = next(button for button in buttons if button.text == "Резерв 2")
+    prodamus_button = next(
+        button for button in buttons if button.text == "💳 Prodamus · Карта и СБП"
+    )
+
+    assert tribute_button.url == tribute.TRIBUTE_PACKAGE_LINKS["mini"]
+    assert prodamus_button.callback_data == "prodamus_pay_mini"
+
+
+def test_miniapp_keeps_tribute_and_prodamus_together() -> None:
+    source = Path("frontend/miniapp-v0/components/balance-sheet.tsx").read_text(
+        encoding="utf-8"
+    )
+
+    assert "const TRIBUTE_LINKS" in source
+    assert "provider === ('tribute' as PaymentProvider)" in source
+    assert "Резерв 2" in source
+    assert "provider === 'prodamus'" in source
+    assert "Prodamus · Карта и СБП" in source
 
 
 @pytest.mark.asyncio

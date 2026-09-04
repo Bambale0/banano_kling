@@ -22,7 +22,7 @@ WEB_ROOT="/var/www/${FRONTEND_DOMAIN}"
 MINIAPP_ROOT="${WEB_ROOT}/mini-app"
 BACKUP_ROOT="/var/backups/banano-miniapp/${FRONTEND_DOMAIN}"
 KEEP_BACKUPS="${KEEP_BACKUPS:-7}"
-RUN_NPM_AUDIT="${RUN_NPM_AUDIT:-1}"
+RUN_NPM_AUDIT="${RUN_NPM_AUDIT:-0}"
 
 log() {
   printf '[miniapp-local] %s\n' "$*"
@@ -124,7 +124,7 @@ if [[ -f "$PROFILE_FILE" ]]; then
   MINIAPP_ROOT="${MINIAPP_ROOT:-${WEB_ROOT}/mini-app}"
   BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/banano-miniapp/${FRONTEND_DOMAIN}}"
   KEEP_BACKUPS="${KEEP_BACKUPS:-7}"
-  RUN_NPM_AUDIT="${RUN_NPM_AUDIT:-1}"
+  RUN_NPM_AUDIT="${RUN_NPM_AUDIT:-0}"
 fi
 
 command -v git >/dev/null || die "git is required"
@@ -148,7 +148,7 @@ node_major="$(node -p 'process.versions.node.split(".")[0]')"
 
 log "Building exact commit ${EXPECTED_SHA} on $(hostname)"
 cd "$FRONTEND_DIR"
-npm ci
+npm ci --no-audit --fund=false
 
 if [[ "$RUN_NPM_AUDIT" == "1" ]]; then
   run_npm_audit

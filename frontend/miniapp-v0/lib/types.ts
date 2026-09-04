@@ -92,6 +92,7 @@ export interface PaymentPackage {
   lava_foreign_product_id?: string
   lava_foreign_offer_id?: string
   lava_foreign_currency?: string
+  prodamus_enabled?: boolean
   bonus_credits?: number
   popular?: boolean
   description?: string
@@ -106,6 +107,7 @@ export type PaymentProvider =
   | 'lava_foreign'
   | 'lava_foreign_card'
   | 'lava_foreign_paypal'
+  | 'prodamus'
 
 export interface CreatePaymentResponse {
   ok: true

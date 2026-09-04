@@ -28,8 +28,11 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/miniapp-v0/package-lock.json
 
+      - name: Pin npm CLI with current audit client
+        run: npm install --global npm@12.0.2
+
       - name: Install locked application and E2E dependencies
-        run: npm ci
+        run: npm ci --no-audit --fund=false
 
       - name: Block high-severity dependency vulnerabilities
         run: npm audit --audit-level=high

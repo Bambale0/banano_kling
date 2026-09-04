@@ -256,6 +256,24 @@ jobs:
           fi
           rm -f /tmp/tribute-probe.json
 
+          prodamus_env="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' banano-kling-bot)"
+          if printf '%s\n' "$prodamus_env" | grep -Eq '^PRODAMUS_PAYFORM_URL=.+$' \
+            && printf '%s\n' "$prodamus_env" | grep -Eq '^PRODAMUS_SECRET_KEY=.+$' \
+            && printf '%s\n' "$prodamus_env" | grep -Eq '^PRODAMUS_SYS=.+$'; then
+            prodamus_http="$(curl -sS --max-time 20 -o /tmp/prodamus-probe.txt -w '%{http_code}' \
+              -X POST https://tanyapi.chillcreative.ru/prodamus/webhook \
+              -H 'Content-Type: application/json' --data '{}')"
+            if [ "$prodamus_http" != 401 ]; then
+              echo "Prodamus webhook probe returned HTTP $prodamus_http (expected 401 for unsigned request)" >&2
+              cat /tmp/prodamus-probe.txt >&2 || true
+              exit 44
+            fi
+            rm -f /tmp/prodamus-probe.txt
+            echo "Prodamus runtime: configured; unsigned webhook probe=401"
+          else
+            echo "Prodamus runtime: disabled (merchant env is incomplete)"
+          fi
+
           echo "deployed_sha=$(git rev-parse HEAD)"
           echo "container_revision=$revision"
           echo "container_health=$health"

@@ -30,6 +30,8 @@ from .pinterest_flow_contract_compat import install_pinterest_flow_contract_comp
 from .profile_feed_deeplink_compat import install_profile_feed_deeplink_compat
 from .public_offer_compat import install_public_offer_compat
 from .public_offer_compat import router as public_offer_compat_router
+from .prodamus_payments import install_prodamus_payment_surfaces
+from .prodamus_payments import router as prodamus_payments_router
 
 # Publication scope must be installed before generation/common/miniapp import
 # their database and keyboard functions. This keeps the established flow while
@@ -181,6 +183,7 @@ generation_router.include_router(generation_module.router)
 payments_router = Router()
 payments_router.include_router(lava_checkout_router)
 payments_router.include_router(freekassa_payments_router)
+payments_router.include_router(prodamus_payments_router)
 payments_router.include_router(legacy_payments_router)
 
 # Keep the established common-menu flow. Specific background/support handlers are
@@ -200,6 +203,7 @@ install_trend_route_compat()
 # Mini App checkout keeps legacy `lava`, while explicit UI choices route Card
 # and SBP to the exact Lava PAY2ME payment method.
 install_miniapp_lava_payment_methods()
+install_prodamus_payment_surfaces()
 common_router = Router()
 common_router.include_router(partner_approval_user_router)
 common_router.include_router(trend_video_compat_router)
@@ -224,6 +228,7 @@ __all__ = [
     "lava_checkout_router",
     "notification_campaigns_router",
     "payments_router",
+    "prodamus_payments_router",
     "prompt_analyzer_v2_router",
     "public_offer_compat_router",
     "publication_scope_compat_router",
