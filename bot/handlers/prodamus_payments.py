@@ -388,7 +388,7 @@ def _decorate_payment_keyboard(
             rows.append(
                 [
                     InlineKeyboardButton(
-                        text="💳 Prodamus · Карта / СБП",
+                        text="💳 Prodamus · Карта и СБП",
                         callback_data=callback_data,
                     )
                 ]
@@ -409,7 +409,7 @@ def _decorate_payment_keyboard(
             back_index,
             [
                 InlineKeyboardButton(
-                    text="💳 Prodamus · Карта / СБП",
+                    text="💳 Prodamus · Карта и СБП",
                     callback_data=callback_data,
                 )
             ],
