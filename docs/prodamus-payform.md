@@ -15,7 +15,7 @@ PRODAMUS_SYS=<integration code agreed with Prodamus support>
 Optional overrides:
 
 ```env
-PRODAMUS_WEBHOOK_URL=https://api.chillcreative.ru/prodamus/webhook
+PRODAMUS_WEBHOOK_URL=https://tanyapi.chillcreative.ru/prodamus/webhook
 PRODAMUS_SUCCESS_URL=<optional Mini App return URL>
 ```
 
@@ -24,7 +24,7 @@ Telegram payment keyboard until all three required variables are present.
 
 ## Prodamus settings
 
-- Webhook: `POST https://api.chillcreative.ru/prodamus/webhook`.
+- Webhook: `POST https://tanyapi.chillcreative.ru/prodamus/webhook`.
 - Use the same secret key as `PRODAMUS_SECRET_KEY`.
 - `SYS` is mandatory in this integration because `urlNotification` is passed in
   each signed checkout.
@@ -45,7 +45,7 @@ Telegram payment keyboard until all three required variables are present.
 ## Safe verification
 
 ```bash
-curl -i -X POST https://api.chillcreative.ru/prodamus/webhook \
+curl -i -X POST https://tanyapi.chillcreative.ru/prodamus/webhook \
   -H 'Content-Type: application/json' \
   --data '{}'
 ```

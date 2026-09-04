@@ -30,7 +30,7 @@ from bot.services.preset_manager import preset_manager
 logger = logging.getLogger(__name__)
 
 PRODAMUS_WEBHOOK_PATH = "/prodamus/webhook"
-DEFAULT_PRODAMUS_WEBHOOK_URL = "https://api.chillcreative.ru/prodamus/webhook"
+DEFAULT_PRODAMUS_WEBHOOK_URL = "https://tanyapi.chillcreative.ru/prodamus/webhook"
 _FORM_KEY_RE = re.compile(r"^([^\[]+)((?:\[[^\]]*\])*)$")
 _BRACKET_RE = re.compile(r"\[([^\]]*)\]")
 router = Router()

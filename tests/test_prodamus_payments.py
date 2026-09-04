@@ -242,3 +242,11 @@ async def test_prodamus_webhook_rejects_invalid_signature_before_db(
 
     assert response.status == 401
     assert response.text == "error: invalid signature"
+
+
+def test_default_prodamus_webhook_uses_tanyapi_domain(monkeypatch: pytest.MonkeyPatch) -> None:
+    import bot.handlers.prodamus_payments as prodamus
+
+    monkeypatch.delenv("PRODAMUS_WEBHOOK_URL", raising=False)
+    assert prodamus.DEFAULT_PRODAMUS_WEBHOOK_URL == "https://tanyapi.chillcreative.ru/prodamus/webhook"
+    assert prodamus._webhook_url() == "https://tanyapi.chillcreative.ru/prodamus/webhook"

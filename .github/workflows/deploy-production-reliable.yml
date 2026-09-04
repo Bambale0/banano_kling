@@ -261,7 +261,7 @@ jobs:
             && printf '%s\n' "$prodamus_env" | grep -Eq '^PRODAMUS_SECRET_KEY=.+$' \
             && printf '%s\n' "$prodamus_env" | grep -Eq '^PRODAMUS_SYS=.+$'; then
             prodamus_http="$(curl -sS --max-time 20 -o /tmp/prodamus-probe.txt -w '%{http_code}' \
-              -X POST https://api.chillcreative.ru/prodamus/webhook \
+              -X POST https://tanyapi.chillcreative.ru/prodamus/webhook \
               -H 'Content-Type: application/json' --data '{}')"
             if [ "$prodamus_http" != 401 ]; then
               echo "Prodamus webhook probe returned HTTP $prodamus_http (expected 401 for unsigned request)" >&2
