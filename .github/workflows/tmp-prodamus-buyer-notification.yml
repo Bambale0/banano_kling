@@ -16,127 +16,23 @@ jobs:
       - name: Apply tested source changes
         run: |
           python - <<'PY'
+          import base64
           from pathlib import Path
-
-          handler = Path("bot/handlers/prodamus_payments.py")
+          old = base64.b64decode('ICAgIGxvZ2dlci5pbmZvKAogICAgICAgICJQcm9kYW11cyBwYXltZW50IGNvbXBsZXRlZCBvcmRlcj0lcyBkdXBsaWNhdGU9JXMiLAogICAgICAgIG9yZGVyX2lkLAogICAgICAgIGJvb2wocmVzdWx0LmdldCgiYWxyZWFkeV9jb21wbGV0ZWQiKSksCiAgICApCiAgICByZXR1cm4gd2ViLlJlc3BvbnNlKHRleHQ9InN1Y2Nlc3MiLCBzdGF0dXM9MjAwKQo=').decode()
+          new = base64.b64decode('ICAgIGR1cGxpY2F0ZSA9IGJvb2wocmVzdWx0LmdldCgiYWxyZWFkeV9jb21wbGV0ZWQiKSkKICAgIGlmIG5vdCBkdXBsaWNhdGU6CiAgICAgICAgYm90ID0gcmVxdWVzdC5hcHAuZ2V0KCJib3QiKQogICAgICAgIHRlbGVncmFtX2lkID0gcmVzdWx0LmdldCgidGVsZWdyYW1faWQiKQogICAgICAgIGNvbXBsZXRlZF90cmFuc2FjdGlvbiA9IHJlc3VsdC5nZXQoInRyYW5zYWN0aW9uIikKICAgICAgICBpZiBib3QgaXMgbm90IE5vbmUgYW5kIHRlbGVncmFtX2lkIGFuZCBjb21wbGV0ZWRfdHJhbnNhY3Rpb24gaXMgbm90IE5vbmU6CiAgICAgICAgICAgIGNyZWRpdHMgPSBpbnQoZ2V0YXR0cihjb21wbGV0ZWRfdHJhbnNhY3Rpb24sICJjcmVkaXRzIiwgMCkgb3IgMCkKICAgICAgICAgICAgdHJ5OgogICAgICAgICAgICAgICAgYXdhaXQgYm90LnNlbmRfbWVzc2FnZSgKICAgICAgICAgICAgICAgICAgICBpbnQodGVsZWdyYW1faWQpLAogICAgICAgICAgICAgICAgICAgICLinIUg0J7Qv9C70LDRgtCwINC/0L7Qu9GD0YfQtdC90LBcbiIKICAgICAgICAgICAgICAgICAgICBmItCd0LDRh9C40YHQu9C10L3Qvjoge2NyZWRpdHN9IPCfjYwiLAogICAgICAgICAgICAgICAgKQogICAgICAgICAgICAgICAgbG9nZ2VyLmluZm8oCiAgICAgICAgICAgICAgICAgICAgIlByb2RhbXVzIGJ1eWVyIG5vdGlmaWNhdGlvbiBzZW50IG9yZGVyPSVzIHRlbGVncmFtX2lkPSVzIiwKICAgICAgICAgICAgICAgICAgICBvcmRlcl9pZCwKICAgICAgICAgICAgICAgICAgICB0ZWxlZ3JhbV9pZCwKICAgICAgICAgICAgICAgICkKICAgICAgICAgICAgZXhjZXB0IEV4Y2VwdGlvbjoKICAgICAgICAgICAgICAgICMgUGF5bWVudCBpcyBhbHJlYWR5IGNvbW1pdHRlZC4gQSBUZWxlZ3JhbSBkZWxpdmVyeSBmYWlsdXJlIG11c3QKICAgICAgICAgICAgICAgICMgbm90IG1ha2UgUHJvZGFtdXMgcmV0cnkgYSBzdWNjZXNzZnVsbHkgcHJvY2Vzc2VkIHBheW1lbnQuCiAgICAgICAgICAgICAgICBsb2dnZXIuZXhjZXB0aW9uKAogICAgICAgICAgICAgICAgICAgICJGYWlsZWQgdG8gbm90aWZ5IFByb2RhbXVzIGJ1eWVyIG9yZGVyPSVzIHRlbGVncmFtX2lkPSVzIiwKICAgICAgICAgICAgICAgICAgICBvcmRlcl9pZCwKICAgICAgICAgICAgICAgICAgICB0ZWxlZ3JhbV9pZCwKICAgICAgICAgICAgICAgICkKCiAgICBsb2dnZXIuaW5mbygKICAgICAgICAiUHJvZGFtdXMgcGF5bWVudCBjb21wbGV0ZWQgb3JkZXI9JXMgZHVwbGljYXRlPSVzIiwKICAgICAgICBvcmRlcl9pZCwKICAgICAgICBkdXBsaWNhdGUsCiAgICApCiAgICByZXR1cm4gd2ViLlJlc3BvbnNlKHRleHQ9InN1Y2Nlc3MiLCBzdGF0dXM9MjAwKQo=').decode()
+          handler = Path('bot/handlers/prodamus_payments.py')
           text = handler.read_text()
-          old = '''    logger.info(
-        "Prodamus payment completed order=%s duplicate=%s",
-        order_id,
-        bool(result.get("already_completed")),
-    )
-    return web.Response(text="success", status=200)
-'''
-          new = '''    duplicate = bool(result.get("already_completed"))
-    if not duplicate:
-        bot = request.app.get("bot")
-        telegram_id = result.get("telegram_id")
-        completed_transaction = result.get("transaction")
-        if bot is not None and telegram_id and completed_transaction is not None:
-            credits = int(getattr(completed_transaction, "credits", 0) or 0)
-            try:
-                await bot.send_message(
-                    int(telegram_id),
-                    "✅ Оплата получена\\n"
-                    f"Начислено: {credits} 🍌",
-                )
-                logger.info(
-                    "Prodamus buyer notification sent order=%s telegram_id=%s",
-                    order_id,
-                    telegram_id,
-                )
-            except Exception:
-                # Payment is already committed. A Telegram delivery failure must
-                # not make Prodamus retry a successfully processed payment.
-                logger.exception(
-                    "Failed to notify Prodamus buyer order=%s telegram_id=%s",
-                    order_id,
-                    telegram_id,
-                )
-
-    logger.info(
-        "Prodamus payment completed order=%s duplicate=%s",
-        order_id,
-        duplicate,
-    )
-    return web.Response(text="success", status=200)
-'''
           if old not in text:
-              raise SystemExit("handler marker not found")
+              raise SystemExit('handler marker not found')
           handler.write_text(text.replace(old, new, 1))
-
-          test = Path("tests/test_prodamus_payments.py")
+          test = Path('tests/test_prodamus_payments.py')
           text = test.read_text()
-          if "from unittest.mock import AsyncMock\n" not in text:
-              text = text.replace(
-                  "from types import SimpleNamespace\n",
-                  "from types import SimpleNamespace\nfrom unittest.mock import AsyncMock\n",
-                  1,
-              )
-          marker = '''@pytest.mark.asyncio
-async def test_prodamus_webhook_rejects_invalid_signature_before_db(
-'''
-          addition = '''@pytest.mark.asyncio
-async def test_prodamus_webhook_notifies_buyer_only_on_first_completion(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import bot.handlers.prodamus_payments as prodamus
-    from bot.handlers import payments as payments_handler
-
-    payload = {
-        "payment_status": "success",
-        "order_num": "42_2000_mini",
-        "sum": "150.00",
-        "currency": "rub",
-    }
-    secret = "webhook-secret"
-    signature = sign_prodamus_payload(payload, secret)
-    monkeypatch.setenv("PRODAMUS_SECRET_KEY", secret)
-
-    async def fake_transaction(order_id: str):
-        assert order_id == "42_2000_mini"
-        return SimpleNamespace(provider="prodamus", amount_rub=150.0, status="pending")
-
-    completion_count = 0
-
-    async def fake_complete(order_id: str, *, bot=None):
-        nonlocal completion_count
-        completion_count += 1
-        return {
-            "ok": True,
-            "already_completed": completion_count > 1,
-            "telegram_id": 42,
-            "transaction": SimpleNamespace(credits=15),
-        }
-
-    bot = SimpleNamespace(send_message=AsyncMock())
-    monkeypatch.setattr(prodamus, "get_transaction_by_order", fake_transaction)
-    monkeypatch.setattr(payments_handler, "_complete_transaction", fake_complete)
-
-    class FakeRequest:
-        content_type = "application/json"
-
-        def __init__(self) -> None:
-            self.headers = {"Sign": signature}
-            self.app = {"bot": bot}
-
-        async def json(self):
-            return payload
-
-    first = await handle_prodamus_webhook(FakeRequest())
-    replay = await handle_prodamus_webhook(FakeRequest())
-
-    assert first.status == 200
-    assert replay.status == 200
-    bot.send_message.assert_awaited_once_with(
-        42,
-        "✅ Оплата получена\\nНачислено: 15 🍌",
-    )
-
-
-'''
+          if 'from unittest.mock import AsyncMock\n' not in text:
+              text = text.replace('from types import SimpleNamespace\n', 'from types import SimpleNamespace\nfrom unittest.mock import AsyncMock\n', 1)
+          marker = base64.b64decode('QHB5dGVzdC5tYXJrLmFzeW5jaW8KYXN5bmMgZGVmIHRlc3RfcHJvZGFtdXNfd2ViaG9va19yZWplY3RzX2ludmFsaWRfc2lnbmF0dXJlX2JlZm9yZV9kYigK').decode()
+          addition = base64.b64decode('QHB5dGVzdC5tYXJrLmFzeW5jaW8KYXN5bmMgZGVmIHRlc3RfcHJvZGFtdXNfd2ViaG9va19ub3RpZmllc19idXllcl9vbmx5X29uX2ZpcnN0X2NvbXBsZXRpb24oCiAgICBtb25rZXlwYXRjaDogcHl0ZXN0Lk1vbmtleVBhdGNoLAopIC0+IE5vbmU6CiAgICBpbXBvcnQgYm90LmhhbmRsZXJzLnByb2RhbXVzX3BheW1lbnRzIGFzIHByb2RhbXVzCiAgICBmcm9tIGJvdC5oYW5kbGVycyBpbXBvcnQgcGF5bWVudHMgYXMgcGF5bWVudHNfaGFuZGxlcgoKICAgIHBheWxvYWQgPSB7CiAgICAgICAgInBheW1lbnRfc3RhdHVzIjogInN1Y2Nlc3MiLAogICAgICAgICJvcmRlcl9udW0iOiAiNDJfMjAwMF9taW5pIiwKICAgICAgICAic3VtIjogIjE1MC4wMCIsCiAgICAgICAgImN1cnJlbmN5IjogInJ1YiIsCiAgICB9CiAgICBzZWNyZXQgPSAid2ViaG9vay1zZWNyZXQiCiAgICBzaWduYXR1cmUgPSBzaWduX3Byb2RhbXVzX3BheWxvYWQocGF5bG9hZCwgc2VjcmV0KQogICAgbW9ua2V5cGF0Y2guc2V0ZW52KCJQUk9EQU1VU19TRUNSRVRfS0VZIiwgc2VjcmV0KQoKICAgIGFzeW5jIGRlZiBmYWtlX3RyYW5zYWN0aW9uKG9yZGVyX2lkOiBzdHIpOgogICAgICAgIGFzc2VydCBvcmRlcl9pZCA9PSAiNDJfMjAwMF9taW5pIgogICAgICAgIHJldHVybiBTaW1wbGVOYW1lc3BhY2UocHJvdmlkZXI9InByb2RhbXVzIiwgYW1vdW50X3J1Yj0xNTAuMCwgc3RhdHVzPSJwZW5kaW5nIikKCiAgICBjb21wbGV0aW9uX2NvdW50ID0gMAoKICAgIGFzeW5jIGRlZiBmYWtlX2NvbXBsZXRlKG9yZGVyX2lkOiBzdHIsICosIGJvdD1Ob25lKToKICAgICAgICBub25sb2NhbCBjb21wbGV0aW9uX2NvdW50CiAgICAgICAgY29tcGxldGlvbl9jb3VudCArPSAxCiAgICAgICAgcmV0dXJuIHsKICAgICAgICAgICAgIm9rIjogVHJ1ZSwKICAgICAgICAgICAgImFscmVhZHlfY29tcGxldGVkIjogY29tcGxldGlvbl9jb3VudCA+IDEsCiAgICAgICAgICAgICJ0ZWxlZ3JhbV9pZCI6IDQyLAogICAgICAgICAgICAidHJhbnNhY3Rpb24iOiBTaW1wbGVOYW1lc3BhY2UoY3JlZGl0cz0xNSksCiAgICAgICAgfQoKICAgIGJvdCA9IFNpbXBsZU5hbWVzcGFjZShzZW5kX21lc3NhZ2U9QXN5bmNNb2NrKCkpCiAgICBtb25rZXlwYXRjaC5zZXRhdHRyKHByb2RhbXVzLCAiZ2V0X3RyYW5zYWN0aW9uX2J5X29yZGVyIiwgZmFrZV90cmFuc2FjdGlvbikKICAgIG1vbmtleXBhdGNoLnNldGF0dHIocGF5bWVudHNfaGFuZGxlciwgIl9jb21wbGV0ZV90cmFuc2FjdGlvbiIsIGZha2VfY29tcGxldGUpCgogICAgY2xhc3MgRmFrZVJlcXVlc3Q6CiAgICAgICAgY29udGVudF90eXBlID0gImFwcGxpY2F0aW9uL2pzb24iCgogICAgICAgIGRlZiBfX2luaXRfXyhzZWxmKSAtPiBOb25lOgogICAgICAgICAgICBzZWxmLmhlYWRlcnMgPSB7IlNpZ24iOiBzaWduYXR1cmV9CiAgICAgICAgICAgIHNlbGYuYXBwID0geyJib3QiOiBib3R9CgogICAgICAgIGFzeW5jIGRlZiBqc29uKHNlbGYpOgogICAgICAgICAgICByZXR1cm4gcGF5bG9hZAoKICAgIGZpcnN0ID0gYXdhaXQgaGFuZGxlX3Byb2RhbXVzX3dlYmhvb2soRmFrZVJlcXVlc3QoKSkKICAgIHJlcGxheSA9IGF3YWl0IGhhbmRsZV9wcm9kYW11c193ZWJob29rKEZha2VSZXF1ZXN0KCkpCgogICAgYXNzZXJ0IGZpcnN0LnN0YXR1cyA9PSAyMDAKICAgIGFzc2VydCByZXBsYXkuc3RhdHVzID09IDIwMAogICAgYm90LnNlbmRfbWVzc2FnZS5hc3NlcnRfYXdhaXRlZF9vbmNlX3dpdGgoCiAgICAgICAgNDIsCiAgICAgICAgIuKchSDQntC/0LvQsNGC0LAg0L/QvtC70YPRh9C10L3QsFxu0J3QsNGH0LjRgdC70LXQvdC+OiAxNSDwn42MIiwKICAgICkKCgo=').decode()
           if marker not in text:
-              raise SystemExit("test marker not found")
+              raise SystemExit('test marker not found')
           test.write_text(text.replace(marker, addition + marker, 1))
           PY
           git diff --check
