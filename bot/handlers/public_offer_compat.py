@@ -17,6 +17,11 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 PUBLIC_OFFER_CALLBACK = "public_offer"
+PUBLIC_OFFER_CALLBACKS = {
+    PUBLIC_OFFER_CALLBACK,
+    "partner_offer",
+    "payment_public_offer",
+}
 PUBLIC_OFFER_PDF_PATH = Path(__file__).resolve().parents[2] / "legal" / "public-offer.pdf"
 PUBLIC_OFFER_TEXT_PATH = Path(__file__).resolve().parents[2] / "legal" / "public-offer.txt"
 
@@ -27,7 +32,7 @@ def _with_public_offer(markup: InlineKeyboardMarkup | None) -> InlineKeyboardMar
 
     rows = [list(row) for row in markup.inline_keyboard]
     if any(
-        button.callback_data in {PUBLIC_OFFER_CALLBACK, "partner_offer"}
+        button.callback_data in PUBLIC_OFFER_CALLBACKS
         for row in rows
         for button in row
     ):
@@ -95,9 +100,9 @@ async def _send_offer_text(
         )
 
 
-@router.callback_query(F.data.in_({PUBLIC_OFFER_CALLBACK, "partner_offer"}))
+@router.callback_query(F.data.in_(PUBLIC_OFFER_CALLBACKS))
 async def show_public_offer(callback: types.CallbackQuery):
-    """Send the exact locally bundled Prodamus offer, never an external URL."""
+    """Send the exact locally bundled public offer, never a placeholder or external URL."""
     if callback.message is None:
         await callback.answer("Оферта недоступна в этом сообщении", show_alert=True)
         return
@@ -115,7 +120,7 @@ async def show_public_offer(callback: types.CallbackQuery):
                 str(PUBLIC_OFFER_PDF_PATH),
                 filename="public-offer.pdf",
             ),
-            caption="📜 Публичная оферта",
+            caption="📄 Публичная оферта · полный документ",
             reply_markup=reply_markup,
         )
     except Exception:
