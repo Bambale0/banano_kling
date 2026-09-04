@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import aiohttp
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiohttp import web
 
 from bot.database import create_transaction, get_or_create_user, get_transaction_by_order
@@ -104,6 +105,65 @@ def _product_from_api_row(row: dict[str, Any], configured_links: dict[str, str])
         amount=amount,
         currency=str(row.get("currency") or "").strip().upper(),
     )
+
+
+def build_tribute_payment_method_keyboard(
+    package_id: str,
+    has_crypto: bool = True,
+    has_lava: bool = False,
+    has_stars: bool = True,
+    lava_price_usd: float | None = None,
+) -> InlineKeyboardMarkup:
+    """Text-bot payment methods with Tribute exposed as Reserve 2.
+
+    Reserve 2 points straight to the matching Tribute product. Stars intentionally
+    stay below Reserve 2 so the international backup method is easier to reach.
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    if has_crypto:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="₿ Криптовалюта (CryptoBot)",
+                    callback_data=f"buy_crypto_{package_id}",
+                )
+            ]
+        )
+    if has_lava:
+        lava_suffix = f" · ${lava_price_usd:g}" if lava_price_usd else ""
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"Оплата картой {lava_suffix}",
+                    callback_data=f"buy_lava_{package_id}",
+                )
+            ]
+        )
+
+    tribute_url = TRIBUTE_PACKAGE_LINKS.get(package_id)
+    if tribute_url:
+        rows.append([InlineKeyboardButton(text="Резерв 2", url=tribute_url)])
+
+    if has_stars:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="⭐ Telegram Stars",
+                    callback_data=f"buy_stars_{package_id}",
+                )
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu_topup")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def install_tribute_text_payment_keyboard() -> None:
+    """Install Reserve 2 into the existing Telegram payment flow."""
+    from bot import keyboards as keyboards_module
+    from bot.handlers import payments as payments_handler
+
+    keyboards_module.get_payment_method_keyboard = build_tribute_payment_method_keyboard
+    payments_handler.get_payment_method_keyboard = build_tribute_payment_method_keyboard
 
 
 async def _load_product_map() -> dict[int, TributeProduct]:
@@ -295,5 +355,6 @@ async def handle_tribute_webhook(request: web.Request) -> web.Response:
 
 
 def setup_tribute_routes(app: web.Application) -> None:
+    install_tribute_text_payment_keyboard()
     app.router.add_post(TRIBUTE_WEBHOOK_PATH, handle_tribute_webhook)
     logger.info("Tribute webhook registered: %s", TRIBUTE_WEBHOOK_PATH)
