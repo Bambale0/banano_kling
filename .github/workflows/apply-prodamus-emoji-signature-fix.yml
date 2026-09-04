@@ -1,0 +1,65 @@
+name: Apply Prodamus emoji signature fix
+
+on:
+  push:
+    branches:
+      - fix/tanyapi-prodamus-emoji-signature
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fix:
+    if: ${{ !contains(github.event.head_commit.message, '[prodamus-emoji-bot]') }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/tanyapi-prodamus-emoji-signature
+          fetch-depth: 0
+
+      - name: Apply validated source edits
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          src = Path('bot/handlers/prodamus_payments.py')
+          text = src.read_text(encoding='utf-8')
+          marker = '''def _normalize_for_hmac(value: Any) -> Any:\n'''
+          helper = '''def _prodamus_product_name(package_name: str, credits: int) -> str:\n    # Prodamus rejects otherwise valid signed requests when a product name\n    # contains non-BMP emoji (for example the leading banana in our presets).\n    # Keep the UI label unchanged, but sign/send a payment-safe product title.\n    safe_name = "".join(char for char in str(package_name) if ord(char) <= 0xFFFF)\n    safe_name = re.sub(r"\\s+", " ", safe_name).strip() or "Пакет"\n    return f"{safe_name} — {int(credits)} бананов"\n\n\n'''
+          if helper not in text:
+              if marker not in text:
+                  raise SystemExit('normalize marker not found')
+              text = text.replace(marker, helper + marker, 1)
+          old = '"name": f"{package_name} — {int(credits)} бананов",'
+          new = '"name": _prodamus_product_name(package_name, credits),'
+          if new not in text:
+              if old not in text:
+                  raise SystemExit('product name marker not found')
+              text = text.replace(old, new, 1)
+          src.write_text(text, encoding='utf-8')
+
+          tests = Path('tests/test_prodamus_payments.py')
+          t = tests.read_text(encoding='utf-8')
+          insert_before = '''def test_build_prodamus_payment_url_rejects_public_payment_link(\n'''
+          new_test = '''def test_build_prodamus_payment_url_strips_non_bmp_emoji_from_product_name(\n    monkeypatch: pytest.MonkeyPatch,\n) -> None:\n    monkeypatch.setenv("PRODAMUS_PAYFORM_URL", "https://neuromix.payform.ru/")\n    monkeypatch.setenv("PRODAMUS_SECRET_KEY", "merchant-secret")\n    monkeypatch.setenv("PRODAMUS_SYS", "neuromixonlytm")\n\n    payment_url = build_prodamus_payment_url(\n        order_id="42_1000_start",\n        package_id="start",\n        package_name="🍌 Старт",\n        credits=25,\n        amount_rub=250,\n        telegram_id=42,\n    )\n    query = parse_qs(urlparse(payment_url).query)\n\n    assert query["products[0][name]"] == ["Старт — 25 бананов"]\n    assert "🍌" not in query["products[0][name]"][0]\n\n\n'''
+          if new_test not in t:
+              if insert_before not in t:
+                  raise SystemExit('test insertion marker not found')
+              t = t.replace(insert_before, new_test + insert_before, 1)
+          tests.write_text(t, encoding='utf-8')
+          PY
+
+      - name: Verify patch shape
+        run: |
+          git diff --check
+          grep -q '_prodamus_product_name(package_name, credits)' bot/handlers/prodamus_payments.py
+          grep -q 'package_name="🍌 Старт"' tests/test_prodamus_payments.py
+
+      - name: Commit patch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add bot/handlers/prodamus_payments.py tests/test_prodamus_payments.py
+          git commit -m 'fix(payments): sanitize Prodamus signed product names [prodamus-emoji-bot]'
+          git push origin HEAD:fix/tanyapi-prodamus-emoji-signature
