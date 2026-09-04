@@ -209,7 +209,9 @@ export function BalanceSheet() {
                   ? 'Открыта оплата через PayPal'
                   : provider === 'lava_foreign'
                     ? 'Открыта зарубежная оплата'
-                    : provider === ('freekassa_sbp' as PaymentProvider)
+                    : provider === 'prodamus'
+                      ? 'Открыта оплата через Prodamus'
+                      : provider === ('freekassa_sbp' as PaymentProvider)
                       ? 'Открыта резервная оплата KASSA через СБП'
                       : provider === ('freekassa_card' as PaymentProvider)
                         ? 'Открыта резервная оплата KASSA картой'
@@ -333,8 +335,10 @@ export function BalanceSheet() {
                     const starsPrice = pkg.price_stars ?? pkg.price_rub
                     const lavaConfigured = Boolean(pkg.lava_offer_id)
                     const tributeConfigured = Boolean(TRIBUTE_LINKS[pkg.id])
+                    const prodamusConfigured = Boolean(pkg.prodamus_enabled)
                     const starsLoading = loadingPayment === `${pkg.id}:telegram_stars`
                     const tributeLoading = loadingPayment === `${pkg.id}:tribute`
+                    const prodamusLoading = loadingPayment === `${pkg.id}:prodamus`
                     const cardLoading = loadingPayment === `${pkg.id}:lava_card`
                     const sbpLoading = loadingPayment === `${pkg.id}:lava_sbp`
                     const foreignLoading = loadingPayment === `${pkg.id}:lava_foreign`
@@ -407,6 +411,20 @@ export function BalanceSheet() {
                             )}
                             СБП
                           </Button>
+                          {prodamusConfigured ? (
+                            <Button
+                              onClick={() => handleTopup(pkg.id, 'prodamus')}
+                              disabled={Boolean(loadingPayment)}
+                              className="col-span-2 w-full bg-secondary text-foreground hover:bg-secondary/80"
+                            >
+                              {prodamusLoading ? (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              ) : (
+                                <CreditCard className="mr-2 h-4 w-4" />
+                              )}
+                              Prodamus · Карта / СБП
+                            </Button>
+                          ) : null}
                           <Button
                             onClick={() => handleTopup(pkg.id, 'tribute' as PaymentProvider)}
                             disabled={Boolean(loadingPayment) || !tributeConfigured}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import html
 import json
 import logging
 import os
@@ -12,7 +13,7 @@ from functools import wraps
 from typing import Any
 from urllib.parse import urlencode, urlparse
 
-from aiogram import F, types
+from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiohttp import web
@@ -32,7 +33,7 @@ PRODAMUS_WEBHOOK_PATH = "/prodamus/webhook"
 DEFAULT_PRODAMUS_WEBHOOK_URL = "https://api.chillcreative.ru/prodamus/webhook"
 _FORM_KEY_RE = re.compile(r"^([^\[]+)((?:\[[^\]]*\])*)$")
 _BRACKET_RE = re.compile(r"\[([^\]]*)\]")
-_CALLBACK_REGISTERED = False
+router = Router()
 
 
 class ProdamusConfigurationError(RuntimeError):
@@ -435,6 +436,7 @@ def install_prodamus_text_payment_keyboard() -> None:
     payments_handler.get_payment_method_keyboard = payment_keyboard_with_prodamus
 
 
+@router.callback_query(F.data.startswith("prodamus_pay_"))
 async def handle_prodamus_payment(
     callback: types.CallbackQuery,
     state: FSMContext,
@@ -458,8 +460,6 @@ async def handle_prodamus_payment(
     telegram_id = int(callback.from_user.id)
     order_id = f"{telegram_id}_{int(time.time() * 1000)}_{package_id}"
 
-    bot_info = await callback.bot.get_me()
-    success_url = f"https://t.me/{bot_info.username}?start=success_{order_id}"
     try:
         payment_url = build_prodamus_payment_url(
             order_id=order_id,
@@ -468,13 +468,12 @@ async def handle_prodamus_payment(
             credits=credits,
             amount_rub=float(package["price_rub"]),
             telegram_id=telegram_id,
-            success_url=success_url,
         )
     except Exception as exc:
         logger.exception("Failed to build Prodamus payment order=%s", order_id)
         await callback.message.edit_text(
             "Не удалось открыть Prodamus. Попробуйте другой способ оплаты.\n"
-            f"Причина: <code>{types.html.quote(str(exc))}</code>",
+            f"Причина: <code>{html.escape(str(exc))}</code>",
             parse_mode="HTML",
         )
         return
@@ -525,18 +524,6 @@ async def handle_prodamus_payment(
     )
     await callback.answer()
 
-
-def _install_prodamus_callback() -> None:
-    global _CALLBACK_REGISTERED
-    if _CALLBACK_REGISTERED:
-        return
-    from bot.handlers import payments as payments_handler
-
-    payments_handler.router.callback_query.register(
-        handle_prodamus_payment,
-        F.data.startswith("prodamus_pay_"),
-    )
-    _CALLBACK_REGISTERED = True
 
 
 def install_prodamus_miniapp_payment() -> None:
@@ -641,7 +628,7 @@ def install_prodamus_miniapp_payment() -> None:
                     "promo_code": promo.code if promo and promo_bonus > 0 else "",
                 }
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - normalize Mini App API errors
             return miniapp_module._miniapp_error_response(
                 exc,
                 log_message="Mini App Prodamus payment creation failed",
@@ -651,10 +638,13 @@ def install_prodamus_miniapp_payment() -> None:
     miniapp_module.miniapp_create_payment = create_payment_with_prodamus
 
 
-def setup_prodamus_routes(app: web.Application) -> None:
+def install_prodamus_payment_surfaces() -> None:
     install_prodamus_text_payment_keyboard()
-    _install_prodamus_callback()
     install_prodamus_miniapp_payment()
+
+
+def setup_prodamus_routes(app: web.Application) -> None:
+    install_prodamus_payment_surfaces()
     app.router.add_post(PRODAMUS_WEBHOOK_PATH, handle_prodamus_webhook)
     logger.info(
         "Prodamus payment integration registered: path=%s enabled=%s",
