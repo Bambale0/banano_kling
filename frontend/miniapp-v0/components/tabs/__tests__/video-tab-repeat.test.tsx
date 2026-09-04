@@ -85,7 +85,7 @@ describe('VideoTab repeat mode selection', () => {
     expect(screen.queryByTestId('seedance25-form')).not.toBeInTheDocument()
   })
 
-  it('keeps Seedance 2.5 feed repeats on the source-aware generic form', () => {
+  it('keeps Seedance 2.5 selected while feed repeat uses the source-aware generic form', () => {
     mockApp({
       title: 'Повторить Seedance 2.5',
       prompt: '',
@@ -98,5 +98,10 @@ describe('VideoTab repeat mode selection', () => {
 
     expect(screen.getByTestId('regular-video-form')).toBeInTheDocument()
     expect(screen.queryByTestId('seedance25-form')).not.toBeInTheDocument()
+
+    const seedanceButton = screen.getByRole('button', { name: /Seedance 2\.5/i })
+    const catalogButton = screen.getByRole('button', { name: /Другие модели/i })
+    expect(seedanceButton.className).toContain('border-gold/45')
+    expect(catalogButton.className).not.toContain('border-border bg-secondary')
   })
 })

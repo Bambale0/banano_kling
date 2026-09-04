@@ -44,16 +44,10 @@ export function VideoTab() {
 
   useEffect(() => {
     if (!canUseSeedance25 || !videoPromptPreset) return
-    // A remix preset must keep sourceFeedGenId all the way to generateVideo().
-    // The dedicated Seedance form is for fresh generations and intentionally has
-    // no feed-repeat contract, so use the generic form only for this repeat case.
-    setVideoMode(
-      videoPromptPreset.model === 'seedance_2_5' && videoPromptPreset.sourceFeedGenId
-        ? 'regular'
-        : videoPromptPreset.model === 'seedance_2_5'
-          ? 'seedance25'
-          : 'regular',
-    )
+    // Seedance 2.5 repeats still use the source-aware generic form below,
+    // but the model switch must reflect the source model instead of falsely
+    // highlighting the generic catalog.
+    setVideoMode(videoPromptPreset.model === 'seedance_2_5' ? 'seedance25' : 'regular')
   }, [canUseSeedance25, videoPromptPreset])
 
   const handleSubmit = async (data: {
@@ -173,7 +167,7 @@ export function VideoTab() {
               type="button"
               onClick={() => setVideoMode('seedance25')}
               className={`rounded-xl px-3 py-3 text-xs font-semibold transition ${
-                effectiveMode === 'seedance25' && !isSeedanceRepeat
+                effectiveMode === 'seedance25'
                   ? 'border border-gold/45 bg-gold/15 text-gold shadow-[0_0_18px_rgba(251,191,36,0.10)]'
                   : 'border border-transparent text-muted-foreground hover:bg-gold/5 hover:text-foreground'
               }`}
@@ -185,7 +179,7 @@ export function VideoTab() {
               type="button"
               onClick={() => setVideoMode('regular')}
               className={`rounded-xl px-3 py-3 text-xs font-medium transition ${
-                effectiveMode === 'regular' || isSeedanceRepeat
+                effectiveMode === 'regular'
                   ? 'border border-border bg-secondary text-foreground'
                   : 'border border-transparent text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
               }`}
