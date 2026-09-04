@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import type { VideoModel, UploadedFile, ScenarioType, VideoPromptPreset } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -133,6 +133,7 @@ export function VideoGeneratorForm({
   const [omniCharacterAudioIds, setOmniCharacterAudioIds] = useState('')
   const [prompt, setPrompt] = useState('')
   const [sourceFeedGenId, setSourceFeedGenId] = useState<number | null>(null)
+  const appliedPromptPresetRef = useRef<VideoPromptPreset | null>(null)
   const [repeatTitle, setRepeatTitle] = useState('')
   const [startImage, setStartImage] = useState<UploadedFile[]>([])
   const [photoReferences, setPhotoReferences] = useState<UploadedFile[]>([])
@@ -276,7 +277,8 @@ export function VideoGeneratorForm({
   }, [models])
 
   useEffect(() => {
-    if (!promptPreset) return
+    if (!promptPreset || appliedPromptPresetRef.current === promptPreset) return
+    appliedPromptPresetRef.current = promptPreset
     setPrompt(promptPreset.prompt)
     setSourceFeedGenId(promptPreset.sourceFeedGenId || null)
     setRepeatTitle(promptPreset.sourceFeedGenId ? promptPreset.title : '')
