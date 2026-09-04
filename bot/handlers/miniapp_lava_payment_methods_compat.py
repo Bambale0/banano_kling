@@ -5,6 +5,7 @@ from __future__ import annotations
 from functools import wraps
 from typing import Any
 
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiohttp import web
 
 from bot.services.freekassa_service import (
@@ -13,6 +14,7 @@ from bot.services.freekassa_service import (
     freekassa_service,
 )
 from bot.services.lava_service import normalize_lava_customer_email
+from bot.tribute_config import TRIBUTE_PACKAGE_LINKS
 
 
 _LAVA_MINIAPP_METHODS = {
@@ -40,8 +42,60 @@ def _payment_error_message(result: Any, *, default: str = "Failed to create paym
     return default
 
 
+def _decorate_text_payment_options(
+    markup: InlineKeyboardMarkup,
+    package_id: str,
+) -> InlineKeyboardMarkup:
+    """Expose Tribute as Reserve 2 in the real flat Telegram payment keyboard."""
+
+    tribute_url = TRIBUTE_PACKAGE_LINKS.get(str(package_id))
+    if not tribute_url:
+        return markup
+
+    reserve_label = "Резерв 2"
+    star_labels = {"⭐ Stars", "⭐ Telegram Stars"}
+    rows: list[list[InlineKeyboardButton]] = []
+    stars_rows: list[list[InlineKeyboardButton]] = []
+
+    for row in markup.inline_keyboard:
+        if any(button.text == reserve_label for button in row):
+            continue
+        if len(row) == 1 and row[0].text in star_labels:
+            stars_rows.append(list(row))
+            continue
+        rows.append(list(row))
+
+    reserve_row = [InlineKeyboardButton(text=reserve_label, url=tribute_url)]
+    sbp_index = next(
+        (
+            index
+            for index, row in enumerate(rows)
+            if any(button.text == "⚡ СБП" for button in row)
+        ),
+        -1,
+    )
+    if sbp_index >= 0:
+        rows.insert(sbp_index + 1, reserve_row)
+    else:
+        rows.insert(0, reserve_row)
+
+    back_index = next(
+        (
+            index
+            for index, row in enumerate(rows)
+            if any(button.callback_data == "menu_topup" for button in row)
+        ),
+        len(rows),
+    )
+    for star_row in stars_rows:
+        rows.insert(back_index, star_row)
+        back_index += 1
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def _install_freekassa_reserve_button() -> None:
-    """Expose the existing KASSA reserve button when FreeKassa is configured."""
+    """Expose KASSA and Reserve 2 in the actual text-bot payment keyboard."""
 
     from bot.handlers import lava_checkout as lava_checkout_module
 
@@ -50,12 +104,14 @@ def _install_freekassa_reserve_button() -> None:
         return
 
     @wraps(current_keyboard)
-    def payment_options_with_freekassa(*args: Any, **kwargs: Any):
+    def payment_options_with_reserves(*args: Any, **kwargs: Any):
+        package_id = str(args[0] if args else kwargs.get("package_id") or "")
         kwargs["freekassa"] = bool(freekassa_service.api_enabled)
-        return current_keyboard(*args, **kwargs)
+        markup = current_keyboard(*args, **kwargs)
+        return _decorate_text_payment_options(markup, package_id)
 
-    payment_options_with_freekassa._freekassa_reserve_compat = True
-    lava_checkout_module._payment_options_keyboard = payment_options_with_freekassa
+    payment_options_with_reserves._freekassa_reserve_compat = True
+    lava_checkout_module._payment_options_keyboard = payment_options_with_reserves
 
 
 def _install_freekassa_package_flag(miniapp_module: Any) -> None:
