@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -229,6 +230,64 @@ async def test_prodamus_webhook_completes_valid_signed_payment(
     assert response.status == 200
     assert response.text == "success"
     assert completed == ["42_1000_mini"]
+
+
+@pytest.mark.asyncio
+async def test_prodamus_webhook_notifies_buyer_only_on_first_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import bot.handlers.prodamus_payments as prodamus
+    from bot.handlers import payments as payments_handler
+
+    payload = {
+        "payment_status": "success",
+        "order_num": "42_2000_mini",
+        "sum": "150.00",
+        "currency": "rub",
+    }
+    secret = "webhook-secret"
+    signature = sign_prodamus_payload(payload, secret)
+    monkeypatch.setenv("PRODAMUS_SECRET_KEY", secret)
+
+    async def fake_transaction(order_id: str):
+        assert order_id == "42_2000_mini"
+        return SimpleNamespace(provider="prodamus", amount_rub=150.0, status="pending")
+
+    completion_count = 0
+
+    async def fake_complete(order_id: str, *, bot=None):
+        nonlocal completion_count
+        completion_count += 1
+        return {
+            "ok": True,
+            "already_completed": completion_count > 1,
+            "telegram_id": 42,
+            "transaction": SimpleNamespace(credits=15),
+        }
+
+    bot = SimpleNamespace(send_message=AsyncMock())
+    monkeypatch.setattr(prodamus, "get_transaction_by_order", fake_transaction)
+    monkeypatch.setattr(payments_handler, "_complete_transaction", fake_complete)
+
+    class FakeRequest:
+        content_type = "application/json"
+
+        def __init__(self) -> None:
+            self.headers = {"Sign": signature}
+            self.app = {"bot": bot}
+
+        async def json(self):
+            return payload
+
+    first = await handle_prodamus_webhook(FakeRequest())
+    replay = await handle_prodamus_webhook(FakeRequest())
+
+    assert first.status == 200
+    assert replay.status == 200
+    bot.send_message.assert_awaited_once_with(
+        42,
+        "✅ Оплата получена\nНачислено: 15 🍌",
+    )
 
 
 @pytest.mark.asyncio

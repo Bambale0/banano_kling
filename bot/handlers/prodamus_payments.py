@@ -378,10 +378,37 @@ async def handle_prodamus_webhook(request: web.Request) -> web.Response:
         )
         return web.Response(text="error: completion failed", status=500)
 
+    duplicate = bool(result.get("already_completed"))
+    if not duplicate:
+        bot = request.app.get("bot")
+        telegram_id = result.get("telegram_id")
+        completed_transaction = result.get("transaction")
+        if bot is not None and telegram_id and completed_transaction is not None:
+            credits = int(getattr(completed_transaction, "credits", 0) or 0)
+            try:
+                await bot.send_message(
+                    int(telegram_id),
+                    "✅ Оплата получена\n"
+                    f"Начислено: {credits} 🍌",
+                )
+                logger.info(
+                    "Prodamus buyer notification sent order=%s telegram_id=%s",
+                    order_id,
+                    telegram_id,
+                )
+            except Exception:
+                # Payment is already committed. A Telegram delivery failure must
+                # not make Prodamus retry a successfully processed payment.
+                logger.exception(
+                    "Failed to notify Prodamus buyer order=%s telegram_id=%s",
+                    order_id,
+                    telegram_id,
+                )
+
     logger.info(
         "Prodamus payment completed order=%s duplicate=%s",
         order_id,
-        bool(result.get("already_completed")),
+        duplicate,
     )
     return web.Response(text="success", status=200)
 
