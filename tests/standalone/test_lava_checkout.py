@@ -93,8 +93,9 @@ def test_payment_menu_shows_card_and_sbp_separately() -> None:
     assert labels == [
         "💳 Картой",
         "⚡ СБП",
-        "⭐ Stars",
+        "Резерв 2",
         "₿ Криптовалюта",
+        "⭐ Stars",
         "◀️ Назад",
     ]
     assert "buy_lava_card_studio" in callbacks
@@ -119,6 +120,7 @@ def test_payment_menu_shows_foreign_card_and_paypal_separately() -> None:
     assert labels == [
         "💳 Картой",
         "⚡ СБП",
+        "Резерв 2",
         "🌍 Зарубежная карта",
         "🌍 PayPal",
         "◀️ Назад",
