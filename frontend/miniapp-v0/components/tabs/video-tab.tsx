@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useApp } from '@/lib/app-context'
 import { VideoGeneratorForm } from '../forms/video-generator-form'
 import { Seedance25PublicForm } from '../forms/seedance25-public-form'
@@ -138,6 +138,10 @@ export function VideoTab() {
     return uploaded
   }
 
+  const handleVideoPromptPresetConsumed = useCallback(() => {
+    setVideoPromptPreset(null)
+  }, [setVideoPromptPreset])
+
   const handleSeedanceQueued = async (result: Seedance25GenerateResponse) => {
     setSeedanceQueued(result)
     setCredits(result.credits)
@@ -213,7 +217,7 @@ export function VideoTab() {
             savedVideoReferences={state.savedReferences.filter((item) => item.type === 'video')}
             savedAudioReferences={state.savedReferences.filter((item) => item.type === 'audio')}
             promptPreset={videoPromptPreset}
-            onPromptPresetConsumed={() => setVideoPromptPreset(null)}
+            onPromptPresetConsumed={handleVideoPromptPresetConsumed}
             isSubmitting={isSubmitting}
             credits={state.user.credits}
           />
