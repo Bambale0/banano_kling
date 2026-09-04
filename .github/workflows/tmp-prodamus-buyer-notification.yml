@@ -1,0 +1,155 @@
+name: Temporary Prodamus buyer notification patch
+
+on:
+  push:
+    branches:
+      - fix/tanyapi-prodamus-buyer-notification
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/tanyapi-prodamus-buyer-notification
+          fetch-depth: 0
+      - name: Apply buyer notification fix and regression test
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          handler = Path('bot/handlers/prodamus_payments.py')
+          text = handler.read_text()
+          old = '''    logger.info(
+        "Prodamus payment completed order=%s duplicate=%s",
+        order_id,
+        bool(result.get("already_completed")),
+    )
+    return web.Response(text="success", status=200)
+'''
+          new = '''    duplicate = bool(result.get("already_completed"))
+    if not duplicate:
+        bot = request.app.get("bot")
+        telegram_id = result.get("telegram_id")
+        completed_transaction = result.get("transaction")
+        if bot is not None and telegram_id and completed_transaction is not None:
+            credits = int(getattr(completed_transaction, "credits", 0) or 0)
+            try:
+                await bot.send_message(
+                    int(telegram_id),
+                    "✅ Оплата получена\\n"
+                    f"Начислено: {credits} 🍌",
+                )
+                logger.info(
+                    "Prodamus buyer notification sent order=%s telegram_id=%s",
+                    order_id,
+                    telegram_id,
+                )
+            except Exception:
+                # Payment is already committed. A Telegram delivery failure must
+                # not make Prodamus retry a successfully processed payment.
+                logger.exception(
+                    "Failed to notify Prodamus buyer order=%s telegram_id=%s",
+                    order_id,
+                    telegram_id,
+                )
+
+    logger.info(
+        "Prodamus payment completed order=%s duplicate=%s",
+        order_id,
+        duplicate,
+    )
+    return web.Response(text="success", status=200)
+'''
+          if old not in text:
+              raise SystemExit('handler marker not found')
+          handler.write_text(text.replace(old, new, 1))
+
+          test = Path('tests/test_prodamus_payments.py')
+          text = test.read_text()
+          if 'from unittest.mock import AsyncMock\n' not in text:
+              text = text.replace('from types import SimpleNamespace\n', 'from types import SimpleNamespace\nfrom unittest.mock import AsyncMock\n', 1)
+
+          marker = '''@pytest.mark.asyncio
+async def test_prodamus_webhook_rejects_invalid_signature_before_db(
+'''
+          addition = '''@pytest.mark.asyncio
+async def test_prodamus_webhook_notifies_buyer_only_on_first_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import bot.handlers.prodamus_payments as prodamus
+    from bot.handlers import payments as payments_handler
+
+    payload = {
+        "payment_status": "success",
+        "order_num": "42_2000_mini",
+        "sum": "150.00",
+        "currency": "rub",
+    }
+    secret = "webhook-secret"
+    signature = sign_prodamus_payload(payload, secret)
+    monkeypatch.setenv("PRODAMUS_SECRET_KEY", secret)
+
+    async def fake_transaction(order_id: str):
+        assert order_id == "42_2000_mini"
+        return SimpleNamespace(provider="prodamus", amount_rub=150.0, status="pending")
+
+    completion_count = 0
+
+    async def fake_complete(order_id: str, *, bot=None):
+        nonlocal completion_count
+        completion_count += 1
+        return {
+            "ok": True,
+            "already_completed": completion_count > 1,
+            "telegram_id": 42,
+            "transaction": SimpleNamespace(credits=15),
+        }
+
+    bot = SimpleNamespace(send_message=AsyncMock())
+    monkeypatch.setattr(prodamus, "get_transaction_by_order", fake_transaction)
+    monkeypatch.setattr(payments_handler, "_complete_transaction", fake_complete)
+
+    class FakeRequest:
+        content_type = "application/json"
+
+        def __init__(self) -> None:
+            self.headers = {"Sign": signature}
+            self.app = {"bot": bot}
+
+        async def json(self):
+            return payload
+
+    first = await handle_prodamus_webhook(FakeRequest())
+    replay = await handle_prodamus_webhook(FakeRequest())
+
+    assert first.status == 200
+    assert replay.status == 200
+    bot.send_message.assert_awaited_once_with(
+        42,
+        "✅ Оплата получена\\nНачислено: 15 🍌",
+    )
+
+
+'''
+          if marker not in text:
+              raise SystemExit('test marker not found')
+          test.write_text(text.replace(marker, addition + marker, 1))
+          PY
+      - name: Validate targeted tests
+        run: |
+          python -m pip install -q -r requirements.txt
+          python -m pytest -q tests/test_prodamus_payments.py
+          python -m ruff check bot/handlers/prodamus_payments.py tests/test_prodamus_payments.py
+      - name: Commit final patch and remove helper
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git rm .github/workflows/tmp-prodamus-buyer-notification.yml
+          git add bot/handlers/prodamus_payments.py tests/test_prodamus_payments.py
+          git commit -m 'fix(payments): notify Prodamus buyer after payment'
+          git push origin HEAD:fix/tanyapi-prodamus-buyer-notification
