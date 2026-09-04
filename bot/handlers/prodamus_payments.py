@@ -79,6 +79,15 @@ def _stringify_scalar(value: Any) -> str:
     return str(value)
 
 
+def _prodamus_product_name(package_name: str, credits: int) -> str:
+    # Prodamus rejects otherwise valid signed requests when a product name
+    # contains non-BMP emoji (for example the leading banana in our presets).
+    # Keep the UI label unchanged, but sign/send a payment-safe product title.
+    safe_name = "".join(char for char in str(package_name) if ord(char) <= 0xFFFF)
+    safe_name = re.sub(r"\s+", " ", safe_name).strip() or "Пакет"
+    return f"{safe_name} — {int(credits)} бананов"
+
+
 def _normalize_for_hmac(value: Any) -> Any:
     if isinstance(value, dict):
         return {
@@ -181,7 +190,7 @@ def build_prodamus_payment_url(
         "order_id": str(order_id),
         "products": [
             {
-                "name": f"{package_name} — {int(credits)} бананов",
+                "name": _prodamus_product_name(package_name, credits),
                 "price": f"{amount:.2f}",
                 "quantity": "1",
                 "sku": str(package_id),

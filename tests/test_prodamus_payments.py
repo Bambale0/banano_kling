@@ -86,6 +86,27 @@ def test_build_prodamus_payment_url_contains_signed_order(monkeypatch: pytest.Mo
     assert "merchant-secret" not in payment_url
 
 
+def test_build_prodamus_payment_url_strips_non_bmp_emoji_from_product_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PRODAMUS_PAYFORM_URL", "https://neuromix.payform.ru/")
+    monkeypatch.setenv("PRODAMUS_SECRET_KEY", "merchant-secret")
+    monkeypatch.setenv("PRODAMUS_SYS", "neuromixonlytm")
+
+    payment_url = build_prodamus_payment_url(
+        order_id="42_1000_start",
+        package_id="start",
+        package_name="🍌 Старт",
+        credits=25,
+        amount_rub=250,
+        telegram_id=42,
+    )
+    query = parse_qs(urlparse(payment_url).query)
+
+    assert query["products[0][name]"] == ["Старт — 25 бананов"]
+    assert "🍌" not in query["products[0][name]"][0]
+
+
 def test_build_prodamus_payment_url_rejects_public_payment_link(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
