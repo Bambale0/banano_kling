@@ -372,7 +372,7 @@ export function BalanceSheet() {
                             </p>
                             {foreignConfigured || tributeConfigured ? (
                               <p className="mt-1 text-xs text-muted-foreground">
-                                Доступна международная оплата
+                                Зарубежная оплата и СНГ · Tribute
                               </p>
                             ) : null}
                           </div>
