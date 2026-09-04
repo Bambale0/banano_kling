@@ -145,9 +145,14 @@ def _flatten_query(value: Any, prefix: str = "") -> list[tuple[str, str]]:
 def _validate_payform_url(value: str) -> str:
     url = str(value or "").strip()
     parsed = urlparse(url)
-    if parsed.scheme != "https" or not parsed.netloc:
+    hostname = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or not hostname.endswith(".payform.ru"):
         raise ProdamusConfigurationError(
-            "PRODAMUS_PAYFORM_URL must be a valid https:// payment form URL"
+            "PRODAMUS_PAYFORM_URL must be a merchant https://<subdomain>.payform.ru/ URL"
+        )
+    if hostname == "link.payform.ru" or parsed.query or parsed.fragment:
+        raise ProdamusConfigurationError(
+            "PRODAMUS_PAYFORM_URL must be the merchant payment-page URL, not a link.payform.ru payment link"
         )
     return url.rstrip("/") + "/"
 

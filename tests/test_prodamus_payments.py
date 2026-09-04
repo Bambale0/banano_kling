@@ -86,6 +86,27 @@ def test_build_prodamus_payment_url_contains_signed_order(monkeypatch: pytest.Mo
     assert "merchant-secret" not in payment_url
 
 
+def test_build_prodamus_payment_url_rejects_public_payment_link(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "PRODAMUS_PAYFORM_URL",
+        "https://link.payform.ru/?paymentLinkId=b0db3b6d-60ed-4e89-af0c-8ff58088c4b3",
+    )
+    monkeypatch.setenv("PRODAMUS_SECRET_KEY", "merchant-secret")
+    monkeypatch.setenv("PRODAMUS_SYS", "neuromix_bot")
+
+    with pytest.raises(ProdamusConfigurationError, match="merchant payment-page URL"):
+        build_prodamus_payment_url(
+            order_id="1",
+            package_id="mini",
+            package_name="Mini",
+            credits=15,
+            amount_rub=150,
+            telegram_id=42,
+        )
+
+
 def test_build_prodamus_payment_url_requires_sys(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PRODAMUS_PAYFORM_URL", "https://neuromix.payform.ru/")
     monkeypatch.setenv("PRODAMUS_SECRET_KEY", "merchant-secret")
