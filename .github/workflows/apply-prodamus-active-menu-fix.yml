@@ -18,155 +18,50 @@ jobs:
           ref: fix/tanyapi-prodamus-active-menu-label
           fetch-depth: 0
 
-      - name: Apply validated patch
+      - name: Apply validated source edits
         run: |
-          git apply <<'PATCH'
-          diff --git a/bot/handlers/prodamus_payments.py b/bot/handlers/prodamus_payments.py
-          index 85a1d67..fb9ce50 100644
-          --- a/bot/handlers/prodamus_payments.py
-          +++ b/bot/handlers/prodamus_payments.py
-          @@ -34,6 +34,7 @@ DEFAULT_PRODAMUS_WEBHOOK_URL = "https://tanyapi.chillcreative.ru/prodamus/webhoo
-           _FORM_KEY_RE = re.compile(r"^([^\[]+)((?:\[[^\]]*\])*)$")
-           _BRACKET_RE = re.compile(r"\[([^\]]*)\]")
-           router = Router()
-          +PRODAMUS_PAYMENT_BUTTON_TEXT = "🇰🇿🇦🇲 Карта | РФ | СНГ"
-           
-           
-           class ProdamusConfigurationError(RuntimeError):
-          @@ -393,7 +394,7 @@ def _decorate_payment_keyboard(
-                       [
-                           InlineKeyboardButton(
-          -                    text="💳 Prodamus · Карта и СБП",
-          +                    text=PRODAMUS_PAYMENT_BUTTON_TEXT,
-                               callback_data=callback_data,
-                           )
-                       ]
-          @@ -414,7 +415,7 @@ def _decorate_payment_keyboard(
-                       back_index,
-                       [
-                           InlineKeyboardButton(
-          -                    text="💳 Prodamus · Карта и СБП",
-          +                    text=PRODAMUS_PAYMENT_BUTTON_TEXT,
-                               callback_data=callback_data,
-                           )
-                       ],
-          @@ -422,6 +423,24 @@ def _decorate_payment_keyboard(
-               return InlineKeyboardMarkup(inline_keyboard=rows)
-           
-           
-          +def install_prodamus_flat_text_payment_keyboard() -> None:
-          +    """Expose Prodamus in the active flat Telegram payment-method menu."""
-          +    from bot.handlers import lava_checkout as lava_checkout_module
-          +
-          +    current_keyboard = lava_checkout_module._payment_options_keyboard
-          +    if getattr(current_keyboard, "_prodamus_flat_payment_compat", False):
-          +        return
-          +
-          +    @wraps(current_keyboard)
-          +    def payment_options_with_prodamus(*args: Any, **kwargs: Any) -> InlineKeyboardMarkup:
-          +        package_id = str(args[0] if args else kwargs.get("package_id") or "")
-          +        markup = current_keyboard(*args, **kwargs)
-          +        return _decorate_payment_keyboard(markup, package_id)
-          +
-          +    payment_options_with_prodamus._prodamus_flat_payment_compat = True
-          +    lava_checkout_module._payment_options_keyboard = payment_options_with_prodamus
-          +
-          +
-           def install_prodamus_text_payment_keyboard() -> None:
-               from bot import keyboards as keyboards_module
-               from bot.handlers import payments as payments_handler
-          @@ -645,6 +664,7 @@ def install_prodamus_miniapp_payment() -> None:
-           
-           def install_prodamus_payment_surfaces() -> None:
-               install_prodamus_text_payment_keyboard()
-          +    install_prodamus_flat_text_payment_keyboard()
-               install_prodamus_miniapp_payment()
-           
-           
-          diff --git a/frontend/miniapp-v0/components/balance-sheet.tsx b/frontend/miniapp-v0/components/balance-sheet.tsx
-          index e13b76a..de43e48 100644
-          --- a/frontend/miniapp-v0/components/balance-sheet.tsx
-          +++ b/frontend/miniapp-v0/components/balance-sheet.tsx
-          @@ -422,7 +422,7 @@ export function BalanceSheet() {
-                                       ) : (
-                                         <CreditCard className="mr-2 h-4 w-4" />
-                                       )}
-          -                              Prodamus · Карта и СБП
-          +                              🇰🇿🇦🇲 Карта | РФ | СНГ
-                                     </Button>
-                                   ) : null}
-                                   <Button
-          diff --git a/tests/test_tribute_payments.py b/tests/test_tribute_payments.py
-          index 21be361..459ebcb 100644
-          --- a/tests/test_tribute_payments.py
-          +++ b/tests/test_tribute_payments.py
-          @@ -7,6 +7,7 @@ from types import SimpleNamespace
-           
-           import pytest
-           
-          +from bot.handlers import lava_checkout
-           from bot.handlers import prodamus_payments as prodamus
-           from bot.handlers import tribute_payments as tribute
-           
-          @@ -96,13 +97,47 @@ def test_text_bot_keeps_tribute_and_prodamus_together(
-               buttons = [button for row in combined_markup.inline_keyboard for button in row]
-               tribute_button = next(button for button in buttons if button.text == "Резерв 2")
-               prodamus_button = next(
-          -        button for button in buttons if button.text == "💳 Prodamus · Карта и СБП"
-          +        button for button in buttons if button.text == prodamus.PRODAMUS_PAYMENT_BUTTON_TEXT
-               )
-           
-               assert tribute_button.url == tribute.TRIBUTE_PACKAGE_LINKS["mini"]
-               assert prodamus_button.callback_data == "prodamus_pay_mini"
-           
-           
-          +def test_active_flat_payment_menu_includes_prodamus_before_reserve(
-          +    monkeypatch: pytest.MonkeyPatch,
-          +) -> None:
-          +    monkeypatch.setenv("PRODAMUS_PAYFORM_URL", "https://example.payform.ru/")
-          +    monkeypatch.setenv("PRODAMUS_SECRET_KEY", "test-secret")
-          +    monkeypatch.setenv("PRODAMUS_SYS", "test-system")
-          +
-          +    def fake_flat_keyboard(package_id: str, **_kwargs):
-          +        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-          +
-          +        return InlineKeyboardMarkup(
-          +            inline_keyboard=[
-          +                [InlineKeyboardButton(text="💳 Картой", callback_data=f"card_{package_id}")],
-          +                [InlineKeyboardButton(text="⚡ СБП", callback_data=f"sbp_{package_id}")],
-          +                [InlineKeyboardButton(text="Резерв 2", url="https://example.test/reserve")],
-          +                [InlineKeyboardButton(text="⭐ Stars", callback_data=f"stars_{package_id}")],
-          +                [InlineKeyboardButton(text="◀️ Назад", callback_data="menu_topup")],
-          +            ]
-          +        )
-          +
-          +    monkeypatch.setattr(lava_checkout, "_payment_options_keyboard", fake_flat_keyboard)
-          +    prodamus.install_prodamus_flat_text_payment_keyboard()
-          +
-          +    markup = lava_checkout._payment_options_keyboard("start")
-          +    buttons = [button for row in markup.inline_keyboard for button in row]
-          +    texts = [button.text for button in buttons]
-          +    assert prodamus.PRODAMUS_PAYMENT_BUTTON_TEXT in texts
-          +    assert texts.index(prodamus.PRODAMUS_PAYMENT_BUTTON_TEXT) < texts.index("Резерв 2")
-          +    button = next(
-          +        item for item in buttons if item.text == prodamus.PRODAMUS_PAYMENT_BUTTON_TEXT
-          +    )
-          +    assert button.callback_data == "prodamus_pay_start"
-          +
-          +
-           def test_miniapp_keeps_tribute_and_prodamus_together() -> None:
-               source = Path("frontend/miniapp-v0/components/balance-sheet.tsx").read_text(
-                   encoding="utf-8"
-          @@ -112,7 +147,7 @@ def test_miniapp_keeps_tribute_and_prodamus_together() -> None:
-               assert "provider === ('tribute' as PaymentProvider)" in source
-               assert "Резерв 2" in source
-               assert "provider === 'prodamus'" in source
-          -    assert "Prodamus · Карта и СБП" in source
-          +    assert "🇰🇿🇦🇲 Карта | РФ | СНГ" in source
-           
-           
-           @pytest.mark.asyncio
-          PATCH
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('bot/handlers/prodamus_payments.py')
+          s = p.read_text()
+          s = s.replace('router = Router()\n', 'router = Router()\nPRODAMUS_PAYMENT_BUTTON_TEXT = "🇰🇿🇦🇲 Карта | РФ | СНГ"\n', 1)
+          if s.count('PRODAMUS_PAYMENT_BUTTON_TEXT = "🇰🇿🇦🇲 Карта | РФ | СНГ"') != 1:
+              raise SystemExit('button label insertion failed')
+          s = s.replace('text="💳 Prodamus · Карта и СБП",', 'text=PRODAMUS_PAYMENT_BUTTON_TEXT,')
+          marker = 'def install_prodamus_text_payment_keyboard() -> None:\n'
+          block = '''def install_prodamus_flat_text_payment_keyboard() -> None:\n    """Expose Prodamus in the active flat Telegram payment-method menu."""\n    from bot.handlers import lava_checkout as lava_checkout_module\n\n    current_keyboard = lava_checkout_module._payment_options_keyboard\n    if getattr(current_keyboard, "_prodamus_flat_payment_compat", False):\n        return\n\n    @wraps(current_keyboard)\n    def payment_options_with_prodamus(*args: Any, **kwargs: Any) -> InlineKeyboardMarkup:\n        package_id = str(args[0] if args else kwargs.get("package_id") or "")\n        markup = current_keyboard(*args, **kwargs)\n        return _decorate_payment_keyboard(markup, package_id)\n\n    payment_options_with_prodamus._prodamus_flat_payment_compat = True\n    lava_checkout_module._payment_options_keyboard = payment_options_with_prodamus\n\n\n'''
+          if 'def install_prodamus_flat_text_payment_keyboard()' not in s:
+              if marker not in s:
+                  raise SystemExit('text keyboard marker missing')
+              s = s.replace(marker, block + marker, 1)
+          old = '''def install_prodamus_payment_surfaces() -> None:\n    install_prodamus_text_payment_keyboard()\n    install_prodamus_miniapp_payment()\n'''
+          new = '''def install_prodamus_payment_surfaces() -> None:\n    install_prodamus_text_payment_keyboard()\n    install_prodamus_flat_text_payment_keyboard()\n    install_prodamus_miniapp_payment()\n'''
+          if old not in s:
+              raise SystemExit('surface installer marker missing')
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          p = Path('frontend/miniapp-v0/components/balance-sheet.tsx')
+          s = p.read_text()
+          if 'Prodamus · Карта и СБП' not in s:
+              raise SystemExit('Mini App label marker missing')
+          p.write_text(s.replace('Prodamus · Карта и СБП', '🇰🇿🇦🇲 Карта | РФ | СНГ', 1))
+
+          p = Path('tests/test_tribute_payments.py')
+          s = p.read_text()
+          if 'from bot.handlers import lava_checkout\n' not in s:
+              s = s.replace('from bot.handlers import prodamus_payments as prodamus\n', 'from bot.handlers import lava_checkout\nfrom bot.handlers import prodamus_payments as prodamus\n', 1)
+          s = s.replace('button for button in buttons if button.text == "💳 Prodamus · Карта и СБП"', 'button for button in buttons if button.text == prodamus.PRODAMUS_PAYMENT_BUTTON_TEXT')
+          s = s.replace('assert "Prodamus · Карта и СБП" in source', 'assert "🇰🇿🇦🇲 Карта | РФ | СНГ" in source')
+          anchor = 'def test_miniapp_keeps_tribute_and_prodamus_together() -> None:\n'
+          test = '''def test_active_flat_payment_menu_includes_prodamus_before_reserve(\n    monkeypatch: pytest.MonkeyPatch,\n) -> None:\n    monkeypatch.setenv("PRODAMUS_PAYFORM_URL", "https://example.payform.ru/")\n    monkeypatch.setenv("PRODAMUS_SECRET_KEY", "test-secret")\n    monkeypatch.setenv("PRODAMUS_SYS", "test-system")\n\n    def fake_flat_keyboard(package_id: str, **_kwargs):\n        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup\n\n        return InlineKeyboardMarkup(\n            inline_keyboard=[\n                [InlineKeyboardButton(text="💳 Картой", callback_data=f"card_{package_id}")],\n                [InlineKeyboardButton(text="⚡ СБП", callback_data=f"sbp_{package_id}")],\n                [InlineKeyboardButton(text="Резерв 2", url="https://example.test/reserve")],\n                [InlineKeyboardButton(text="⭐ Stars", callback_data=f"stars_{package_id}")],\n                [InlineKeyboardButton(text="◀️ Назад", callback_data="menu_topup")],\n            ]\n        )\n\n    monkeypatch.setattr(lava_checkout, "_payment_options_keyboard", fake_flat_keyboard)\n    prodamus.install_prodamus_flat_text_payment_keyboard()\n\n    markup = lava_checkout._payment_options_keyboard("start")\n    buttons = [button for row in markup.inline_keyboard for button in row]\n    texts = [button.text for button in buttons]\n    assert prodamus.PRODAMUS_PAYMENT_BUTTON_TEXT in texts\n    assert texts.index(prodamus.PRODAMUS_PAYMENT_BUTTON_TEXT) < texts.index("Резерв 2")\n    button = next(\n        item for item in buttons if item.text == prodamus.PRODAMUS_PAYMENT_BUTTON_TEXT\n    )\n    assert button.callback_data == "prodamus_pay_start"\n\n\n'''
+          if 'def test_active_flat_payment_menu_includes_prodamus_before_reserve(' not in s:
+              if anchor not in s:
+                  raise SystemExit('test insertion anchor missing')
+              s = s.replace(anchor, test + anchor, 1)
+          p.write_text(s)
+          PY
 
       - name: Verify patch
         run: |
