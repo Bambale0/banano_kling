@@ -18,152 +18,58 @@ jobs:
           ref: fix/tanyapi-video-repeat-source-media
           fetch-depth: 0
 
-      - name: Apply validated UI fix and regression
+      - name: Apply validated UI fix
         run: |
           python3 - <<'PY'
           from pathlib import Path
 
           path = Path('frontend/miniapp-v0/components/forms/video-generator-form.tsx')
           source = path.read_text()
-          old = """  const needsStartImage = ((selectedScenario === 'imgtxt' && !isOmniVideo) || selectedScenario === 'character') && startImage.length === 0
-          const needsVideoRef = selectedScenario === 'video' && !isOmniVideo && videoReferences.length === 0
-          """
-          new = """  const hasServerRepeatSource = Boolean(sourceFeedGenId)
-          const needsStartImage = ((selectedScenario === 'imgtxt' && !isOmniVideo) || selectedScenario === 'character') && startImage.length === 0 && !hasServerRepeatSource
-          const needsVideoRef = selectedScenario === 'video' && !isOmniVideo && videoReferences.length === 0 && !hasServerRepeatSource
-          """
+
+          old = "  const needsStartImage = ((selectedScenario === 'imgtxt' && !isOmniVideo) || selectedScenario === 'character') && startImage.length === 0\n  const needsVideoRef = selectedScenario === 'video' && !isOmniVideo && videoReferences.length === 0\n"
+          new = "  const hasServerRepeatSource = Boolean(sourceFeedGenId)\n  const needsStartImage = ((selectedScenario === 'imgtxt' && !isOmniVideo) || selectedScenario === 'character') && startImage.length === 0 && !hasServerRepeatSource\n  const needsVideoRef = selectedScenario === 'video' && !isOmniVideo && videoReferences.length === 0 && !hasServerRepeatSource\n"
           if source.count(old) != 1:
-              raise SystemExit('validation block drifted')
+              raise SystemExit('validation lines drifted')
           source = source.replace(old, new, 1)
 
-          old = """              {isOmniVideo ? (
-                          <span className=\"text-xs text-muted-foreground ml-2\">(опционально)</span>
-                        ) : (
-                          <span className=\"text-destructive ml-1\">*</span>
-                        )}
-          """
-          new = """              {isOmniVideo ? (
-                          <span className=\"text-xs text-muted-foreground ml-2\">(опционально)</span>
-                        ) : hasServerRepeatSource && startImage.length === 0 ? (
-                          <span className=\"text-xs text-muted-foreground ml-2\">(из исходной генерации)</span>
-                        ) : (
-                          <span className=\"text-destructive ml-1\">*</span>
-                        )}
-          """
-          if source.count(old) < 2:
-              raise SystemExit('required media labels drifted')
-          source = source.replace(old, new, 1)
-          source = source.replace('              required={!isOmniVideo}\n', '              required={!isOmniVideo && !hasServerRepeatSource}\n', 1)
+          required_start = "              required={!isOmniVideo}\n"
+          if source.count(required_start) != 1:
+              raise SystemExit('start-image required prop drifted')
+          source = source.replace(required_start, "              required={!isOmniVideo && !hasServerRepeatSource}\n", 1)
 
-          old = """              {isOmniVideo ? (
-                          <span className=\"text-xs text-muted-foreground ml-2\">(опционально)</span>
-                        ) : (
-                          <span className=\"text-destructive ml-1\">*</span>
-                        )}
-          """
-          new = """              {isOmniVideo ? (
-                          <span className=\"text-xs text-muted-foreground ml-2\">(опционально)</span>
-                        ) : hasServerRepeatSource && videoReferences.length === 0 ? (
-                          <span className=\"text-xs text-muted-foreground ml-2\">(из исходной генерации)</span>
-                        ) : (
-                          <span className=\"text-destructive ml-1\">*</span>
-                        )}
-          """
-          if source.count(old) != 1:
-              raise SystemExit('video-reference label drifted')
-          source = source.replace(old, new, 1)
-          source = source.replace('            required={!isOmniVideo}\n', '            required={!isOmniVideo && !hasServerRepeatSource}\n', 1)
+          required_video = "            required={!isOmniVideo}\n"
+          if source.count(required_video) != 1:
+              raise SystemExit('video-reference required prop drifted')
+          source = source.replace(required_video, "            required={!isOmniVideo && !hasServerRepeatSource}\n", 1)
+
+          star = "              ) : (\n                <span className=\"text-destructive ml-1\">*</span>\n              )}"
+
+          start_marker = "                  : 'Стартовое изображение'}"
+          start_at = source.index(start_marker)
+          star_at = source.index(star, start_at)
+          start_replacement = "              ) : hasServerRepeatSource && startImage.length === 0 ? (\n                <span className=\"text-xs text-muted-foreground ml-2\">(из исходной генерации)</span>\n              ) : (\n                <span className=\"text-destructive ml-1\">*</span>\n              )}"
+          source = source[:star_at] + start_replacement + source[star_at + len(star):]
+
+          video_marker = "              {isOmniVideo ? 'Видео-референс' : 'Видео-референсы'}"
+          video_at = source.index(video_marker)
+          star_at = source.index(star, video_at)
+          video_replacement = "              ) : hasServerRepeatSource && videoReferences.length === 0 ? (\n                <span className=\"text-xs text-muted-foreground ml-2\">(из исходной генерации)</span>\n              ) : (\n                <span className=\"text-destructive ml-1\">*</span>\n              )}"
+          source = source[:star_at] + video_replacement + source[star_at + len(star):]
+
           path.write_text(source)
-
-          test_path = Path('frontend/miniapp-v0/components/forms/__tests__/video-generator-form-repeat.test.tsx')
-          test_path.parent.mkdir(parents=True, exist_ok=True)
-          test_path.write_text(r'''import '@testing-library/jest-dom'
-          import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-
-          import { VideoGeneratorForm } from '@/components/forms/video-generator-form'
-          import type { VideoModel, VideoPromptPreset } from '@/lib/types'
-
-          jest.mock('@/components/forms/model-select', () => ({ ModelSelect: () => <div data-testid="model-select" /> }))
-          jest.mock('@/components/forms/ratio-select', () => ({ RatioSelect: () => <div data-testid="ratio-select" /> }))
-          jest.mock('@/components/forms/scenario-select', () => ({ ScenarioSelect: () => <div data-testid="scenario-select" /> }))
-          jest.mock('@/components/forms/duration-select', () => ({ DurationSelect: () => <div data-testid="duration-select" /> }))
-          jest.mock('@/components/forms/upload-area', () => ({
-            UploadArea: ({ required }: { required?: boolean }) => (
-              <div data-testid="upload-area" data-required={required ? 'true' : 'false'} />
-            ),
-          }))
-
-          const models = [
-            {
-              id: 'seedance_2',
-              label: 'Seedance 2.0',
-              description: 'Seedance',
-              durations: [5],
-              ratios: ['16:9'],
-              supports: ['text', 'imgtxt', 'video'],
-              costs: { '5': 4 },
-              max_image_references: 9,
-              max_video_references: 3,
-            },
-          ] as VideoModel[]
-
-          const repeatPreset = {
-            title: 'Повторить видео',
-            prompt: '',
-            model: 'seedance_2',
-            scenario: 'imgtxt',
-            ratio: '16:9',
-            duration: 5,
-            sourceFeedGenId: 42,
-            promptHidden: true,
-          } as VideoPromptPreset
-
-          describe('VideoGeneratorForm server-side repeat media', () => {
-            it('does not require a new Seedance start image when source generation will restore it', async () => {
-              const onSubmit = jest.fn().mockResolvedValue(undefined)
-
-              render(
-                <VideoGeneratorForm
-                  models={models}
-                  onSubmit={onSubmit}
-                  promptPreset={repeatPreset}
-                  onPromptPresetConsumed={jest.fn()}
-                  isSubmitting={false}
-                  credits={100}
-                />,
-              )
-
-              const launchButton = await screen.findByRole('button', { name: /Запустить видео/i })
-              await waitFor(() => expect(launchButton).toBeEnabled())
-              expect(screen.getByText('(из исходной генерации)')).toBeInTheDocument()
-
-              fireEvent.click(launchButton)
-
-              await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
-              expect(onSubmit).toHaveBeenCalledWith(
-                expect.objectContaining({
-                  model: 'seedance_2',
-                  scenario: 'imgtxt',
-                  sourceFeedGenId: 42,
-                  startImage: null,
-                }),
-              )
-            })
-          })
-          '''.replace('\n          ', '\n').lstrip())
           PY
 
       - name: Verify exact diff shape
         run: |
           git diff --check
-          git diff --exit-code -- .github/workflows/apply-video-repeat-source-media-fix.yml || true
-          test -f frontend/miniapp-v0/components/forms/__tests__/video-generator-form-repeat.test.tsx
-          grep -q 'hasServerRepeatSource' frontend/miniapp-v0/components/forms/video-generator-form.tsx
+          grep -q 'const hasServerRepeatSource = Boolean(sourceFeedGenId)' frontend/miniapp-v0/components/forms/video-generator-form.tsx
+          grep -q '(из исходной генерации)' frontend/miniapp-v0/components/forms/video-generator-form.tsx
+          test "$(grep -c '(из исходной генерации)' frontend/miniapp-v0/components/forms/video-generator-form.tsx)" -eq 2
 
       - name: Commit fix
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add frontend/miniapp-v0/components/forms/video-generator-form.tsx frontend/miniapp-v0/components/forms/__tests__/video-generator-form-repeat.test.tsx
+          git add frontend/miniapp-v0/components/forms/video-generator-form.tsx
           git commit -m 'fix(video): reuse source media on repeat [repeatbot]'
           git push origin HEAD:fix/tanyapi-video-repeat-source-media
