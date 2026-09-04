@@ -422,7 +422,7 @@ export function BalanceSheet() {
                               ) : (
                                 <CreditCard className="mr-2 h-4 w-4" />
                               )}
-                              Prodamus · Карта и СБП
+                              🇰🇿🇦🇲 Карта | РФ | СНГ
                             </Button>
                           ) : null}
                           <Button

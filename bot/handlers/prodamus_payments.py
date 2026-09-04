@@ -34,6 +34,7 @@ DEFAULT_PRODAMUS_WEBHOOK_URL = "https://tanyapi.chillcreative.ru/prodamus/webhoo
 _FORM_KEY_RE = re.compile(r"^([^\[]+)((?:\[[^\]]*\])*)$")
 _BRACKET_RE = re.compile(r"\[([^\]]*)\]")
 router = Router()
+PRODAMUS_PAYMENT_BUTTON_TEXT = "🇰🇿🇦🇲 Карта | РФ | СНГ"
 
 
 class ProdamusConfigurationError(RuntimeError):
@@ -393,7 +394,7 @@ def _decorate_payment_keyboard(
             rows.append(
                 [
                     InlineKeyboardButton(
-                        text="💳 Prodamus · Карта и СБП",
+                        text=PRODAMUS_PAYMENT_BUTTON_TEXT,
                         callback_data=callback_data,
                     )
                 ]
@@ -414,12 +415,30 @@ def _decorate_payment_keyboard(
             back_index,
             [
                 InlineKeyboardButton(
-                    text="💳 Prodamus · Карта и СБП",
+                    text=PRODAMUS_PAYMENT_BUTTON_TEXT,
                     callback_data=callback_data,
                 )
             ],
         )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def install_prodamus_flat_text_payment_keyboard() -> None:
+    """Expose Prodamus in the active flat Telegram payment-method menu."""
+    from bot.handlers import lava_checkout as lava_checkout_module
+
+    current_keyboard = lava_checkout_module._payment_options_keyboard
+    if getattr(current_keyboard, "_prodamus_flat_payment_compat", False):
+        return
+
+    @wraps(current_keyboard)
+    def payment_options_with_prodamus(*args: Any, **kwargs: Any) -> InlineKeyboardMarkup:
+        package_id = str(args[0] if args else kwargs.get("package_id") or "")
+        markup = current_keyboard(*args, **kwargs)
+        return _decorate_payment_keyboard(markup, package_id)
+
+    payment_options_with_prodamus._prodamus_flat_payment_compat = True
+    lava_checkout_module._payment_options_keyboard = payment_options_with_prodamus
 
 
 def install_prodamus_text_payment_keyboard() -> None:
@@ -645,6 +664,7 @@ def install_prodamus_miniapp_payment() -> None:
 
 def install_prodamus_payment_surfaces() -> None:
     install_prodamus_text_payment_keyboard()
+    install_prodamus_flat_text_payment_keyboard()
     install_prodamus_miniapp_payment()
 
 

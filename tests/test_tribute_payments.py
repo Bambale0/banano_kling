@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from bot.handlers import lava_checkout
 from bot.handlers import prodamus_payments as prodamus
 from bot.handlers import tribute_payments as tribute
 
@@ -96,11 +97,45 @@ def test_text_bot_keeps_tribute_and_prodamus_together(
     buttons = [button for row in combined_markup.inline_keyboard for button in row]
     tribute_button = next(button for button in buttons if button.text == "Резерв 2")
     prodamus_button = next(
-        button for button in buttons if button.text == "💳 Prodamus · Карта и СБП"
+        button for button in buttons if button.text == prodamus.PRODAMUS_PAYMENT_BUTTON_TEXT
     )
 
     assert tribute_button.url == tribute.TRIBUTE_PACKAGE_LINKS["mini"]
     assert prodamus_button.callback_data == "prodamus_pay_mini"
+
+
+def test_active_flat_payment_menu_includes_prodamus_before_reserve(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PRODAMUS_PAYFORM_URL", "https://example.payform.ru/")
+    monkeypatch.setenv("PRODAMUS_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("PRODAMUS_SYS", "test-system")
+
+    def fake_flat_keyboard(package_id: str, **_kwargs):
+        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="💳 Картой", callback_data=f"card_{package_id}")],
+                [InlineKeyboardButton(text="⚡ СБП", callback_data=f"sbp_{package_id}")],
+                [InlineKeyboardButton(text="Резерв 2", url="https://example.test/reserve")],
+                [InlineKeyboardButton(text="⭐ Stars", callback_data=f"stars_{package_id}")],
+                [InlineKeyboardButton(text="◀️ Назад", callback_data="menu_topup")],
+            ]
+        )
+
+    monkeypatch.setattr(lava_checkout, "_payment_options_keyboard", fake_flat_keyboard)
+    prodamus.install_prodamus_flat_text_payment_keyboard()
+
+    markup = lava_checkout._payment_options_keyboard("start")
+    buttons = [button for row in markup.inline_keyboard for button in row]
+    texts = [button.text for button in buttons]
+    assert prodamus.PRODAMUS_PAYMENT_BUTTON_TEXT in texts
+    assert texts.index(prodamus.PRODAMUS_PAYMENT_BUTTON_TEXT) < texts.index("Резерв 2")
+    button = next(
+        item for item in buttons if item.text == prodamus.PRODAMUS_PAYMENT_BUTTON_TEXT
+    )
+    assert button.callback_data == "prodamus_pay_start"
 
 
 def test_miniapp_keeps_tribute_and_prodamus_together() -> None:
@@ -112,7 +147,7 @@ def test_miniapp_keeps_tribute_and_prodamus_together() -> None:
     assert "provider === ('tribute' as PaymentProvider)" in source
     assert "Резерв 2" in source
     assert "provider === 'prodamus'" in source
-    assert "Prodamus · Карта и СБП" in source
+    assert "🇰🇿🇦🇲 Карта | РФ | СНГ" in source
 
 
 @pytest.mark.asyncio
