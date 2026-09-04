@@ -218,8 +218,9 @@ export function VideoGeneratorForm({
   const scenarioSupported = model?.supports.includes(selectedScenario) ?? false
   
   // Validation
-  const needsStartImage = ((selectedScenario === 'imgtxt' && !isOmniVideo) || selectedScenario === 'character') && startImage.length === 0
-  const needsVideoRef = selectedScenario === 'video' && !isOmniVideo && videoReferences.length === 0
+  const hasServerRepeatSource = Boolean(sourceFeedGenId)
+  const needsStartImage = ((selectedScenario === 'imgtxt' && !isOmniVideo) || selectedScenario === 'character') && startImage.length === 0 && !hasServerRepeatSource
+  const needsVideoRef = selectedScenario === 'video' && !isOmniVideo && videoReferences.length === 0 && !hasServerRepeatSource
   const needsAvatarImage = selectedScenario === 'avatar' && startImage.length === 0
   const needsAvatarAudio = selectedScenario === 'avatar' && audioReference.length === 0
   const needsOmniVoiceName = isOmniAudio && omniVoiceName.trim().length === 0
@@ -919,6 +920,8 @@ export function VideoGeneratorForm({
                   : 'Стартовое изображение'}
               {isOmniVideo ? (
                 <span className="text-xs text-muted-foreground ml-2">(опционально)</span>
+              ) : hasServerRepeatSource && startImage.length === 0 ? (
+                <span className="text-xs text-muted-foreground ml-2">(из исходной генерации)</span>
               ) : (
                 <span className="text-destructive ml-1">*</span>
               )}
@@ -928,7 +931,7 @@ export function VideoGeneratorForm({
               onFilesChange={setStartImage}
               maxFiles={1}
               accept="image/*"
-              required={!isOmniVideo}
+              required={!isOmniVideo && !hasServerRepeatSource}
               onUpload={onUploadImageReference}
               libraryFiles={savedImageReferences}
               libraryLabel="Сохранённые стартовые кадры"
@@ -942,6 +945,8 @@ export function VideoGeneratorForm({
               {isOmniVideo ? 'Видео-референс' : 'Видео-референсы'}
               {isOmniVideo ? (
                 <span className="text-xs text-muted-foreground ml-2">(опционально)</span>
+              ) : hasServerRepeatSource && videoReferences.length === 0 ? (
+                <span className="text-xs text-muted-foreground ml-2">(из исходной генерации)</span>
               ) : (
                 <span className="text-destructive ml-1">*</span>
               )}
@@ -951,7 +956,7 @@ export function VideoGeneratorForm({
             onFilesChange={setVideoReferences}
             maxFiles={isOmniVideo ? 1 : model?.max_video_references || 5}
             accept="video/*"
-            required={!isOmniVideo}
+            required={!isOmniVideo && !hasServerRepeatSource}
             onUpload={onUploadVideoReference}
             libraryFiles={savedVideoReferences}
             libraryLabel="Сохранённые видео-референсы"
