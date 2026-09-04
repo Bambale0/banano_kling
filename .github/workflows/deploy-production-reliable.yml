@@ -242,12 +242,12 @@ jobs:
 
           run_root bash scripts/deploy_miniapp_local.sh "$EXPECTED_SHA"
 
-          curl -fsS --max-time 20 https://api.chillcreative.ru/healthz >/dev/null
+          curl -fsS --max-time 20 https://tanyapi.chillcreative.ru/health >/dev/null
           live_frontend_revision="$(curl -fsS --max-time 20 "https://tanyapp.xn--e1aikcel5c5a.online/mini-app/revision.txt?revision=${EXPECTED_SHA}")"
           [ "$live_frontend_revision" = "$EXPECTED_SHA" ]
 
           tribute_http="$(curl -sS --max-time 20 -o /tmp/tribute-probe.json -w '%{http_code}' \
-            -X POST https://api.chillcreative.ru/tribute/webhook \
+            -X POST https://tanyapi.chillcreative.ru/tribute/webhook \
             -H 'Content-Type: application/json' --data '{}')"
           if [ "$tribute_http" != 401 ]; then
             echo "Tribute webhook probe returned HTTP $tribute_http (expected 401 for unsigned request)" >&2
