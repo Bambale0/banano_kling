@@ -46,13 +46,13 @@ def _decorate_text_payment_options(
     markup: InlineKeyboardMarkup,
     package_id: str,
 ) -> InlineKeyboardMarkup:
-    """Expose Tribute as Reserve 2 in the real flat Telegram payment keyboard."""
+    """Expose Tribute as the CIS/foreign fallback in the flat Telegram payment keyboard."""
 
     tribute_url = TRIBUTE_PACKAGE_LINKS.get(str(package_id))
     if not tribute_url:
         return markup
 
-    reserve_label = "Резерв 2"
+    reserve_label = "СНГ И ЗАРУБЕЖНЫЕ"
     star_labels = {"⭐ Stars", "⭐ Telegram Stars"}
     rows: list[list[InlineKeyboardButton]] = []
     stars_rows: list[list[InlineKeyboardButton]] = []

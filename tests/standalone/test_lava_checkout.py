@@ -93,7 +93,7 @@ def test_payment_menu_shows_card_and_sbp_separately() -> None:
     assert labels == [
         "💳 Картой",
         "⚡ СБП",
-        "Резерв 2",
+        "СНГ И ЗАРУБЕЖНЫЕ",
         "₿ Криптовалюта",
         "⭐ Stars",
         "◀️ Назад",
@@ -120,7 +120,7 @@ def test_payment_menu_shows_foreign_card_and_paypal_separately() -> None:
     assert labels == [
         "💳 Картой",
         "⚡ СБП",
-        "Резерв 2",
+        "СНГ И ЗАРУБЕЖНЫЕ",
         "🌍 Зарубежная карта",
         "🌍 PayPal",
         "◀️ Назад",

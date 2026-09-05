@@ -37,10 +37,10 @@ def test_live_text_bot_keyboard_has_reserve2_after_sbp() -> None:
     )
     labels = _button_texts(markup)
 
-    assert labels[:3] == ["💳 Картой", "⚡ СБП", "Резерв 2"]
-    assert _button(markup, "Резерв 2").url == TRIBUTE_PACKAGE_LINKS["optimal"]
-    assert _button(markup, "Резерв 2").url == "https://web.tribute.tg/p/Dxm"
-    assert labels.index("Резерв 2") < labels.index("⭐ Stars")
+    assert labels[:3] == ["💳 Картой", "⚡ СБП", "СНГ И ЗАРУБЕЖНЫЕ"]
+    assert _button(markup, "СНГ И ЗАРУБЕЖНЫЕ").url == TRIBUTE_PACKAGE_LINKS["optimal"]
+    assert _button(markup, "СНГ И ЗАРУБЕЖНЫЕ").url == "https://web.tribute.tg/p/Dxm"
+    assert labels.index("СНГ И ЗАРУБЕЖНЫЕ") < labels.index("⭐ Stars")
     assert labels.index("₿ Криптовалюта") < labels.index("⭐ Stars")
     assert labels[-1] == "◀️ Назад"
 
@@ -64,7 +64,7 @@ def test_reserve2_decorator_matches_production_flat_menu_order() -> None:
     assert _button_texts(markup) == [
         "💳 Картой",
         "⚡ СБП",
-        "Резерв 2",
+        "СНГ И ЗАРУБЕЖНЫЕ",
         "🇷🇺 РФ — KASSA (резерв)",
         "🌍 Зарубежная карта",
         "🌍 PayPal",
@@ -72,7 +72,7 @@ def test_reserve2_decorator_matches_production_flat_menu_order() -> None:
         "⭐ Stars",
         "◀️ Назад",
     ]
-    assert _button(markup, "Резерв 2").url == "https://web.tribute.tg/p/Dxm"
+    assert _button(markup, "СНГ И ЗАРУБЕЖНЫЕ").url == "https://web.tribute.tg/p/Dxm"
 
 
 def test_all_six_reserve2_links_are_configured() -> None:
@@ -91,5 +91,5 @@ def test_miniapp_labels_tribute_button_as_reserve2() -> None:
         encoding="utf-8"
     )
 
-    assert "Резерв 2" in source
+    assert "СНГ И ЗАРУБЕЖНЫЕ" in source
     assert "Tribute · международная оплата" not in source

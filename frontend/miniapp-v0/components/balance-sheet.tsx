@@ -422,7 +422,7 @@ export function BalanceSheet() {
                               ) : (
                                 <CreditCard className="mr-2 h-4 w-4" />
                               )}
-                              🇰🇿🇦🇲 Карта | РФ | СНГ
+                              🇰🇿🇦🇲 Карта | СНГ
                             </Button>
                           ) : null}
                           <Button
@@ -435,7 +435,7 @@ export function BalanceSheet() {
                             ) : (
                               <Globe2 className="mr-2 h-4 w-4" />
                             )}
-                            Резерв 2
+                            СНГ И ЗАРУБЕЖНЫЕ
                           </Button>
                           {foreignConfigured ? (
                             <>

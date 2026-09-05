@@ -95,7 +95,7 @@ def test_text_bot_keeps_tribute_and_prodamus_together(
     combined_markup = prodamus._decorate_payment_keyboard(tribute_markup, "mini")
 
     buttons = [button for row in combined_markup.inline_keyboard for button in row]
-    tribute_button = next(button for button in buttons if button.text == "Резерв 2")
+    tribute_button = next(button for button in buttons if button.text == "СНГ И ЗАРУБЕЖНЫЕ")
     prodamus_button = next(
         button for button in buttons if button.text == prodamus.PRODAMUS_PAYMENT_BUTTON_TEXT
     )
@@ -118,7 +118,7 @@ def test_active_flat_payment_menu_includes_prodamus_before_reserve(
             inline_keyboard=[
                 [InlineKeyboardButton(text="💳 Картой", callback_data=f"card_{package_id}")],
                 [InlineKeyboardButton(text="⚡ СБП", callback_data=f"sbp_{package_id}")],
-                [InlineKeyboardButton(text="Резерв 2", url="https://example.test/reserve")],
+                [InlineKeyboardButton(text="СНГ И ЗАРУБЕЖНЫЕ", url="https://example.test/reserve")],
                 [InlineKeyboardButton(text="⭐ Stars", callback_data=f"stars_{package_id}")],
                 [InlineKeyboardButton(text="◀️ Назад", callback_data="menu_topup")],
             ]
@@ -131,7 +131,7 @@ def test_active_flat_payment_menu_includes_prodamus_before_reserve(
     buttons = [button for row in markup.inline_keyboard for button in row]
     texts = [button.text for button in buttons]
     assert prodamus.PRODAMUS_PAYMENT_BUTTON_TEXT in texts
-    assert texts.index(prodamus.PRODAMUS_PAYMENT_BUTTON_TEXT) < texts.index("Резерв 2")
+    assert texts.index(prodamus.PRODAMUS_PAYMENT_BUTTON_TEXT) < texts.index("СНГ И ЗАРУБЕЖНЫЕ")
     button = next(
         item for item in buttons if item.text == prodamus.PRODAMUS_PAYMENT_BUTTON_TEXT
     )
@@ -145,9 +145,9 @@ def test_miniapp_keeps_tribute_and_prodamus_together() -> None:
 
     assert "const TRIBUTE_LINKS" in source
     assert "provider === ('tribute' as PaymentProvider)" in source
-    assert "Резерв 2" in source
+    assert "СНГ И ЗАРУБЕЖНЫЕ" in source
     assert "provider === 'prodamus'" in source
-    assert "🇰🇿🇦🇲 Карта | РФ | СНГ" in source
+    assert "🇰🇿🇦🇲 Карта | СНГ" in source
 
 
 @pytest.mark.asyncio
