@@ -415,10 +415,9 @@ export function TrendRunnerDialog({
               <video
                 src={videoPreviewFrameUrl(trend.preview_url)}
                 poster={trend.preview_poster_url ? normalizeMiniAppMediaUrl(trend.preview_poster_url) : undefined}
-                muted
                 loop
-                autoPlay
                 controls
+                data-audio-enabled="true"
                 playsInline
                 preload="metadata"
                 onLoadedData={() => setTrendPreviewFailed(false)}

@@ -1,33 +1,20 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { FileText, Loader2 } from 'lucide-react'
 
-import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
-import { useApp } from '@/lib/app-context'
-import { cn } from '@/lib/utils'
 
 const MINIAPP_BASE_PATH =
   process.env.NEXT_PUBLIC_MINIAPP_BASE_PATH ||
   (process.env.NODE_ENV === 'production' ? '/mini-app' : '')
 const OFFER_TEXT_URL = `${MINIAPP_BASE_PATH}/legal/public-offer.txt`.replace(/\/{2,}/g, '/')
 
-type OfferContext = 'payment' | 'partner' | 'profile'
-
 export function PublicOfferAccess() {
-  const { isBalanceOpen, activeWorkspace, activeTab } = useApp()
   const [open, setOpen] = useState(false)
   const [offerText, setOfferText] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-
-  const context = useMemo<OfferContext | null>(() => {
-    if (isBalanceOpen) return 'payment'
-    if (activeWorkspace === 'partners') return 'partner'
-    if (activeTab === 7) return 'profile'
-    return null
-  }, [activeTab, activeWorkspace, isBalanceOpen])
 
   useEffect(() => {
     if (!open || offerText) return
@@ -56,43 +43,26 @@ export function PublicOfferAccess() {
     }
   }, [offerText, open])
 
-  useEffect(() => {
-    if (!context) setOpen(false)
-  }, [context])
-
-  if (!context) return null
-
-  const isOverlay = context === 'payment' || context === 'partner'
-  const label = context === 'payment' ? 'Оферта · оплата = согласие' : 'Публичная оферта'
-  const description =
-    context === 'payment'
-      ? 'Нажимая оплату, вы принимаете условия публичной оферты.'
-      : context === 'partner'
-        ? 'Условия партнёрской программы и расчётов.'
-        : 'Полный юридический документ.'
-
   return (
     <>
-      <div
-        className={cn(
-          'fixed right-4 z-[75] max-w-[calc(100vw-2rem)] rounded-2xl border border-border/60 bg-background/95 p-2 shadow-xl backdrop-blur',
-          isOverlay
-            ? 'bottom-[calc(env(safe-area-inset-bottom)+0.75rem)]'
-            : 'bottom-[calc(env(safe-area-inset-bottom)+5.75rem)]',
-        )}
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="rounded-2xl border border-border/50 bg-secondary/20 p-4 text-left transition-colors hover:bg-secondary/40"
+        aria-label="Открыть публичную оферту"
       >
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={() => setOpen(true)}
-          className="h-9 rounded-xl border-gold/30 bg-gold/10 px-3 text-gold hover:bg-gold/15"
-          aria-label={`${label}. ${description}`}
-        >
-          <FileText className="mr-2 h-4 w-4" />
-          {label}
-        </Button>
-      </div>
+        <div className="flex items-start gap-3">
+          <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-gold/25 bg-gold/10 text-gold">
+            <FileText className="h-4 w-4" />
+          </div>
+          <div>
+            <p className="font-medium text-foreground">Публичная оферта</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Условия оплаты и использования сервиса.
+            </p>
+          </div>
+        </div>
+      </button>
 
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent

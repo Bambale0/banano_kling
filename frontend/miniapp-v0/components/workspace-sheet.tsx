@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from 'react'
 import { Bot, BriefcaseBusiness, Copy, Headphones, ImagePlus, Loader2, Mic, PanelTopOpen, Send, Sparkles, Square, Wand2 } from 'lucide-react'
 import { useApp } from '@/lib/app-context'
 import { Button } from '@/components/ui/button'
+import { PublicOfferAccess } from '@/components/public-offer-access'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -834,6 +835,7 @@ function MorePanel({
           <p className="mt-1 text-sm text-muted-foreground">{item.description}</p>
         </button>
       ))}
+      <PublicOfferAccess />
     </div>
   )
 }
