@@ -48,8 +48,8 @@ const savedFrame: UploadedFile = {
   size: 0,
 }
 
-describe('VideoGeneratorForm repeat start frame', () => {
-  it('does not wipe a saved start frame when the repeat parent rerenders', async () => {
+describe('VideoGeneratorForm repeat photo references', () => {
+  it('uses a saved photo reference without a separate start-image field', async () => {
     const onSubmit = jest.fn().mockResolvedValue(undefined)
     const firstConsumed = jest.fn()
     const view = render(
@@ -83,6 +83,8 @@ describe('VideoGeneratorForm repeat start frame', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Запустить видео/i }))
     await waitFor(() => expect(onSubmit).toHaveBeenCalled())
-    expect(onSubmit.mock.calls[0][0].startImage).toBe(savedFrame.url)
+    expect(onSubmit.mock.calls[0][0].startImage).toBeNull()
+    expect(onSubmit.mock.calls[0][0].references).toEqual([savedFrame.url])
+    expect(screen.queryByText('Стартовое изображение')).not.toBeInTheDocument()
   })
 })
