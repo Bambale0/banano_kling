@@ -5122,6 +5122,58 @@ async def get_task_by_id(task_id: str) -> Optional[GenerationTask]:
         )
 
 
+async def _credit_feed_repeat_on_webhook_completion(task_lookup_id: str) -> None:
+    """Начисляет автору исходного feed-поста награду за повтор из ленты,
+    если задача завершилась через webhook (минуя синхронное начисление при запуске).
+
+    Все условия (публичный завершённый источник, повторитель != автор,
+    credits_spent > 0) проверяются внутри credit_feed_prompt_repeat,
+    повторное начисление блокируется dedup-защитой в _credit_prompt_repeat_reward_in_db.
+    """
+    try:
+        async with db_backend.connect(DATABASE_PATH) as db:
+            db.row_factory = db_backend.Row
+            cursor = await db.execute(
+                """SELECT task_id, user_id, cost, source_feed_gen_id
+                   FROM generation_tasks
+                   WHERE task_id = ?
+                      OR EXISTS (
+                          SELECT 1
+                          FROM json_each(
+                              CASE
+                                  WHEN json_valid(generation_tasks.request_data)
+                                  THEN generation_tasks.request_data
+                                  ELSE '{}'
+                              END,
+                              '$.task_id_aliases'
+                          )
+                          WHERE CAST(value AS TEXT) = ?
+                      )
+                   LIMIT 1""",
+                (task_lookup_id, task_lookup_id),
+            )
+            row = await cursor.fetchone()
+        if not row or row["source_feed_gen_id"] is None:
+            return
+        credited = await credit_feed_prompt_repeat(
+            int(row["source_feed_gen_id"]),
+            int(row["user_id"]),
+            repeat_task_id=str(row["task_id"] or ""),
+            credits_spent=float(row["cost"] or 0),
+        )
+        if credited:
+            logger.info(
+                "feed repeat reward credited on webhook completion: task_id=%s source_feed_gen_id=%s",
+                row["task_id"],
+                row["source_feed_gen_id"],
+            )
+    except Exception:
+        logger.exception(
+            "Failed to credit feed repeat reward on completion: task_id=%s",
+            task_lookup_id,
+        )
+
+
 async def complete_video_task(task_id: str, result_url: str) -> bool:
     """Отмечает задачу как выполненную"""
     lookup_value = str(task_id or "").strip()
@@ -5160,6 +5212,8 @@ async def complete_video_task(task_id: str, result_url: str) -> bool:
             lookup_value,
             final_status,
         )
+        if final_status == "completed":
+            await _credit_feed_repeat_on_webhook_completion(lookup_value)
         return True
 
 
@@ -5480,6 +5534,16 @@ async def _credit_prompt_repeat_reward_in_db(
     reward = round(float(amount_rub or 0), 2)
     if reward <= 0:
         return False
+
+    # Idempotency: одна задача-повтор не должна начисляться дважды
+    # (например, синхронное начисление при запуске + webhook о завершении).
+    if repeat_task_id:
+        cursor = await db.execute(
+            "SELECT 1 FROM prompt_repeat_events WHERE repeat_task_id = ? LIMIT 1",
+            (str(repeat_task_id),),
+        )
+        if await cursor.fetchone():
+            return False
 
     await db.execute(
         """

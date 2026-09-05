@@ -47,21 +47,29 @@ async def test_feed_persistence_downloads_non_ephemeral_photo_when_required(
 async def test_complete_video_task_marks_completed_with_result_url(monkeypatch):
     conn = FakeConnection()
     monkeypatch.setattr(database.db_backend, "connect", lambda *_args, **_kwargs: conn)
+    credit = AsyncMock()
+    monkeypatch.setattr(
+        database, "_credit_feed_repeat_on_webhook_completion", credit
+    )
 
     result = await database.complete_video_task("task-ok", "http://result.url")
 
     assert result is True
-    conn.execute.assert_awaited_once()
     sql, params = conn.execute.await_args.args
     assert "UPDATE generation_tasks" in sql
     assert params == ("completed", "http://result.url", "task-ok", "task-ok")
     conn.commit.assert_awaited_once()
+    credit.assert_awaited_once_with("task-ok")
 
 
 @pytest.mark.asyncio
 async def test_complete_video_task_marks_failed_without_result_url(monkeypatch):
     conn = FakeConnection()
     monkeypatch.setattr(database.db_backend, "connect", lambda *_args, **_kwargs: conn)
+    credit = AsyncMock()
+    monkeypatch.setattr(
+        database, "_credit_feed_repeat_on_webhook_completion", credit
+    )
 
     result = await database.complete_video_task("task-fail", None)
 
@@ -70,6 +78,90 @@ async def test_complete_video_task_marks_failed_without_result_url(monkeypatch):
     assert "UPDATE generation_tasks" in sql
     assert params == ("failed", None, "task-fail", "task-fail")
     conn.commit.assert_awaited_once()
+    credit.assert_not_awaited()
+
+
+class FakeCursor:
+    def __init__(self, row):
+        self._row = row
+
+    async def fetchone(self):
+        return self._row
+
+
+@pytest.mark.asyncio
+async def test_webhook_completion_skips_tasks_without_feed_source(monkeypatch):
+    conn = FakeConnection()
+    conn.execute = AsyncMock(return_value=FakeCursor(None))
+    monkeypatch.setattr(database.db_backend, "connect", lambda *_args, **_kwargs: conn)
+    credit_repeat = AsyncMock(return_value=False)
+    monkeypatch.setattr(database, "credit_feed_prompt_repeat", credit_repeat)
+
+    await database._credit_feed_repeat_on_webhook_completion("task-plain")
+
+    credit_repeat.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_webhook_completion_credits_feed_repeat(monkeypatch):
+    row = {
+        "task_id": "task-feed-repeat",
+        "user_id": 4242,
+        "cost": 2.5,
+        "source_feed_gen_id": 186039,
+    }
+    conn = FakeConnection()
+    conn.execute = AsyncMock(return_value=FakeCursor(row))
+    monkeypatch.setattr(database.db_backend, "connect", lambda *_args, **_kwargs: conn)
+    credit_repeat = AsyncMock(return_value=True)
+    monkeypatch.setattr(database, "credit_feed_prompt_repeat", credit_repeat)
+
+    await database._credit_feed_repeat_on_webhook_completion("task-feed-repeat")
+
+    credit_repeat.assert_awaited_once_with(
+        186039,
+        4242,
+        repeat_task_id="task-feed-repeat",
+        credits_spent=2.5,
+    )
+
+
+@pytest.mark.asyncio
+async def test_webhook_completion_swallows_errors(monkeypatch):
+    conn = FakeConnection()
+    conn.execute = AsyncMock(side_effect=RuntimeError("boom"))
+    monkeypatch.setattr(database.db_backend, "connect", lambda *_args, **_kwargs: conn)
+
+    # Helper must never break the completion flow
+    await database._credit_feed_repeat_on_webhook_completion("task-boom")
+
+
+@pytest.mark.asyncio
+async def test_prompt_repeat_reward_dedupes_by_repeat_task_id(monkeypatch):
+    conn = FakeConnection()
+
+    async def fake_fetchone():
+        return (1,)
+
+    conn.fetchone = fake_fetchone
+    monkeypatch.setattr(database.db_backend, "connect", lambda *_args, **_kwargs: conn)
+
+    result = await database._credit_prompt_repeat_reward_in_db(
+        conn,
+        author_id=15943,
+        repeater_id=20100,
+        source_type="feed",
+        source_id=186039,
+        repeat_task_id="61b1d7f5b6e8abba98d3219eb0bbf8b5",
+        credits_spent=2.5,
+    )
+
+    assert result is False
+    # Only the dedup SELECT must run — no INSERT, no balance UPDATE
+    assert conn.execute.await_count == 1
+    sql = conn.execute.await_args.args[0]
+    assert "prompt_repeat_events" in sql
+    conn.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
