@@ -41,6 +41,24 @@ def test_product_code_uses_only_local_offer_resources():
     assert "Публичная оферта" in source
 
 
+def test_miniapp_offer_is_only_exposed_inside_more_workspace():
+    shell_source = (
+        ROOT / "frontend" / "miniapp-v0" / "components" / "mini-app-shell.tsx"
+    ).read_text(encoding="utf-8")
+    workspace_source = (
+        ROOT / "frontend" / "miniapp-v0" / "components" / "workspace-sheet.tsx"
+    ).read_text(encoding="utf-8")
+    offer_source = (
+        ROOT / "frontend" / "miniapp-v0" / "components" / "public-offer-access.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert "PublicOfferAccess" not in shell_source
+    assert "activeWorkspace === 'more'" in workspace_source
+    assert "<PublicOfferAccess />" in workspace_source
+    assert "fixed right-4" not in offer_source
+    assert "Открыть публичную оферту" in offer_source
+
+
 def test_partner_offer_uses_full_local_document_before_legacy_handler():
     offer_source = (ROOT / "bot" / "handlers" / "public_offer_compat.py").read_text(
         encoding="utf-8"

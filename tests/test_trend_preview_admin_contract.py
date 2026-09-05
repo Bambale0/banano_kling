@@ -1,7 +1,7 @@
+import re
 from pathlib import Path
 
 from bot import pinterest_trend_catalog, trend_preview_admin, trend_visibility
-
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -76,7 +76,13 @@ def test_frontend_supports_promo_video_for_photo_trends_and_existing_cards():
     assert "updateTrendPreview(trend.id, uploaded.url, detectedKind)" in source
     assert "Промо-видео" in source
     assert "autoPlay" in source
-    assert "muted" in source
+    # Silent autoplay is kept only for grid cards. Every player with native controls
+    # must be audible so Telegram/iOS users can start playback with sound.
+    assert len(re.findall(r"(?m)^\s*muted\s*$", source)) == 1
+    assert source.count('data-audio-enabled="true"') == 3
+    runner_source = (ROOT / "frontend/miniapp-v0/components/trend-runner-dialog.tsx").read_text(encoding="utf-8")
+    assert not re.search(r"(?m)^\s*muted\s*$", runner_source)
+    assert 'data-audio-enabled="true"' in runner_source
     assert "loop" in source
     assert "playsInline" in source
     assert "preview_type?: 'image' | 'video'" in types_source

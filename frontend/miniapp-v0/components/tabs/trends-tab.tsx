@@ -765,8 +765,7 @@ export function TrendsTab() {
                   <video
                     src={previewUrl}
                     controls
-                    muted
-                    autoPlay
+                    data-audio-enabled="true"
                     loop
                     playsInline
                     preload="metadata"
@@ -889,7 +888,7 @@ export function TrendsTab() {
                       <video
                         src={normalizeMiniAppMediaUrl(editPreviewUrl || editingTrend.preview_url || '')}
                         controls
-                        muted
+                        data-audio-enabled="true"
                         playsInline
                         preload="metadata"
                         className="h-auto max-h-[58vh] w-full bg-black object-contain"
@@ -939,8 +938,7 @@ export function TrendsTab() {
               src={normalizeMiniAppMediaUrl(previewTrend.preview_url)}
               poster={previewTrend.preview_poster_url ? normalizeMiniAppMediaUrl(previewTrend.preview_poster_url) : undefined}
               controls
-              autoPlay
-              muted
+              data-audio-enabled="true"
               loop
               playsInline
               onLoadedMetadata={(event) => rememberVideoAspectRatio(previewTrend.id, event.currentTarget)}
