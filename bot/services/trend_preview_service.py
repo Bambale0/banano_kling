@@ -13,7 +13,7 @@ from bot.services.media_input_utils import resolve_local_upload_path
 logger = logging.getLogger(__name__)
 
 VIDEO_PREVIEW_EXTENSIONS = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}
-TREND_PREVIEW_VERSION = "full-v2"
+TREND_PREVIEW_VERSION = "full-v3-audio"
 TREND_PREVIEW_MAX_WIDTH = int(os.getenv("TREND_PREVIEW_MAX_WIDTH", "480"))
 TREND_PREVIEW_FPS = int(os.getenv("TREND_PREVIEW_FPS", "12"))
 TREND_PREVIEW_CRF = int(os.getenv("TREND_PREVIEW_CRF", "32"))
@@ -76,7 +76,10 @@ def _run_ffmpeg_preview(source: Path, output_path: Path) -> None:
         "error",
         "-i",
         str(source),
-        "-an",
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a:0?",
         "-vf",
         scale_filter,
         "-r",
@@ -91,6 +94,14 @@ def _run_ffmpeg_preview(source: Path, output_path: Path) -> None:
         "3.0",
         "-pix_fmt",
         "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "96k",
+        "-ac",
+        "2",
+        "-ar",
+        "44100",
         "-movflags",
         "+faststart",
         "-crf",
