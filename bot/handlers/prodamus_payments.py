@@ -34,7 +34,7 @@ DEFAULT_PRODAMUS_WEBHOOK_URL = "https://tanyapi.chillcreative.ru/prodamus/webhoo
 _FORM_KEY_RE = re.compile(r"^([^\[]+)((?:\[[^\]]*\])*)$")
 _BRACKET_RE = re.compile(r"\[([^\]]*)\]")
 router = Router()
-PRODAMUS_PAYMENT_BUTTON_TEXT = "🇰🇿🇦🇲 Карта | РФ | СНГ"
+PRODAMUS_PAYMENT_BUTTON_TEXT = "🇰🇿🇦🇲 Карта | СНГ"
 
 
 class ProdamusConfigurationError(RuntimeError):
@@ -426,7 +426,7 @@ def _decorate_payment_keyboard(
     for row in markup.inline_keyboard:
         if any(button.callback_data == callback_data for button in row):
             return markup
-        if not inserted and any(button.text == "Резерв 2" for button in row):
+        if not inserted and any(button.text == "СНГ И ЗАРУБЕЖНЫЕ" for button in row):
             rows.append(
                 [
                     InlineKeyboardButton(

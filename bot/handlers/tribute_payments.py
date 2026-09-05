@@ -142,7 +142,7 @@ def build_tribute_payment_method_keyboard(
 
     tribute_url = TRIBUTE_PACKAGE_LINKS.get(package_id)
     if tribute_url:
-        rows.append([InlineKeyboardButton(text="Резерв 2", url=tribute_url)])
+        rows.append([InlineKeyboardButton(text="СНГ И ЗАРУБЕЖНЫЕ", url=tribute_url)])
 
     if has_stars:
         rows.append(
