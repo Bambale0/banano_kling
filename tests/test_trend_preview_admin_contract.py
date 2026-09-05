@@ -3,7 +3,6 @@ from pathlib import Path
 
 from bot import pinterest_trend_catalog, trend_preview_admin, trend_visibility
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
