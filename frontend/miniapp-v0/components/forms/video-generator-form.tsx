@@ -378,7 +378,14 @@ export function VideoGeneratorForm({
       nextModel.durations.includes(current) ? current : nextModel.durations[0] || 5
     )
 
-    if (nextModel.id === 'grok_imagine') {
+    if (nextModel.id === 'seedance_2') {
+      // Seedance 2.0 is primarily an image-to-video flow in the Mini App.
+      // Selecting the model should open the useful default immediately instead
+      // of leaving the previous Text -> Video scenario selected.
+      setSelectedScenario('imgtxt')
+      setVideoReferences([])
+      setAudioReference([])
+    } else if (nextModel.id === 'grok_imagine') {
       setSelectedScenario('imgtxt')
       setSelectedRatio((current) =>
         nextModel.ratios.includes(current) ? current : nextModel.ratios[0] || '16:9'
