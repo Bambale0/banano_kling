@@ -1,0 +1,228 @@
+name: tmp video photo references only
+on:
+  push:
+    branches: [fix/tanyapi-video-photo-references-only]
+permissions:
+  contents: write
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Patch source and tests
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          form_path = Path('frontend/miniapp-v0/components/forms/video-generator-form.tsx')
+          s = form_path.read_text(encoding='utf-8')
+
+          s = s.replace(
+              "const omniImageCount = isOmniVideo ? startImage.length + photoReferences.length : 0",
+              "const omniImageCount = isOmniVideo ? photoReferences.length : 0",
+          )
+
+          old_validation = """  // A feed repeat can restore the original private start frame on the server.\n  // Keep fresh image-to-video generations strict, while allowing the repeat request\n  // to reach the server even when that private frame is intentionally hidden in UI.\n  const startImageRestoredByRepeat = selectedScenario === 'imgtxt' && Boolean(sourceFeedGenId)\n  const startImageOptional = isOmniVideo || startImageRestoredByRepeat\n\n  // Validation\n  const needsStartImage = ((selectedScenario === 'imgtxt' && !startImageRestoredByRepeat && !isOmniVideo) || selectedScenario === 'character') && startImage.length === 0\n"""
+          new_validation = """  // Image-to-video uses the same photo-reference picker as every other photo input.\n  // The backend promotes the first selected reference to the provider's primary image slot.\n  const needsPhotoReference = selectedScenario === 'imgtxt' && !isOmniVideo && photoReferences.length === 0\n  const needsCharacterImage = selectedScenario === 'character' && startImage.length === 0\n"""
+          assert old_validation in s
+          s = s.replace(old_validation, new_validation)
+          s = s.replace("    !needsStartImage &&\n", "    !needsPhotoReference &&\n    !needsCharacterImage &&\n")
+
+          old_preset = """    setStartImage(promptPreset.initialStartImage || [])\n    setPhotoReferences(promptPreset.initialPhotoReferences || [])\n"""
+          new_preset = """    if (promptPreset.scenario === 'character' || promptPreset.scenario === 'avatar') {\n      setStartImage(promptPreset.initialStartImage || [])\n      setPhotoReferences(promptPreset.initialPhotoReferences || [])\n    } else {\n      setStartImage([])\n      const combinedPhotoReferences = [\n        ...(promptPreset.initialStartImage || []),\n        ...(promptPreset.initialPhotoReferences || []),\n      ]\n      setPhotoReferences(\n        combinedPhotoReferences.filter(\n          (item, index, items) => items.findIndex((candidate) => candidate.url === item.url) === index\n        )\n      )\n    }\n"""
+          assert old_preset in s
+          s = s.replace(old_preset, new_preset)
+
+          s = s.replace(
+              "      setSelectedScenario('imgtxt')\n      setVideoReferences([])\n      setAudioReference([])\n",
+              "      setSelectedScenario('imgtxt')\n      setStartImage([])\n      setVideoReferences([])\n      setAudioReference([])\n",
+              1,
+          )
+          # Grok Imagine and Grok Imagine 1.5 also use the unified photo-reference picker.
+          grok_marker = "    } else if (nextModel.id === 'grok_imagine') {"
+          idx = s.index(grok_marker)
+          tail = s[idx:]
+          tail = tail.replace("      setSelectedScenario('imgtxt')\n", "      setSelectedScenario('imgtxt')\n      setStartImage([])\n", 1)
+          idx2 = tail.index("    } else if (nextModel.id === 'grok_imagine_v15') {")
+          before, grok15 = tail[:idx2], tail[idx2:]
+          grok15 = grok15.replace("      setSelectedScenario('imgtxt')\n", "      setSelectedScenario('imgtxt')\n      setStartImage([])\n", 1)
+          s = s[:idx] + before + grok15
+
+          old_submit = """      startImage: isOmniAudio ? null : startImage[0]?.url || null,\n      references: isOmniAudio || isOmniCharacter || (model?.max_image_references ?? 8) === 0 ? [] : photoReferences.map(r => r.url),\n"""
+          new_submit = """      startImage:\n        isOmniAudio || !['character', 'avatar'].includes(selectedScenario)\n          ? null\n          : startImage[0]?.url || null,\n      references:\n        isOmniAudio || isOmniCharacter\n          ? []\n          : selectedScenario === 'imgtxt' || (model?.max_image_references ?? 8) > 0\n            ? photoReferences.map((item) => item.url)\n            : [],\n"""
+          assert old_submit in s
+          s = s.replace(old_submit, new_submit)
+
+          start_block = re.compile(
+              r"\n        \{\(selectedScenario === 'imgtxt' \|\| selectedScenario === 'character' \|\| selectedScenario === 'avatar'\) && \(.*?\n        \)\}\n\n        \{\(selectedScenario === 'video' \|\| isOmniVideo\) && \(",
+              re.S,
+          )
+          replacement = """
+        {(selectedScenario === 'character' || selectedScenario === 'avatar') && (
+          <div className=\"space-y-2\">
+            <label className=\"text-sm font-medium text-foreground\">
+              {selectedScenario === 'character' ? 'Изображение персонажа' : 'Фото аватара'}
+              <span className=\"text-destructive ml-1\">*</span>
+            </label>
+            <UploadArea
+              files={startImage}
+              onFilesChange={setStartImage}
+              maxFiles={1}
+              accept=\"image/*\"
+              required
+              onUpload={onUploadImageReference}
+              libraryFiles={savedImageReferences}
+              libraryLabel={selectedScenario === 'character' ? 'Сохранённые изображения персонажей' : 'Сохранённые фото'}
+            />
+          </div>
+        )}
+
+        {(selectedScenario === 'video' || isOmniVideo) && ("""
+          s, count = start_block.subn(replacement, s, count=1)
+          assert count == 1, count
+
+          photo_block = re.compile(
+              r"\n        \{!isOmniAudio && !isOmniCharacter && \(model\?\.max_image_references \?\? 8\) > 0 \? \(.*?\n        \) : null\}\n",
+              re.S,
+          )
+          replacement = """
+        {!isOmniAudio && !isOmniCharacter && ((model?.max_image_references ?? 8) > 0 || selectedScenario === 'imgtxt') ? (
+          <div className=\"space-y-2\">
+            <label className=\"text-sm font-medium text-foreground\">
+              Фото-референсы
+              {selectedScenario === 'imgtxt' && !isOmniVideo ? (
+                <span className=\"text-destructive ml-1\">*</span>
+              ) : (
+                <span className=\"text-xs text-muted-foreground ml-2\">(опционально)</span>
+              )}
+            </label>
+            <UploadArea
+              files={photoReferences}
+              onFilesChange={setPhotoReferences}
+              maxFiles={
+                selectedScenario === 'imgtxt'
+                  ? Math.max(1, model?.max_image_references ?? 0)
+                  : model?.max_image_references || 8
+              }
+              accept=\"image/*\"
+              required={selectedScenario === 'imgtxt' && !isOmniVideo}
+              onUpload={onUploadImageReference}
+              libraryFiles={savedImageReferences}
+              libraryLabel=\"Сохранённые фото-референсы\"
+            />
+          </div>
+        ) : null}
+"""
+          s, count = photo_block.subn(replacement, s, count=1)
+          assert count == 1, count
+
+          old_alert = """        {needsStartImage && (\n          <div className=\"flex items-center gap-2 p-3 rounded-xl bg-cyan/10 border border-cyan/30\">\n            <AlertCircle className=\"w-4 h-4 text-cyan flex-shrink-0\" />\n            <p className=\"text-xs text-cyan\">\n              Загрузите стартовое изображение\n            </p>\n          </div>\n        )}\n"""
+          new_alert = """        {needsPhotoReference && (\n          <div className=\"flex items-center gap-2 p-3 rounded-xl bg-cyan/10 border border-cyan/30\">\n            <AlertCircle className=\"w-4 h-4 text-cyan flex-shrink-0\" />\n            <p className=\"text-xs text-cyan\">Добавьте фото-референс</p>\n          </div>\n        )}\n\n        {needsCharacterImage && (\n          <div className=\"flex items-center gap-2 p-3 rounded-xl bg-cyan/10 border border-cyan/30\">\n            <AlertCircle className=\"w-4 h-4 text-cyan flex-shrink-0\" />\n            <p className=\"text-xs text-cyan\">Добавьте изображение персонажа</p>\n          </div>\n        )}\n"""
+          assert old_alert in s
+          s = s.replace(old_alert, new_alert)
+          s = s.replace(
+              ": 'Фото-референсы опциональны'}",
+              ": selectedScenario === 'imgtxt' && !isOmniVideo\n                      ? 'Фото-референс обязателен'\n                      : 'Фото-референсы опциональны'}",
+          )
+          assert 'Стартовое изображение' not in s
+          assert 'Сохранённые стартовые кадры' not in s
+          form_path.write_text(s, encoding='utf-8')
+
+          # Backend: the first photo reference becomes the provider's primary image input.
+          mini = Path('bot/miniapp.py')
+          m = mini.read_text(encoding='utf-8')
+          marker = """        effective_model = _resolve_gemini_omni_model(model, generation_type)\n        if effective_model in {\"gemini_omni_audio\", \"gemini_omni_character\"}:\n"""
+          replacement = """        effective_model = _resolve_gemini_omni_model(model, generation_type)\n        if (\n            generation_type == \"imgtxt\"\n            and not image_url\n            and image_references\n            and effective_model != \"gemini_omni_video\"\n        ):\n            image_url = str(image_references.pop(0) or \"\") or None\n        if effective_model in {\"gemini_omni_audio\", \"gemini_omni_character\"}:\n"""
+          assert marker in m
+          m = m.replace(marker, replacement, 1)
+          m = m.replace(
+              '"error": "Для режима Фото + Текст загрузите стартовое фото",',
+              '"error": "Для режима Фото + Текст добавьте фото-референс",',
+              1,
+          )
+          mini.write_text(m, encoding='utf-8')
+
+          # Repeat requests: a newly selected photo reference must override the source image.
+          compat = Path('bot/handlers/miniapp_video_continuity_compat.py')
+          c = compat.read_text(encoding='utf-8')
+          marker = """    if not str(normalized.get(\"v_ratio\") or \"\").strip():\n        normalized[\"v_ratio\"] = str(\n            source_task.get(\"aspect_ratio\") or request_data.get(\"v_ratio\") or \"16:9\"\n        )\n\n    for target, aliases in _REPEAT_LIST_ALIASES.items():\n"""
+          replacement = """    if not str(normalized.get(\"v_ratio\") or \"\").strip():\n        normalized[\"v_ratio\"] = str(\n            source_task.get(\"aspect_ratio\") or request_data.get(\"v_ratio\") or \"16:9\"\n        )\n\n    # The Mini App exposes one photo-reference picker instead of a separate start-image field.\n    # When a user selected photos for image-to-video, the first one is authoritative and must\n    # win over the private source image restored from the feed item.\n    if str(normalized.get(\"v_type\") or \"\").strip().lower() == \"imgtxt\" and _missing(\n        normalized.get(\"v_image_url\")\n    ):\n        requested_images = _clean_list(normalized.get(\"reference_images\"))\n        if requested_images:\n            normalized[\"v_image_url\"] = requested_images[0]\n            normalized[\"reference_images\"] = requested_images[1:]\n\n    for target, aliases in _REPEAT_LIST_ALIASES.items():\n"""
+          assert marker in c
+          c = c.replace(marker, replacement, 1)
+          compat.write_text(c, encoding='utf-8')
+
+          # Frontend repeat regression: saved photo references are submitted as references, never startImage.
+          repeat_test = Path('frontend/miniapp-v0/components/forms/video-generator-form-repeat.test.tsx')
+          t = repeat_test.read_text(encoding='utf-8')
+          t = t.replace(
+              "describe('VideoGeneratorForm repeat start frame', () => {",
+              "describe('VideoGeneratorForm repeat photo references', () => {",
+          )
+          t = t.replace(
+              "it('does not wipe a saved start frame when the repeat parent rerenders', async () => {",
+              "it('uses a saved photo reference without a separate start-image field', async () => {",
+          )
+          t = t.replace(
+              "expect(onSubmit.mock.calls[0][0].startImage).toBe(savedFrame.url)",
+              "expect(onSubmit.mock.calls[0][0].startImage).toBeNull()\n    expect(onSubmit.mock.calls[0][0].references).toEqual([savedFrame.url])\n    expect(screen.queryByText('Стартовое изображение')).not.toBeInTheDocument()",
+          )
+          repeat_test.write_text(t, encoding='utf-8')
+
+          # Seedance 2.0 defaults regression also verifies the unified required photo-reference picker.
+          seed_test = Path('frontend/miniapp-v0/components/forms/video-generator-form-seedance-default.test.tsx')
+          t = seed_test.read_text(encoding='utf-8')
+          t = t.replace(
+              "UploadArea: () => <div data-testid=\"upload-area\" />",
+              "UploadArea: ({ required, libraryLabel }: { required?: boolean; libraryLabel?: string }) => (\n    <div data-testid=\"upload-area\" data-required={String(Boolean(required))} data-library-label={libraryLabel || ''} />\n  )",
+          )
+          t = t.replace(
+              "      expect(screen.getByTestId('scenario')).toHaveTextContent('imgtxt')\n",
+              "      expect(screen.getByTestId('scenario')).toHaveTextContent('imgtxt')\n      expect(screen.queryByText('Стартовое изображение')).not.toBeInTheDocument()\n      expect(screen.getByText('Фото-референсы')).toBeInTheDocument()\n      expect(screen.getByTestId('upload-area')).toHaveAttribute('data-required', 'true')\n      expect(screen.getByTestId('upload-area')).toHaveAttribute('data-library-label', 'Сохранённые фото-референсы')\n",
+          )
+          seed_test.write_text(t, encoding='utf-8')
+
+          # Backend repeat contract tests.
+          compat_test = Path('tests/test_miniapp_video_continuity_compat.py')
+          t = compat_test.read_text(encoding='utf-8')
+          old_source_test = """def test_feed_repeat_form_allows_server_restored_private_start_frame() -> None:\n    form_path = (\n        Path(__file__).resolve().parents[1]\n        / \"frontend\"\n        / \"miniapp-v0\"\n        / \"components\"\n        / \"forms\"\n        / \"video-generator-form.tsx\"\n    )\n    source = form_path.read_text(encoding=\"utf-8\")\n\n    assert \"const startImageRestoredByRepeat\" in source\n    assert \"selectedScenario === 'imgtxt' && Boolean(sourceFeedGenId)\" in source\n    assert \"!startImageRestoredByRepeat\" in source\n    assert \"const startImageOptional = isOmniVideo || startImageRestoredByRepeat\" in source\n    assert \"required={!startImageOptional}\" in source\n    assert \"Без нового кадра будет использован исходный кадр генерации\" in source\n"""
+          new_source_test = """def test_feed_repeat_form_uses_photo_references_instead_of_start_image() -> None:\n    form_path = (\n        Path(__file__).resolve().parents[1]\n        / \"frontend\"\n        / \"miniapp-v0\"\n        / \"components\"\n        / \"forms\"\n        / \"video-generator-form.tsx\"\n    )\n    source = form_path.read_text(encoding=\"utf-8\")\n\n    assert \"Стартовое изображение\" not in source\n    assert \"Сохранённые стартовые кадры\" not in source\n    assert \"const needsPhotoReference\" in source\n    assert \"photoReferences.length === 0\" in source\n    assert 'libraryLabel=\"Сохранённые фото-референсы\"' in source\n\n\ndef test_repeat_selected_photo_reference_overrides_private_source_image() -> None:\n    source_task = {\n        \"prompt\": \"animate this frame\",\n        \"model\": \"seedance_2\",\n        \"duration\": 10,\n        \"aspect_ratio\": \"16:9\",\n        \"request_data\": {\n            \"v_type\": \"imgtxt\",\n            \"v_image_url\": \"https://example.test/private-source.jpg\",\n        },\n    }\n\n    restored = enrich_video_repeat_body(\n        {\n            \"v_model\": \"seedance_2\",\n            \"v_type\": \"imgtxt\",\n            \"source_feed_gen_id\": 92,\n            \"v_image_url\": None,\n            \"reference_images\": [\n                \"https://example.test/user-photo.jpg\",\n                \"https://example.test/extra-reference.jpg\",\n            ],\n        },\n        source_task,\n    )\n\n    assert restored[\"v_image_url\"] == \"https://example.test/user-photo.jpg\"\n    assert restored[\"reference_images\"] == [\"https://example.test/extra-reference.jpg\"]\n"""
+          assert old_source_test in t
+          t = t.replace(old_source_test, new_source_test)
+          compat_test.write_text(t, encoding='utf-8')
+          PY
+      - name: Install Mini App dependencies
+        working-directory: frontend/miniapp-v0
+        run: npm ci --no-audit --fund=false
+      - name: Run targeted frontend regressions
+        working-directory: frontend/miniapp-v0
+        run: npx jest --config jest.config.ts --runInBand components/forms/video-generator-form-repeat.test.tsx components/forms/video-generator-form-seedance-default.test.tsx components/tabs/__tests__/video-tab-repeat.test.tsx
+      - name: Run backend repeat regression
+        run: python -m pytest -q tests/test_miniapp_video_continuity_compat.py
+      - name: Lint changed frontend source
+        working-directory: frontend/miniapp-v0
+        run: npx eslint components/forms/video-generator-form.tsx components/forms/video-generator-form-repeat.test.tsx components/forms/video-generator-form-seedance-default.test.tsx
+      - name: Build production Mini App
+        working-directory: frontend/miniapp-v0
+        run: npm run build
+      - name: Commit tested fix and remove helper
+        shell: bash
+        run: |
+          rm .github/workflows/tmp-video-photo-references-only.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add frontend/miniapp-v0/components/forms/video-generator-form.tsx \
+                  frontend/miniapp-v0/components/forms/video-generator-form-repeat.test.tsx \
+                  frontend/miniapp-v0/components/forms/video-generator-form-seedance-default.test.tsx \
+                  bot/miniapp.py \
+                  bot/handlers/miniapp_video_continuity_compat.py \
+                  tests/test_miniapp_video_continuity_compat.py \
+                  .github/workflows/tmp-video-photo-references-only.yml
+          git commit -m "fix(miniapp): use photo references for image-to-video"
+          git push origin HEAD:fix/tanyapi-video-photo-references-only
