@@ -176,6 +176,17 @@ def enrich_video_repeat_body(
             source_task.get("aspect_ratio") or request_data.get("v_ratio") or "16:9"
         )
 
+    # The Mini App exposes one photo-reference picker instead of a separate start-image field.
+    # When a user selected photos for image-to-video, the first one is authoritative and must
+    # win over the private source image restored from the feed item.
+    if str(normalized.get("v_type") or "").strip().lower() == "imgtxt" and _missing(
+        normalized.get("v_image_url")
+    ):
+        requested_images = _clean_list(normalized.get("reference_images"))
+        if requested_images:
+            normalized["v_image_url"] = requested_images[0]
+            normalized["reference_images"] = requested_images[1:]
+
     for target, aliases in _REPEAT_LIST_ALIASES.items():
         if not _clean_list(normalized.get(target)):
             restored = _first_list(request_data, aliases)

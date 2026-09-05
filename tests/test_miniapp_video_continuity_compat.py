@@ -111,7 +111,7 @@ def test_regular_image_to_video_repeat_restores_private_start_frame() -> None:
     assert restored["v_image_url"] == "https://example.test/private-start.jpg"
 
 
-def test_feed_repeat_form_allows_server_restored_private_start_frame() -> None:
+def test_feed_repeat_form_uses_photo_references_instead_of_start_image() -> None:
     form_path = (
         Path(__file__).resolve().parents[1]
         / "frontend"
@@ -122,9 +122,38 @@ def test_feed_repeat_form_allows_server_restored_private_start_frame() -> None:
     )
     source = form_path.read_text(encoding="utf-8")
 
-    assert "const startImageRestoredByRepeat" in source
-    assert "selectedScenario === 'imgtxt' && Boolean(sourceFeedGenId)" in source
-    assert "!startImageRestoredByRepeat" in source
-    assert "const startImageOptional = isOmniVideo || startImageRestoredByRepeat" in source
-    assert "required={!startImageOptional}" in source
-    assert "Без нового кадра будет использован исходный кадр генерации" in source
+    assert "Стартовое изображение" not in source
+    assert "Сохранённые стартовые кадры" not in source
+    assert "const needsPhotoReference" in source
+    assert "photoReferences.length === 0" in source
+    assert 'libraryLabel="Сохранённые фото-референсы"' in source
+
+
+def test_repeat_selected_photo_reference_overrides_private_source_image() -> None:
+    source_task = {
+        "prompt": "animate this frame",
+        "model": "seedance_2",
+        "duration": 10,
+        "aspect_ratio": "16:9",
+        "request_data": {
+            "v_type": "imgtxt",
+            "v_image_url": "https://example.test/private-source.jpg",
+        },
+    }
+
+    restored = enrich_video_repeat_body(
+        {
+            "v_model": "seedance_2",
+            "v_type": "imgtxt",
+            "source_feed_gen_id": 92,
+            "v_image_url": None,
+            "reference_images": [
+                "https://example.test/user-photo.jpg",
+                "https://example.test/extra-reference.jpg",
+            ],
+        },
+        source_task,
+    )
+
+    assert restored["v_image_url"] == "https://example.test/user-photo.jpg"
+    assert restored["reference_images"] == ["https://example.test/extra-reference.jpg"]

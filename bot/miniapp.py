@@ -4423,6 +4423,13 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
                 status=400,
             )
         effective_model = _resolve_gemini_omni_model(model, generation_type)
+        if (
+            generation_type == "imgtxt"
+            and not image_url
+            and image_references
+            and effective_model != "gemini_omni_video"
+        ):
+            image_url = str(image_references.pop(0) or "") or None
         if effective_model in {"gemini_omni_audio", "gemini_omni_character"}:
             duration = 6
 
@@ -4471,7 +4478,7 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
             return web.json_response(
                 {
                     "ok": False,
-                    "error": "Для режима Фото + Текст загрузите стартовое фото",
+                    "error": "Для режима Фото + Текст добавьте фото-референс",
                 },
                 status=400,
             )

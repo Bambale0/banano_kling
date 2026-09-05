@@ -205,7 +205,7 @@ export function VideoGeneratorForm({
   const parsedOmniAudioIds = parseAssetIds(omniAudioIds)
   const parsedOmniCharacterIds = parseAssetIds(omniCharacterIds)
   const parsedOmniCharacterAudioIds = parseAssetIds(omniCharacterAudioIds)
-  const omniImageCount = isOmniVideo ? startImage.length + photoReferences.length : 0
+  const omniImageCount = isOmniVideo ? photoReferences.length : 0
   const omniVideoCount = isOmniVideo ? videoReferences.length : 0
   const omniInputUnits = omniImageCount + omniVideoCount * 2 + parsedOmniCharacterIds.length
   const omniTooManyVideos = isOmniVideo && omniVideoCount > 1
@@ -218,14 +218,10 @@ export function VideoGeneratorForm({
   // Check if scenario is supported
   const scenarioSupported = model?.supports.includes(selectedScenario) ?? false
   
-  // A feed repeat can restore the original private start frame on the server.
-  // Keep fresh image-to-video generations strict, while allowing the repeat request
-  // to reach the server even when that private frame is intentionally hidden in UI.
-  const startImageRestoredByRepeat = selectedScenario === 'imgtxt' && Boolean(sourceFeedGenId)
-  const startImageOptional = isOmniVideo || startImageRestoredByRepeat
-
-  // Validation
-  const needsStartImage = ((selectedScenario === 'imgtxt' && !startImageRestoredByRepeat && !isOmniVideo) || selectedScenario === 'character') && startImage.length === 0
+  // Image-to-video uses the same photo-reference picker as every other photo input.
+  // The backend promotes the first selected reference to the provider's primary image slot.
+  const needsPhotoReference = selectedScenario === 'imgtxt' && !isOmniVideo && photoReferences.length === 0
+  const needsCharacterImage = selectedScenario === 'character' && startImage.length === 0
   const needsVideoRef = selectedScenario === 'video' && !isOmniVideo && videoReferences.length === 0
   const needsAvatarImage = selectedScenario === 'avatar' && startImage.length === 0
   const needsAvatarAudio = selectedScenario === 'avatar' && audioReference.length === 0
@@ -235,7 +231,8 @@ export function VideoGeneratorForm({
   const isValid = hasPrompt &&
     canAfford &&
     scenarioSupported &&
-    !needsStartImage &&
+    !needsPhotoReference &&
+    !needsCharacterImage &&
     !needsVideoRef &&
     !needsAvatarImage &&
     !needsAvatarAudio &&
@@ -294,8 +291,21 @@ export function VideoGeneratorForm({
     if (promptPreset.duration) {
       setSelectedDuration(promptPreset.duration)
     }
-    setStartImage(promptPreset.initialStartImage || [])
-    setPhotoReferences(promptPreset.initialPhotoReferences || [])
+    if (promptPreset.scenario === 'character' || promptPreset.scenario === 'avatar') {
+      setStartImage(promptPreset.initialStartImage || [])
+      setPhotoReferences(promptPreset.initialPhotoReferences || [])
+    } else {
+      setStartImage([])
+      const combinedPhotoReferences = [
+        ...(promptPreset.initialStartImage || []),
+        ...(promptPreset.initialPhotoReferences || []),
+      ]
+      setPhotoReferences(
+        combinedPhotoReferences.filter(
+          (item, index, items) => items.findIndex((candidate) => candidate.url === item.url) === index
+        )
+      )
+    }
     setVideoReferences(promptPreset.initialVideoReferences || [])
     setAudioReference([])
     onPromptPresetConsumed?.()
@@ -383,10 +393,12 @@ export function VideoGeneratorForm({
       // Selecting the model should open the useful default immediately instead
       // of leaving the previous Text -> Video scenario selected.
       setSelectedScenario('imgtxt')
+      setStartImage([])
       setVideoReferences([])
       setAudioReference([])
     } else if (nextModel.id === 'grok_imagine') {
       setSelectedScenario('imgtxt')
+      setStartImage([])
       setSelectedRatio((current) =>
         nextModel.ratios.includes(current) ? current : nextModel.ratios[0] || '16:9'
       )
@@ -397,6 +409,7 @@ export function VideoGeneratorForm({
       setAudioReference([])
     } else if (nextModel.id === 'grok_imagine_v15') {
       setSelectedScenario('imgtxt')
+      setStartImage([])
       setSelectedRatio((current) =>
         nextModel.ratios.includes(current) ? current : nextModel.ratios[0] || 'auto'
       )
@@ -438,8 +451,16 @@ export function VideoGeneratorForm({
       omniCharacterName,
       omniCharacterAudioIds: parsedOmniCharacterAudioIds,
       prompt,
-      startImage: isOmniAudio ? null : startImage[0]?.url || null,
-      references: isOmniAudio || isOmniCharacter || (model?.max_image_references ?? 8) === 0 ? [] : photoReferences.map(r => r.url),
+      startImage:
+        isOmniAudio || !['character', 'avatar'].includes(selectedScenario)
+          ? null
+          : startImage[0]?.url || null,
+      references:
+        isOmniAudio || isOmniCharacter
+          ? []
+          : selectedScenario === 'imgtxt' || (model?.max_image_references ?? 8) > 0
+            ? photoReferences.map((item) => item.url)
+            : [],
       videoReferences: isOmniVideo || (model?.max_video_references ?? 0) > 0 ? videoReferences.map(r => r.url) : [],
       audioReference: selectedScenario === 'avatar' ? audioReference[0]?.url || null : null,
     })
@@ -924,35 +945,22 @@ export function VideoGeneratorForm({
           </div>
         ) : null}
 
-        {(selectedScenario === 'imgtxt' || selectedScenario === 'character' || selectedScenario === 'avatar') && (
+        {(selectedScenario === 'character' || selectedScenario === 'avatar') && (
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground">
-              {selectedScenario === 'character'
-                ? 'Изображение персонажа'
-                : selectedScenario === 'avatar'
-                  ? 'Фото аватара'
-                  : 'Стартовое изображение'}
-              {startImageOptional ? (
-                <span className="text-xs text-muted-foreground ml-2">(опционально)</span>
-              ) : (
-                <span className="text-destructive ml-1">*</span>
-              )}
+              {selectedScenario === 'character' ? 'Изображение персонажа' : 'Фото аватара'}
+              <span className="text-destructive ml-1">*</span>
             </label>
             <UploadArea
               files={startImage}
               onFilesChange={setStartImage}
               maxFiles={1}
               accept="image/*"
-              required={!startImageOptional}
+              required
               onUpload={onUploadImageReference}
               libraryFiles={savedImageReferences}
-              libraryLabel="Сохранённые стартовые кадры"
+              libraryLabel={selectedScenario === 'character' ? 'Сохранённые изображения персонажей' : 'Сохранённые фото'}
             />
-            {startImageRestoredByRepeat && startImage.length === 0 ? (
-              <p className="text-xs text-muted-foreground">
-                Без нового кадра будет использован исходный кадр генерации.
-              </p>
-            ) : null}
           </div>
         )}
 
@@ -996,20 +1004,29 @@ export function VideoGeneratorForm({
           </div>
         ) : null}
 
-        {!isOmniAudio && !isOmniCharacter && (model?.max_image_references ?? 8) > 0 ? (
+        {!isOmniAudio && !isOmniCharacter && ((model?.max_image_references ?? 8) > 0 || selectedScenario === 'imgtxt') ? (
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground">
               Фото-референсы
-              <span className="text-xs text-muted-foreground ml-2">(опционально)</span>
+              {selectedScenario === 'imgtxt' && !isOmniVideo ? (
+                <span className="text-destructive ml-1">*</span>
+              ) : (
+                <span className="text-xs text-muted-foreground ml-2">(опционально)</span>
+              )}
             </label>
             <UploadArea
               files={photoReferences}
               onFilesChange={setPhotoReferences}
-              maxFiles={model?.max_image_references || 8}
+              maxFiles={
+                selectedScenario === 'imgtxt'
+                  ? Math.max(1, model?.max_image_references ?? 0)
+                  : model?.max_image_references || 8
+              }
               accept="image/*"
+              required={selectedScenario === 'imgtxt' && !isOmniVideo}
               onUpload={onUploadImageReference}
               libraryFiles={savedImageReferences}
-              libraryLabel="Сохранённые image-референсы"
+              libraryLabel="Сохранённые фото-референсы"
             />
           </div>
         ) : null}
@@ -1105,7 +1122,9 @@ export function VideoGeneratorForm({
                         ? 'Character ID'
                   : selectedScenario === 'video'
                     ? 'Видео-режим активен'
-                    : 'Фото-референсы опциональны'}
+                    : selectedScenario === 'imgtxt' && !isOmniVideo
+                      ? 'Фото-референс обязателен'
+                      : 'Фото-референсы опциональны'}
             </p>
           </div>
         </div>
@@ -1136,12 +1155,17 @@ export function VideoGeneratorForm({
           </div>
         )}
 
-        {needsStartImage && (
+        {needsPhotoReference && (
           <div className="flex items-center gap-2 p-3 rounded-xl bg-cyan/10 border border-cyan/30">
             <AlertCircle className="w-4 h-4 text-cyan flex-shrink-0" />
-            <p className="text-xs text-cyan">
-              Загрузите стартовое изображение
-            </p>
+            <p className="text-xs text-cyan">Добавьте фото-референс</p>
+          </div>
+        )}
+
+        {needsCharacterImage && (
+          <div className="flex items-center gap-2 p-3 rounded-xl bg-cyan/10 border border-cyan/30">
+            <AlertCircle className="w-4 h-4 text-cyan flex-shrink-0" />
+            <p className="text-xs text-cyan">Добавьте изображение персонажа</p>
           </div>
         )}
 

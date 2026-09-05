@@ -19,7 +19,9 @@ jest.mock('@/components/forms/duration-select', () => ({
   DurationSelect: ({ value }: { value: number }) => <div data-testid="duration">{value}</div>,
 }))
 jest.mock('@/components/forms/upload-area', () => ({
-  UploadArea: () => <div data-testid="upload-area" />,
+  UploadArea: ({ required, libraryLabel }: { required?: boolean; libraryLabel?: string }) => (
+    <div data-testid="upload-area" data-required={String(Boolean(required))} data-library-label={libraryLabel || ''} />
+  ),
 }))
 
 import { VideoGeneratorForm } from '@/components/forms/video-generator-form'
@@ -66,6 +68,10 @@ describe('Seedance 2.0 model defaults', () => {
     await waitFor(() => {
       expect(screen.getByTestId('model')).toHaveTextContent('seedance_2')
       expect(screen.getByTestId('scenario')).toHaveTextContent('imgtxt')
+      expect(screen.queryByText('Стартовое изображение')).not.toBeInTheDocument()
+      expect(screen.getByText('Фото-референсы')).toBeInTheDocument()
+      expect(screen.getByTestId('upload-area')).toHaveAttribute('data-required', 'true')
+      expect(screen.getByTestId('upload-area')).toHaveAttribute('data-library-label', 'Сохранённые фото-референсы')
     })
   })
 })
