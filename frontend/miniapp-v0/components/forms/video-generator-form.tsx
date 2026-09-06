@@ -91,6 +91,7 @@ interface VideoGeneratorFormProps {
   onPromptPresetConsumed?: () => void
   isSubmitting: boolean
   credits: number
+  onModelSelected?: (modelId: string) => void
 }
 
 export function VideoGeneratorForm({ 
@@ -106,6 +107,7 @@ export function VideoGeneratorForm({
   onPromptPresetConsumed,
   isSubmitting,
   credits,
+  onModelSelected,
 }: VideoGeneratorFormProps) {
   const formatPerSecondCost = (raw: number) => Number(raw.toFixed(2)).toString()
   const [selectedModel, setSelectedModel] = useState(models.find((item) => !['motion_control', 'motion_control_v26', 'motion_control_v30'].includes(item.id))?.id || models[0]?.id || '')
@@ -371,6 +373,7 @@ export function VideoGeneratorForm({
   }, [model, grokMode, grokResolution, veoGenerationType, veoResolution, omniResolution, omniBaseVoice])
 
   const handleModelChange = (modelId: string) => {
+    onModelSelected?.(modelId)
     const nextModel = models.find((item) => item.id === modelId)
     if (!nextModel) {
       setSelectedModel(modelId)
