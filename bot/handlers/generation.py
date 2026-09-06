@@ -1536,6 +1536,20 @@ async def select_model_wan_27(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer("Wan 2.7 Pro выбран")
 
 
+def _repeat_source_prompt(request_data: dict, task) -> str:
+    """Restore a repeat prompt from legacy request payloads safely.
+
+    Older generation rows can contain an explicit but empty ``prompt`` key in
+    ``request_data`` while the canonical prompt is still stored on the task.
+    ``dict.get(key, fallback)`` does not fall back for empty strings, so repeat
+    flows must use truthy/non-blank fallback semantics here.
+    """
+    request_prompt = str(request_data.get("prompt") or "")
+    if request_prompt.strip():
+        return request_prompt
+    return str(getattr(task, "prompt", "") or "")
+
+
 async def _restore_image_task_to_state(
     task,
     state: FSMContext,
@@ -1558,7 +1572,7 @@ async def _restore_image_task_to_state(
     img_quality = request_data.get("img_quality", "2K")
     img_nsfw_checker = bool(request_data.get("img_nsfw_checker", False))
     nsfw_enabled = bool(request_data.get("nsfw_enabled", False))
-    prompt = request_data.get("prompt", task.prompt or "")
+    prompt = _repeat_source_prompt(request_data, task)
 
     await state.clear()
     available_reference_images, missing_reference_images = _available_reference_images(
@@ -2443,7 +2457,7 @@ async def run_repeat_image_generation(callback: types.CallbackQuery, state: FSMC
     prompt = (
         data.get("repeat_prompt")
         if state_matches_repeat and data.get("repeat_prompt")
-        else request_data.get("prompt", task.prompt or "")
+        else _repeat_source_prompt(request_data, task)
     )
     img_ratio = request_data.get("img_ratio", task.aspect_ratio or "1:1")
     if state_matches_repeat:
@@ -2720,7 +2734,7 @@ async def quick_repeat_image_confirm(callback: types.CallbackQuery, state: FSMCo
     user = await get_or_create_user(callback.from_user.id)
 
     img_service = request_data.get("img_service", task.model or "banana_pro")
-    prompt = request_data.get("prompt", task.prompt or "")
+    prompt = _repeat_source_prompt(request_data, task)
     img_ratio = request_data.get("img_ratio", task.aspect_ratio or "1:1")
     img_quality = request_data.get("img_quality", "2K")
     img_nsfw_checker = bool(request_data.get("img_nsfw_checker", False))
