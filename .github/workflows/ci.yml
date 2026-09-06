@@ -36,6 +36,11 @@ jobs:
         # be removed only after each RHS is reviewed for possible side effects.
         run: ruff check bot/ tests/ --select=E4,E7,E9,F --ignore=E402,F403,F405,E501,F841 --output-format=github
 
+      - name: Compile Python 3.11 sources
+        # Ruff parses a modern Python grammar; compile with the actual runtime
+        # version too, so Python-version-specific syntax cannot slip through.
+        run: python -m compileall -q bot tests
+
   test:
     runs-on: ubuntu-latest
     needs: lint
