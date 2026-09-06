@@ -157,3 +157,41 @@ def test_repeat_selected_photo_reference_overrides_private_source_image() -> Non
 
     assert restored["v_image_url"] == "https://example.test/user-photo.jpg"
     assert restored["reference_images"] == ["https://example.test/extra-reference.jpg"]
+
+
+def test_exact_video_repeat_restores_full_recipe_from_source_id_only() -> None:
+    source_task = {
+        "prompt": "private original prompt",
+        "model": "seedance_2_5",
+        "duration": 12,
+        "aspect_ratio": "9:16",
+        "request_data": {
+            "v_type": "video",
+            "seedance25_scenario": "multimodal",
+            "reference_images": ["https://example.test/private-image.png"],
+            "v_reference_videos": ["https://example.test/private-video.mp4"],
+            "reference_audios": ["https://example.test/private-audio.mp3"],
+            "resolution": "720p",
+            "generate_audio": True,
+            "return_last_frame": False,
+            "output_format": "mp4",
+            "web_search": False,
+            "nsfw_checker": False,
+        },
+    }
+
+    restored = enrich_video_repeat_body(
+        {"source_feed_gen_id": 42},
+        source_task,
+    )
+
+    assert restored["v_model"] == "seedance_2_5"
+    assert restored["prompt"] == "private original prompt"
+    assert restored["v_duration"] == 12
+    assert restored["v_ratio"] == "9:16"
+    assert restored["seedance25_scenario"] == "multimodal"
+    assert restored["reference_images"] == ["https://example.test/private-image.png"]
+    assert restored["v_reference_videos"] == ["https://example.test/private-video.mp4"]
+    assert restored["seedance25_reference_audio_urls"] == [
+        "https://example.test/private-audio.mp3"
+    ]

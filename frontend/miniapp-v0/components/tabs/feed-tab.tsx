@@ -19,6 +19,7 @@ import {
   fetchFeedComments,
   likeFeedItem,
   removeFeedItem,
+  repeatFeedVideo,
   setFeedItemBlurred,
   shareFeedItem,
 } from '@/lib/api'
@@ -32,6 +33,7 @@ import {
   Play,
   Repeat2,
   Send,
+  Settings2,
   Share2,
   Trash2,
   UserRound,
@@ -201,6 +203,10 @@ export function FeedTab() {
     setPromptPreset,
     setVideoPromptPreset,
     openProfile,
+    addTask,
+    setCredits,
+    setTaskDetail,
+    selectTask,
   } = useApp()
   const [source, setSource] = useState<(typeof sources)[number]['id']>('recent')
   const [model, setModel] = useState('banana_pro')
@@ -406,24 +412,20 @@ export function FeedTab() {
   const handleRemix = async (item: FeedItem) => {
     if (!isLive) return
     if (item.gen_type === 'video') {
-      const modelExists = state.videoModels.some((model) => model.id === item.model)
-      const imageReferences = item.references_hidden ? [] : (item.reference_images || []).map((url, index) => feedReferenceToUploadedFile(url, index))
-      const videoReferences = item.references_hidden ? [] : (item.reference_videos || []).map((url, index) => feedReferenceToUploadedFile(url, index, 'video'))
-      const scenario = imageReferences.length ? 'imgtxt' : videoReferences.length ? 'video' : normalizeVideoScenario(item.scenario)
-      setVideoPromptPreset({
-        title: 'Повторить видео из ленты',
-        prompt: item.prompt || '',
-        model: modelExists ? item.model : state.videoModels[0]?.id || 'v3_pro',
-        scenario,
-        ratio: item.aspect_ratio || '16:9',
-        duration: item.duration || 5,
-        sourceFeedGenId: item.id,
-        promptHidden: item.prompt_hidden,
-        initialStartImage: scenario === 'imgtxt' ? imageReferences.slice(0, 1) : [],
-        initialPhotoReferences: scenario === 'imgtxt' ? imageReferences.slice(1) : imageReferences,
-        initialVideoReferences: videoReferences,
-      })
-      setActiveTab(2)
+      setBusyId(item.id)
+      setError(null)
+      try {
+        const result = await repeatFeedVideo(item.id)
+        addTask(result.task)
+        setCredits(result.credits)
+        if (result.detail) setTaskDetail(result.detail)
+        setPreviewItem(null)
+        selectTask(result.task)
+      } catch (e) {
+        setError(getErrorMessage(e, 'Не удалось повторить видео'))
+      } finally {
+        setBusyId(null)
+      }
       return
     }
     const modelExists = state.imageModels.some((model) => model.id === item.model)
@@ -437,6 +439,37 @@ export function FeedTab() {
       promptHidden: false,
     })
     setActiveTab(1)
+  }
+
+  const handleVideoCustomize = (item: FeedItem) => {
+    if (!isLive || item.gen_type !== 'video') return
+    const modelExists = state.videoModels.some((model) => model.id === item.model)
+    const imageReferences = item.references_hidden
+      ? []
+      : (item.reference_images || []).map((url, index) => feedReferenceToUploadedFile(url, index))
+    const videoReferences = item.references_hidden
+      ? []
+      : (item.reference_videos || []).map((url, index) => feedReferenceToUploadedFile(url, index, 'video'))
+    const scenario = imageReferences.length
+      ? 'imgtxt'
+      : videoReferences.length
+        ? 'video'
+        : normalizeVideoScenario(item.scenario)
+    setVideoPromptPreset({
+      title: 'Изменить настройки повтора',
+      prompt: item.prompt || '',
+      model: modelExists ? item.model : state.videoModels[0]?.id || 'v3_pro',
+      scenario,
+      ratio: item.aspect_ratio || '16:9',
+      duration: item.duration || 5,
+      sourceFeedGenId: item.id,
+      promptHidden: item.prompt_hidden,
+      initialStartImage: scenario === 'imgtxt' ? imageReferences.slice(0, 1) : [],
+      initialPhotoReferences: scenario === 'imgtxt' ? imageReferences.slice(1) : imageReferences,
+      initialVideoReferences: videoReferences,
+    })
+    setPreviewItem(null)
+    setActiveTab(2)
   }
 
   const handleToggleBlur = async (item: FeedItem) => {
@@ -865,14 +898,30 @@ export function FeedTab() {
               <MessageCircle className="h-4 w-4" />
               {previewItem.comments_count || 0}
             </Button>
+            {previewItem.gen_type === 'video' ? (
+              <Button
+                type="button"
+                variant="secondary"
+                className="h-10 rounded-full bg-secondary/90 px-4"
+                disabled={!isLive || busyId === previewItem.id}
+                onClick={() => handleVideoCustomize(previewItem)}
+              >
+                <Settings2 className="h-4 w-4" />
+                <span>Настроить</span>
+              </Button>
+            ) : null}
             <Button
               type="button"
               className="h-10 rounded-full px-4"
-              disabled={!isLive}
+              disabled={!isLive || busyId === previewItem.id}
               onClick={() => handleRemix(previewItem)}
             >
-              <Repeat2 className="h-4 w-4" />
-              <span>Повторить</span>
+              {busyId === previewItem.id && previewItem.gen_type === 'video' ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Repeat2 className="h-4 w-4" />
+              )}
+              <span>{busyId === previewItem.id && previewItem.gen_type === 'video' ? 'Запускаю…' : 'Повторить'}</span>
             </Button>
 
           </div>

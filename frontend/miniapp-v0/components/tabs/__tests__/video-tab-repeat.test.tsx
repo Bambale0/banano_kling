@@ -85,7 +85,7 @@ describe('VideoTab repeat mode selection', () => {
     expect(screen.queryByTestId('seedance25-form')).not.toBeInTheDocument()
   })
 
-  it('keeps Seedance 2.5 selected while feed repeat uses the source-aware generic form', () => {
+  it('keeps Seedance 2.5 selected when the user explicitly customizes a repeat', () => {
     mockApp({
       title: 'Повторить Seedance 2.5',
       prompt: '',
