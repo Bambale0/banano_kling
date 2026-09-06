@@ -147,7 +147,7 @@ class GeminiOmniService(KlingService):
                     text = await resp.text()
                     try:
                         data = json.loads(text)
-                    except json.JSONDecodeError as exc:
+                    except json.JSONDecodeError:
                         logger.error("Gemini Omni invalid JSON: %s", text[:500])
                         return {
                             "error": "invalid_json",

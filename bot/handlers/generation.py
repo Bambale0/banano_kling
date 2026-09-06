@@ -1,5 +1,4 @@
 import asyncio
-import base64
 import html
 import io
 import json
@@ -8,7 +7,6 @@ import os
 import random
 import re
 import subprocess
-import time
 import uuid
 from datetime import datetime
 from typing import Optional
@@ -25,7 +23,6 @@ from bot.config import config
 from bot.quality_pricing import QUALITY_COSTS
 from bot.database import (
     add_credits,
-    add_generation_history,
     add_generation_task,
     _merge_task_id_aliases,
     check_can_afford,
@@ -92,7 +89,6 @@ from bot.utils.help_texts import (
     get_reference_images_help,
 )
 from bot.utils.user_facing_errors import make_user_friendly_generation_error
-from bot.utils.validators import detect_explicit_prompt_policy_violation
 from bot.video_reference_policy import (
     choose_video_reference_model,
     get_max_video_image_references,
@@ -2912,7 +2908,7 @@ async def _show_video_creation_screen(
         and not v_image_url
         and current_model != "gemini_omni_video"
     ):
-        text += f"<i>📷 Сначала загрузите фото для первого кадра.</i>"
+        text += "<i>📷 Сначала загрузите фото для первого кадра.</i>"
     elif current_v_type == "video" and not v_reference_videos:
         text += (
             f"<i>📹 При желании загрузите до {max_video_refs} коротких "
@@ -4863,7 +4859,7 @@ async def _send_download_link(send_callable, saved_url: str):
             ]
         )
         await send_callable(
-            f"📥 <b>Исходник</b> — можно скачать по ссылке:",
+            "📥 <b>Исходник</b> — можно скачать по ссылке:",
             reply_markup=kb,
             parse_mode="HTML",
         )
@@ -5300,8 +5296,8 @@ async def show_video_edit_options(
         media_status = "✅ Загружено" if has_image else "⏳ Ожидание загрузки"
         media_text = "🖼 Изображение"
 
-    text = f"✂️ <b>Видео-эффекты</b>"
-    text += f"<b>Опции:</b>\n"
+    text = "✂️ <b>Видео-эффекты</b>"
+    text += "<b>Опции:</b>\n"
     text += f"   {quality_emoji} Качество: <code>{quality.upper()}</code>\n"
     text += f"   ⏱ Длительность: <code>{options.get('duration', 5)} сек</code>\n"
     text += f"   📐 Формат: <code>{options.get('aspect_ratio', '16:9')}</code>"
@@ -5356,7 +5352,7 @@ async def handle_model_selection(callback: types.CallbackQuery, state: FSMContex
         preset = preset_manager.get_preset(preset_id)
         if preset:
             model_emoji = "💎" if "pro" in model else "⚡"
-            text = f"✅ <b>Модель изменена</b>"
+            text = "✅ <b>Модель изменена</b>"
             text += f"{model_emoji} Теперь используется: <code>{model}</code>"
 
             if model_type == "flash":
@@ -5394,7 +5390,7 @@ async def handle_resolution_selection(callback: types.CallbackQuery, state: FSMC
         preset = preset_manager.get_preset(preset_id)
         if preset:
             res_emoji = {"1K": "⚡", "2K": "💎", "4K": "👑"}.get(resolution, "⚡")
-            text = f"✅ <b>Разрешение изменено</b>"
+            text = "✅ <b>Разрешение изменено</b>"
             text += f"{res_emoji} Теперь используется: <code>{resolution}</code>"
 
             resolutions = {
@@ -5437,7 +5433,7 @@ async def handle_image_ratio_selection(
         # Показываем подтверждение
         preset = preset_manager.get_preset(preset_id)
         if preset:
-            text = f"✅ <b>Формат изменён</b>"
+            text = "✅ <b>Формат изменён</b>"
             text += f"📐 Теперь используется: <code>{ratio}</code>"
 
             ratios_desc = {

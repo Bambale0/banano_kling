@@ -574,7 +574,7 @@ def format_generation_options(options: dict) -> str:
         text += f"👁 Разрешение: <code>{options['resolution']}</code>\n"
 
     if options.get("enable_search"):
-        text += f"🔍 Поиск: <code>ВКЛ</code>\n"
+        text += "🔍 Поиск: <code>ВКЛ</code>\n"
 
     if options.get("reference_count"):
         text += f"🖼 Референсы: <code>{options['reference_count']}</code>\n"

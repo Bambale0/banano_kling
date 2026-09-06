@@ -1,10 +1,8 @@
-import asyncio
 import logging
 from typing import Optional
 
 from aiogram import Bot, F, Router, types
 from aiogram.fsm.context import FSMContext
-from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.config import config
@@ -12,7 +10,6 @@ from bot.database import add_credits, check_can_afford, deduct_credits, get_user
 from bot.keyboards import get_main_menu_button_keyboard, get_main_menu_keyboard
 from bot.services.batch_service import BatchStatus, batch_service
 from bot.services.gemini_service import gemini_service
-from bot.services.preset_manager import preset_manager
 from bot.states import GenerationStates
 
 logger = logging.getLogger(__name__)
@@ -229,11 +226,11 @@ async def process_batch_image(message: types.Message, state: FSMContext):
         await state.update_data(main_image=image_data)
 
         await message.answer(
-            f"✅ <b>Главное фото загружено!</b>"
-            f"Теперь вы можете:\n"
-            f"• Добавить до <b>14 референсных изображений</b> (стиль, персонажи, объекты)\n"
-            f"• Или нажать «Готово» чтобы продолжить без референсов"
-            f"📎 Референсов добавлено: <code>0/9</code>",
+            "✅ <b>Главное фото загружено!</b>"
+            "Теперь вы можете:\n"
+            "• Добавить до <b>14 референсных изображений</b> (стиль, персонажи, объекты)\n"
+            "• Или нажать «Готово» чтобы продолжить без референсов"
+            "📎 Референсов добавлено: <code>0/9</code>",
             reply_markup=get_batch_upload_keyboard(),
             parse_mode="HTML",
         )
@@ -241,8 +238,8 @@ async def process_batch_image(message: types.Message, state: FSMContext):
         # Добавляем как референс
         if len(ref_images) >= 9:
             await message.answer(
-                f"⚠️ <b>Достигнут лимит референсов (14)</b>"
-                f"Нажмите «Готово» чтобы продолжить.",
+                "⚠️ <b>Достигнут лимит референсов (14)</b>"
+                "Нажмите «Готово» чтобы продолжить.",
                 reply_markup=get_batch_upload_keyboard(),
                 parse_mode="HTML",
             )
@@ -437,7 +434,7 @@ async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: B
         # Удаляем сообщение прогресса
         try:
             await progress_msg.delete()
-        except Exception as e:
+        except Exception:
             pass
 
         if _is_binary_image_payload(result):

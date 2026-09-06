@@ -15,11 +15,9 @@ from bot import db as db_backend
 from bot.config import config
 from bot.database import (
     PROMO_BONUS_BY_CREDITS,
-    add_credits,
     complete_payment_atomic,
     create_miniapp_notification,
     create_transaction,
-    credit_first_payment_referral_bonus,
     get_promo_bonus_for_credits,
     get_promo_code_by_code,
     get_or_create_user,
@@ -27,7 +25,6 @@ from bot.database import (
     get_transaction_by_order,
     get_user_settings,
     normalize_promo_code,
-    record_promo_redemption,
     update_transaction_payment_id,
     update_transaction_status,
 )
