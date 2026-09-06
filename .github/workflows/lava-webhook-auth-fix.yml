@@ -1,0 +1,73 @@
+name: One-shot Lava webhook auth fix
+
+on:
+  push:
+    branches: [ci-stabilize-ruff-defaults-2026-09-06]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ci-stabilize-ruff-defaults-2026-09-06
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Align Lava webhook authentication with current provider contract
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          payments = Path('bot/handlers/payments.py')
+          text = payments.read_text(encoding='utf-8')
+          old = '''        # Validate HMAC signature (MANDATORY — Lava docs: HMAC-SHA256 of raw body)\n        import hashlib\n        import hmac\n\n        lava_secret = config.LAVA_WEBHOOK_SECRET\n        if not lava_secret:\n            logger.error("LAVA_WEBHOOK_SECRET is not configured — rejecting all webhooks")\n            return web.Response(\n                status=403,\n                text='{\"error\": \"webhook secret not configured\"}',\n                content_type="application/json",\n            )\n\n        try:\n            raw_str = raw_body.decode("utf-8")\n            sig = data.get("signature", "")\n            expected = hmac.new(lava_secret.encode(), raw_str.encode(), hashlib.sha256).hexdigest()\n            if not hmac.compare_digest(sig, expected):\n                logger.warning(\n                    "Rejected Lava webhook: invalid HMAC signature contract_id=%s",\n                    lava_service.webhook_contract_id(data) or "unknown",\n                )\n                return web.Response(status=401)\n        except Exception:\n            logger.exception("Error while validating Lava webhook signature")\n            return web.Response(status=401)\n'''
+          new = '''        # lava.top authenticates webhook delivery with the API key configured\n        # for the webhook and sends it in the X-Api-Key HTTP header.\n        import hmac\n\n        lava_secret = config.LAVA_WEBHOOK_SECRET\n        if not lava_secret:\n            logger.error("LAVA_WEBHOOK_SECRET is not configured — rejecting all webhooks")\n            return web.Response(\n                status=403,\n                text='{\"error\": \"webhook secret not configured\"}',\n                content_type="application/json",\n            )\n\n        provided_key = str(request.headers.get("X-Api-Key", "") or "")\n        if not provided_key or not hmac.compare_digest(provided_key, lava_secret):\n            logger.warning(\n                "Rejected Lava webhook: invalid X-Api-Key contract_id=%s",\n                lava_service.webhook_contract_id(data) or "unknown",\n            )\n            return web.Response(status=401)\n'''
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f'payments auth block: expected one match, found {count}')
+          payments.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          tests = Path('tests/test_referral_system.py')
+          text = tests.read_text(encoding='utf-8')
+          marker = '''    monkeypatch.setattr(payments_module, "_resolve_lava_provider_status", _fake_status)\n\n    user = await database.get_or_create_user(4303)\n'''
+          replacement = '''    monkeypatch.setattr(payments_module, "_resolve_lava_provider_status", _fake_status)\n    monkeypatch.setattr(\n        payments_module.config, "LAVA_WEBHOOK_SECRET", "test-lava-webhook-key"\n    )\n\n    user = await database.get_or_create_user(4303)\n'''
+          count = text.count(marker)
+          if count != 1:
+              raise SystemExit(f'test secret marker: expected one match, found {count}')
+          text = text.replace(marker, replacement, 1)
+
+          marker = '''        ),\n        app={"bot": bot},\n    )\n\n    response = await handle_lava_webhook(request)\n'''
+          replacement = '''        ),\n        headers={"X-Api-Key": "test-lava-webhook-key"},\n        app={"bot": bot},\n    )\n\n    response = await handle_lava_webhook(request)\n'''
+          count = text.count(marker)
+          if count != 1:
+              raise SystemExit(f'test request marker: expected one match, found {count}')
+          text = text.replace(marker, replacement, 1)
+
+          insert_after = '''    assert transaction.status == "completed"\n    bot.send_message.assert_awaited_once()\n\n\n'''
+          security_tests = '''    assert transaction.status == "completed"\n    bot.send_message.assert_awaited_once()\n\n\n@pytest.mark.asyncio\nasync def test_lava_webhook_rejects_invalid_api_key(monkeypatch):\n    from bot.handlers import payments as payments_module\n    from bot.handlers.payments import handle_lava_webhook\n\n    monkeypatch.setattr(\n        payments_module.config, "LAVA_WEBHOOK_SECRET", "expected-lava-webhook-key"\n    )\n    request = SimpleNamespace(\n        read=AsyncMock(\n            return_value=b'{"eventType":"payment.success","status":"success"}'\n        ),\n        headers={"X-Api-Key": "wrong-key"},\n        app={"bot": SimpleNamespace(send_message=AsyncMock())},\n    )\n\n    response = await handle_lava_webhook(request)\n\n    assert response.status == 401\n\n\n@pytest.mark.asyncio\nasync def test_lava_webhook_fails_closed_without_configured_key(monkeypatch):\n    from bot.handlers import payments as payments_module\n    from bot.handlers.payments import handle_lava_webhook\n\n    monkeypatch.setattr(payments_module.config, "LAVA_WEBHOOK_SECRET", "")\n    request = SimpleNamespace(\n        read=AsyncMock(\n            return_value=b'{"eventType":"payment.success","status":"success"}'\n        ),\n        headers={},\n        app={"bot": SimpleNamespace(send_message=AsyncMock())},\n    )\n\n    response = await handle_lava_webhook(request)\n\n    assert response.status == 403\n\n\n'''
+          count = text.count(insert_after)
+          if count < 1:
+              raise SystemExit('completed-webhook insertion marker not found')
+          # Insert after the first matching Lava completion test only.
+          text = text.replace(insert_after, security_tests, 1)
+          tests.write_text(text, encoding='utf-8')
+          PY
+
+          python -m compileall -q bot tests
+          git diff --check
+          git diff -- bot/handlers/payments.py tests/test_referral_system.py
+
+      - name: Commit Lava webhook authentication fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add bot/handlers/payments.py tests/test_referral_system.py
+          git commit -m 'fix: authenticate Lava webhooks with X-Api-Key'
+          git push origin HEAD:ci-stabilize-ruff-defaults-2026-09-06
