@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 
 import { VideoTab } from '@/components/tabs/video-tab'
 import { useApp } from '@/lib/app-context'
@@ -14,7 +14,15 @@ jest.mock('@/lib/api', () => ({
 }))
 
 jest.mock('@/components/forms/video-generator-form', () => ({
-  VideoGeneratorForm: () => <div data-testid="regular-video-form">regular form</div>,
+  VideoGeneratorForm: ({ models, onModelSelected }: { models: Array<{ id: string }>; onModelSelected?: (modelId: string) => void }) => (
+    <div data-testid="regular-video-form">
+      {models.map((model) => (
+        <button key={model.id} type="button" onClick={() => onModelSelected?.(model.id)}>
+          {model.id}
+        </button>
+      ))}
+    </div>
+  ),
 }))
 
 jest.mock('@/components/forms/seedance25-public-form', () => ({
@@ -83,6 +91,23 @@ describe('VideoTab repeat mode selection', () => {
 
     expect(screen.getByTestId('regular-video-form')).toBeInTheDocument()
     expect(screen.queryByTestId('seedance25-form')).not.toBeInTheDocument()
+  })
+
+
+  it('shows Seedance 2.5 inside the regular catalog and routes it to the dedicated flow', () => {
+    mockApp({
+      title: 'Обычное видео',
+      prompt: 'prompt',
+      model: 'seedance_2',
+    })
+
+    render(<VideoTab />)
+
+    expect(screen.getByRole('button', { name: 'seedance_2_5' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'seedance_2_5' }))
+
+    expect(screen.getByTestId('seedance25-form')).toBeInTheDocument()
+    expect(screen.queryByTestId('regular-video-form')).not.toBeInTheDocument()
   })
 
   it('keeps Seedance 2.5 selected when the user explicitly customizes a repeat', () => {

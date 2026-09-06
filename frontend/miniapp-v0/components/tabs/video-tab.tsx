@@ -34,11 +34,13 @@ export function VideoTab() {
   const isSeedanceRepeat = Boolean(
     videoPromptPreset?.model === 'seedance_2_5' && videoPromptPreset.sourceFeedGenId,
   )
-  const regularVideoModels = useMemo(
-    () => state.videoModels.filter((item) => item.id !== 'seedance_2_5'),
+  const formVideoModels = useMemo(
+    () => [
+      ...state.videoModels.filter((item) => item.id !== 'seedance_2_5'),
+      ...state.videoModels.filter((item) => item.id === 'seedance_2_5'),
+    ],
     [state.videoModels],
   )
-  const formVideoModels = isSeedanceRepeat ? state.videoModels : regularVideoModels
   const canUseSeedance25 = Boolean(seedance25Model)
   const effectiveMode = canUseSeedance25 ? videoMode : 'regular'
 
@@ -132,6 +134,11 @@ export function VideoTab() {
     return uploaded
   }
 
+  const handleCatalogModelSelected = useCallback((modelId: string) => {
+    if (!canUseSeedance25) return
+    setVideoMode(modelId === 'seedance_2_5' ? 'seedance25' : 'regular')
+  }, [canUseSeedance25])
+
   const handleVideoPromptPresetConsumed = useCallback(() => {
     setVideoPromptPreset(null)
   }, [setVideoPromptPreset])
@@ -214,6 +221,7 @@ export function VideoTab() {
             onPromptPresetConsumed={handleVideoPromptPresetConsumed}
             isSubmitting={isSubmitting}
             credits={state.user.credits}
+            onModelSelected={handleCatalogModelSelected}
           />
         )}
 
