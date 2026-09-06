@@ -1,9 +1,8 @@
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 
 import { VideoTab } from '@/components/tabs/video-tab'
 import { useApp } from '@/lib/app-context'
-import { repeatSeedance25 } from '@/lib/seedance25-api'
 
 jest.mock('@/lib/app-context', () => ({
   useApp: jest.fn(),
@@ -12,10 +11,6 @@ jest.mock('@/lib/app-context', () => ({
 jest.mock('@/lib/api', () => ({
   generateVideo: jest.fn(),
   uploadFile: jest.fn(),
-}))
-
-jest.mock('@/lib/seedance25-api', () => ({
-  repeatSeedance25: jest.fn(),
 }))
 
 jest.mock('@/components/forms/video-generator-form', () => ({
@@ -31,7 +26,6 @@ jest.mock('@/components/result-card', () => ({
 }))
 
 const mockedUseApp = useApp as jest.MockedFunction<typeof useApp>
-const mockedRepeatSeedance25 = repeatSeedance25 as jest.MockedFunction<typeof repeatSeedance25>
 
 const videoModels = [
   {
@@ -91,41 +85,23 @@ describe('VideoTab repeat mode selection', () => {
     expect(screen.queryByTestId('seedance25-form')).not.toBeInTheDocument()
   })
 
-  it('opens a one-click Seedance 2.5 repeat card instead of the full settings form', async () => {
+  it('keeps Seedance 2.5 selected while feed repeat uses the source-aware generic form', () => {
     mockApp({
       title: 'Повторить Seedance 2.5',
       prompt: '',
       model: 'seedance_2_5',
-      duration: 10,
-      ratio: '9:16',
       sourceFeedGenId: 42,
       promptHidden: true,
-    })
-    mockedRepeatSeedance25.mockResolvedValue({
-      ok: true,
-      status: 'queued',
-      task_id: 'repeat-task',
-      credits: 88,
-      cost: 12,
-      model_label: 'Seedance 2.5',
-      admin_free: false,
-      resolution: '720p',
-      duration: 10,
-      aspect_ratio: '9:16',
-      scenario: 'multimodal',
     })
 
     render(<VideoTab />)
 
-    expect(screen.getByTestId('seedance25-repeat-card')).toBeInTheDocument()
-    expect(screen.queryByTestId('regular-video-form')).not.toBeInTheDocument()
+    expect(screen.getByTestId('regular-video-form')).toBeInTheDocument()
     expect(screen.queryByTestId('seedance25-form')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Другие модели/i })).not.toBeInTheDocument()
-    expect(screen.getByText('10 сек')).toBeInTheDocument()
-    expect(screen.getByText('9:16')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: /^Повторить видео$/i }))
-    await waitFor(() => expect(mockedRepeatSeedance25).toHaveBeenCalledWith(42))
-    expect(await screen.findByText(/Повтор запущен/i)).toBeInTheDocument()
+    const seedanceButton = screen.getByRole('button', { name: /Seedance 2\.5/i })
+    const catalogButton = screen.getByRole('button', { name: /Другие модели/i })
+    expect(seedanceButton.className).toContain('border-gold/45')
+    expect(catalogButton.className).not.toContain('border-border bg-secondary')
   })
 })

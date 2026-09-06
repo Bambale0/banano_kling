@@ -411,6 +411,7 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
         if str(source_feed_gen_id_raw or "").isdigit()
         else None
     )
+    immediate_parent_id = source_feed_gen_id
     if source_feed_gen_id:
         source_card = await miniapp_module._get_repeat_source_card(
             source_feed_gen_id,
@@ -425,6 +426,11 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
                 {"ok": False, "error": "Исходное видео для повтора не найдено"},
                 status=404,
             )
+        # Match the common Mini App repeat contract: keep the root source on
+        # the generated task, but reward the immediate parent on each repeat.
+        source_feed_gen_id = int(
+            source_card.get("source_feed_gen_id") or source_feed_gen_id
+        )
 
     data = {
         "seedance25_scenario": str(body.get("seedance25_scenario") or "text").strip().lower(),
@@ -498,6 +504,18 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
             )
 
         task_id = str(result["task_id"])
+        request_data = _request_data(
+            payload,
+            is_admin=is_admin,
+            quote=quote,
+            source="miniapp",
+        )
+        if source_feed_gen_id:
+            request_data.update(
+                source_feed_gen_id=source_feed_gen_id,
+                parent_generation_id=immediate_parent_id,
+                action_type="repeat",
+            )
         await generation_module.add_generation_task(
             user.id,
             telegram_id,
@@ -509,20 +527,15 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
             aspect_ratio=payload["ratio"],
             prompt=payload["prompt"],
             cost=quote,
-            request_data=_request_data(
-                payload,
-                is_admin=is_admin,
-                quote=quote,
-                source="miniapp_repeat" if source_feed_gen_id else "miniapp",
-            ),
+            request_data=request_data,
             source_feed_gen_id=source_feed_gen_id,
-            parent_generation_id=source_feed_gen_id,
+            parent_generation_id=(immediate_parent_id if source_feed_gen_id else None),
             action_type="repeat" if source_feed_gen_id else None,
         )
-        if source_feed_gen_id and not is_admin and quote > 0:
+        if source_feed_gen_id:
             try:
                 await miniapp_module.credit_feed_prompt_repeat(
-                    source_feed_gen_id,
+                    immediate_parent_id,
                     user.id,
                     repeat_task_id=task_id,
                     credits_spent=quote,

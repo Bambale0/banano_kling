@@ -136,7 +136,7 @@ async def test_seedance25_miniapp_repeat_keeps_source_lineage_and_rewards_author
     monkeypatch.setattr(
         miniapp_module,
         '_get_repeat_source_card',
-        AsyncMock(return_value={'gen_type': 'video', 'model': 'seedance_2_5'}),
+        AsyncMock(return_value={'gen_type': 'video', 'model': 'seedance_2_5', 'source_feed_gen_id': 7}),
     )
     monkeypatch.setattr(miniapp_module, 'check_can_afford', AsyncMock(return_value=True))
     monkeypatch.setattr(miniapp_module, 'deduct_credits', AsyncMock(return_value=True))
@@ -173,10 +173,13 @@ async def test_seedance25_miniapp_repeat_keeps_source_lineage_and_rewards_author
 
     assert response.status == 200
     kwargs = add_task.await_args.kwargs
-    assert kwargs['source_feed_gen_id'] == 42
+    assert kwargs['source_feed_gen_id'] == 7
     assert kwargs['parent_generation_id'] == 42
     assert kwargs['action_type'] == 'repeat'
-    assert kwargs['request_data']['source'] == 'miniapp_repeat'
+    assert kwargs['request_data']['source'] == 'miniapp'
+    assert kwargs['request_data']['source_feed_gen_id'] == 7
+    assert kwargs['request_data']['parent_generation_id'] == 42
+    assert kwargs['request_data']['action_type'] == 'repeat'
     repeat_credit.assert_awaited_once_with(
         42,
         501,
