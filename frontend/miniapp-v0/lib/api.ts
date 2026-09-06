@@ -1377,6 +1377,73 @@ export async function generateVideo(payload: {
   }
 }
 
+export async function repeatFeedVideo(sourceFeedGenId: number): Promise<{
+  task: Task
+  detail?: TaskDetail | null
+  credits: number
+}> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+  if (!Number.isInteger(sourceFeedGenId) || sourceFeedGenId <= 0) {
+    throw new Error('Исходное видео не найдено')
+  }
+
+  const response = await postJson<{
+    ok: true
+    status: 'queued' | 'done'
+    task_id: string
+    saved_url?: string | null
+    task_type?: 'video'
+    credits: number
+    cost: number
+    model: string
+    model_label: string
+    aspect_ratio: string
+    duration?: number | null
+    scenario?: string | null
+    prompt_hidden?: boolean
+    prompt_actions_allowed?: boolean
+    source_feed_gen_id?: number | null
+  }>('generate-video', {
+    init_data: initData,
+    source_feed_gen_id: sourceFeedGenId,
+  })
+
+  const task: Task = {
+    task_id: response.task_id,
+    type: 'video',
+    model: response.model,
+    model_label: response.model_label,
+    aspect_ratio: response.aspect_ratio,
+    status: response.status === 'done' ? 'completed' : 'pending',
+    result_url: response.saved_url || null,
+    created_at: new Date().toISOString(),
+    prompt_preview: '',
+    cost: response.cost,
+    duration: response.duration ?? null,
+    prompt_hidden: response.prompt_hidden ?? true,
+    prompt_actions_allowed: response.prompt_actions_allowed ?? false,
+  }
+
+  return {
+    task,
+    detail:
+      response.status === 'done'
+        ? {
+            ...task,
+            prompt: '',
+            request_data: {
+              source_feed_gen_id: response.source_feed_gen_id || sourceFeedGenId,
+              action_type: 'repeat',
+            },
+          }
+        : null,
+    credits: response.credits,
+  }
+}
+
 export async function askAIAssistant(payload: {
   message: string
   history: { role: 'user' | 'assistant'; text: string }[]

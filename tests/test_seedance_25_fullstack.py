@@ -1,6 +1,7 @@
 # ruff: noqa: I001
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -172,6 +173,15 @@ async def test_seedance25_miniapp_repeat_keeps_source_lineage_and_rewards_author
     )
 
     assert response.status == 200
+    payload = json.loads(response.body.decode('utf-8'))
+    assert payload['task_type'] == 'video'
+    assert payload['model'] == 'seedance_2_5'
+    assert payload['aspect_ratio'] == '9:16'
+    assert payload['duration'] == 10
+    assert payload['scenario'] == 'text'
+    assert payload['prompt_hidden'] is True
+    assert payload['prompt_actions_allowed'] is False
+    assert payload['source_feed_gen_id'] == 7
     kwargs = add_task.await_args.kwargs
     assert kwargs['source_feed_gen_id'] == 7
     assert kwargs['parent_generation_id'] == 42
