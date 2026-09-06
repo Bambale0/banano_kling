@@ -49,14 +49,10 @@ const videoItem = {
   feed_references_visible: false,
 }
 
-describe('FeedTab exact video repeat', () => {
-  it('repeats the video directly instead of opening the full video constructor', async () => {
+describe('FeedTab editable video repeat', () => {
+  it('opens the source-aware video form instead of launching immediately', async () => {
     const setActiveTab = jest.fn()
     const setVideoPromptPreset = jest.fn()
-    const addTask = jest.fn()
-    const setCredits = jest.fn()
-    const setTaskDetail = jest.fn()
-    const selectTask = jest.fn()
 
     mockedUseApp.mockReturnValue({
       state: {
@@ -83,47 +79,32 @@ describe('FeedTab exact video repeat', () => {
       setPromptPreset: jest.fn(),
       setVideoPromptPreset,
       openProfile: jest.fn(),
-      addTask,
-      setCredits,
-      setTaskDetail,
-      selectTask,
     } as unknown as ReturnType<typeof useApp>)
 
     mockedFetchFeed.mockResolvedValue({
       feed: [videoItem],
       models: [{ id: 'seedance_2_5', label: 'Seedance 2.5' }],
     } as Awaited<ReturnType<typeof fetchFeed>>)
-    mockedRepeatFeedVideo.mockResolvedValue({
-      task: {
-        task_id: 'repeat-task',
-        type: 'video',
-        model: 'seedance_2_5',
-        model_label: 'Seedance 2.5',
-        aspect_ratio: '9:16',
-        status: 'pending',
-        result_url: null,
-        created_at: '2026-09-06T00:00:01Z',
-        prompt_preview: '',
-        cost: 12,
-        duration: 12,
-        prompt_hidden: true,
-        prompt_actions_allowed: false,
-      },
-      detail: null,
-      credits: 88,
-    })
 
     render(<FeedTab />)
 
     await screen.findByRole('button', { name: 'Открыть видео' })
     fireEvent.click(screen.getByRole('button', { name: 'Открыть видео' }))
-    fireEvent.click(await screen.findByRole('button', { name: /Повторить/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Повторить$/i }))
 
-    await waitFor(() => expect(mockedRepeatFeedVideo).toHaveBeenCalledWith(42))
-    expect(setVideoPromptPreset).not.toHaveBeenCalled()
-    expect(setActiveTab).not.toHaveBeenCalledWith(2)
-    expect(addTask).toHaveBeenCalledWith(expect.objectContaining({ task_id: 'repeat-task' }))
-    expect(setCredits).toHaveBeenCalledWith(88)
-    expect(selectTask).toHaveBeenCalledWith(expect.objectContaining({ task_id: 'repeat-task' }))
+    await waitFor(() => {
+      expect(setVideoPromptPreset).toHaveBeenCalledWith(expect.objectContaining({
+        title: 'Повторить видео из ленты',
+        model: 'seedance_2_5',
+        scenario: 'video',
+        ratio: '9:16',
+        duration: 12,
+        sourceFeedGenId: 42,
+        promptHidden: true,
+      }))
+    })
+    expect(setActiveTab).toHaveBeenCalledWith(2)
+    expect(mockedRepeatFeedVideo).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: /Настроить/i })).not.toBeInTheDocument()
   })
 })
