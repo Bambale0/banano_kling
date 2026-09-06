@@ -405,6 +405,32 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
     )
     user = ctx["user"]
     is_admin = config.is_admin(telegram_id)
+    source_feed_gen_id_raw = body.get("source_feed_gen_id") or body.get("sourceFeedGenId")
+    source_feed_gen_id = (
+        int(source_feed_gen_id_raw)
+        if str(source_feed_gen_id_raw or "").isdigit()
+        else None
+    )
+    immediate_parent_id = source_feed_gen_id
+    if source_feed_gen_id:
+        source_card = await miniapp_module._get_repeat_source_card(
+            source_feed_gen_id,
+            viewer_user_id=user.id,
+        )
+        if (
+            not source_card
+            or str(source_card.get("gen_type") or "").lower() != "video"
+            or str(source_card.get("model") or "") != MODEL_KEY
+        ):
+            return web.json_response(
+                {"ok": False, "error": "Исходное видео для повтора не найдено"},
+                status=404,
+            )
+        # Match the common Mini App repeat contract: keep the root source on
+        # the generated task, but reward the immediate parent on each repeat.
+        source_feed_gen_id = int(
+            source_card.get("source_feed_gen_id") or source_feed_gen_id
+        )
 
     data = {
         "seedance25_scenario": str(body.get("seedance25_scenario") or "text").strip().lower(),
@@ -478,6 +504,18 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
             )
 
         task_id = str(result["task_id"])
+        request_data = _request_data(
+            payload,
+            is_admin=is_admin,
+            quote=quote,
+            source="miniapp",
+        )
+        if source_feed_gen_id:
+            request_data.update(
+                source_feed_gen_id=source_feed_gen_id,
+                parent_generation_id=immediate_parent_id,
+                action_type="repeat",
+            )
         await generation_module.add_generation_task(
             user.id,
             telegram_id,
@@ -489,8 +527,25 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
             aspect_ratio=payload["ratio"],
             prompt=payload["prompt"],
             cost=quote,
-            request_data=_request_data(payload, is_admin=is_admin, quote=quote, source="miniapp"),
+            request_data=request_data,
+            source_feed_gen_id=source_feed_gen_id,
+            parent_generation_id=(immediate_parent_id if source_feed_gen_id else None),
+            action_type="repeat" if source_feed_gen_id else None,
         )
+        if source_feed_gen_id:
+            try:
+                await miniapp_module.credit_feed_prompt_repeat(
+                    immediate_parent_id,
+                    user.id,
+                    repeat_task_id=task_id,
+                    credits_spent=quote,
+                )
+            except Exception:
+                logger.exception(
+                    "Seedance 2.5 repeat reward failed for source=%s task=%s",
+                    source_feed_gen_id,
+                    task_id,
+                )
         fresh_user = await miniapp_module.get_or_create_user(telegram_id)
         return web.json_response(
             {
