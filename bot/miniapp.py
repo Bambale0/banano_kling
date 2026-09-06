@@ -1946,10 +1946,11 @@ async def miniapp_index(request: web.Request) -> web.Response:
             'try{sessionStorage.setItem("miniapp_debug_url",window.location.href)}catch(e){}'
             '</script>'
         )
+        runtime_config_json = json.dumps(runtime_config, ensure_ascii=False).replace("</", "<\\/")
         script = (
             '<script id="miniapp-runtime-config">'
             "window.__BANANO_MINIAPP_CONFIG__="
-            f"{json.dumps(runtime_config, ensure_ascii=False).replace('</', '<\\/')};"
+            f"{runtime_config_json};"
             "</script>"
         )
         html_text = index_path.read_text(encoding="utf-8")
