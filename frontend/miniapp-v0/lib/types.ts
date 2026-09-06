@@ -184,6 +184,19 @@ export interface BootstrapResponse {
   saved_references?: SavedReference[]
 }
 
+export interface TrendUserField {
+  key: string
+  label: string
+  type: 'text' | 'number'
+  required?: boolean
+  placeholder?: string
+  min?: number
+  max?: number
+  max_length?: number
+  suffix?: string
+  default_value?: string
+}
+
 export interface TrendGenerationSettings {
   kind: 'image' | 'video'
   user_input: 'photo'
@@ -192,6 +205,7 @@ export interface TrendGenerationSettings {
   preview_type?: 'image' | 'video'
   reference_count?: number
   reference_labels?: string[]
+  user_fields?: TrendUserField[]
   quality?: string
   count?: number
   nsfw_checker?: boolean

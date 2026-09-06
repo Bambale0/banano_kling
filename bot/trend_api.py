@@ -19,6 +19,11 @@ from bot.database import (
 )
 from bot.services.media_input_utils import missing_local_upload_sources
 from bot.services.preset_manager import preset_manager
+from bot.trend_user_fields import (
+    TrendUserFieldsError,
+    clean_submitted_user_values,
+    render_trend_prompt,
+)
 from bot.video_reference_policy import apply_video_reference_cost
 
 logger = logging.getLogger(__name__)
@@ -34,6 +39,7 @@ class TrendRunValidationError(ValueError):
 class TrendRunRequest:
     trend_id: int
     reference_urls: tuple[str, ...]
+    user_values: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -126,11 +132,12 @@ def _clean_reference_urls(raw_urls: Any) -> tuple[str, ...]:
 
 
 def parse_trend_run_request(body: Any) -> TrendRunRequest:
-    """Accept only a trend ID and uploaded references from the client.
+    """Accept a trend ID, uploaded references and declared template values.
 
     Any client-supplied model, prompt, ratio, quality, duration or provider
-    options are deliberately ignored. Those values are loaded from the trend
-    record created by an administrator.
+    options are deliberately ignored. Template values are validated against
+    the administrator-owned ``generation_settings.user_fields`` schema before
+    they are interpolated into the hidden prompt on the server.
     """
 
     if not isinstance(body, Mapping):
@@ -140,15 +147,22 @@ def parse_trend_run_request(body: Any) -> TrendRunRequest:
     if not str(raw_trend_id or "").isdigit():
         raise TrendRunValidationError("Тренд не найден")
 
+    try:
+        user_values = clean_submitted_user_values(body.get("user_values"))
+    except TrendUserFieldsError as exc:
+        raise TrendRunValidationError(str(exc)) from exc
+
     return TrendRunRequest(
         trend_id=int(raw_trend_id),
         reference_urls=_clean_reference_urls(body.get("reference_urls")),
+        user_values=user_values,
     )
 
 
 def trusted_trend_run(
     trend: Mapping[str, Any] | None,
     reference_urls: tuple[str, ...],
+    user_values: Mapping[str, str] | None = None,
 ) -> TrustedTrendRun:
     if not trend:
         raise TrendRunValidationError("Тренд не найден")
@@ -180,6 +194,10 @@ def trusted_trend_run(
         raise TrendRunValidationError("Этот тренд не поддерживает фото-референсы")
 
     prompt = str(trend.get("prompt_text") or "").strip()
+    try:
+        prompt = render_trend_prompt(prompt, settings, user_values)
+    except TrendUserFieldsError as exc:
+        raise TrendRunValidationError(str(exc)) from exc
     model = str(settings.get("model") or trend.get("model") or "").strip()
     ratio = str(settings.get("ratio") or "").strip()
     if not prompt or not model or not ratio:
@@ -600,7 +618,7 @@ async def miniapp_run_trend(request: web.Request) -> web.Response:
             parsed.trend_id,
             approved_public_only=True,
         )
-        trend = trusted_trend_run(prompt, parsed.reference_urls)
+        trend = trusted_trend_run(prompt, parsed.reference_urls, parsed.user_values)
 
         if trend.kind == "video":
             return await _run_video_trend(
