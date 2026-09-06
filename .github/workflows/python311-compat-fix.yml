@@ -1,0 +1,61 @@
+name: One-shot Python 3.11 compatibility fix
+
+on:
+  push:
+    branches: [ci-stabilize-ruff-defaults-2026-09-06]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ci-stabilize-ruff-defaults-2026-09-06
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Rewrite Python 3.12-only f-string expression
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('bot/miniapp.py')
+          lines = path.read_text(encoding='utf-8').splitlines(keepends=True)
+          matches = [
+              i for i, line in enumerate(lines)
+              if 'json.dumps(runtime_config' in line and '.replace(' in line and 'f"{' in line
+          ]
+          if len(matches) != 1:
+              raise SystemExit(f'expected one runtime-config f-string match, found {len(matches)}')
+
+          value_idx = matches[0]
+          script_idx = value_idx
+          while script_idx >= 0 and 'script = (' not in lines[script_idx]:
+              script_idx -= 1
+          if script_idx < 0:
+              raise SystemExit('runtime-config script assignment not found')
+
+          lines[value_idx] = '            f"{runtime_config_json};"\n'
+          lines.insert(
+              script_idx,
+              '        runtime_config_json = json.dumps(runtime_config, ensure_ascii=False).replace("</", "<\\\\/")\n',
+          )
+          path.write_text(''.join(lines), encoding='utf-8')
+          PY
+          python -m py_compile bot/miniapp.py
+          git diff --check
+          git diff -- bot/miniapp.py
+
+      - name: Commit compatibility fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add bot/miniapp.py
+          git commit -m 'fix: keep Mini App runtime injection Python 3.11 compatible'
+          git push origin HEAD:ci-stabilize-ruff-defaults-2026-09-06
