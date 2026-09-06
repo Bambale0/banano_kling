@@ -40,6 +40,11 @@ _PINTEREST_HOSTS = {
 _PINTEREST_REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 _PINTEREST_TOOL_TITLE = "Повтори фото с Pinterest"
 _PINTEREST_TOOL_TAG = "pinterest-repeat"
+_PINTEREST_DEFAULT_MODEL = "banana_pro"
+_PINTEREST_MODEL_SETTINGS = {
+    "banana_pro": {"quality": "2K", "max_references": 7},
+    "seedream_5_pro": {"quality": "basic", "max_references": 5},
+}
 _PINTEREST_TOOL_PROMPT = (
     "Create a photorealistic recreation of the source photograph using the provided user as the "
     "subject. Recreate the scene, pose, framing, camera perspective, lighting, shadows, background, "
@@ -80,8 +85,7 @@ def _is_pinterest_host(hostname: str) -> bool:
     host = str(hostname or "").strip().lower().rstrip(".")
     return (
         host in _PINTEREST_HOSTS
-        or host.endswith(".pinterest.com")
-        or host.endswith(".pinimg.com")
+        or host.endswith((".pinterest.com", ".pinimg.com"))
     )
 
 
@@ -121,6 +125,27 @@ def _measurement(
         label = "Рост" if key == "height_cm" else "Вес"
         raise TrendRunValidationError(f"{label} вне допустимого диапазона")
     return value
+
+
+def _selected_pinterest_model(body: dict[str, Any]) -> str:
+    model = str(body.get("model") or _PINTEREST_DEFAULT_MODEL).strip()
+    if model not in _PINTEREST_MODEL_SETTINGS:
+        raise TrendRunValidationError("Выберите доступную модель для Pinterest")
+    return model
+
+
+def _pinterest_reference_limit(model: str) -> int:
+    settings = _PINTEREST_MODEL_SETTINGS.get(str(model or "").strip())
+    if not settings:
+        raise TrendRunValidationError("Выберите доступную модель для Pinterest")
+    return int(settings["max_references"])
+
+
+def _pinterest_quality(model: str) -> str:
+    settings = _PINTEREST_MODEL_SETTINGS.get(str(model or "").strip())
+    if not settings:
+        raise TrendRunValidationError("Выберите доступную модель для Pinterest")
+    return str(settings["quality"])
 
 
 def _reference_urls(body: dict[str, Any]) -> tuple[str, str]:
@@ -259,13 +284,24 @@ async def _lock_pinterest_run(
     height_cm: int | None,
     weight_kg: int | None,
     scene_url: str | None = None,
+    model: str = _PINTEREST_DEFAULT_MODEL,
 ) -> TrustedTrendRun:
-    """Force the product contract even if the stored trend is edited later."""
+    """Force the product contract while allowing the approved model choice."""
+
+    selected_model = str(model or _PINTEREST_DEFAULT_MODEL).strip()
+    if selected_model not in _PINTEREST_MODEL_SETTINGS:
+        raise TrendRunValidationError("Выберите доступную модель для Pinterest")
+    if len(trusted.reference_urls) > _pinterest_reference_limit(selected_model):
+        raise TrendRunValidationError(
+            f"Для выбранной модели можно использовать максимум {_pinterest_reference_limit(selected_model)} фото"
+        )
 
     locked_settings = dict(_PINTEREST_TOOL_SETTINGS)
+    locked_settings["model"] = selected_model
+    locked_settings["quality"] = _pinterest_quality(selected_model)
     ratio = str(locked_settings.get("ratio") or trusted.ratio)
     if scene_url:
-        ratio = await _scene_matched_ratio(scene_url, "banana_pro", ratio)
+        ratio = await _scene_matched_ratio(scene_url, selected_model, ratio)
     locked_settings["ratio"] = ratio
     # Pinterest is a person-into-scene transfer. Image 1 stays the SCENE master
     # and Image 2+ carry the USER identity. Identity-first reordering is forbidden:
@@ -276,7 +312,7 @@ async def _lock_pinterest_run(
     # disabled for Pinterest runs (see pinterest_trend_flow_contract).
     return replace(
         trusted,
-        model="banana_pro",
+        model=selected_model,
         ratio=ratio,
         reference_urls=trusted.reference_urls,
         settings=locked_settings,
@@ -473,6 +509,7 @@ async def miniapp_run_pinterest_repeat(request: web.Request) -> web.Response:
         raw_trend_id = body.get("trend_id")
         if not str(raw_trend_id or "").isdigit():
             raise TrendRunValidationError("Тренд не найден")
+        selected_model = _selected_pinterest_model(body)
         references = _reference_urls(body)
         height_cm = _measurement(body, "height_cm", minimum=120, maximum=230)
         weight_kg = _measurement(body, "weight_kg", minimum=30, maximum=250)
@@ -505,6 +542,7 @@ async def miniapp_run_pinterest_repeat(request: web.Request) -> web.Response:
             height_cm=height_cm,
             weight_kg=weight_kg,
             scene_url=references[0] if references else None,
+            model=selected_model,
         )
         return await _run_image_trend(
             request,

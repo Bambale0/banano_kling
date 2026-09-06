@@ -23,6 +23,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 
 type RunnerPhase = 'idle' | 'uploading' | 'generating' | 'error'
+type PinterestModel = 'banana_pro' | 'seedream_5_pro'
 
 interface TrendRunnerDialogProps {
   trend: PromptItem | null
@@ -76,10 +77,12 @@ export function TrendRunnerDialog({
   const [identityAnglePreviews, setIdentityAnglePreviews] = useState<string[]>([])
   const [heightCm, setHeightCm] = useState('')
   const [weightKg, setWeightKg] = useState('')
+  const [pinterestModel, setPinterestModel] = useState<PinterestModel>('banana_pro')
   const [trendPreviewFailed, setTrendPreviewFailed] = useState(false)
 
   const pinterestRepeat = isPinterestRepeatItem(trend)
   const busy = phase === 'uploading' || phase === 'generating'
+  const maxPinterestAngles = pinterestModel === 'seedream_5_pro' ? 3 : MAX_PINTEREST_ANGLES
   const isVideoTrend = trend?.generation_settings?.kind === 'video'
   const configuredReferenceCount = Number(trend?.generation_settings?.reference_count || 0)
   const exactReferenceCount = pinterestRepeat
@@ -124,6 +127,7 @@ export function TrendRunnerDialog({
     setError(null)
     setHeightCm('')
     setWeightKg('')
+    setPinterestModel('banana_pro')
     setIdentityAngles([])
     setTrendPreviewFailed(false)
     clearPreviews()
@@ -262,9 +266,9 @@ export function TrendRunnerDialog({
 
   const uploadPinterestAngles = async (selectedFiles: File[]) => {
     if (!trend || busy || !selectedFiles.length) return
-    if (identityAngles.length + selectedFiles.length > MAX_PINTEREST_ANGLES) {
+    if (identityAngles.length + selectedFiles.length > maxPinterestAngles) {
       setPhase('error')
-      setError(`Можно добавить максимум ${MAX_PINTEREST_ANGLES} дополнительных ракурсов`)
+      setError(`Можно добавить максимум ${maxPinterestAngles} дополнительных ракурсов`)
       return
     }
     const invalidFile = selectedFiles.find((file) => !validateImage(file))
@@ -305,6 +309,19 @@ export function TrendRunnerDialog({
     setIdentityAngles((current) => current.filter((_, itemIndex) => itemIndex !== index))
   }
 
+  const selectPinterestModel = (model: PinterestModel) => {
+    if (busy || model === pinterestModel) return
+    const nextMaxAngles = model === 'seedream_5_pro' ? 3 : MAX_PINTEREST_ANGLES
+    if (identityAngles.length > nextMaxAngles) {
+      setPhase('error')
+      setError(`Для Seedream 5 Pro оставьте не больше ${nextMaxAngles} дополнительных ракурсов`)
+      return
+    }
+    setPinterestModel(model)
+    setError(null)
+    setPhase('idle')
+  }
+
   const handleGenerate = async () => {
     if (!trend || busy || !readyToGenerate) return
     setError(null)
@@ -321,6 +338,7 @@ export function TrendRunnerDialog({
         ? await runPinterestRepeatTrend(trend.id, referenceUrls, {
             heightCm: parseOptionalNumber(heightCm) as number,
             weightKg: parseOptionalNumber(weightKg) as number,
+            model: pinterestModel,
           })
         : await runTrend(trend.id, referenceUrls)
       addTask(result.task)
@@ -449,6 +467,40 @@ export function TrendRunnerDialog({
               </p>
             </div>
 
+            <div className="space-y-2">
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">
+                Модель
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  disabled={busy}
+                  aria-pressed={pinterestModel === 'banana_pro'}
+                  onClick={() => selectPinterestModel('banana_pro')}
+                  className={`rounded-xl border px-3 py-2.5 text-xs font-semibold transition ${
+                    pinterestModel === 'banana_pro'
+                      ? 'border-gold/50 bg-gold/15 text-gold'
+                      : 'border-border/60 bg-secondary/25 text-muted-foreground'
+                  }`}
+                >
+                  Nano Banana Pro
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  aria-pressed={pinterestModel === 'seedream_5_pro'}
+                  onClick={() => selectPinterestModel('seedream_5_pro')}
+                  className={`rounded-xl border px-3 py-2.5 text-xs font-semibold transition ${
+                    pinterestModel === 'seedream_5_pro'
+                      ? 'border-gold/50 bg-gold/15 text-gold'
+                      : 'border-border/60 bg-secondary/25 text-muted-foreground'
+                  }`}
+                >
+                  Seedream 5 Pro
+                </button>
+              </div>
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               {referenceLabels.map(renderExactSlot)}
             </div>
@@ -484,9 +536,9 @@ export function TrendRunnerDialog({
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-muted-foreground">
-                      1–5 ракурсов одного человека
+                      1–{maxPinterestAngles} ракурсов одного человека
                     </p>
-                    <span className="text-[10px] text-muted-foreground">{identityAngles.length}/{MAX_PINTEREST_ANGLES}</span>
+                    <span className="text-[10px] text-muted-foreground">{identityAngles.length}/{maxPinterestAngles}</span>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {identityAnglePreviews.map((preview, index) => (
@@ -504,7 +556,7 @@ export function TrendRunnerDialog({
                         ) : null}
                       </div>
                     ))}
-                    {identityAngles.length < MAX_PINTEREST_ANGLES ? (
+                    {identityAngles.length < maxPinterestAngles ? (
                       <label className="relative flex h-14 w-14 cursor-pointer items-center justify-center rounded-xl border border-dashed border-border/70 bg-secondary/25 text-muted-foreground hover:border-gold/50 hover:text-foreground">
                         <input
                           ref={(node) => { inputRefs.current[2] = node }}

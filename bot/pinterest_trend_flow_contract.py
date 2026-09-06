@@ -49,9 +49,15 @@ def _strict_reference_urls(body: dict[str, Any]) -> tuple[str, ...]:
         raise TrendRunValidationError(
             "Для этого тренда нужны референс и ваше фото"
         )
-    if not MIN_PINTEREST_REFERENCES <= len(raw) <= MAX_PINTEREST_REFERENCES:
+    selected_model = pinterest_api._selected_pinterest_model(body)
+    max_references = min(
+        MAX_PINTEREST_REFERENCES,
+        pinterest_api._pinterest_reference_limit(selected_model),
+    )
+    max_identity_angles = max_references - MIN_PINTEREST_REFERENCES
+    if not MIN_PINTEREST_REFERENCES <= len(raw) <= max_references:
         raise TrendRunValidationError(
-            "Загрузите референс, ваше фото и при желании до 5 дополнительных ракурсов"
+            f"Загрузите референс, ваше фото и при желании до {max_identity_angles} дополнительных ракурсов"
         )
 
     cleaned: list[str] = []
@@ -286,7 +292,7 @@ def install_pinterest_trend_flow_contract() -> None:
             validated_urls = _strict_reference_urls(body)
         except TrendRunValidationError as error:
             return web.json_response({"ok": False, "error": str(error)}, status=400)
-        except Exception:
+        except Exception:  # noqa: BLE001 - normalize malformed client input
             return web.json_response(
                 {"ok": False, "error": "Некорректные параметры Pinterest-тренда"},
                 status=400,
@@ -330,7 +336,7 @@ def install_pinterest_trend_flow_contract() -> None:
                             },
                             status=400,
                         )
-        except Exception:
+        except Exception:  # noqa: BLE001,S110 - preserve generic validation mapping
             # Preserve the ordinary generic handler's own validation/error mapping.
             pass
         return await original_generic_handler(request)

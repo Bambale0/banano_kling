@@ -46,8 +46,11 @@ def test_pinterest_frontend_requires_primary_refs_height_and_weight() -> None:
     runner = read("frontend/miniapp-v0/components/trend-runner-dialog.tsx")
 
     assert "MAX_PINTEREST_ANGLES = 5" in runner
+    assert "maxPinterestAngles = pinterestModel === 'seedream_5_pro' ? 3 : MAX_PINTEREST_ANGLES" in runner
     assert "pinterestPrimaryReady && validHeight && validWeight" in runner
-    assert "1–5 ракурсов одного человека" in runner
+    assert "1–{maxPinterestAngles} ракурсов одного человека" in runner
+    assert "Nano Banana Pro" in runner
+    assert "Seedream 5 Pro" in runner
     assert "Рост и вес обязательны" in runner
     assert "Загрузка фото сама генерацию не запускает" in runner
 
@@ -60,6 +63,7 @@ def test_pinterest_client_sends_explicit_confirmation() -> None:
 
     assert "payload.height_cm = options.heightCm" in pinterest_run
     assert "payload.weight_kg = options.weightKg" in pinterest_run
+    assert "payload.model = options.model" in pinterest_run
     assert "payload.confirmed = true" in pinterest_run
 
 
@@ -69,6 +73,25 @@ def test_backend_accepts_scene_user_and_up_to_five_identity_angles() -> None:
         for index in range(MAX_PINTEREST_REFERENCES)
     ]
     assert _strict_reference_urls({"reference_urls": urls}) == tuple(urls)
+
+
+def test_seedream_5_pro_caps_pinterest_to_three_extra_angles() -> None:
+    allowed = [
+        f"https://tanyapi.chillcreative.ru/uploads/seedream-{index}.jpg"
+        for index in range(5)
+    ]
+    assert _strict_reference_urls(
+        {"model": "seedream_5_pro", "reference_urls": allowed}
+    ) == tuple(allowed)
+
+    too_many = [
+        f"https://tanyapi.chillcreative.ru/uploads/seedream-{index}.jpg"
+        for index in range(6)
+    ]
+    with pytest.raises(TrendRunValidationError, match="до 3 дополнительных"):
+        _strict_reference_urls(
+            {"model": "seedream_5_pro", "reference_urls": too_many}
+        )
 
 
 def test_backend_rejects_external_reference_hosts() -> None:
