@@ -101,3 +101,78 @@ def test_trend_run_request_rejects_missing_or_browser_local_references():
         parse_trend_run_request(
             {"trend_id": 42, "reference_urls": ["blob:https://example.test/local"]}
         )
+
+
+def test_trend_user_fields_render_hidden_prompt_server_side():
+    trend = _trend(
+        prompt_text="Birthday scene with text: Happy birthday {{Возраст}}",
+        generation_settings={
+            "kind": "image",
+            "user_input": "photo",
+            "model": "banana_pro",
+            "ratio": "1:1",
+            "quality": "2K",
+            "count": 1,
+            "user_fields": [
+                {
+                    "key": "Возраст",
+                    "label": "Возраст",
+                    "type": "number",
+                    "required": True,
+                    "min": 1,
+                    "max": 120,
+                }
+            ],
+        },
+    )
+    request = parse_trend_run_request(
+        {
+            "trend_id": 42,
+            "reference_urls": ["https://example.test/ref.jpg"],
+            "user_values": {"Возраст": "28"},
+        }
+    )
+
+    run = trusted_trend_run(trend, request.reference_urls, request.user_values)
+
+    assert request.user_values == {"Возраст": "28"}
+    assert run.prompt == "Birthday scene with text: Happy birthday 28"
+
+
+@pytest.mark.parametrize(
+    ("user_values", "message"),
+    [
+        ({}, "Возраст"),
+        ({"Возраст": "121"}, "Возраст"),
+        ({"Возраст": "28", "prompt": "steal hidden prompt"}, "лишние"),
+    ],
+)
+def test_trend_user_fields_reject_invalid_values(user_values, message):
+    trend = _trend(
+        prompt_text="Happy birthday {{Возраст}}",
+        generation_settings={
+            "kind": "image",
+            "user_input": "photo",
+            "model": "banana_pro",
+            "ratio": "1:1",
+            "quality": "2K",
+            "count": 1,
+            "user_fields": [
+                {
+                    "key": "Возраст",
+                    "label": "Возраст",
+                    "type": "number",
+                    "required": True,
+                    "min": 1,
+                    "max": 120,
+                }
+            ],
+        },
+    )
+
+    with pytest.raises(TrendRunValidationError, match=message):
+        trusted_trend_run(
+            trend,
+            ("https://example.test/ref.jpg",),
+            user_values,
+        )

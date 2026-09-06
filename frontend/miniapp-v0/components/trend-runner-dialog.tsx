@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ImagePlus,
   Loader2,
@@ -18,7 +18,7 @@ import {
   runTrend,
 } from '@/lib/trend-api'
 import { mediaAspectRatio, normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
-import type { PromptItem, UploadedFile } from '@/lib/types'
+import type { PromptItem, TrendUserField, UploadedFile } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 
@@ -55,6 +55,20 @@ function parseOptionalNumber(value: string): number | null {
   return Number.isFinite(parsed) ? Math.trunc(parsed) : null
 }
 
+function isTrendUserFieldValueValid(field: TrendUserField, value: string): boolean {
+  const normalized = value.trim()
+  if (!normalized) return field.required === false
+  if (field.type === 'number') {
+    const parsed = Number(normalized.replace(',', '.'))
+    if (!Number.isFinite(parsed)) return false
+    if (typeof field.min === 'number' && parsed < field.min) return false
+    if (typeof field.max === 'number' && parsed > field.max) return false
+    return true
+  }
+  const maxLength = Math.max(1, Math.min(160, field.max_length || 80))
+  return normalized.length <= maxLength
+}
+
 export function TrendRunnerDialog({
   trend,
   open,
@@ -78,12 +92,20 @@ export function TrendRunnerDialog({
   const [heightCm, setHeightCm] = useState('')
   const [weightKg, setWeightKg] = useState('')
   const [pinterestModel, setPinterestModel] = useState<PinterestModel>('banana_pro')
+  const [userValues, setUserValues] = useState<Record<string, string>>({})
   const [trendPreviewFailed, setTrendPreviewFailed] = useState(false)
 
   const pinterestRepeat = isPinterestRepeatItem(trend)
   const busy = phase === 'uploading' || phase === 'generating'
   const maxPinterestAngles = pinterestModel === 'seedream_5_pro' ? 3 : MAX_PINTEREST_ANGLES
   const isVideoTrend = trend?.generation_settings?.kind === 'video'
+  const userFields = useMemo(
+    () => (trend?.generation_settings?.user_fields || []).slice(0, 6),
+    [trend?.generation_settings?.user_fields],
+  )
+  const userFieldsReady = userFields.every((field) =>
+    isTrendUserFieldValueValid(field, userValues[field.key] || ''),
+  )
   const configuredReferenceCount = Number(trend?.generation_settings?.reference_count || 0)
   const exactReferenceCount = pinterestRepeat
     ? 2
@@ -107,11 +129,12 @@ export function TrendRunnerDialog({
   const validHeight = parsedHeight !== null && parsedHeight >= 120 && parsedHeight <= 230
   const validWeight = parsedWeight !== null && parsedWeight >= 30 && parsedWeight <= 250
   const pinterestPrimaryReady = Boolean(uploadedReferences[0] && uploadedReferences[1])
+  const referencesReady = exactSlots
+    ? completedReferences.length === exactReferenceCount
+    : completedReferences.length > 0
   const readyToGenerate = pinterestRepeat
     ? pinterestPrimaryReady && validHeight && validWeight
-    : exactSlots
-      ? completedReferences.length === exactReferenceCount
-      : completedReferences.length > 0
+    : referencesReady && userFieldsReady
 
   const clearPreviews = useCallback(() => {
     for (const previewUrl of previewRefs.current) {
@@ -128,6 +151,7 @@ export function TrendRunnerDialog({
     setHeightCm('')
     setWeightKg('')
     setPinterestModel('banana_pro')
+    setUserValues(Object.fromEntries(userFields.map((field) => [field.key, field.default_value || ''])))
     setIdentityAngles([])
     setTrendPreviewFailed(false)
     clearPreviews()
@@ -136,7 +160,7 @@ export function TrendRunnerDialog({
     for (const input of inputRefs.current) {
       if (input) input.value = ''
     }
-  }, [clearPreviews, exactReferenceCount, exactSlots])
+  }, [clearPreviews, exactReferenceCount, exactSlots, userFields])
 
   useEffect(() => {
     if (!open) {
@@ -147,7 +171,8 @@ export function TrendRunnerDialog({
     setPreviewUrls(exactSlots ? Array(exactReferenceCount).fill(null) : [])
     setIdentityAngles([])
     setIdentityAnglePreviews([])
-  }, [exactReferenceCount, exactSlots, open, resetRunner, trend?.id])
+    setUserValues(Object.fromEntries(userFields.map((field) => [field.key, field.default_value || ''])))
+  }, [exactReferenceCount, exactSlots, open, resetRunner, trend?.id, userFields])
 
   useEffect(() => {
     setTrendPreviewFailed(false)
@@ -340,7 +365,7 @@ export function TrendRunnerDialog({
             weightKg: parseOptionalNumber(weightKg) as number,
             model: pinterestModel,
           })
-        : await runTrend(trend.id, referenceUrls)
+        : await runTrend(trend.id, referenceUrls, userValues)
       addTask(result.task)
       setCredits(result.credits)
       if (result.detail) setTaskDetail(result.detail)
@@ -712,6 +737,60 @@ export function TrendRunnerDialog({
             )}
           </>
         )}
+
+        {!pinterestRepeat && userFields.length ? (
+          <div className="space-y-3 rounded-2xl border border-border/60 bg-secondary/20 p-3">
+            <div>
+              <p className="text-sm font-semibold text-foreground">Персонализируйте шаблон</p>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Эти значения изменят только нужные детали. Скрытый prompt останется скрытым.
+              </p>
+            </div>
+            {userFields.map((field) => {
+              const value = userValues[field.key] || ''
+              const valid = isTrendUserFieldValueValid(field, value)
+              return (
+                <label key={field.key} className="block space-y-1.5">
+                  <span className="text-xs font-medium text-foreground">
+                    {field.label}{field.required === false ? '' : ' *'}
+                  </span>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      inputMode={field.type === 'number' ? 'numeric' : 'text'}
+                      value={value}
+                      maxLength={field.type === 'text' ? Math.max(1, Math.min(160, field.max_length || 80)) : 32}
+                      placeholder={field.placeholder || ''}
+                      disabled={busy}
+                      aria-invalid={Boolean(value) && !valid}
+                      onChange={(event) => {
+                        let nextValue = event.target.value
+                        if (field.type === 'number') {
+                          nextValue = nextValue.replace(/[^0-9.,-]/g, '').slice(0, 32)
+                        }
+                        setUserValues((current) => ({ ...current, [field.key]: nextValue }))
+                        setError(null)
+                      }}
+                      className="h-11 w-full rounded-xl border border-border/70 bg-background/55 px-3 pr-12 text-sm text-foreground outline-none transition focus:border-gold/60"
+                    />
+                    {field.suffix ? (
+                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                        {field.suffix}
+                      </span>
+                    ) : null}
+                  </div>
+                  {value && !valid ? (
+                    <p className="text-[10px] text-destructive">
+                      {field.type === 'number'
+                        ? `Введите число${typeof field.min === 'number' ? ` от ${field.min}` : ''}${typeof field.max === 'number' ? ` до ${field.max}` : ''}`
+                        : `Максимум ${Math.max(1, Math.min(160, field.max_length || 80))} символов`}
+                    </p>
+                  ) : null}
+                </label>
+              )
+            })}
+          </div>
+        ) : null}
 
         {error ? (
           <p className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">

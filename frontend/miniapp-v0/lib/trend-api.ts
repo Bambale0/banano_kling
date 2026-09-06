@@ -170,10 +170,12 @@ export async function runPinterestRepeatTrend(
 export async function runTrend(
   trendId: number,
   referenceUrls: string[],
+  userValues: Record<string, string> = {},
 ): Promise<RunTrendResult> {
   const payload = authorizedPayload()
   payload.trend_id = trendId
   payload.reference_urls = referenceUrls.map(providerReferenceUrl)
+  if (Object.keys(userValues).length) payload.user_values = userValues
 
   const response = await fetch(`${getApiBasePath()}/trends/run`, {
     method: 'POST',

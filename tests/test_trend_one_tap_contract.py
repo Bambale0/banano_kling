@@ -75,7 +75,7 @@ def test_backend_loads_trusted_trend_settings_by_id() -> None:
     assert 'body.get("trend_id")' in backend
     assert 'body.get("reference_urls")' in backend
     assert "get_prompt_by_id(" in backend
-    assert "trusted_trend_run(prompt, parsed.reference_urls)" in backend
+    assert "trusted_trend_run(prompt, parsed.reference_urls, parsed.user_values)" in backend
     assert 'settings.get("model")' in backend
     assert 'trend.get("prompt_text")' in backend
     assert "setup_trend_routes(app, miniapp_root)" in routes
@@ -152,3 +152,18 @@ def test_sqlite_row_reads_structured_trend_settings() -> None:
         assert _row_optional_value(row, "missing") is None
     finally:
         connection.close()
+
+
+def test_trend_template_user_fields_stay_structured_and_prompt_private() -> None:
+    admin = read("frontend/miniapp-v0/components/tabs/trends-tab.tsx")
+    runner = read("frontend/miniapp-v0/components/trend-runner-dialog.tsx")
+    client = read("frontend/miniapp-v0/lib/trend-api.ts")
+    backend = read("bot/trend_user_fields.py")
+
+    assert "user_fields: normalizedUserFields.length ? normalizedUserFields : undefined" in admin
+    assert "promptText.includes(`{{${field.key}}}`)" in admin
+    assert "trend?.generation_settings?.user_fields" in runner
+    assert "runTrend(trend.id, referenceUrls, userValues)" in runner
+    assert "payload.user_values = userValues" in client
+    assert 'token = "{{" + spec.key + "}}"' in backend
+    assert "rendered = rendered.replace(token, value)" in backend
