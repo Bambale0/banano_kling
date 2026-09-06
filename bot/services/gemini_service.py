@@ -1,7 +1,7 @@
 import base64
 import io
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 import aiohttp
 from PIL import Image
@@ -157,7 +157,7 @@ ULTIMATE DETAIL & QUALITY BOOST:
         - Разрешение до 4K
         - Face/character preservation (до 4 персонажей)
         """
-        logger.info(f"=== GEMINI GENERATE_IMAGE CALLED ===")
+        logger.info("=== GEMINI GENERATE_IMAGE CALLED ===")
         logger.info(f"Input model parameter: {model}")
         logger.info(f"Available MODELS mapping: {self.MODELS}")
 
