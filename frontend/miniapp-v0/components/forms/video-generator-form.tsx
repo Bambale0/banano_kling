@@ -220,9 +220,9 @@ export function VideoGeneratorForm({
   
   // Image-to-video uses the same photo-reference picker as every other photo input.
   // The backend promotes the first selected reference to the provider's primary image slot.
-  const needsPhotoReference = selectedScenario === 'imgtxt' && !isOmniVideo && photoReferences.length === 0
+  const needsPhotoReference = selectedScenario === 'imgtxt' && !isOmniVideo && !sourceFeedGenId && photoReferences.length === 0
   const needsCharacterImage = selectedScenario === 'character' && startImage.length === 0
-  const needsVideoRef = selectedScenario === 'video' && !isOmniVideo && videoReferences.length === 0
+  const needsVideoRef = selectedScenario === 'video' && !isOmniVideo && !sourceFeedGenId && videoReferences.length === 0
   const needsAvatarImage = selectedScenario === 'avatar' && startImage.length === 0
   const needsAvatarAudio = selectedScenario === 'avatar' && audioReference.length === 0
   const needsOmniVoiceName = isOmniAudio && omniVoiceName.trim().length === 0
@@ -968,7 +968,7 @@ export function VideoGeneratorForm({
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground">
               {isOmniVideo ? 'Видео-референс' : 'Видео-референсы'}
-              {isOmniVideo ? (
+              {isOmniVideo || sourceFeedGenId ? (
                 <span className="text-xs text-muted-foreground ml-2">(опционально)</span>
               ) : (
                 <span className="text-destructive ml-1">*</span>
@@ -979,7 +979,7 @@ export function VideoGeneratorForm({
             onFilesChange={setVideoReferences}
             maxFiles={isOmniVideo ? 1 : model?.max_video_references || 5}
             accept="video/*"
-            required={!isOmniVideo}
+            required={!isOmniVideo && !sourceFeedGenId}
             onUpload={onUploadVideoReference}
             libraryFiles={savedVideoReferences}
             libraryLabel="Сохранённые видео-референсы"
@@ -1008,7 +1008,7 @@ export function VideoGeneratorForm({
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground">
               Фото-референсы
-              {selectedScenario === 'imgtxt' && !isOmniVideo ? (
+              {selectedScenario === 'imgtxt' && !isOmniVideo && !sourceFeedGenId ? (
                 <span className="text-destructive ml-1">*</span>
               ) : (
                 <span className="text-xs text-muted-foreground ml-2">(опционально)</span>
@@ -1023,7 +1023,7 @@ export function VideoGeneratorForm({
                   : model?.max_image_references || 8
               }
               accept="image/*"
-              required={selectedScenario === 'imgtxt' && !isOmniVideo}
+              required={selectedScenario === 'imgtxt' && !isOmniVideo && !sourceFeedGenId}
               onUpload={onUploadImageReference}
               libraryFiles={savedImageReferences}
               libraryLabel="Сохранённые фото-референсы"
@@ -1122,7 +1122,7 @@ export function VideoGeneratorForm({
                         ? 'Character ID'
                   : selectedScenario === 'video'
                     ? 'Видео-режим активен'
-                    : selectedScenario === 'imgtxt' && !isOmniVideo
+                    : selectedScenario === 'imgtxt' && !isOmniVideo && !sourceFeedGenId
                       ? 'Фото-референс обязателен'
                       : 'Фото-референсы опциональны'}
             </p>

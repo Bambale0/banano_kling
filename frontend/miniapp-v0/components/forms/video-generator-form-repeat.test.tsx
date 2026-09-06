@@ -23,9 +23,10 @@ const models: VideoModel[] = [{
   description: 'video',
   durations: [5, 10],
   ratios: ['16:9'],
-  supports: ['text', 'imgtxt'],
+  supports: ['text', 'imgtxt', 'video'],
   costs: { '5': 5, '10': 10 },
   max_image_references: 8,
+  max_video_references: 5,
 }]
 
 const preset: VideoPromptPreset = {
@@ -87,4 +88,41 @@ describe('VideoGeneratorForm repeat photo references', () => {
     expect(onSubmit.mock.calls[0][0].references).toEqual([savedFrame.url])
     expect(screen.queryByText('Стартовое изображение')).not.toBeInTheDocument()
   })
+
+  it('lets a source-aware Sedance video repeat adding a photo without requiring a new video ref', async () => {
+    const onSubmit = jest.fn().mockResolvedValue(undefined)
+    const repeatPreset: VideoPromptPreset = {
+      ...preset,
+      prompt: '',
+      scenario: 'video',
+      sourceFeedGenId: 42,
+    }
+
+    render(
+      <VideoGeneratorForm
+        models={models}
+        onSubmit={onSubmit}
+        savedImageReferences={[savedFrame]}
+        promptPreset={repeatPreset}
+        onPromptPresetConsumed={() => undefined}
+        isSubmitting={false}
+        credits={100}
+      />,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: 'saved-frame.jpg' }))
+    expect(screen.queryByText('Загрузите видео-референс')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /Запустить видео/i }))
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled())
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      model: 'seedance_2_5',
+      scenario: 'video',
+      sourceFeedGenId: 42,
+      references: [savedFrame.url],
+      videoReferences: [],
+    }))
+  })
+
 })

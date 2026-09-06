@@ -161,6 +161,19 @@ def enrich_video_repeat_body(
     normalized = dict(body)
     request_data = _source_request_data(source_task)
 
+    # Keep the browser's explicit media separate from server-restored private
+    # references. For Seedance 2.5 repeats, user-selected media must be able to
+    # override/extend the original recipe instead of being silently discarded.
+    explicit_reference_images = _clean_list(body.get("reference_images"))
+    explicit_reference_videos = _clean_list(body.get("v_reference_videos"))
+    explicit_audio_references = _clean_list(
+        body.get("seedance25_reference_audio_urls")
+        or body.get("audio_references")
+    )
+    explicit_v_image_url = str(body.get("v_image_url") or "").strip()
+    if explicit_v_image_url and explicit_v_image_url not in explicit_reference_images:
+        explicit_reference_images.insert(0, explicit_v_image_url)
+
     if not str(normalized.get("prompt") or "").strip():
         normalized["prompt"] = str(source_task.get("prompt") or "")
     if not str(normalized.get("v_model") or "").strip():
@@ -215,14 +228,37 @@ def enrich_video_repeat_body(
             normalized[key] = request_data.get(key)
 
     # Dedicated Seedance 2.5 uses a richer scenario vocabulary than the generic
-    # video form. Preserve that server-side value for hidden-reference repeats.
+    #  video form. Preserve the source scenario, while letting media explicitly
+    #  selected in the repeat form override the matching source inputs.
     if str(normalized.get("v_model") or "").strip() == "seedance_2_5":
-        restored_scenario = _first_value(
-            request_data,
-            ("seedance25_scenario", "scenario"),
-        )
+        restored_scenario = str(
+            _first_value(
+                request_data,
+                ("seedance25_scenario", "scenario"),
+            )
+            or ""
+        ).strip().lower()
         if restored_scenario:
             normalized["seedance25_scenario"] = restored_scenario
+
+        if restored_scenario == "first_frame" and explicit_reference_images:
+            normalized["seedance25_first_frame_url"] = explicit_reference_images[0]
+        elif restored_scenario == "first_last" and explicit_reference_images:
+            normalized["seedance25_first_frame_url"] = explicit_reference_images[0]
+            if len(explicit_reference_images) > 1:
+                normalized["seedance25_last_frame_url"] = explicit_reference_images[1]
+        elif (
+            explicit_reference_images
+            or explicit_reference_videos
+            or explicit_audio_references
+        ):
+            normalized["seedance25_scenario"] = "multimodal"
+            if explicit_reference_images:
+                normalized["reference_images"] = explicit_reference_images
+            if explicit_reference_videos:
+                normalized["v_reference_videos"] = explicit_reference_videos
+            if explicit_audio_references:
+                normalized["seedance25_reference_audio_urls"] = explicit_audio_references
 
     return normalized
 
