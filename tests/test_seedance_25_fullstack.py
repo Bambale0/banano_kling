@@ -1,7 +1,13 @@
 # ruff: noqa: I001
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
 import pytest
+
+import bot.handlers.seedance_25_public_release as public_release
+import bot.miniapp as miniapp_module
 
 from bot.handlers.seedance_25_fullstack import (
     MAX_VIDEO_PIXELS,
@@ -116,3 +122,64 @@ def test_seedance25_dedicated_callback_path_when_host_available(monkeypatch):
     monkeypatch.setattr(module.config, "KIE_AI_WEBHOOK_PATH", "/webhook/kie_ai")
     monkeypatch.setattr(module.config, "KIE_AI_WEBHOOK_SECRET", "")
     assert get_seedance25_callback_url() == "https://example.com/webhook/kie_seedance25"
+
+
+@pytest.mark.asyncio
+async def test_seedance25_miniapp_repeat_keeps_source_lineage_and_rewards_author(monkeypatch):
+    user = SimpleNamespace(id=501)
+    monkeypatch.setattr(
+        miniapp_module,
+        '_get_user_context',
+        AsyncMock(return_value=(700001, {'user': user})),
+    )
+    monkeypatch.setattr(public_release.config, 'is_admin', lambda _telegram_id: False)
+    monkeypatch.setattr(
+        miniapp_module,
+        '_get_repeat_source_card',
+        AsyncMock(return_value={'gen_type': 'video', 'model': 'seedance_2_5'}),
+    )
+    monkeypatch.setattr(miniapp_module, 'check_can_afford', AsyncMock(return_value=True))
+    monkeypatch.setattr(miniapp_module, 'deduct_credits', AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        miniapp_module,
+        'get_or_create_user',
+        AsyncMock(return_value=SimpleNamespace(credits=88)),
+    )
+    repeat_credit = AsyncMock(return_value=True)
+    monkeypatch.setattr(miniapp_module, 'credit_feed_prompt_repeat', repeat_credit)
+    add_task = AsyncMock(return_value=True)
+    monkeypatch.setattr(public_release.generation_module, 'add_generation_task', add_task)
+    monkeypatch.setattr(public_release, '_validate_public_payload', AsyncMock(return_value=None))
+    monkeypatch.setattr(public_release.preview_module, '_price_quote', lambda _data: 12.0)
+    monkeypatch.setattr(
+        public_release,
+        '_launch_provider',
+        AsyncMock(return_value={'task_id': 'seedance-repeat-task'}),
+    )
+
+    response = await public_release._public_miniapp_generate(
+        SimpleNamespace(app={}),
+        {
+            'init_data': 'signed',
+            'v_model': 'seedance_2_5',
+            'source_feed_gen_id': 42,
+            'seedance25_scenario': 'text',
+            'prompt': 'same prompt',
+            'v_duration': 10,
+            'v_ratio': '9:16',
+            'seedance25_resolution': '720p',
+        },
+    )
+
+    assert response.status == 200
+    kwargs = add_task.await_args.kwargs
+    assert kwargs['source_feed_gen_id'] == 42
+    assert kwargs['parent_generation_id'] == 42
+    assert kwargs['action_type'] == 'repeat'
+    assert kwargs['request_data']['source'] == 'miniapp_repeat'
+    repeat_credit.assert_awaited_once_with(
+        42,
+        501,
+        repeat_task_id='seedance-repeat-task',
+        credits_spent=12.0,
+    )

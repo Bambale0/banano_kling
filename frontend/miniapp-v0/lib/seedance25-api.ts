@@ -138,6 +138,37 @@ export async function uploadSeedance25Video(file: File): Promise<UploadedFile> {
   }
 }
 
+export async function repeatSeedance25(
+  sourceFeedGenId: number,
+): Promise<Seedance25GenerateResponse> {
+  const initData = getInitData()
+  if (!initData) throw new Error('Откройте Mini App из Telegram и попробуйте снова.')
+  if (!Number.isSafeInteger(sourceFeedGenId) || sourceFeedGenId <= 0) {
+    throw new Error('Не удалось найти исходное видео для повтора.')
+  }
+
+  const response = await fetch(`${getApiBasePath()}/generate-video`, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    cache: 'no-store',
+    credentials: 'same-origin',
+    body: JSON.stringify({
+      init_data: initData,
+      start_param_fallback: getStartParamFallback(),
+      v_model: 'seedance_2_5',
+      source_feed_gen_id: sourceFeedGenId,
+    }),
+  })
+
+  return parseJsonResponse<Seedance25GenerateResponse>(
+    response,
+    'Не удалось повторить видео. Попробуйте ещё раз.',
+  )
+}
+
 export async function generateSeedance25(
   payload: Seedance25GeneratePayload,
 ): Promise<Seedance25GenerateResponse> {

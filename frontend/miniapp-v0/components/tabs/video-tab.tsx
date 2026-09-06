@@ -4,9 +4,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useApp } from '@/lib/app-context'
 import { VideoGeneratorForm } from '../forms/video-generator-form'
 import { Seedance25PublicForm } from '../forms/seedance25-public-form'
+import { Seedance25RepeatCard } from '../forms/seedance25-repeat-card'
 import { ResultCard } from '../result-card'
 import type { Task, ScenarioType, UploadedFile } from '@/lib/types'
-import type { Seedance25GenerateResponse } from '@/lib/seedance25-api'
+import { repeatSeedance25, type Seedance25GenerateResponse } from '@/lib/seedance25-api'
 import { generateVideo, uploadFile } from '@/lib/api'
 
 export function VideoTab() {
@@ -38,15 +39,14 @@ export function VideoTab() {
     () => state.videoModels.filter((item) => item.id !== 'seedance_2_5'),
     [state.videoModels],
   )
-  const formVideoModels = isSeedanceRepeat ? state.videoModels : regularVideoModels
+  const formVideoModels = regularVideoModels
   const canUseSeedance25 = Boolean(seedance25Model)
   const effectiveMode = canUseSeedance25 ? videoMode : 'regular'
 
   useEffect(() => {
     if (!canUseSeedance25 || !videoPromptPreset) return
-    // Seedance 2.5 repeats still use the source-aware generic form below,
-    // but the model switch must reflect the source model instead of falsely
-    // highlighting the generic catalog.
+    // Keep the tab aligned with the source model. Seedance repeats use a
+    // compact one-click action while the exact source payload stays server-side.
     setVideoMode(videoPromptPreset.model === 'seedance_2_5' ? 'seedance25' : 'regular')
   }, [canUseSeedance25, videoPromptPreset])
 
@@ -142,7 +142,31 @@ export function VideoTab() {
     try {
       await refreshTasks()
     } catch {
-      // Dedicated Seedance webhook/polling still completes the task in Telegram.
+      // The result will still arrive in Telegram.
+    }
+  }
+
+  const handleSeedanceRepeat = async () => {
+    const sourceFeedGenId = Number(videoPromptPreset?.sourceFeedGenId || 0)
+    if (!sourceFeedGenId) {
+      setError('Не удалось найти исходное видео для повтора.')
+      return
+    }
+    if (state.mode !== 'live') {
+      setError('Откройте Mini App через Telegram, чтобы повторить видео.')
+      return
+    }
+
+    setIsSubmitting(true)
+    setError(null)
+    setSeedanceQueued(null)
+    try {
+      const result = await repeatSeedance25(sourceFeedGenId)
+      await handleSeedanceQueued(result)
+    } catch (value) {
+      setError(value instanceof Error ? value.message : 'Не удалось повторить видео')
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
@@ -157,7 +181,7 @@ export function VideoTab() {
         </p>
       </div>
 
-      {canUseSeedance25 ? (
+      {canUseSeedance25 && !isSeedanceRepeat ? (
         <div className="mx-auto mb-4 max-w-xl space-y-2">
           <div className="px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
             Выберите модель
@@ -191,8 +215,23 @@ export function VideoTab() {
         </div>
       ) : null}
 
-      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)] xl:gap-6">
-        {effectiveMode === 'seedance25' && seedance25Model && !isSeedanceRepeat ? (
+      <div
+        className={
+          isSeedanceRepeat
+            ? 'mx-auto max-w-xl'
+            : 'grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)] xl:gap-6'
+        }
+      >
+        {isSeedanceRepeat && seedance25Model ? (
+          <Seedance25RepeatCard
+            duration={videoPromptPreset?.duration}
+            ratio={videoPromptPreset?.ratio}
+            isSubmitting={isSubmitting}
+            error={error}
+            result={seedanceQueued}
+            onRepeat={() => void handleSeedanceRepeat()}
+          />
+        ) : effectiveMode === 'seedance25' && seedance25Model ? (
           <Seedance25PublicForm
             model={seedance25Model}
             credits={state.user.credits}
@@ -217,31 +256,29 @@ export function VideoTab() {
           />
         )}
 
-        <div className="space-y-4">
-          {error && (effectiveMode === 'regular' || isSeedanceRepeat) ? (
+        {!isSeedanceRepeat ? (
+          <div className="space-y-4">
+            {error && effectiveMode === 'regular' ? (
             <div className="p-4 rounded-xl bg-destructive/10 border border-destructive/30">
               <p className="text-sm text-destructive">{error}</p>
             </div>
           ) : null}
 
-          {effectiveMode === 'seedance25' && !isSeedanceRepeat ? (
+            {effectiveMode === 'seedance25' ? (
             <div className="glass rounded-2xl border border-cyan/20 p-5">
-              <p className="text-xs uppercase tracking-[0.18em] text-cyan/80 mb-2">Seedance queue</p>
+              <p className="text-xs uppercase tracking-[0.18em] text-cyan/80 mb-2">Статус</p>
               <h3 className="font-serif text-lg text-foreground mb-2">Seedance 2.5</h3>
               {seedanceQueued ? (
                 <div className="space-y-2 text-sm">
-                  <p>✅ Задача отправлена в Kie.ai.</p>
-                  <p className="break-all font-mono text-xs text-muted-foreground">{seedanceQueued.task_id}</p>
+                  <p>✅ Видео запущено.</p>
                   <p className="text-xs text-muted-foreground">
-                    {seedanceQueued.admin_free
-                      ? 'Для администратора списание отключено.'
-                      : `Списано ${seedanceQueued.cost}🍌.`}{' '}
-                    Результат придёт в Telegram. Если callback задержится, включён polling fallback.
+                    {seedanceQueued.admin_free ? '' : `Списано ${seedanceQueued.cost}🍌. `}
+                    Готовый ролик придёт в Telegram.
                   </p>
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  Здесь появится ID последней задачи Seedance 2.5. Итоговое видео бот пришлёт автоматически.
+                  Здесь появится статус последнего запуска. Готовый ролик бот пришлёт автоматически.
                 </p>
               )}
             </div>
@@ -252,14 +289,15 @@ export function VideoTab() {
             />
           ) : (
             <div className="glass rounded-2xl border border-cyan/20 p-5">
-              <p className="text-xs uppercase tracking-[0.18em] text-cyan/80 mb-2">Очередь</p>
-              <h3 className="font-serif text-lg text-foreground mb-2">Видео-панель</h3>
+              <p className="text-xs uppercase tracking-[0.18em] text-cyan/80 mb-2">Статус</p>
+              <h3 className="font-serif text-lg text-foreground mb-2">Видео</h3>
               <p className="text-sm text-muted-foreground">
-                Очередь, task id и превью ролика появятся здесь. Для image-to-video сначала добавьте стартовый кадр, для video-to-video загрузите видео-референс.
+                Здесь появится статус запуска и готовый ролик. Для режима с фото сначала добавьте исходное изображение.
               </p>
             </div>
           )}
-        </div>
+          </div>
+        ) : null}
       </div>
     </div>
   )
