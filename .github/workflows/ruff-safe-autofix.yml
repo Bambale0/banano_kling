@@ -1,0 +1,89 @@
+name: One-shot Ruff safe cleanup
+
+on:
+  push:
+    branches: [ci-stabilize-ruff-defaults-2026-09-06]
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ci-stabilize-ruff-defaults-2026-09-06
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Fix confirmed undefined-name defects
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected one match, found {count}: {old!r}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          replace_once(
+              'bot/handlers/common.py',
+              'import html\nimport time\n',
+              'import html\nimport json\nimport time\n',
+          )
+          replace_once(
+              'bot/handlers/common.py',
+              '    REFERRAL_ANTIFRAUD_BLOCK_REFERRER_IDS,\n',
+              '    REFERRAL_ANTIFRAUD_BLOCK_REFERRER_IDS,\n    REFERRAL_ANTIFRAUD_MAX_PER_DAY,\n    REFERRAL_ANTIFRAUD_MAX_PER_HOUR,\n',
+          )
+          replace_once(
+              'bot/handlers/image_analyzer.py',
+              'import html\nimport logging\n',
+              'import html\nimport json\nimport logging\n',
+          )
+          replace_once(
+              'bot/handlers/image_analyzer.py',
+              'from pathlib import Path\n\nfrom aiogram',
+              'from pathlib import Path\n\nimport aiohttp\nfrom aiogram',
+          )
+          replace_once(
+              'bot/main.py',
+              'import html\nimport json\n',
+              'import html\nimport hmac\nimport json\n',
+          )
+          replace_once(
+              'bot/main.py',
+              '                task_type=task.type if task else ("video" if is_video else "image"),\n',
+              '                task_type=task.type,\n',
+          )
+          PY
+
+      - name: Apply Ruff safe fixes only
+        run: |
+          python -m pip install 'ruff==0.16.6'
+          ruff check bot/ tests/ \
+            --select=E4,E7,E9,F \
+            --ignore=E402,F403,F405,E501 \
+            --fix || true
+          git diff --check
+          git diff --stat
+          git diff
+
+      - name: Commit reviewed-safe cleanup class
+        run: |
+          if git diff --quiet; then
+            echo 'No safe fixes to commit.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add bot/
+          git commit -m 'fix: clean safe Pyflakes violations'
+          git push origin HEAD:ci-stabilize-ruff-defaults-2026-09-06
