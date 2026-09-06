@@ -893,3 +893,87 @@ async def test_cleanup_saved_references_uses_count_having_expression(isolated_da
 
     removed = await database.cleanup_saved_references(keep_latest=2, max_age_days=0, min_keep_per_kind=1)
     assert removed >= 1
+
+
+@pytest.mark.asyncio
+async def test_profile_only_publication_repeat_credits_author(tmp_path, monkeypatch):
+    monkeypatch.setattr(database, "DATABASE_PATH", str(tmp_path / "profile-repeat-reward.db"))
+    await database.init_db()
+
+    author = await database.get_or_create_user(100041)
+    repeater = await database.get_or_create_user(100042)
+    await database.add_generation_task(
+        author.id,
+        author.telegram_id,
+        "profile-repeat-source",
+        "image",
+        "miniapp_image",
+        model="banana_pro",
+        aspect_ratio="1:1",
+        prompt="Profile-only source",
+        cost=2,
+    )
+    await database.complete_video_task(
+        "profile-repeat-source", "https://example.com/profile-repeat-source.png"
+    )
+    source = await database.share_to_feed(
+        "profile-repeat-source",
+        author.id,
+        publication_scope="profile",
+    )
+
+    assert source is not None
+    assert source["publication_scope"] == "profile"
+    assert source["is_profile_visible"] is True
+    assert await database.get_feed_generations(limit=10) == []
+
+    credited = await database.credit_feed_prompt_repeat(
+        source["id"],
+        repeater.id,
+        repeat_task_id="profile-repeat-task-1",
+        credits_spent=2,
+    )
+
+    assert credited is True
+    overview = await database.get_partner_overview(author.telegram_id)
+    assert overview["balance_rub"] == 10
+    assert overview["prompt_repeat_balance_rub"] == 10
+    assert overview["prompt_repeat_total_rub"] == 10
+
+
+@pytest.mark.asyncio
+async def test_private_generation_repeat_does_not_credit_author(tmp_path, monkeypatch):
+    monkeypatch.setattr(database, "DATABASE_PATH", str(tmp_path / "private-repeat-no-reward.db"))
+    await database.init_db()
+
+    author = await database.get_or_create_user(100043)
+    repeater = await database.get_or_create_user(100044)
+    await database.add_generation_task(
+        author.id,
+        author.telegram_id,
+        "private-repeat-source",
+        "image",
+        "miniapp_image",
+        model="banana_pro",
+        aspect_ratio="1:1",
+        prompt="Private source",
+        cost=2,
+    )
+    await database.complete_video_task(
+        "private-repeat-source", "https://example.com/private-repeat-source.png"
+    )
+    source = await database.get_task_by_id("private-repeat-source")
+    assert source is not None
+
+    credited = await database.credit_feed_prompt_repeat(
+        source.id,
+        repeater.id,
+        repeat_task_id="private-repeat-task-1",
+        credits_spent=2,
+    )
+
+    assert credited is False
+    overview = await database.get_partner_overview(author.telegram_id)
+    assert overview["balance_rub"] == 0
+    assert overview["prompt_repeat_balance_rub"] == 0
+    assert overview["prompt_repeat_total_rub"] == 0
