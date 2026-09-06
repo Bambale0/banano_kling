@@ -29,7 +29,10 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: Lint with ruff
-        run: ruff check bot/ tests/ --ignore=E402,F403,F405,E501 --output-format=github
+        # Ruff 0.16 expanded its default ruleset substantially. Keep this
+        # repository's lint contract explicit so dependency updates do not
+        # turn unrelated legacy/style rules into surprise CI failures.
+        run: ruff check bot/ tests/ --select=E4,E7,E9,F --ignore=E402,F403,F405,E501 --output-format=github
 
   test:
     runs-on: ubuntu-latest
