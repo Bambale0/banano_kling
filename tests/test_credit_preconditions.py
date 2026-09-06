@@ -71,8 +71,8 @@ class TestDeductCreditsPreconditions:
         mock_conn = mocker.AsyncMock()
         mock_conn.execute = mocker.AsyncMock()
         mock_db.connect.return_value.__aenter__.return_value = mock_conn
-        # Mock config.is_admin to return False
-        mocker.patch("bot.database.config.is_admin", return_value=False)
+        # deduct_credits imports config lazily from bot.config.
+        mocker.patch("bot.config.config.is_admin", return_value=False)
 
         result = await deduct_credits(telegram_id=12345, amount=10)
         assert result is False  # Not enough credits, but process reached DB
@@ -86,7 +86,7 @@ class TestCheckCanAffordType:
     async def test_check_can_afford_accepts_int(self, mocker):
         from bot.database import check_can_afford
 
-        mocker.patch("bot.database.config.is_admin", return_value=False)
+        mocker.patch("bot.config.config.is_admin", return_value=False)
         mock_db = mocker.patch("bot.database.db_backend")
         mock_cursor = mocker.AsyncMock()
         mock_cursor.fetchone.return_value = {"credits": 100}
