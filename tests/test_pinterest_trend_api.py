@@ -134,7 +134,7 @@ async def test_pinterest_run_defaults_to_banana_pro_2k():
 
 
 
-async def test_pinterest_run_allows_seedream_5_pro_basic_quality():
+async def test_pinterest_run_defaults_seedream_5_pro_to_high_quality():
     stored = TrustedTrendRun(
         trend_id=42,
         kind="image",
@@ -157,7 +157,7 @@ async def test_pinterest_run_allows_seedream_5_pro_basic_quality():
 
     assert locked.model == "seedream_5_pro"
     assert locked.settings["model"] == "seedream_5_pro"
-    assert locked.settings["quality"] == "basic"
+    assert locked.settings["quality"] == "high"
     assert locked.settings["count"] == 1
     assert _pinterest_reference_limit("seedream_5_pro") == 5
 
