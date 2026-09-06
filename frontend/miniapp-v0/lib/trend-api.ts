@@ -35,6 +35,7 @@ export interface RunTrendResult {
 export interface PinterestRepeatOptions {
   heightCm: number
   weightKg: number
+  model: 'banana_pro' | 'seedream_5_pro'
 }
 
 function providerReferenceUrl(value: string): string {
@@ -149,6 +150,7 @@ export async function runPinterestRepeatTrend(
   payload.reference_urls = referenceUrls.map(providerReferenceUrl)
   payload.height_cm = options.heightCm
   payload.weight_kg = options.weightKg
+  payload.model = options.model
   payload.confirmed = true
 
   const response = await fetch(`${getApiBasePath()}/trends/pinterest-repeat/run`, {

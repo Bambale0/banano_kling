@@ -18,6 +18,8 @@ def test_pinterest_repeat_matches_reference_video_flow():
         "Рост",
         "Вес",
         "Создать →",
+        "Nano Banana Pro",
+        "Seedream 5 Pro",
         "runPinterestRepeatTrend",
         "сцена, свет и поза считаются с референса",
         "лицо и внешность берутся только с твоего фото",
@@ -32,6 +34,7 @@ def test_pinterest_repeat_matches_reference_video_flow():
     assert "pinterestRepeat\n        ? await runPinterestRepeatTrend" in runner
     assert "heightCm: parseOptionalNumber(heightCm)" in runner
     assert "weightKg: parseOptionalNumber(weightKg)" in runner
+    assert "model: pinterestModel" in runner
     assert "completedReferences.length === exactReferenceCount" in runner
     assert "disabled={busy || !readyToGenerate}" in runner
 
@@ -42,10 +45,13 @@ def test_height_and_weight_reach_backend_payload():
 
     assert "payload.height_cm = options.heightCm" in client
     assert "payload.weight_kg = options.weightKg" in client
+    assert "payload.model = options.model" in client
+    assert '_selected_pinterest_model(body)' in backend
     assert '_measurement(body, "height_cm", minimum=120, maximum=230)' in backend
     assert '_measurement(body, "weight_kg", minimum=30, maximum=250)' in backend
     assert "height_cm=height_cm" in backend
     assert "weight_kg=weight_kg" in backend
+    assert "model=selected_model" in backend
 
 
 def test_uploading_a_reference_does_not_auto_start_generation():
@@ -100,14 +106,16 @@ def test_trends_showcase_excludes_pinterest_ai_launch():
     assert "<TrendRunnerDialog" in services_tab
 
 
-def test_runtime_lock_prevents_database_drift_from_changing_model_or_quality():
+def test_runtime_lock_allows_only_approved_pinterest_models_and_server_owned_quality():
     backend = read("bot/pinterest_trend_api.py")
 
-    assert 'model="banana_pro"' in backend
-    # Ratio is only a configured default: at runtime it is matched to the
-    # scene reference aspect so a 3:4 source stays 3:4.
+    assert '"banana_pro": {"quality": "2K", "max_references": 7}' in backend
+    assert '"seedream_5_pro": {"quality": "basic", "max_references": 5}' in backend
+    assert "if model not in _PINTEREST_MODEL_SETTINGS" in backend
+    assert 'locked_settings["model"] = selected_model' in backend
+    assert 'locked_settings["quality"] = _pinterest_quality(selected_model)' in backend
+    # Ratio is still server-owned and matched to the scene reference.
     assert '"ratio": "9:16"' in backend
     assert 'ratio = str(locked_settings.get("ratio") or trusted.ratio)' in backend
-    assert '_scene_matched_ratio(' in backend
-    assert "locked_settings = dict(_PINTEREST_TOOL_SETTINGS)" in backend
+    assert '_scene_matched_ratio(scene_url, selected_model, ratio)' in backend
     assert "await _lock_pinterest_run(" in backend

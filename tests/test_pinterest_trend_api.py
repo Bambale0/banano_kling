@@ -5,10 +5,12 @@ from bot.pinterest_trend_api import (
     _augmented_prompt,
     _lock_pinterest_run,
     _measurement,
+    _pinterest_reference_limit,
     _reference_urls,
+    _selected_pinterest_model,
     _validated_pinterest_url,
 )
-from bot.trend_api import TrustedTrendRun, TrendRunValidationError
+from bot.trend_api import TrendRunValidationError, TrustedTrendRun
 
 
 def test_pinterest_url_accepts_only_expected_hosts():
@@ -93,7 +95,7 @@ def test_augmented_prompt_keeps_reference_roles_and_identity_unambiguous():
     assert "STRICT IDENTITY PRESERVATION CONTRACT" not in prompt
 
 
-async def test_pinterest_run_is_hard_locked_to_banana_pro_2k():
+async def test_pinterest_run_defaults_to_banana_pro_2k():
     stored = TrustedTrendRun(
         trend_id=42,
         kind="image",
@@ -129,6 +131,42 @@ async def test_pinterest_run_is_hard_locked_to_banana_pro_2k():
     assert "height 175 cm" in locked.prompt
     assert "weight 78 kg" in locked.prompt
     assert "admin changed prompt" not in locked.prompt
+
+
+
+async def test_pinterest_run_allows_seedream_5_pro_basic_quality():
+    stored = TrustedTrendRun(
+        trend_id=42,
+        kind="image",
+        prompt="admin changed prompt",
+        model="banana_pro",
+        ratio="1:1",
+        reference_urls=(
+            "https://tanyapi.chillcreative.ru/uploads/reference.jpg",
+            "https://tanyapi.chillcreative.ru/uploads/user.jpg",
+        ),
+        settings={"quality": "4K", "count": 3},
+    )
+
+    locked = await _lock_pinterest_run(
+        stored,
+        height_cm=175,
+        weight_kg=78,
+        model="seedream_5_pro",
+    )
+
+    assert locked.model == "seedream_5_pro"
+    assert locked.settings["model"] == "seedream_5_pro"
+    assert locked.settings["quality"] == "basic"
+    assert locked.settings["count"] == 1
+    assert _pinterest_reference_limit("seedream_5_pro") == 5
+
+
+def test_pinterest_model_choice_is_allowlisted_and_defaults_to_banana():
+    assert _selected_pinterest_model({}) == "banana_pro"
+    assert _selected_pinterest_model({"model": "seedream_5_pro"}) == "seedream_5_pro"
+    with pytest.raises(TrendRunValidationError):
+        _selected_pinterest_model({"model": "seedream_edit"})
 
 
 async def test_lock_pinterest_run_matches_ratio_to_scene_reference(monkeypatch):

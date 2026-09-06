@@ -465,6 +465,9 @@ try {
   await pinterestRunner.getByText('Повтори фото с Pinterest', { exact: true }).waitFor()
   await pinterestRunner.getByText('РЕФЕРЕНС', { exact: true }).waitFor()
   await pinterestRunner.getByText('ТЫ', { exact: true }).waitFor()
+  const seedreamPinterestModel = pinterestRunner.getByRole('button', { name: 'Seedream 5 Pro', exact: true })
+  await seedreamPinterestModel.waitFor()
+  await seedreamPinterestModel.click()
 
   const pinterestFileInputs = pinterestRunner.locator('input[type="file"]')
   assert.equal(await pinterestFileInputs.count(), 2)
@@ -518,8 +521,8 @@ try {
   ])
   assert.equal(pinterestGenerationPayload?.height_cm, 172)
   assert.equal(pinterestGenerationPayload?.weight_kg, 64)
+  assert.equal(pinterestGenerationPayload?.model, 'seedream_5_pro')
   for (const forbiddenField of [
-    'model',
     'prompt',
     'ratio',
     'quality',
