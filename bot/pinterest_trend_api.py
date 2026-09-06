@@ -43,7 +43,7 @@ _PINTEREST_TOOL_TAG = "pinterest-repeat"
 _PINTEREST_DEFAULT_MODEL = "banana_pro"
 _PINTEREST_MODEL_SETTINGS = {
     "banana_pro": {"quality": "2K", "max_references": 7},
-    "seedream_5_pro": {"quality": "basic", "max_references": 5},
+    "seedream_5_pro": {"quality": "high", "max_references": 5},
 }
 _PINTEREST_TOOL_PROMPT = (
     "Create a photorealistic recreation of the source photograph using the provided user as the "

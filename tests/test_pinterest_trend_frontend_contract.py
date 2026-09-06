@@ -110,7 +110,7 @@ def test_runtime_lock_allows_only_approved_pinterest_models_and_server_owned_qua
     backend = read("bot/pinterest_trend_api.py")
 
     assert '"banana_pro": {"quality": "2K", "max_references": 7}' in backend
-    assert '"seedream_5_pro": {"quality": "basic", "max_references": 5}' in backend
+    assert '"seedream_5_pro": {"quality": "high", "max_references": 5}' in backend
     assert "if model not in _PINTEREST_MODEL_SETTINGS" in backend
     assert 'locked_settings["model"] = selected_model' in backend
     assert 'locked_settings["quality"] = _pinterest_quality(selected_model)' in backend
