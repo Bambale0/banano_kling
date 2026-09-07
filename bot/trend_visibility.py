@@ -7,6 +7,8 @@ from collections.abc import Mapping
 from typing import Any
 from urllib.parse import parse_qsl
 
+from bot.trend_user_fields import TrendUserFieldsError, infer_user_fields_from_prompt
+
 
 def is_trend_prompt(prompt: Mapping[str, Any] | None) -> bool:
     if not prompt:
@@ -17,7 +19,7 @@ def is_trend_prompt(prompt: Mapping[str, Any] | None) -> bool:
     )
 
 
-def public_trend_settings(prompt: Mapping[str, Any]) -> dict[str, str]:
+def public_trend_settings(prompt: Mapping[str, Any]) -> dict[str, Any]:
     raw_settings = prompt.get("generation_settings")
     settings = raw_settings if isinstance(raw_settings, Mapping) else {}
     tags = {
@@ -39,7 +41,14 @@ def public_trend_settings(prompt: Mapping[str, Any]) -> dict[str, str]:
     if not ratio:
         ratio = "16:9" if kind == "video" else "1:1"
 
-    public_settings = {"kind": kind, "ratio": ratio}
+    public_settings: dict[str, Any] = {"kind": kind, "ratio": ratio}
+    try:
+        user_fields = infer_user_fields_from_prompt(str(prompt.get("prompt_text") or ""))
+    except TrendUserFieldsError:
+        user_fields = []
+    if user_fields:
+        public_settings["user_fields"] = user_fields
+
     preview_type = str(settings.get("preview_type") or "").strip().lower()
     if preview_type in {"image", "video"}:
         public_settings["preview_type"] = preview_type
@@ -58,9 +67,10 @@ def sanitize_prompt_for_public(
     if not is_trend_prompt(payload):
         return payload
 
+    public_settings = public_trend_settings(payload)
     payload["prompt_text"] = ""
     payload["model"] = None
-    payload["generation_settings"] = public_trend_settings(payload)
+    payload["generation_settings"] = public_settings
     payload["prompt_hidden"] = True
     payload["prompt_actions_allowed"] = False
     return payload

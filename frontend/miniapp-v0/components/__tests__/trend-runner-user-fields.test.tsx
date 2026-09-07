@@ -57,9 +57,7 @@ const trend: PromptItem = {
         label: 'Возраст',
         type: 'number',
         required: true,
-        min: 1,
-        max: 120,
-        placeholder: '28',
+        max_length: 160,
       },
     ],
   },
@@ -114,7 +112,7 @@ describe('TrendRunnerDialog user fields', () => {
       <TrendRunnerDialog trend={trend} open onOpenChange={jest.fn()} />,
     )
 
-    const ageInput = screen.getByPlaceholderText('28')
+    const ageInput = screen.getByRole('textbox', { name: /Возраст/ })
     expect(screen.getByText('Возраст *')).toBeInTheDocument()
     expect(screen.getByText(/Скрытый prompt останется скрытым/)).toBeInTheDocument()
 

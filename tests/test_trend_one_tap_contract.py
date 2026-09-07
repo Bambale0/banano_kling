@@ -159,11 +159,22 @@ def test_trend_template_user_fields_stay_structured_and_prompt_private() -> None
     runner = read("frontend/miniapp-v0/components/trend-runner-dialog.tsx")
     client = read("frontend/miniapp-v0/lib/trend-api.ts")
     backend = read("bot/trend_user_fields.py")
+    miniapp = read("bot/miniapp.py")
+    image_compat = read("bot/handlers/trends_compat.py")
+    video_compat = read("bot/handlers/trend_video_compat.py")
 
-    assert "user_fields: normalizedUserFields.length ? normalizedUserFields : undefined" in admin
-    assert "promptText.includes(`{{${field.key}}}`)" in admin
+    assert "Поля пользователя · авто" in admin
+    assert "{{Возраст}}" in admin
+    assert "normalizedUserFields" not in admin
+    assert "Мин." not in admin
+    assert "Макс." not in admin
+    assert "inferTemplateFieldType" in admin
     assert "trend?.generation_settings?.user_fields" in runner
     assert "runTrend(trend.id, referenceUrls, userValues)" in runner
     assert "payload.user_values = userValues" in client
-    assert 'token = "{{" + spec.key + "}}"' in backend
-    assert "rendered = rendered.replace(token, value)" in backend
+    assert "infer_user_fields_from_prompt" in backend
+    assert "_TEMPLATE_RE" in backend
+    assert "rendered = _TEMPLATE_RE.sub(replace_token" in backend
+    assert "apply_inferred_user_fields" in miniapp
+    assert "apply_inferred_user_fields" in image_compat
+    assert "apply_inferred_user_fields" in video_compat
