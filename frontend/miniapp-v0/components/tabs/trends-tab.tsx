@@ -36,7 +36,7 @@ const VIDEO_TREND_PREVIEW_MAX_BYTES = 200 * 1024 * 1024
 const VIDEO_PREVIEW_EXTENSIONS = new Set(['mp4', 'mov', 'm4v', 'webm'])
 const IMAGE_PREVIEW_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'avif'])
 
-const TEMPLATE_FIELD_PRESETS = ['Дата', 'Надпись', 'Имя', 'Возраст', 'Число'] as const
+const TEMPLATE_FIELD_PRESETS = ['Возраст', 'Имя', 'Надпись', 'Дата', 'Число'] as const
 const NUMBER_FIELD_HINTS = ['возраст', 'число', 'цифр', 'количество', 'номер', 'рост', 'вес', 'лет', 'год', 'свеч']
 const DATE_FIELD_HINTS = ['дата', 'date', 'день рождения', 'birthday']
 
@@ -922,10 +922,8 @@ export function TrendsTab() {
                   <div key={field.key} className="space-y-2 rounded-xl border border-border/50 bg-background/45 p-3">
                     <div className="flex items-center justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-foreground">{field.label}</p>
-                        <p className="mt-0.5 text-[10px] text-muted-foreground">
-                          Авто · {field.type === 'date' ? 'дата' : field.type === 'number' ? 'число' : 'текст'}
-                        </p>
+                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Название поля</p>
+                        <p className="mt-0.5 truncate text-sm font-medium text-foreground">{field.label}</p>
                       </div>
                       <button
                         type="button"
@@ -936,21 +934,24 @@ export function TrendsTab() {
                         <Trash2 className="h-4 w-4" />
                       </button>
                     </div>
-                    <input
-                      type={field.type === 'date' ? 'date' : 'text'}
-                      inputMode={field.type === 'number' ? 'numeric' : undefined}
-                      value={field.default_value || ''}
-                      onChange={(event) => {
-                        const value = field.type === 'number'
-                          ? event.target.value.replace(/[^0-9.,-]/g, '').slice(0, 160)
-                          : event.target.value.slice(0, 160)
-                        setUserFields((current) => current.map((item, itemIndex) =>
-                          itemIndex === index ? { ...item, default_value: value } : item,
-                        ))
-                      }}
-                      placeholder={field.type === 'date' ? undefined : `Исходное значение: ${field.label}`}
-                      className="h-10 w-full rounded-lg border border-border/60 bg-secondary/40 px-3 text-sm text-foreground outline-none focus:border-gold/50"
-                    />
+                    <div>
+                      <p className="mb-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">Исходное значение</p>
+                      <input
+                        type={field.type === 'date' ? 'date' : 'text'}
+                        inputMode={field.type === 'number' ? 'numeric' : undefined}
+                        value={field.default_value || ''}
+                        onChange={(event) => {
+                          const value = field.type === 'number'
+                            ? event.target.value.replace(/[^0-9.,-]/g, '').slice(0, 160)
+                            : event.target.value.slice(0, 160)
+                          setUserFields((current) => current.map((item, itemIndex) =>
+                            itemIndex === index ? { ...item, default_value: value } : item,
+                          ))
+                        }}
+                        placeholder={field.type === 'date' ? undefined : `Например: ${field.label === 'Возраст' ? '28' : field.label === 'Имя' ? 'Анна' : field.label === 'Надпись' ? 'С днём рождения!' : field.label}`}
+                        className="h-10 w-full rounded-lg border border-border/60 bg-secondary/40 px-3 text-sm text-foreground outline-none focus:border-gold/50"
+                      />
+                    </div>
                   </div>
                 ))}
               </div>
