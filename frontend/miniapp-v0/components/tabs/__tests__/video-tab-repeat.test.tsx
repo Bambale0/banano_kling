@@ -14,15 +14,32 @@ jest.mock('@/lib/api', () => ({
 }))
 
 jest.mock('@/components/forms/video-generator-form', () => ({
-  VideoGeneratorForm: ({ models, onModelSelected }: { models: Array<{ id: string }>; onModelSelected?: (modelId: string) => void }) => (
-    <div data-testid="regular-video-form">
-      {models.map((model) => (
-        <button key={model.id} type="button" onClick={() => onModelSelected?.(model.id)}>
-          {model.id}
-        </button>
-      ))}
-    </div>
-  ),
+  VideoGeneratorForm: ({
+    models,
+    onModelSelected,
+    promptPreset,
+    onPromptPresetConsumed,
+  }: {
+    models: Array<{ id: string }>
+    onModelSelected?: (modelId: string) => void
+    promptPreset?: Record<string, unknown> | null
+    onPromptPresetConsumed?: () => void
+  }) => {
+    const React = jest.requireActual<typeof import('react')>('react')
+    React.useEffect(() => {
+      if (promptPreset) onPromptPresetConsumed?.()
+    }, [onPromptPresetConsumed, promptPreset])
+
+    return (
+      <div data-testid="regular-video-form">
+        {models.map((model) => (
+          <button key={model.id} type="button" onClick={() => onModelSelected?.(model.id)}>
+            select-{model.id}
+          </button>
+        ))}
+      </div>
+    )
+  },
 }))
 
 jest.mock('@/components/forms/seedance25-public-form', () => ({
@@ -56,23 +73,28 @@ const videoModels = [
   },
 ]
 
-function mockApp(videoPromptPreset: Record<string, unknown>) {
-  mockedUseApp.mockReturnValue({
-    state: {
-      mode: 'live',
-      user: { credits: 100, isAdmin: false },
-      videoModels,
-      savedReferences: [],
-    },
-    addTask: jest.fn(),
-    setCredits: jest.fn(),
-    setTaskDetail: jest.fn(),
-    selectTask: jest.fn(),
-    addSavedReference: jest.fn(),
-    videoPromptPreset,
-    setVideoPromptPreset: jest.fn(),
-    refreshTasks: jest.fn(),
-  } as ReturnType<typeof useApp>)
+function mockApp(initialVideoPromptPreset: Record<string, unknown> | null) {
+  mockedUseApp.mockImplementation(() => {
+    const React = jest.requireActual<typeof import('react')>('react')
+    const [videoPromptPreset, setVideoPromptPreset] = React.useState(initialVideoPromptPreset)
+
+    return {
+      state: {
+        mode: 'live',
+        user: { credits: 100, isAdmin: false },
+        videoModels,
+        savedReferences: [],
+      },
+      addTask: jest.fn(),
+      setCredits: jest.fn(),
+      setTaskDetail: jest.fn(),
+      selectTask: jest.fn(),
+      addSavedReference: jest.fn(),
+      videoPromptPreset,
+      setVideoPromptPreset,
+      refreshTasks: jest.fn(),
+    } as ReturnType<typeof useApp>
+  })
 }
 
 describe('VideoTab repeat mode selection', () => {
@@ -93,8 +115,7 @@ describe('VideoTab repeat mode selection', () => {
     expect(screen.queryByTestId('seedance25-form')).not.toBeInTheDocument()
   })
 
-
-  it('shows Seedance 2.5 inside the regular catalog and routes it to the dedicated flow', () => {
+  it('does not leave the catalog when Seedance 2.5 is selected inside the generic model picker', () => {
     mockApp({
       title: 'Обычное видео',
       prompt: 'prompt',
@@ -103,14 +124,14 @@ describe('VideoTab repeat mode selection', () => {
 
     render(<VideoTab />)
 
-    expect(screen.getByRole('button', { name: 'seedance_2_5' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'seedance_2_5' }))
+    const seedanceCatalogOption = screen.getByRole('button', { name: 'select-seedance_2_5' })
+    fireEvent.click(seedanceCatalogOption)
 
-    expect(screen.getByTestId('seedance25-form')).toBeInTheDocument()
-    expect(screen.queryByTestId('regular-video-form')).not.toBeInTheDocument()
+    expect(screen.getByTestId('regular-video-form')).toBeInTheDocument()
+    expect(screen.queryByTestId('seedance25-form')).not.toBeInTheDocument()
   })
 
-  it('keeps Seedance 2.5 selected when the user explicitly customizes a repeat', () => {
+  it('keeps a Seedance 2.5 repeat in the source-aware form after the preset is consumed', () => {
     mockApp({
       title: 'Повторить Seedance 2.5',
       prompt: '',
@@ -124,9 +145,32 @@ describe('VideoTab repeat mode selection', () => {
     expect(screen.getByTestId('regular-video-form')).toBeInTheDocument()
     expect(screen.queryByTestId('seedance25-form')).not.toBeInTheDocument()
 
-    const seedanceButton = screen.getByRole('button', { name: /Seedance 2\.5/i })
-    const catalogButton = screen.getByRole('button', { name: /Другие модели/i })
+    const seedanceButton = screen.getByRole('button', { name: /NEW Seedance 2\.5/i })
+    const catalogButton = screen.getByRole('button', { name: /Каталог Другие модели/i })
     expect(seedanceButton.className).toContain('border-gold/45')
     expect(catalogButton.className).not.toContain('border-border bg-secondary')
+
+    fireEvent.click(seedanceButton)
+    expect(screen.getByTestId('regular-video-form')).toBeInTheDocument()
+    expect(screen.queryByTestId('seedance25-form')).not.toBeInTheDocument()
+  })
+
+  it('opens a fresh dedicated Seedance form only after the user explicitly leaves repeat mode', () => {
+    mockApp({
+      title: 'Повторить Seedance 2.5',
+      prompt: '',
+      model: 'seedance_2_5',
+      sourceFeedGenId: 42,
+      promptHidden: true,
+    })
+
+    render(<VideoTab />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Каталог Другие модели/i }))
+    expect(screen.getByTestId('regular-video-form')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /NEW Seedance 2\.5/i }))
+    expect(screen.getByTestId('seedance25-form')).toBeInTheDocument()
+    expect(screen.queryByTestId('regular-video-form')).not.toBeInTheDocument()
   })
 })

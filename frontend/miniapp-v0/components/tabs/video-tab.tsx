@@ -21,18 +21,27 @@ export function VideoTab() {
     setVideoPromptPreset,
     refreshTasks,
   } = useApp()
+  const presetTargetsSeedance25 = videoPromptPreset?.model === 'seedance_2_5'
+  const presetIsSeedanceRepeat = Boolean(
+    presetTargetsSeedance25 && videoPromptPreset?.sourceFeedGenId,
+  )
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [lastРезультат, setLastРезультат] = useState<Task | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [videoMode, setVideoMode] = useState<'regular' | 'seedance25'>('seedance25')
+  const [videoMode, setVideoMode] = useState<'regular' | 'seedance25'>(() =>
+    videoPromptPreset && !presetTargetsSeedance25 ? 'regular' : 'seedance25',
+  )
+  // A feed repeat must remain in the source-aware generic form even after the
+  // one-shot preset is consumed from app context. Otherwise the next render
+  // mounts the dedicated Seedance form from scratch and loses the repeat data.
+  const [keepSeedanceRepeatInCatalog, setKeepSeedanceRepeatInCatalog] = useState(
+    () => presetIsSeedanceRepeat,
+  )
   const [seedanceQueued, setSeedanceQueued] = useState<Seedance25GenerateResponse | null>(null)
 
   const seedance25Model = useMemo(
     () => state.videoModels.find((item) => item.id === 'seedance_2_5'),
     [state.videoModels],
-  )
-  const isSeedanceRepeat = Boolean(
-    videoPromptPreset?.model === 'seedance_2_5' && videoPromptPreset.sourceFeedGenId,
   )
   const formVideoModels = useMemo(
     () => [
@@ -45,12 +54,13 @@ export function VideoTab() {
   const effectiveMode = canUseSeedance25 ? videoMode : 'regular'
 
   useEffect(() => {
-    if (!canUseSeedance25 || !videoPromptPreset) return
+    if (!videoPromptPreset) return
+    setKeepSeedanceRepeatInCatalog(presetIsSeedanceRepeat)
+    if (!canUseSeedance25) return
     // Seedance 2.5 repeats still use the source-aware generic form below,
-    // but the model switch must reflect the source model instead of falsely
-    // highlighting the generic catalog.
-    setVideoMode(videoPromptPreset.model === 'seedance_2_5' ? 'seedance25' : 'regular')
-  }, [canUseSeedance25, videoPromptPreset])
+    // but the model switch reflects the source model.
+    setVideoMode(presetTargetsSeedance25 ? 'seedance25' : 'regular')
+  }, [canUseSeedance25, presetIsSeedanceRepeat, presetTargetsSeedance25, videoPromptPreset])
 
   const handleSubmit = async (data: {
     model: string
@@ -134,11 +144,6 @@ export function VideoTab() {
     return uploaded
   }
 
-  const handleCatalogModelSelected = useCallback((modelId: string) => {
-    if (!canUseSeedance25) return
-    setVideoMode(modelId === 'seedance_2_5' ? 'seedance25' : 'regular')
-  }, [canUseSeedance25])
-
   const handleVideoPromptPresetConsumed = useCallback(() => {
     setVideoPromptPreset(null)
   }, [setVideoPromptPreset])
@@ -151,6 +156,18 @@ export function VideoTab() {
     } catch {
       // Dedicated Seedance webhook/polling still completes the task in Telegram.
     }
+  }
+
+  const handleSeedanceShortcut = () => {
+    // While a repeat is active, tapping the already-selected Seedance shortcut
+    // must not discard its source context. Switching to the catalog explicitly
+    // ends that protected repeat session; a later Seedance shortcut opens fresh.
+    setVideoMode('seedance25')
+  }
+
+  const handleCatalogShortcut = () => {
+    setKeepSeedanceRepeatInCatalog(false)
+    setVideoMode('regular')
   }
 
   return (
@@ -172,7 +189,7 @@ export function VideoTab() {
           <div className="grid grid-cols-2 gap-2 rounded-2xl border border-gold/25 bg-background/45 p-1.5">
             <button
               type="button"
-              onClick={() => setVideoMode('seedance25')}
+              onClick={handleSeedanceShortcut}
               className={`rounded-xl px-3 py-3 text-xs font-semibold transition ${
                 effectiveMode === 'seedance25'
                   ? 'border border-gold/45 bg-gold/15 text-gold shadow-[0_0_18px_rgba(251,191,36,0.10)]'
@@ -184,7 +201,7 @@ export function VideoTab() {
             </button>
             <button
               type="button"
-              onClick={() => setVideoMode('regular')}
+              onClick={handleCatalogShortcut}
               className={`rounded-xl px-3 py-3 text-xs font-medium transition ${
                 effectiveMode === 'regular'
                   ? 'border border-border bg-secondary text-foreground'
@@ -199,7 +216,7 @@ export function VideoTab() {
       ) : null}
 
       <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)] xl:gap-6">
-        {effectiveMode === 'seedance25' && seedance25Model && !isSeedanceRepeat ? (
+        {effectiveMode === 'seedance25' && seedance25Model && !keepSeedanceRepeatInCatalog ? (
           <Seedance25PublicForm
             model={seedance25Model}
             credits={state.user.credits}
@@ -221,18 +238,17 @@ export function VideoTab() {
             onPromptPresetConsumed={handleVideoPromptPresetConsumed}
             isSubmitting={isSubmitting}
             credits={state.user.credits}
-            onModelSelected={handleCatalogModelSelected}
           />
         )}
 
         <div className="space-y-4">
-          {error && (effectiveMode === 'regular' || isSeedanceRepeat) ? (
+          {error && (effectiveMode === 'regular' || keepSeedanceRepeatInCatalog) ? (
             <div className="p-4 rounded-xl bg-destructive/10 border border-destructive/30">
               <p className="text-sm text-destructive">{error}</p>
             </div>
           ) : null}
 
-          {effectiveMode === 'seedance25' && !isSeedanceRepeat ? (
+          {effectiveMode === 'seedance25' && !keepSeedanceRepeatInCatalog ? (
             <div className="glass rounded-2xl border border-cyan/20 p-5">
               <p className="text-xs uppercase tracking-[0.18em] text-cyan/80 mb-2">Seedance queue</p>
               <h3 className="font-serif text-lg text-foreground mb-2">Seedance 2.5</h3>
