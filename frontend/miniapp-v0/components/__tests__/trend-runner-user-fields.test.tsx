@@ -58,7 +58,6 @@ const trend: PromptItem = {
         type: 'number',
         required: true,
         max_length: 160,
-        default_value: '28',
       },
     ],
   },
@@ -108,13 +107,13 @@ describe('TrendRunnerDialog user fields', () => {
     })
   })
 
-  it('prefills the admin-selected value and lets the user edit it', async () => {
+  it('shows an empty admin-selected field and lets the user fill it', async () => {
     const { container } = render(
       <TrendRunnerDialog trend={trend} open onOpenChange={jest.fn()} />,
     )
 
     const ageInput = screen.getByRole('textbox', { name: /Возраст/ })
-    expect(ageInput).toHaveValue('28')
+    expect(ageInput).toHaveValue('')
     expect(screen.getByText('Возраст *')).toBeInTheDocument()
     expect(screen.getByText(/Скрытый prompt останется скрытым/)).toBeInTheDocument()
 

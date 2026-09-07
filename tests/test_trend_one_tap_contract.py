@@ -165,13 +165,13 @@ def test_trend_template_user_fields_stay_structured_and_prompt_private() -> None
 
     assert "Поля шаблона" in admin
     assert "TEMPLATE_FIELD_PRESETS" in admin
-    assert "default_value" in admin
+    assert "default_value" not in admin
     assert "user_fields: userFields.length ? userFields : undefined" in admin
     assert "Мин." not in admin
     assert "Макс." not in admin
     assert "inferTemplateFieldType" in admin
     assert "trend?.generation_settings?.user_fields" in runner
-    assert "field.default_value" in runner
+    assert "default_value" not in runner
     assert "runTrend(trend.id, referenceUrls, userValues)" in runner
     assert "payload.user_values = userValues" in client
     assert "configured_user_fields" in backend

@@ -54,7 +54,6 @@ function normalizedAdminField(label: string): TrendUserField {
     type: inferTemplateFieldType(clean),
     required: true,
     max_length: 160,
-    default_value: '',
   }
 }
 
@@ -385,11 +384,6 @@ export function TrendsTab() {
     }
     if (userFields.some((field) => !field.key.trim())) {
       setError('Укажите название поля шаблона')
-      return
-    }
-    const emptyField = userFields.find((field) => !String(field.default_value || '').trim())
-    if (emptyField) {
-      setError(`Заполните исходное значение поля «${emptyField.label}»`)
       return
     }
     setSubmitting(true)
@@ -870,7 +864,7 @@ export function TrendsTab() {
             <div>
               <p className="text-xs font-semibold text-foreground">Поля шаблона</p>
               <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-                Выберите только то, что пользователь сможет поменять. Введите исходное значение — при повторе пользователь увидит его и сможет заменить своим. Остальное бот соберёт сам.
+                Выберите только то, что пользователь сможет поменять. При повторе он увидит пустые поля с этими названиями и введёт свои значения. Остальное бот соберёт сам.
               </p>
             </div>
 
@@ -918,40 +912,20 @@ export function TrendsTab() {
 
             {userFields.length ? (
               <div className="space-y-2">
-                {userFields.map((field, index) => (
-                  <div key={field.key} className="space-y-2 rounded-xl border border-border/50 bg-background/45 p-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Название поля</p>
-                        <p className="mt-0.5 truncate text-sm font-medium text-foreground">{field.label}</p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => removeUserField(field.key)}
-                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-secondary/40 text-muted-foreground hover:text-destructive"
-                        aria-label={`Удалить поле ${field.label}`}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+                {userFields.map((field) => (
+                  <div key={field.key} className="flex items-center justify-between gap-3 rounded-xl border border-border/50 bg-background/45 p-3">
+                    <div className="min-w-0">
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Название поля</p>
+                      <p className="mt-0.5 truncate text-sm font-medium text-foreground">{field.label}</p>
                     </div>
-                    <div>
-                      <p className="mb-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">Исходное значение</p>
-                      <input
-                        type={field.type === 'date' ? 'date' : 'text'}
-                        inputMode={field.type === 'number' ? 'numeric' : undefined}
-                        value={field.default_value || ''}
-                        onChange={(event) => {
-                          const value = field.type === 'number'
-                            ? event.target.value.replace(/[^0-9.,-]/g, '').slice(0, 160)
-                            : event.target.value.slice(0, 160)
-                          setUserFields((current) => current.map((item, itemIndex) =>
-                            itemIndex === index ? { ...item, default_value: value } : item,
-                          ))
-                        }}
-                        placeholder={field.type === 'date' ? undefined : `Например: ${field.label === 'Возраст' ? '28' : field.label === 'Имя' ? 'Анна' : field.label === 'Надпись' ? 'С днём рождения!' : field.label}`}
-                        className="h-10 w-full rounded-lg border border-border/60 bg-secondary/40 px-3 text-sm text-foreground outline-none focus:border-gold/50"
-                      />
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeUserField(field.key)}
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-secondary/40 text-muted-foreground hover:text-destructive"
+                      aria-label={`Удалить поле ${field.label}`}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
                   </div>
                 ))}
               </div>

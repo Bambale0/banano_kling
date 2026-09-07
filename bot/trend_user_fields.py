@@ -44,7 +44,6 @@ class TrendUserFieldSpec:
     field_type: str
     required: bool = True
     max_length: int = MAX_FIELD_VALUE_LENGTH
-    default_value: str = ""
 
 
 def infer_field_type(label: str) -> str:
@@ -122,10 +121,6 @@ def _normalize_configured_fields(raw_fields: Any) -> list[dict[str, Any]]:
             raise TrendUserFieldsError("Поля шаблона не должны повторяться")
         seen.add(dedupe_key)
 
-        default_value = str(raw_field.get("default_value") or "").strip()
-        if len(default_value) > MAX_FIELD_VALUE_LENGTH:
-            raise TrendUserFieldsError(f"Слишком длинное значение поля «{label}»")
-
         normalized.append(
             {
                 "key": key,
@@ -133,7 +128,6 @@ def _normalize_configured_fields(raw_fields: Any) -> list[dict[str, Any]]:
                 "type": infer_field_type(label),
                 "required": True,
                 "max_length": MAX_FIELD_VALUE_LENGTH,
-                "default_value": default_value,
             }
         )
     return normalized
@@ -164,7 +158,6 @@ def configured_user_fields(
             "type": infer_field_type(key),
             "required": True,
             "max_length": MAX_FIELD_VALUE_LENGTH,
-            "default_value": "",
         }
         for key in _template_keys(prompt)
     ]
@@ -198,7 +191,6 @@ def _field_specs(
             field_type=str(field["type"]),
             required=bool(field.get("required", True)),
             max_length=MAX_FIELD_VALUE_LENGTH,
-            default_value=str(field.get("default_value") or ""),
         )
         for field in configured_user_fields(settings, prompt=prompt)
     )
@@ -206,8 +198,6 @@ def _field_specs(
 
 def _validated_field_value(spec: TrendUserFieldSpec, raw_value: str) -> str:
     value = str(raw_value or "").strip()
-    if not value:
-        value = spec.default_value.strip()
     if not value:
         if spec.required:
             raise TrendUserFieldsError(f"Заполните поле «{spec.label}»")

@@ -116,13 +116,11 @@ def test_admin_selected_fields_apply_as_server_side_overrides_without_prompt_tok
                     "key": "Возраст",
                     "label": "Возраст",
                     "type": "text",  # server must infer the type itself
-                    "default_value": "28",
                 },
                 {
                     "key": "Надпись",
                     "label": "Надпись",
                     "type": "number",  # ignored; label drives auto type
-                    "default_value": "С днём рождения!",
                 },
             ],
         },
@@ -144,7 +142,7 @@ def test_admin_selected_fields_apply_as_server_side_overrides_without_prompt_tok
     assert "{{" not in run.prompt
 
 
-def test_admin_selected_fields_use_defaults_until_user_edits_them():
+def test_admin_selected_fields_require_user_values():
     trend = _trend(
         prompt_text="Create a birthday poster",
         generation_settings={
@@ -153,16 +151,14 @@ def test_admin_selected_fields_use_defaults_until_user_edits_them():
             "model": "banana_pro",
             "ratio": "1:1",
             "user_fields": [
-                {"key": "Дата", "label": "Дата", "default_value": "2026-09-07"},
-                {"key": "Надпись", "label": "Надпись", "default_value": "С днём рождения"},
+                {"key": "Дата", "label": "Дата"},
+                {"key": "Надпись", "label": "Надпись"},
             ],
         },
     )
 
-    run = trusted_trend_run(trend, ("https://example.test/ref.jpg",), {})
-
-    assert "- Дата: 2026-09-07" in run.prompt
-    assert "- Надпись: С днём рождения" in run.prompt
+    with pytest.raises(TrendRunValidationError, match="Дата"):
+        trusted_trend_run(trend, ("https://example.test/ref.jpg",), {})
 
 
 @pytest.mark.parametrize(
@@ -181,7 +177,7 @@ def test_admin_selected_fields_reject_invalid_user_values(user_values, message):
             "model": "banana_pro",
             "ratio": "1:1",
             "user_fields": [
-                {"key": "Возраст", "label": "Возраст", "default_value": "28"}
+                {"key": "Возраст", "label": "Возраст"}
             ],
         },
     )
@@ -210,7 +206,6 @@ def test_admin_fields_have_no_manual_numeric_range():
                     "required": True,
                     "min": 1,
                     "max": 120,
-                    "default_value": "28",
                 }
             ],
         },

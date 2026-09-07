@@ -30,8 +30,8 @@ def _trend() -> dict:
             "duration": 10,
             "quality": "4K",
             "user_fields": [
-                {"key": "Возраст", "label": "Возраст", "type": "text", "default_value": "28"},
-                {"key": "Имя", "label": "Имя", "type": "number", "default_value": "Таня"},
+                {"key": "Возраст", "label": "Возраст", "type": "text"},
+                {"key": "Имя", "label": "Имя", "type": "number"},
             ],
             "kling_negative_prompt": "SECRET NEGATIVE",
         },
@@ -67,8 +67,8 @@ def test_public_trend_keeps_only_runner_metadata() -> None:
         "kind": "video",
         "ratio": "9:16",
         "user_fields": [
-            {"key": "Возраст", "label": "Возраст", "type": "number", "required": True, "max_length": 160, "default_value": "28"},
-            {"key": "Имя", "label": "Имя", "type": "text", "required": True, "max_length": 160, "default_value": "Таня"},
+            {"key": "Возраст", "label": "Возраст", "type": "number", "required": True, "max_length": 160},
+            {"key": "Имя", "label": "Имя", "type": "text", "required": True, "max_length": 160},
         ],
     }
     assert payload["prompt_hidden"] is True

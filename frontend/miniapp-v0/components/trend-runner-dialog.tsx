@@ -148,7 +148,7 @@ export function TrendRunnerDialog({
     setHeightCm('')
     setWeightKg('')
     setPinterestModel('banana_pro')
-    setUserValues(Object.fromEntries(userFields.map((field) => [field.key, field.default_value || ''])))
+    setUserValues(Object.fromEntries(userFields.map((field) => [field.key, ''])))
     setIdentityAngles([])
     setTrendPreviewFailed(false)
     clearPreviews()
@@ -168,7 +168,7 @@ export function TrendRunnerDialog({
     setPreviewUrls(exactSlots ? Array(exactReferenceCount).fill(null) : [])
     setIdentityAngles([])
     setIdentityAnglePreviews([])
-    setUserValues(Object.fromEntries(userFields.map((field) => [field.key, field.default_value || ''])))
+    setUserValues(Object.fromEntries(userFields.map((field) => [field.key, ''])))
   }, [exactReferenceCount, exactSlots, open, resetRunner, trend?.id, userFields])
 
   useEffect(() => {

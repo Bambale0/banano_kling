@@ -194,7 +194,6 @@ export interface TrendUserField {
   max?: number
   max_length?: number
   suffix?: string
-  default_value?: string
 }
 
 export interface TrendGenerationSettings {
