@@ -74,8 +74,8 @@ from bot.database import (
     share_to_feed,
     share_to_library,
     touch_saved_references,
-    update_transaction_status,
     update_prompt_preview_url,
+    update_transaction_status,
     update_user_profile,
     use_prompt,
 )
@@ -156,6 +156,7 @@ from bot.services.photo_prompt_billing import (
 )
 from bot.services.preset_manager import preset_manager
 from bot.services.reference_storage_service import save_reference_file
+from bot.services.remix_prompt import compose_feed_remix_prompt
 from bot.services.subscription_service import (
     REQUIRED_CHANNEL_USERNAME,
     check_required_channel_subscription,
@@ -3912,7 +3913,7 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
         source_prompt = str(source_task.get("prompt") or "").strip()
         if not source_prompt:
             return web.json_response({"ok": False, "error": "У исходной генерации нет prompt"}, status=400)
-        prompt = str(body.get("prompt", "") or "").strip() or source_prompt
+        prompt = compose_feed_remix_prompt(source_prompt, body.get("prompt", ""))
 
         img_service = str(body.get("img_service") or body.get("model") or source.get("model") or "banana_pro")
         img_ratio = str(body.get("img_ratio") or source.get("aspect_ratio") or "1:1")
@@ -4085,8 +4086,7 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
                     {"ok": False, "error": "У исходной генерации нет prompt"},
                     status=400,
                 )
-            if not prompt:
-                prompt = source_prompt
+            prompt = compose_feed_remix_prompt(source_prompt, prompt)
             references = _filter_foreign_feed_source_references(
                 source_feed_task,
                 source_feed_payload,

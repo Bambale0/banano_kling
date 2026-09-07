@@ -413,7 +413,7 @@ export function FeedTab() {
     setPromptPreset({
       promptId: null,
       title: 'Повторить образ из ленты',
-      prompt: item.prompt || '',
+      prompt: '',
       model: modelExists ? item.model : state.imageModels[0]?.id || 'banana_pro',
       ratio: item.aspect_ratio || '1:1',
       sourceFeedGenId: item.id,
