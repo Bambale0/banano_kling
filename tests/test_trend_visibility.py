@@ -20,7 +20,7 @@ def _trend() -> dict:
         "category": "video",
         "tags": ["trend", "trend-video"],
         "preview_url": "/uploads/trend.mp4",
-        "prompt_text": "SECRET PROMPT with {{Возраст}} and {{Имя}}",
+        "prompt_text": "SECRET PROMPT",
         "model": "seedance_2",
         "generation_settings": {
             "kind": "video",
@@ -29,6 +29,10 @@ def _trend() -> dict:
             "ratio": "9:16",
             "duration": 10,
             "quality": "4K",
+            "user_fields": [
+                {"key": "Возраст", "label": "Возраст", "type": "text", "default_value": "28"},
+                {"key": "Имя", "label": "Имя", "type": "number", "default_value": "Таня"},
+            ],
             "kling_negative_prompt": "SECRET NEGATIVE",
         },
     }
@@ -63,8 +67,8 @@ def test_public_trend_keeps_only_runner_metadata() -> None:
         "kind": "video",
         "ratio": "9:16",
         "user_fields": [
-            {"key": "Возраст", "label": "Возраст", "type": "number", "required": True, "max_length": 160},
-            {"key": "Имя", "label": "Имя", "type": "text", "required": True, "max_length": 160},
+            {"key": "Возраст", "label": "Возраст", "type": "number", "required": True, "max_length": 160, "default_value": "28"},
+            {"key": "Имя", "label": "Имя", "type": "text", "required": True, "max_length": 160, "default_value": "Таня"},
         ],
     }
     assert payload["prompt_hidden"] is True

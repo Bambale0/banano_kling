@@ -58,6 +58,7 @@ const trend: PromptItem = {
         type: 'number',
         required: true,
         max_length: 160,
+        default_value: '28',
       },
     ],
   },
@@ -107,12 +108,13 @@ describe('TrendRunnerDialog user fields', () => {
     })
   })
 
-  it('collects a configured age without revealing the hidden prompt', async () => {
+  it('prefills the admin-selected value and lets the user edit it', async () => {
     const { container } = render(
       <TrendRunnerDialog trend={trend} open onOpenChange={jest.fn()} />,
     )
 
     const ageInput = screen.getByRole('textbox', { name: /Возраст/ })
+    expect(ageInput).toHaveValue('28')
     expect(screen.getByText('Возраст *')).toBeInTheDocument()
     expect(screen.getByText(/Скрытый prompt останется скрытым/)).toBeInTheDocument()
 
@@ -122,7 +124,7 @@ describe('TrendRunnerDialog user fields', () => {
     })
     await waitFor(() => expect(mockedUploadFile).toHaveBeenCalledTimes(1))
 
-    fireEvent.change(ageInput, { target: { value: '28' } })
+    fireEvent.change(ageInput, { target: { value: '31' } })
     const generateButton = screen.getByRole('button', { name: /Сгенерировать/ })
     await waitFor(() => expect(generateButton).toBeEnabled())
     fireEvent.click(generateButton)
@@ -131,7 +133,7 @@ describe('TrendRunnerDialog user fields', () => {
       expect(mockedRunTrend).toHaveBeenCalledWith(
         42,
         ['https://example.test/portrait.jpg'],
-        { Возраст: '28' },
+        { Возраст: '31' },
       ),
     )
     expect(screen.queryByText(/Birthday scene|Happy birthday/)).not.toBeInTheDocument()

@@ -25,40 +25,12 @@ _NUMBER_FIELD_HINTS = (
     "год",
     "свеч",
 )
-
-_TEXT_FIELD_HINTS = (
-    "имя",
-    "текст",
-    "надпись",
-    "слово",
-    "цвет",
-    "стиль",
-    "город",
-    "страна",
-    "професс",
-    "одеж",
-    "причес",
-    "волос",
-    "фон",
+_DATE_FIELD_HINTS = (
+    "дата",
+    "date",
+    "день рождения",
+    "birthday",
 )
-
-
-def _infer_field_type(key: str, prompt: str) -> str:
-    normalized_key = str(key or "").strip().lower()
-    if any(hint in normalized_key for hint in _TEXT_FIELD_HINTS):
-        return "text"
-    if any(hint in normalized_key for hint in _NUMBER_FIELD_HINTS):
-        return "number"
-
-    token = "{{" + str(key or "").strip() + "}}"
-    prompt_text = str(prompt or "")
-    position = prompt_text.find(token)
-    if position >= 0:
-        context = prompt_text[max(0, position - 32) : position + len(token) + 32].lower()
-        context = _TEMPLATE_RE.sub(" ", context)
-    else:
-        context = ""
-    return "number" if any(hint in context for hint in _NUMBER_FIELD_HINTS) else "text"
 
 
 class TrendUserFieldsError(ValueError):
@@ -72,6 +44,16 @@ class TrendUserFieldSpec:
     field_type: str
     required: bool = True
     max_length: int = MAX_FIELD_VALUE_LENGTH
+    default_value: str = ""
+
+
+def infer_field_type(label: str) -> str:
+    normalized = str(label or "").strip().lower()
+    if any(hint in normalized for hint in _DATE_FIELD_HINTS):
+        return "date"
+    if any(hint in normalized for hint in _NUMBER_FIELD_HINTS):
+        return "number"
+    return "text"
 
 
 def clean_submitted_user_values(raw_values: Any) -> dict[str, str]:
@@ -101,46 +83,102 @@ def _template_keys(prompt: str) -> tuple[str, ...]:
     for match in _TEMPLATE_RE.finditer(str(prompt or "")):
         key = match.group(1).strip()
         if not key or len(key) > MAX_FIELD_KEY_LENGTH:
-            raise TrendUserFieldsError(
-                "Название параметра в {{...}} должно быть от 1 до 48 символов"
-            )
+            continue
         if key not in keys:
             keys.append(key)
-        if len(keys) > MAX_USER_FIELDS:
-            raise TrendUserFieldsError(
-                f"В одном тренде можно использовать не больше {MAX_USER_FIELDS} параметров"
-            )
+        if len(keys) >= MAX_USER_FIELDS:
+            break
     return tuple(keys)
 
 
-def infer_user_fields_from_prompt(prompt: str) -> list[dict[str, Any]]:
-    """Build safe runner fields directly from hidden-prompt ``{{...}}`` tokens.
+def _normalize_configured_fields(raw_fields: Any) -> list[dict[str, Any]]:
+    if raw_fields in (None, ""):
+        return []
+    if not isinstance(raw_fields, list):
+        raise TrendUserFieldsError("Поля шаблона настроены неверно")
+    if len(raw_fields) > MAX_USER_FIELDS:
+        raise TrendUserFieldsError(
+            f"В одном тренде можно использовать не больше {MAX_USER_FIELDS} полей"
+        )
 
-    The hidden prompt is the single source of truth: admins do not configure
-    field types, ranges or placeholders separately. Every unique token becomes
-    one required free-form value that is substituted server-side.
+    normalized: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw_field in raw_fields:
+        if not isinstance(raw_field, Mapping):
+            raise TrendUserFieldsError("Поля шаблона настроены неверно")
+        label = str(raw_field.get("label") or raw_field.get("key") or "").strip()
+        key = str(raw_field.get("key") or label).strip()
+        if (
+            not key
+            or not label
+            or len(key) > MAX_FIELD_KEY_LENGTH
+            or len(label) > MAX_FIELD_LABEL_LENGTH
+            or "{{" in key
+            or "}}" in key
+        ):
+            raise TrendUserFieldsError("Поля шаблона настроены неверно")
+        dedupe_key = key.casefold()
+        if dedupe_key in seen:
+            raise TrendUserFieldsError("Поля шаблона не должны повторяться")
+        seen.add(dedupe_key)
+
+        default_value = str(raw_field.get("default_value") or "").strip()
+        if len(default_value) > MAX_FIELD_VALUE_LENGTH:
+            raise TrendUserFieldsError(f"Слишком длинное значение поля «{label}»")
+
+        normalized.append(
+            {
+                "key": key,
+                "label": label,
+                "type": infer_field_type(label),
+                "required": True,
+                "max_length": MAX_FIELD_VALUE_LENGTH,
+                "default_value": default_value,
+            }
+        )
+    return normalized
+
+
+def configured_user_fields(
+    settings: Mapping[str, Any] | None,
+    *,
+    prompt: str = "",
+) -> list[dict[str, Any]]:
+    """Return safe fields selected by the admin.
+
+    New trends store explicit admin-selected fields in generation_settings.
+    Legacy {{...}} prompts are still supported as a fallback so old trends do
+    not break, but new admins never need to write template tokens manually.
     """
 
+    raw_settings = settings if isinstance(settings, Mapping) else {}
+    fields = _normalize_configured_fields(raw_settings.get("user_fields"))
+    if fields:
+        return fields
+
+    # Compatibility for trends created by the previous token-based flow.
     return [
         {
             "key": key,
             "label": key,
-            "type": _infer_field_type(key, prompt),
+            "type": infer_field_type(key),
             "required": True,
             "max_length": MAX_FIELD_VALUE_LENGTH,
+            "default_value": "",
         }
         for key in _template_keys(prompt)
     ]
 
 
-def apply_inferred_user_fields(
-    prompt: str,
+def normalize_user_fields_settings(
     settings: Mapping[str, Any] | None,
+    *,
+    prompt: str = "",
 ) -> dict[str, Any]:
-    """Return generation settings with user fields derived from the prompt."""
+    """Normalize admin-selected fields while leaving provider settings intact."""
 
     normalized = dict(settings or {})
-    fields = infer_user_fields_from_prompt(prompt)
+    fields = configured_user_fields(normalized, prompt=prompt)
     if fields:
         normalized["user_fields"] = fields
     else:
@@ -148,21 +186,32 @@ def apply_inferred_user_fields(
     return normalized
 
 
-def _field_specs_from_prompt(prompt: str) -> tuple[TrendUserFieldSpec, ...]:
+def _field_specs(
+    settings: Mapping[str, Any],
+    *,
+    prompt: str,
+) -> tuple[TrendUserFieldSpec, ...]:
     return tuple(
         TrendUserFieldSpec(
-            key=field["key"],
-            label=field["label"],
-            field_type=field["type"],
+            key=str(field["key"]),
+            label=str(field["label"]),
+            field_type=str(field["type"]),
+            required=bool(field.get("required", True)),
+            max_length=MAX_FIELD_VALUE_LENGTH,
+            default_value=str(field.get("default_value") or ""),
         )
-        for field in infer_user_fields_from_prompt(prompt)
+        for field in configured_user_fields(settings, prompt=prompt)
     )
 
 
 def _validated_field_value(spec: TrendUserFieldSpec, raw_value: str) -> str:
     value = str(raw_value or "").strip()
     if not value:
-        raise TrendUserFieldsError(f"Заполните поле «{spec.label}»")
+        value = spec.default_value.strip()
+    if not value:
+        if spec.required:
+            raise TrendUserFieldsError(f"Заполните поле «{spec.label}»")
+        return ""
     if spec.field_type == "number" and not _NUMBER_RE.fullmatch(value):
         raise TrendUserFieldsError(f"Поле «{spec.label}» должно быть числом")
     if len(value) > spec.max_length:
@@ -177,15 +226,20 @@ def render_trend_prompt(
     settings: Mapping[str, Any],
     user_values: Mapping[str, str] | None = None,
 ) -> str:
-    # ``settings`` stays in the signature for API compatibility. Template
-    # parameters are intentionally inferred from the hidden prompt itself.
-    _ = settings
+    """Apply user-editable admin fields to a hidden trend prompt server-side.
+
+    New flow: the admin selects fields in UX and never edits {{tokens}}.
+    User values are appended as authoritative overrides. Legacy matching tokens
+    are substituted too, so older trends continue to work.
+    """
+
+    base_prompt = str(prompt or "").strip()
     values = dict(user_values or {})
-    specs = _field_specs_from_prompt(prompt)
+    specs = _field_specs(settings, prompt=base_prompt)
     if not specs:
         if values:
             raise TrendUserFieldsError("Этот тренд не принимает дополнительные поля")
-        return str(prompt or "").strip()
+        return base_prompt
 
     allowed = {spec.key for spec in specs}
     unknown = sorted(set(values) - allowed)
@@ -197,19 +251,23 @@ def render_trend_prompt(
         for spec in specs
     }
 
-    def replace_token(match: re.Match[str]) -> str:
-        key = match.group(1).strip()
-        try:
-            return validated[key]
-        except KeyError as exc:
-            raise TrendUserFieldsError(
-                f"Шаблон содержит незаполненное поле «{key}»"
-            ) from exc
+    rendered = base_prompt
+    for spec in specs:
+        token_pattern = re.compile(r"\{\{\s*" + re.escape(spec.key) + r"\s*\}\}")
+        rendered = token_pattern.sub(validated[spec.key], rendered)
 
-    rendered = _TEMPLATE_RE.sub(replace_token, str(prompt or ""))
-    unresolved = _TEMPLATE_RE.search(rendered)
-    if unresolved:
-        raise TrendUserFieldsError(
-            f"Шаблон содержит незаполненное поле «{unresolved.group(1).strip()}»"
+    # Values selected by the user must win over any conflicting wording in the
+    # base prompt. Keeping this server-side also preserves prompt privacy.
+    overrides = "\n".join(
+        f"- {spec.label}: {validated[spec.key]}"
+        for spec in specs
+        if validated[spec.key]
+    )
+    if overrides:
+        rendered = (
+            f"{rendered}\n\n"
+            "ВАЖНО: примените следующие параметры пользователя как приоритетные "
+            "изменения. Если они противоречат исходному prompt, значения ниже имеют "
+            f"приоритет. Остальные детали сохраните без изменений:\n{overrides}"
         )
     return rendered.strip()

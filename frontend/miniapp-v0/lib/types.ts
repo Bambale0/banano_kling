@@ -187,7 +187,7 @@ export interface BootstrapResponse {
 export interface TrendUserField {
   key: string
   label: string
-  type: 'text' | 'number'
+  type: 'text' | 'number' | 'date'
   required?: boolean
   placeholder?: string
   min?: number

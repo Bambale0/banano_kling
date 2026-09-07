@@ -18,7 +18,7 @@ from aiogram.types import (
 from bot import database
 from bot.config import config
 from bot.services.reference_storage_service import save_reference_file
-from bot.trend_user_fields import TrendUserFieldsError, apply_inferred_user_fields
+from bot.trend_user_fields import TrendUserFieldsError, normalize_user_fields_settings
 from bot.utils.validators import detect_explicit_prompt_policy_violation
 
 logger = logging.getLogger(__name__)
@@ -546,9 +546,9 @@ async def publish_video_trend(
 
     user = await database.get_or_create_user(callback.from_user.id)
     try:
-        generation_settings = apply_inferred_user_fields(
-            str(data["prompt_text"]),
+        generation_settings = normalize_user_fields_settings(
             _build_video_generation_settings(str(data["model"])),
+            prompt=str(data["prompt_text"]),
         )
     except TrendUserFieldsError as exc:
         await callback.answer(str(exc), show_alert=True)
@@ -679,9 +679,9 @@ def _install_miniapp_video_submit(miniapp_module: Any) -> None:
                 )
             )
             try:
-                generation_settings = apply_inferred_user_fields(
-                    prompt_text,
+                generation_settings = normalize_user_fields_settings(
                     generation_settings,
+                    prompt=prompt_text,
                 )
             except TrendUserFieldsError as exc:
                 return miniapp_module.web.json_response(

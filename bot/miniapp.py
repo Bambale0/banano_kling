@@ -21,7 +21,7 @@ from bot import db as db_backend
 from bot.config import config
 from bot.trend_user_fields import (
     TrendUserFieldsError,
-    apply_inferred_user_fields,
+    normalize_user_fields_settings,
 )
 
 FILE_KIND_MAP: dict[str, dict[str, Any]] = {}
@@ -3304,9 +3304,9 @@ async def miniapp_prompt_submit(request: web.Request) -> web.Response:
             generation_settings = {}
         elif any(tag.strip().lower() == "trend" for tag in tags):
             try:
-                generation_settings = apply_inferred_user_fields(
-                    prompt_text,
+                generation_settings = normalize_user_fields_settings(
                     generation_settings,
+                    prompt=prompt_text,
                 )
             except TrendUserFieldsError as exc:
                 return web.json_response(

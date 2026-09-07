@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 from urllib.parse import parse_qsl
 
-from bot.trend_user_fields import TrendUserFieldsError, infer_user_fields_from_prompt
+from bot.trend_user_fields import TrendUserFieldsError, configured_user_fields
 
 
 def is_trend_prompt(prompt: Mapping[str, Any] | None) -> bool:
@@ -43,7 +43,10 @@ def public_trend_settings(prompt: Mapping[str, Any]) -> dict[str, Any]:
 
     public_settings: dict[str, Any] = {"kind": kind, "ratio": ratio}
     try:
-        user_fields = infer_user_fields_from_prompt(str(prompt.get("prompt_text") or ""))
+        user_fields = configured_user_fields(
+            settings,
+            prompt=str(prompt.get("prompt_text") or ""),
+        )
     except TrendUserFieldsError:
         user_fields = []
     if user_fields:

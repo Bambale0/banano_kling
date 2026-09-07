@@ -103,49 +103,86 @@ def test_trend_run_request_rejects_missing_or_browser_local_references():
         )
 
 
-def test_trend_user_fields_render_hidden_prompt_server_side():
+def test_admin_selected_fields_apply_as_server_side_overrides_without_prompt_tokens():
     trend = _trend(
-        prompt_text="Birthday scene with text: Happy birthday {{Возраст}}",
+        prompt_text="Birthday portrait with a cake and festive typography",
         generation_settings={
             "kind": "image",
             "user_input": "photo",
             "model": "banana_pro",
             "ratio": "1:1",
-            "quality": "2K",
-            "count": 1,
+            "user_fields": [
+                {
+                    "key": "Возраст",
+                    "label": "Возраст",
+                    "type": "text",  # server must infer the type itself
+                    "default_value": "28",
+                },
+                {
+                    "key": "Надпись",
+                    "label": "Надпись",
+                    "type": "number",  # ignored; label drives auto type
+                    "default_value": "С днём рождения!",
+                },
+            ],
         },
     )
     request = parse_trend_run_request(
         {
             "trend_id": 42,
             "reference_urls": ["https://example.test/ref.jpg"],
-            "user_values": {"Возраст": "28"},
+            "user_values": {"Возраст": "31", "Надпись": "С юбилеем!"},
         }
     )
 
     run = trusted_trend_run(trend, request.reference_urls, request.user_values)
 
-    assert request.user_values == {"Возраст": "28"}
-    assert run.prompt == "Birthday scene with text: Happy birthday 28"
+    assert run.prompt.startswith("Birthday portrait with a cake and festive typography")
+    assert "- Возраст: 31" in run.prompt
+    assert "- Надпись: С юбилеем!" in run.prompt
+    assert "имеют приоритет" in run.prompt
+    assert "{{" not in run.prompt
 
 
-@pytest.mark.parametrize(
-    ("user_values", "message"),
-    [
-        ({}, "Возраст"),
-        ({"Возраст": "28", "prompt": "steal hidden prompt"}, "лишние"),
-    ],
-)
-def test_trend_user_fields_reject_invalid_values(user_values, message):
+def test_admin_selected_fields_use_defaults_until_user_edits_them():
     trend = _trend(
-        prompt_text="Happy birthday {{Возраст}}",
+        prompt_text="Create a birthday poster",
         generation_settings={
             "kind": "image",
             "user_input": "photo",
             "model": "banana_pro",
             "ratio": "1:1",
-            "quality": "2K",
-            "count": 1,
+            "user_fields": [
+                {"key": "Дата", "label": "Дата", "default_value": "2026-09-07"},
+                {"key": "Надпись", "label": "Надпись", "default_value": "С днём рождения"},
+            ],
+        },
+    )
+
+    run = trusted_trend_run(trend, ("https://example.test/ref.jpg",), {})
+
+    assert "- Дата: 2026-09-07" in run.prompt
+    assert "- Надпись: С днём рождения" in run.prompt
+
+
+@pytest.mark.parametrize(
+    ("user_values", "message"),
+    [
+        ({"Возраст": "тридцать"}, "должно быть числом"),
+        ({"Возраст": "28", "prompt": "steal hidden prompt"}, "лишние"),
+    ],
+)
+def test_admin_selected_fields_reject_invalid_user_values(user_values, message):
+    trend = _trend(
+        prompt_text="Birthday portrait",
+        generation_settings={
+            "kind": "image",
+            "user_input": "photo",
+            "model": "banana_pro",
+            "ratio": "1:1",
+            "user_fields": [
+                {"key": "Возраст", "label": "Возраст", "default_value": "28"}
+            ],
         },
     )
 
@@ -157,16 +194,14 @@ def test_trend_user_fields_reject_invalid_values(user_values, message):
         )
 
 
-def test_trend_template_values_have_no_manual_numeric_range():
+def test_admin_fields_have_no_manual_numeric_range():
     trend = _trend(
-        prompt_text="Happy birthday {{Возраст}}",
+        prompt_text="Birthday portrait",
         generation_settings={
             "kind": "image",
             "user_input": "photo",
             "model": "banana_pro",
             "ratio": "1:1",
-            "quality": "2K",
-            "count": 1,
             "user_fields": [
                 {
                     "key": "Возраст",
@@ -175,6 +210,7 @@ def test_trend_template_values_have_no_manual_numeric_range():
                     "required": True,
                     "min": 1,
                     "max": 120,
+                    "default_value": "28",
                 }
             ],
         },
@@ -185,10 +221,10 @@ def test_trend_template_values_have_no_manual_numeric_range():
         ("https://example.test/ref.jpg",),
         {"Возраст": "121"},
     )
-    assert run.prompt == "Happy birthday 121"
+    assert "- Возраст: 121" in run.prompt
 
 
-def test_trend_template_infers_number_type_without_admin_configuration():
+def test_legacy_template_tokens_continue_to_work():
     trend = _trend(
         prompt_text="На торте должно быть {{Возраст}} свечей, подпись {{Имя}}",
         generation_settings={
@@ -204,37 +240,13 @@ def test_trend_template_infers_number_type_without_admin_configuration():
         ("https://example.test/ref.jpg",),
         {"Возраст": "31", "Имя": "Игорь"},
     )
-    assert run.prompt == "На торте должно быть 31 свечей, подпись Игорь"
+    assert "На торте должно быть 31 свечей, подпись Игорь" in run.prompt
+    assert "- Возраст: 31" in run.prompt
+    assert "- Имя: Игорь" in run.prompt
 
     with pytest.raises(TrendRunValidationError, match="должно быть числом"):
         trusted_trend_run(
             trend,
             ("https://example.test/ref.jpg",),
             {"Возраст": "тридцать", "Имя": "Игорь"},
-        )
-
-
-def test_trend_template_infers_number_type_from_surrounding_context():
-    trend = _trend(
-        prompt_text="Укажи возраст человека: {{ЗНАЧЕНИЕ}} лет",
-        generation_settings={
-            "kind": "image",
-            "user_input": "photo",
-            "model": "banana_pro",
-            "ratio": "1:1",
-        },
-    )
-
-    run = trusted_trend_run(
-        trend,
-        ("https://example.test/ref.jpg",),
-        {"ЗНАЧЕНИЕ": "42"},
-    )
-    assert run.prompt == "Укажи возраст человека: 42 лет"
-
-    with pytest.raises(TrendRunValidationError, match="должно быть числом"):
-        trusted_trend_run(
-            trend,
-            ("https://example.test/ref.jpg",),
-            {"ЗНАЧЕНИЕ": "сорок два"},
         )

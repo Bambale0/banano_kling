@@ -163,18 +163,19 @@ def test_trend_template_user_fields_stay_structured_and_prompt_private() -> None
     image_compat = read("bot/handlers/trends_compat.py")
     video_compat = read("bot/handlers/trend_video_compat.py")
 
-    assert "Поля пользователя · авто" in admin
-    assert "{{Возраст}}" in admin
-    assert "normalizedUserFields" not in admin
+    assert "Поля шаблона" in admin
+    assert "TEMPLATE_FIELD_PRESETS" in admin
+    assert "default_value" in admin
+    assert "user_fields: userFields.length ? userFields : undefined" in admin
     assert "Мин." not in admin
     assert "Макс." not in admin
     assert "inferTemplateFieldType" in admin
     assert "trend?.generation_settings?.user_fields" in runner
+    assert "field.default_value" in runner
     assert "runTrend(trend.id, referenceUrls, userValues)" in runner
     assert "payload.user_values = userValues" in client
-    assert "infer_user_fields_from_prompt" in backend
-    assert "_TEMPLATE_RE" in backend
-    assert "rendered = _TEMPLATE_RE.sub(replace_token" in backend
-    assert "apply_inferred_user_fields" in miniapp
-    assert "apply_inferred_user_fields" in image_compat
-    assert "apply_inferred_user_fields" in video_compat
+    assert "configured_user_fields" in backend
+    assert "ВАЖНО: примените следующие параметры пользователя" in backend
+    assert "normalize_user_fields_settings" in miniapp
+    assert "normalize_user_fields_settings" in image_compat
+    assert "normalize_user_fields_settings" in video_compat
