@@ -110,19 +110,13 @@ def test_rendergrid_polling_never_goes_below_documented_floor():
     assert provider.poll_interval_seconds == MIN_POLL_INTERVAL_SECONDS
 
 
-def test_rendergrid_generate_returns_existing_bot_image_bytes_contract():
+def test_rendergrid_generate_returns_accepted_creation_without_waiting():
     provider = _provider("nano-banana-2")
     provider.client.generate_image = AsyncMock(
         return_value={"id": "creation-1", "status": "queued"}
     )
-    provider.client.wait_for_creation = AsyncMock(
-        return_value={
-            "id": "creation-1",
-            "status": "completed",
-            "result_urls": ["https://cdn.example/result.png"],
-        }
-    )
-    provider._download_result = AsyncMock(return_value=(b"png-bytes", "image/png"))
+    provider.client.wait_for_creation = AsyncMock()
+    provider._download_result = AsyncMock()
 
     result = asyncio.run(
         provider.generate_image(
@@ -136,11 +130,32 @@ def test_rendergrid_generate_returns_existing_bot_image_bytes_contract():
     asyncio.run(provider.close())
 
     assert result is not None
-    assert result["image_bytes"] == b"png-bytes"
+    assert result["task_id"] == "creation-1"
+    assert result["provider_task_id"] == "creation-1"
     assert result["provider"] == "rendergrid"
     assert result["provider_model"] == "nano-banana-2"
     assert result["creation_id"] == "creation-1"
-    assert result["retryable"] is False
+    provider.client.wait_for_creation.assert_not_awaited()
+    provider._download_result.assert_not_awaited()
+
+
+def test_rendergrid_completed_result_is_resolved_by_poller_contract():
+    provider = _provider("nano-banana-pro")
+    payload = {
+        "id": "creation-done",
+        "status": "completed",
+        "result_urls": ["https://cdn.example/result.png"],
+    }
+
+    result = asyncio.run(provider.get_completed_result("creation-done", payload))
+    asyncio.run(provider.close())
+
+    assert result == {
+        "result_url": "https://cdn.example/result.png",
+        "provider": "rendergrid",
+        "provider_model": "nano-banana-pro",
+        "provider_task_id": "creation-done",
+    }
 
 
 def test_rendergrid_4k_validation_retries_lowercase_inside_rendergrid():
@@ -155,7 +170,7 @@ def test_rendergrid_4k_validation_retries_lowercase_inside_rendergrid():
             },
         ]
     )
-    provider._download_result = AsyncMock(return_value=(b"4k-bytes", "image/png"))
+    provider._download_result = AsyncMock()
 
     result = asyncio.run(
         provider.generate_image("Create a portrait", "1:1", "4K", [], "png")
@@ -164,7 +179,8 @@ def test_rendergrid_4k_validation_retries_lowercase_inside_rendergrid():
 
     assert result is not None
     assert result["provider"] == "rendergrid"
-    assert result["image_bytes"] == b"4k-bytes"
+    assert result["task_id"] == "creation-4k"
+    provider._download_result.assert_not_awaited()
     assert provider.client.generate_image.await_count == 2
     first_payload = provider.client.generate_image.await_args_list[0].args[0]
     second_payload = provider.client.generate_image.await_args_list[1].args[0]
@@ -259,3 +275,23 @@ def test_nanobanana_wiring_is_internal_and_uses_kie_as_rendergrid_fallback():
     # Provider migration stays below the UI/handler layer.
     assert "bot/handlers" not in services_init
     assert "InlineKeyboard" not in services_init
+
+
+def test_rendergrid_status_normalizes_nested_creation_payload_for_poller():
+    provider = _provider("nano-banana-pro")
+    provider.client.get_creation = AsyncMock(
+        return_value={
+            "data": {
+                "id": "nested-creation",
+                "status": "completed",
+                "result_urls": ["https://cdn.example/nested-result.png"],
+            }
+        }
+    )
+
+    result = asyncio.run(provider.get_task_status("nested-creation"))
+    asyncio.run(provider.close())
+
+    assert result is not None
+    assert result["status"] == "completed"
+    assert result["data"]["result_urls"] == ["https://cdn.example/nested-result.png"]

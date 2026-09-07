@@ -307,6 +307,13 @@ class RenderGridNanoBananaProvider:
         image_input: list[str] | None = None,
         output_format: str = "png",
     ) -> dict[str, Any] | None:
+        """Submit a RenderGrid creation and return its provider id immediately.
+
+        RenderGrid is asynchronous. Waiting for the final image inside the Telegram
+        request handler blocks the user's update for minutes and loses the provider
+        id until completion. The persistent image-provider poller resolves the
+        accepted creation after this method returns.
+        """
         del output_format
         if not self.configured:
             return None
@@ -339,54 +346,42 @@ class RenderGridNanoBananaProvider:
             )
             accepted = await self._create_rendergrid_generation(payload)
             creation_id = self._creation_id(accepted)
-            final = accepted
-            if creation_id and self._status(accepted) not in {"completed", "failed"}:
-                final = await self.client.wait_for_creation(
-                    creation_id,
-                    timeout_seconds=self.generation_timeout_seconds,
-                    poll_interval_seconds=self.poll_interval_seconds,
+            status = self._status(accepted)
+
+            if status == "failed":
+                reason = self._failure_text(accepted) or "RenderGrid generation failed"
+                return {
+                    "error": reason,
+                    "provider": "rendergrid",
+                    "provider_model": self.model_name,
+                    "creation_id": creation_id,
+                    "provider_task_id": creation_id,
+                    "retryable": False,
+                }
+
+            if not creation_id:
+                raise RenderGridError(
+                    "RenderGrid accepted generation without a creation id",
+                    code="INVALID_CREATION_RESPONSE",
+                    payload=accepted,
                 )
 
-            if self._status(final) == "failed":
-                reason = self._failure_text(final) or "RenderGrid generation failed"
-                if self._is_policy_failure(reason):
-                    return {
-                        "error": reason,
-                        "provider": "rendergrid",
-                        "provider_model": self.model_name,
-                        "creation_id": creation_id,
-                        "retryable": False,
-                    }
-                raise RenderGridError(
-                    reason,
-                    code="CREATION_FAILED",
-                    payload=final,
-                )
-
-            result_urls = self._result_urls(final)
-            if not result_urls:
-                raise RenderGridError(
-                    "RenderGrid completed without result_urls",
-                    code="CREATION_FAILED",
-                    payload=final,
-                )
-            image_bytes, mime_type = await self._download_result(result_urls[0])
             logger.info(
-                "Nano Banana provider success: provider=rendergrid model=%s refs=%s "
-                "creation_id=%s latency_seconds=%.2f bytes=%s",
+                "Nano Banana provider accepted: provider=rendergrid model=%s refs=%s "
+                "creation_id=%s status=%s latency_seconds=%.2f",
                 self.model_name,
                 len(references),
-                creation_id or "none",
+                creation_id,
+                status or "queued",
                 asyncio.get_running_loop().time() - started_at,
-                len(image_bytes),
             )
             return {
-                "image_bytes": image_bytes,
-                "mime_type": mime_type,
+                "task_id": creation_id,
+                "provider_task_id": creation_id,
+                "creation_id": creation_id,
                 "provider": "rendergrid",
                 "provider_model": self.model_name,
-                "creation_id": creation_id,
-                "result_url": result_urls[0],
+                "provider_status": status or "queued",
                 "retryable": False,
             }
         except (RenderGridError, ValueError, TypeError, TimeoutError) as exc:
@@ -421,8 +416,9 @@ class RenderGridNanoBananaProvider:
                 }
 
             logger.warning(
-                "Nano Banana provider technical failure: provider=rendergrid model=%s "
-                "status=%s code=%s latency_seconds=%.2f error=%s; fallback=kie",
+                "Nano Banana provider technical failure before acceptance: "
+                "provider=rendergrid model=%s status=%s code=%s latency_seconds=%.2f "
+                "error=%s; fallback=kie",
                 self.model_name,
                 status,
                 code,
@@ -430,6 +426,63 @@ class RenderGridNanoBananaProvider:
                 exc,
             )
             return None
+
+    async def get_task_status(self, creation_id: str) -> dict[str, Any] | None:
+        """Return the current RenderGrid creation for the persistent poller."""
+        if not self.configured:
+            return None
+        try:
+            creation = await self.client.get_creation(creation_id)
+            normalized = dict(creation)
+            status = self._status(creation)
+            if status:
+                normalized["status"] = status
+            if status == "failed" and not normalized.get("error"):
+                normalized["error"] = self._failure_text(creation)
+            return normalized
+        except (RenderGridError, ValueError, TypeError, TimeoutError) as exc:
+            # A transient status lookup must not make NanoBananaService ask KIE
+            # about a RenderGrid id or mark the job failed. Keep it pending and
+            # let the next poll cycle retry.
+            logger.warning(
+                "RenderGrid creation status lookup failed: creation_id=%s model=%s error=%s",
+                creation_id,
+                self.model_name,
+                exc,
+            )
+            return {
+                "id": creation_id,
+                "status": "pending",
+                "provider": "rendergrid",
+                "transient_error": str(exc),
+            }
+
+    async def get_completed_result(
+        self,
+        creation_id: str,
+        payload: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Resolve a completed creation into the common image-poller contract."""
+        creation = dict(payload or {})
+        if not creation:
+            status_payload = await self.get_task_status(creation_id)
+            creation = dict(status_payload or {})
+        if self._status(creation) != "completed":
+            return None
+        result_urls = self._result_urls(creation)
+        if not result_urls:
+            logger.error(
+                "RenderGrid completed without result_urls: creation_id=%s model=%s",
+                creation_id,
+                self.model_name,
+            )
+            return None
+        return {
+            "result_url": result_urls[0],
+            "provider": "rendergrid",
+            "provider_model": self.model_name,
+            "provider_task_id": creation_id,
+        }
 
     async def close(self) -> None:
         if self._download_session is not None and not self._download_session.closed:
