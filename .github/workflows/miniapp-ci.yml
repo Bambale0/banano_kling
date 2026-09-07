@@ -62,6 +62,8 @@ jobs:
           npm test -- --runInBand
           lib/__tests__/trend-api.test.ts
           components/tabs/__tests__/video-tab-repeat.test.tsx
+          components/forms/image-generator-form-remix.test.tsx
+          components/tabs/__tests__/feed-image-remix.test.tsx
 
       - name: Build static Mini App
         run: npm run build

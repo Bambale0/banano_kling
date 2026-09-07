@@ -616,7 +616,7 @@ export function ProfileTab() {
     setPromptPreset({
       promptId: null,
       title: 'Повторить публикацию',
-      prompt: item.prompt || '',
+      prompt: '',
       model: modelExists ? item.model : state.imageModels[0]?.id || 'banana_pro',
       ratio: item.aspect_ratio || '1:1',
       sourceFeedGenId: isLive ? item.id : null,

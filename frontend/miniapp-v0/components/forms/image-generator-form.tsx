@@ -109,8 +109,9 @@ export function ImageGeneratorForm({
 
   useEffect(() => {
     if (!promptPreset) return
-    setPrompt(promptPreset.prompt)
-    setSelectedPromptId(promptPreset.promptId || null)
+    const isSourceRepeat = Boolean(promptPreset.sourceFeedGenId)
+    setPrompt(isSourceRepeat ? '' : promptPreset.prompt)
+    setSelectedPromptId(isSourceRepeat ? null : (promptPreset.promptId || null))
     setSourceFeedGenId(promptPreset.sourceFeedGenId || null)
     setRemixTitle(promptPreset.sourceFeedGenId ? promptPreset.title : '')
     setActiveChanges(new Set())
@@ -372,7 +373,7 @@ export function ImageGeneratorForm({
                   {remixTitle || 'Повторить образ из ленты'}
                 </p>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  Можно заменить цвет волос, одежду, фон и другие детали перед запуском.
+                  Исходный промпт автора сохранится автоматически. Здесь укажите только свои изменения.
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -399,7 +400,9 @@ export function ImageGeneratorForm({
               </div>
             </div>
           )}
-          <label className="text-sm font-medium text-foreground">Промпт</label>
+          <label className="text-sm font-medium text-foreground">
+            {isFeedRemix ? 'Что изменить' : 'Промпт'}
+          </label>
           <Textarea
             value={prompt}
             onChange={(e) => {
@@ -422,8 +425,8 @@ export function ImageGeneratorForm({
             <span>
               {isFeedRemix
                 ? prompt.trim().length > 0
-                  ? 'Промпт из ленты готов к запуску'
-                  : 'Промпт скрыт автором, запуск доступен'
+                  ? 'Изменения добавятся к исходному промпту автора'
+                  : 'Без изменений — повторим исходный образ автора'
                 : selectedPromptId
                   ? 'Используется промпт из библиотеки'
                   : prompt.trim().length > 0
