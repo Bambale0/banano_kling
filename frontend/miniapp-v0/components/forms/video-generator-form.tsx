@@ -499,65 +499,8 @@ export function VideoGeneratorForm({
           />
         </div>
 
-        <div className="min-w-0 rounded-2xl border border-cyan/20 bg-cyan/5 p-3 sm:p-4">
-          <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-foreground">{model?.label}</p>
-              <p className="text-xs text-muted-foreground mt-1">{model?.description}</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                {isOmniAudio || isOmniCharacter ? `${cost}🍌 за ID` : `${formatPerSecondCost(perSecondCost)}🍌 за 1 секунду`}
-              </p>
-            </div>
-            <div className="w-fit max-w-full rounded-full border border-gold/20 bg-gold/10 px-3 py-1 text-xs text-gold">
-              <span className="block max-w-full truncate">
-                {isOmniAudio || isOmniCharacter ? 'ID' : `${model?.durations.join('/')} сек`}
-              </span>
-            </div>
-          </div>
-
-          <div className="mt-3 flex min-w-0 flex-wrap gap-2">
-            {(model?.supports || []).map((scenario) => (
-              <span
-                key={scenario}
-                className="max-w-full rounded-full border border-border/50 bg-background/40 px-3 py-1 text-xs text-secondary-foreground"
-              >
-                {scenario === 'text'
-                  ? 'Текст → Видео'
-                  : scenario === 'imgtxt'
-                    ? 'Фото + Текст'
-                    : scenario === 'avatar'
-                      ? 'Avatar'
-                      : scenario === 'audio'
-                        ? 'Audio ID'
-                        : scenario === 'character'
-                          ? 'Character ID'
-                          : 'Видео + Текст'}
-              </span>
-            ))}
-            {model?.grok_modes?.length ? (
-              <span className="rounded-full border border-border/50 bg-background/40 px-3 py-1 text-xs text-secondary-foreground">
-                Grok modes: {model.grok_modes.join(' / ')}
-              </span>
-            ) : null}
-            {model?.grok_resolutions?.length ? (
-              <span className="rounded-full border border-border/50 bg-background/40 px-3 py-1 text-xs text-secondary-foreground">
-                Grok 1.5: {model.grok_resolutions.join(' / ')}
-              </span>
-            ) : null}
-            {model?.supports_negative_prompt ? (
-              <span className="rounded-full border border-border/50 bg-background/40 px-3 py-1 text-xs text-secondary-foreground">
-                Negative + CFG
-              </span>
-            ) : null}
-            {model?.veo_generation_types?.length ? (
-              <span className="rounded-full border border-border/50 bg-background/40 px-3 py-1 text-xs text-secondary-foreground">
-                Veo controls
-              </span>
-            ) : null}
-          </div>
-
-          {isGeminiOmni ? (
-            <div className="mt-4 space-y-3 text-xs leading-relaxed text-muted-foreground">
+        {isGeminiOmni ? (
+            <div className="space-y-3 rounded-2xl border border-cyan/20 bg-cyan/5 p-3 text-xs leading-relaxed text-muted-foreground sm:p-4">
               <div className="flex items-start gap-2 text-foreground">
                 <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-cyan" />
                 <p>
@@ -581,8 +524,7 @@ export function VideoGeneratorForm({
                 Video принимает текст, стартовое изображение, фото-референсы, один видео-референс, один Audio ID и до трёх Character ID. Доступны 4/6/8/10 сек, 16:9 или 9:16, 720p/1080p/4k и seed для повторяемого результата.
               </p>
             </div>
-          ) : null}
-        </div>
+        ) : null}
 
         <div className="space-y-2">
           <label className="text-sm font-medium text-foreground">Сценарий</label>

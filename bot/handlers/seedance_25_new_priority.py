@@ -19,13 +19,14 @@ from . import seedance_25_fullstack as fullstack
 from . import seedance_25_public_release as public_release
 
 MODEL_KEY = "seedance_2_5"
-MODEL_LABEL = "🔥🆕 NEW · Seedance 2.5"
+MODEL_LABEL = "Seedance 2.5"
+TELEGRAM_MODEL_LABEL = "🔥🆕 NEW · Seedance 2.5"
 
 
 def _priority_button_text(current_model: str) -> str:
     check = "✅ " if current_model == MODEL_KEY else ""
     per_second = preset_manager.get_video_cost_per_second(MODEL_KEY, 5, "720p")
-    return f"{check}{MODEL_LABEL} • {per_second}🍌/с"
+    return f"{check}{TELEGRAM_MODEL_LABEL} • {per_second}🍌/с"
 
 
 def _priority_model_meta() -> dict[str, Any]:
@@ -109,8 +110,8 @@ def install_seedance_25_new_priority() -> None:
     if getattr(generation_module, "_seedance_25_new_priority_installed", False):
         return
 
-    # The public-release wrapper resolves these globals at call time, so switch
-    # its public copy to the brighter product label as well.
+    # The public-release wrapper resolves these globals at call time. Keep the
+    # Mini App metadata clean while Telegram still gets the explicit NEW marker.
     if not hasattr(public_release, "_public_model_meta_original"):
         public_release._public_model_meta_original = public_release._public_model_meta
     public_release._seedance_public_button_text = _priority_button_text
