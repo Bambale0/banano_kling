@@ -60,10 +60,7 @@ function isTrendUserFieldValueValid(field: TrendUserField, value: string): boole
   if (!normalized) return field.required === false
   if (field.type === 'number') {
     const parsed = Number(normalized.replace(',', '.'))
-    if (!Number.isFinite(parsed)) return false
-    if (typeof field.min === 'number' && parsed < field.min) return false
-    if (typeof field.max === 'number' && parsed > field.max) return false
-    return true
+    return Number.isFinite(parsed)
   }
   const maxLength = Math.max(1, Math.min(160, field.max_length || 80))
   return normalized.length <= maxLength
@@ -151,7 +148,7 @@ export function TrendRunnerDialog({
     setHeightCm('')
     setWeightKg('')
     setPinterestModel('banana_pro')
-    setUserValues(Object.fromEntries(userFields.map((field) => [field.key, field.default_value || ''])))
+    setUserValues(Object.fromEntries(userFields.map((field) => [field.key, ''])))
     setIdentityAngles([])
     setTrendPreviewFailed(false)
     clearPreviews()
@@ -171,7 +168,7 @@ export function TrendRunnerDialog({
     setPreviewUrls(exactSlots ? Array(exactReferenceCount).fill(null) : [])
     setIdentityAngles([])
     setIdentityAnglePreviews([])
-    setUserValues(Object.fromEntries(userFields.map((field) => [field.key, field.default_value || ''])))
+    setUserValues(Object.fromEntries(userFields.map((field) => [field.key, ''])))
   }, [exactReferenceCount, exactSlots, open, resetRunner, trend?.id, userFields])
 
   useEffect(() => {
@@ -756,17 +753,17 @@ export function TrendRunnerDialog({
                   </span>
                   <div className="relative">
                     <input
-                      type="text"
+                      type={field.type === 'date' ? 'date' : 'text'}
                       inputMode={field.type === 'number' ? 'numeric' : 'text'}
                       value={value}
-                      maxLength={field.type === 'text' ? Math.max(1, Math.min(160, field.max_length || 80)) : 32}
+                      maxLength={field.type === 'date' ? undefined : Math.max(1, Math.min(160, field.max_length || 160))}
                       placeholder={field.placeholder || ''}
                       disabled={busy}
                       aria-invalid={Boolean(value) && !valid}
                       onChange={(event) => {
                         let nextValue = event.target.value
                         if (field.type === 'number') {
-                          nextValue = nextValue.replace(/[^0-9.,-]/g, '').slice(0, 32)
+                          nextValue = nextValue.replace(/[^0-9.,-]/g, '').slice(0, 160)
                         }
                         setUserValues((current) => ({ ...current, [field.key]: nextValue }))
                         setError(null)
@@ -782,8 +779,8 @@ export function TrendRunnerDialog({
                   {value && !valid ? (
                     <p className="text-[10px] text-destructive">
                       {field.type === 'number'
-                        ? `Введите число${typeof field.min === 'number' ? ` от ${field.min}` : ''}${typeof field.max === 'number' ? ` до ${field.max}` : ''}`
-                        : `Максимум ${Math.max(1, Math.min(160, field.max_length || 80))} символов`}
+                        ? 'Введите число'
+                        : `Максимум ${Math.max(1, Math.min(160, field.max_length || 160))} символов`}
                     </p>
                   ) : null}
                 </label>

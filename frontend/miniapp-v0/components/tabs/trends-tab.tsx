@@ -36,6 +36,27 @@ const VIDEO_TREND_PREVIEW_MAX_BYTES = 200 * 1024 * 1024
 const VIDEO_PREVIEW_EXTENSIONS = new Set(['mp4', 'mov', 'm4v', 'webm'])
 const IMAGE_PREVIEW_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'avif'])
 
+const TEMPLATE_FIELD_PRESETS = ['Возраст', 'Имя', 'Надпись', 'Дата', 'Число'] as const
+const NUMBER_FIELD_HINTS = ['возраст', 'число', 'цифр', 'количество', 'номер', 'рост', 'вес', 'лет', 'год', 'свеч']
+const DATE_FIELD_HINTS = ['дата', 'date', 'день рождения', 'birthday']
+
+function inferTemplateFieldType(field: string): TrendUserField['type'] {
+  const normalized = field.trim().toLowerCase()
+  if (DATE_FIELD_HINTS.some((hint) => normalized.includes(hint))) return 'date'
+  return NUMBER_FIELD_HINTS.some((hint) => normalized.includes(hint)) ? 'number' : 'text'
+}
+
+function normalizedAdminField(label: string): TrendUserField {
+  const clean = label.replace(/[{}]/g, '').trim().slice(0, 48)
+  return {
+    key: clean,
+    label: clean,
+    type: inferTemplateFieldType(clean),
+    required: true,
+    max_length: 160,
+  }
+}
+
 function normalizedTags(trend: PromptItem) {
   return new Set((trend.tags || []).map((tag) => String(tag).trim().toLowerCase()))
 }
@@ -98,6 +119,7 @@ export function TrendsTab() {
   const [description, setDescription] = useState('')
   const [promptText, setPromptText] = useState('')
   const [userFields, setUserFields] = useState<TrendUserField[]>([])
+  const [customFieldName, setCustomFieldName] = useState('')
   const [model, setModel] = useState('banana_pro')
   const [videoDuration, setVideoDuration] = useState(5)
   const [trendRatio, setTrendRatio] = useState('1:1')
@@ -220,6 +242,7 @@ export function TrendsTab() {
     setDescription('')
     setPromptText('')
     setUserFields([])
+    setCustomFieldName('')
     setModel(state.imageModels[0]?.id || 'banana_pro')
     setVideoDuration(5)
     setTrendRatio('1:1')
@@ -339,34 +362,18 @@ export function TrendsTab() {
     }
   }
 
-  const addUserField = () => {
+  const addUserField = (label: string) => {
+    const field = normalizedAdminField(label)
+    if (!field.key) return
     setUserFields((current) => {
-      if (current.length >= 6) return current
-      const label = `Поле ${current.length + 1}`
-      return [
-        ...current,
-        {
-          key: label,
-          label,
-          type: 'text',
-          required: true,
-          placeholder: '',
-          max_length: 80,
-        },
-      ]
+      if (current.length >= 6 || current.some((item) => item.key.toLowerCase() === field.key.toLowerCase())) return current
+      return [...current, field]
     })
+    setCustomFieldName('')
   }
 
-  const updateUserField = (index: number, patch: Partial<TrendUserField>) => {
-    setUserFields((current) =>
-      current.map((field, fieldIndex) =>
-        fieldIndex === index ? { ...field, ...patch } : field,
-      ),
-    )
-  }
-
-  const removeUserField = (index: number) => {
-    setUserFields((current) => current.filter((_, fieldIndex) => fieldIndex !== index))
+  const removeUserField = (key: string) => {
+    setUserFields((current) => current.filter((field) => field.key !== key))
   }
 
   const handleCreate = async () => {
@@ -375,47 +382,8 @@ export function TrendsTab() {
       setError('Заполните название, preview, нейросеть и скрытый prompt')
       return
     }
-    const normalizedUserFields = userFields.map((field) => {
-      const label = field.label.trim()
-      return {
-        ...field,
-        key: label,
-        label,
-        required: true,
-        placeholder: String(field.placeholder || '').trim(),
-        max_length: field.type === 'text' ? Math.max(1, Math.min(160, field.max_length || 80)) : undefined,
-        min: field.type === 'number' ? field.min : undefined,
-        max: field.type === 'number' ? field.max : undefined,
-      }
-    })
-    if (normalizedUserFields.some((field) => !field.key)) {
-      setError('Укажите название каждого пользовательского поля')
-      return
-    }
-    if (normalizedUserFields.some((field) => field.key.includes('{{') || field.key.includes('}}'))) {
-      setError('Название пользовательского поля не должно содержать фигурные скобки')
-      return
-    }
-    if (new Set(normalizedUserFields.map((field) => field.key)).size !== normalizedUserFields.length) {
-      setError('Названия пользовательских полей не должны повторяться')
-      return
-    }
-    const missingTemplateField = normalizedUserFields.find(
-      (field) => !promptText.includes(`{{${field.key}}}`),
-    )
-    if (missingTemplateField) {
-      setError(`Добавьте {{${missingTemplateField.key}}} в скрытый prompt`)
-      return
-    }
-    const invalidNumberRange = normalizedUserFields.find(
-      (field) =>
-        field.type === 'number' &&
-        typeof field.min === 'number' &&
-        typeof field.max === 'number' &&
-        field.min > field.max,
-    )
-    if (invalidNumberRange) {
-      setError(`Минимум поля «${invalidNumberRange.label}» больше максимума`)
+    if (userFields.some((field) => !field.key.trim())) {
+      setError('Укажите название поля шаблона')
       return
     }
     setSubmitting(true)
@@ -444,7 +412,7 @@ export function TrendsTab() {
             model,
             ratio: trendRatio,
             preview_type: previewKind,
-            user_fields: normalizedUserFields.length ? normalizedUserFields : undefined,
+            user_fields: userFields.length ? userFields : undefined,
             scenario: 'imgtxt',
             duration: videoDuration,
             grok_mode: selectedTrendVideoModel?.grok_modes?.[0] || 'normal',
@@ -478,7 +446,7 @@ export function TrendsTab() {
             model,
             ratio: trendRatio,
             preview_type: previewKind,
-            user_fields: normalizedUserFields.length ? normalizedUserFields : undefined,
+            user_fields: userFields.length ? userFields : undefined,
             quality: imageQuality,
             count: 1,
             nsfw_checker: false,
@@ -893,106 +861,76 @@ export function TrendsTab() {
           </div>
 
           <div className="space-y-3 rounded-2xl border border-border/50 bg-secondary/25 p-3">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-xs font-semibold text-foreground">Поля пользователя</p>
-                <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-                  Необязательно. Пользователь заполнит их перед генерацией, а скрытый prompt останется закрытым.
-                </p>
-              </div>
+            <div>
+              <p className="text-xs font-semibold text-foreground">Поля шаблона</p>
+              <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                Выберите только то, что пользователь сможет поменять. При повторе он увидит пустые поля с этими названиями и введёт свои значения. Остальное бот соберёт сам.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {TEMPLATE_FIELD_PRESETS.map((preset) => {
+                const active = userFields.some((field) => field.key.toLowerCase() === preset.toLowerCase())
+                return (
+                  <button
+                    key={preset}
+                    type="button"
+                    disabled={active || userFields.length >= 6}
+                    onClick={() => addUserField(preset)}
+                    className="rounded-full border border-border/60 bg-background/55 px-3 py-1.5 text-[11px] text-foreground transition hover:border-gold/40 disabled:cursor-default disabled:opacity-40"
+                  >
+                    + {preset}
+                  </button>
+                )
+              })}
+            </div>
+
+            <div className="flex gap-2">
+              <input
+                value={customFieldName}
+                onChange={(event) => setCustomFieldName(event.target.value.slice(0, 48))}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    addUserField(customFieldName)
+                  }
+                }}
+                placeholder="Другое поле, например: Цвет волос"
+                className="h-10 min-w-0 flex-1 rounded-lg border border-border/60 bg-background/55 px-3 text-sm text-foreground outline-none focus:border-gold/50"
+              />
               <Button
                 type="button"
                 size="sm"
                 variant="secondary"
-                disabled={userFields.length >= 6}
-                onClick={addUserField}
+                disabled={!customFieldName.trim() || userFields.length >= 6}
+                onClick={() => addUserField(customFieldName)}
               >
                 <Plus className="h-3.5 w-3.5" />
-                Поле
+                Добавить
               </Button>
             </div>
 
             {userFields.length ? (
-              <div className="space-y-3">
-                {userFields.map((field, index) => (
-                  <div key={index} className="space-y-2 rounded-xl border border-border/50 bg-background/45 p-3">
-                    <div className="grid grid-cols-[minmax(0,1fr)_110px_auto] gap-2">
-                      <input
-                        value={field.label}
-                        onChange={(event) => {
-                          const label = event.target.value.slice(0, 48)
-                          updateUserField(index, { label, key: label })
-                        }}
-                        placeholder="Например: Возраст"
-                        className="h-10 min-w-0 rounded-lg border border-border/60 bg-secondary/50 px-3 text-sm text-foreground outline-none focus:border-gold/50"
-                      />
-                      <select
-                        value={field.type}
-                        onChange={(event) => {
-                          const type = event.target.value as 'text' | 'number'
-                          updateUserField(index,
-                            type === 'number'
-                              ? { type, min: 1, max: 120, placeholder: field.placeholder || '28', max_length: undefined }
-                              : { type, min: undefined, max: undefined, max_length: 80 },
-                          )
-                        }}
-                        className="h-10 rounded-lg border border-border/60 bg-secondary/50 px-2 text-xs text-foreground"
-                      >
-                        <option value="text">Текст</option>
-                        <option value="number">Число</option>
-                      </select>
-                      <button
-                        type="button"
-                        onClick={() => removeUserField(index)}
-                        className="flex h-10 w-10 items-center justify-center rounded-lg border border-border/60 bg-secondary/40 text-muted-foreground hover:text-destructive"
-                        aria-label={`Удалить поле ${field.label || index + 1}`}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+              <div className="space-y-2">
+                {userFields.map((field) => (
+                  <div key={field.key} className="flex items-center justify-between gap-3 rounded-xl border border-border/50 bg-background/45 p-3">
+                    <div className="min-w-0">
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Название поля</p>
+                      <p className="mt-0.5 truncate text-sm font-medium text-foreground">{field.label}</p>
                     </div>
-
-                    {field.type === 'number' ? (
-                      <div className="grid grid-cols-3 gap-2">
-                        <input
-                          type="number"
-                          value={field.min ?? ''}
-                          onChange={(event) => updateUserField(index, { min: event.target.value === '' ? undefined : Number(event.target.value) })}
-                          placeholder="Мин."
-                          className="h-9 rounded-lg border border-border/60 bg-secondary/40 px-2 text-xs"
-                        />
-                        <input
-                          type="number"
-                          value={field.max ?? ''}
-                          onChange={(event) => updateUserField(index, { max: event.target.value === '' ? undefined : Number(event.target.value) })}
-                          placeholder="Макс."
-                          className="h-9 rounded-lg border border-border/60 bg-secondary/40 px-2 text-xs"
-                        />
-                        <input
-                          value={field.placeholder || ''}
-                          onChange={(event) => updateUserField(index, { placeholder: event.target.value.slice(0, 80) })}
-                          placeholder="Пример: 28"
-                          className="h-9 rounded-lg border border-border/60 bg-secondary/40 px-2 text-xs"
-                        />
-                      </div>
-                    ) : (
-                      <input
-                        value={field.placeholder || ''}
-                        onChange={(event) => updateUserField(index, { placeholder: event.target.value.slice(0, 80) })}
-                        placeholder="Подсказка в поле, например: Анна"
-                        className="h-9 w-full rounded-lg border border-border/60 bg-secondary/40 px-2 text-xs"
-                      />
-                    )}
-
-                    <p className="text-[10px] text-muted-foreground">
-                      В скрытом prompt используйте <code className="text-gold">{`{{${field.label.trim() || 'Название'}}}`}</code>
-                    </p>
+                    <button
+                      type="button"
+                      onClick={() => removeUserField(field.key)}
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-secondary/40 text-muted-foreground hover:text-destructive"
+                      aria-label={`Удалить поле ${field.label}`}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
                   </div>
                 ))}
               </div>
             ) : (
-              <p className="text-[11px] text-muted-foreground">
-                Для обычного тренда ничего добавлять не нужно. Для birthday-шаблона добавьте поле «Возраст».
-              </p>
+              <p className="text-[11px] text-muted-foreground">Если пользователь ничего менять не должен — оставьте блок пустым.</p>
             )}
           </div>
 

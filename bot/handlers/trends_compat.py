@@ -25,6 +25,7 @@ from bot import database
 from bot.config import config
 from bot.handlers.trend_text_upload import _build_image_generation_settings
 from bot.keyboards import _mini_app_url_with_start_param
+from bot.trend_user_fields import TrendUserFieldsError, normalize_user_fields_settings
 from bot.utils.validators import detect_explicit_prompt_policy_violation
 
 logger = logging.getLogger(__name__)
@@ -384,6 +385,16 @@ def _install_miniapp_trends(miniapp_module: Any) -> None:
                 if isinstance(raw_generation_settings, dict) and raw_generation_settings
                 else _build_image_generation_settings(model)
             )
+            try:
+                generation_settings = normalize_user_fields_settings(
+                    generation_settings,
+                    prompt=prompt_text,
+                )
+            except TrendUserFieldsError as exc:
+                return miniapp_module.web.json_response(
+                    {"ok": False, "error": str(exc)},
+                    status=400,
+                )
 
             prompt = await database.create_prompt(
                 author_id=ctx["user"].id,

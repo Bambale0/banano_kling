@@ -159,11 +159,23 @@ def test_trend_template_user_fields_stay_structured_and_prompt_private() -> None
     runner = read("frontend/miniapp-v0/components/trend-runner-dialog.tsx")
     client = read("frontend/miniapp-v0/lib/trend-api.ts")
     backend = read("bot/trend_user_fields.py")
+    miniapp = read("bot/miniapp.py")
+    image_compat = read("bot/handlers/trends_compat.py")
+    video_compat = read("bot/handlers/trend_video_compat.py")
 
-    assert "user_fields: normalizedUserFields.length ? normalizedUserFields : undefined" in admin
-    assert "promptText.includes(`{{${field.key}}}`)" in admin
+    assert "Поля шаблона" in admin
+    assert "TEMPLATE_FIELD_PRESETS" in admin
+    assert "default_value" not in admin
+    assert "user_fields: userFields.length ? userFields : undefined" in admin
+    assert "Мин." not in admin
+    assert "Макс." not in admin
+    assert "inferTemplateFieldType" in admin
     assert "trend?.generation_settings?.user_fields" in runner
+    assert "default_value" not in runner
     assert "runTrend(trend.id, referenceUrls, userValues)" in runner
     assert "payload.user_values = userValues" in client
-    assert 'token = "{{" + spec.key + "}}"' in backend
-    assert "rendered = rendered.replace(token, value)" in backend
+    assert "configured_user_fields" in backend
+    assert "ВАЖНО: примените следующие параметры пользователя" in backend
+    assert "normalize_user_fields_settings" in miniapp
+    assert "normalize_user_fields_settings" in image_compat
+    assert "normalize_user_fields_settings" in video_compat

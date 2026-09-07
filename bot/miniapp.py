@@ -19,6 +19,10 @@ from aiohttp import web
 
 from bot import db as db_backend
 from bot.config import config
+from bot.trend_user_fields import (
+    TrendUserFieldsError,
+    normalize_user_fields_settings,
+)
 
 FILE_KIND_MAP: dict[str, dict[str, Any]] = {}
 
@@ -3295,8 +3299,20 @@ async def miniapp_prompt_submit(request: web.Request) -> web.Response:
             if isinstance(raw_generation_settings, dict)
             else {}
         )
+        tags = [str(item) for item in list(body.get("tags", []) or [])]
         if not config.is_admin(telegram_id):
             generation_settings = {}
+        elif any(tag.strip().lower() == "trend" for tag in tags):
+            try:
+                generation_settings = normalize_user_fields_settings(
+                    generation_settings,
+                    prompt=prompt_text,
+                )
+            except TrendUserFieldsError as exc:
+                return web.json_response(
+                    {"ok": False, "error": str(exc)},
+                    status=400,
+                )
         if len(json.dumps(generation_settings, ensure_ascii=False)) > 12_000:
             return web.json_response(
                 {"ok": False, "error": "Слишком много настроек тренда"},
@@ -3318,7 +3334,7 @@ async def miniapp_prompt_submit(request: web.Request) -> web.Response:
             category=str(body.get("category", "") or "").strip() or None,
             preview_url=str(body.get("preview_url", "") or "").strip() or None,
             model=str(body.get("model", "") or "").strip() or None,
-            tags=[str(item) for item in list(body.get("tags", []) or [])],
+            tags=tags,
             generation_settings=generation_settings,
             is_public=True,
         )
