@@ -167,9 +167,10 @@ def get_more_menu_keyboard():
     builder = InlineKeyboardBuilder()
     builder.button(text="❓ Как пользоваться", callback_data="menu_help")
     builder.button(text="💬 Поддержка", callback_data="menu_support")
+    builder.button(text="📜 Публичная оферта", callback_data="more_public_offer")
     builder.button(text="💰 Пополнить", callback_data="menu_topup")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
-    builder.adjust(2, 1, 1)
+    builder.adjust(2, 1, 1, 1)
     return builder.as_markup()
 
 
@@ -951,7 +952,6 @@ def get_referral_keyboard(referral_link: str):
 
 def get_partner_program_keyboard(referral_link: str, is_partner: bool = False):
     builder = InlineKeyboardBuilder()
-    builder.button(text="📜 Публичная оферта", callback_data="partner_offer")
     if not is_partner:
         builder.button(text="✔ Прочитал и согласен с условиями", callback_data="partner_accept")
     if referral_link:
@@ -968,7 +968,6 @@ def get_partner_program_keyboard(referral_link: str, is_partner: bool = False):
 
 def get_partner_consent_keyboard():
     builder = InlineKeyboardBuilder()
-    builder.button(text="📜 Публичная оферта", callback_data="partner_offer")
     builder.button(text="✔ Прочитал и согласен с условиями", callback_data="partner_accept")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
     builder.adjust(1, 1, 1)

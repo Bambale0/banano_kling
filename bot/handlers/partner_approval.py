@@ -27,14 +27,7 @@ admin_router = Router()
 
 
 def _preapproval_keyboard(status: str) -> types.InlineKeyboardMarkup:
-    rows: list[list[types.InlineKeyboardButton]] = [
-        [
-            types.InlineKeyboardButton(
-                text="📜 Публичная оферта",
-                callback_data="partner_offer",
-            )
-        ]
-    ]
+    rows: list[list[types.InlineKeyboardButton]] = []
     if status == PARTNER_APPLICATION_AVAILABLE:
         rows.append(
             [
@@ -86,10 +79,9 @@ def _preapproval_text(status: str) -> str:
     return (
         "🤝 <b>Партнёрская программа</b>\n\n"
         "Для новых партнёров кабинет активируется вручную администратором.\n\n"
-        "1. Ознакомьтесь с публичной офертой.\n"
-        "2. Нажмите <b>«Активировать партнёрскую ссылку»</b>.\n"
-        "3. Администратор получит заявку и ссылку на ваш Telegram-аккаунт.\n"
-        "4. После одобрения откроются полноценный кабинет, статистика и реферальная ссылка.\n\n"
+        "1. Нажмите <b>«Активировать партнёрскую ссылку»</b>.\n"
+        "2. Администратор получит заявку и ссылку на ваш Telegram-аккаунт.\n"
+        "3. После одобрения откроются полноценный кабинет, статистика и реферальная ссылка.\n\n"
         "До одобрения реферальная ссылка не работает и новых пользователей за вами не закрепляет."
     )
 

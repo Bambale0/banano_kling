@@ -83,3 +83,31 @@ def test_partner_offer_uses_full_local_document_before_legacy_handler():
         "common_router.include_router(legacy_common_router)"
     )
     assert exact_offer < legacy_common
+
+
+def test_telegram_offer_is_exposed_in_more_and_removed_from_partner_ui():
+    keyboards_source = (ROOT / "bot" / "keyboards.py").read_text(encoding="utf-8")
+    offer_source = (
+        ROOT / "bot" / "handlers" / "public_offer_compat.py"
+    ).read_text(encoding="utf-8")
+    partner_source = (
+        ROOT / "bot" / "handlers" / "partner_approval.py"
+    ).read_text(encoding="utf-8")
+
+    more_keyboard = keyboards_source.split("def get_more_menu_keyboard():", 1)[1].split(
+        "def get_admin_keyboard", 1
+    )[0]
+    partner_keyboards = keyboards_source.split(
+        "def get_partner_program_keyboard", 1
+    )[1].split("def get_settings_keyboard", 1)[0]
+    preapproval_ui = partner_source.split("def _preapproval_keyboard", 1)[1].split(
+        "async def _render_partner_entry", 1
+    )[0]
+
+    assert 'text="📜 Публичная оферта"' in more_keyboard
+    assert 'callback_data="more_public_offer"' in more_keyboard
+    assert '"more_public_offer"' in offer_source
+    assert 'get_back_keyboard("ux_more")' in offer_source
+
+    assert 'callback_data="partner_offer"' not in partner_keyboards
+    assert "Публичная оферта" not in preapproval_ui

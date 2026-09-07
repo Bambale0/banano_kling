@@ -17,8 +17,10 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 PUBLIC_OFFER_CALLBACK = "public_offer"
+MORE_PUBLIC_OFFER_CALLBACK = "more_public_offer"
 PUBLIC_OFFER_CALLBACKS = {
     PUBLIC_OFFER_CALLBACK,
+    MORE_PUBLIC_OFFER_CALLBACK,
     "partner_offer",
     "payment_public_offer",
 }
@@ -108,11 +110,12 @@ async def show_public_offer(callback: types.CallbackQuery):
         return
 
     is_partner_flow = callback.data == "partner_offer"
-    reply_markup = (
-        get_partner_consent_keyboard()
-        if is_partner_flow
-        else get_back_keyboard("menu_topup")
-    )
+    if is_partner_flow:
+        reply_markup = get_partner_consent_keyboard()
+    elif callback.data == MORE_PUBLIC_OFFER_CALLBACK:
+        reply_markup = get_back_keyboard("ux_more")
+    else:
+        reply_markup = get_back_keyboard("menu_topup")
 
     try:
         await callback.message.answer_document(
