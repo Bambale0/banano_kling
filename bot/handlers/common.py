@@ -249,18 +249,17 @@ def _feed_cards_for_viewer(cards: list[dict], viewer_user_id: int | None) -> lis
     ]
 
 
-def _load_feed_cards_sync(source: str) -> list[dict]:
-    return asyncio.run(
-        get_feed_generations(
-            limit=FEED_PAGE_LIMIT,
-            source=source,
-            viewer_user_id=None,
-        )
-    )
-
-
 async def _load_feed_cards(source: str) -> list[dict]:
-    return await asyncio.to_thread(_load_feed_cards_sync, source)
+    # PostgreSQL uses one async connection pool bound to the bot event loop.
+    # Running this coroutine via asyncio.run() in a worker thread reuses that
+    # pool from a second loop and eventually breaks every DB call with
+    # "Lock ... is bound to a different event loop". The query is already
+    # asynchronous, so keep it on the application loop.
+    return await get_feed_generations(
+        limit=FEED_PAGE_LIMIT,
+        source=source,
+        viewer_user_id=None,
+    )
 
 
 def _profile_feed_cache_key(referral_code: str, viewer_user_id: int | None) -> tuple[str, int | None]:
