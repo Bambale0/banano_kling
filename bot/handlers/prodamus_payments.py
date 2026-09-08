@@ -69,6 +69,16 @@ def prodamus_enabled() -> bool:
     return bool(_env("PRODAMUS_PAYFORM_URL") and _secret_key() and _sys_code())
 
 
+def prodamus_public_enabled() -> bool:
+    """Return True only when Prodamus is explicitly allowed on user-facing surfaces."""
+    return prodamus_enabled() and _env("PRODAMUS_PUBLIC_ENABLED").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _stringify_scalar(value: Any) -> str:
     if value is None:
         return ""
@@ -417,7 +427,7 @@ def _decorate_payment_keyboard(
     markup: InlineKeyboardMarkup,
     package_id: str,
 ) -> InlineKeyboardMarkup:
-    if not prodamus_enabled():
+    if not prodamus_public_enabled():
         return markup
 
     callback_data = f"prodamus_pay_{package_id}"
@@ -501,8 +511,8 @@ async def handle_prodamus_payment(
     callback: types.CallbackQuery,
     state: FSMContext,
 ) -> None:
-    if not prodamus_enabled():
-        await callback.answer("Prodamus пока не настроен", show_alert=True)
+    if not prodamus_public_enabled():
+        await callback.answer("Этот способ оплаты временно недоступен", show_alert=True)
         return
 
     package_id = str(callback.data or "").replace("prodamus_pay_", "", 1)
@@ -594,7 +604,7 @@ def install_prodamus_miniapp_payment() -> None:
         @wraps(current_payload)
         def package_payload_with_prodamus(package: dict[str, Any]) -> dict[str, Any]:
             payload = current_payload(package)
-            payload["prodamus_enabled"] = prodamus_enabled()
+            payload["prodamus_enabled"] = prodamus_public_enabled()
             return payload
 
         package_payload_with_prodamus._prodamus_payment_compat = True
@@ -611,9 +621,9 @@ def install_prodamus_miniapp_payment() -> None:
             provider = str(body.get("provider") or "").strip().lower()
             if provider != "prodamus":
                 return await current_create_payment(request)
-            if not prodamus_enabled():
+            if not prodamus_public_enabled():
                 return web.json_response(
-                    {"ok": False, "error": "Prodamus not configured"}, status=503
+                    {"ok": False, "error": "Payment provider unavailable"}, status=404
                 )
 
             package_id = str(body.get("package_id") or "").strip()

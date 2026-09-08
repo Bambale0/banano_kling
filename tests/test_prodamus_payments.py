@@ -12,9 +12,19 @@ from bot.handlers.prodamus_payments import (
     canonical_hmac_json,
     handle_prodamus_webhook,
     parse_prodamus_form,
+    prodamus_public_enabled,
     sign_prodamus_payload,
     verify_prodamus_signature,
 )
+
+
+def test_prodamus_public_surfaces_are_disabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PRODAMUS_PAYFORM_URL", "https://neuromix.payform.ru/")
+    monkeypatch.setenv("PRODAMUS_SECRET_KEY", "merchant-secret")
+    monkeypatch.setenv("PRODAMUS_SYS", "neuromix_bot")
+    monkeypatch.delenv("PRODAMUS_PUBLIC_ENABLED", raising=False)
+
+    assert prodamus_public_enabled() is False
 
 
 def test_prodamus_hmac_matches_canonical_fixture() -> None:

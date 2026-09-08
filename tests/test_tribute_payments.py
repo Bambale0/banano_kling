@@ -79,12 +79,13 @@ def test_payload_amount_and_currency_must_match_resolved_product() -> None:
         )
 
 
-def test_text_bot_keeps_tribute_and_prodamus_together(
+def test_text_bot_hides_prodamus_while_keeping_tribute(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("PRODAMUS_PAYFORM_URL", "https://example.payform.ru/")
     monkeypatch.setenv("PRODAMUS_SECRET_KEY", "test-secret")
     monkeypatch.setenv("PRODAMUS_SYS", "test-system")
+    monkeypatch.delenv("PRODAMUS_PUBLIC_ENABLED", raising=False)
 
     tribute_markup = tribute.build_tribute_payment_method_keyboard(
         "mini",
@@ -95,21 +96,18 @@ def test_text_bot_keeps_tribute_and_prodamus_together(
     combined_markup = prodamus._decorate_payment_keyboard(tribute_markup, "mini")
 
     buttons = [button for row in combined_markup.inline_keyboard for button in row]
-    tribute_button = next(button for button in buttons if button.text == "СНГ И ЗАРУБЕЖНЫЕ")
-    prodamus_button = next(
-        button for button in buttons if button.text == prodamus.PRODAMUS_PAYMENT_BUTTON_TEXT
-    )
-
-    assert tribute_button.url == tribute.TRIBUTE_PACKAGE_LINKS["mini"]
-    assert prodamus_button.callback_data == "prodamus_pay_mini"
+    texts = [button.text for button in buttons]
+    assert "СНГ И ЗАРУБЕЖНЫЕ" in texts
+    assert prodamus.PRODAMUS_PAYMENT_BUTTON_TEXT not in texts
 
 
-def test_active_flat_payment_menu_includes_prodamus_before_reserve(
+def test_active_flat_payment_menu_hides_prodamus(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("PRODAMUS_PAYFORM_URL", "https://example.payform.ru/")
     monkeypatch.setenv("PRODAMUS_SECRET_KEY", "test-secret")
     monkeypatch.setenv("PRODAMUS_SYS", "test-system")
+    monkeypatch.delenv("PRODAMUS_PUBLIC_ENABLED", raising=False)
 
     def fake_flat_keyboard(package_id: str, **_kwargs):
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -128,26 +126,22 @@ def test_active_flat_payment_menu_includes_prodamus_before_reserve(
     prodamus.install_prodamus_flat_text_payment_keyboard()
 
     markup = lava_checkout._payment_options_keyboard("start")
-    buttons = [button for row in markup.inline_keyboard for button in row]
-    texts = [button.text for button in buttons]
-    assert prodamus.PRODAMUS_PAYMENT_BUTTON_TEXT in texts
-    assert texts.index(prodamus.PRODAMUS_PAYMENT_BUTTON_TEXT) < texts.index("СНГ И ЗАРУБЕЖНЫЕ")
-    button = next(
-        item for item in buttons if item.text == prodamus.PRODAMUS_PAYMENT_BUTTON_TEXT
-    )
-    assert button.callback_data == "prodamus_pay_start"
+    texts = [button.text for row in markup.inline_keyboard for button in row]
+    assert prodamus.PRODAMUS_PAYMENT_BUTTON_TEXT not in texts
+    assert "СНГ И ЗАРУБЕЖНЫЕ" in texts
 
 
-def test_miniapp_keeps_tribute_and_prodamus_together() -> None:
+def test_miniapp_contains_no_prodamus_surface() -> None:
     source = Path("frontend/miniapp-v0/components/balance-sheet.tsx").read_text(
         encoding="utf-8"
     )
+    types_source = Path("frontend/miniapp-v0/lib/types.ts").read_text(encoding="utf-8")
 
     assert "const TRIBUTE_LINKS" in source
     assert "provider === ('tribute' as PaymentProvider)" in source
     assert "СНГ И ЗАРУБЕЖНЫЕ" in source
-    assert "provider === 'prodamus'" in source
-    assert "🇰🇿🇦🇲 Карта | СНГ" in source
+    assert "prodamus" not in source.lower()
+    assert "prodamus" not in types_source.lower()
 
 
 @pytest.mark.asyncio
