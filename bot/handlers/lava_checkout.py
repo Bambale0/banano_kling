@@ -165,12 +165,12 @@ def _lava_checkout_params(mode: str) -> tuple[str | None, str, str]:
         return (
             LAVA_FOREIGN_CARD_PAYMENT_PROVIDER,
             LAVA_FOREIGN_CARD_PAYMENT_METHOD,
-            "Зарубежная карта",
+            "Резерв · зарубежная карта",
         )
     if mode == LAVA_CHECKOUT_FOREIGN_PAYPAL:
-        return LAVA_FOREIGN_PAYPAL_PAYMENT_PROVIDER, "", "PayPal"
+        return LAVA_FOREIGN_PAYPAL_PAYMENT_PROVIDER, "", "Резерв · PayPal"
     if mode == LAVA_CHECKOUT_FOREIGN:
-        return None, "", "Зарубежная оплата и СНГ"
+        return None, "", "Резерв · зарубежная оплата"
     return (
         LAVA_RUB_SBP_PAYMENT_PROVIDER,
         LAVA_RUB_SBP_PAYMENT_METHOD,
@@ -209,11 +209,11 @@ def _payment_options_keyboard(
         )
     if lava_foreign:
         builder.button(
-            text="🌍 Зарубежная карта",
+            text="🌐 Резерв · зарубежная карта",
             callback_data=f"buy_lava_foreign_card_{package_id}",
         )
         builder.button(
-            text="🌍 PayPal",
+            text="🌐 Резерв · PayPal",
             callback_data=f"buy_lava_foreign_paypal_{package_id}",
         )
     if stars:
@@ -284,11 +284,11 @@ def _checkout_title(mode: str) -> str:
     if mode == LAVA_CHECKOUT_CARD:
         return "💳 <b>Оплата картой</b>"
     if mode == LAVA_CHECKOUT_FOREIGN_CARD:
-        return "🌍 <b>Зарубежная карта</b>"
+        return "🌐 <b>Резерв · зарубежная карта</b>"
     if mode == LAVA_CHECKOUT_FOREIGN_PAYPAL:
-        return "🌍 <b>PayPal</b>"
+        return "🌐 <b>Резерв · PayPal</b>"
     if mode == LAVA_CHECKOUT_FOREIGN:
-        return "🌍 <b>Зарубежная оплата и СНГ</b>"
+        return "🌐 <b>Резерв · зарубежная оплата</b>"
     return "⚡ <b>Оплата по СБП</b>"
 
 

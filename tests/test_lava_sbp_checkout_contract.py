@@ -173,8 +173,8 @@ def test_miniapp_payment_ui_has_separate_card_and_sbp_actions() -> None:
     assert "handleTopup(pkg.id, 'lava_foreign_paypal')" in source
     assert "Картой" in source
     assert "СБП" in source
-    assert "Зарубежная оплата и СНГ" in source
-    assert "Зарубежная карта" in source
+    assert "Зарубежная / СНГ" in source
+    assert "Резерв · зарубежная" in source
     assert "PayPal" in source
     assert "Карта / СБП" not in source
     assert "'lava_card'" in types_source
@@ -190,8 +190,8 @@ def test_text_bot_sbp_uses_lava_checkout_not_freekassa() -> None:
     assert 'callback_data=f"buy_lava_sbp_{package_id}"' in source
     assert 'callback_data=f"buy_lava_foreign_card_{package_id}"' in source
     assert 'callback_data=f"buy_lava_foreign_paypal_{package_id}"' in source
-    assert "Зарубежная оплата и СНГ" in source
-    assert "Зарубежная карта" in source
+    assert "Резерв · зарубежная оплата" in source
+    assert "Резерв · зарубежная карта" in source
     assert "PayPal" in source
     assert "_package_lava_foreign_offer_config(package)" in source
     assert 'expected_currency = "USD" if mode in LAVA_CHECKOUT_FOREIGN_MODES else "RUB"' in source

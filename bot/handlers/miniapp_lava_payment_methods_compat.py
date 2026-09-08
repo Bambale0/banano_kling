@@ -52,7 +52,7 @@ def _decorate_text_payment_options(
     if not tribute_url:
         return markup
 
-    reserve_label = "СНГ И ЗАРУБЕЖНЫЕ"
+    reserve_label = "🌍 Зарубежная / СНГ"
     star_labels = {"⭐ Stars", "⭐ Telegram Stars"}
     rows: list[list[InlineKeyboardButton]] = []
     stars_rows: list[list[InlineKeyboardButton]] = []

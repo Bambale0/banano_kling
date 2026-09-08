@@ -97,7 +97,7 @@ def test_text_bot_hides_prodamus_while_keeping_tribute(
 
     buttons = [button for row in combined_markup.inline_keyboard for button in row]
     texts = [button.text for button in buttons]
-    assert "СНГ И ЗАРУБЕЖНЫЕ" in texts
+    assert "🌍 Зарубежная / СНГ" in texts
     assert prodamus.PRODAMUS_PAYMENT_BUTTON_TEXT not in texts
 
 
@@ -116,7 +116,7 @@ def test_active_flat_payment_menu_hides_prodamus(
             inline_keyboard=[
                 [InlineKeyboardButton(text="💳 Картой", callback_data=f"card_{package_id}")],
                 [InlineKeyboardButton(text="⚡ СБП", callback_data=f"sbp_{package_id}")],
-                [InlineKeyboardButton(text="СНГ И ЗАРУБЕЖНЫЕ", url="https://example.test/reserve")],
+                [InlineKeyboardButton(text="🌍 Зарубежная / СНГ", url="https://example.test/reserve")],
                 [InlineKeyboardButton(text="⭐ Stars", callback_data=f"stars_{package_id}")],
                 [InlineKeyboardButton(text="◀️ Назад", callback_data="menu_topup")],
             ]
@@ -128,7 +128,7 @@ def test_active_flat_payment_menu_hides_prodamus(
     markup = lava_checkout._payment_options_keyboard("start")
     texts = [button.text for row in markup.inline_keyboard for button in row]
     assert prodamus.PRODAMUS_PAYMENT_BUTTON_TEXT not in texts
-    assert "СНГ И ЗАРУБЕЖНЫЕ" in texts
+    assert "🌍 Зарубежная / СНГ" in texts
 
 
 def test_miniapp_contains_no_prodamus_surface() -> None:
@@ -139,7 +139,7 @@ def test_miniapp_contains_no_prodamus_surface() -> None:
 
     assert "const TRIBUTE_LINKS" in source
     assert "provider === ('tribute' as PaymentProvider)" in source
-    assert "СНГ И ЗАРУБЕЖНЫЕ" in source
+    assert "🌍 Зарубежная / СНГ" in source
     assert "prodamus" not in source.lower()
     assert "prodamus" not in types_source.lower()
 
