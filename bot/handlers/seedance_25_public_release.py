@@ -645,7 +645,7 @@ async def _public_send_results(
     billing = "без списания для администратора" if admin_free else f"списано {cost:g}🍌"
     caption = (
         "✅ <b>Seedance 2.5 готово</b>\n"
-        f"• ID: <code>{task_id}</code>\n"
+        f"• ID задачи: <code>{task_id}</code>\n"
         f"• Сценарий: <code>{scenario}</code>\n"
         f"• Качество: <code>{resolution}</code>\n"
         f"• Формат: <code>{output_format.upper()}</code>\n"

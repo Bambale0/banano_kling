@@ -611,7 +611,7 @@ async def _send_seedance25_results(
     scenario = str(request_data.get("seedance25_scenario") or "text")
     caption = (
         "✅ <b>Seedance 2.5 готово</b>\n"
-        f"• ID: <code>{task_id}</code>\n"
+        f"• ID задачи: <code>{task_id}</code>\n"
         f"• Сценарий: <code>{scenario}</code>\n"
         f"• Качество: <code>{resolution}</code>\n"
         f"• Формат: <code>{output_format.upper()}</code>"

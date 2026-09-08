@@ -103,7 +103,7 @@ DB_BACKUP_TIMEOUT_SECONDS = 30 * 60
 _TELEGRAM_WEBHOOK_TASKS: set[asyncio.Task] = set()
 TELEGRAM_WEBHOOK_CONCURRENCY_LIMIT = 8
 _TELEGRAM_WEBHOOK_SEMAPHORE = asyncio.Semaphore(TELEGRAM_WEBHOOK_CONCURRENCY_LIMIT)
-_NEXUS_POLL_IN_FLIGHT: set[str] = set()
+_IMAGE_PROVIDER_POLL_IN_FLIGHT: set[str] = set()
 
 USER_BOT_COMMANDS = [
     BotCommand(command="start", description="Текстовый бот и главное меню"),
@@ -1377,7 +1377,7 @@ async def _send_polled_nexus_image_result(
     full_caption = (
         "✅ <b>Изображение готово</b>\n"
         f"• Модель: <code>{_html_fragment(model_label)}</code>\n"
-        f"• ID: <code>{_html_fragment(display_task_id)}</code>"
+        f"• ID задачи: <code>{_html_fragment(display_task_id)}</code>"
         f"{_provider_task_id_line(task, task_lookup_id)}"
     )
     if getattr(task, "cost", None):
@@ -1550,7 +1550,7 @@ async def _fail_polled_nexus_image_task(
         )
         return False
 
-async def _poll_single_nexus_image_task(bot_instance: Bot, task_row: dict[str, Any]) -> None:
+async def _poll_single_image_provider_task(bot_instance: Bot, task_row: dict[str, Any]) -> None:
     from bot.database import get_task_by_id
     from bot.handlers.generation import save_uploaded_file
     from bot.services.nano_banana_2_service import nano_banana_2_service
@@ -1560,10 +1560,10 @@ async def _poll_single_nexus_image_task(bot_instance: Bot, task_row: dict[str, A
     provider_task_id = str(
         request_data.get("provider_task_id") or task_row.get("task_id") or ""
     ).strip()
-    if not provider_task_id or provider_task_id in _NEXUS_POLL_IN_FLIGHT:
+    if not provider_task_id or provider_task_id in _IMAGE_PROVIDER_POLL_IN_FLIGHT:
         return
 
-    _NEXUS_POLL_IN_FLIGHT.add(provider_task_id)
+    _IMAGE_PROVIDER_POLL_IN_FLIGHT.add(provider_task_id)
     try:
         task = await get_task_by_id(provider_task_id)
         if not task or getattr(task, "status", "") == "completed":
@@ -1588,10 +1588,28 @@ async def _poll_single_nexus_image_task(bot_instance: Bot, task_row: dict[str, A
             return
 
         if status == "completed":
-            provider = getattr(service, "primary_provider", None)
-            if not provider or not hasattr(provider, "get_completed_result"):
+            provider_name = str(request_data.get("provider") or "").strip().lower()
+            provider_candidates = [
+                getattr(service, "primary_provider", None),
+                getattr(service, "fallback_provider", None),
+            ]
+            provider = next(
+                (
+                    candidate
+                    for candidate in provider_candidates
+                    if candidate is not None
+                    and hasattr(candidate, "get_completed_result")
+                    and (
+                        provider_name != "rendergrid"
+                        or candidate.__class__.__name__ == "RenderGridNanoBananaProvider"
+                    )
+                ),
+                None,
+            )
+            if not provider:
                 logger.error(
-                    "Nexus poller: provider for task %s cannot resolve completed result",
+                    "Image provider poller: provider=%s task=%s cannot resolve completed result",
+                    provider_name or "unknown",
                     provider_task_id,
                 )
                 return
@@ -1600,7 +1618,7 @@ async def _poll_single_nexus_image_task(bot_instance: Bot, task_row: dict[str, A
                 retried_task_id = await _retry_nexus_banana_image_failure(
                     task,
                     provider_task_id,
-                    reason="Nexus completed task without a usable image result",
+                    reason=f"{provider_name or 'provider'} completed task without a usable image result",
                 )
                 if retried_task_id:
                     return
@@ -1609,7 +1627,7 @@ async def _poll_single_nexus_image_task(bot_instance: Bot, task_row: dict[str, A
                     task,
                     provider_task_id=provider_task_id,
                     service_name=service_name,
-                    reason="Nexus completed task without a usable image result",
+                    reason=f"{provider_name or 'provider'} completed task without a usable image result",
                 )
                 return
             result_url = str(result.get("result_url") or "").strip()
@@ -1619,7 +1637,7 @@ async def _poll_single_nexus_image_task(bot_instance: Bot, task_row: dict[str, A
                 retried_task_id = await _retry_nexus_banana_image_failure(
                     task,
                     provider_task_id,
-                    reason="Nexus returned an empty image payload",
+                    reason=f"{provider_name or 'provider'} returned an empty image payload",
                 )
                 if retried_task_id:
                     return
@@ -1628,7 +1646,7 @@ async def _poll_single_nexus_image_task(bot_instance: Bot, task_row: dict[str, A
                     task,
                     provider_task_id=provider_task_id,
                     service_name=service_name,
-                    reason="Nexus returned an empty image payload",
+                    reason=f"{provider_name or 'provider'} returned an empty image payload",
                 )
                 return
             await _send_polled_nexus_image_result(
@@ -1656,30 +1674,30 @@ async def _poll_single_nexus_image_task(bot_instance: Bot, task_row: dict[str, A
                 reason=str(payload.get("error") or "unknown provider failure"),
             )
     finally:
-        _NEXUS_POLL_IN_FLIGHT.discard(provider_task_id)
+        _IMAGE_PROVIDER_POLL_IN_FLIGHT.discard(provider_task_id)
 
-async def _nexus_image_poller_loop(bot_instance: Bot) -> None:
+async def _image_provider_poller_loop(bot_instance: Bot) -> None:
     from bot.services.nexus_task_poller import (
         NEXUS_POLL_BATCH_SIZE,
         NEXUS_POLL_INTERVAL_SECONDS,
-        get_pending_nexus_image_tasks,
+        get_pending_provider_image_tasks,
     )
 
     await asyncio.sleep(5)
     logger.info(
-        "Nexus image poller started: interval=%ss batch_size=%s",
+        "Image provider poller started: interval=%ss batch_size=%s",
         NEXUS_POLL_INTERVAL_SECONDS,
         NEXUS_POLL_BATCH_SIZE,
     )
     while True:
         try:
-            pending_tasks = await get_pending_nexus_image_tasks(
+            pending_tasks = await get_pending_provider_image_tasks(
                 limit=NEXUS_POLL_BATCH_SIZE,
             )
             for task_row in pending_tasks:
-                await _poll_single_nexus_image_task(bot_instance, task_row)
+                await _poll_single_image_provider_task(bot_instance, task_row)
         except Exception:
-            logger.exception("Nexus image poller cycle error")
+            logger.exception("Image provider poller cycle error")
         await asyncio.sleep(NEXUS_POLL_INTERVAL_SECONDS)
 
 def _build_failure_notification_text(
@@ -1698,7 +1716,7 @@ def _build_failure_notification_text(
     return (
         f"Не удалось завершить генерацию {media_kind}.\n"
         f"• Модель: <code>{_html_fragment(service_name or 'AI')}</code>\n"
-        f"• ID: <code>{_html_fragment(task_id)}</code>\n"
+        f"• ID задачи: <code>{_html_fragment(task_id)}</code>\n"
         f"• Причина: <code>{safe_reason}</code>"
         f"{refund_text}"
     )
@@ -2816,7 +2834,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                 caption = (
                                     f"✅ <b>{'Видео' if task.type == 'video' else 'Изображение'} готово</b>\n"
                                     f"• Модель: <code>{_html_fragment(model_display)}</code>\n"
-                                    f"• ID: <code>{_html_fragment(task_id)}</code>"
+                                    f"• ID задачи: <code>{_html_fragment(task_id)}</code>"
                                 )
                                 if task.duration:
                                     caption += f"\n• Длительность: <code>{_html_fragment(task.duration)}с</code>"
@@ -4083,7 +4101,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         text=(
                             "Не получилось завершить генерацию.\n"
                             f"• Модель: <code>{service_name}</code>\n"
-                            f"• ID: <code>{task_id}</code>\n\n"
+                            f"• ID задачи: <code>{task_id}</code>\n\n"
                             "Мы не получили готовый файл от сервиса.\n"
                             "Попробуйте повторить запуск немного позже."
                         ),
@@ -4136,7 +4154,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             full_caption = (
                 f"✅ <b>{'Видео' if is_video else 'Изображение'} готово</b>\n"
                 f"• Модель: <code>{_html_fragment(model_label)}</code>\n"
-                f"• ID: <code>{_html_fragment(display_task_id)}</code>"
+                f"• ID задачи: <code>{_html_fragment(display_task_id)}</code>"
                 f"{_provider_task_id_line(task, task_id)}"
             )
             if task.cost:
@@ -4635,10 +4653,10 @@ async def main():
     )
 
     try:
-        asyncio.create_task(_nexus_image_poller_loop(bot))
-        logger.info("Nexus image poller started")
+        asyncio.create_task(_image_provider_poller_loop(bot))
+        logger.info("Image provider poller started")
     except Exception:
-        logger.exception("Failed to start Nexus image poller")
+        logger.exception("Failed to start image provider poller")
 
     # Настраиваем диспатчер
     dp = setup_dispatcher()

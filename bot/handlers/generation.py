@@ -2521,7 +2521,7 @@ async def run_repeat_image_generation(callback: types.CallbackQuery, state: FSMC
             await progress_message.edit_text(
                 "🔁 <b>Повтор поставлен в запуск</b>\n"
                 f"• Модель: <code>{model_label}</code>\n"
-                f"• ID: <code>{local_task_id}</code>\n"
+                f"• ID задачи: <code>{local_task_id}</code>\n"
                 f"• Формат: <code>{img_ratio.replace(':', '∶')}</code>\n"
                 f"• Референсы: <code>{len(reference_images)}</code>\n\n"
                 "Жду ответ провайдера.",
@@ -2567,7 +2567,7 @@ async def run_repeat_image_generation(callback: types.CallbackQuery, state: FSMC
             await callback.message.answer(
                 "🚀 <b>Повторная генерация запущена</b>\n"
                 f"• Модель: <code>{model_label}</code>\n"
-                f"• ID: <code>{public_task_id}</code>\n"
+                f"• ID задачи: <code>{public_task_id}</code>\n"
                 f"{provider_id_line}"
                 f"• Списано: <code>{unit_cost}</code>🍌 {'(админ бесплатно)' if is_admin else ''}\n\n"
                 "Результат придёт в этот чат.",
@@ -2588,7 +2588,7 @@ async def run_repeat_image_generation(callback: types.CallbackQuery, state: FSMC
                 caption=(
                     "✅ <b>Повтор готов</b>\n"
                     f"• Модель: <code>{model_label}</code>\n"
-                    f"• ID: <code>{launch_result['task_id']}</code>\n"
+                    f"• ID задачи: <code>{launch_result['task_id']}</code>\n"
                     f"• Списано: <code>{unit_cost}</code>🍌 {'(админ бесплатно)' if is_admin else ''}"
                 ),
                 parse_mode="HTML",
@@ -2767,7 +2767,7 @@ async def quick_repeat_image_confirm(callback: types.CallbackQuery, state: FSMCo
             await progress_message.edit_text(
                 "🔁 <b>Повтор поставлен в запуск</b>\n"
                 f"• Модель: <code>{model_label}</code>\n"
-                f"• ID: <code>{local_task_id}</code>\n"
+                f"• ID задачи: <code>{local_task_id}</code>\n"
                 f"• Формат: <code>{img_ratio.replace(':', '∶')}</code>\n"
                 f"• Референсы: <code>{len(reference_images)}</code>\n\n"
                 "Жду ответ провайдера.",
@@ -2813,7 +2813,7 @@ async def quick_repeat_image_confirm(callback: types.CallbackQuery, state: FSMCo
             await callback.message.answer(
                 "🚀 <b>Повторная генерация запущена</b>\n"
                 f"• Модель: <code>{model_label}</code>\n"
-                f"• ID: <code>{public_task_id}</code>\n"
+                f"• ID задачи: <code>{public_task_id}</code>\n"
                 f"{provider_id_line}"
                 f"• Списано: <code>{unit_cost}</code>🍌 {'(админ бесплатно)' if is_admin else ''}\n\n"
                 "Результат придёт в этот чат.",
@@ -2834,7 +2834,7 @@ async def quick_repeat_image_confirm(callback: types.CallbackQuery, state: FSMCo
                 caption=(
                     "✅ <b>Повтор готов</b>\n"
                     f"• Модель: <code>{model_label}</code>\n"
-                    f"• ID: <code>{launch_result['task_id']}</code>\n"
+                    f"• ID задачи: <code>{launch_result['task_id']}</code>\n"
                     f"• Списано: <code>{unit_cost}</code>🍌 {'(админ бесплатно)' if is_admin else ''}"
                 ),
                 parse_mode="HTML",
@@ -7230,7 +7230,7 @@ async def run_no_preset_video_from_callback(
             await callback.message.answer(
                 "🚀 <b>Повторное видео запущено</b>\n"
                 f"• Модель: <code>{model_label}</code>\n"
-                f"• ID: <code>{result['task_id']}</code>\n"
+                f"• ID задачи: <code>{result['task_id']}</code>\n"
                 f"• Списано: <code>{cost}</code>🍌 {'(админ бесплатно)' if is_admin else ''}\n\n"
                 "Результат придёт в этот чат.",
                 parse_mode="HTML",
@@ -8520,7 +8520,7 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
                         "✅ <b>Изображение готово</b>\n"
                         f"• Вариант: <code>{index + 1}/{img_count}</code>\n"
                         f"• Модель: <code>{model_label}</code>\n"
-                        f"• ID: <code>{launch_result['task_id']}</code>\n"
+                        f"• ID задачи: <code>{launch_result['task_id']}</code>\n"
                         f"• Списано: <code>{unit_cost}</code>🍌\n"
                         "• Отправлено без сжатия"
                     ),
@@ -8547,7 +8547,7 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
             id_lines = []
             for task_id, local_task_id in started_task_infos[:6]:
                 public_task_id, provider_id_line = _format_public_task_id_lines(task_id, local_task_id)
-                line = f"• <code>{public_task_id}</code>"
+                line = f"• ID задачи: <code>{public_task_id}</code>"
                 if provider_id_line:
                     line += f"\n  {provider_id_line.strip()}"
                 id_lines.append(line)
