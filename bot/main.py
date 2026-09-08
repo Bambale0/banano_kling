@@ -1377,7 +1377,7 @@ async def _send_polled_nexus_image_result(
     full_caption = (
         "✅ <b>Изображение готово</b>\n"
         f"• Модель: <code>{_html_fragment(model_label)}</code>\n"
-        f"• ID: <code>{_html_fragment(display_task_id)}</code>"
+        f"• ID задачи: <code>{_html_fragment(display_task_id)}</code>"
         f"{_provider_task_id_line(task, task_lookup_id)}"
     )
     if getattr(task, "cost", None):
@@ -1716,7 +1716,7 @@ def _build_failure_notification_text(
     return (
         f"Не удалось завершить генерацию {media_kind}.\n"
         f"• Модель: <code>{_html_fragment(service_name or 'AI')}</code>\n"
-        f"• ID: <code>{_html_fragment(task_id)}</code>\n"
+        f"• ID задачи: <code>{_html_fragment(task_id)}</code>\n"
         f"• Причина: <code>{safe_reason}</code>"
         f"{refund_text}"
     )
@@ -2834,7 +2834,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                 caption = (
                                     f"✅ <b>{'Видео' if task.type == 'video' else 'Изображение'} готово</b>\n"
                                     f"• Модель: <code>{_html_fragment(model_display)}</code>\n"
-                                    f"• ID: <code>{_html_fragment(task_id)}</code>"
+                                    f"• ID задачи: <code>{_html_fragment(task_id)}</code>"
                                 )
                                 if task.duration:
                                     caption += f"\n• Длительность: <code>{_html_fragment(task.duration)}с</code>"
@@ -4101,7 +4101,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         text=(
                             "Не получилось завершить генерацию.\n"
                             f"• Модель: <code>{service_name}</code>\n"
-                            f"• ID: <code>{task_id}</code>\n\n"
+                            f"• ID задачи: <code>{task_id}</code>\n\n"
                             "Мы не получили готовый файл от сервиса.\n"
                             "Попробуйте повторить запуск немного позже."
                         ),
@@ -4154,7 +4154,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             full_caption = (
                 f"✅ <b>{'Видео' if is_video else 'Изображение'} готово</b>\n"
                 f"• Модель: <code>{_html_fragment(model_label)}</code>\n"
-                f"• ID: <code>{_html_fragment(display_task_id)}</code>"
+                f"• ID задачи: <code>{_html_fragment(display_task_id)}</code>"
                 f"{_provider_task_id_line(task, task_id)}"
             )
             if task.cost:

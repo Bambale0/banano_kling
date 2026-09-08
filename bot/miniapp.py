@@ -1415,7 +1415,7 @@ async def _deliver_miniapp_direct_image_result(
     caption = (
         "✅ <b>Изображение готово</b>\n"
         f"• Модель: <code>{html.escape(str(model_label))}</code>\n"
-        f"• ID: <code>{html.escape(task_id)}</code>"
+        f"• ID задачи: <code>{html.escape(task_id)}</code>"
     )
     if unit_cost:
         caption += f"\n• Стоимость: <code>{html.escape(str(unit_cost))}🍌</code>"
@@ -1472,7 +1472,7 @@ async def _notify_miniapp_image_task_queued(
     text = (
         "⏳ <b>Задача принята в очередь</b>\n"
         f"• Модель: <code>{html.escape(str(model_label))}</code>\n"
-        f"• ID: <code>{html.escape(public_task_id)}</code>"
+        f"• ID задачи: <code>{html.escape(public_task_id)}</code>"
     )
     if task_id and task_id != public_task_id:
         text += f"\n• ID провайдера: <code>{html.escape(task_id)}</code>"
