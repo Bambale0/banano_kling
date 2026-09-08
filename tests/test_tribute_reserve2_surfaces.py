@@ -37,10 +37,10 @@ def test_live_text_bot_keyboard_has_reserve2_after_sbp() -> None:
     )
     labels = _button_texts(markup)
 
-    assert labels[:3] == ["💳 Картой", "⚡ СБП", "СНГ И ЗАРУБЕЖНЫЕ"]
-    assert _button(markup, "СНГ И ЗАРУБЕЖНЫЕ").url == TRIBUTE_PACKAGE_LINKS["optimal"]
-    assert _button(markup, "СНГ И ЗАРУБЕЖНЫЕ").url == "https://web.tribute.tg/p/Dxm"
-    assert labels.index("СНГ И ЗАРУБЕЖНЫЕ") < labels.index("⭐ Stars")
+    assert labels[:3] == ["💳 Картой", "⚡ СБП", "🌍 Зарубежная / СНГ"]
+    assert _button(markup, "🌍 Зарубежная / СНГ").url == TRIBUTE_PACKAGE_LINKS["optimal"]
+    assert _button(markup, "🌍 Зарубежная / СНГ").url == "https://web.tribute.tg/p/Dxm"
+    assert labels.index("🌍 Зарубежная / СНГ") < labels.index("⭐ Stars")
     assert labels.index("₿ Криптовалюта") < labels.index("⭐ Stars")
     assert labels[-1] == "◀️ Назад"
 
@@ -51,8 +51,8 @@ def test_reserve2_decorator_matches_production_flat_menu_order() -> None:
             [InlineKeyboardButton(text="💳 Картой", callback_data="card")],
             [InlineKeyboardButton(text="⚡ СБП", callback_data="sbp")],
             [InlineKeyboardButton(text="🇷🇺 РФ — KASSA (резерв)", callback_data="kassa")],
-            [InlineKeyboardButton(text="🌍 Зарубежная карта", callback_data="foreign")],
-            [InlineKeyboardButton(text="🌍 PayPal", callback_data="paypal")],
+            [InlineKeyboardButton(text="🌐 Резерв · зарубежная карта", callback_data="foreign")],
+            [InlineKeyboardButton(text="🌐 Резерв · PayPal", callback_data="paypal")],
             [InlineKeyboardButton(text="⭐ Stars", callback_data="stars")],
             [InlineKeyboardButton(text="₿ Криптовалюта", callback_data="crypto")],
             [InlineKeyboardButton(text="◀️ Назад", callback_data="menu_topup")],
@@ -64,15 +64,15 @@ def test_reserve2_decorator_matches_production_flat_menu_order() -> None:
     assert _button_texts(markup) == [
         "💳 Картой",
         "⚡ СБП",
-        "СНГ И ЗАРУБЕЖНЫЕ",
+        "🌍 Зарубежная / СНГ",
         "🇷🇺 РФ — KASSA (резерв)",
-        "🌍 Зарубежная карта",
-        "🌍 PayPal",
+        "🌐 Резерв · зарубежная карта",
+        "🌐 Резерв · PayPal",
         "₿ Криптовалюта",
         "⭐ Stars",
         "◀️ Назад",
     ]
-    assert _button(markup, "СНГ И ЗАРУБЕЖНЫЕ").url == "https://web.tribute.tg/p/Dxm"
+    assert _button(markup, "🌍 Зарубежная / СНГ").url == "https://web.tribute.tg/p/Dxm"
 
 
 def test_all_six_reserve2_links_are_configured() -> None:
@@ -86,10 +86,11 @@ def test_all_six_reserve2_links_are_configured() -> None:
     }
 
 
-def test_miniapp_labels_tribute_button_as_reserve2() -> None:
+def test_miniapp_labels_tribute_as_primary_foreign_cis_and_lava_as_reserve() -> None:
     source = Path("frontend/miniapp-v0/components/balance-sheet.tsx").read_text(
         encoding="utf-8"
     )
 
-    assert "СНГ И ЗАРУБЕЖНЫЕ" in source
+    assert "Зарубежная / СНГ" in source
+    assert "Резерв · зарубежная" in source
     assert "Tribute · международная оплата" not in source

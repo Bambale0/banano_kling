@@ -436,7 +436,7 @@ def _decorate_payment_keyboard(
     for row in markup.inline_keyboard:
         if any(button.callback_data == callback_data for button in row):
             return markup
-        if not inserted and any(button.text == "СНГ И ЗАРУБЕЖНЫЕ" for button in row):
+        if not inserted and any(button.text == "🌍 Зарубежная / СНГ" for button in row):
             rows.append(
                 [
                     InlineKeyboardButton(

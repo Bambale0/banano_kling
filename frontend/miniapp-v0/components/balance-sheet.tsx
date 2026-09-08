@@ -161,11 +161,11 @@ export function BalanceSheet() {
       if (provider === ('tribute' as PaymentProvider)) {
         const tributeUrl = TRIBUTE_LINKS[selectedPackage.id]
         if (!tributeUrl) {
-          throw new Error('Tribute пока недоступен для этого пакета')
+          throw new Error('Зарубежная / СНГ пока недоступна для этого пакета')
         }
         openExternalPayment(tributeUrl)
-        toast.message('Открыта оплата через Tribute', {
-          description: 'После подтверждения Tribute бананы начислятся автоматически.',
+        toast.message('Открыта оплата Зарубежная / СНГ', {
+          description: 'После подтверждения платежа бананы начислятся автоматически.',
         })
         return
       }
@@ -204,11 +204,11 @@ export function BalanceSheet() {
             : provider === 'lava_card'
               ? 'Открыта оплата картой'
               : provider === 'lava_foreign_card'
-                ? 'Открыта зарубежная оплата картой'
+                ? 'Открыта резервная зарубежная оплата картой'
                 : provider === 'lava_foreign_paypal'
-                  ? 'Открыта оплата через PayPal'
+                  ? 'Открыта резервная зарубежная оплата через PayPal'
                   : provider === 'lava_foreign'
-                    ? 'Открыта зарубежная оплата'
+                    ? 'Открыта резервная зарубежная оплата'
                     : provider === ('freekassa_sbp' as PaymentProvider)
                       ? 'Открыта резервная оплата KASSA через СБП'
                       : provider === ('freekassa_card' as PaymentProvider)
@@ -372,7 +372,7 @@ export function BalanceSheet() {
                             </p>
                             {foreignConfigured || tributeConfigured ? (
                               <p className="mt-1 text-xs text-muted-foreground">
-                                Зарубежная оплата и СНГ · Tribute
+                                Зарубежная / СНГ · основной способ
                               </p>
                             ) : null}
                           </div>
@@ -417,10 +417,13 @@ export function BalanceSheet() {
                             ) : (
                               <Globe2 className="mr-2 h-4 w-4" />
                             )}
-                            СНГ И ЗАРУБЕЖНЫЕ
+                            Зарубежная / СНГ
                           </Button>
                           {foreignConfigured ? (
                             <>
+                              <p className="col-span-2 mt-1 px-1 text-center text-[11px] text-muted-foreground">
+                                Резерв · зарубежная
+                              </p>
                               <Button
                                 onClick={() => handleTopup(pkg.id, 'lava_foreign_card')}
                                 disabled={Boolean(loadingPayment)}
@@ -431,7 +434,7 @@ export function BalanceSheet() {
                                 ) : (
                                   <Globe2 className="mr-2 h-4 w-4" />
                                 )}
-                                Зарубежная карта
+                                Карта
                               </Button>
                               <Button
                                 onClick={() => handleTopup(pkg.id, 'lava_foreign_paypal')}
@@ -482,7 +485,7 @@ export function BalanceSheet() {
                           ) : null}
                           {lavaConfigured ? (
                             <p className="col-span-2 px-1 text-center text-[11px] text-muted-foreground">
-                              Карта, СБП и зарубежная оплата открываются отдельными способами.
+                              Резервная зарубежная оплата доступна отдельно от основного способа.
                             </p>
                           ) : null}
                           <Button
