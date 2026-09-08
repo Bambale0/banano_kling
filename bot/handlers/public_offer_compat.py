@@ -1,15 +1,13 @@
-"""Exact local public-offer integration for Telegram payment and partner flows."""
+"""Exact local public-offer integration for Telegram More and partner flows."""
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
-from functools import wraps
 from pathlib import Path
 from typing import Any
 
 from aiogram import F, Router, types
-from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import FSInputFile, InlineKeyboardMarkup
 
 from bot.keyboards import get_back_keyboard, get_partner_consent_keyboard
 
@@ -28,64 +26,9 @@ PUBLIC_OFFER_PDF_PATH = Path(__file__).resolve().parents[2] / "legal" / "public-
 PUBLIC_OFFER_TEXT_PATH = Path(__file__).resolve().parents[2] / "legal" / "public-offer.txt"
 
 
-def _with_public_offer(markup: InlineKeyboardMarkup | None) -> InlineKeyboardMarkup | None:
-    if markup is None:
-        return None
-
-    rows = [list(row) for row in markup.inline_keyboard]
-    if any(
-        button.callback_data in PUBLIC_OFFER_CALLBACKS
-        for row in rows
-        for button in row
-    ):
-        return markup
-
-    offer_row = [
-        InlineKeyboardButton(
-            text="📜 Оферта · оплата = согласие",
-            callback_data=PUBLIC_OFFER_CALLBACK,
-        )
-    ]
-    insert_at = len(rows)
-    if rows:
-        last_callbacks = {button.callback_data or "" for button in rows[-1]}
-        if any(
-            callback == "back_main"
-            or callback == "menu_topup"
-            or callback.startswith("back_")
-            for callback in last_callbacks
-        ):
-            insert_at = len(rows) - 1
-    rows.insert(insert_at, offer_row)
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def _wrap_keyboard(factory: Callable[..., Any]) -> Callable[..., Any]:
-    if getattr(factory, "_public_offer_wrapped", False):
-        return factory
-
-    @wraps(factory)
-    def wrapped(*args: Any, **kwargs: Any):
-        return _with_public_offer(factory(*args, **kwargs))
-
-    wrapped._public_offer_wrapped = True  # type: ignore[attr-defined]
-    return wrapped
-
-
 def install_public_offer_compat(payments_module: Any) -> None:
-    """Keep the offer on checkout steps, not in the initial package picker."""
-    import bot.keyboards as keyboard_module
-
-    for name in (
-        "get_payment_method_keyboard",
-        "get_payment_confirmation_keyboard",
-    ):
-        current = getattr(keyboard_module, name, None)
-        if not callable(current):
-            continue
-        wrapped = _wrap_keyboard(current)
-        setattr(keyboard_module, name, wrapped)
-        setattr(payments_module, name, wrapped)
+    """Offer lives in the dedicated More section; payment UI must not inject it."""
+    _ = payments_module
 
 
 async def _send_offer_text(
