@@ -111,3 +111,16 @@ def test_telegram_offer_is_exposed_in_more_and_removed_from_partner_ui():
 
     assert 'callback_data="partner_offer"' not in partner_keyboards
     assert "Публичная оферта" not in preapproval_ui
+
+
+def test_telegram_offer_is_not_in_initial_topup_package_picker():
+    offer_source = (
+        ROOT / "bot" / "handlers" / "public_offer_compat.py"
+    ).read_text(encoding="utf-8")
+    install_block = offer_source.split("def install_public_offer_compat", 1)[1].split(
+        "async def _send_offer_text", 1
+    )[0]
+
+    assert '"get_payment_packages_keyboard"' not in install_block
+    assert '"get_payment_method_keyboard"' in install_block
+    assert '"get_payment_confirmation_keyboard"' in install_block

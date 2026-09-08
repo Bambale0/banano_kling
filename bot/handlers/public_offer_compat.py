@@ -73,11 +73,10 @@ def _wrap_keyboard(factory: Callable[..., Any]) -> Callable[..., Any]:
 
 
 def install_public_offer_compat(payments_module: Any) -> None:
-    """Add the local offer to every shared Telegram payment keyboard."""
+    """Keep the offer on checkout steps, not in the initial package picker."""
     import bot.keyboards as keyboard_module
 
     for name in (
-        "get_payment_packages_keyboard",
         "get_payment_method_keyboard",
         "get_payment_confirmation_keyboard",
     ):

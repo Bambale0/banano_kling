@@ -5999,6 +5999,45 @@ def _feed_reference_videos(row: db_backend.Row, request_data: dict[str, Any]) ->
     return _public_reference_urls(row, request_data.get("v_reference_videos", []))
 
 
+def _feed_repeat_scenario(
+    model: str,
+    request_data: dict[str, Any],
+    *,
+    has_image_references: bool,
+    has_video_references: bool,
+) -> str | None:
+    """Return the public repeat form mode without exposing private references.
+
+    Seedance 2.5 stores every multimodal generation as generic ``v_type=video``.
+    That is correct for provider routing, but wrong for the repeat UI when the
+    source recipe only contains image references: a hidden image-only recipe
+    would otherwise open the "Видео + текст" picker.  The public card may
+    expose the media *kind* needed by the form while still keeping the actual
+    reference URLs private.
+    """
+
+    generic = str(
+        request_data.get("v_type") or request_data.get("generation_type") or ""
+    ).strip().lower()
+    if str(model or "").strip() != "seedance_2_5":
+        return generic or None
+
+    seedance_scenario = str(request_data.get("seedance25_scenario") or "").strip().lower()
+    if seedance_scenario == "text":
+        return "text"
+    if seedance_scenario in {"first_frame", "first_last"}:
+        return "imgtxt"
+    if seedance_scenario == "multimodal":
+        if has_video_references:
+            return "video"
+        if has_image_references:
+            return "imgtxt"
+        return "text"
+    return generic or (
+        "video" if has_video_references else "imgtxt" if has_image_references else "text"
+    )
+
+
 def _feed_activity_time_for_sort(row: db_backend.Row) -> datetime:
     values: list[datetime] = []
     for key in ("created_at", "updated_at"):
@@ -6102,7 +6141,12 @@ def _generation_row_to_card(
         "comments_count": comments_count,
         "aspect_ratio": row["aspect_ratio"] or "",
         "duration": row["duration"] if "duration" in row.keys() else None,
-        "scenario": request_data.get("v_type") or request_data.get("generation_type"),
+        "scenario": _feed_repeat_scenario(
+            str(row["model"] or row["preset_id"] or ""),
+            request_data,
+            has_image_references=bool(all_reference_images),
+            has_video_references=bool(all_reference_videos),
+        ),
         "reference_images": public_reference_images,
         "reference_videos": public_reference_videos,
         "references_count": references_count,
