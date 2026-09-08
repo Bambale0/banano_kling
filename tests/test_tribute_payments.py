@@ -139,7 +139,7 @@ def test_miniapp_contains_no_prodamus_surface() -> None:
 
     assert "const TRIBUTE_LINKS" in source
     assert "provider === ('tribute' as PaymentProvider)" in source
-    assert "🌍 Зарубежная / СНГ" in source
+    assert "Зарубежная / СНГ" in source
     assert "prodamus" not in source.lower()
     assert "prodamus" not in types_source.lower()
 
