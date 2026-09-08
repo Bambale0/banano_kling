@@ -35,7 +35,7 @@ const videoItem = {
   comments_count: 0,
   aspect_ratio: '9:16',
   duration: 12,
-  scenario: 'video' as const,
+  scenario: 'imgtxt' as const,
   reference_images: [],
   reference_videos: [],
   references_hidden: true,
@@ -50,7 +50,7 @@ const videoItem = {
 }
 
 describe('FeedTab editable video repeat', () => {
-  it('opens the source-aware video form instead of launching immediately', async () => {
+  it('opens hidden image-only Seedance repeats in photo + text mode', async () => {
     const setActiveTab = jest.fn()
     const setVideoPromptPreset = jest.fn()
 
@@ -96,7 +96,7 @@ describe('FeedTab editable video repeat', () => {
       expect(setVideoPromptPreset).toHaveBeenCalledWith(expect.objectContaining({
         title: 'Повторить видео из ленты',
         model: 'seedance_2_5',
-        scenario: 'video',
+        scenario: 'imgtxt',
         ratio: '9:16',
         duration: 12,
         sourceFeedGenId: 42,
