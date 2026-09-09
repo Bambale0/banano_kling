@@ -107,3 +107,36 @@ async def test_analyzer_rejects_empty_input():
 
     with pytest.raises(ValueError, match="text, image_url or audio_bytes"):
         await service.analyze_prompt()
+
+
+@pytest.mark.asyncio
+async def test_photo_prompt_v2_uses_gpt6_astra_as_primary_model():
+    service = PromptAnalyzerV2Service(api_key="test-key")
+
+    assert service.model == "gpt-6-astra"
+
+
+@pytest.mark.asyncio
+async def test_photo_prompt_v2_falls_back_to_gemini_when_gpt6_astra_is_unavailable():
+    service = PromptAnalyzerV2Service(api_key="test-key")
+    service._analyze_with_gpt6_astra = AsyncMock(
+        side_effect=RuntimeError("GPT-6 Astra недоступен. Код: 500")
+    )
+    service._analyze_with_gemini_fallback = AsyncMock(
+        return_value={
+            "prompt_ru": "Русский fallback промпт",
+            "prompt_en": "English fallback prompt",
+            "provider": "gemini-2.5-flash-fallback",
+            "raw": {},
+        }
+    )
+    service._analyze_with_claude = AsyncMock()
+
+    result = await service.analyze_prompt(
+        image_url="https://example.test/reference.jpg"
+    )
+
+    assert result["provider"] == "gemini-2.5-flash-fallback"
+    service._analyze_with_gpt6_astra.assert_awaited_once()
+    service._analyze_with_gemini_fallback.assert_awaited_once()
+    service._analyze_with_claude.assert_not_awaited()
