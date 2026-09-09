@@ -110,17 +110,17 @@ async def test_analyzer_rejects_empty_input():
 
 
 @pytest.mark.asyncio
-async def test_photo_prompt_v2_uses_gpt6_astra_as_primary_model():
+async def test_photo_prompt_v2_uses_gpt55_as_primary_model():
     service = PromptAnalyzerV2Service(api_key="test-key")
 
-    assert service.model == "gpt-6-astra"
+    assert service.model == "gpt-5-5"
 
 
 @pytest.mark.asyncio
-async def test_photo_prompt_v2_falls_back_to_gemini_when_gpt6_astra_is_unavailable():
+async def test_photo_prompt_v2_falls_back_to_gemini_when_gpt55_is_unavailable():
     service = PromptAnalyzerV2Service(api_key="test-key")
-    service._analyze_with_gpt6_astra = AsyncMock(
-        side_effect=RuntimeError("GPT-6 Astra недоступен. Код: 500")
+    service._analyze_with_gpt55 = AsyncMock(
+        side_effect=RuntimeError("GPT-5.5 недоступен. Код: 500")
     )
     service._analyze_with_gemini_fallback = AsyncMock(
         return_value={
@@ -137,6 +137,6 @@ async def test_photo_prompt_v2_falls_back_to_gemini_when_gpt6_astra_is_unavailab
     )
 
     assert result["provider"] == "gemini-2.5-flash-fallback"
-    service._analyze_with_gpt6_astra.assert_awaited_once()
+    service._analyze_with_gpt55.assert_awaited_once()
     service._analyze_with_gemini_fallback.assert_awaited_once()
     service._analyze_with_claude.assert_not_awaited()

@@ -19,9 +19,9 @@ from bot.config import config
 
 logger = logging.getLogger(__name__)
 
-GPT6_ASTRA_MODEL = "gpt-6-astra"
-GPT6_ASTRA_MAX_ATTEMPTS = 3
-GPT6_ASTRA_RETRYABLE_BODY_CODES = {429}
+GPT55_MODEL = "gpt-5-5"
+GPT55_MAX_ATTEMPTS = 1
+GPT55_RETRYABLE_BODY_CODES = {429}
 CLAUDE_MAX_ATTEMPTS = 2
 GEMINI_FALLBACK_ENDPOINT = "/gemini-2.5-flash/v1/chat/completions"
 
@@ -183,10 +183,10 @@ class PromptAnalyzerV2Service:
         model: Optional[str] = None,
     ) -> None:
         self.api_key = api_key or config.KIE_AI_API_KEY
-        self.model = model or GPT6_ASTRA_MODEL
+        self.model = model or GPT55_MODEL
         self.base_url = config.KIE_BASE_URL
 
-    async def _analyze_with_gpt6_astra(
+    async def _analyze_with_gpt55(
         self,
         *,
         image_url: str,
@@ -218,7 +218,7 @@ class PromptAnalyzerV2Service:
 
         timeout = aiohttp.ClientTimeout(total=120)
         data: Optional[Dict[str, Any]] = None
-        for attempt in range(GPT6_ASTRA_MAX_ATTEMPTS):
+        for attempt in range(GPT55_MAX_ATTEMPTS):
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(
                     f"{self.base_url}/codex/v1/responses",
@@ -228,50 +228,50 @@ class PromptAnalyzerV2Service:
                     text = await response.text()
                     if response.status >= 500:
                         logger.info(
-                            "GPT-6 Astra prompt analyzer HTTP 5xx: status=%s body=%s",
+                            "GPT-5.5 prompt analyzer HTTP 5xx: status=%s body=%s",
                             response.status,
                             text[:500],
                         )
-                        if attempt < GPT6_ASTRA_MAX_ATTEMPTS - 1:
+                        if attempt < GPT55_MAX_ATTEMPTS - 1:
                             await asyncio.sleep(2**attempt)
                             continue
-                        raise RuntimeError(f"GPT-6 Astra недоступен. Код: {response.status}")
+                        raise RuntimeError(f"GPT-5.5 недоступен. Код: {response.status}")
                     if response.status == 429:
-                        if attempt < GPT6_ASTRA_MAX_ATTEMPTS - 1:
+                        if attempt < GPT55_MAX_ATTEMPTS - 1:
                             await asyncio.sleep(2**attempt)
                             continue
-                        raise RuntimeError("GPT-6 Astra временно ограничил запросы")
+                        raise RuntimeError("GPT-5.5 временно ограничил запросы")
                     if response.status >= 400:
-                        raise RuntimeError(f"GPT-6 Astra ошибка. Код: {response.status}")
+                        raise RuntimeError(f"GPT-5.5 ошибка. Код: {response.status}")
 
                     try:
                         data = json.loads(text)
                     except json.JSONDecodeError as exc:
-                        raise RuntimeError("GPT-6 Astra вернул некорректный JSON") from exc
+                        raise RuntimeError("GPT-5.5 вернул некорректный JSON") from exc
 
                     try:
                         body_code = int(data.get("code", 0) or 0)
                     except (TypeError, ValueError):
                         body_code = 0
                     if _is_fast_fallback_application_error(data):
-                        if attempt < GPT6_ASTRA_MAX_ATTEMPTS - 1:
+                        if attempt < GPT55_MAX_ATTEMPTS - 1:
                             await asyncio.sleep(2**attempt)
                             data = None
                             continue
-                        raise RuntimeError(f"GPT-6 Astra upstream error: {body_code}")
+                        raise RuntimeError(f"GPT-5.5 upstream error: {body_code}")
                     if body_code >= 400:
-                        if body_code in GPT6_ASTRA_RETRYABLE_BODY_CODES and attempt < GPT6_ASTRA_MAX_ATTEMPTS - 1:
+                        if body_code in GPT55_RETRYABLE_BODY_CODES and attempt < GPT55_MAX_ATTEMPTS - 1:
                             await asyncio.sleep(2**attempt)
                             data = None
                             continue
-                        raise RuntimeError(f"GPT-6 Astra вернул ошибку: {body_code}")
+                        raise RuntimeError(f"GPT-5.5 вернул ошибку: {body_code}")
             break
 
         if data is None:
-            raise RuntimeError("GPT-6 Astra не вернул данных после всех попыток")
+            raise RuntimeError("GPT-5.5 не вернул данных после всех попыток")
         return _build_result(
             _parse_json_object(_extract_output_text(data)),
-            provider="gpt-6-astra",
+            provider="gpt-5.5",
         )
 
     async def _analyze_with_gemini_fallback(
@@ -446,7 +446,7 @@ class PromptAnalyzerV2Service:
 
         gpt_error: Optional[Exception] = None
         try:
-            return await self._analyze_with_gpt6_astra(
+            return await self._analyze_with_gpt55(
                 image_url=image_url,
                 user_instruction=user_instruction,
                 headers=headers,
@@ -466,7 +466,7 @@ class PromptAnalyzerV2Service:
                 headers=headers,
             )
             logger.warning(
-                "GPT-6 Astra prompt analyzer failed (%s); Gemini fallback succeeded",
+                "GPT-5.5 prompt analyzer failed (%s); Gemini fallback succeeded",
                 gpt_error,
             )
             return result
@@ -480,14 +480,14 @@ class PromptAnalyzerV2Service:
                 headers=headers,
             )
             logger.warning(
-                "GPT-6 Astra and Gemini prompt analyzers failed (%s; %s); Claude Haiku fallback succeeded",
+                "GPT-5.5 and Gemini prompt analyzers failed (%s; %s); Claude Haiku fallback succeeded",
                 gpt_error,
                 gemini_error,
             )
             return result
         except Exception as fallback_exc:
             logger.error(
-                "Prompt analyzer fallbacks failed after GPT-6 Astra failure (%s); Gemini error (%s); Claude error: %s",
+                "Prompt analyzer fallbacks failed after GPT-5.5 failure (%s); Gemini error (%s); Claude error: %s",
                 gpt_error,
                 gemini_error,
                 fallback_exc,
