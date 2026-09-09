@@ -19,9 +19,11 @@ from bot.config import config
 
 logger = logging.getLogger(__name__)
 
-GPT55_MAX_ATTEMPTS = 3
+GPT55_MODEL = "gpt-5-5"
+GPT55_MAX_ATTEMPTS = 1
 GPT55_RETRYABLE_BODY_CODES = {429}
 CLAUDE_MAX_ATTEMPTS = 2
+GEMINI_FALLBACK_ENDPOINT = "/gemini-2.5-flash/v1/chat/completions"
 
 SYSTEM_PROMPT = """
 You are a senior prompt engineer for AI image generation.
@@ -181,7 +183,7 @@ class PromptAnalyzerV2Service:
         model: Optional[str] = None,
     ) -> None:
         self.api_key = api_key or config.KIE_AI_API_KEY
-        self.model = model or config.PHOTO_PROMPT_MODEL
+        self.model = model or GPT55_MODEL
         self.base_url = config.KIE_BASE_URL
 
     async def _analyze_with_gpt55(
@@ -270,6 +272,78 @@ class PromptAnalyzerV2Service:
         return _build_result(
             _parse_json_object(_extract_output_text(data)),
             provider="gpt-5.5",
+        )
+
+    async def _analyze_with_gemini_fallback(
+        self,
+        *,
+        image_url: str,
+        user_instruction: str,
+        headers: dict[str, str],
+    ) -> dict[str, Any]:
+        content: list[dict[str, Any]] = [
+            {
+                "type": "text",
+                "text": SYSTEM_PROMPT + "\n\n" + user_instruction,
+            }
+        ]
+        if image_url:
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": image_url},
+                }
+            )
+
+        payload = {
+            "stream": False,
+            "messages": [{"role": "user", "content": content}],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "photo_prompt_pair",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "prompt_ru": {"type": "string"},
+                            "prompt_en": {"type": "string"},
+                        },
+                        "required": ["prompt_ru", "prompt_en"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+        }
+        timeout = aiohttp.ClientTimeout(total=90)
+        async with (
+            aiohttp.ClientSession(timeout=timeout) as session,
+            session.post(
+                f"{self.base_url}{GEMINI_FALLBACK_ENDPOINT}",
+                json=payload,
+                headers=headers,
+            ) as response,
+        ):
+            text = await response.text()
+            if response.status >= 400:
+                raise RuntimeError(
+                    f"Gemini fallback недоступен. Код: {response.status}"
+                )
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError("Gemini fallback вернул некорректный JSON") from exc
+
+        choices = data.get("choices") or []
+        if not choices:
+            raise RuntimeError("Gemini fallback вернул пустой ответ")
+        message = (choices[0] or {}).get("message") or {}
+        raw_output = message.get("content")
+        if not isinstance(raw_output, str) or not raw_output.strip():
+            raise RuntimeError("Gemini fallback вернул пустой текст")
+        return _build_result(
+            _parse_json_object(raw_output),
+            provider="gemini-2.5-flash-fallback",
         )
 
     async def _analyze_with_claude(
@@ -384,21 +458,38 @@ class PromptAnalyzerV2Service:
             if has_audio:
                 raise RuntimeError(f"Не удалось разобрать голосовой запрос: {exc}") from exc
 
+        gemini_error: Exception | None = None
+        try:
+            result = await self._analyze_with_gemini_fallback(
+                image_url=image_url,
+                user_instruction=user_instruction,
+                headers=headers,
+            )
+            logger.warning(
+                "GPT-5.5 prompt analyzer failed (%s); Gemini fallback succeeded",
+                gpt_error,
+            )
+            return result
+        except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, ValueError, TypeError) as exc:
+            gemini_error = exc
+
         try:
             result = await self._analyze_with_claude(
                 image_url=image_url,
                 user_instruction=user_instruction,
                 headers=headers,
             )
-            logger.info(
-                "GPT-5.5 prompt analyzer failed (%s); Claude Haiku fallback succeeded",
+            logger.warning(
+                "GPT-5.5 and Gemini prompt analyzers failed (%s; %s); Claude Haiku fallback succeeded",
                 gpt_error,
+                gemini_error,
             )
             return result
         except Exception as fallback_exc:
             logger.error(
-                "Prompt analyzer fallback failed after GPT-5.5 failure (%s): %s",
+                "Prompt analyzer fallbacks failed after GPT-5.5 failure (%s); Gemini error (%s); Claude error: %s",
                 gpt_error,
+                gemini_error,
                 fallback_exc,
             )
             raise RuntimeError(
