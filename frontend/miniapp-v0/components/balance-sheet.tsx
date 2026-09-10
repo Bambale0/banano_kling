@@ -209,10 +209,12 @@ export function BalanceSheet() {
                   ? 'Открыта резервная зарубежная оплата через PayPal'
                   : provider === 'lava_foreign'
                     ? 'Открыта резервная зарубежная оплата'
-                    : provider === 'freekassa_sbp'
-                      ? 'Открыта оплата KASSA через СБП'
+                    : provider === 'robokassa'
+                      ? 'Открыта оплата через Robokassa'
+                      : provider === 'freekassa_sbp'
+                        ? 'Открыта резервная оплата KASSA через СБП'
                       : provider === 'freekassa_card'
-                        ? 'Открыта оплата KASSA картой'
+                        ? 'Открыта резервная оплата KASSA картой'
                         : 'Открыта страница оплаты',
         )
         return
@@ -340,12 +342,12 @@ export function BalanceSheet() {
                     const foreignLoading = loadingPayment === `${pkg.id}:lava_foreign`
                     const foreignCardLoading = loadingPayment === `${pkg.id}:lava_foreign_card`
                     const foreignPayPalLoading = loadingPayment === `${pkg.id}:lava_foreign_paypal`
+                    const robokassaLoading = loadingPayment === `${pkg.id}:robokassa`
                     const freekassaCardLoading = loadingPayment === `${pkg.id}:freekassa_card`
                     const freekassaSbpLoading = loadingPayment === `${pkg.id}:freekassa_sbp`
                     const foreignConfigured = Boolean(pkg.lava_foreign_offer_id || pkg.lava_foreign_product_id)
-                    const freekassaConfigured = Boolean(
-                      (pkg as typeof pkg & { freekassa_enabled?: boolean }).freekassa_enabled,
-                    )
+                    const robokassaConfigured = Boolean(pkg.robokassa_enabled)
+                    const freekassaConfigured = Boolean(pkg.freekassa_enabled)
                     return (
                       <div
                         key={pkg.id}
@@ -372,7 +374,7 @@ export function BalanceSheet() {
                             </p>
                             {foreignConfigured || tributeConfigured ? (
                               <p className="mt-1 text-xs text-muted-foreground">
-                                Зарубежная / СНГ · основной способ
+                                Зарубежная / СНГ · отдельный способ
                               </p>
                             ) : null}
                           </div>
@@ -383,15 +385,35 @@ export function BalanceSheet() {
                         </div>
 
                         <div className="mt-4 grid grid-cols-2 gap-2">
-                          {freekassaConfigured ? (
+                          {robokassaConfigured ? (
                             <>
                               <p className="col-span-2 px-1 text-center text-[11px] text-muted-foreground">
-                                KASSA · основной способ
+                                Robokassa · основной способ
+                              </p>
+                              <Button
+                                onClick={() => handleTopup(pkg.id, 'robokassa')}
+                                disabled={Boolean(loadingPayment)}
+                                className="col-span-2 w-full bg-gold text-primary-foreground hover:bg-gold/90"
+                              >
+                                {robokassaLoading ? (
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                  <CreditCard className="mr-2 h-4 w-4" />
+                                )}
+                                Оплатить через Robokassa
+                              </Button>
+                            </>
+                          ) : null}
+                          {freekassaConfigured ? (
+                            <>
+                              <p className="col-span-2 mt-1 px-1 text-center text-[11px] text-muted-foreground">
+                                Резерв · KASSA
                               </p>
                               <Button
                                 onClick={() => handleTopup(pkg.id, 'freekassa_card')}
                                 disabled={Boolean(loadingPayment)}
-                                className="w-full bg-gold text-primary-foreground hover:bg-gold/90"
+                                variant="outline"
+                                className="w-full border-border/60 bg-background/20 text-foreground hover:bg-secondary/50"
                               >
                                 {freekassaCardLoading ? (
                                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -403,7 +425,8 @@ export function BalanceSheet() {
                               <Button
                                 onClick={() => handleTopup(pkg.id, 'freekassa_sbp')}
                                 disabled={Boolean(loadingPayment)}
-                                className="w-full bg-gold text-primary-foreground hover:bg-gold/90"
+                                variant="outline"
+                                className="w-full border-border/60 bg-background/20 text-foreground hover:bg-secondary/50"
                               >
                                 {freekassaSbpLoading ? (
                                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
