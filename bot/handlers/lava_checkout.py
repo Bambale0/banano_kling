@@ -189,7 +189,7 @@ def _payment_options_keyboard(
     lava_foreign_price_usd: float | None,
     crypto: bool,
     freekassa: bool,
-    robokassa: bool,
+    robokassa: bool = False,
 ) -> types.InlineKeyboardMarkup:
     """Show every enabled payment method as an independent option."""
 
