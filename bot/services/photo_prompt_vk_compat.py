@@ -19,8 +19,8 @@ from typing import Any
 
 import aiohttp
 
-from bot.services.openrouter_qwen38_service import openrouter_qwen38_service
 from bot.services.media_input_utils import resolve_local_upload_path
+from bot.services.openrouter_qwen38_service import openrouter_qwen38_service
 
 logger = logging.getLogger(__name__)
 
