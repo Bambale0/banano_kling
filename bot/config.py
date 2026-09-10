@@ -129,7 +129,7 @@ class Config:
         "QWEN38_PROMPT_REASONING_EFFORT", "medium"
     )
     QWEN38_PROMPT_MAX_TOKENS: int = int(
-        os.getenv("QWEN38_PROMPT_MAX_TOKENS", "4096")
+        os.getenv("QWEN38_PROMPT_MAX_TOKENS", "8192")
     )
     QWEN38_PROMPT_TIMEOUT_SECONDS: int = int(
         os.getenv("QWEN38_PROMPT_TIMEOUT_SECONDS", "180")

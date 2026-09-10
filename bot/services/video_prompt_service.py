@@ -544,6 +544,7 @@ class VideoPromptService:
                     user_instruction=user_instruction,
                     system_prompt=None,
                     json_response=False,
+                    reasoning_effort="minimal",
                 )
                 return _build_video_result(
                     _parse_video_json_object(raw_output),

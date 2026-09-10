@@ -99,6 +99,7 @@ async def test_qwen_video_uses_native_openrouter_video_url() -> None:
         user_instruction="analyze video",
         system_prompt=None,
         json_response=False,
+        reasoning_effort="minimal",
     )
 
     kwargs = service._complete.await_args.kwargs
@@ -111,6 +112,7 @@ async def test_qwen_video_uses_native_openrouter_video_url() -> None:
     ]
     assert kwargs["system_prompt"] is None
     assert kwargs["json_response"] is False
+    assert kwargs["reasoning_effort"] == "minimal"
 
 
 def test_qwen_raw_video_payload_has_only_user_message() -> None:
@@ -131,10 +133,12 @@ def test_qwen_raw_video_payload_has_only_user_message() -> None:
         user_content=content,
         system_prompt=None,
         json_response=False,
+        reasoning_effort="minimal",
     )
 
     assert payload["messages"] == [{"role": "user", "content": content}]
     assert "response_format" not in payload
+    assert payload["reasoning"] == {"effort": "minimal"}
 
 
 @pytest.mark.asyncio
@@ -164,6 +168,7 @@ async def test_video_prompt_uses_qwen38_before_kie(monkeypatch) -> None:
         user_instruction=_build_video_prompt_instruction(12),
         system_prompt=None,
         json_response=False,
+        reasoning_effort="minimal",
     )
     service._analyze_with_gpt55.assert_not_awaited()
     service._analyze_frames_with_gpt55.assert_not_awaited()

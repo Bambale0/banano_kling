@@ -86,6 +86,7 @@ class OpenRouterQwen38Service:
         user_content: list[dict[str, Any]],
         system_prompt: str | None = None,
         json_response: bool = True,
+        reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         messages: list[dict[str, Any]] = []
         if system_prompt:
@@ -101,8 +102,14 @@ class OpenRouterQwen38Service:
         }
         if json_response:
             payload["response_format"] = {"type": "json_object"}
-        if self.reasoning_effort:
-            payload["reasoning"] = {"effort": self.reasoning_effort}
+
+        effective_reasoning = (
+            self.reasoning_effort
+            if reasoning_effort is None
+            else str(reasoning_effort).strip()
+        )
+        if effective_reasoning:
+            payload["reasoning"] = {"effort": effective_reasoning}
         return payload
 
     async def _complete(
@@ -111,6 +118,7 @@ class OpenRouterQwen38Service:
         user_content: list[dict[str, Any]],
         system_prompt: str | None = None,
         json_response: bool = True,
+        reasoning_effort: str | None = None,
     ) -> str:
         if not self.enabled:
             raise RuntimeError("OPENROUTER_API_KEY is not configured")
@@ -123,6 +131,7 @@ class OpenRouterQwen38Service:
             user_content=user_content,
             system_prompt=system_prompt,
             json_response=json_response,
+            reasoning_effort=reasoning_effort,
         )
         timeout = aiohttp.ClientTimeout(total=self.timeout_seconds)
         last_error: Exception | None = None
@@ -202,6 +211,7 @@ class OpenRouterQwen38Service:
         user_instruction: str,
         system_prompt: str | None = None,
         json_response: bool = True,
+        reasoning_effort: str | None = None,
     ) -> str:
         video_url = str(video_url or "").strip()
         if not video_url:
@@ -213,6 +223,7 @@ class OpenRouterQwen38Service:
             ],
             system_prompt=system_prompt,
             json_response=json_response,
+            reasoning_effort=reasoning_effort,
         )
 
 

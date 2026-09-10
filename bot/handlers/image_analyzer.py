@@ -163,50 +163,17 @@ def _format_photo_prompt_result_text(result: dict) -> str:
 
 def _format_video_prompt_result_text(result: dict) -> str:
     prompt_ru = (result.get("prompt_ru") or "").strip()
-    prompt_en = (result.get("prompt_en") or "").strip()
-    negative_prompt = (result.get("negative_prompt") or "").strip()
-    camera_movement = (result.get("camera_movement_ru") or "").strip()
-    visual_style = (result.get("visual_style_ru") or "").strip()
-    audio_notes = (result.get("audio_notes_ru") or "").strip()
     provider = (result.get("provider") or "").strip()
-    timeline = result.get("timeline_ru") or []
 
     provider_note = ""
     if provider:
-        provider_note = f"\n\n<i>Модель анализа: {html.escape(provider)}</i>"
-
-    timeline_lines = []
-    if isinstance(timeline, list):
-        timeline_lines = [
-            "• " + _escape_clip_text(str(item), 120)
-            for item in timeline[:6]
-            if str(item or "").strip()
-        ]
-    timeline_note = ""
-    if timeline_lines:
-        timeline_note = "\n\n<b>Динамика:</b>\n" + "\n".join(timeline_lines)
-
-    audio_note = ""
-    if audio_notes:
-        audio_note = (
-            "\n\n<b>Звук:</b>\n"
-            f"{_escape_clip_text(audio_notes, 220)}"
+        provider_note = (
+            f"{chr(10)}{chr(10)}<i>Модель анализа: {html.escape(provider)}</i>"
         )
 
     return (
-        "✅ <b>Промпт по видео готов</b>\n\n"
-        "<b>Prompt RU:</b>\n"
-        f"<pre>{_escape_clip_text(prompt_ru or '—', 950)}</pre>\n\n"
-        "<b>Prompt EN:</b>\n"
-        f"<pre>{_escape_clip_text(prompt_en or '—', 680)}</pre>\n\n"
-        "<b>Камера:</b>\n"
-        f"{_escape_clip_text(camera_movement or '—', 220)}"
-        f"{timeline_note}\n\n"
-        "<b>Стиль:</b>\n"
-        f"{_escape_clip_text(visual_style or '—', 220)}"
-        f"{audio_note}\n\n"
-        "<b>Negative prompt:</b>\n"
-        f"<pre>{_escape_clip_text(negative_prompt or '—', 220)}</pre>"
+        f"✅ <b>Промпт по видео готов</b>{chr(10)}{chr(10)}"
+        f"<pre>{_escape_clip_text(prompt_ru or '—', 3500)}</pre>"
         f"{provider_note}"
     )
 
@@ -454,14 +421,10 @@ async def _send_video_prompt_result(
     message: Message,
     result: dict,
     *,
-    filename: str = "video_prompt_full.txt",
-    document_caption: str = "📝 Полный video prompt: RU + EN + motion notes",
+    filename: str = "video_prompt_seedance_2.txt",
+    document_caption: str = "📝 Полный промпт для Seedance 2.0",
 ) -> None:
-    prompt_en = (result.get("prompt_en") or "").strip()
     prompt_ru = (result.get("prompt_ru") or "").strip()
-    negative_prompt = (result.get("negative_prompt") or "").strip()
-    timeline = result.get("timeline_ru") or []
-    timeline_text = "\n".join(f"- {item}" for item in timeline) if timeline else "—"
     text = _format_video_prompt_result_text(result)
 
     await message.answer(
@@ -471,35 +434,9 @@ async def _send_video_prompt_result(
         reply_markup=get_video_prompt_result_keyboard(),
     )
 
-    full_prompt_text = (
-        "PROMPT RU\n"
-        "---------\n"
-        f"{prompt_ru or '—'}\n\n"
-        "PROMPT EN\n"
-        "---------\n"
-        f"{prompt_en or '—'}\n\n"
-        "CAMERA / FRAMING\n"
-        "----------------\n"
-        f"{result.get('camera_movement_ru') or '—'}\n\n"
-        "TIMELINE\n"
-        "--------\n"
-        f"{timeline_text}\n\n"
-        "STYLE / LIGHT / COLOR\n"
-        "---------------------\n"
-        f"{result.get('visual_style_ru') or '—'}\n\n"
-        "AUDIO NOTES\n"
-        "-----------\n"
-        f"{result.get('audio_notes_ru') or '—'}\n\n"
-        "NEGATIVE PROMPT\n"
-        "---------------\n"
-        f"{negative_prompt or '—'}\n\n"
-        "KEY DETAILS\n"
-        "-----------\n"
-        f"{chr(10).join('- ' + str(item) for item in (result.get('key_details') or [])) or '—'}\n"
-    )
     await message.answer_document(
         document=BufferedInputFile(
-            full_prompt_text.encode("utf-8"),
+            (prompt_ru or "—").encode("utf-8"),
             filename=filename,
         ),
         caption=document_caption,
@@ -553,12 +490,8 @@ async def video_to_prompt_handler(callback: CallbackQuery, state: FSMContext):
         "🎞 <b>Промпт по видео</b>\n\n"
         f"Стоимость: <code>{_video_prompt_cost()}</code> 🍌\n\n"
         "Отправьте короткое видео как обычное видео или файлом.\n"
-        "GPT-5.5 получит сам видеофайл и соберёт подробный prompt для генерации похожего ролика.\n\n"
-        "В результате вы получите:\n"
-        "• подробный prompt на русском\n"
-        "• английскую версию для video-моделей\n"
-        "• описание камеры и динамики\n"
-        "• negative prompt\n\n"
+        "Qwen 3.8 получит сам видеофайл и соберёт подробный prompt для Seedance 2.0 по фактической длине исходного ролика.\n\n"
+        "В результате вы получите подробный русский prompt с посекундными действиями на всю фактическую длину ролика.\n\n"
         f"<i>Тестовый лимит: до {max_mb}MB и до {max_seconds} секунд.</i>"
     )
 
