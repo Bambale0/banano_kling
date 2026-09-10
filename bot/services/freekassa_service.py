@@ -149,6 +149,10 @@ class FreeKassaService:
 
         self._session: aiohttp.ClientSession | None = None
         self._nonce_lock = asyncio.Lock()
+        # FreeKassa requires every nonce to be greater than the previous one.
+        # Serializing the complete API request prevents concurrently generated
+        # nonces from reaching the provider out of order.
+        self._api_request_lock = asyncio.Lock()
         self._last_nonce = 0
 
     async def _get_session(self) -> aiohttp.ClientSession:
@@ -310,37 +314,38 @@ class FreeKassaService:
         if not self.api_enabled:
             return None
 
-        body = dict(payload)
-        body["shopId"] = int(self.merchant_id)
-        body["nonce"] = await self._next_nonce()
-        body["signature"] = build_api_signature(body, self.api_key)
+        async with self._api_request_lock:
+            body = dict(payload)
+            body["shopId"] = int(self.merchant_id)
+            body["nonce"] = await self._next_nonce()
+            body["signature"] = build_api_signature(body, self.api_key)
 
-        session = await self._get_session()
-        url = f"{self.api_base_url}/{endpoint.lstrip('/')}"
-        try:
-            async with session.post(url, json=body) as response:
-                text = await response.text()
-                if response.status != 200:
-                    logger.warning(
-                        "FreeKassa API request failed: endpoint=%s status=%s body=%s",
-                        endpoint,
-                        response.status,
-                        text[:1000],
-                    )
-                    return None
-                try:
-                    data = await response.json(content_type=None)
-                except (ValueError, UnicodeError):
-                    logger.warning(
-                        "FreeKassa API returned invalid JSON: endpoint=%s body=%s",
-                        endpoint,
-                        text[:500],
-                    )
-                    return None
-                return data if isinstance(data, dict) else None
-        except (aiohttp.ClientError, asyncio.TimeoutError):
-            logger.exception("FreeKassa API request error: endpoint=%s", endpoint)
-            return None
+            session = await self._get_session()
+            url = f"{self.api_base_url}/{endpoint.lstrip('/')}"
+            try:
+                async with session.post(url, json=body) as response:
+                    text = await response.text()
+                    if response.status != 200:
+                        logger.warning(
+                            "FreeKassa API request failed: endpoint=%s status=%s body=%s",
+                            endpoint,
+                            response.status,
+                            text[:1000],
+                        )
+                        return None
+                    try:
+                        data = await response.json(content_type=None)
+                    except (ValueError, UnicodeError):
+                        logger.warning(
+                            "FreeKassa API returned invalid JSON: endpoint=%s body=%s",
+                            endpoint,
+                            text[:500],
+                        )
+                        return None
+                    return data if isinstance(data, dict) else None
+            except (aiohttp.ClientError, asyncio.TimeoutError):
+                logger.exception("FreeKassa API request error: endpoint=%s", endpoint)
+                return None
 
     async def get_payment(
         self,

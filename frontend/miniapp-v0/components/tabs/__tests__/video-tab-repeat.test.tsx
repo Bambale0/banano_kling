@@ -93,7 +93,7 @@ function mockApp(initialVideoPromptPreset: Record<string, unknown> | null) {
       videoPromptPreset,
       setVideoPromptPreset,
       refreshTasks: jest.fn(),
-    } as ReturnType<typeof useApp>
+    } as unknown as ReturnType<typeof useApp>
   })
 }
 

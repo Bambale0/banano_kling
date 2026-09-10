@@ -61,6 +61,7 @@ FREEKASSA_RECONCILE_INTERVAL_SECONDS = 5 * 60
 FREEKASSA_RECONCILE_BATCH_SIZE = 100
 FREEKASSA_BOT_RETURN_URL = "https://t.me/Neuromixx_bot"
 FREEKASSA_CHECKOUT_PATH = "/freekassa/checkout"
+_FREEKASSA_ROUTES_REGISTERED = web.AppKey("freekassa_routes_registered", bool)
 _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 
@@ -678,6 +679,9 @@ async def _cleanup_context(app: web.Application):
 
 
 def setup_freekassa_routes(app: web.Application) -> None:
+    if app.get(_FREEKASSA_ROUTES_REGISTERED, False):
+        return
+
     paths = {freekassa_service.webhook_path, "/webhook/freekassa"}
     for path in paths:
         app.router.add_post(path, handle_freekassa_webhook)
@@ -686,6 +690,7 @@ def setup_freekassa_routes(app: web.Application) -> None:
     app.router.add_get(FREEKASSA_CHECKOUT_PATH, handle_freekassa_checkout)
     app.router.add_post(FREEKASSA_CHECKOUT_PATH, handle_freekassa_checkout)
     app.cleanup_ctx.append(_cleanup_context)
+    app[_FREEKASSA_ROUTES_REGISTERED] = True
     logger.info(
         "FreeKassa routes registered: paths=%s enabled=%s api_enabled=%s verify_ip=%s",
         sorted(paths),
