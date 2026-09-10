@@ -25,7 +25,7 @@ def _button(markup: InlineKeyboardMarkup, text: str) -> InlineKeyboardButton:
     )
 
 
-def test_live_text_bot_keyboard_restores_freekassa_before_foreign_options() -> None:
+def test_live_text_bot_keyboard_places_kassa_primary_before_reserves() -> None:
     raw_keyboard = unwrap(lava_checkout._payment_options_keyboard)
     base = raw_keyboard(
         "optimal",
@@ -40,11 +40,13 @@ def test_live_text_bot_keyboard_restores_freekassa_before_foreign_options() -> N
     markup = _decorate_text_payment_options(base, "optimal")
     labels = _button_texts(markup)
 
-    assert labels[:4] == [
-        "💳 Картой",
-        "⚡ СБП",
-        "🇷🇺 РФ — KASSA (резерв)",
+    assert labels[:6] == [
+        "💳 Картой · KASSA",
+        "⚡ СБП · KASSA",
         "🌍 Зарубежная / СНГ",
+        "↩️ Резерв · карта (Lava)",
+        "↩️ Резерв · СБП (Lava)",
+        "🌐 Резерв · зарубежная карта",
     ]
     assert _button(markup, "🌍 Зарубежная / СНГ").url == TRIBUTE_PACKAGE_LINKS["optimal"]
     assert _button(markup, "🌍 Зарубежная / СНГ").url == "https://web.tribute.tg/p/Dxm"
@@ -56,9 +58,10 @@ def test_live_text_bot_keyboard_restores_freekassa_before_foreign_options() -> N
 def test_reserve2_decorator_matches_production_flat_menu_order() -> None:
     base = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="💳 Картой", callback_data="card")],
-            [InlineKeyboardButton(text="⚡ СБП", callback_data="sbp")],
-            [InlineKeyboardButton(text="🇷🇺 РФ — KASSA (резерв)", callback_data="buy_freekassa_optimal")],
+            [InlineKeyboardButton(text="💳 Картой · KASSA", callback_data="freekassa_card_optimal")],
+            [InlineKeyboardButton(text="⚡ СБП · KASSA", callback_data="freekassa_sbp_optimal")],
+            [InlineKeyboardButton(text="↩️ Резерв · карта (Lava)", callback_data="buy_lava_card_optimal")],
+            [InlineKeyboardButton(text="↩️ Резерв · СБП (Lava)", callback_data="buy_lava_sbp_optimal")],
             [InlineKeyboardButton(text="🌐 Резерв · зарубежная карта", callback_data="foreign")],
             [InlineKeyboardButton(text="🌐 Резерв · PayPal", callback_data="paypal")],
             [InlineKeyboardButton(text="⭐ Stars", callback_data="stars")],
@@ -70,10 +73,11 @@ def test_reserve2_decorator_matches_production_flat_menu_order() -> None:
     markup = _decorate_text_payment_options(base, "optimal")
 
     assert _button_texts(markup) == [
-        "💳 Картой",
-        "⚡ СБП",
-        "🇷🇺 РФ — KASSA (резерв)",
+        "💳 Картой · KASSA",
+        "⚡ СБП · KASSA",
         "🌍 Зарубежная / СНГ",
+        "↩️ Резерв · карта (Lava)",
+        "↩️ Резерв · СБП (Lava)",
         "🌐 Резерв · зарубежная карта",
         "🌐 Резерв · PayPal",
         "₿ Криптовалюта",

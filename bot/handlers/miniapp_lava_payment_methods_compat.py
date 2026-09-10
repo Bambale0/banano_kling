@@ -46,7 +46,7 @@ def _decorate_text_payment_options(
     markup: InlineKeyboardMarkup,
     package_id: str,
 ) -> InlineKeyboardMarkup:
-    """Expose Tribute as the CIS/foreign fallback in the flat Telegram payment keyboard."""
+    """Keep KASSA primary, then Tribute, with Lava methods left as reserves."""
 
     tribute_url = TRIBUTE_PACKAGE_LINKS.get(str(package_id))
     if not tribute_url:
@@ -66,26 +66,29 @@ def _decorate_text_payment_options(
         rows.append(list(row))
 
     reserve_row = [InlineKeyboardButton(text=reserve_label, url=tribute_url)]
-    freekassa_index = next(
-        (
-            index
-            for index, row in enumerate(rows)
-            if any(button.callback_data == f"buy_freekassa_{package_id}" for button in row)
-        ),
-        -1,
-    )
-    if freekassa_index >= 0:
-        rows.insert(freekassa_index + 1, reserve_row)
+    primary_kassa_callbacks = {
+        f"freekassa_card_{package_id}",
+        f"freekassa_sbp_{package_id}",
+        # Keep already-sent legacy submenu buttons compatible.
+        f"buy_freekassa_{package_id}",
+    }
+    kassa_indexes = [
+        index
+        for index, row in enumerate(rows)
+        if any(button.callback_data in primary_kassa_callbacks for button in row)
+    ]
+    if kassa_indexes:
+        rows.insert(max(kassa_indexes) + 1, reserve_row)
     else:
-        sbp_index = next(
+        first_lava_reserve = next(
             (
                 index
                 for index, row in enumerate(rows)
-                if any(button.text == "⚡ СБП" for button in row)
+                if any((button.text or "").startswith("↩️ Резерв ·") for button in row)
             ),
-            -1,
+            0,
         )
-        rows.insert(sbp_index + 1 if sbp_index >= 0 else 0, reserve_row)
+        rows.insert(first_lava_reserve, reserve_row)
 
     back_index = next(
         (
@@ -103,7 +106,7 @@ def _decorate_text_payment_options(
 
 
 def _install_freekassa_reserve_button() -> None:
-    """Expose KASSA and Reserve 2 in the actual text-bot payment keyboard."""
+    """Expose KASSA as primary and keep Tribute/Lava reserve options."""
 
     from bot.handlers import lava_checkout as lava_checkout_module
 
@@ -222,7 +225,7 @@ async def _create_freekassa_miniapp_checkout(
 
 
 def install_miniapp_lava_payment_methods() -> None:
-    """Handle explicit Lava actions and keep FreeKassa as a real reserve."""
+    """Handle KASSA as primary while keeping explicit Lava reserve actions."""
 
     import bot.miniapp as miniapp_module
 

@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -21,21 +20,27 @@ def test_miniapp_freekassa_uses_signed_server_checkout() -> None:
     assert "freekassa_service.create_payment" not in source
 
 
-def test_miniapp_shows_freekassa_only_as_reserve() -> None:
+def test_miniapp_uses_freekassa_as_primary_and_lava_as_reserve() -> None:
     source = _read("frontend/miniapp-v0/components/balance-sheet.tsx")
 
-    assert "KASSA · резервная оплата" in source
-    assert "KASSA · Карта РФ" in source
-    assert "KASSA · СБП" in source
+    assert "KASSA · основной способ" in source
+    assert "Резерв · Lava" in source
     assert "handleTopup(pkg.id, 'freekassa_card')" in source
     assert "handleTopup(pkg.id, 'freekassa_sbp')" in source
+    assert "handleTopup(pkg.id, 'lava_card')" in source
+    assert "handleTopup(pkg.id, 'lava_sbp')" in source
     assert "freekassa_enabled" in source
 
-    primary_card = source.index("handleTopup(pkg.id, 'lava_card')")
-    primary_sbp = source.index("handleTopup(pkg.id, 'lava_sbp')")
-    reserve_label = source.index("KASSA · резервная оплата")
-    assert primary_card < reserve_label
-    assert primary_sbp < reserve_label
+    primary_label = source.index("KASSA · основной способ")
+    primary_card = source.index("handleTopup(pkg.id, 'freekassa_card')")
+    primary_sbp = source.index("handleTopup(pkg.id, 'freekassa_sbp')")
+    reserve_label = source.index("Резерв · Lava")
+    reserve_card = source.index("handleTopup(pkg.id, 'lava_card')")
+    reserve_sbp = source.index("handleTopup(pkg.id, 'lava_sbp')")
+    assert primary_label < primary_card < reserve_label
+    assert primary_label < primary_sbp < reserve_label
+    assert reserve_label < reserve_card
+    assert reserve_label < reserve_sbp
 
 
 def test_freekassa_checkout_still_owns_email_ip_and_provider_creation() -> None:
@@ -51,13 +56,13 @@ def test_freekassa_checkout_still_owns_email_ip_and_provider_creation() -> None:
     assert "HTTPSeeOther" in checkout
 
 
-def test_miniapp_places_freekassa_before_foreign_payment_options() -> None:
+def test_miniapp_places_primary_kassa_before_foreign_and_lava_reserves() -> None:
     source = _read("frontend/miniapp-v0/components/balance-sheet.tsx")
 
-    freekassa = source.index("KASSA · резервная оплата")
+    freekassa = source.index("KASSA · основной способ")
+    lava_reserve = source.index("Резерв · Lava")
     tribute = source.index("handleTopup(pkg.id, 'tribute' as PaymentProvider)")
-    lava_foreign = source.index("Резерв · зарубежная")
-    assert freekassa < tribute < lava_foreign
+    assert freekassa < lava_reserve < tribute
 
 
 def test_payment_provider_type_includes_freekassa_methods() -> None:
