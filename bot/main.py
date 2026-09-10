@@ -406,7 +406,7 @@ class AccessGuardMiddleware(BaseMiddleware):
 
     def _is_admin_management_event(self, event: types.TelegramObject) -> bool:
         callback_data = self._callback_data(event)
-        if callback_data.startswith("admin_"):
+        if callback_data.startswith(("admin_", "gpt25_")):
             return True
 
         text = self._message_text(event).strip()
@@ -414,6 +414,19 @@ class AccessGuardMiddleware(BaseMiddleware):
             return False
         command = text.split(maxsplit=1)[0].split("@", 1)[0].lower()
         return command in {"/admin", "/admin_ai"}
+
+    @staticmethod
+    async def _is_admin_test_state(data: dict[str, Any]) -> bool:
+        raw_state = str(data.get("raw_state") or "")
+        if not raw_state:
+            state_context = data.get("state")
+            get_state = getattr(state_context, "get_state", None)
+            if callable(get_state):
+                raw_state = str(await get_state() or "")
+        return raw_state in {
+            "AdminTestLabStates:gpt25_prompt",
+            "AdminTestLabStates:gpt25_references",
+        }
 
     async def __call__(
         self,
@@ -429,8 +442,9 @@ class AccessGuardMiddleware(BaseMiddleware):
         is_subscription_check_callback = (
             self._callback_data(event) == SUBSCRIPTION_CHECK_CALLBACK
         )
-        is_admin_management_event = (
-            is_admin_user and self._is_admin_management_event(event)
+        is_admin_management_event = is_admin_user and (
+            self._is_admin_management_event(event)
+            or await self._is_admin_test_state(data)
         )
 
         try:
