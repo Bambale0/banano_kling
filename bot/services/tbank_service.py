@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional
 from bot.config import config
 from tbank_payment.client import TBankAsyncClient
 from tbank_payment.config import TBankConfig
-from tbank_payment.models import GetStateRequest, InitPaymentRequest
+from tbank_payment.models import InitPaymentRequest
 from tbank_payment.webhooks import WebhookHandler
 
 logger = logging.getLogger(__name__)
