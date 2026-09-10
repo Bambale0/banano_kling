@@ -64,7 +64,7 @@ def _provider_keyboard(
     builder = InlineKeyboardBuilder()
     if robokassa:
         builder.button(
-            text="💳 Robokassa · основной способ",
+            text="💳 КАРТА | СБП",
             callback_data=f"buy_robokassa_{package_id}",
         )
     if freekassa:
@@ -234,7 +234,7 @@ async def initiate_robokassa_payment(
         )
 
     await callback.message.edit_text(
-        "💳 <b>Оплата через Robokassa</b>\n"
+        "💳 <b>КАРТА | СБП</b>\n"
         f"• Пакет: <code>{html.escape(str(package.get("name", "")))}</code>\n"
         f"• Бананов: <code>{total_credits}</code>{bonus_text}\n"
         f"• Сумма: <code>{package.get("price_rub")}</code> ₽\n\n"
@@ -271,7 +271,7 @@ async def check_robokassa_payment(callback: types.CallbackQuery):
         return
 
     await callback.answer(
-        "Платёж ещё не подтверждён. Robokassa уведомит бот автоматически.",
+        "Платёж ещё не подтверждён. После оплаты баланс обновится автоматически.",
         show_alert=True,
     )
 

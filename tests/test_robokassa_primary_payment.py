@@ -61,3 +61,10 @@ def test_main_registers_robokassa_before_freekassa_routes():
     robokassa = source.index("setup_robokassa_routes(app)")
     freekassa = source.index("setup_freekassa_routes(app)")
     assert robokassa < freekassa
+
+
+def test_text_bot_uses_card_sbp_label_for_robokassa() -> None:
+    source = _read("bot/handlers/robokassa_payments.py")
+    assert 'text="💳 КАРТА | СБП"' in source
+    assert '💳 <b>КАРТА | СБП</b>' in source
+    assert 'Robokassa · основной способ' not in source
