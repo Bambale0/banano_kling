@@ -31,21 +31,31 @@ class GPTImage25Service(KlingService):
         ("sunburst", False): "gpt-image-2-5-sunburst-text-to-image",
         ("sunburst", True): "gpt-image-2-5-sunburst-image-to-image",
     }
-    ASPECT_RATIOS: ClassVar[set[str]] = {
+    TEXT_ASPECT_RATIOS: ClassVar[tuple[str, ...]] = (
         "auto",
         "1:1",
         "3:2",
         "2:3",
-        "16:9",
-        "9:16",
         "4:3",
         "3:4",
+        "16:9",
+        "9:16",
         "21:9",
         "27:16",
         "16:27",
         "9:8",
         "8:9",
-    }
+    )
+    IMAGE_ASPECT_RATIOS: ClassVar[tuple[str, ...]] = (
+        *TEXT_ASPECT_RATIOS,
+        "5:4",
+        "4:5",
+        "2:1",
+        "1:2",
+        "3:1",
+        "1:3",
+        "9:21",
+    )
     RESOLUTIONS: ClassVar[set[str]] = {"1K", "2K", "4K"}
     MAX_PROMPT_CHARS = 20_000
     MAX_INPUT_IMAGES = 16
@@ -93,20 +103,26 @@ class GPTImage25Service(KlingService):
                 f"GPT Image 2.5 prompt exceeds {cls.MAX_PROMPT_CHARS} characters"
             )
 
+        references = cls._public_image_urls(input_urls)
+        if len(references) > cls.MAX_INPUT_IMAGES:
+            raise ValueError(
+                f"GPT Image 2.5 accepts at most {cls.MAX_INPUT_IMAGES} reference images"
+            )
+
         ratio = str(aspect_ratio or "auto").strip()
-        if ratio not in cls.ASPECT_RATIOS:
-            raise ValueError(f"Unsupported GPT Image 2.5 aspect ratio: {ratio}")
+        allowed_ratios = (
+            cls.IMAGE_ASPECT_RATIOS if references else cls.TEXT_ASPECT_RATIOS
+        )
+        if ratio not in allowed_ratios:
+            mode = "image-to-image" if references else "text-to-image"
+            raise ValueError(
+                f"Unsupported GPT Image 2.5 {mode} aspect ratio: {ratio}"
+            )
 
         normalized_resolution = str(resolution or "1K").strip().upper()
         if normalized_resolution not in cls.RESOLUTIONS:
             raise ValueError(
                 f"Unsupported GPT Image 2.5 resolution: {normalized_resolution}"
-            )
-
-        references = cls._public_image_urls(input_urls)
-        if len(references) > cls.MAX_INPUT_IMAGES:
-            raise ValueError(
-                f"GPT Image 2.5 accepts at most {cls.MAX_INPUT_IMAGES} reference images"
             )
 
         model = cls.model_id(variant, has_references=bool(references))

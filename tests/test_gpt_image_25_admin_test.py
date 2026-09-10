@@ -84,11 +84,32 @@ def test_gpt25_image_payload_supports_sixteen_unique_references_and_callback():
     assert payload["callBackUrl"] == "https://example.test/kie/callback"
 
 
+def test_gpt25_image_to_image_supports_extended_kie_ratios():
+    refs = ["https://cdn.example/reference.png"]
+    extended = {"5:4", "4:5", "2:1", "1:2", "3:1", "1:3", "9:21"}
+
+    assert extended.issubset(set(GPTImage25Service.IMAGE_ASPECT_RATIOS))
+    assert extended.isdisjoint(set(GPTImage25Service.TEXT_ASPECT_RATIOS))
+
+    for ratio in extended:
+        payload = GPTImage25Service.build_payload(
+            prompt="Edit this image",
+            input_urls=refs,
+            aspect_ratio=ratio,
+        )
+        assert payload["input"]["aspect_ratio"] == ratio
+
+
+def test_gpt25_text_to_image_rejects_i2i_only_ratio():
+    with pytest.raises(ValueError, match="text-to-image"):
+        GPTImage25Service.build_payload(prompt="test", aspect_ratio="5:4")
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
         ("variant", "unknown"),
-        ("aspect_ratio", "5:4"),
+        ("aspect_ratio", "7:5"),
         ("resolution", "8K"),
     ],
 )
@@ -205,3 +226,39 @@ def test_admin_test_handler_keeps_provider_key_server_side_and_has_no_billing():
     assert "deduct" not in source.lower()
     assert "update_user_credits" not in source
     assert "api_key=" not in source.lower()
+
+
+@pytest.mark.asyncio
+async def test_access_guard_allows_only_admin_test_state_to_bypass_subscription(monkeypatch):
+    from types import SimpleNamespace
+
+    from bot import main as main_module
+    from bot.main import AccessGuardMiddleware
+
+    middleware = AccessGuardMiddleware()
+    handler = AsyncMock(return_value="ok")
+    event = SimpleNamespace(from_user=SimpleNamespace(id=111), text="prompt fragment")
+    subscription_required = AsyncMock(return_value=True)
+
+    monkeypatch.setattr(main_module.config, "is_admin", lambda _telegram_id: True)
+    monkeypatch.setattr(main_module, "is_channel_subscription_required", subscription_required)
+
+    result = await middleware(
+        handler,
+        event,
+        {"raw_state": "AdminTestLabStates:gpt25_prompt"},
+    )
+
+    assert result == "ok"
+    handler.assert_awaited_once()
+    subscription_required.assert_not_awaited()
+
+
+def test_access_guard_recognizes_gpt25_callbacks_as_admin_management():
+    from types import SimpleNamespace
+
+    from bot.main import AccessGuardMiddleware
+
+    middleware = AccessGuardMiddleware()
+    event = SimpleNamespace(data="gpt25_generate", text="")
+    assert middleware._is_admin_management_event(event) is True

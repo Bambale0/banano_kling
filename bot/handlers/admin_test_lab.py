@@ -356,21 +356,13 @@ async def choose_ratio(callback: types.CallbackQuery, state: FSMContext) -> None
     if not await _require_admin(callback):
         return
     current = str((await _data(state)).get("gpt25_ratio") or "auto")
-    values = [
-        "auto",
-        "1:1",
-        "3:2",
-        "2:3",
-        "16:9",
-        "9:16",
-        "4:3",
-        "3:4",
-        "21:9",
-        "27:16",
-        "16:27",
-        "9:8",
-        "8:9",
-    ]
+    data = await _data(state)
+    has_references = bool(data.get("gpt25_references"))
+    values = list(
+        GPTImage25Service.IMAGE_ASPECT_RATIOS
+        if has_references
+        else GPTImage25Service.TEXT_ASPECT_RATIOS
+    )
     if callback.message is not None:
         await callback.message.edit_text(
             "↔️ <b>GPT Image 2.5 · формат</b>\n\n"
@@ -386,8 +378,14 @@ async def set_ratio(callback: types.CallbackQuery, state: FSMContext) -> None:
     if not await _require_admin(callback):
         return
     value = (callback.data or "").split(":", 1)[1]
-    if value not in GPTImage25Service.ASPECT_RATIOS:
-        await callback.answer("Формат не поддерживается", show_alert=True)
+    data = await _data(state)
+    allowed = (
+        GPTImage25Service.IMAGE_ASPECT_RATIOS
+        if data.get("gpt25_references")
+        else GPTImage25Service.TEXT_ASPECT_RATIOS
+    )
+    if value not in allowed:
+        await callback.answer("Формат не поддерживается для этого режима", show_alert=True)
         return
     await state.update_data(gpt25_ratio=value)
     if callback.message is not None:
@@ -572,7 +570,11 @@ async def finish_references(callback: types.CallbackQuery, state: FSMContext) ->
 async def clear_references(callback: types.CallbackQuery, state: FSMContext) -> None:
     if not await _require_admin(callback):
         return
-    await state.update_data(gpt25_references=[])
+    data = await _data(state)
+    updates: dict[str, Any] = {"gpt25_references": []}
+    if str(data.get("gpt25_ratio") or "auto") not in GPTImage25Service.TEXT_ASPECT_RATIOS:
+        updates["gpt25_ratio"] = "auto"
+    await state.update_data(**updates)
     await state.set_state(AdminTestLabStates.gpt25_references)
     if callback.message is not None:
         await callback.message.edit_text(
@@ -597,8 +599,9 @@ async def gpt25_info(callback: types.CallbackQuery) -> None:
             "• До <b>16</b> JPEG/PNG/WEBP референсов, до <b>30 МБ</b> каждый.\n"
             "• Промпт: до <b>20 000</b> символов.\n"
             "• Разрешение: <b>1K / 2K / 4K</b>.\n"
-            "• Форматы: auto, 1:1, 3:2, 2:3, 16:9, 9:16, 4:3, 3:4, "
-            "21:9, 27:16, 16:27, 9:8, 8:9.\n"
+            "• Text-to-Image форматы: auto, 1:1, 3:2, 2:3, 4:3, 3:4, 16:9, "
+            "9:16, 21:9, 27:16, 16:27, 9:8, 8:9.\n"
+            "• Image-to-Image дополнительно: 5:4, 4:5, 2:1, 1:2, 3:1, 1:3, 9:21.\n"
             "• В текущей KIE API-форме нет отдельного параметра background: "
             "прозрачный фон при необходимости задаётся текстом промпта.\n\n"
             "Sketch, templates и комментарии относятся к интерфейсу ChatGPT; "

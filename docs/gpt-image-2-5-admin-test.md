@@ -20,7 +20,8 @@ Create task: `POST https://api.kie.ai/api/v1/jobs/createTask` with Bearer auth.
 Common `input` fields:
 
 - `prompt`: required, maximum 20,000 characters;
-- `aspect_ratio`: `auto`, `1:1`, `3:2`, `2:3`, `4:3`, `3:4`, `16:9`, `9:16`, `21:9`, `27:16`, `16:27`, `9:8`, `8:9`;
+- text-to-image `aspect_ratio`: `auto`, `1:1`, `3:2`, `2:3`, `4:3`, `3:4`, `16:9`, `9:16`, `21:9`, `27:16`, `16:27`, `9:8`, `8:9`;
+- image-to-image supports all of the above plus `5:4`, `4:5`, `2:1`, `1:2`, `3:1`, `1:3`, `9:21`;
 - `resolution`: `1K`, `2K`, `4K`.
 
 Image-to-image adds `input_urls`, maximum 16 images. KIE's GPT Image 2.5 model page lists JPEG/JPG, PNG and WEBP uploads, up to 30 MB each.
