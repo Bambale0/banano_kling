@@ -1,4 +1,4 @@
-"""Photo-to-prompt service with CometAPI Qwen 3.8 primary and KIE fallbacks."""
+"""Photo-to-prompt service with OpenRouter Qwen 3.8 primary and KIE fallbacks."""
 
 import asyncio
 import base64
@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 import aiohttp
 
 from bot.config import config
-from bot.services.comet_qwen38_service import comet_qwen38_service
+from bot.services.openrouter_qwen38_service import openrouter_qwen38_service
 from bot.services.photo_analysis_media import image_source_to_analysis_input
 
 logger = logging.getLogger(__name__)
@@ -601,9 +601,9 @@ class PhotoPromptService:
         )
 
         qwen_error: Exception | None = None
-        if has_image and not has_audio and comet_qwen38_service.enabled:
+        if has_image and not has_audio and openrouter_qwen38_service.enabled:
             try:
-                raw_output = await comet_qwen38_service.analyze_image(
+                raw_output = await openrouter_qwen38_service.analyze_image(
                     image_url=image_url,
                     system_prompt=SYSTEM_PROMPT,
                     user_instruction=user_instruction,

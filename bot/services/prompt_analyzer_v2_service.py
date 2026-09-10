@@ -16,7 +16,7 @@ from typing import Any, Dict, Optional
 import aiohttp
 
 from bot.config import config
-from bot.services.comet_qwen38_service import comet_qwen38_service
+from bot.services.openrouter_qwen38_service import openrouter_qwen38_service
 
 logger = logging.getLogger(__name__)
 
@@ -439,16 +439,16 @@ class PromptAnalyzerV2Service:
         )
 
         qwen_error: Exception | None = None
-        if image_url and not has_audio and comet_qwen38_service.enabled:
+        if image_url and not has_audio and openrouter_qwen38_service.enabled:
             try:
-                raw_output = await comet_qwen38_service.analyze_image(
+                raw_output = await openrouter_qwen38_service.analyze_image(
                     image_url=image_url,
                     system_prompt=SYSTEM_PROMPT,
                     user_instruction=user_instruction,
                 )
                 return _build_result(
                     _parse_json_object(raw_output),
-                    provider=comet_qwen38_service.model,
+                    provider=openrouter_qwen38_service.model,
                 )
             except (
                 aiohttp.ClientError,

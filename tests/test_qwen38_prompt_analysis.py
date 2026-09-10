@@ -24,9 +24,9 @@ VIDEO_JSON = (
 
 @pytest.mark.asyncio
 async def test_unified_photo_prompt_uses_qwen38_before_kie(monkeypatch) -> None:
-    qwen = v2_module.comet_qwen38_service
+    qwen = v2_module.openrouter_qwen38_service
     monkeypatch.setattr(qwen, "enabled", True)
-    monkeypatch.setattr(qwen, "model", "qwen3.8-max")
+    monkeypatch.setattr(qwen, "model", "qwen/qwen3.8-max-0902")
     monkeypatch.setattr(qwen, "analyze_image", AsyncMock(return_value=PHOTO_JSON))
 
     service = PromptAnalyzerV2Service(api_key="kie-fallback-key")
@@ -34,14 +34,14 @@ async def test_unified_photo_prompt_uses_qwen38_before_kie(monkeypatch) -> None:
 
     result = await service.analyze_prompt(image_url="https://example.test/photo.jpg")
 
-    assert result["provider"] == "qwen3.8-max"
+    assert result["provider"] == "qwen/qwen3.8-max-0902"
     qwen.analyze_image.assert_awaited_once()
     service._analyze_with_gpt55.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_unified_photo_prompt_falls_back_to_kie_after_qwen_failure(monkeypatch) -> None:
-    qwen = v2_module.comet_qwen38_service
+    qwen = v2_module.openrouter_qwen38_service
     monkeypatch.setattr(qwen, "enabled", True)
     monkeypatch.setattr(qwen, "analyze_image", AsyncMock(side_effect=RuntimeError("Comet down")))
 
@@ -64,7 +64,7 @@ async def test_unified_photo_prompt_falls_back_to_kie_after_qwen_failure(monkeyp
 
 @pytest.mark.asyncio
 async def test_photo_service_uses_qwen38_for_image_only(monkeypatch) -> None:
-    qwen = photo_module.comet_qwen38_service
+    qwen = photo_module.openrouter_qwen38_service
     monkeypatch.setattr(qwen, "enabled", True)
     monkeypatch.setattr(qwen, "analyze_image", AsyncMock(return_value=RICH_PHOTO_JSON))
     monkeypatch.setattr(photo_module, "image_source_to_analysis_input", lambda value: value)
@@ -82,7 +82,7 @@ async def test_photo_service_uses_qwen38_for_image_only(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_photo_plus_audio_stays_on_existing_audio_pipeline(monkeypatch) -> None:
-    qwen = photo_module.comet_qwen38_service
+    qwen = photo_module.openrouter_qwen38_service
     monkeypatch.setattr(qwen, "enabled", True)
     monkeypatch.setattr(qwen, "analyze_image", AsyncMock())
     monkeypatch.setattr(photo_module, "image_source_to_analysis_input", lambda value: value)
@@ -110,9 +110,9 @@ async def test_photo_plus_audio_stays_on_existing_audio_pipeline(monkeypatch) ->
 
 @pytest.mark.asyncio
 async def test_video_prompt_uses_qwen38_before_kie(monkeypatch) -> None:
-    qwen = video_module.comet_qwen38_service
+    qwen = video_module.openrouter_qwen38_service
     monkeypatch.setattr(qwen, "enabled", True)
-    monkeypatch.setattr(qwen, "model", "qwen3.8-max")
+    monkeypatch.setattr(qwen, "model", "qwen/qwen3.8-max-0902")
     monkeypatch.setattr(qwen, "analyze_video", AsyncMock(return_value=VIDEO_JSON))
 
     service = VideoPromptService(api_key="kie-fallback-key")
@@ -124,7 +124,7 @@ async def test_video_prompt_uses_qwen38_before_kie(monkeypatch) -> None:
         duration_seconds=12,
     )
 
-    assert result["provider"] == "qwen3.8-max"
+    assert result["provider"] == "qwen/qwen3.8-max-0902"
     assert result["camera_movement_ru"] == "Трекинг"
     qwen.analyze_video.assert_awaited_once()
     service._analyze_with_gpt55.assert_not_awaited()

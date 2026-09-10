@@ -3,8 +3,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-import bot.services.comet_qwen38_service as qwen_module
-from bot.services.comet_qwen38_service import CometQwen38Service, _extract_chat_text
+import bot.services.openrouter_qwen38_service as qwen_module
+from bot.services.openrouter_qwen38_service import (
+    OpenRouterQwen38Service,
+    _extract_chat_text,
+)
 
 
 def test_extract_chat_text_reads_openai_compatible_choice() -> None:
@@ -48,10 +51,10 @@ async def test_qwen_image_uses_openai_multimodal_image_url(monkeypatch) -> None:
             return FakeResponse()
 
     monkeypatch.setattr(qwen_module.aiohttp, "ClientSession", FakeSession)
-    service = CometQwen38Service(
+    service = OpenRouterQwen38Service(
         api_key="secret-test-key",
-        base_url="https://api.cometapi.com/v1",
-        model="qwen3.8-max",
+        base_url="https://openrouter.ai/api/v1",
+        model="qwen/qwen3.8-max-0902",
     )
 
     output = await service.analyze_image(
@@ -61,26 +64,27 @@ async def test_qwen_image_uses_openai_multimodal_image_url(monkeypatch) -> None:
     )
 
     assert json.loads(output)["prompt_ru"] == "ru"
-    assert captured["url"] == "https://api.cometapi.com/v1/chat/completions"
+    assert captured["url"] == "https://openrouter.ai/api/v1/chat/completions"
     assert captured["headers"]["Authorization"] == "Bearer secret-test-key"
     payload = captured["payload"]
-    assert payload["model"] == "qwen3.8-max"
+    assert payload["model"] == "qwen/qwen3.8-max-0902"
     assert payload["response_format"] == {"type": "json_object"}
     assert payload["messages"][1]["content"] == [
+        {"type": "text", "text": "analyze image"},
         {
             "type": "image_url",
             "image_url": {"url": "https://example.test/photo.jpg"},
         },
-        {"type": "text", "text": "analyze image"},
     ]
+    assert payload["reasoning"] == {"effort": "medium"}
 
 
 @pytest.mark.asyncio
-async def test_qwen_video_uses_native_video_url_and_configured_fps() -> None:
-    service = CometQwen38Service(
+async def test_qwen_video_uses_native_openrouter_video_url() -> None:
+    service = OpenRouterQwen38Service(
         api_key="test-key",
-        base_url="https://api.cometapi.com/v1",
-        model="qwen3.8-max",
+        base_url="https://openrouter.ai/api/v1",
+        model="qwen/qwen3.8-max-0902",
     )
     service._complete = AsyncMock(return_value='{"prompt_ru":"ru","prompt_en":"en"}')
 
@@ -88,17 +92,15 @@ async def test_qwen_video_uses_native_video_url_and_configured_fps() -> None:
         video_url="https://example.test/clip.mp4",
         system_prompt="system",
         user_instruction="analyze video",
-        fps=2,
     )
 
     content = service._complete.await_args.kwargs["user_content"]
     assert content == [
+        {"type": "text", "text": "analyze video"},
         {
             "type": "video_url",
             "video_url": {"url": "https://example.test/clip.mp4"},
-            "fps": 2.0,
         },
-        {"type": "text", "text": "analyze video"},
     ]
 
 
@@ -141,7 +143,7 @@ async def test_qwen_retries_rate_limit_once(monkeypatch) -> None:
 
     monkeypatch.setattr(qwen_module.aiohttp, "ClientSession", FakeSession)
     monkeypatch.setattr(qwen_module.asyncio, "sleep", AsyncMock())
-    service = CometQwen38Service(api_key="test-key")
+    service = OpenRouterQwen38Service(api_key="test-key")
     service.max_attempts = 2
 
     result = await service.analyze_image(
@@ -156,8 +158,8 @@ async def test_qwen_retries_rate_limit_once(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_qwen_requires_api_key_before_network() -> None:
-    service = CometQwen38Service(api_key="")
-    with pytest.raises(RuntimeError, match="COMETAPI_KEY"):
+    service = OpenRouterQwen38Service(api_key="")
+    with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
         await service.analyze_image(
             image_url="https://example.test/photo.jpg",
             system_prompt="system",

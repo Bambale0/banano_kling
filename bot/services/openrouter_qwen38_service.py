@@ -1,4 +1,4 @@
-"""CometAPI Qwen 3.8 multimodal adapter for prompt analysis."""
+"""OpenRouter Qwen 3.8 multimodal adapter for prompt analysis."""
 
 from __future__ import annotations
 
@@ -55,8 +55,8 @@ def _provider_error_message(raw_text: str) -> str:
     return str(message or "provider error")[:300]
 
 
-class CometQwen38Service:
-    """Thin OpenAI-compatible client for qwen3.8-max on CometAPI."""
+class OpenRouterQwen38Service:
+    """Thin OpenAI-compatible client for qwen/qwen3.8-max-0902 on OpenRouter."""
 
     def __init__(
         self,
@@ -65,16 +65,15 @@ class CometQwen38Service:
         base_url: str | None = None,
         model: str | None = None,
     ) -> None:
-        self.api_key = (api_key if api_key is not None else config.COMETAPI_KEY).strip()
+        self.api_key = (api_key if api_key is not None else config.OPENROUTER_API_KEY).strip()
         self.base_url = (
-            base_url if base_url is not None else config.COMETAPI_BASE_URL
+            base_url if base_url is not None else config.OPENROUTER_BASE_URL
         ).rstrip("/")
         self.model = (model if model is not None else config.QWEN38_PROMPT_MODEL).strip()
         self.max_tokens = max(256, int(config.QWEN38_PROMPT_MAX_TOKENS))
         self.reasoning_effort = str(config.QWEN38_PROMPT_REASONING_EFFORT or "").strip()
         self.timeout_seconds = max(30, int(config.QWEN38_PROMPT_TIMEOUT_SECONDS))
         self.max_attempts = min(3, max(1, int(config.QWEN38_PROMPT_MAX_ATTEMPTS)))
-        self.video_fps = max(0.1, float(config.QWEN38_VIDEO_FPS))
         self.enabled = bool(self.api_key and self.base_url and self.model)
 
     @property
@@ -99,7 +98,7 @@ class CometQwen38Service:
             "max_tokens": self.max_tokens,
         }
         if self.reasoning_effort:
-            payload["reasoning_effort"] = self.reasoning_effort
+            payload["reasoning"] = {"effort": self.reasoning_effort}
         return payload
 
     async def _complete(
@@ -109,7 +108,7 @@ class CometQwen38Service:
         user_content: list[dict[str, Any]],
     ) -> str:
         if not self.enabled:
-            raise RuntimeError("COMETAPI_KEY is not configured")
+            raise RuntimeError("OPENROUTER_API_KEY is not configured")
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -130,10 +129,10 @@ class CometQwen38Service:
                         raw_text = await response.text()
                         if response.status >= 500 or response.status in _RETRYABLE_STATUSES:
                             last_error = RuntimeError(
-                                f"CometAPI Qwen 3.8 временно недоступен: HTTP {response.status}"
+                                f"OpenRouter Qwen 3.8 временно недоступен: HTTP {response.status}"
                             )
                             logger.warning(
-                                "CometAPI Qwen 3.8 retryable error: status=%s attempt=%s detail=%s",
+                                "OpenRouter Qwen 3.8 retryable error: status=%s attempt=%s detail=%s",
                                 response.status,
                                 attempt + 1,
                                 _provider_error_message(raw_text),
@@ -145,29 +144,29 @@ class CometQwen38Service:
                         if response.status >= 400:
                             detail = _provider_error_message(raw_text)
                             raise RuntimeError(
-                                f"CometAPI Qwen 3.8 ошибка: HTTP {response.status}: {detail}"
+                                f"OpenRouter Qwen 3.8 ошибка: HTTP {response.status}: {detail}"
                             )
 
                         try:
                             data = json.loads(raw_text)
                         except json.JSONDecodeError as exc:
                             raise RuntimeError(
-                                "CometAPI Qwen 3.8 вернул некорректный JSON"
+                                "OpenRouter Qwen 3.8 вернул некорректный JSON"
                             ) from exc
                         return _extract_chat_text(data)
                 except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
                     last_error = exc
                     logger.warning(
-                        "CometAPI Qwen 3.8 network error: attempt=%s error=%s",
+                        "OpenRouter Qwen 3.8 network error: attempt=%s error=%s",
                         attempt + 1,
                         type(exc).__name__,
                     )
                     if attempt < self.max_attempts - 1:
                         await asyncio.sleep(2**attempt)
                         continue
-                    raise RuntimeError("CometAPI Qwen 3.8 недоступен по сети") from exc
+                    raise RuntimeError("OpenRouter Qwen 3.8 недоступен по сети") from exc
 
-        raise RuntimeError(f"CometAPI Qwen 3.8 не вернул результат: {last_error}")
+        raise RuntimeError(f"OpenRouter Qwen 3.8 не вернул результат: {last_error}")
 
     async def analyze_image(
         self,
@@ -182,8 +181,8 @@ class CometQwen38Service:
         return await self._complete(
             system_prompt=system_prompt,
             user_content=[
-                {"type": "image_url", "image_url": {"url": image_url}},
                 {"type": "text", "text": user_instruction},
+                {"type": "image_url", "image_url": {"url": image_url}},
             ],
         )
 
@@ -193,23 +192,17 @@ class CometQwen38Service:
         video_url: str,
         system_prompt: str,
         user_instruction: str,
-        fps: float | None = None,
     ) -> str:
         video_url = str(video_url or "").strip()
         if not video_url:
             raise ValueError("video_url is required")
-        effective_fps = max(0.1, float(fps if fps is not None else self.video_fps))
         return await self._complete(
             system_prompt=system_prompt,
             user_content=[
-                {
-                    "type": "video_url",
-                    "video_url": {"url": video_url},
-                    "fps": effective_fps,
-                },
                 {"type": "text", "text": user_instruction},
+                {"type": "video_url", "video_url": {"url": video_url}},
             ],
         )
 
 
-comet_qwen38_service = CometQwen38Service()
+openrouter_qwen38_service = OpenRouterQwen38Service()

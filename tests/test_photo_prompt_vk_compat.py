@@ -103,7 +103,7 @@ async def test_vk_wrapper_defers_to_primary_photo_service_when_qwen_is_enabled(m
 
     exact_vk = AsyncMock(return_value=("legacy vk prompt", "gpt-5.5"))
     monkeypatch.setattr(photo_prompt_vk_compat, "analyze_photo_exactly_as_vk", exact_vk)
-    monkeypatch.setattr(photo_prompt_vk_compat.comet_qwen38_service, "enabled", True)
+    monkeypatch.setattr(photo_prompt_vk_compat.openrouter_qwen38_service, "enabled", True)
 
     import bot.services.photo_prompt_service as module
 

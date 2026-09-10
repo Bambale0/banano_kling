@@ -1,4 +1,4 @@
-"""Video-to-prompt service with CometAPI Qwen 3.8 primary and KIE fallbacks."""
+"""Video-to-prompt service with OpenRouter Qwen 3.8 primary and KIE fallbacks."""
 
 import asyncio
 import base64
@@ -12,7 +12,7 @@ from typing import Any, Dict, Optional
 import aiohttp
 
 from bot.config import config
-from bot.services.comet_qwen38_service import comet_qwen38_service
+from bot.services.openrouter_qwen38_service import openrouter_qwen38_service
 from bot.services.photo_prompt_service import (
     GPT_MAX_ATTEMPTS as GPT55_MAX_ATTEMPTS,
 )
@@ -567,16 +567,16 @@ class VideoPromptService:
         )
 
         qwen_error: Exception | None = None
-        if comet_qwen38_service.enabled:
+        if openrouter_qwen38_service.enabled:
             try:
-                raw_output = await comet_qwen38_service.analyze_video(
+                raw_output = await openrouter_qwen38_service.analyze_video(
                     video_url=video_url,
                     system_prompt=VIDEO_SYSTEM_PROMPT,
                     user_instruction=user_instruction,
                 )
                 return _build_video_result(
                     _parse_video_json_object(raw_output),
-                    provider=comet_qwen38_service.model,
+                    provider=openrouter_qwen38_service.model,
                 )
             except (
                 aiohttp.ClientError,
