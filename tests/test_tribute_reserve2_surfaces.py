@@ -25,7 +25,7 @@ def _button(markup: InlineKeyboardMarkup, text: str) -> InlineKeyboardButton:
     )
 
 
-def test_live_text_bot_keyboard_places_kassa_primary_before_reserves() -> None:
+def test_live_text_bot_keyboard_places_lava_before_kassa_and_reserves() -> None:
     raw_keyboard = unwrap(lava_checkout._payment_options_keyboard)
     base = raw_keyboard(
         "optimal",
@@ -41,11 +41,11 @@ def test_live_text_bot_keyboard_places_kassa_primary_before_reserves() -> None:
     labels = _button_texts(markup)
 
     assert labels[:6] == [
+        "💳 Карта · Lava",
+        "⚡ СБП · Lava",
         "💳 Картой · KASSA",
         "⚡ СБП · KASSA",
         "🌍 Зарубежная / СНГ",
-        "↩️ Резерв · карта (Lava)",
-        "↩️ Резерв · СБП (Lava)",
         "🌐 Резерв · зарубежная карта",
     ]
     assert _button(markup, "🌍 Зарубежная / СНГ").url == TRIBUTE_PACKAGE_LINKS["optimal"]

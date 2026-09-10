@@ -92,8 +92,8 @@ def test_payment_menu_shows_card_and_sbp_separately() -> None:
 
     assert labels == [
         "🌍 Зарубежная / СНГ",
-        "↩️ Резерв · карта (Lava)",
-        "↩️ Резерв · СБП (Lava)",
+        "💳 Карта · Lava",
+        "⚡ СБП · Lava",
         "₿ Криптовалюта",
         "⭐ Stars",
         "◀️ Назад",
@@ -119,8 +119,8 @@ def test_payment_menu_shows_foreign_card_and_paypal_separately() -> None:
 
     assert labels == [
         "🌍 Зарубежная / СНГ",
-        "↩️ Резерв · карта (Lava)",
-        "↩️ Резерв · СБП (Lava)",
+        "💳 Карта · Lava",
+        "⚡ СБП · Lava",
         "🌐 Резерв · зарубежная карта",
         "🌐 Резерв · PayPal",
         "◀️ Назад",
