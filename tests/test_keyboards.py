@@ -45,7 +45,7 @@ from bot.services.photo_prompt_service import (
 )
 from bot.services.subscription_service import SubscriptionCheckResult
 from bot.services.video_prompt_service import (
-    VIDEO_SYSTEM_PROMPT,
+    VIDEO_PROMPT_INSTRUCTION,
     VideoPromptService,
     _build_gpt_video_user_content,
 )
@@ -898,11 +898,26 @@ def test_photo_prompt_system_prompt_prefers_editorial_russian_style():
     assert "Do not use forensic" in SYSTEM_PROMPT
 
 
-def test_video_prompt_system_prompt_prefers_cinematic_russian_style():
-    assert '"prompt_ru" is the main result' in VIDEO_SYSTEM_PROMPT
-    assert "photorealistic AI video generation" in VIDEO_SYSTEM_PROMPT
-    assert "camera movement" in VIDEO_SYSTEM_PROMPT
-    assert "Return only valid JSON" in VIDEO_SYSTEM_PROMPT
+def test_video_prompt_instruction_is_exact_seedance_request():
+    assert VIDEO_PROMPT_INSTRUCTION == (
+        "Напиши максимально детальный промпт на русском языке для Seedance 2.0"
+        + chr(10)
+        + "Посекундо действия"
+        + chr(10)
+        + "Видео должно длится 10 сек"
+        + chr(10)
+        + "Очень реалистичное видео, 1:1 действия как на исходном. Максимально подробно"
+    )
+
+
+def test_video_prompt_payloads_have_no_hidden_system_or_fallback_instruction():
+    native_source = inspect.getsource(VideoPromptService._analyze_with_gpt55)
+    frame_source = inspect.getsource(VideoPromptService._analyze_frames_with_gpt55)
+
+    assert '"role": "system"' not in native_source
+    assert '"role": "system"' not in frame_source
+    assert "frame_instruction" not in frame_source
+    assert "user_instruction=user_instruction" in frame_source
 
 
 def test_video_prompt_user_content_passes_video_as_input_file():
@@ -951,8 +966,9 @@ async def test_video_prompt_service_passes_video_file_to_gpt55():
 
     assert captured["video_url"] == "https://example.com/reference.mp4"
     assert captured["filename"] == "reference.mp4"
-    assert "Additional text instruction from user" in captured["user_instruction"]
-    assert "7 seconds" in captured["user_instruction"]
+    assert captured["user_instruction"] == VIDEO_PROMPT_INSTRUCTION
+    assert "Сделай более модный свет" not in captured["user_instruction"]
+    assert "7 seconds" not in captured["user_instruction"]
     assert result["camera_movement_ru"] == "Плавный трекинг"
 
 
@@ -967,14 +983,7 @@ async def test_video_prompt_gpt55_payload_uses_input_file(monkeypatch):
                         "type": "message",
                         "content": [
                             {
-                                "text": json.dumps(
-                                    {
-                                        "prompt_en": "Tracking shot",
-                                        "prompt_ru": "Плавный трекинговый кадр",
-                                        "negative_prompt": "flicker",
-                                        "model_hint": "Gemini Omni Video",
-                                    }
-                                )
+                                "text": "Посекундный подробный русский промпт для Seedance 2.0"
                             }
                         ],
                     }
@@ -1022,11 +1031,14 @@ async def test_video_prompt_gpt55_payload_uses_input_file(monkeypatch):
         filename="reference.mp4",
     )
 
-    assert result["prompt_ru"] == "Плавный трекинговый кадр"
+    assert result["prompt_ru"] == "Посекундный подробный русский промпт для Seedance 2.0"
+    assert len(payloads[-1]["input"]) == 1
+    assert payloads[-1]["input"][0]["role"] == "user"
     assert [
-        item["type"] for item in payloads[-1]["input"][1]["content"]
+        item["type"] for item in payloads[-1]["input"][0]["content"]
     ] == ["input_text", "input_file"]
-    assert payloads[-1]["input"][1]["content"][1]["file_url"] == (
+    assert payloads[-1]["input"][0]["content"][0]["text"] == "Analyze video"
+    assert payloads[-1]["input"][0]["content"][1]["file_url"] == (
         "https://example.com/reference.mp4"
     )
 
