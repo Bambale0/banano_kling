@@ -195,7 +195,9 @@ def test_text_bot_uses_lava_primary_and_keeps_other_methods_as_reserve() -> None
     assert 'callback_data=f"buy_lava_foreign_paypal_{package_id}"' in source
     assert "Карта · Lava" in source
     assert "СБП · Lava" in source
+    assert "Картой · KASSA" in source
     assert "Резерв · Robokassa" in source
+    assert source.index("Картой · KASSA") < source.index("Резерв · Robokassa")
     assert "Резерв · зарубежная оплата" in source
     assert "Резерв · зарубежная карта" in source
     assert "PayPal" in source

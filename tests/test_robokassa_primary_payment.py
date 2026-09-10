@@ -37,13 +37,13 @@ def test_miniapp_exposes_lava_primary_and_robokassa_reserve():
     lava_primary = source.index("Lava · основной способ")
     lava_card = source.index("handleTopup(pkg.id, 'lava_card')")
     lava_sbp = source.index("handleTopup(pkg.id, 'lava_sbp')")
+    kassa_reserve = source.index("Резерв · KASSA")
     robokassa_reserve = source.index("Резерв · Robokassa")
     robokassa_button = source.index("handleTopup(pkg.id, 'robokassa')")
-    kassa_reserve = source.index("Резерв · KASSA")
 
-    assert lava_primary < lava_card < robokassa_reserve
-    assert lava_primary < lava_sbp < robokassa_reserve
-    assert robokassa_reserve < robokassa_button < kassa_reserve
+    assert lava_primary < lava_card < kassa_reserve
+    assert lava_primary < lava_sbp < kassa_reserve
+    assert kassa_reserve < robokassa_reserve < robokassa_button
     assert "handleTopup(pkg.id, 'freekassa_card')" in source
     assert "handleTopup(pkg.id, 'freekassa_sbp')" in source
 

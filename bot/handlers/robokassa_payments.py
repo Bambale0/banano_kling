@@ -64,15 +64,15 @@ def _provider_keyboard(
     builder = InlineKeyboardBuilder()
     if lava:
         builder.button(text="💳 Lava", callback_data=f"buy_lava_{package_id}")
-    if robokassa:
-        builder.button(
-            text="↩️ Резерв · Robokassa",
-            callback_data=f"buy_robokassa_{package_id}",
-        )
     if freekassa:
         builder.button(
             text="↩️ Резерв · KASSA",
             callback_data=f"buy_freekassa_{package_id}",
+        )
+    if robokassa:
+        builder.button(
+            text="↩️ Резерв · Robokassa",
+            callback_data=f"buy_robokassa_{package_id}",
         )
     if crypto:
         builder.button(

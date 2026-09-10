@@ -204,11 +204,6 @@ def _payment_options_keyboard(
             text="⚡ СБП · Lava",
             callback_data=f"buy_lava_sbp_{package_id}",
         )
-    if robokassa:
-        builder.button(
-            text="↩️ Резерв · Robokassa",
-            callback_data=f"buy_robokassa_{package_id}",
-        )
     if freekassa:
         builder.button(
             text="💳 Картой · KASSA",
@@ -217,6 +212,11 @@ def _payment_options_keyboard(
         builder.button(
             text="⚡ СБП · KASSA",
             callback_data=f"freekassa_sbp_{package_id}",
+        )
+    if robokassa:
+        builder.button(
+            text="↩️ Резерв · Robokassa",
+            callback_data=f"buy_robokassa_{package_id}",
         )
     if lava_foreign:
         builder.button(

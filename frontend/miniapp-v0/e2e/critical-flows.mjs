@@ -371,7 +371,7 @@ try {
   })
   await page.getByText('Curated Video', { exact: true }).waitFor()
 
-  // Payment E2E: Lava is primary; Robokassa and KASSA stay explicit reserves.
+  // Payment E2E: Lava is primary; KASSA is next; Robokassa stays below it as reserve.
   await page.locator('header button').last().click()
   await page.getByLabel('Почта для оплаты Lava').fill('Buyer2026@Mail.ru')
 
@@ -384,22 +384,22 @@ try {
   assert.equal(paymentPayload?.provider, 'lava_card')
   assert.equal(paymentPayload?.customer_email, 'buyer2026@mail.ru')
 
-  await page.getByRole('button', { name: 'Оплатить через Robokassa', exact: true }).click()
+  await page.getByRole('button', { name: 'Картой', exact: true }).click()
   await page.waitForFunction(() => (
     Array.isArray(window.__openedLinks)
       && window.__openedLinks.length >= 2
       && window.__openedLinks[1] === 'https://pay.example/e2e'
   ))
-  assert.equal(paymentPayload?.provider, 'robokassa')
+  assert.equal(paymentPayload?.provider, 'freekassa_card')
   assert.equal(paymentPayload?.customer_email, '')
 
-  await page.getByRole('button', { name: 'Картой', exact: true }).click()
+  await page.getByRole('button', { name: 'Оплатить через Robokassa', exact: true }).click()
   await page.waitForFunction(() => (
     Array.isArray(window.__openedLinks)
       && window.__openedLinks.length >= 3
       && window.__openedLinks[2] === 'https://pay.example/e2e'
   ))
-  assert.equal(paymentPayload?.provider, 'freekassa_card')
+  assert.equal(paymentPayload?.provider, 'robokassa')
   assert.equal(paymentPayload?.customer_email, '')
   await page.getByRole('button', { name: 'Закрыть пополнение' }).click()
 

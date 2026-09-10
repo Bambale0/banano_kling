@@ -416,26 +416,6 @@ export function BalanceSheet() {
                               </Button>
                             </>
                           ) : null}
-                          {robokassaConfigured ? (
-                            <>
-                              <p className="col-span-2 mt-1 px-1 text-center text-[11px] text-muted-foreground">
-                                Резерв · Robokassa
-                              </p>
-                              <Button
-                                onClick={() => handleTopup(pkg.id, 'robokassa')}
-                                disabled={Boolean(loadingPayment)}
-                                variant="outline"
-                                className="col-span-2 w-full border-border/60 bg-background/20 text-foreground hover:bg-secondary/50"
-                              >
-                                {robokassaLoading ? (
-                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                ) : (
-                                  <CreditCard className="mr-2 h-4 w-4" />
-                                )}
-                                Оплатить через Robokassa
-                              </Button>
-                            </>
-                          ) : null}
                           {freekassaConfigured ? (
                             <>
                               <p className="col-span-2 mt-1 px-1 text-center text-[11px] text-muted-foreground">
@@ -466,6 +446,26 @@ export function BalanceSheet() {
                                   <QrCode className="mr-2 h-4 w-4" />
                                 )}
                                 СБП
+                              </Button>
+                            </>
+                          ) : null}
+                          {robokassaConfigured ? (
+                            <>
+                              <p className="col-span-2 mt-1 px-1 text-center text-[11px] text-muted-foreground">
+                                Резерв · Robokassa
+                              </p>
+                              <Button
+                                onClick={() => handleTopup(pkg.id, 'robokassa')}
+                                disabled={Boolean(loadingPayment)}
+                                variant="outline"
+                                className="col-span-2 w-full border-border/60 bg-background/20 text-foreground hover:bg-secondary/50"
+                              >
+                                {robokassaLoading ? (
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                  <CreditCard className="mr-2 h-4 w-4" />
+                                )}
+                                Оплатить через Robokassa
                               </Button>
                             </>
                           ) : null}
