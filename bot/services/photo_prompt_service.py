@@ -1,4 +1,4 @@
-"""Photo-to-prompt service via Kie GPT-5.4 with GPT-5.2 and Claude fallback."""
+"""Photo-to-prompt service with OpenRouter Qwen 3.8 primary and KIE fallbacks."""
 
 import asyncio
 import base64
@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 import aiohttp
 
 from bot.config import config
+from bot.services.openrouter_qwen38_service import openrouter_qwen38_service
 from bot.services.photo_analysis_media import image_source_to_analysis_input
 
 logger = logging.getLogger(__name__)
@@ -536,9 +537,6 @@ class PhotoPromptService:
         audio_bytes: bytes | None = None,
         audio_format: str = "",
     ) -> Dict[str, Any]:
-        if not self.api_key:
-            raise RuntimeError("KIE_AI_API_KEY is not configured")
-
         image_url = (image_url or "").strip()
         if image_url:
             image_url = image_source_to_analysis_input(image_url)
@@ -601,6 +599,35 @@ class PhotoPromptService:
             f"{extra_instruction + chr(10) + chr(10) if extra_instruction else ''}"
             f"Return valid JSON only according to the required schema."
         )
+
+        qwen_error: Exception | None = None
+        if has_image and not has_audio and openrouter_qwen38_service.enabled:
+            try:
+                raw_output = await openrouter_qwen38_service.analyze_image(
+                    image_url=image_url,
+                    system_prompt=SYSTEM_PROMPT,
+                    user_instruction=user_instruction,
+                )
+                return _build_result(_parse_json_object(raw_output), provider="")
+            except (
+                aiohttp.ClientError,
+                asyncio.TimeoutError,
+                RuntimeError,
+                ValueError,
+                TypeError,
+            ) as exc:
+                qwen_error = exc
+                logger.warning(
+                    "Qwen 3.8 photo analysis failed; falling back to KIE chain: %s",
+                    exc,
+                )
+
+        if not self.api_key:
+            if qwen_error is not None:
+                raise RuntimeError(
+                    f"Qwen 3.8 failed and KIE fallback is not configured: {qwen_error}"
+                ) from qwen_error
+            raise RuntimeError("KIE_AI_API_KEY is not configured")
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",

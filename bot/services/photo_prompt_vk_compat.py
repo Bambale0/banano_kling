@@ -20,6 +20,7 @@ from typing import Any
 import aiohttp
 
 from bot.services.media_input_utils import resolve_local_upload_path
+from bot.services.openrouter_qwen38_service import openrouter_qwen38_service
 
 logger = logging.getLogger(__name__)
 
@@ -293,7 +294,7 @@ def install_vk_photo_prompt_instructions() -> None:
         audio_bytes: bytes | None = None,
         audio_format: str = "",
     ) -> dict[str, Any]:
-        if image_url and not audio_bytes:
+        if image_url and not audio_bytes and not openrouter_qwen38_service.enabled:
             try:
                 prompt, model = await analyze_photo_exactly_as_vk(image_url)
                 return _telegram_result_from_vk_prompt(prompt, model)

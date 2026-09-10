@@ -1,4 +1,4 @@
-"""Video to prompt service via Kie GPT 5.5 Responses API."""
+"""Video-to-prompt service with OpenRouter Qwen 3.8 primary and KIE fallbacks."""
 
 import asyncio
 import base64
@@ -12,9 +12,14 @@ from typing import Any, Dict, Optional
 import aiohttp
 
 from bot.config import config
+from bot.services.openrouter_qwen38_service import openrouter_qwen38_service
 from bot.services.photo_prompt_service import (
     GPT_MAX_ATTEMPTS as GPT55_MAX_ATTEMPTS,
+)
+from bot.services.photo_prompt_service import (
     GPT_RETRYABLE_BODY_CODES as GPT55_RETRYABLE_BODY_CODES,
+)
+from bot.services.photo_prompt_service import (
     _extract_output_text,
     _is_fast_fallback_application_error,
 )
@@ -536,9 +541,6 @@ class VideoPromptService:
         filename: str = "reference_video.mp4",
         video_bytes: bytes | None = None,
     ) -> Dict[str, Any]:
-        if not self.api_key:
-            raise RuntimeError("KIE_AI_API_KEY is not configured")
-
         video_url = (video_url or "").strip()
         if not video_url:
             raise ValueError("video_url is required")
@@ -563,6 +565,38 @@ class VideoPromptService:
             f"{extra_instruction + chr(10) + chr(10) if extra_instruction else ''}"
             "Return valid JSON only according to the required schema."
         )
+
+        qwen_error: Exception | None = None
+        if openrouter_qwen38_service.enabled:
+            try:
+                raw_output = await openrouter_qwen38_service.analyze_video(
+                    video_url=video_url,
+                    system_prompt=VIDEO_SYSTEM_PROMPT,
+                    user_instruction=user_instruction,
+                )
+                return _build_video_result(
+                    _parse_video_json_object(raw_output),
+                    provider=openrouter_qwen38_service.model,
+                )
+            except (
+                aiohttp.ClientError,
+                asyncio.TimeoutError,
+                RuntimeError,
+                ValueError,
+                TypeError,
+            ) as exc:
+                qwen_error = exc
+                logger.warning(
+                    "Qwen 3.8 video analysis failed; falling back to KIE: %s",
+                    exc,
+                )
+
+        if not self.api_key:
+            if qwen_error is not None:
+                raise RuntimeError(
+                    f"Qwen 3.8 failed and KIE fallback is not configured: {qwen_error}"
+                ) from qwen_error
+            raise RuntimeError("KIE_AI_API_KEY is not configured")
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
