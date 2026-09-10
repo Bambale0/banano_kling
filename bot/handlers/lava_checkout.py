@@ -194,9 +194,19 @@ def _payment_options_keyboard(
     """Show every enabled payment method as an independent option."""
 
     builder = InlineKeyboardBuilder()
+    if lava_card:
+        builder.button(
+            text="💳 Карта · Lava",
+            callback_data=f"buy_lava_card_{package_id}",
+        )
+    if lava_sbp:
+        builder.button(
+            text="⚡ СБП · Lava",
+            callback_data=f"buy_lava_sbp_{package_id}",
+        )
     if robokassa:
         builder.button(
-            text="💳 КАРТА | СБП",
+            text="↩️ Резерв · Robokassa",
             callback_data=f"buy_robokassa_{package_id}",
         )
     if freekassa:
@@ -207,16 +217,6 @@ def _payment_options_keyboard(
         builder.button(
             text="⚡ СБП · KASSA",
             callback_data=f"freekassa_sbp_{package_id}",
-        )
-    if lava_card:
-        builder.button(
-            text="↩️ Резерв · карта (Lava)",
-            callback_data=f"buy_lava_card_{package_id}",
-        )
-    if lava_sbp:
-        builder.button(
-            text="↩️ Резерв · СБП (Lava)",
-            callback_data=f"buy_lava_sbp_{package_id}",
         )
     if lava_foreign:
         builder.button(
