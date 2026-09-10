@@ -28,6 +28,7 @@ from bot.payment_utils import (
 from bot.services.cryptobot_service import cryptobot_service
 from bot.services.lava_service import lava_service
 from bot.services.preset_manager import preset_manager
+from bot.services.robokassa_service import robokassa_service
 from bot.states import PaymentStates
 
 logger = logging.getLogger(__name__)
@@ -188,10 +189,16 @@ def _payment_options_keyboard(
     lava_foreign_price_usd: float | None,
     crypto: bool,
     freekassa: bool,
+    robokassa: bool = False,
 ) -> types.InlineKeyboardMarkup:
     """Show every enabled payment method as an independent option."""
 
     builder = InlineKeyboardBuilder()
+    if robokassa:
+        builder.button(
+            text="💳 КАРТА | СБП",
+            callback_data=f"buy_robokassa_{package_id}",
+        )
     if freekassa:
         builder.button(
             text="💳 Картой · KASSA",
@@ -329,12 +336,14 @@ async def show_direct_payment_methods(
         lava_foreign_price_usd = float(package.get("price_usd") or 0) or None
     except (TypeError, ValueError):
         lava_foreign_price_usd = None
+    has_robokassa = bool(robokassa_service.enabled)
     has_freekassa = False
     has_stars = bool(config.TELEGRAM_STARS_ENABLED)
     has_crypto = bool(cryptobot_service.enabled)
 
     if not any(
         (
+            has_robokassa,
             has_lava_card,
             has_lava_sbp,
             has_lava_foreign,
@@ -383,6 +392,7 @@ async def show_direct_payment_methods(
             lava_foreign_price_usd=lava_foreign_price_usd,
             crypto=has_crypto,
             freekassa=has_freekassa,
+            robokassa=has_robokassa,
         ),
         parse_mode="HTML",
     )
