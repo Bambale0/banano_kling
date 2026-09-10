@@ -430,7 +430,7 @@ export function BalanceSheet() {
                                 ) : (
                                   <CreditCard className="mr-2 h-4 w-4" />
                                 )}
-                                Карта
+                                Lava · Карта
                               </Button>
                               <Button
                                 onClick={() => handleTopup(pkg.id, 'lava_sbp')}
@@ -443,7 +443,7 @@ export function BalanceSheet() {
                                 ) : (
                                   <QrCode className="mr-2 h-4 w-4" />
                                 )}
-                                СБП
+                                Lava · СБП
                               </Button>
                             </>
                           ) : null}

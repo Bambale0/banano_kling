@@ -25,6 +25,8 @@ def test_miniapp_uses_freekassa_as_primary_and_lava_as_reserve() -> None:
 
     assert "KASSA · основной способ" in source
     assert "Резерв · Lava" in source
+    assert "Lava · Карта" in source
+    assert "Lava · СБП" in source
     assert "handleTopup(pkg.id, 'freekassa_card')" in source
     assert "handleTopup(pkg.id, 'freekassa_sbp')" in source
     assert "handleTopup(pkg.id, 'lava_card')" in source

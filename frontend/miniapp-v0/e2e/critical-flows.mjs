@@ -31,6 +31,7 @@ const bootstrapPayload = {
       price_stars: 299,
       lava_offer_id: 'offer-mini',
       lava_currency: 'RUB',
+      freekassa_enabled: true,
       description: 'Тестовый пакет',
     },
   ],
@@ -369,7 +370,7 @@ try {
   })
   await page.getByText('Curated Video', { exact: true }).waitFor()
 
-  // Payment E2E: email -> explicit Card/SBP provider -> Telegram WebApp.openLink.
+  // Payment E2E: KASSA is primary; Lava remains an explicit reserve.
   await page.locator('header button').last().click()
   await page.getByLabel('Почта для оплаты Lava').fill('Buyer2026@Mail.ru')
 
@@ -379,8 +380,8 @@ try {
       && window.__openedLinks.length >= 1
       && window.__openedLinks[0] === 'https://pay.example/e2e'
   ))
-  assert.equal(paymentPayload?.provider, 'lava_card')
-  assert.equal(paymentPayload?.customer_email, 'buyer2026@mail.ru')
+  assert.equal(paymentPayload?.provider, 'freekassa_card')
+  assert.equal(paymentPayload?.customer_email, '')
 
   await page.getByRole('button', { name: 'СБП', exact: true }).click()
   await page.waitForFunction(() => (
@@ -388,7 +389,16 @@ try {
       && window.__openedLinks.length >= 2
       && window.__openedLinks[1] === 'https://pay.example/e2e'
   ))
-  assert.equal(paymentPayload?.provider, 'lava_sbp')
+  assert.equal(paymentPayload?.provider, 'freekassa_sbp')
+  assert.equal(paymentPayload?.customer_email, '')
+
+  await page.getByRole('button', { name: 'Lava · Карта', exact: true }).click()
+  await page.waitForFunction(() => (
+    Array.isArray(window.__openedLinks)
+      && window.__openedLinks.length >= 3
+      && window.__openedLinks[2] === 'https://pay.example/e2e'
+  ))
+  assert.equal(paymentPayload?.provider, 'lava_card')
   assert.equal(paymentPayload?.customer_email, 'buyer2026@mail.ru')
   await page.getByRole('button', { name: 'Закрыть пополнение' }).click()
 
