@@ -91,9 +91,9 @@ def test_payment_menu_shows_card_and_sbp_separately() -> None:
     callbacks = [button.callback_data for button in buttons if button.callback_data]
 
     assert labels == [
-        "💳 Картой",
-        "⚡ СБП",
         "🌍 Зарубежная / СНГ",
+        "↩️ Резерв · карта (Lava)",
+        "↩️ Резерв · СБП (Lava)",
         "₿ Криптовалюта",
         "⭐ Stars",
         "◀️ Назад",
@@ -118,9 +118,9 @@ def test_payment_menu_shows_foreign_card_and_paypal_separately() -> None:
     callbacks = [button.callback_data for button in buttons if button.callback_data]
 
     assert labels == [
-        "💳 Картой",
-        "⚡ СБП",
         "🌍 Зарубежная / СНГ",
+        "↩️ Резерв · карта (Lava)",
+        "↩️ Резерв · СБП (Lava)",
         "🌐 Резерв · зарубежная карта",
         "🌐 Резерв · PayPal",
         "◀️ Назад",

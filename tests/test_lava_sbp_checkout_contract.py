@@ -184,32 +184,36 @@ def test_miniapp_payment_ui_has_separate_card_and_sbp_actions() -> None:
     assert "'lava_foreign_paypal'" in types_source
 
 
-def test_text_bot_sbp_uses_lava_checkout_not_freekassa() -> None:
+def test_text_bot_uses_freekassa_primary_and_keeps_lava_as_reserve() -> None:
     source = _read("bot/handlers/lava_checkout.py")
 
+    assert 'callback_data=f"freekassa_card_{package_id}"' in source
+    assert 'callback_data=f"freekassa_sbp_{package_id}"' in source
+    assert 'callback_data=f"buy_lava_card_{package_id}"' in source
     assert 'callback_data=f"buy_lava_sbp_{package_id}"' in source
     assert 'callback_data=f"buy_lava_foreign_card_{package_id}"' in source
     assert 'callback_data=f"buy_lava_foreign_paypal_{package_id}"' in source
+    assert "Резерв · карта (Lava)" in source
+    assert "Резерв · СБП (Lava)" in source
     assert "Резерв · зарубежная оплата" in source
     assert "Резерв · зарубежная карта" in source
     assert "PayPal" in source
     assert "_package_lava_foreign_offer_config(package)" in source
     assert 'expected_currency = "USD" if mode in LAVA_CHECKOUT_FOREIGN_MODES else "RUB"' in source
-    assert 'callback_data=f"freekassa_sbp_{package_id}"' not in source
-    assert "freekassa_service" not in source
-    assert "СБП теперь оформляется через KASSA" not in source
     assert "payment_provider=payment_provider" in source
     assert "payment_method=payment_method" in source
     assert "_allow_amount_fallback=False" in source
 
 
-def test_freekassa_is_reserve_without_replacing_primary_lava() -> None:
+def test_freekassa_legacy_provider_keyboard_labels_kassa_primary_and_lava_reserve() -> None:
     source = _read("bot/handlers/freekassa_payments.py")
     callback_block = source.split(
         "async def initiate_freekassa_payment", 1
     )[1].split("@router.callback_query(F.data.startswith(\"check_freekassa_\"))", 1)[0]
 
-    assert 'text="🇷🇺 РФ — KASSA (резерв)"' in source
+    assert 'text="🇷🇺 РФ — KASSA"' in source
+    assert 'text="↩️ Резерв · Lava"' in source
+    assert "KASSA (резерв)" not in source
     assert 'callback_data=f"freekassa_card_{package_id}"' in source
     assert 'callback_data=f"freekassa_sbp_{package_id}"' in source
     assert 'provider="freekassa"' in callback_block

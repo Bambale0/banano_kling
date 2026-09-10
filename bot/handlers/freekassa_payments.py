@@ -215,7 +215,7 @@ def _provider_keyboard(
     builder = InlineKeyboardBuilder()
     if freekassa:
         builder.button(
-            text="🇷🇺 РФ — KASSA (резерв)",
+            text="🇷🇺 РФ — KASSA",
             callback_data=f"buy_freekassa_{package_id}",
         )
     if stars:
@@ -229,7 +229,7 @@ def _provider_keyboard(
         )
     if lava:
         builder.button(
-            text="🌐 Оплата через Lava", callback_data=f"buy_lava_{package_id}"
+            text="↩️ Резерв · Lava", callback_data=f"buy_lava_{package_id}"
         )
     builder.button(text="◀️ Назад", callback_data="menu_topup")
     builder.adjust(1)
@@ -296,7 +296,7 @@ async def _render_completed_payment(message, transaction, bonus_text: str = "") 
 async def choose_payment_method_freekassa(
     callback: types.CallbackQuery, state: FSMContext
 ):
-    """Show all enabled providers with FreeKassa replacing YooKassa."""
+    """Show KASSA as the primary RUB provider and Lava as reserve."""
 
     package_id = callback.data.replace("choose_pay_", "", 1)
     package = preset_manager.get_package(package_id)
