@@ -1,45 +1,55 @@
 """Unit tests for bot/keyboards.py"""
 
-import json
-import logging
 import importlib
 import inspect
+import json
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, mock_open, patch
 
 import pytest
-import bot.keyboards as keyboards_module
 
-from bot.keyboards import (get_admin_keyboard, get_balance_keyboard,
-                           get_create_hub_keyboard, get_create_video_keyboard,
-                           get_help_keyboard, get_image_result_keyboard,
-                           get_image_model_label,
-                           get_image_model_selection_keyboard,
-                           get_main_menu_keyboard,
-                           get_payment_packages_keyboard,
-                           get_payment_provider_keyboard, get_support_keyboard,
-                           get_settings_keyboard_with_ai, get_topup_keyboard,
-                           get_video_media_step_keyboard,
-                           get_video_model_label,
-                           get_video_model_selection_keyboard,
-                           get_video_result_keyboard, get_ai_assistant_keyboard,
-                           get_video_prompt_result_keyboard, load_prices)
+import bot.handlers.common as common_module
+import bot.keyboards as keyboards_module
+import bot.services.grok_service as grok_module
+import bot.services.photo_prompt_service as photo_prompt_module
+import bot.services.video_prompt_service as video_prompt_module
+from bot.handlers.generation import (
+    _normalize_video_duration_value,
+    _repeat_image_keyboard,
+)
 from bot.handlers.image_analyzer import (
     _audio_prompt_format,
     _clear_photo_prompt_audio_if_current,
     _format_photo_prompt_result_text,
     _format_video_prompt_result_text,
 )
-from bot.handlers.generation import _normalize_video_duration_value, _repeat_image_keyboard
-import bot.handlers.common as common_module
-import bot.services.photo_prompt_service as photo_prompt_module
+from bot.keyboards import (
+    get_admin_keyboard,
+    get_ai_assistant_keyboard,
+    get_balance_keyboard,
+    get_create_hub_keyboard,
+    get_create_video_keyboard,
+    get_help_keyboard,
+    get_image_model_label,
+    get_image_model_selection_keyboard,
+    get_main_menu_keyboard,
+    get_payment_packages_keyboard,
+    get_payment_provider_keyboard,
+    get_settings_keyboard_with_ai,
+    get_support_keyboard,
+    get_topup_keyboard,
+    get_video_media_step_keyboard,
+    get_video_model_label,
+    get_video_model_selection_keyboard,
+    get_video_prompt_result_keyboard,
+    load_prices,
+)
 from bot.services.gemini_omni_service import GeminiOmniService
-import bot.services.grok_service as grok_module
 from bot.services.grok_service import GROK_V15_VIDEO_MODEL, GrokService
-import bot.services.video_prompt_service as video_prompt_module
 from bot.services.photo_prompt_service import (
-    PhotoPromptService,
     SYSTEM_PROMPT,
+    PhotoPromptService,
     _build_gpt_user_content,
     _is_fast_fallback_application_error,
 )
