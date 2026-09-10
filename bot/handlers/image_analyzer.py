@@ -163,18 +163,10 @@ def _format_photo_prompt_result_text(result: dict) -> str:
 
 def _format_video_prompt_result_text(result: dict) -> str:
     prompt_ru = (result.get("prompt_ru") or "").strip()
-    provider = (result.get("provider") or "").strip()
-
-    provider_note = ""
-    if provider:
-        provider_note = (
-            f"{chr(10)}{chr(10)}<i>Модель анализа: {html.escape(provider)}</i>"
-        )
 
     return (
         f"✅ <b>Промпт по видео готов</b>{chr(10)}{chr(10)}"
         f"<pre>{_escape_clip_text(prompt_ru or '—', 3500)}</pre>"
-        f"{provider_note}"
     )
 
 
@@ -490,7 +482,7 @@ async def video_to_prompt_handler(callback: CallbackQuery, state: FSMContext):
         "🎞 <b>Промпт по видео</b>\n\n"
         f"Стоимость: <code>{_video_prompt_cost()}</code> 🍌\n\n"
         "Отправьте короткое видео как обычное видео или файлом.\n"
-        "Qwen 3.8 получит сам видеофайл и соберёт подробный prompt для Seedance 2.0 по фактической длине исходного ролика.\n\n"
+        "Сервис разберёт сам видеофайл и соберёт подробный prompt для Seedance 2.0 по фактической длине исходного ролика.\n\n"
         "В результате вы получите подробный русский prompt с посекундными действиями на всю фактическую длину ролика.\n\n"
         f"<i>Тестовый лимит: до {max_mb}MB и до {max_seconds} секунд.</i>"
     )

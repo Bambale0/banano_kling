@@ -1070,7 +1070,7 @@ def test_video_prompt_result_text_is_telegram_safe_for_long_result():
     assert len(text) < 4096
     assert "Промпт по видео готов" in text
     assert "Кинематографичное движение" in text
-    assert "Модель анализа: gpt-5.5" in text
+    assert "Модель анализа:" not in text
     assert "Prompt EN" not in text
     assert "Negative prompt" not in text
     assert "Камера:" not in text
