@@ -100,6 +100,10 @@ def get_main_menu_keyboard(user_credits: int = 0, telegram_id: int | None = None
         InlineKeyboardButton(text="🤝 Партнёрам", callback_data="menu_partner"),
         InlineKeyboardButton(text="⋯ Ещё", callback_data="ux_more"),
     )
+    if telegram_id is not None and config.is_admin(int(telegram_id)):
+        builder.row(
+            InlineKeyboardButton(text="🧪 Тест", callback_data="admin_test_lab")
+        )
 
     return builder.as_markup()
 
