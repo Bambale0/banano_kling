@@ -68,3 +68,14 @@ def test_text_bot_uses_card_sbp_label_for_robokassa() -> None:
     assert 'text="💳 КАРТА | СБП"' in source
     assert '💳 <b>КАРТА | СБП</b>' in source
     assert 'Robokassa · основной способ' not in source
+
+
+def test_text_bot_primary_payment_surface_is_robokassa() -> None:
+    source = _read("bot/handlers/lava_checkout.py")
+
+    assert 'from bot.services.robokassa_service import robokassa_service' in source
+    assert 'has_robokassa = bool(robokassa_service.enabled)' in source
+    assert 'text="💳 КАРТА | СБП"' in source
+    assert 'callback_data=f"buy_robokassa_{package_id}"' in source
+    assert 'robokassa=has_robokassa' in source
+
