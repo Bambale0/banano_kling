@@ -66,6 +66,23 @@ def test_payment_url_contains_signed_required_fields(monkeypatch):
     assert query["SignatureValue"] == [expected]
 
 
+def test_payment_url_sanitizes_emoji_from_description(monkeypatch):
+    service = _service(monkeypatch)
+    url = service.create_payment_url(
+        amount_rub=250,
+        inv_id="1789057951890792199",
+        description="Покупка 25 бананов (🍌 Старт)",
+    )
+    query = parse_qs(urlparse(url).query)
+
+    assert query["Description"] == ["Покупка 25 бананов ( Старт)"]
+    assert "🍌" not in query["Description"][0]
+
+
+def test_description_falls_back_when_only_unsupported_symbols_are_given():
+    assert robokassa_module.sanitize_description("🍌🔥") == "Оплата"
+
+
 def test_result_verification_accepts_live_six_decimal_amount(monkeypatch):
     service = _service(monkeypatch)
     payload = {"OutSum": "299.000000", "InvId": "123456"}
