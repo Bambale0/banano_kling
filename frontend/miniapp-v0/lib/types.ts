@@ -92,6 +92,8 @@ export interface PaymentPackage {
   lava_foreign_product_id?: string
   lava_foreign_offer_id?: string
   lava_foreign_currency?: string
+  robokassa_enabled?: boolean
+  freekassa_enabled?: boolean
   bonus_credits?: number
   popular?: boolean
   description?: string
@@ -106,6 +108,7 @@ export type PaymentProvider =
   | 'lava_foreign'
   | 'lava_foreign_card'
   | 'lava_foreign_paypal'
+  | 'robokassa'
   | 'freekassa_card'
   | 'freekassa_sbp'
 

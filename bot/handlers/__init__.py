@@ -74,6 +74,8 @@ from .admin_test_lab import router as admin_test_lab_router
 from .admin_user_ban import router as admin_user_ban_router
 from .batch_generation import router as batch_generation_router
 from .freekassa_payments import router as freekassa_payments_router
+from .robokassa_payments import install_robokassa_payment_surfaces
+from .robokassa_payments import router as robokassa_payments_router
 from .image_analyzer import router as legacy_image_analyzer_router
 from .notification_campaigns import router as notification_campaigns_router
 from .partner_approval import admin_router as partner_approval_admin_router
@@ -184,6 +186,7 @@ generation_router.include_router(generation_module.router)
 # while generation and photo analysis keep the original UX routing.
 payments_router = Router()
 payments_router.include_router(lava_checkout_router)
+payments_router.include_router(robokassa_payments_router)
 payments_router.include_router(freekassa_payments_router)
 payments_router.include_router(prodamus_payments_router)
 payments_router.include_router(legacy_payments_router)
@@ -205,6 +208,7 @@ install_trend_route_compat()
 # Mini App checkout keeps legacy `lava`, while explicit UI choices route Card
 # and SBP to the exact Lava PAY2ME payment method.
 install_miniapp_lava_payment_methods()
+install_robokassa_payment_surfaces()
 install_prodamus_payment_surfaces()
 common_router = Router()
 common_router.include_router(partner_approval_user_router)
@@ -234,6 +238,7 @@ __all__ = [
     "prodamus_payments_router",
     "prompt_analyzer_v2_router",
     "public_offer_compat_router",
+    "robokassa_payments_router",
     "publication_scope_compat_router",
     "repeat_result_compat_router",
     "repeat_run_confirm_compat_router",

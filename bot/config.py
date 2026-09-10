@@ -31,6 +31,19 @@ class Config:
     FREEKASSA_WEBHOOK_PATH: str = os.getenv(
         "FREEKASSA_WEBHOOK_PATH", "/freekassa/webhook"
     )
+
+    # Robokassa — primary RUB checkout
+    ROBOKASSA_MERCHANT_LOGIN: str = os.getenv("ROBOKASSA_MERCHANT_LOGIN", "")
+    ROBOKASSA_PASSWORD1: str = os.getenv("ROBOKASSA_PASSWORD1", "")
+    ROBOKASSA_PASSWORD2: str = os.getenv("ROBOKASSA_PASSWORD2", "")
+    ROBOKASSA_HASH_ALGORITHM: str = os.getenv("ROBOKASSA_HASH_ALGORITHM", "md5").lower()
+    ROBOKASSA_TEST_MODE: bool = os.getenv("ROBOKASSA_TEST_MODE", "0").lower() in (
+        "1", "true", "yes", "on"
+    )
+    ROBOKASSA_WEBHOOK_PATH: str = os.getenv(
+        "ROBOKASSA_WEBHOOK_PATH", "/robokassa/result"
+    )
+
     PAYMENT_PROVIDER: str = os.getenv("PAYMENT_PROVIDER", "lava").lower()
 
     # Telegram Stars
@@ -222,6 +235,13 @@ class Config:
         return f"{self.WEBHOOK_HOST.rstrip('/')}{path}"
 
     @property
+    def robokassa_notification_url(self) -> str:
+        path = self.ROBOKASSA_WEBHOOK_PATH or "/robokassa/result"
+        if not path.startswith("/"):
+            path = "/" + path
+        return f"{self.WEBHOOK_HOST.rstrip('/')}{path}"
+
+    @property
     def YOOKASSA_RETURN_URL(self) -> str:  # transitional API name
         return self.FREEKASSA_RETURN_URL
 
@@ -235,6 +255,7 @@ class Config:
             "cryptobot",
             "lava",
             "freekassa",
+            "robokassa",
             "tbank",
             "telegram_stars",
         }:
@@ -265,6 +286,14 @@ class Config:
             "business": self.LAVA_OFFER_ID_BUSINESS,
         }
         return mapping.get(package_id, "")
+
+    @property
+    def has_robokassa(self) -> bool:
+        return bool(
+            self.ROBOKASSA_MERCHANT_LOGIN
+            and self.ROBOKASSA_PASSWORD1
+            and self.ROBOKASSA_PASSWORD2
+        )
 
     @property
     def has_freekassa(self) -> bool:

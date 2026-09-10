@@ -20,10 +20,11 @@ def test_miniapp_freekassa_uses_signed_server_checkout() -> None:
     assert "freekassa_service.create_payment" not in source
 
 
-def test_miniapp_uses_freekassa_as_primary_and_lava_as_reserve() -> None:
+def test_miniapp_uses_robokassa_primary_with_freekassa_and_lava_reserves() -> None:
     source = _read("frontend/miniapp-v0/components/balance-sheet.tsx")
 
-    assert "KASSA · основной способ" in source
+    assert "Robokassa · основной способ" in source
+    assert "Резерв · KASSA" in source
     assert "Резерв · Lava" in source
     assert "Lava · Карта" in source
     assert "Lava · СБП" in source
@@ -33,16 +34,19 @@ def test_miniapp_uses_freekassa_as_primary_and_lava_as_reserve() -> None:
     assert "handleTopup(pkg.id, 'lava_sbp')" in source
     assert "freekassa_enabled" in source
 
-    primary_label = source.index("KASSA · основной способ")
+    primary_label = source.index("Robokassa · основной способ")
+    primary_button = source.index("handleTopup(pkg.id, 'robokassa')")
+    kassa_reserve = source.index("Резерв · KASSA")
     primary_card = source.index("handleTopup(pkg.id, 'freekassa_card')")
     primary_sbp = source.index("handleTopup(pkg.id, 'freekassa_sbp')")
-    reserve_label = source.index("Резерв · Lava")
+    lava_reserve = source.index("Резерв · Lava")
     reserve_card = source.index("handleTopup(pkg.id, 'lava_card')")
     reserve_sbp = source.index("handleTopup(pkg.id, 'lava_sbp')")
-    assert primary_label < primary_card < reserve_label
-    assert primary_label < primary_sbp < reserve_label
-    assert reserve_label < reserve_card
-    assert reserve_label < reserve_sbp
+    assert primary_label < primary_button < kassa_reserve
+    assert kassa_reserve < primary_card < lava_reserve
+    assert kassa_reserve < primary_sbp < lava_reserve
+    assert lava_reserve < reserve_card
+    assert lava_reserve < reserve_sbp
 
 
 def test_freekassa_checkout_still_owns_email_ip_and_provider_creation() -> None:
@@ -58,13 +62,14 @@ def test_freekassa_checkout_still_owns_email_ip_and_provider_creation() -> None:
     assert "HTTPSeeOther" in checkout
 
 
-def test_miniapp_places_primary_kassa_before_foreign_and_lava_reserves() -> None:
+def test_miniapp_places_robokassa_before_kassa_and_lava_reserves() -> None:
     source = _read("frontend/miniapp-v0/components/balance-sheet.tsx")
 
-    freekassa = source.index("KASSA · основной способ")
+    robokassa = source.index("Robokassa · основной способ")
+    kassa_reserve = source.index("Резерв · KASSA")
     lava_reserve = source.index("Резерв · Lava")
     tribute = source.index("handleTopup(pkg.id, 'tribute' as PaymentProvider)")
-    assert freekassa < lava_reserve < tribute
+    assert robokassa < kassa_reserve < lava_reserve < tribute
 
 
 def test_payment_provider_type_includes_freekassa_methods() -> None:

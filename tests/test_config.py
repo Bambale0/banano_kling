@@ -66,6 +66,11 @@ class TestConfig:
         cfg = Config()
         assert cfg.WEBHOOK_BIND_HOST == "127.0.0.1"
 
+    def test_payment_provider_robokassa(self):
+        cfg = Config()
+        cfg.PAYMENT_PROVIDER = "robokassa"
+        assert cfg.payment_provider == "robokassa"
+
     def test_payment_provider_freekassa(self):
         cfg = Config()
         cfg.PAYMENT_PROVIDER = "freekassa"
@@ -82,6 +87,26 @@ class TestConfig:
         cfg.PAYMENT_PROVIDER = "invalid"
         cfg.LAVA_API_KEY = "lava-key"
         assert cfg.payment_provider == "lava"
+
+    def test_has_robokassa_true(self):
+        cfg = Config()
+        cfg.ROBOKASSA_MERCHANT_LOGIN = "shop"
+        cfg.ROBOKASSA_PASSWORD1 = "pass1"
+        cfg.ROBOKASSA_PASSWORD2 = "pass2"
+        assert cfg.has_robokassa is True
+
+    def test_has_robokassa_false(self):
+        cfg = Config()
+        cfg.ROBOKASSA_MERCHANT_LOGIN = "shop"
+        cfg.ROBOKASSA_PASSWORD1 = "pass1"
+        cfg.ROBOKASSA_PASSWORD2 = ""
+        assert cfg.has_robokassa is False
+
+    def test_robokassa_notification_url(self):
+        cfg = Config()
+        cfg.WEBHOOK_HOST = "https://payments.example"
+        cfg.ROBOKASSA_WEBHOOK_PATH = "robokassa/result"
+        assert cfg.robokassa_notification_url == "https://payments.example/robokassa/result"
 
     def test_has_freekassa_true(self):
         cfg = Config()
