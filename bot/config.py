@@ -116,6 +116,23 @@ class Config:
 
     # Legacy API Keys (optional fallbacks)
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+
+    # CometAPI Qwen 3.8 — primary photo/video prompt analysis
+    COMETAPI_KEY: str = os.getenv("COMETAPI_KEY", "") or os.getenv("COMET_API_KEY", "")
+    COMETAPI_BASE_URL: str = os.getenv(
+        "COMETAPI_BASE_URL", "https://api.cometapi.com/v1"
+    ).rstrip("/")
+    QWEN38_PROMPT_MODEL: str = os.getenv("QWEN38_PROMPT_MODEL", "qwen3.8-max")
+    QWEN38_PROMPT_REASONING_EFFORT: str = os.getenv(
+        "QWEN38_PROMPT_REASONING_EFFORT", "medium"
+    )
+    QWEN38_PROMPT_MAX_TOKENS: int = int(os.getenv("QWEN38_PROMPT_MAX_TOKENS", "4096"))
+    QWEN38_PROMPT_TIMEOUT_SECONDS: int = int(
+        os.getenv("QWEN38_PROMPT_TIMEOUT_SECONDS", "180")
+    )
+    QWEN38_PROMPT_MAX_ATTEMPTS: int = int(os.getenv("QWEN38_PROMPT_MAX_ATTEMPTS", "2"))
+    QWEN38_VIDEO_FPS: float = float(os.getenv("QWEN38_VIDEO_FPS", "1.0"))
+
     PHOTO_PROMPT_MODEL: str = os.getenv("PHOTO_PROMPT_MODEL", "gpt-5-5")
 
     # APIYI Vision — analysis photo in prompt (like VK bot)

@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock
+
 import pytest
 
 from bot.services import photo_prompt_vk_compat
@@ -89,6 +91,35 @@ async def test_vk_wrapper_falls_back_to_original_service_after_apiyi_provider_er
         )
 
         assert result["prompt_ru"] == "fallback after provider error"
+    finally:
+        module.photo_prompt_service.analyze_photo = previous_analyze_photo
+        module._vk_photo_prompt_exact_installed = previous_installed
+
+
+@pytest.mark.asyncio
+async def test_vk_wrapper_defers_to_primary_photo_service_when_qwen_is_enabled(monkeypatch):
+    async def original_analyze_photo(**kwargs):
+        return {"prompt_ru": "qwen-backed prompt", "raw": {"kwargs": kwargs}}
+
+    exact_vk = AsyncMock(return_value=("legacy vk prompt", "gpt-5.5"))
+    monkeypatch.setattr(photo_prompt_vk_compat, "analyze_photo_exactly_as_vk", exact_vk)
+    monkeypatch.setattr(photo_prompt_vk_compat.comet_qwen38_service, "enabled", True)
+
+    import bot.services.photo_prompt_service as module
+
+    previous_installed = getattr(module, "_vk_photo_prompt_exact_installed", False)
+    previous_analyze_photo = module.photo_prompt_service.analyze_photo
+    try:
+        module._vk_photo_prompt_exact_installed = False
+        module.photo_prompt_service.analyze_photo = original_analyze_photo
+        photo_prompt_vk_compat.install_vk_photo_prompt_instructions()
+
+        result = await module.photo_prompt_service.analyze_photo(
+            image_url="https://example.com/a.jpg"
+        )
+
+        assert result["prompt_ru"] == "qwen-backed prompt"
+        exact_vk.assert_not_awaited()
     finally:
         module.photo_prompt_service.analyze_photo = previous_analyze_photo
         module._vk_photo_prompt_exact_installed = previous_installed
