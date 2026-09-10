@@ -1,4 +1,4 @@
-"""Video to prompt service via Kie GPT 5.5 Responses API."""
+"""Video-to-prompt service with OpenRouter Qwen 3.8 primary and KIE fallback."""
 
 import asyncio
 import base64
@@ -12,9 +12,14 @@ from typing import Any, Dict, Optional
 import aiohttp
 
 from bot.config import config
+from bot.services.openrouter_qwen38_service import openrouter_qwen38_service
 from bot.services.photo_prompt_service import (
     GPT_MAX_ATTEMPTS as GPT55_MAX_ATTEMPTS,
+)
+from bot.services.photo_prompt_service import (
     GPT_RETRYABLE_BODY_CODES as GPT55_RETRYABLE_BODY_CODES,
+)
+from bot.services.photo_prompt_service import (
     _extract_output_text,
     _is_fast_fallback_application_error,
 )
@@ -26,9 +31,31 @@ VIDEO_PROMPT_FRAME_TIMEOUT_SECONDS = 60
 
 
 VIDEO_PROMPT_INSTRUCTION = """Напиши максимально детальный промпт на русском языке для Seedance 2.0
-Посекундо действия
-Видео должно длится 10 сек
+Посекундно распиши действия на всей длительности исходного видео
+Видео в промпте должно длиться столько же, сколько исходное видео
 Очень реалистичное видео, 1:1 действия как на исходном. Максимально подробно""".strip()
+
+
+def _build_video_prompt_instruction(duration_seconds: float = 0) -> str:
+    try:
+        duration = float(duration_seconds or 0)
+    except (TypeError, ValueError):
+        duration = 0
+
+    if duration <= 0:
+        return VIDEO_PROMPT_INSTRUCTION
+
+    duration_text = (
+        str(int(duration))
+        if duration.is_integer()
+        else f"{duration:.1f}".rstrip("0").rstrip(".")
+    )
+    return (
+        "Напиши максимально детальный промпт на русском языке для Seedance 2.0\n"
+        f"Посекундно распиши действия на всей длительности исходного видео — {duration_text} сек\n"
+        f"Видео в промпте должно длиться ровно {duration_text} сек, как исходное видео\n"
+        "Очень реалистичное видео, 1:1 действия как на исходном. Максимально подробно"
+    )
 
 
 def _parse_video_json_object(raw_text: str) -> Dict[str, Any]:
@@ -133,6 +160,39 @@ def _build_gpt_frame_user_content(
             }
         )
     return content
+
+
+def _probe_video_duration_sync(video_bytes: bytes) -> float:
+    if not video_bytes:
+        return 0.0
+
+    with tempfile.TemporaryDirectory(prefix="video_prompt_probe_") as temp_dir:
+        input_path = Path(temp_dir) / "input_video"
+        input_path.write_bytes(video_bytes)
+        try:
+            result = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "default=noprint_wrappers=1:nokey=1",
+                    str(input_path),
+                ],
+                check=True,
+                capture_output=True,
+                timeout=15,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+            return 0.0
+
+    try:
+        duration = float(result.stdout.decode("utf-8", errors="replace").strip())
+    except (TypeError, ValueError):
+        return 0.0
+    return duration if duration > 0 else 0.0
 
 
 def _extract_frame_data_urls_sync(
@@ -461,14 +521,55 @@ class VideoPromptService:
         filename: str = "reference_video.mp4",
         video_bytes: bytes | None = None,
     ) -> Dict[str, Any]:
-        if not self.api_key:
-            raise RuntimeError("KIE_AI_API_KEY is not configured")
-
         video_url = (video_url or "").strip()
         if not video_url:
             raise ValueError("video_url is required")
 
-        user_instruction = VIDEO_PROMPT_INSTRUCTION
+        effective_duration = float(duration_seconds or 0)
+        if video_bytes:
+            probed_duration = await asyncio.to_thread(
+                _probe_video_duration_sync,
+                video_bytes,
+            )
+            if probed_duration > 0:
+                effective_duration = probed_duration
+
+        user_instruction = _build_video_prompt_instruction(effective_duration)
+        qwen_error: Exception | None = None
+
+        if openrouter_qwen38_service.enabled:
+            try:
+                raw_output = await openrouter_qwen38_service.analyze_video(
+                    video_url=video_url,
+                    user_instruction=user_instruction,
+                    system_prompt=None,
+                    json_response=False,
+                )
+                return _build_video_result(
+                    _parse_video_json_object(raw_output),
+                    provider=openrouter_qwen38_service.model,
+                )
+            except (
+                aiohttp.ClientError,
+                asyncio.TimeoutError,
+                RuntimeError,
+                ValueError,
+                TypeError,
+            ) as exc:
+                qwen_error = exc
+                logger.warning(
+                    "Qwen 3.8 video analysis failed; falling back to KIE: %s",
+                    exc,
+                )
+
+        if not self.api_key:
+            if qwen_error is not None:
+                raise RuntimeError(
+                    f"Qwen 3.8 failed and KIE fallback is not configured: {qwen_error}"
+                ) from qwen_error
+            raise RuntimeError(
+                "OPENROUTER_API_KEY and KIE_AI_API_KEY are not configured"
+            )
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",

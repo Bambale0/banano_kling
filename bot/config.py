@@ -116,6 +116,28 @@ class Config:
 
     # Legacy API Keys (optional fallbacks)
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+
+    # OpenRouter Qwen 3.8 — primary video prompt analysis
+    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
+    OPENROUTER_BASE_URL: str = os.getenv(
+        "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
+    ).rstrip("/")
+    QWEN38_PROMPT_MODEL: str = os.getenv(
+        "QWEN38_PROMPT_MODEL", "qwen/qwen3.8-max-0902"
+    )
+    QWEN38_PROMPT_REASONING_EFFORT: str = os.getenv(
+        "QWEN38_PROMPT_REASONING_EFFORT", "medium"
+    )
+    QWEN38_PROMPT_MAX_TOKENS: int = int(
+        os.getenv("QWEN38_PROMPT_MAX_TOKENS", "4096")
+    )
+    QWEN38_PROMPT_TIMEOUT_SECONDS: int = int(
+        os.getenv("QWEN38_PROMPT_TIMEOUT_SECONDS", "180")
+    )
+    QWEN38_PROMPT_MAX_ATTEMPTS: int = int(
+        os.getenv("QWEN38_PROMPT_MAX_ATTEMPTS", "2")
+    )
+
     PHOTO_PROMPT_MODEL: str = os.getenv("PHOTO_PROMPT_MODEL", "gpt-5-5")
 
     # APIYI Vision — analysis photo in prompt (like VK bot)

@@ -58,6 +58,7 @@ from bot.services.video_prompt_service import (
     VIDEO_PROMPT_INSTRUCTION,
     VideoPromptService,
     _build_gpt_video_user_content,
+    _build_video_prompt_instruction,
 )
 from bot.video_reference_policy import get_max_video_image_references
 
@@ -908,16 +909,14 @@ def test_photo_prompt_system_prompt_prefers_editorial_russian_style():
     assert "Do not use forensic" in SYSTEM_PROMPT
 
 
-def test_video_prompt_instruction_is_exact_seedance_request():
-    assert VIDEO_PROMPT_INSTRUCTION == (
-        "Напиши максимально детальный промпт на русском языке для Seedance 2.0"
-        + chr(10)
-        + "Посекундо действия"
-        + chr(10)
-        + "Видео должно длится 10 сек"
-        + chr(10)
-        + "Очень реалистичное видео, 1:1 действия как на исходном. Максимально подробно"
-    )
+def test_video_prompt_instruction_uses_source_video_duration():
+    assert "10 сек" not in VIDEO_PROMPT_INSTRUCTION
+
+    instruction = _build_video_prompt_instruction(17)
+    assert "17 сек" in instruction
+    assert "Посекундно" in instruction
+    assert "ровно 17 сек" in instruction
+    assert "1:1 действия как на исходном" in instruction
 
 
 def test_video_prompt_payloads_have_no_hidden_system_or_fallback_instruction():
@@ -976,9 +975,9 @@ async def test_video_prompt_service_passes_video_file_to_gpt55():
 
     assert captured["video_url"] == "https://example.com/reference.mp4"
     assert captured["filename"] == "reference.mp4"
-    assert captured["user_instruction"] == VIDEO_PROMPT_INSTRUCTION
+    assert captured["user_instruction"] == _build_video_prompt_instruction(7)
+    assert "ровно 7 сек" in captured["user_instruction"]
     assert "Сделай более модный свет" not in captured["user_instruction"]
-    assert "7 seconds" not in captured["user_instruction"]
     assert result["camera_movement_ru"] == "Плавный трекинг"
 
 
