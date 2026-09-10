@@ -66,18 +66,26 @@ def _decorate_text_payment_options(
         rows.append(list(row))
 
     reserve_row = [InlineKeyboardButton(text=reserve_label, url=tribute_url)]
-    sbp_index = next(
+    freekassa_index = next(
         (
             index
             for index, row in enumerate(rows)
-            if any(button.text == "⚡ СБП" for button in row)
+            if any(button.callback_data == f"buy_freekassa_{package_id}" for button in row)
         ),
         -1,
     )
-    if sbp_index >= 0:
-        rows.insert(sbp_index + 1, reserve_row)
+    if freekassa_index >= 0:
+        rows.insert(freekassa_index + 1, reserve_row)
     else:
-        rows.insert(0, reserve_row)
+        sbp_index = next(
+            (
+                index
+                for index, row in enumerate(rows)
+                if any(button.text == "⚡ СБП" for button in row)
+            ),
+            -1,
+        )
+        rows.insert(sbp_index + 1 if sbp_index >= 0 else 0, reserve_row)
 
     back_index = next(
         (

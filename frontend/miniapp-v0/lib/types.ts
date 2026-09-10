@@ -106,6 +106,8 @@ export type PaymentProvider =
   | 'lava_foreign'
   | 'lava_foreign_card'
   | 'lava_foreign_paypal'
+  | 'freekassa_card'
+  | 'freekassa_sbp'
 
 export interface CreatePaymentResponse {
   ok: true

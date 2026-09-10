@@ -27,8 +27,8 @@ def test_miniapp_shows_freekassa_only_as_reserve() -> None:
     assert "KASSA · резервная оплата" in source
     assert "KASSA · Карта РФ" in source
     assert "KASSA · СБП" in source
-    assert "'freekassa_card' as PaymentProvider" in source
-    assert "'freekassa_sbp' as PaymentProvider" in source
+    assert "handleTopup(pkg.id, 'freekassa_card')" in source
+    assert "handleTopup(pkg.id, 'freekassa_sbp')" in source
     assert "freekassa_enabled" in source
 
     primary_card = source.index("handleTopup(pkg.id, 'lava_card')")
@@ -49,3 +49,19 @@ def test_freekassa_checkout_still_owns_email_ip_and_provider_creation() -> None:
     assert "freekassa_service.create_payment(" in checkout
     assert "payment_system_id=method_id" in checkout
     assert "HTTPSeeOther" in checkout
+
+
+def test_miniapp_places_freekassa_before_foreign_payment_options() -> None:
+    source = _read("frontend/miniapp-v0/components/balance-sheet.tsx")
+
+    freekassa = source.index("KASSA · резервная оплата")
+    tribute = source.index("handleTopup(pkg.id, 'tribute' as PaymentProvider)")
+    lava_foreign = source.index("Резерв · зарубежная")
+    assert freekassa < tribute < lava_foreign
+
+
+def test_payment_provider_type_includes_freekassa_methods() -> None:
+    source = _read("frontend/miniapp-v0/lib/types.ts")
+
+    assert "| 'freekassa_card'" in source
+    assert "| 'freekassa_sbp'" in source

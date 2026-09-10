@@ -182,3 +182,73 @@ def test_order_status_mapping():
     assert freekassa_module.normalize_order_status(6)["failed"] is True
     assert freekassa_module.normalize_order_status(8)["failed"] is True
     assert freekassa_module.normalize_order_status(9)["failed"] is True
+
+
+def test_api_requests_are_serialized_to_preserve_nonce_order(monkeypatch):
+    service = _configured_service(monkeypatch)
+    entered_nonces: list[int] = []
+    active = 0
+    max_active = 0
+
+    class FakeResponse:
+        status = 200
+
+        def __init__(self, body):
+            self.body = body
+
+        async def __aenter__(self):
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            entered_nonces.append(self.body["nonce"])
+            await asyncio.sleep(0.01)
+            return self
+
+        async def __aexit__(self, *_args):
+            nonlocal active
+            active -= 1
+
+        async def text(self):
+            return '{"type":"success","orders":[]}'
+
+        async def json(self, content_type=None):
+            _ = content_type
+            return {"type": "success", "orders": []}
+
+    class FakeSession:
+        closed = False
+
+        def post(self, _url, *, json):
+            return FakeResponse(json)
+
+    session = FakeSession()
+
+    async def fake_get_session():
+        return session
+
+    monkeypatch.setattr(service, "_get_session", fake_get_session)
+
+    async def run_concurrently():
+        return await asyncio.gather(
+            *(service._api_post("orders", {"paymentId": f"order-{i}"}) for i in range(8))
+        )
+
+    asyncio.run(run_concurrently())
+
+    assert max_active == 1
+    assert entered_nonces == sorted(entered_nonces)
+    assert len(set(entered_nonces)) == 8
+
+
+def test_freekassa_route_setup_is_idempotent():
+    from aiohttp import web
+
+    app = web.Application()
+    freekassa_payments.setup_freekassa_routes(app)
+    route_count = len(list(app.router.routes()))
+    cleanup_count = len(app.cleanup_ctx)
+
+    freekassa_payments.setup_freekassa_routes(app)
+
+    assert len(list(app.router.routes())) == route_count
+    assert len(app.cleanup_ctx) == cleanup_count == 1

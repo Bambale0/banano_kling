@@ -209,9 +209,9 @@ export function BalanceSheet() {
                   ? 'Открыта резервная зарубежная оплата через PayPal'
                   : provider === 'lava_foreign'
                     ? 'Открыта резервная зарубежная оплата'
-                    : provider === ('freekassa_sbp' as PaymentProvider)
+                    : provider === 'freekassa_sbp'
                       ? 'Открыта резервная оплата KASSA через СБП'
-                      : provider === ('freekassa_card' as PaymentProvider)
+                      : provider === 'freekassa_card'
                         ? 'Открыта резервная оплата KASSA картой'
                         : 'Открыта страница оплаты',
         )
@@ -407,6 +407,39 @@ export function BalanceSheet() {
                             )}
                             СБП
                           </Button>
+                          {freekassaConfigured ? (
+                            <>
+                              <p className="col-span-2 mt-1 px-1 text-center text-[11px] text-muted-foreground">
+                                KASSA · резервная оплата
+                              </p>
+                              <Button
+                                onClick={() => handleTopup(pkg.id, 'freekassa_card')}
+                                disabled={Boolean(loadingPayment)}
+                                variant="outline"
+                                className="w-full border-border/60 bg-background/20 text-foreground hover:bg-secondary/50"
+                              >
+                                {freekassaCardLoading ? (
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                  <CreditCard className="mr-2 h-4 w-4" />
+                                )}
+                                KASSA · Карта РФ
+                              </Button>
+                              <Button
+                                onClick={() => handleTopup(pkg.id, 'freekassa_sbp')}
+                                disabled={Boolean(loadingPayment)}
+                                variant="outline"
+                                className="w-full border-border/60 bg-background/20 text-foreground hover:bg-secondary/50"
+                              >
+                                {freekassaSbpLoading ? (
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                  <QrCode className="mr-2 h-4 w-4" />
+                                )}
+                                KASSA · СБП
+                              </Button>
+                            </>
+                          ) : null}
                           <Button
                             onClick={() => handleTopup(pkg.id, 'tribute' as PaymentProvider)}
                             disabled={Boolean(loadingPayment) || !tributeConfigured}
@@ -447,39 +480,6 @@ export function BalanceSheet() {
                                   <Globe2 className="mr-2 h-4 w-4" />
                                 )}
                                 PayPal
-                              </Button>
-                            </>
-                          ) : null}
-                          {freekassaConfigured ? (
-                            <>
-                              <p className="col-span-2 mt-1 px-1 text-center text-[11px] text-muted-foreground">
-                                KASSA · резервная оплата
-                              </p>
-                              <Button
-                                onClick={() => handleTopup(pkg.id, 'freekassa_card' as PaymentProvider)}
-                                disabled={Boolean(loadingPayment)}
-                                variant="outline"
-                                className="w-full border-border/60 bg-background/20 text-foreground hover:bg-secondary/50"
-                              >
-                                {freekassaCardLoading ? (
-                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                ) : (
-                                  <CreditCard className="mr-2 h-4 w-4" />
-                                )}
-                                KASSA · Карта РФ
-                              </Button>
-                              <Button
-                                onClick={() => handleTopup(pkg.id, 'freekassa_sbp' as PaymentProvider)}
-                                disabled={Boolean(loadingPayment)}
-                                variant="outline"
-                                className="w-full border-border/60 bg-background/20 text-foreground hover:bg-secondary/50"
-                              >
-                                {freekassaSbpLoading ? (
-                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                ) : (
-                                  <QrCode className="mr-2 h-4 w-4" />
-                                )}
-                                KASSA · СБП
                               </Button>
                             </>
                           ) : null}
