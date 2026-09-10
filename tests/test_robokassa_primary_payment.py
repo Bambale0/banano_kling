@@ -32,18 +32,20 @@ def test_telegram_payment_router_places_robokassa_before_freekassa():
     assert robokassa < freekassa < legacy
 
 
-def test_miniapp_exposes_robokassa_primary_and_reserves():
+def test_miniapp_exposes_lava_primary_and_robokassa_reserve():
     source = _read("frontend/miniapp-v0/components/balance-sheet.tsx")
-    primary = source.index("Robokassa · основной способ")
-    robokassa_button = source.index("handleTopup(pkg.id, 'robokassa')")
+    lava_primary = source.index("Lava · основной способ")
+    lava_card = source.index("handleTopup(pkg.id, 'lava_card')")
+    lava_sbp = source.index("handleTopup(pkg.id, 'lava_sbp')")
     kassa_reserve = source.index("Резерв · KASSA")
-    lava_reserve = source.index("Резерв · Lava")
+    robokassa_reserve = source.index("Резерв · Robokassa")
+    robokassa_button = source.index("handleTopup(pkg.id, 'robokassa')")
 
-    assert primary < robokassa_button < kassa_reserve < lava_reserve
+    assert lava_primary < lava_card < kassa_reserve
+    assert lava_primary < lava_sbp < kassa_reserve
+    assert kassa_reserve < robokassa_reserve < robokassa_button
     assert "handleTopup(pkg.id, 'freekassa_card')" in source
     assert "handleTopup(pkg.id, 'freekassa_sbp')" in source
-    assert "handleTopup(pkg.id, 'lava_card')" in source
-    assert "handleTopup(pkg.id, 'lava_sbp')" in source
 
 
 def test_miniapp_provider_contract_contains_robokassa():
@@ -63,19 +65,21 @@ def test_main_registers_robokassa_before_freekassa_routes():
     assert robokassa < freekassa
 
 
-def test_text_bot_uses_card_sbp_label_for_robokassa() -> None:
+def test_text_bot_marks_robokassa_as_reserve() -> None:
     source = _read("bot/handlers/robokassa_payments.py")
-    assert 'text="💳 КАРТА | СБП"' in source
+    assert 'text="↩️ Резерв · Robokassa"' in source
     assert '💳 <b>КАРТА | СБП</b>' in source
     assert 'Robokassa · основной способ' not in source
 
 
-def test_text_bot_primary_payment_surface_is_robokassa() -> None:
+def test_text_bot_primary_payment_surface_is_lava() -> None:
     source = _read("bot/handlers/lava_checkout.py")
 
     assert 'from bot.services.robokassa_service import robokassa_service' in source
     assert 'has_robokassa = bool(robokassa_service.enabled)' in source
-    assert 'text="💳 КАРТА | СБП"' in source
+    assert 'text="💳 Карта · Lava"' in source
+    assert 'text="⚡ СБП · Lava"' in source
+    assert 'text="↩️ Резерв · Robokassa"' in source
     assert 'callback_data=f"buy_robokassa_{package_id}"' in source
     assert 'robokassa=has_robokassa' in source
 

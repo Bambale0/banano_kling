@@ -385,22 +385,34 @@ export function BalanceSheet() {
                         </div>
 
                         <div className="mt-4 grid grid-cols-2 gap-2">
-                          {robokassaConfigured ? (
+                          {lavaConfigured ? (
                             <>
                               <p className="col-span-2 px-1 text-center text-[11px] text-muted-foreground">
-                                Robokassa · основной способ
+                                Lava · основной способ
                               </p>
                               <Button
-                                onClick={() => handleTopup(pkg.id, 'robokassa')}
+                                onClick={() => handleTopup(pkg.id, 'lava_card')}
                                 disabled={Boolean(loadingPayment)}
-                                className="col-span-2 w-full bg-gold text-primary-foreground hover:bg-gold/90"
+                                className="w-full bg-gold text-primary-foreground hover:bg-gold/90"
                               >
-                                {robokassaLoading ? (
+                                {cardLoading ? (
                                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                                 ) : (
                                   <CreditCard className="mr-2 h-4 w-4" />
                                 )}
-                                Оплатить через Robokassa
+                                Карта
+                              </Button>
+                              <Button
+                                onClick={() => handleTopup(pkg.id, 'lava_sbp')}
+                                disabled={Boolean(loadingPayment)}
+                                className="w-full bg-gold text-primary-foreground hover:bg-gold/90"
+                              >
+                                {sbpLoading ? (
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                  <QrCode className="mr-2 h-4 w-4" />
+                                )}
+                                СБП
                               </Button>
                             </>
                           ) : null}
@@ -437,36 +449,23 @@ export function BalanceSheet() {
                               </Button>
                             </>
                           ) : null}
-                          {lavaConfigured ? (
+                          {robokassaConfigured ? (
                             <>
                               <p className="col-span-2 mt-1 px-1 text-center text-[11px] text-muted-foreground">
-                                Резерв · Lava
+                                Резерв · Robokassa
                               </p>
                               <Button
-                                onClick={() => handleTopup(pkg.id, 'lava_card')}
+                                onClick={() => handleTopup(pkg.id, 'robokassa')}
                                 disabled={Boolean(loadingPayment)}
                                 variant="outline"
-                                className="w-full border-border/60 bg-background/20 text-foreground hover:bg-secondary/50"
+                                className="col-span-2 w-full border-border/60 bg-background/20 text-foreground hover:bg-secondary/50"
                               >
-                                {cardLoading ? (
+                                {robokassaLoading ? (
                                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                                 ) : (
                                   <CreditCard className="mr-2 h-4 w-4" />
                                 )}
-                                Lava · Карта
-                              </Button>
-                              <Button
-                                onClick={() => handleTopup(pkg.id, 'lava_sbp')}
-                                disabled={Boolean(loadingPayment)}
-                                variant="outline"
-                                className="w-full border-border/60 bg-background/20 text-foreground hover:bg-secondary/50"
-                              >
-                                {sbpLoading ? (
-                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                ) : (
-                                  <QrCode className="mr-2 h-4 w-4" />
-                                )}
-                                Lava · СБП
+                                Оплатить через Robokassa
                               </Button>
                             </>
                           ) : null}
@@ -512,11 +511,6 @@ export function BalanceSheet() {
                                 PayPal
                               </Button>
                             </>
-                          ) : null}
-                          {lavaConfigured ? (
-                            <p className="col-span-2 px-1 text-center text-[11px] text-muted-foreground">
-                              Lava остаётся резервным способом оплаты.
-                            </p>
                           ) : null}
                           <Button
                             onClick={() => handleTopup(pkg.id, 'telegram_stars')}

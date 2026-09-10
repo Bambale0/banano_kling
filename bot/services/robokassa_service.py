@@ -9,6 +9,24 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 from urllib.parse import urlencode
 
+
+def sanitize_description(value: Any, *, max_length: int = 100) -> str:
+    """Return a Robokassa-safe checkout description.
+
+    Robokassa rejects some Unicode symbols (notably emoji) with error 30.
+    Keep letters, digits, whitespace and a conservative punctuation set,
+    collapse whitespace, and always return a non-empty value.
+    """
+    text = str(value or "")
+    allowed_punctuation = {"-", "_", ".", ",", "(", ")"}
+    cleaned = "".join(
+        char
+        for char in text
+        if char.isalnum() or char.isspace() or char in allowed_punctuation
+    )
+    cleaned = " ".join(cleaned.split())
+    return (cleaned or "Оплата")[:max_length]
+
 ROBOKASSA_MAX_INV_ID = 9_223_372_036_854_775_807
 _SUPPORTED_HASHES = {"md5", "sha1", "sha256", "sha512"}
 
@@ -167,7 +185,7 @@ class RobokassaService:
             "MerchantLogin": self.merchant_login,
             "OutSum": amount,
             "InvId": invoice,
-            "Description": str(description or "")[:100],
+            "Description": sanitize_description(description),
             "SignatureValue": signature,
             "Culture": "ru",
             "Encoding": "utf-8",
