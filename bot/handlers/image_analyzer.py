@@ -26,6 +26,11 @@ from bot.services.photo_prompt_billing import (
 )
 from bot.services.photo_prompt_service import photo_prompt_service
 from bot.services.preset_manager import preset_manager
+from bot.services.video_prompt_billing import (
+    VideoPromptInsufficientBalance,
+    refund_video_prompt_charge,
+    reserve_video_prompt_charge,
+)
 from bot.services.video_prompt_service import video_prompt_service
 from bot.states import ImageAnalyzerStates
 
@@ -737,6 +742,7 @@ async def analyze_video_prompt(message: Message, state: FSMContext):
         return
 
     processing = await message.answer("🎞 Анализирую видео и собираю prompt…")
+    charge = None
 
     try:
         file = await message.bot.get_file(media.file_id)
@@ -765,6 +771,8 @@ async def analyze_video_prompt(message: Message, state: FSMContext):
             )
             return
 
+        charge = await reserve_video_prompt_charge(message.from_user.id)
+
         result = await video_prompt_service.analyze_video(
             video_url=video_url,
             user_note=(message.caption or "").strip(),
@@ -781,8 +789,18 @@ async def analyze_video_prompt(message: Message, state: FSMContext):
         await _send_video_prompt_result(message, result)
         await state.clear()
 
+    except VideoPromptInsufficientBalance as e:
+        await _safe_edit_or_answer(
+            processing,
+            message,
+            f"❌ {html.escape(str(e))}",
+            reply_markup=get_main_menu_button_keyboard(),
+            parse_mode="HTML",
+        )
+        await state.clear()
     except Exception as e:
         logger.exception("Video to prompt analysis failed")
+        await refund_video_prompt_charge(charge)
         await _safe_edit_or_answer(
             processing,
             message,
