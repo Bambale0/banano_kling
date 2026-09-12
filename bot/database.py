@@ -6190,7 +6190,7 @@ def _generation_row_to_card(
         "is_profile_visible": generation_profile_visible(row),
         "is_adult_content": generation_adult_content(row),
         "publication_scope": generation_publication_scope(row),
-        "feed_interactions_enabled": generation_profile_visible(row),
+        "feed_interactions_enabled": generation_publication_scope(row) == "feed",
     }
 
 
