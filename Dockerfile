@@ -46,14 +46,22 @@ ENV PATH="/opt/venv/bin:${PATH}" \
     WEBHOOK_PORT=1888
 
 RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && install -d /usr/share/postgresql-common/pgdg \
+    && curl --fail --silent --show-error \
+        -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+        https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+    && . /etc/os-release \
+    && printf 'Types: deb\nURIs: https://apt.postgresql.org/pub/repos/apt\nSuites: %s-pgdg\nComponents: main\nSigned-By: /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc\n' "$VERSION_CODENAME" \
+        > /etc/apt/sources.list.d/pgdg.sources \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates \
-        curl \
         ffmpeg \
         gzip \
-        postgresql-client \
+        postgresql-client-16 \
         sqlite3 \
         util-linux \
+    && pg_dump --version | grep -Eq 'pg_dump \(PostgreSQL\) 16\.' \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid "${APP_GID}" app \
     && useradd --uid "${APP_UID}" --gid "${APP_GID}" --create-home --home-dir /home/app app
