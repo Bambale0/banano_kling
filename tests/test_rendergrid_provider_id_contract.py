@@ -256,3 +256,53 @@ async def test_image_provider_poller_delivers_completed_rendergrid_task(monkeypa
     deliver.assert_awaited_once()
     assert deliver.await_args.args[2] == "https://cdn.example/rendergrid-done.png"
     assert deliver.await_args.kwargs["provider_task_id"] == provider_task_id
+
+
+@pytest.mark.asyncio
+async def test_image_provider_poller_processes_batch_concurrently(monkeypatch) -> None:
+    from bot import main as main_module
+    from bot.services import nexus_task_poller
+
+    tasks = [
+        {"task_id": f"rg-concurrent-{index}", "request_data": {"provider": "rendergrid"}}
+        for index in range(4)
+    ]
+    monkeypatch.setattr(nexus_task_poller, "NEXUS_POLL_BATCH_SIZE", len(tasks))
+    monkeypatch.setattr(nexus_task_poller, "NEXUS_POLL_CONCURRENCY", len(tasks))
+    monkeypatch.setattr(nexus_task_poller, "NEXUS_POLL_INTERVAL_SECONDS", 3600)
+    monkeypatch.setattr(
+        nexus_task_poller,
+        "get_pending_provider_image_tasks",
+        AsyncMock(return_value=tasks),
+    )
+
+    started: list[str] = []
+    all_started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fake_poll(_bot, task_row):
+        started.append(task_row["task_id"])
+        if len(started) == len(tasks):
+            all_started.set()
+        await release.wait()
+
+    monkeypatch.setattr(main_module, "_poll_single_image_provider_task", fake_poll)
+
+    real_sleep = asyncio.sleep
+
+    async def controlled_sleep(delay):
+        if delay == 5:
+            return
+        await real_sleep(delay)
+
+    monkeypatch.setattr(main_module.asyncio, "sleep", controlled_sleep)
+
+    poller = asyncio.create_task(main_module._image_provider_poller_loop(object()))
+    try:
+        await asyncio.wait_for(all_started.wait(), timeout=1)
+        assert set(started) == {task["task_id"] for task in tasks}
+    finally:
+        release.set()
+        poller.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await poller

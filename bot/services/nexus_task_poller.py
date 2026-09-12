@@ -12,7 +12,8 @@ from bot.database import DATABASE_PATH
 logger = logging.getLogger(__name__)
 
 NEXUS_POLL_INTERVAL_SECONDS = 3
-NEXUS_POLL_BATCH_SIZE = 12
+NEXUS_POLL_BATCH_SIZE = 36
+NEXUS_POLL_CONCURRENCY = 8
 MANAGED_IMAGE_PROVIDERS = frozenset({"nexus", "rendergrid"})
 
 

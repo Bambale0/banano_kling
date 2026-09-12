@@ -1694,23 +1694,33 @@ async def _poll_single_image_provider_task(bot_instance: Bot, task_row: dict[str
 async def _image_provider_poller_loop(bot_instance: Bot) -> None:
     from bot.services.nexus_task_poller import (
         NEXUS_POLL_BATCH_SIZE,
+        NEXUS_POLL_CONCURRENCY,
         NEXUS_POLL_INTERVAL_SECONDS,
         get_pending_provider_image_tasks,
     )
 
     await asyncio.sleep(5)
     logger.info(
-        "Image provider poller started: interval=%ss batch_size=%s",
+        "Image provider poller started: interval=%ss batch_size=%s concurrency=%s",
         NEXUS_POLL_INTERVAL_SECONDS,
         NEXUS_POLL_BATCH_SIZE,
+        NEXUS_POLL_CONCURRENCY,
     )
     while True:
         try:
             pending_tasks = await get_pending_provider_image_tasks(
                 limit=NEXUS_POLL_BATCH_SIZE,
             )
-            for task_row in pending_tasks:
-                await _poll_single_image_provider_task(bot_instance, task_row)
+            if pending_tasks:
+                semaphore = asyncio.Semaphore(NEXUS_POLL_CONCURRENCY)
+
+                async def _poll_with_limit(task_row: dict[str, Any]) -> None:
+                    async with semaphore:
+                        await _poll_single_image_provider_task(bot_instance, task_row)
+
+                await asyncio.gather(
+                    *(_poll_with_limit(task_row) for task_row in pending_tasks)
+                )
         except Exception:
             logger.exception("Image provider poller cycle error")
         await asyncio.sleep(NEXUS_POLL_INTERVAL_SECONDS)
