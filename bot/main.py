@@ -965,7 +965,14 @@ async def _send_original_file(bot_instance: Bot, telegram_id: int, result_url: s
         )
         return True
     except Exception as e:
-        logger.error(f"Failed to send original file to {telegram_id}: {e}")
+        if _is_terminal_telegram_delivery_error(e):
+            logger.warning(
+                "Original file delivery unavailable for user %s: %s",
+                telegram_id,
+                e,
+            )
+        else:
+            logger.error(f"Failed to send original file to {telegram_id}: {e}")
         return False
 
 async def _send_video_file_from_url(
@@ -1799,10 +1806,15 @@ def _is_retryable_kie_timeout_failure(task, fail_code, fail_msg) -> bool:
     }:
         return False
     normalized = str(fail_msg or "").lower()
-    retryable_markers = (
-        "timed out",
+    download_timeout_markers = (
         "timeout while downloading",
         "timeout downloading",
+    )
+    if any(marker in normalized for marker in download_timeout_markers):
+        return str(fail_code) in {"400", "500"}
+
+    retryable_markers = (
+        "timed out",
         "no results were returned",
     )
     return str(fail_code) == "500" and any(marker in normalized for marker in retryable_markers)
@@ -4404,9 +4416,17 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         f"{service_name} fallback text sent to user {telegram_id}"
                     )
             except Exception as send_e:
-                logger.error(
-                    f"Failed to send {service_name} result to {telegram_id}: {send_e}"
-                )
+                if _is_terminal_telegram_delivery_error(send_e):
+                    logger.warning(
+                        "%s result delivery terminally unavailable for user %s: %s",
+                        service_name,
+                        telegram_id,
+                        send_e,
+                    )
+                else:
+                    logger.error(
+                        f"Failed to send {service_name} result to {telegram_id}: {send_e}"
+                    )
                 try:
                     if _is_terminal_telegram_delivery_error(send_e):
                         await complete_video_task(task_id, result_url)

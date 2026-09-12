@@ -28,9 +28,17 @@ class TestGetStuckTasks:
         mock_connect = AsyncMock()
         mock_connect.__aenter__.return_value = mock_db
 
-        with patch("bot.services.task_watchdog.db_backend.connect", return_value=mock_connect):
+        with (
+            patch("bot.services.task_watchdog.db_backend.connect", return_value=mock_connect),
+            patch("bot.services.task_watchdog.db_backend.is_postgres", return_value=True),
+        ):
             tasks = await get_stuck_tasks(minutes=30)
             assert tasks == []
+
+        sql, params = mock_db.execute.await_args.args
+        assert "EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - created_at)) / 60.0" in sql
+        assert ">= ?" in sql
+        assert params == (30,)
 
     @pytest.mark.asyncio
     async def test_returns_stuck_tasks(self):
@@ -44,11 +52,19 @@ class TestGetStuckTasks:
         mock_connect = AsyncMock()
         mock_connect.__aenter__.return_value = mock_db
 
-        with patch("bot.services.task_watchdog.db_backend.connect", return_value=mock_connect):
+        with (
+            patch("bot.services.task_watchdog.db_backend.connect", return_value=mock_connect),
+            patch("bot.services.task_watchdog.db_backend.is_postgres", return_value=False),
+        ):
             tasks = await get_stuck_tasks(minutes=30)
             assert len(tasks) == 2
             assert tasks[0]["id"] == 1
             assert tasks[1]["id"] == 2
+
+        sql, params = mock_db.execute.await_args.args
+        assert "(julianday(CURRENT_TIMESTAMP) - julianday(created_at)) * 1440.0" in sql
+        assert ">= ?" in sql
+        assert params == (30,)
 
 
 class TestForceFailTask:
@@ -136,7 +152,8 @@ class TestRunWatchdogCycle:
         stuck = [{
             "id": 1, "user_id": 42, "task_id": "ext_1", "model": "kling",
             "cost": 5, "request_data": "{}",
-            "created_at": datetime.utcnow() - timedelta(minutes=45),  # >30 stuck but <120 max
+            "watchdog_age_minutes": 45,
+            "created_at": datetime.utcnow() - timedelta(minutes=45),
         }]
         with (
             patch("bot.services.task_watchdog.get_stuck_tasks", AsyncMock(return_value=stuck)),
@@ -153,6 +170,7 @@ class TestRunWatchdogCycle:
         stuck = [{
             "id": 1, "user_id": 42, "task_id": "ext_1", "model": "kling",
             "cost": 5, "request_data": "{}",
+            "watchdog_age_minutes": 130,
             "created_at": datetime.utcnow() - timedelta(minutes=130),
         }]
         with (
@@ -173,6 +191,7 @@ class TestRunWatchdogCycle:
             "model": "banana_pro",
             "cost": 5,
             "request_data": "{}",
+            "watchdog_age_minutes": 45,
             "created_at": datetime.utcnow() - timedelta(minutes=45),
         }]
         with (
@@ -194,6 +213,7 @@ class TestRunWatchdogCycle:
             "model": "flux_pro",
             "cost": 2,
             "request_data": "{}",
+            "watchdog_age_minutes": 5,
             "created_at": datetime.utcnow() - timedelta(minutes=5),
         }]
         recover = AsyncMock(return_value=True)
@@ -228,7 +248,7 @@ class TestCheckTaskWithProvider:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "model",
-        ["flux_pro", "grok_imagine", "motion_control_v26", "v3_std"],
+        ["flux_pro", "grok_imagine", "motion_control_v26", "v3_std", "seedance_2"],
     )
     async def test_uses_kie_record_info_for_kie_backed_models(self, model):
         mock_status = AsyncMock(return_value={"state": "success"})

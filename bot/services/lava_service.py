@@ -283,8 +283,28 @@ class LavaService:
             product_id=offer_id,
             currency=normalized_currency,
         )
-        if not resolved_offer_id or resolved_offer_id == offer_id:
+        if not resolved_offer_id:
             return response
+
+        if resolved_offer_id == offer_id:
+            logger.info(
+                "Lava catalog still contains offer_id=%s after transient invoice 404; retrying once",
+                offer_id,
+            )
+            await asyncio.sleep(0.5)
+            return await self.create_invoice(
+                email=customer_email,
+                offer_id=offer_id,
+                currency=normalized_currency,
+                amount=resolved_amount,
+                payment_provider=payment_provider,
+                payment_method=payment_method,
+                buyer_language=buyer_language,
+                periodicity=periodicity,
+                client_utm=client_utm,
+                _allow_product_fallback=False,
+                _allow_amount_fallback=False,
+            )
 
         logger.info(
             "Resolved Lava productId=%s to offerId=%s for currency=%s",
@@ -360,12 +380,11 @@ class LavaService:
                 data = item
             if not isinstance(data, dict):
                 continue
-            if str(data.get("id") or "").strip() != product_id:
-                continue
 
+            product_matches = str(data.get("id") or "").strip() == product_id
             offers = data.get("offers") or []
             if not isinstance(offers, list):
-                return None
+                continue
 
             for offer in offers:
                 if not isinstance(offer, dict):
@@ -373,6 +392,9 @@ class LavaService:
                 offer_id = str(offer.get("id") or "").strip()
                 if not offer_id:
                     continue
+                if not product_matches and offer_id != product_id:
+                    continue
+
                 if fallback_offer_id is None:
                     fallback_offer_id = offer_id
 
@@ -385,9 +407,10 @@ class LavaService:
                     if str(price.get("currency") or "").strip().upper() == currency:
                         return offer_id
 
-            return fallback_offer_id
+            if product_matches and fallback_offer_id:
+                return fallback_offer_id
 
-        return None
+        return fallback_offer_id
 
     async def get_invoice(self, invoice_id: str) -> dict[str, Any] | None:
         response = await self._request("GET", f"/api/v2/invoices/{invoice_id}")

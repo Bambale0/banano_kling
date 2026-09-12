@@ -10,7 +10,6 @@
 import asyncio
 import json
 import logging
-from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 from bot import db as db_backend
@@ -25,38 +24,35 @@ MAX_STUCK_MINUTES = 120  # принудительно failed через 2 час
 LOCAL_ORPHAN_MAX_AGE_SECONDS = 15 * 60  # локальная задача без provider id
 
 
-def _parse_created_at(value: Any) -> Optional[datetime]:
-    if isinstance(value, datetime):
-        return value
-    if isinstance(value, str) and value.strip():
-        normalized = value.strip().replace("Z", "+00:00")
-        try:
-            return datetime.fromisoformat(normalized)
-        except ValueError:
-            try:
-                return datetime.strptime(normalized.split(".", 1)[0], "%Y-%m-%d %H:%M:%S")
-            except ValueError:
-                logger.warning("Watchdog: cannot parse created_at=%r", value)
-    return None
-
 
 async def get_stuck_tasks(minutes: int = STUCK_THRESHOLD_MINUTES) -> list[Dict[str, Any]]:
-    """Возвращает provider-задачи, созданные больше N минут назад."""
-    since = datetime.utcnow() - timedelta(minutes=minutes)
+    """Возвращает provider-задачи, созданные больше N минут назад.
+
+    Cutoff считается часами самой БД. PostgreSQL хранит created_at как
+    timestamp without time zone в timezone сессии, поэтому Python
+    datetime.utcnow() может сдвигать окно и полностью отключать recovery.
+    """
+    safe_minutes = max(0, int(minutes))
+    if db_backend.is_postgres():
+        age_expr = "EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - created_at)) / 60.0"
+    else:
+        age_expr = "(julianday(CURRENT_TIMESTAMP) - julianday(created_at)) * 1440.0"
+
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
         cursor = await db.execute(
-            """
+            f"""
             SELECT id, user_id, task_id, model,
-                   prompt, cost, request_data, created_at
+                   prompt, cost, request_data, created_at,
+                   {age_expr} AS watchdog_age_minutes
             FROM generation_tasks
             WHERE status IN ('pending', 'processing')
               AND task_id NOT LIKE 'img_%'
-              AND created_at <= ?
+              AND {age_expr} >= ?
             ORDER BY created_at ASC
             LIMIT 50
             """,
-            (since.isoformat(),),
+            (safe_minutes,),
         )
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
@@ -91,8 +87,8 @@ async def check_task_with_provider(
             # Veo возвращает результат асинхронно — polling вряд ли поможет
             return None
         elif "seedance" in normalized_service:
-            from bot.services.seedance_service import seedance_service
-            result = await seedance_service.get_task(external_task_id)
+            from bot.services.kie_market_service import kie_market_service
+            result = await kie_market_service.get_task_status(external_task_id)
             if result:
                 status = result.get("state") or result.get("status")
                 if status and str(status).lower() in ("success", "completed", "done"):
@@ -214,15 +210,16 @@ async def run_watchdog_cycle(on_completed=None) -> int:
     if not stuck:
         return recovered
 
-    max_stuck_cutoff = datetime.utcnow() - timedelta(minutes=MAX_STUCK_MINUTES)
-
     for task in stuck:
         tid = task["id"]
         uid = task["user_id"]
         model = task.get("model") or ""
         raw_request = task.get("request_data") or "{}"
         cost = float(task.get("cost") or 0)
-        created_at = _parse_created_at(task.get("created_at"))
+        try:
+            task_age_minutes = float(task.get("watchdog_age_minutes") or 0)
+        except (TypeError, ValueError):
+            task_age_minutes = 0.0
         request_data: dict = {}
         if isinstance(raw_request, str):
             try:
@@ -267,8 +264,9 @@ async def run_watchdog_cycle(on_completed=None) -> int:
                 recovered += 1
             continue
 
-        # Задачи старше MAX_STUCK_MINUTES — принудительно в failed
-        if created_at and created_at <= max_stuck_cutoff:
+        # Задачи старше MAX_STUCK_MINUTES — принудительно в failed.
+        # Возраст вычислен часами самой БД в get_stuck_tasks(), без timezone drift.
+        if task_age_minutes >= MAX_STUCK_MINUTES:
             if await force_fail_task(tid, uid, cost):
                 logger.warning(
                     "Watchdog: force-failed task %s (user=%s, model=%s, cost=%s) "

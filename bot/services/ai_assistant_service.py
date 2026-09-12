@@ -9,13 +9,12 @@ from typing import Any, Optional
 import aiohttp
 
 from bot.config import config
+from bot.services.openrouter_qwen38_service import openrouter_qwen38_service
 
 logger = logging.getLogger(__name__)
 
 PRICE_FILE = os.path.join("data", "price.json")
 AI_INSTRUCTIONS_FILE = os.path.join("bot", "utils", "ai_assistant_instructions.json")
-AI_ASSISTANT_TIMEOUT_SECONDS = int(os.getenv("AI_ASSISTANT_TIMEOUT_SECONDS", "20"))
-
 # Fallback-цены на случай, если data/price.json недоступен.
 FALLBACK_IMAGE_COSTS = {
     "banana_pro": 2.5,
@@ -100,27 +99,16 @@ def _load_json(path: str) -> dict:
 class AIAssistantService:
     """Сервис AI-ассистента для помощи с моделями, промптами и настройками."""
 
-    ENDPOINT = "/gpt-5-2/v1/chat/completions"
     AUDIO_ENDPOINT = "/codex/v1/responses"
-
-    def __init__(self):
-        self._session = None
-
-    async def _get_session(self) -> aiohttp.ClientSession:
-        """Получение HTTP-сессии."""
-        if self._session is None or self._session.closed:
-            timeout = aiohttp.ClientTimeout(total=max(5, AI_ASSISTANT_TIMEOUT_SECONDS))
-            self._session = aiohttp.ClientSession(timeout=timeout)
-        return self._session
 
     async def get_assistant_response(
         self,
         user_message: str,
         context: dict = None,
     ) -> Optional[str]:
-        """Получить ответ от AI-ассистента."""
-        if not config.KIE_AI_API_KEY:
-            logger.error("Kie.ai API key not configured for AI Assistant")
+        """Получить текстовый ответ AI-ассистента через OpenRouter Qwen 3.8."""
+        if not openrouter_qwen38_service.enabled:
+            logger.error("OpenRouter Qwen 3.8 is not configured for AI Assistant")
             return None
 
         user_message = str(user_message or "").strip()
@@ -143,65 +131,22 @@ class AIAssistantService:
 Вопрос пользователя: {user_message}"""
 
         try:
-            session = await self._get_session()
-            headers = {
-                "Authorization": f"Bearer {config.KIE_AI_API_KEY}",
-                "Content-Type": "application/json",
-            }
-            payload = {
-                "messages": [
-                    {
-                        "role": "developer",
-                        "content": [{"type": "text", "text": system_prompt}],
-                    },
-                    {
-                        "role": "user",
-                        "content": [{"type": "text", "text": full_message}],
-                    },
-                ],
-                "tools": [{"type": "function", "function": {"name": "web_search"}}],
-                "stream": False,
-                "reasoning_effort": "high",
-            }
-
-            async with session.post(
-                f"{config.KIE_BASE_URL}{self.ENDPOINT}",
-                headers=headers,
-                json=payload,
-            ) as response:
-                response_text = await response.text()
-                logger.info(
-                    "Kie.ai GPT 5.2 response status: %s, content-type: %s",
-                    response.status,
-                    response.headers.get("content-type", "none"),
-                )
-                logger.info("Response preview: %s...", response_text[:500])
-
-                if response.status != 200:
-                    logger.error(
-                        "Kie.ai GPT 5.2 error %s: %s",
-                        response.status,
-                        response_text[:1000],
-                    )
-                    return None
-
-                try:
-                    data = json.loads(response_text)
-                except json.JSONDecodeError as json_err:
-                    logger.error(
-                        "JSON decode error: %s. Raw response: %s",
-                        json_err,
-                        response_text[:1000],
-                    )
-                    return None
-
-                choices = data.get("choices") or []
-                if choices:
-                    return choices[0].get("message", {}).get("content")
-                return None
-
-        except Exception as e:
-            logger.exception(f"Kie.ai GPT 5.2 call failed: {e}")
+            response_text = await openrouter_qwen38_service.analyze_text(
+                user_instruction=full_message,
+                system_prompt=system_prompt,
+                json_response=False,
+                reasoning_effort="medium",
+            )
+            logger.info(
+                "AI Assistant text response received via %s",
+                openrouter_qwen38_service.model,
+            )
+            return str(response_text or "").strip() or None
+        except Exception as exc:
+            logger.exception(
+                "OpenRouter Qwen 3.8 AI Assistant call failed: %s",
+                exc,
+            )
             return None
 
     async def get_assistant_response_with_audio(
@@ -506,11 +451,5 @@ class AIAssistantService:
 - Std: {motion_std_5}🍌 / {motion_std_10}🍌 за 5/10 сек
 
 ✏️ Редактирование фото: от {banana_pro_cost}🍌"""
-
-    async def close(self):
-        """Закрытие HTTP-сессии."""
-        if self._session and not self._session.closed:
-            await self._session.close()
-
 
 ai_assistant_service = AIAssistantService()
