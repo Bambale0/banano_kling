@@ -606,6 +606,21 @@ function fileToBase64(file: File): Promise<string> {
   })
 }
 
+const IOS_JSON_UPLOAD_MAX_BYTES = 16 * 1024 * 1024
+
+function shouldPreferJsonUpload(
+  fileKind: 'image_reference' | 'video_reference' | 'audio_reference' | 'assistant_audio' | 'trend_video_preview',
+  file: File,
+): boolean {
+  if (fileKind !== 'image_reference' || file.size > IOS_JSON_UPLOAD_MAX_BYTES) {
+    return false
+  }
+  if (typeof navigator === 'undefined') {
+    return false
+  }
+  return /iPhone|iPad|iPod/i.test(navigator.userAgent)
+}
+
 async function uploadFileAsJson(
   fileKind: 'image_reference' | 'video_reference' | 'audio_reference' | 'assistant_audio' | 'trend_video_preview',
   file: File,
@@ -656,6 +671,28 @@ export async function uploadFile(
     file_size: normalizedFile.size,
   }
   sendMiniAppClientLog('upload-start', uploadLogPayload)
+
+  if (shouldPreferJsonUpload(fileKind, normalizedFile)) {
+    sendMiniAppClientLog('upload-json-preferred-start', uploadLogPayload)
+    const data = await uploadFileAsJson(
+      fileKind,
+      normalizedFile,
+      initData,
+      uploadLogPayload,
+      startedAt,
+    )
+    return {
+      id: 'file_' + Date.now() + '_' + Math.random().toString(36).slice(2),
+      name: data.filename,
+      url: data.url,
+      type: data.kind,
+      size: normalizedFile.size,
+      saved_reference_id: data.reference?.id || null,
+      created_at: data.reference?.created_at || null,
+      source: data.reference?.source,
+    }
+  }
+
   const formData = new FormData()
   formData.append('init_data', initData)
   formData.append('file_kind', fileKind)
@@ -665,7 +702,7 @@ export async function uploadFile(
     let data: Awaited<ReturnType<typeof uploadFileWithXhr>>
     try {
       data = await uploadFileWithXhr(formData, uploadLogPayload, startedAt)
-    } catch (error) {
+    } catch (_error) {
       data = await uploadFileAsJson(fileKind, normalizedFile, initData, uploadLogPayload, startedAt)
     }
     return {
