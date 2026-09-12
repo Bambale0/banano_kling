@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 import aiohttp
 
 from bot.config import config
+from bot.services.openrouter_qwen38_service import openrouter_qwen38_service
 from bot.services.photo_analysis_media import image_source_to_analysis_input
 
 logger = logging.getLogger(__name__)
@@ -253,6 +254,25 @@ class PhotoPromptService:
         self.model = model or PRIMARY_MODEL
         self.fallback_model = fallback_model or FALLBACK_MODEL
         self.base_url = config.KIE_BASE_URL
+
+    async def _analyze_with_qwen38(
+        self,
+        *,
+        image_url: str,
+        user_instruction: str,
+    ) -> Dict[str, Any]:
+        if not openrouter_qwen38_service.enabled:
+            raise RuntimeError("OPENROUTER_API_KEY is not configured")
+
+        raw_output = await openrouter_qwen38_service.analyze_image(
+            image_url=image_url,
+            system_prompt=SYSTEM_PROMPT,
+            user_instruction=user_instruction,
+        )
+        parsed = _parse_json_object(raw_output)
+        # Empty provider preserves the existing Telegram contract where
+        # non-empty provider means a fallback notice.
+        return _build_result(parsed, provider="")
 
     async def _analyze_with_gpt(
         self,
@@ -536,9 +556,6 @@ class PhotoPromptService:
         audio_bytes: bytes | None = None,
         audio_format: str = "",
     ) -> Dict[str, Any]:
-        if not self.api_key:
-            raise RuntimeError("KIE_AI_API_KEY is not configured")
-
         image_url = (image_url or "").strip()
         if image_url:
             image_url = image_source_to_analysis_input(image_url)
@@ -601,6 +618,15 @@ class PhotoPromptService:
             f"{extra_instruction + chr(10) + chr(10) if extra_instruction else ''}"
             f"Return valid JSON only according to the required schema."
         )
+
+        if has_image and not has_audio:
+            return await self._analyze_with_qwen38(
+                image_url=image_url,
+                user_instruction=user_instruction,
+            )
+
+        if not self.api_key:
+            raise RuntimeError("KIE_AI_API_KEY is not configured for voice input")
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",

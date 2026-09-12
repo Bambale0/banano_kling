@@ -1125,27 +1125,34 @@ def test_photo_prompt_gpt_user_content_allows_audio_without_image():
 
 
 @pytest.mark.asyncio
-async def test_photo_prompt_service_falls_back_to_claude(caplog):
-    service = PhotoPromptService(api_key="test")
-    service._analyze_with_gpt55 = AsyncMock(
-        side_effect=RuntimeError("GPT-5.5 upstream error: 500")
-    )
-    service._analyze_with_claude = AsyncMock(
-        return_value={
-            "prompt_en": "fallback prompt",
-            "prompt_ru": "резервный промпт",
+async def test_photo_prompt_service_uses_qwen38_for_image_only(monkeypatch):
+    service = PhotoPromptService(api_key="legacy-test-key")
+    qwen = AsyncMock()
+    qwen.enabled = True
+    qwen.model = "qwen/qwen3.8-max-0902"
+    qwen.analyze_image.return_value = json.dumps(
+        {
+            "prompt_en": "Qwen image prompt",
+            "prompt_ru": "Промпт Qwen по изображению",
             "negative_prompt": "blur",
             "model_hint": "Nano Banana Pro",
-            "provider": "claude-haiku-4-5",
+            "key_details": ["soft light"],
         }
     )
+    monkeypatch.setattr(
+        "bot.services.photo_prompt_service.openrouter_qwen38_service",
+        qwen,
+    )
+    service._analyze_with_gpt55 = AsyncMock()
+    service._analyze_with_claude = AsyncMock()
 
-    with caplog.at_level(logging.WARNING, logger="bot.services.photo_prompt_service"):
-        result = await service.analyze_photo(image_url="https://example.com/image.jpg")
+    result = await service.analyze_photo(image_url="https://example.com/image.jpg")
 
-    assert result["prompt_en"] == "fallback prompt"
-    assert "GPT-5.5 failed" not in caplog.text
-    service._analyze_with_claude.assert_awaited_once()
+    assert result["prompt_en"] == "Qwen image prompt"
+    assert result["provider"] == ""
+    qwen.analyze_image.assert_awaited_once()
+    service._analyze_with_gpt55.assert_not_awaited()
+    service._analyze_with_claude.assert_not_awaited()
 
 
 @pytest.mark.asyncio

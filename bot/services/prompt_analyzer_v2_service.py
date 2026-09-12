@@ -16,6 +16,7 @@ from typing import Any, Dict, Optional
 import aiohttp
 
 from bot.config import config
+from bot.services.openrouter_qwen38_service import openrouter_qwen38_service
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +186,32 @@ class PromptAnalyzerV2Service:
         self.api_key = api_key or config.KIE_AI_API_KEY
         self.model = model or GPT55_MODEL
         self.base_url = config.KIE_BASE_URL
+
+    async def _analyze_with_qwen38(
+        self,
+        *,
+        image_url: str,
+        user_instruction: str,
+    ) -> Dict[str, Any]:
+        if not openrouter_qwen38_service.enabled:
+            raise RuntimeError("OPENROUTER_API_KEY is not configured")
+
+        if image_url:
+            raw_output = await openrouter_qwen38_service.analyze_image(
+                image_url=image_url,
+                system_prompt=SYSTEM_PROMPT,
+                user_instruction=user_instruction,
+            )
+        else:
+            raw_output = await openrouter_qwen38_service.analyze_text(
+                system_prompt=SYSTEM_PROMPT,
+                user_instruction=user_instruction,
+            )
+
+        return _build_result(
+            _parse_json_object(raw_output),
+            provider=openrouter_qwen38_service.model,
+        )
 
     async def _analyze_with_gpt55(
         self,
@@ -408,9 +435,6 @@ class PromptAnalyzerV2Service:
         audio_bytes: bytes | None = None,
         audio_format: str = "",
     ) -> Dict[str, Any]:
-        if not self.api_key:
-            raise RuntimeError("KIE_AI_API_KEY is not configured")
-
         text = (text or "").strip()
         image_url = (image_url or "").strip()
         has_audio = bool(audio_bytes)
@@ -439,12 +463,19 @@ class PromptAnalyzerV2Service:
             + "\n\n".join(input_notes)
             + "\n\nReturn only prompt_ru and prompt_en according to the JSON schema."
         )
+        if not has_audio:
+            return await self._analyze_with_qwen38(
+                image_url=image_url,
+                user_instruction=user_instruction,
+            )
+
+        if not self.api_key:
+            raise RuntimeError("KIE_AI_API_KEY is not configured for voice input")
+
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-
-        gpt_error: Optional[Exception] = None
         try:
             return await self._analyze_with_gpt55(
                 image_url=image_url,
@@ -454,47 +485,7 @@ class PromptAnalyzerV2Service:
                 audio_format=audio_format,
             )
         except Exception as exc:
-            gpt_error = exc
-            if has_audio:
-                raise RuntimeError(f"Не удалось разобрать голосовой запрос: {exc}") from exc
-
-        gemini_error: Exception | None = None
-        try:
-            result = await self._analyze_with_gemini_fallback(
-                image_url=image_url,
-                user_instruction=user_instruction,
-                headers=headers,
-            )
-            logger.warning(
-                "GPT-5.5 prompt analyzer failed (%s); Gemini fallback succeeded",
-                gpt_error,
-            )
-            return result
-        except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, ValueError, TypeError) as exc:
-            gemini_error = exc
-
-        try:
-            result = await self._analyze_with_claude(
-                image_url=image_url,
-                user_instruction=user_instruction,
-                headers=headers,
-            )
-            logger.warning(
-                "GPT-5.5 and Gemini prompt analyzers failed (%s; %s); Claude Haiku fallback succeeded",
-                gpt_error,
-                gemini_error,
-            )
-            return result
-        except Exception as fallback_exc:
-            logger.error(
-                "Prompt analyzer fallbacks failed after GPT-5.5 failure (%s); Gemini error (%s); Claude error: %s",
-                gpt_error,
-                gemini_error,
-                fallback_exc,
-            )
-            raise RuntimeError(
-                f"Не удалось составить промпт через fallback: {fallback_exc}"
-            ) from fallback_exc
+            raise RuntimeError(f"Не удалось разобрать голосовой запрос: {exc}") from exc
 
 
 prompt_analyzer_v2_service = PromptAnalyzerV2Service()

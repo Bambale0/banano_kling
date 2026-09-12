@@ -49,10 +49,21 @@ def _provider_error_message(raw_text: str) -> str:
     error = data.get("error")
     if isinstance(error, dict):
         message = error.get("message") or error.get("code")
+        metadata = error.get("metadata")
+        details: list[str] = []
         if message:
-            return str(message)[:300]
+            details.append(str(message))
+        if isinstance(metadata, dict):
+            provider = metadata.get("provider_name") or metadata.get("provider")
+            raw = metadata.get("raw")
+            if provider:
+                details.append(f"provider={provider}")
+            if raw:
+                details.append(str(raw))
+        if details:
+            return ": ".join(details)[:1000]
     message = data.get("message") or data.get("msg")
-    return str(message or "provider error")[:300]
+    return str(message or "provider error")[:1000]
 
 
 class OpenRouterQwen38Service:
@@ -185,6 +196,24 @@ class OpenRouterQwen38Service:
                     raise RuntimeError("OpenRouter Qwen 3.8 недоступен по сети") from exc
 
         raise RuntimeError(f"OpenRouter Qwen 3.8 не вернул результат: {last_error}")
+
+    async def analyze_text(
+        self,
+        *,
+        user_instruction: str,
+        system_prompt: str | None = None,
+        json_response: bool = True,
+        reasoning_effort: str | None = None,
+    ) -> str:
+        user_instruction = str(user_instruction or "").strip()
+        if not user_instruction:
+            raise ValueError("user_instruction is required")
+        return await self._complete(
+            user_content=[{"type": "text", "text": user_instruction}],
+            system_prompt=system_prompt,
+            json_response=json_response,
+            reasoning_effort=reasoning_effort,
+        )
 
     async def analyze_image(
         self,

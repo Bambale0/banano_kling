@@ -110,33 +110,44 @@ async def test_analyzer_rejects_empty_input():
 
 
 @pytest.mark.asyncio
-async def test_photo_prompt_v2_uses_gpt55_as_primary_model():
-    service = PromptAnalyzerV2Service(api_key="test-key")
-
-    assert service.model == "gpt-5-5"
-
-
-@pytest.mark.asyncio
-async def test_photo_prompt_v2_falls_back_to_gemini_when_gpt55_is_unavailable():
-    service = PromptAnalyzerV2Service(api_key="test-key")
-    service._analyze_with_gpt55 = AsyncMock(
-        side_effect=RuntimeError("GPT-5.5 недоступен. Код: 500")
+async def test_photo_prompt_v2_uses_qwen38_for_image_analysis(monkeypatch):
+    service = PromptAnalyzerV2Service(api_key="legacy-test-key")
+    qwen = AsyncMock()
+    qwen.enabled = True
+    qwen.model = "qwen/qwen3.8-max-0902"
+    qwen.analyze_image.return_value = (
+        '{"prompt_ru":"Русский Qwen промпт","prompt_en":"English Qwen prompt"}'
     )
-    service._analyze_with_gemini_fallback = AsyncMock(
-        return_value={
-            "prompt_ru": "Русский fallback промпт",
-            "prompt_en": "English fallback prompt",
-            "provider": "gemini-2.5-flash-fallback",
-            "raw": {},
-        }
+    monkeypatch.setattr(
+        "bot.services.prompt_analyzer_v2_service.openrouter_qwen38_service",
+        qwen,
     )
-    service._analyze_with_claude = AsyncMock()
+    service._analyze_with_gpt55 = AsyncMock()
 
     result = await service.analyze_prompt(
         image_url="https://example.test/reference.jpg"
     )
 
-    assert result["provider"] == "gemini-2.5-flash-fallback"
-    service._analyze_with_gpt55.assert_awaited_once()
-    service._analyze_with_gemini_fallback.assert_awaited_once()
-    service._analyze_with_claude.assert_not_awaited()
+    assert result["provider"] == "qwen/qwen3.8-max-0902"
+    qwen.analyze_image.assert_awaited_once()
+    service._analyze_with_gpt55.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_photo_prompt_v2_uses_qwen38_for_text_analysis(monkeypatch):
+    service = PromptAnalyzerV2Service(api_key="legacy-test-key")
+    qwen = AsyncMock()
+    qwen.enabled = True
+    qwen.model = "qwen/qwen3.8-max-0902"
+    qwen.analyze_text.return_value = (
+        '{"prompt_ru":"Русский текстовый промпт","prompt_en":"English text prompt"}'
+    )
+    monkeypatch.setattr(
+        "bot.services.prompt_analyzer_v2_service.openrouter_qwen38_service",
+        qwen,
+    )
+
+    result = await service.analyze_prompt(text="Неоновый город ночью")
+
+    assert result["provider"] == "qwen/qwen3.8-max-0902"
+    qwen.analyze_text.assert_awaited_once()
