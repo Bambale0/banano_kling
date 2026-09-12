@@ -1520,10 +1520,17 @@ async def _send_polled_nexus_image_result(
         )
     except Exception as exc:
         fallback_error = exc
-        logger.exception(
-            "Nexus poller: all Telegram delivery attempts failed for task %s",
-            task_lookup_id,
-        )
+        if _is_terminal_telegram_delivery_error(exc):
+            logger.warning(
+                "Nexus poller: Telegram delivery terminally unavailable for task %s: %s",
+                task_lookup_id,
+                exc,
+            )
+        else:
+            logger.exception(
+                "Nexus poller: all Telegram delivery attempts failed for task %s",
+                task_lookup_id,
+            )
     if fallback_sent:
         await complete_video_task(task_lookup_id, persisted_url)
         await mark_task_delivery_status(task_lookup_id, "delivered")
@@ -4397,9 +4404,18 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         try:
                             await _send_used_prompt_message(bot_instance, telegram_id, task, result_url)
                         except Exception as prompt_e:
-                            logger.error(
-                                f"Failed to send prompt follow-up to {telegram_id}: {prompt_e}"
-                            )
+                            if _is_terminal_telegram_delivery_error(prompt_e):
+                                logger.warning(
+                                    "Prompt follow-up delivery unavailable for user %s: %s",
+                                    telegram_id,
+                                    prompt_e,
+                                )
+                            else:
+                                logger.error(
+                                    "Failed to send prompt follow-up to %s: %s",
+                                    telegram_id,
+                                    prompt_e,
+                                )
                 else:
                     await _send_plain_result_link(
                         bot_instance,

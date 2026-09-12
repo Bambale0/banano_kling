@@ -112,6 +112,7 @@ class RenderGridNanoBananaProvider:
         )
         self.poll_interval_seconds = max(MIN_POLL_INTERVAL_SECONDS, requested_poll)
         self.max_references = max(1, int(max_references))
+        self._last_status_poll_at: dict[str, float] = {}
         self.client = _NanoBananaRenderGridClient(
             api_key=self.api_key,
             base_url=self.base_url,
@@ -431,12 +432,30 @@ class RenderGridNanoBananaProvider:
         """Return the current RenderGrid creation for the persistent poller."""
         if not self.configured:
             return None
+
+        creation_id = str(creation_id or "").strip()
+        now = asyncio.get_running_loop().time()
+        last_poll = self._last_status_poll_at.get(creation_id)
+        if (
+            last_poll is not None
+            and now - last_poll < self.poll_interval_seconds
+        ):
+            return {
+                "id": creation_id,
+                "status": "pending",
+                "provider": "rendergrid",
+                "poll_throttled": True,
+            }
+        self._last_status_poll_at[creation_id] = now
+
         try:
             creation = await self.client.get_creation(creation_id)
             normalized = dict(creation)
             status = self._status(creation)
             if status:
                 normalized["status"] = status
+            if status in {"completed", "failed"}:
+                self._last_status_poll_at.pop(creation_id, None)
             if status == "failed" and not normalized.get("error"):
                 normalized["error"] = self._failure_text(creation)
             return normalized

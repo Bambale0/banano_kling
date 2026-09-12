@@ -1,6 +1,6 @@
-from types import SimpleNamespace
 import importlib
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest

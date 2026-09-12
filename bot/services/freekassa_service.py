@@ -418,7 +418,9 @@ class FreeKassaService:
         query = (
             "SELECT order_id, payment_id FROM transactions "
             f"WHERE provider IN ({placeholders}) AND status = 'pending' "
-            "ORDER BY created_at ASC LIMIT ?"
+            # Reconcile current checkouts first. Historic abandoned/not-found
+            # rows must not permanently consume the whole provider batch.
+            "ORDER BY created_at DESC LIMIT ?"
         )
         async with db_backend.connect() as connection:
             connection.row_factory = db_backend.Row

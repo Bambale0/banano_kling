@@ -295,3 +295,28 @@ def test_rendergrid_status_normalizes_nested_creation_payload_for_poller():
     assert result is not None
     assert result["status"] == "completed"
     assert result["data"]["result_urls"] == ["https://cdn.example/nested-result.png"]
+
+
+def test_rendergrid_status_poll_respects_provider_minimum_interval():
+    provider = _provider("nano-banana-pro")
+    provider.client.get_creation = AsyncMock(
+        return_value={
+            "id": "creation-throttled",
+            "status": "processing",
+        }
+    )
+
+    async def run():
+        first = await provider.get_task_status("creation-throttled")
+        second = await provider.get_task_status("creation-throttled")
+        await provider.close()
+        return first, second
+
+    first, second = asyncio.run(run())
+
+    assert first is not None
+    assert first["status"] == "processing"
+    assert second is not None
+    assert second["status"] == "pending"
+    assert second["poll_throttled"] is True
+    provider.client.get_creation.assert_awaited_once_with("creation-throttled")

@@ -142,11 +142,8 @@ class AIAssistantService:
                 openrouter_qwen38_service.model,
             )
             return str(response_text or "").strip() or None
-        except Exception as exc:
-            logger.exception(
-                "OpenRouter Qwen 3.8 AI Assistant call failed: %s",
-                exc,
-            )
+        except Exception:
+            logger.exception("OpenRouter Qwen 3.8 AI Assistant call failed")
             return None
 
     async def get_assistant_response_with_audio(

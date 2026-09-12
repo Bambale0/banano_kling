@@ -252,3 +252,41 @@ def test_freekassa_route_setup_is_idempotent():
 
     assert len(list(app.router.routes())) == route_count
     assert len(app.cleanup_ctx) == cleanup_count == 1
+
+
+def test_reconcile_prioritizes_newest_pending_transactions(monkeypatch):
+    service = _configured_service(monkeypatch)
+    captured: dict[str, object] = {}
+
+    class FakeCursor:
+        async def fetchall(self):
+            return []
+
+    class FakeConnection:
+        row_factory = None
+
+        async def execute(self, query, params):
+            captured["query"] = query
+            captured["params"] = params
+            return FakeCursor()
+
+    class FakeContext:
+        async def __aenter__(self):
+            return FakeConnection()
+
+        async def __aexit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(
+        freekassa_module.db_backend,
+        "connect",
+        lambda: FakeContext(),
+    )
+
+    result = asyncio.run(
+        service.poll_pending_transactions(limit=25, providers=("freekassa",))
+    )
+
+    assert result == []
+    assert "ORDER BY created_at DESC LIMIT ?" in str(captured["query"])
+    assert captured["params"] == ("freekassa", 25)

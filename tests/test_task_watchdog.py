@@ -148,12 +148,12 @@ class TestRunWatchdogCycle:
     async def test_skips_young_stuck_tasks(self):
         """Tasks still within MAX_STUCK_MINUTES should not be force-failed
         (they get checked by provider which may return None)."""
-        from datetime import datetime, timedelta
+        from datetime import UTC, datetime, timedelta
         stuck = [{
             "id": 1, "user_id": 42, "task_id": "ext_1", "model": "kling",
             "cost": 5, "request_data": "{}",
             "watchdog_age_minutes": 45,
-            "created_at": datetime.utcnow() - timedelta(minutes=45),
+            "created_at": datetime.now(UTC) - timedelta(minutes=45),
         }]
         with (
             patch("bot.services.task_watchdog.get_stuck_tasks", AsyncMock(return_value=stuck)),
@@ -166,12 +166,12 @@ class TestRunWatchdogCycle:
     @pytest.mark.asyncio
     async def test_force_fails_very_old_stuck_tasks(self):
         """Tasks older than MAX_STUCK_MINUTES should be force-failed."""
-        from datetime import datetime, timedelta
+        from datetime import UTC, datetime, timedelta
         stuck = [{
             "id": 1, "user_id": 42, "task_id": "ext_1", "model": "kling",
             "cost": 5, "request_data": "{}",
             "watchdog_age_minutes": 130,
-            "created_at": datetime.utcnow() - timedelta(minutes=130),
+            "created_at": datetime.now(UTC) - timedelta(minutes=130),
         }]
         with (
             patch("bot.services.task_watchdog.get_stuck_tasks", AsyncMock(return_value=stuck)),
@@ -182,7 +182,7 @@ class TestRunWatchdogCycle:
 
     @pytest.mark.asyncio
     async def test_force_fails_when_provider_already_reported_failed(self):
-        from datetime import datetime, timedelta
+        from datetime import UTC, datetime, timedelta
 
         stuck = [{
             "id": 1,
@@ -192,7 +192,7 @@ class TestRunWatchdogCycle:
             "cost": 5,
             "request_data": "{}",
             "watchdog_age_minutes": 45,
-            "created_at": datetime.utcnow() - timedelta(minutes=45),
+            "created_at": datetime.now(UTC) - timedelta(minutes=45),
         }]
         with (
             patch("bot.services.task_watchdog.get_stuck_tasks", AsyncMock(return_value=stuck)),
@@ -204,7 +204,7 @@ class TestRunWatchdogCycle:
 
     @pytest.mark.asyncio
     async def test_replays_completed_provider_task_via_recovery_callback(self):
-        from datetime import datetime, timedelta
+        from datetime import UTC, datetime, timedelta
 
         stuck = [{
             "id": 7,
@@ -214,7 +214,7 @@ class TestRunWatchdogCycle:
             "cost": 2,
             "request_data": "{}",
             "watchdog_age_minutes": 5,
-            "created_at": datetime.utcnow() - timedelta(minutes=5),
+            "created_at": datetime.now(UTC) - timedelta(minutes=5),
         }]
         recover = AsyncMock(return_value=True)
         with (

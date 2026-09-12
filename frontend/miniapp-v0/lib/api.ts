@@ -612,8 +612,11 @@ function shouldPreferJsonUpload(
   fileKind: 'image_reference' | 'video_reference' | 'audio_reference' | 'assistant_audio' | 'trend_video_preview',
   file: File,
 ): boolean {
-  const isImageReference = String(fileKind).endsWith('image_reference')
-  if (!isImageReference || file.size > TELEGRAM_JSON_UPLOAD_MAX_BYTES) {
+  const jsonFriendlyKind =
+    fileKind === 'image_reference' ||
+    fileKind === 'video_reference' ||
+    fileKind === 'trend_video_preview'
+  if (!jsonFriendlyKind || file.size > TELEGRAM_JSON_UPLOAD_MAX_BYTES) {
     return false
   }
   if (typeof navigator === 'undefined') {
