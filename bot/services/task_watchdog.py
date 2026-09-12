@@ -14,11 +14,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 from bot import db as db_backend
-from bot.database import (
-    DATABASE_PATH,
-    cleanup_stale_local_generation_tasks,
-    get_telegram_id_by_user_id,
-)
+from bot.database import DATABASE_PATH, cleanup_stale_local_generation_tasks
 
 logger = logging.getLogger(__name__)
 

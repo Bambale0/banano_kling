@@ -21,12 +21,12 @@ def test_postgres_pool_defaults_absorb_short_production_bursts(monkeypatch) -> N
     assert postgres_pool._pool_timeout() == 10.0
 
 
-def test_ios_image_uploads_prefer_json_transport() -> None:
+def test_telegram_mobile_image_uploads_prefer_json_transport() -> None:
     api = Path("frontend/miniapp-v0/lib/api.ts").read_text(encoding="utf-8")
 
     assert "function shouldPreferJsonUpload" in api
-    assert "iPhone|iPad|iPod" in api
-    assert "fileKind !== 'image_reference'" in api
-    assert "IOS_JSON_UPLOAD_MAX_BYTES" in api
+    assert "iPhone|iPad|iPod|Telegram-Android" in api
+    assert "String(fileKind).endsWith('image_reference')" in api
+    assert "TELEGRAM_JSON_UPLOAD_MAX_BYTES" in api
     assert "upload-json-preferred-start" in api
     assert "const data = await uploadFileAsJson(" in api

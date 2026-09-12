@@ -110,24 +110,93 @@ async def test_exact_vk_request_is_sent_to_apiyi(monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.asyncio
-async def test_main_telegram_photo_service_uses_exact_vk_route(
+async def test_main_telegram_photo_service_uses_qwen38_not_legacy_vk_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def fake_vk_analysis(image_url: str) -> tuple[str, str]:
-        assert image_url == "/static/uploads/photo.jpg"
-        return "результат ровно из VK-контракта", "gpt-5.4"
+    captured: dict[str, str] = {}
 
-    monkeypatch.setattr(vk_compat, "analyze_photo_exactly_as_vk", fake_vk_analysis)
+    class FakeQwen:
+        enabled = True
+        model = "qwen/qwen3.8-max-0902"
+
+        async def analyze_image(
+            self,
+            *,
+            image_url: str,
+            system_prompt: str,
+            user_instruction: str,
+        ) -> str:
+            captured["image_url"] = image_url
+            captured["system_prompt"] = system_prompt
+            captured["user_instruction"] = user_instruction
+            return json.dumps(
+                {
+                    "prompt_ru": "результат Qwen 3.8",
+                    "prompt_en": "Qwen 3.8 result",
+                    "negative_prompt": "blur",
+                    "model_hint": "Nano Banana Pro",
+                    "key_details": ["soft light"],
+                },
+                ensure_ascii=False,
+            )
+
+    async def legacy_vk_must_not_run(_image_url: str) -> tuple[str, str]:
+        raise AssertionError("legacy VK/APIYI photo route must not run")
+
+    monkeypatch.setattr(
+        photo_prompt_module,
+        "openrouter_qwen38_service",
+        FakeQwen(),
+    )
+    monkeypatch.setattr(
+        vk_compat,
+        "analyze_photo_exactly_as_vk",
+        legacy_vk_must_not_run,
+    )
 
     result = await photo_prompt_module.photo_prompt_service.analyze_photo(
         image_url="/static/uploads/photo.jpg",
-        preserve="это должно быть проигнорировано для точного VK режима",
-        goal="это тоже должно быть проигнорировано",
-        user_note="и подпись не меняет VK payload",
+        preserve="сохранить детали",
+        goal="сделать похожий кадр",
+        user_note="мягкий свет",
     )
 
-    assert result["prompt_ru"] == "результат ровно из VK-контракта"
-    assert result["prompt_en"] == ""
-    assert result["negative_prompt"] == ""
-    assert result["raw"]["analysis_contract"] == "vk_exact"
-    assert result["raw"]["analysis_model"] == "gpt-5.4"
+    assert result["prompt_ru"] == "результат Qwen 3.8"
+    assert result["prompt_en"] == "Qwen 3.8 result"
+    assert result["negative_prompt"] == "blur"
+    assert captured["image_url"] == "/static/uploads/photo.jpg"
+    assert "сделать похожий кадр" in captured["user_instruction"]
+    assert "сохранить детали" in captured["user_instruction"]
+    assert "мягкий свет" in captured["user_instruction"]
+
+
+@pytest.mark.asyncio
+async def test_legacy_vk_callback_is_routed_through_unified_qwen_analyzer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import importlib
+    from unittest.mock import AsyncMock
+
+    image_analyzer = importlib.import_module("bot.handlers.image_analyzer")
+    prompt_module = importlib.import_module("bot.services.prompt_analyzer_v2_service")
+    analyze_prompt = AsyncMock(
+        return_value={
+            "prompt_ru": "Qwen legacy callback result",
+            "prompt_en": "Qwen legacy callback result EN",
+        }
+    )
+    monkeypatch.setattr(
+        prompt_module.prompt_analyzer_v2_service,
+        "analyze_prompt",
+        analyze_prompt,
+    )
+
+    result = await image_analyzer._vk_analyze_photo(
+        "https://example.test/reference.jpg"
+    )
+
+    assert result == "Qwen legacy callback result"
+    analyze_prompt.assert_awaited_once()
+    kwargs = analyze_prompt.await_args.kwargs
+    assert kwargs["image_url"] == "https://example.test/reference.jpg"
+    assert "подробный промпт" in kwargs["text"]

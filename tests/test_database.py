@@ -583,6 +583,73 @@ async def test_share_to_feed_controls_prompt_and_reference_visibility(tmp_path, 
 
 
 @pytest.mark.asyncio
+async def test_profile_remix_does_not_republish_inherited_references_to_other_users(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(database, "DATABASE_PATH", str(tmp_path / "remix_refs.db"))
+
+    await database.init_db()
+    owner = await database.get_or_create_user(111111111)
+    viewer = await database.get_or_create_user(222222222)
+    reference_url = "https://example.com/source-ref.png"
+
+    await database.add_generation_task(
+        owner.id,
+        owner.telegram_id,
+        "remix-private-refs",
+        "image",
+        "banana_pro",
+        model="banana_pro",
+        aspect_ratio="1:1",
+        prompt="remix",
+        cost=2,
+        request_data={
+            "reference_images": [reference_url],
+            "source_reference_images": [reference_url],
+        },
+        source_feed_gen_id=42,
+        parent_generation_id=42,
+        action_type="remix",
+    )
+    await database.complete_video_task(
+        "remix-private-refs",
+        "https://example.com/result.png",
+    )
+
+    async with database.db_backend.connect(database.DATABASE_PATH) as db:
+        await db.execute(
+            """
+            UPDATE generation_tasks
+            SET is_profile_visible = 1,
+                feed_references_visible = 1
+            WHERE task_id = ?
+            """,
+            ("remix-private-refs",),
+        )
+        await db.commit()
+
+    owner_card = await database.get_profile_generation_card(
+        "remix-private-refs",
+        viewer_user_id=owner.id,
+    )
+    viewer_card = await database.get_profile_generation_card(
+        "remix-private-refs",
+        viewer_user_id=viewer.id,
+    )
+
+    assert owner_card is not None
+    assert owner_card["reference_images"] == [reference_url]
+    assert owner_card["references_hidden"] is False
+    assert owner_card["feed_references_visible"] is True
+
+    assert viewer_card is not None
+    assert viewer_card["reference_images"] == []
+    assert viewer_card["references_hidden"] is True
+    assert viewer_card["feed_references_visible"] is False
+
+
+@pytest.mark.asyncio
 async def test_share_to_feed_does_not_publish_image_when_storage_fails(
     tmp_path,
     monkeypatch,

@@ -6112,10 +6112,24 @@ def _generation_row_to_card(
     prompt_hidden = generation_prompt_hidden(row)
     viewer_is_owner = bool(viewer_user_id and row["user_id"] == viewer_user_id)
     references_visible = generation_references_visible(row)
+    is_remix = bool(
+        _generation_attr(row, "source_feed_gen_id")
+        or str(_generation_attr(row, "action_type", "") or "").strip().lower() == "remix"
+    )
+    # A remix may contain reference URLs inherited from somebody else's
+    # publication. They remain visible to the owner of the child generation,
+    # but are never re-published transitively to third parties.
+    references_visible_for_viewer = bool(
+        references_visible and (viewer_is_owner or not is_remix)
+    )
     all_reference_images = _feed_reference_images(row, request_data)
     all_reference_videos = _feed_reference_videos(row, request_data)
-    public_reference_images = all_reference_images if references_visible else []
-    public_reference_videos = all_reference_videos if references_visible else []
+    public_reference_images = (
+        all_reference_images if references_visible_for_viewer else []
+    )
+    public_reference_videos = (
+        all_reference_videos if references_visible_for_viewer else []
+    )
     references_count = len(all_reference_images) + len(all_reference_videos)
     preview_url = feed_urls[0] if feed_urls else ""
     if preview_url and str(row["type"]) == "image":
@@ -6150,7 +6164,9 @@ def _generation_row_to_card(
         "reference_images": public_reference_images,
         "reference_videos": public_reference_videos,
         "references_count": references_count,
-        "references_hidden": bool(references_count and not references_visible),
+        "references_hidden": bool(
+            references_count and not references_visible_for_viewer
+        ),
         "author": author,
         "author_referral_code": (
             row["author_referral_code"]
@@ -6169,7 +6185,7 @@ def _generation_row_to_card(
         "prompt_hidden": prompt_hidden,
         "prompt_actions_allowed": not prompt_hidden,
         "feed_prompt_visible": generation_feed_prompt_visible(row),
-        "feed_references_visible": references_visible,
+        "feed_references_visible": references_visible_for_viewer,
         "feed_blurred": generation_feed_blurred(row),
         "is_profile_visible": generation_profile_visible(row),
         "is_adult_content": generation_adult_content(row),

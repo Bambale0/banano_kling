@@ -449,7 +449,7 @@ async def photo_to_prompt_handler(callback: CallbackQuery, state: FSMContext):
         "📸 <b>Промпт по фото</b>\n\n"
         f"Стоимость анализа фото: <b>{photo_prompt_price_label()}</b>\n\n"
         "Отправьте фото, голосовой промпт или сначала голос, а затем фото.\n"
-        "GPT-5.5 разберёт фото отдельно, голос отдельно или объединит голос с последующим фото.\n\n"
+        "Qwen 3.8 разберёт фото и текст, а голосовой контекст будет учтён отдельным аудио-контуром.\n\n"
         "В результате вы получите:\n"
         "• точный prompt на английском\n"
         "• понятную версию на русском\n"
@@ -523,7 +523,7 @@ async def analyze_voice_prompt(message: Message, state: FSMContext):
         photo_prompt_audio_consumed_url=None,
         photo_prompt_audio_pending=audio_token,
     )
-    processing = await message.answer("🎙 Анализирую голосовой промпт через GPT-5.5…")
+    processing = await message.answer("🎙 Анализирую голосовой промпт…")
     audio_url = ""
 
     try:
@@ -583,7 +583,7 @@ async def analyze_voice_prompt(message: Message, state: FSMContext):
             document_caption="📝 Полный prompt по голосу: RU + EN + negative",
         )
         await message.answer(
-            "Можно отправить фото следующим сообщением — тогда GPT-5.5 объединит его с этим голосовым промптом.",
+            "Можно отправить фото следующим сообщением — тогда я объединю его с этим голосовым промптом.",
             reply_markup=get_back_keyboard("back_main"),
             parse_mode="HTML",
         )
@@ -858,103 +858,23 @@ async def photo_to_prompt_vk_handler(callback: CallbackQuery, state: FSMContext)
 
 
 async def _vk_analyze_photo(photo_url: str) -> str:
-    """Analyze photo via APIYI - same as VK bot."""
-    models = [config.APIYI_VISION_MODEL]
-    models.extend(m for m in config.APIYI_VISION_FALLBACK_MODELS if m not in models)
+    """Legacy callback compatibility routed through the current Qwen analyzer."""
+    from bot.services.prompt_analyzer_v2_service import prompt_analyzer_v2_service
 
-    headers = {
-        "Authorization": f"Bearer {config.KIE_AI_API_KEY}",
-        "Content-Type": "application/json",
-    }
-
-    last_error = None
-    for model in models:
-        try:
-            data = {
-                "model": model,
-                "input": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "input_text",
-                                "text": (
-                                    "Составь подробное описание изображения для генерации похожего в Banana Pro. "
-                                    "Сохрани все мелкие детали, лицо, одежду, позу, освещение, стиль, цвета. "
-                                    "На русском языке."
-                                ),
-                            },
-                            {"type": "input_image", "image_url": photo_url},
-                        ],
-                    }
-                ],
-                "instructions": (
-                    "Ты эксперт по промптам для генерации изображений. "
-                    "Отвечай только готовым промптом без вводных фраз."
-                ),
-                "max_output_tokens": 1200,
-            }
-
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{config.APIYI_BASE_URL}/responses",
-                    headers=headers,
-                    json=data,
-                    timeout=aiohttp.ClientTimeout(total=60),
-                ) as resp:
-                    text_result = await resp.text()
-
-                    if resp.status != 200:
-                        logger.warning(
-                            "APIYI %s HTTP %s: %s", model, resp.status, text_result[:500]
-                        )
-                        last_error = ValueError(f"APIYI {resp.status}")
-                        continue
-
-                    try:
-                        result = json.loads(text_result)
-                    except json.JSONDecodeError as e:
-                        logger.warning("APIYI JSON error: %s body=%s", e, text_result[:500])
-                        last_error = ValueError(f"JSON error: {e}")
-                        continue
-
-                    # Try choices format
-                    if result.get("choices") and result["choices"]:
-                        msg = result["choices"][0].get("message", {})
-                        content_text = msg.get("content")
-                        if content_text:
-                            return content_text.strip()
-
-                    # Try output_text format
-                    if result.get("output_text"):
-                        return str(result["output_text"]).strip()
-
-                    # Try responses format (output array)
-                    output_parts = []
-                    for item in result.get("output", []) or []:
-                        if isinstance(item, dict) and item.get("type") == "message":
-                            for c in item.get("content", []) or []:
-                                if isinstance(c, dict) and c.get("type") == "output_text":
-                                    text_val = c.get("text", "")
-                                    if text_val:
-                                        output_parts.append(str(text_val))
-                    if output_parts:
-                        return "\n".join(output_parts).strip()
-
-                    logger.warning("APIYI unexpected response: %s", result)
-                    last_error = ValueError("Unexpected API response")
-                    continue
-
-        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-            logger.warning("APIYI network error with %s: %s", model, e)
-            last_error = e
-            continue
-        except Exception as e:
-            logger.exception("APIYI unexpected error with %s: %s", model, e)
-            last_error = e
-            continue
-
-    raise ValueError(f"APIYI photo analysis failed for all models: {last_error}")
+    result = await prompt_analyzer_v2_service.analyze_prompt(
+        image_url=photo_url,
+        text=(
+            "Составь подробный промпт для генерации максимально похожего изображения. "
+            "Сохрани композицию, внешность, одежду, позу, освещение, стиль, цвета "
+            "и мелкие визуальные детали."
+        ),
+    )
+    prompt_ru = str(result.get("prompt_ru") or "").strip()
+    prompt_en = str(result.get("prompt_en") or "").strip()
+    prompt = prompt_ru or prompt_en
+    if not prompt:
+        raise ValueError("Qwen 3.8 вернул пустой промпт")
+    return prompt
 
 
 @router.message(ImageAnalyzerStates.waiting_for_photo_vk, F.photo)
@@ -996,9 +916,9 @@ async def photo_to_prompt_vk_photo_handler(message: Message, state: FSMContext):
 
     except ValueError as e:
         await processing.edit_text(
-            f"⚠️ Не удалось разобрать фото через APIYI.\n\n"
+            f"⚠️ Не удалось разобрать фото через Qwen 3.8.\n\n"
             f"{html.escape(str(e))}\n\n"
-            "Попробуйте ещё раз. Если ошибка повторится, можно использовать «📸 Промпт по фото» (GPT-5.5).",
+            "Попробуйте ещё раз или отправьте другое фото.",
             reply_markup=get_back_keyboard("back_main"),
             parse_mode="HTML",
         )
