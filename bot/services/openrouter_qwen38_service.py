@@ -182,7 +182,21 @@ class OpenRouterQwen38Service:
                             raise RuntimeError(
                                 "OpenRouter Qwen 3.8 вернул некорректный JSON"
                             ) from exc
-                        return _extract_chat_text(data)
+
+                        try:
+                            return _extract_chat_text(data)
+                        except RuntimeError as exc:
+                            if (
+                                "пустой текст" in str(exc).lower()
+                                and attempt < self.max_attempts - 1
+                            ):
+                                logger.warning(
+                                    "OpenRouter Qwen 3.8 returned empty content: attempt=%s",
+                                    attempt + 1,
+                                )
+                                await asyncio.sleep(2**attempt)
+                                continue
+                            raise
                 except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
                     last_error = exc
                     logger.warning(

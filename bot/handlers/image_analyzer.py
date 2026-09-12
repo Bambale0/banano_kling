@@ -745,8 +745,29 @@ async def analyze_video_prompt(message: Message, state: FSMContext):
     charge = None
 
     try:
-        file = await message.bot.get_file(media.file_id)
-        video_io = await message.bot.download_file(file.file_path)
+        try:
+            file = await message.bot.get_file(media.file_id)
+            video_io = await message.bot.download_file(file.file_path)
+        except TelegramBadRequest as exc:
+            if "file is too big" not in str(exc).lower():
+                raise
+            logger.warning(
+                "Video prompt file cannot be downloaded through Telegram Bot API: user_id=%s file_size=%s",
+                message.from_user.id if message.from_user else None,
+                file_size,
+            )
+            await _safe_edit_or_answer(
+                processing,
+                message,
+                (
+                    "❌ Telegram не позволяет боту скачать этот видеофайл из-за его размера. "
+                    "Отправьте файл поменьше или загрузите видео через Mini App."
+                ),
+                reply_markup=get_main_menu_button_keyboard(),
+            )
+            await state.clear()
+            return
+
         video_bytes = video_io.read()
         if len(video_bytes) > max_bytes:
             max_mb = max(1, max_bytes // (1024 * 1024))

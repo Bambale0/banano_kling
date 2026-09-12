@@ -262,3 +262,55 @@ async def test_qwen_requires_api_key_before_network() -> None:
             system_prompt="system",
             user_instruction="analyze",
         )
+
+
+@pytest.mark.asyncio
+async def test_qwen_retries_empty_content_once(monkeypatch) -> None:
+    responses = [
+        (200, {"choices": [{"message": {"content": ""}}]}),
+        (200, {"choices": [{"message": {"content": '{"prompt_ru":"ok"}'}}]}),
+    ]
+    calls = []
+
+    class FakeResponse:
+        def __init__(self, status, body):
+            self.status = status
+            self.body = body
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def text(self):
+            return json.dumps(self.body)
+
+    class FakeSession:
+        def __init__(self, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, *, headers, json):
+            calls.append(url)
+            status, body = responses.pop(0)
+            return FakeResponse(status, body)
+
+    monkeypatch.setattr(qwen_module.aiohttp, "ClientSession", FakeSession)
+    monkeypatch.setattr(qwen_module.asyncio, "sleep", AsyncMock())
+    service = OpenRouterQwen38Service(api_key="test-key")
+    service.max_attempts = 2
+
+    result = await service.analyze_image(
+        image_url="https://example.test/photo.jpg",
+        system_prompt="system",
+        user_instruction="analyze",
+    )
+
+    assert json.loads(result)["prompt_ru"] == "ok"
+    assert len(calls) == 2

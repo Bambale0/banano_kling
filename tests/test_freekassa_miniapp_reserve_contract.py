@@ -54,6 +54,8 @@ def test_freekassa_checkout_still_owns_email_ip_and_provider_creation() -> None:
     assert "freekassa_service.create_payment(" in checkout
     assert "payment_system_id=method_id" in checkout
     assert "HTTPSeeOther" in checkout
+    assert "except ConnectionResetError:" in checkout
+    assert 'web.Response(status=499, text="Client closed request")' in checkout
 
 
 def test_miniapp_places_lava_then_kassa_then_robokassa() -> None:

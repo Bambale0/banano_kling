@@ -35,6 +35,8 @@ def test_video_prompt_handler_reserves_charge_before_provider_call() -> None:
     assert handler.index(reserve) < handler.index(provider)
     assert "except VideoPromptInsufficientBalance as e:" in handler
     assert "await refund_video_prompt_charge(charge)" in handler
+    assert '"file is too big" not in str(exc).lower()' in handler
+    assert "Telegram не позволяет боту скачать этот видеофайл" in handler
 
 
 def test_video_prompt_cost_uses_configured_service_price(mocker) -> None:

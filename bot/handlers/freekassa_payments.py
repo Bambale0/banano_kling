@@ -95,7 +95,14 @@ def _checkout_form(order_id: str, method_id: int, signature: str, error: str = "
 
 
 async def handle_freekassa_checkout(request: web.Request) -> web.Response:
-    values = request.query if request.method == "GET" else await request.post()
+    if request.method == "GET":
+        values = request.query
+    else:
+        try:
+            values = await request.post()
+        except ConnectionResetError:
+            logger.info("FreeKassa checkout client disconnected before request body completed")
+            return web.Response(status=499, text="Client closed request")
     order_id = str(values.get("o") or "").strip()
     signature = str(values.get("s") or "").strip()
     try:
