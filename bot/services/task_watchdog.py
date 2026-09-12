@@ -14,7 +14,11 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 from bot import db as db_backend
-from bot.database import DATABASE_PATH, get_telegram_id_by_user_id
+from bot.database import (
+    DATABASE_PATH,
+    cleanup_stale_local_generation_tasks,
+    get_telegram_id_by_user_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +26,7 @@ logger = logging.getLogger(__name__)
 WATCHDOG_INTERVAL_SECONDS = 300  # 5 минут
 STUCK_THRESHOLD_MINUTES = 30  # задача считается зависшей через 30 минут
 MAX_STUCK_MINUTES = 120  # принудительно failed через 2 часа
+LOCAL_ORPHAN_MAX_AGE_SECONDS = 15 * 60  # локальная задача без provider id
 
 
 def _parse_created_at(value: Any) -> Optional[datetime]:
@@ -182,16 +187,26 @@ async def force_fail_task(task_id: int, user_id: int, cost: float) -> bool:
 
 
 async def run_watchdog_cycle() -> int:
-    """Один цикл watchdog: находит > форсит зависшие задачи.
+    """Один цикл watchdog: восстанавливает orphan и зависшие provider-задачи.
 
     Returns: количество переведённых в failed задач.
     """
+    orphan_stats = await cleanup_stale_local_generation_tasks(
+        max_age_seconds=LOCAL_ORPHAN_MAX_AGE_SECONDS
+    )
+    recovered = int(orphan_stats.get("failed_count") or 0)
+    if recovered:
+        logger.warning(
+            "Watchdog: recovered %s local orphan task(s), refunded_credits=%s",
+            recovered,
+            orphan_stats.get("refunded_credits", 0.0),
+        )
+
     stuck = await get_stuck_tasks(STUCK_THRESHOLD_MINUTES)
     if not stuck:
-        return 0
+        return recovered
 
     max_stuck_cutoff = datetime.utcnow() - timedelta(minutes=MAX_STUCK_MINUTES)
-    recovered = 0
 
     for task in stuck:
         tid = task["id"]

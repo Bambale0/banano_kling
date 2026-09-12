@@ -4181,7 +4181,7 @@ async def cleanup_orphaned_reference_files(max_age_seconds: int = 24 * 3600) -> 
 
 
 async def cleanup_stale_local_generation_tasks(
-    max_age_seconds: int = 60 * 60,
+    max_age_seconds: int = 15 * 60,
 ) -> dict[str, float | int]:
     """Fail old local image tasks that never received a provider task id."""
     from bot.config import config
