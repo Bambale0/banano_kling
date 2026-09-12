@@ -34,7 +34,7 @@ router = Router()
 PUBLIC_VIDEO_MODEL_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Kling", ("v3_std", "v3_pro", "v3_4k", "v26_pro")),
     ("Motion и Avatar", ("motion_control_v26", "motion_control_v30", "glow", "avatar_std", "avatar_pro")),
-    ("Seedance и Grok", ("seedance_2", "seedance_2_fast", "grok_imagine", "grok_imagine_v15")),
+    ("Seedance и Grok", ("seedance_2_5", "seedance_2", "seedance_2_fast", "grok_imagine", "grok_imagine_v15")),
     ("Veo", ("veo3", "veo3_fast", "veo3_lite")),
     ("Gemini Omni", ("gemini_omni_video", "gemini_omni_audio", "gemini_omni_character")),
 )
@@ -42,7 +42,7 @@ PUBLIC_VIDEO_MODEL_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
 MODEL_EMOJI = {
     "v3_std": "⚡", "v3_pro": "💎", "v3_4k": "🖥", "v26_pro": "🌀",
     "motion_control_v26": "🎯", "motion_control_v30": "🚀", "glow": "✨",
-    "avatar_std": "🗣", "avatar_pro": "🎙", "seedance_2": "🎞",
+    "avatar_std": "🗣", "avatar_pro": "🎙", "seedance_2_5": "🆕", "seedance_2": "🎞",
     "seedance_2_fast": "⚡", "grok_imagine": "🧠", "grok_imagine_v15": "🔥",
     "veo3": "🎥", "veo3_fast": "🚄", "veo3_lite": "🌿",
     "gemini_omni_video": "🔷", "gemini_omni_audio": "🎧", "gemini_omni_character": "🧍",
@@ -56,9 +56,14 @@ def _advanced_video_models_keyboard(current_model: str | None = None) -> types.I
         for model_key in model_keys:
             capability = VIDEO_MODEL_CAPABILITIES[model_key]
             check = "✅ " if selected == model_key else ""
+            callback_data = (
+                "v_model_seedance_2_5"
+                if model_key == "seedance_2_5"
+                else f"advanced_v_model_{model_key}"
+            )
             builder.button(
                 text=f"{check}{MODEL_EMOJI.get(model_key, '🎬')} {capability.label}",
-                callback_data=f"advanced_v_model_{model_key}",
+                callback_data=callback_data,
             )
     builder.button(text="🏠 Главное меню", callback_data="back_main")
     builder.adjust(1)
