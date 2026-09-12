@@ -83,21 +83,6 @@ from bot.database import (
     update_user_profile,
     use_prompt,
 )
-from bot.handlers.common import (
-    AI_ASSISTANT_AUDIO_FORMATS,
-    AIAssistantStates,
-    _build_balance_text,
-    _build_main_menu_text,
-    _notify_partner_about_new_referral,
-)
-from bot.handlers.generation import (
-    _init_default_video_state,
-    _show_image_model_selection_screen,
-    _show_video_model_selection_screen,
-    _start_image_generation_task,
-    save_uploaded_file,
-)
-from bot.handlers.image_analyzer import ImageAnalyzerStates
 from bot.keyboards import (
     get_ai_assistant_keyboard,
     get_animate_hub_keyboard,
@@ -185,6 +170,19 @@ MINIAPP_TREND_VIDEO_MAX_BYTES = 200 * 1024 * 1024
 _miniapp_media_locks: dict[str, asyncio.Lock] = {}
 
 logger = logging.getLogger(__name__)
+
+
+def _save_uploaded_file_lazy(raw: bytes, extension: str):
+    from bot.handlers.generation import save_uploaded_file
+
+    return save_uploaded_file(raw, extension)
+
+
+async def _start_image_generation_task_lazy(**kwargs):
+    from bot.handlers.generation import _start_image_generation_task
+
+    return await _start_image_generation_task(**kwargs)
+
 
 _MINIAPP_INIT_DATA_ERRORS = {
     "Missing init_data": "Откройте Mini App из Telegram и попробуйте снова.",
@@ -831,6 +829,8 @@ def _miniapp_assistant_audio_format(
     if not mime_type:
         mime_type = (mimetypes.guess_type(audio_url)[0] or "").strip().lower()
 
+    from bot.handlers.common import AI_ASSISTANT_AUDIO_FORMATS
+
     audio_format = AI_ASSISTANT_AUDIO_FORMATS.get(mime_type, "")
     if audio_format:
         return mime_type, audio_format
@@ -1063,6 +1063,8 @@ async def _activate_start_param_referral(
                 if str(telegram_user.get(key) or "").strip()
             ),
         )
+        from bot.handlers.common import _notify_partner_about_new_referral
+
         sent = await _notify_partner_about_new_referral(
             app["bot"],
             referrer_telegram_id=referrer.telegram_id,
@@ -2080,7 +2082,7 @@ async def _launch_video_generation_task(
     )
 
     if result_status == "done":
-        saved_url = save_uploaded_file(bytes(result), "mp4")
+        saved_url = _save_uploaded_file_lazy(bytes(result), "mp4")
         await complete_video_task(local_task_id, saved_url)
         return {
             "status": "done",
@@ -2101,6 +2103,8 @@ async def _launch_video_generation_task(
 
 
 async def _send_main_menu(app: web.Application, telegram_id: int):
+    from bot.handlers.common import _build_main_menu_text
+
     user = await get_or_create_user(telegram_id)
     text = _build_main_menu_text(user.credits)
     await app["bot"].send_message(
@@ -2177,6 +2181,8 @@ async def _send_more_menu(app: web.Application, telegram_id: int):
 
 
 async def _send_create_image(app: web.Application, telegram_id: int):
+    from bot.handlers.generation import _show_image_model_selection_screen
+
     state = await _get_state(app, telegram_id)
     await state.clear()
     await state.update_data(
@@ -2196,6 +2202,11 @@ async def _send_create_image(app: web.Application, telegram_id: int):
 
 
 async def _send_create_video(app: web.Application, telegram_id: int):
+    from bot.handlers.generation import (
+        _init_default_video_state,
+        _show_video_model_selection_screen,
+    )
+
     state = await _get_state(app, telegram_id)
     await state.clear()
     await _init_default_video_state(
@@ -2208,6 +2219,8 @@ async def _send_create_video(app: web.Application, telegram_id: int):
 
 
 async def _send_photo_prompt(app: web.Application, telegram_id: int):
+    from bot.handlers.image_analyzer import ImageAnalyzerStates
+
     state = await _get_state(app, telegram_id)
     await state.clear()
     await state.set_state(ImageAnalyzerStates.waiting_for_photo)
@@ -2232,6 +2245,8 @@ async def _send_photo_prompt(app: web.Application, telegram_id: int):
 
 
 async def _send_balance(app: web.Application, telegram_id: int):
+    from bot.handlers.common import _build_balance_text
+
     user = await get_or_create_user(telegram_id)
     stats = await get_user_stats(telegram_id)
     await app["bot"].send_message(
@@ -2278,6 +2293,8 @@ async def _send_support(app: web.Application, telegram_id: int):
 
 
 async def _send_ai_assistant(app: web.Application, telegram_id: int):
+    from bot.handlers.common import AIAssistantStates
+
     state = await _get_state(app, telegram_id)
     await state.clear()
     await state.set_state(AIAssistantStates.waiting_for_message)
@@ -2761,7 +2778,8 @@ async def miniapp_upload(request: web.Request) -> web.Response:
         raw: bytes | None = None
         filename = ""
         declared_content_type = ""
-        if request.content_type == "application/json":
+        request_content_type = str(getattr(request, "content_type", "") or "").lower()
+        if request_content_type == "application/json":
             body = await request.json()
             init_data = str(body.get("init_data", ""))
             file_kind = str(body.get("file_kind", "image_reference"))
@@ -2829,7 +2847,7 @@ async def miniapp_upload(request: web.Request) -> web.Response:
             )
 
         extension = _guess_extension(
-            getattr(upload, "filename", ""),
+            filename,
             content_type,
             config_entry["fallback_ext"],
         )
@@ -2846,7 +2864,7 @@ async def miniapp_upload(request: web.Request) -> web.Response:
                 source=str(config_entry.get("source") or "miniapp"),
             )
         if not public_url:
-            public_url = save_uploaded_file(bytes(raw), extension)
+            public_url = _save_uploaded_file_lazy(bytes(raw), extension)
         if not public_url:
             return web.json_response(
                 {"ok": False, "error": "Не удалось сохранить файл"}, status=500
@@ -3987,7 +4005,7 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
         if not is_admin:
             await deduct_credits(telegram_id, unit_cost)
 
-        launch_result = await _start_image_generation_task(
+        launch_result = await _start_image_generation_task_lazy(
             user=user,
             telegram_id=telegram_id,
             img_service=img_service,
@@ -4205,7 +4223,7 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
         if not is_admin:
             await deduct_credits(telegram_id, unit_cost)
 
-        launch_result = await _start_image_generation_task(
+        launch_result = await _start_image_generation_task_lazy(
             user=user,
             telegram_id=telegram_id,
             img_service=img_service,
@@ -4864,7 +4882,7 @@ async def miniapp_generate_motion(request: web.Request) -> web.Response:
         )
 
         if result_status == "done":
-            saved_url = save_uploaded_file(bytes(result), "mp4")
+            saved_url = _save_uploaded_file_lazy(bytes(result), "mp4")
             await complete_video_task(local_task_id, saved_url)
             fresh_user = await get_or_create_user(telegram_id)
             return web.json_response(

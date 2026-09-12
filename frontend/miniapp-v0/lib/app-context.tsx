@@ -479,7 +479,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true
     }
-  }, [applyFeedRemix, openProfile, state.isLoading, state.mode, state.videoModels])
+  }, [applyFeedRemix, openProfile, state.imageModels, state.isLoading, state.mode, state.videoModels])
 
   const setCredits = useCallback((amount: number) => {
     setState(prev => ({

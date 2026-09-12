@@ -20,13 +20,14 @@ describe('Mini App media UX contracts', () => {
     expect(source).toContain('preload="auto"')
     expect(source).toContain('normalizeMiniAppMediaUrl(previewTrend.preview_url)')
     expect(source).toContain('poster={previewTrend.preview_poster_url ? normalizeMiniAppMediaUrl(previewTrend.preview_poster_url) : undefined}')
-    expect(source).toContain('updatePromptPreview(editingTrend.id, finalPreviewUrl)')
+    expect(source).toContain('updateTrendPreview(trend.id, uploaded.url, detectedKind)')
     expect(source).toContain('aria-label="Редактировать тренд"')
     expect(source).toContain('<span className="truncate">Редактировать</span>')
-    expect(source).toContain('Загрузите новый preview, тренд останется тем же.')
+    expect(source).toContain('Загрузите новый preview. Тип фото/видео сохранится вместе с трендом.')
 
-    const api = read('lib/api.ts')
-    expect(api).toContain("postJson<{ ok: true; prompt: PromptItem }>('admin/prompts/update-preview'")
+    const api = read('lib/trend-admin-api.ts')
+    expect(api).toContain('/admin/trends/preview')
+    expect(api).toContain('preview_kind: previewKind')
 
     const runner = read('components/trend-runner-dialog.tsx')
     expect(runner).toContain('const [trendPreviewFailed, setTrendPreviewFailed] = useState(false)')

@@ -606,19 +606,20 @@ function fileToBase64(file: File): Promise<string> {
   })
 }
 
-const IOS_JSON_UPLOAD_MAX_BYTES = 16 * 1024 * 1024
+const TELEGRAM_JSON_UPLOAD_MAX_BYTES = 16 * 1024 * 1024
 
 function shouldPreferJsonUpload(
   fileKind: 'image_reference' | 'video_reference' | 'audio_reference' | 'assistant_audio' | 'trend_video_preview',
   file: File,
 ): boolean {
-  if (fileKind !== 'image_reference' || file.size > IOS_JSON_UPLOAD_MAX_BYTES) {
+  const isImageReference = String(fileKind).endsWith('image_reference')
+  if (!isImageReference || file.size > TELEGRAM_JSON_UPLOAD_MAX_BYTES) {
     return false
   }
   if (typeof navigator === 'undefined') {
     return false
   }
-  return /iPhone|iPad|iPod/i.test(navigator.userAgent)
+  return /iPhone|iPad|iPod|Telegram-Android/i.test(navigator.userAgent)
 }
 
 async function uploadFileAsJson(

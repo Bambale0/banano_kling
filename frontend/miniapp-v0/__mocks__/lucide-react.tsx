@@ -52,6 +52,7 @@ export const Link = createIcon('Link')
 export const ExternalLink = createIcon('ExternalLink')
 export const RefreshCw = createIcon('RefreshCw')
 export const Loader2 = createIcon('Loader2')
+export const Loader2Icon = Loader2
 export const Clock = createIcon('Clock')
 export const Calendar = createIcon('Calendar')
 export const MapPin = createIcon('MapPin')

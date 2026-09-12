@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useApp } from '@/lib/app-context'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import type { PromptItem, TrendGenerationSettings, TrendUserField } from '@/lib/types'
@@ -145,27 +145,34 @@ export function TrendsTab() {
     : state.imageModels
   const selectedTrendImageModel = state.imageModels.find((item) => item.id === model)
   const selectedTrendVideoModel = state.videoModels.find((item) => item.id === model)
-  const trendImageQualities =
-    selectedTrendImageModel?.id === 'banana_pro' || selectedTrendImageModel?.id === 'banana_2'
-      ? ['1K', '2K', '4K']
-      : selectedTrendImageModel?.qualities?.length
-        ? selectedTrendImageModel.qualities
-        : ['basic']
+  const trendImageQualities = useMemo(
+    () => (
+      selectedTrendImageModel?.id === 'banana_pro' || selectedTrendImageModel?.id === 'banana_2'
+        ? ['1K', '2K', '4K']
+        : selectedTrendImageModel?.qualities?.length
+          ? selectedTrendImageModel.qualities
+          : ['basic']
+    ),
+    [selectedTrendImageModel],
+  )
 
   const videoModelIds = useMemo(
     () => new Set(state.videoModels.map((item) => item.id)),
     [state.videoModels],
   )
 
-  const isVideoTrend = (trend: PromptItem) =>
-    trend.category === 'video' ||
-    hasVideoTag(trend) ||
-    videoModelIds.has(String(trend.model || ''))
+  const isVideoTrend = useCallback(
+    (trend: PromptItem) =>
+      trend.category === 'video' ||
+      hasVideoTag(trend) ||
+      videoModelIds.has(String(trend.model || '')),
+    [videoModelIds],
+  )
 
-  const photoTrends = useMemo(() => items.filter((item) => !isVideoTrend(item)), [items, videoModelIds])
-  const videoTrends = useMemo(() => items.filter((item) => isVideoTrend(item)), [items, videoModelIds])
+  const photoTrends = useMemo(() => items.filter((item) => !isVideoTrend(item)), [isVideoTrend, items])
+  const videoTrends = useMemo(() => items.filter((item) => isVideoTrend(item)), [isVideoTrend, items])
 
-  async function loadTrends() {
+  const loadTrends = useCallback(async () => {
     if (!isLive) {
       setItems([])
       return
@@ -180,11 +187,11 @@ export function TrendsTab() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [isLive])
 
   useEffect(() => {
     void loadTrends()
-  }, [isLive])
+  }, [loadTrends])
 
   useEffect(() => {
     const models = trendKind === 'video' ? state.videoModels : state.imageModels
