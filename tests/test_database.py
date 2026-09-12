@@ -2,7 +2,7 @@
 
 import json
 import os
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 from bot import db as db_backend
 import pytest
@@ -41,6 +41,40 @@ async def test_feed_persistence_downloads_non_ephemeral_photo_when_required(
     download.assert_awaited_once_with(
         "https://permanent-provider.example/result.png"
     )
+
+
+@pytest.mark.asyncio
+async def test_mark_task_delivery_status_persists_delivery_metadata(monkeypatch):
+    task = database.GenerationTask(
+        id=7,
+        user_id=1,
+        task_id="provider-task",
+        type="image",
+        preset_id="preset",
+        request_data=json.dumps({"foo": "bar"}),
+    )
+    monkeypatch.setattr(database, "get_task_by_id", AsyncMock(return_value=task))
+
+    conn = FakeConnection()
+    cursor = MagicMock()
+    cursor.rowcount = 1
+    conn.execute.return_value = cursor
+    monkeypatch.setattr(database.db_backend, "connect", lambda *_args, **_kwargs: conn)
+
+    result = await database.mark_task_delivery_status(
+        "provider-task",
+        "failed",
+        error="chat not found",
+    )
+
+    assert result is True
+    _sql, params = conn.execute.await_args.args
+    payload = json.loads(params[0])
+    assert payload["foo"] == "bar"
+    assert payload["delivery_status"] == "failed"
+    assert payload["delivery_attempts"] == 1
+    assert payload["delivery_error"] == "chat not found"
+    assert params[1] == 7
 
 
 @pytest.mark.asyncio

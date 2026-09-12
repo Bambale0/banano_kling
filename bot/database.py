@@ -5174,6 +5174,43 @@ async def _credit_feed_repeat_on_webhook_completion(task_lookup_id: str) -> None
         )
 
 
+async def mark_task_delivery_status(
+    task_id: str,
+    status: str,
+    *,
+    error: str | None = None,
+) -> bool:
+    """Persist Telegram delivery outcome separately from provider completion."""
+    normalized_status = str(status or "").strip().lower()
+    if normalized_status not in {"delivered", "failed", "pending"}:
+        raise ValueError(f"Unsupported delivery status: {status}")
+
+    task = await get_task_by_id(task_id)
+    if not task:
+        return False
+
+    request_data = _parse_json_dict(task.request_data)
+    request_data["delivery_status"] = normalized_status
+    request_data["delivery_attempts"] = int(request_data.get("delivery_attempts") or 0) + 1
+    request_data["delivery_updated_at"] = datetime.utcnow().isoformat()
+    if error:
+        request_data["delivery_error"] = str(error)[:500]
+    else:
+        request_data.pop("delivery_error", None)
+
+    async with db_backend.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            UPDATE generation_tasks
+            SET request_data = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (json.dumps(request_data, ensure_ascii=False), int(task.id)),
+        )
+        await db.commit()
+        return int(getattr(cursor, "rowcount", 0) or 0) > 0
+
+
 async def complete_video_task(task_id: str, result_url: str) -> bool:
     """Отмечает задачу как выполненную"""
     lookup_value = str(task_id or "").strip()

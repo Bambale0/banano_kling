@@ -40,6 +40,9 @@ import aiohttp
 
 from bot import db as db_backend
 from bot.config import config
+from bot.services.delivery_state import (
+    is_terminal_telegram_delivery_error as _is_terminal_telegram_delivery_error,
+)
 from bot.database import (
     cleanup_orphaned_reference_files,
     _merge_task_id_aliases,
@@ -1373,7 +1376,7 @@ async def _send_polled_nexus_image_result(
     provider_task_id: str | None = None,
     service_name: str = "Nano Banana",
 ) -> bool:
-    from bot.database import complete_video_task
+    from bot.database import complete_video_task, mark_task_delivery_status
     from bot.keyboards import get_image_result_keyboard
 
     telegram_id = await _resolve_task_telegram_id(task, context="nexus_poller")
@@ -1472,6 +1475,7 @@ async def _send_polled_nexus_image_result(
     )
     if preview_sent or original_sent:
         await complete_video_task(task_lookup_id, persisted_url)
+        await mark_task_delivery_status(task_lookup_id, "delivered")
         sent_media = True
         if _should_send_prompt_followup(task):
             try:
@@ -1488,6 +1492,8 @@ async def _send_polled_nexus_image_result(
                 )
         return True
 
+    fallback_error = None
+    fallback_sent = False
     try:
         await _send_plain_result_link(
             bot_instance,
@@ -1499,19 +1505,43 @@ async def _send_polled_nexus_image_result(
             reply_markup=keyboard,
             notice="Telegram не смог отправить превью автоматически.",
         )
+        fallback_sent = True
         logger.info(
             "Nexus poller: fallback text sent for task %s to user %s",
             task_lookup_id,
             telegram_id,
         )
-    except Exception:
+    except Exception as exc:
+        fallback_error = exc
         logger.exception(
             "Nexus poller: all Telegram delivery attempts failed for task %s",
             task_lookup_id,
         )
-    finally:
+    if fallback_sent:
         await complete_video_task(task_lookup_id, persisted_url)
-    return True
+        await mark_task_delivery_status(task_lookup_id, "delivered")
+        return True
+
+    delivery_error = str(fallback_error or "Telegram delivery failed")
+    if _is_terminal_telegram_delivery_error(fallback_error):
+        await complete_video_task(task_lookup_id, persisted_url)
+        await mark_task_delivery_status(
+            task_lookup_id,
+            "failed",
+            error=delivery_error,
+        )
+        return True
+
+    await mark_task_delivery_status(
+        task_lookup_id,
+        "pending",
+        error=delivery_error,
+    )
+    logger.warning(
+        "Nexus poller: transient Telegram delivery failure kept recoverable for task %s",
+        task_lookup_id,
+    )
+    return False
 
 async def _fail_polled_nexus_image_task(
     bot_instance: Bot,
@@ -3941,6 +3971,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             add_credits,
             complete_video_task,
             get_task_by_id,
+            mark_task_delivery_status,
         )
         from bot.keyboards import (
             get_gemini_omni_result_keyboard,
@@ -4108,6 +4139,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                     )
 
                     await complete_video_task(task_id, asset_id)
+                    await mark_task_delivery_status(task_id, "delivered")
                     logger.info(
                         "%s asset id %s sent to user %s",
                         service_name,
@@ -4348,7 +4380,8 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 if sent_media:
                     if is_video:
                         await complete_video_task(task_id, result_url)
-                    elif _should_send_prompt_followup(task):
+                    await mark_task_delivery_status(task_id, "delivered")
+                    if not is_video and _should_send_prompt_followup(task):
                         try:
                             await _send_used_prompt_message(bot_instance, telegram_id, task, result_url)
                         except Exception as prompt_e:
@@ -4366,6 +4399,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         reply_markup=kb_link,
                     )
                     await complete_video_task(task_id, result_url)
+                    await mark_task_delivery_status(task_id, "delivered")
                     logger.info(
                         f"{service_name} fallback text sent to user {telegram_id}"
                     )
@@ -4374,13 +4408,28 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                     f"Failed to send {service_name} result to {telegram_id}: {send_e}"
                 )
                 try:
-                    await complete_video_task(task_id, result_url)
-                    logger.warning(
-                        f"{service_name} result stored but Telegram delivery failed for {telegram_id}"
-                    )
+                    if _is_terminal_telegram_delivery_error(send_e):
+                        await complete_video_task(task_id, result_url)
+                        await mark_task_delivery_status(
+                            task_id,
+                            "failed",
+                            error=str(send_e),
+                        )
+                        logger.warning(
+                            f"{service_name} result stored but Telegram delivery is terminally unavailable for {telegram_id}"
+                        )
+                    else:
+                        await mark_task_delivery_status(
+                            task_id,
+                            "pending",
+                            error=str(send_e),
+                        )
+                        logger.warning(
+                            f"{service_name} Telegram delivery will be retried by watchdog for {telegram_id}"
+                        )
                 except Exception as complete_e:
                     logger.error(
-                        f"Failed to store completed {service_name} task {task_id}: {complete_e}"
+                        f"Failed to persist delivery state for {service_name} task {task_id}: {complete_e}"
                     )
         else:
             # Enhanced failure logging and user notification
@@ -4644,6 +4693,78 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
 
     return app
 
+
+_KIE_WATCHDOG_RECOVERY_MODELS = {
+    "flux_pro",
+    "gpt-image-2",
+    "gpt_image_2",
+    "nano-banana-2-lite",
+    "nano_banana_2_lite",
+    "banana_2_lite",
+    "seedream_5_pro",
+    "seedream_edit",
+    "seedance_2",
+    "seedance_2_5",
+    "wan_27",
+    "grok_imagine",
+    "grok_imagine_v15",
+    "motion_control_v26",
+    "v3_std",
+    "v3_pro",
+}
+
+
+async def _replay_completed_kie_task(task: Mapping[str, Any]) -> bool:
+    """Replay a lost KIE completion through the normal webhook delivery path."""
+    task_id = str(task.get("task_id") or "").strip()
+    model = str(task.get("model") or "").strip().lower()
+    if not task_id or model not in _KIE_WATCHDOG_RECOVERY_MODELS:
+        return False
+
+    from bot.database import get_task_by_id
+    from bot.services.kie_market_service import kie_market_service
+
+    provider_data = await kie_market_service.get_task_status(task_id)
+    if not isinstance(provider_data, dict):
+        return False
+    state = str(provider_data.get("state") or provider_data.get("status") or "").lower()
+    if state not in {"success", "completed", "succeeded", "finished"}:
+        return False
+
+    payload = {
+        "code": 200,
+        "msg": "watchdog reconciliation",
+        "data": provider_data,
+    }
+    webhook_path = str(config.KIE_AI_WEBHOOK_PATH or "/webhook/kie_ai").strip()
+    if not webhook_path.startswith("/"):
+        webhook_path = f"/{webhook_path}"
+    params = {}
+    if config.KIE_AI_WEBHOOK_SECRET:
+        params["secret"] = config.KIE_AI_WEBHOOK_SECRET
+
+    url = f"http://127.0.0.1:{config.WEBHOOK_PORT}{webhook_path}"
+    async with aiohttp.ClientSession(trust_env=False) as session:
+        async with session.post(
+            url,
+            params=params,
+            json=payload,
+            timeout=aiohttp.ClientTimeout(total=90),
+        ) as response:
+            await response.read()
+            if response.status >= 300:
+                logger.warning(
+                    "Watchdog KIE replay HTTP %s for task %s model=%s",
+                    response.status,
+                    task_id,
+                    model,
+                )
+                return False
+
+    refreshed = await get_task_by_id(task_id)
+    return bool(refreshed and refreshed.status == "completed")
+
+
 async def main():
     """Главная функция"""
     # Создаём директорию для логов если её нет
@@ -4664,7 +4785,7 @@ async def main():
     # Запускаем Task Watchdog для зависших задач генерации
     try:
         from bot.services.task_watchdog import watchdog_loop
-        asyncio.create_task(watchdog_loop())
+        asyncio.create_task(watchdog_loop(on_completed=_replay_completed_kie_task))
         logger.info("Task watchdog started")
     except Exception:
         logger.exception("Failed to start task watchdog")

@@ -19,8 +19,8 @@ from bot.database import DATABASE_PATH, cleanup_stale_local_generation_tasks
 logger = logging.getLogger(__name__)
 
 # Конфигурация
-WATCHDOG_INTERVAL_SECONDS = 300  # 5 минут
-STUCK_THRESHOLD_MINUTES = 30  # задача считается зависшей через 30 минут
+WATCHDOG_INTERVAL_SECONDS = 60  # быстро подхватываем webhook-race после рестарта
+STUCK_THRESHOLD_MINUTES = 2  # provider уже мог завершить задачу, но webhook потеряться
 MAX_STUCK_MINUTES = 120  # принудительно failed через 2 часа
 LOCAL_ORPHAN_MAX_AGE_SECONDS = 15 * 60  # локальная задача без provider id
 
@@ -119,7 +119,19 @@ async def check_task_with_provider(
                     return "completed"
                 if status and str(status).lower() in ("failed", "error", "rejected"):
                     return "failed"
-        elif normalized_service in {"nano-banana-2-lite", "nano_banana_2_lite", "banana_2_lite"}:
+        elif normalized_service in {
+            "nano-banana-2-lite",
+            "nano_banana_2_lite",
+            "banana_2_lite",
+            "flux_pro",
+            "gpt-image-2",
+            "gpt_image_2",
+            "grok_imagine",
+            "grok_imagine_v15",
+            "motion_control_v26",
+            "v3_std",
+            "v3_pro",
+        }:
             from bot.services.kie_market_service import kie_market_service
             result = await kie_market_service.get_task_status(external_task_id)
             if result:
@@ -182,7 +194,7 @@ async def force_fail_task(task_id: int, user_id: int, cost: float) -> bool:
         return True
 
 
-async def run_watchdog_cycle() -> int:
+async def run_watchdog_cycle(on_completed=None) -> int:
     """Один цикл watchdog: восстанавливает orphan и зависшие provider-задачи.
 
     Returns: количество переведённых в failed задач.
@@ -227,6 +239,25 @@ async def run_watchdog_cycle() -> int:
         if external_task_id and service_name:
             provider_status = await check_task_with_provider(external_task_id, service_name)
 
+        if provider_status == "completed":
+            if on_completed is not None:
+                try:
+                    if await on_completed(task):
+                        logger.warning(
+                            "Watchdog: replayed completed upstream task %s (provider_task_id=%s, model=%s)",
+                            tid,
+                            external_task_id,
+                            model,
+                        )
+                        recovered += 1
+                except Exception:
+                    logger.exception(
+                        "Watchdog: completed-task replay failed for task %s provider_task_id=%s",
+                        tid,
+                        external_task_id,
+                    )
+            continue
+
         if provider_status == "failed":
             if await force_fail_task(tid, uid, cost):
                 logger.warning(
@@ -255,7 +286,7 @@ async def run_watchdog_cycle() -> int:
     return recovered
 
 
-async def watchdog_loop():
+async def watchdog_loop(on_completed=None):
     """Бесконечный цикл watchdog, запускается при старте бота."""
     # Задержка при старте — даём БД инициализироваться
     await asyncio.sleep(15)
@@ -265,7 +296,7 @@ async def watchdog_loop():
     )
     while True:
         try:
-            await run_watchdog_cycle()
+            await run_watchdog_cycle(on_completed=on_completed)
         except Exception:
             logger.exception("Watchdog cycle error")
         await asyncio.sleep(WATCHDOG_INTERVAL_SECONDS)

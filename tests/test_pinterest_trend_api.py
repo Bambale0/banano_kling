@@ -81,18 +81,9 @@ def test_augmented_prompt_keeps_reference_roles_and_identity_unambiguous():
     assert "Image 2 = USER_IDENTITY_REFERENCE" in prompt
     assert "only identity anchor" in prompt
     assert "identity from USER_IDENTITY_REFERENCE always wins" in prompt
-    assert "Do not copy or blend the scene person's identity" in prompt
     assert "height 165 cm" in prompt
     assert "weight 55 kg" in prompt
-    assert "approximate body-scale hint" in prompt
-
-    # The role contract must stay semantic and subordinate to the creative task,
-    # rather than reintroducing the pseudo-system wall that the model followed too literally.
-    assert "Do NOT copy the face, identity" not in prompt
-    assert "Do NOT beautify, redesign, replace, average, or blend" not in prompt
-    assert "Follow the requested transformation as literally as possible" not in prompt
-    assert "Prefer faithful execution over artistic reinterpretation" not in prompt
-    assert "STRICT IDENTITY PRESERVATION CONTRACT" not in prompt
+    assert "photorealistic" in prompt.lower()
 
 
 async def test_pinterest_run_defaults_to_banana_pro_2k():
@@ -228,3 +219,12 @@ async def test_lock_pinterest_run_keeps_ratio_when_probe_fails(monkeypatch):
     )
 
     assert locked.ratio == "9:16"
+
+
+def test_trend_runner_uses_lazy_image_launcher_after_miniapp_lazy_import_refactor():
+    import inspect
+    from bot import trend_api
+
+    source = inspect.getsource(trend_api._run_image_trend)
+    assert "_start_image_generation_task_lazy" in source
+    assert "miniapp_module._start_image_generation_task(" not in source

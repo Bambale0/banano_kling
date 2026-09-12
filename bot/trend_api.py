@@ -353,7 +353,7 @@ async def _run_image_trend(
 
     launched = False
     try:
-        launch_result = await miniapp_module._start_image_generation_task(
+        launch_result = await miniapp_module._start_image_generation_task_lazy(
             user=user,
             telegram_id=telegram_id,
             img_service=trend.model,
