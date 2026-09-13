@@ -57,6 +57,9 @@ install_publication_scope_compat()
 # production. Install the override before admin/common/generation import and
 # before any user-facing referral handler can run.
 disable_referral_antifraud()
+# Install the approval guard before any compatibility installer can import
+# bot.miniapp and capture the unguarded referral function.
+install_partner_referral_approval_guard()
 
 from . import admin as admin_module
 from . import common as common_module
@@ -200,7 +203,6 @@ install_text_trend_upload(trends_compat_module)
 install_trend_video_compat(trends_compat_module)
 install_feed_model_filter_compat(common_module)
 install_own_profile_feed_compat()
-install_partner_referral_approval_guard()
 install_miniapp_regression_safety()
 # Route safety must wrap add_post before trend/miniapp routes are registered.
 # The trend route itself must be inserted before Mini App's API catch-all.

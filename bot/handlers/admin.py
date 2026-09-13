@@ -1229,6 +1229,7 @@ def _format_admin_partner_details_text(details: dict) -> str:
         "👤 <b>Карточка партнёра</b>",
         "",
         f"🆔 Telegram ID: <code>{details['telegram_id']}</code>",
+        f"📅 Дата регистрации: <code>{details.get('created_at') or '—'}</code>",
         f"🔗 Рефкод: <code>{details.get('referral_code') or '—'}</code>",
         f"🍌 Баланс пользователя: <code>{details['credits']}</code>",
         f"🤝 Активировал партнёрку: <code>{'да' if details['is_partner'] else 'нет'}</code>",

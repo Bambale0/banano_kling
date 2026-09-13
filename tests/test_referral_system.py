@@ -866,6 +866,7 @@ def test_partner_overview_counts_only_payments_after_referral(tmp_path, monkeypa
 
         assert overview["total_payments"] == 1
         assert overview["monthly_revenue"] == 500
+        assert details["created_at"] == referrer.created_at.strftime("%d.%m.%Y %H:%M")
         assert details["referrals"][0]["payments_count"] == 1
         assert details["referrals"][0]["spent_rub"] == 500
 

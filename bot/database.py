@@ -2810,6 +2810,7 @@ async def get_admin_partner_details(
 
         return {
             "telegram_id": user.telegram_id,
+            "created_at": user.created_at.strftime("%d.%m.%Y %H:%M"),
             "credits": Credits(user.credits),
             "referral_code": user.referral_code or "",
             "is_partner": bool(user.partner_agreed_at),
