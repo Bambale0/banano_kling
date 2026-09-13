@@ -17,7 +17,6 @@ interface ImageGeneratorFormProps {
     model: string
     ratio: string
     quality: string
-    count: number
     nsfwChecker: boolean
     nsfwEnabled: boolean
     promptId?: number | null
@@ -46,7 +45,6 @@ export function ImageGeneratorForm({
   const [selectedModel, setSelectedModel] = useState(models[0]?.id || '')
   const [selectedRatio, setSelectedRatio] = useState('1:1')
   const [selectedQuality, setSelectedQuality] = useState('basic')
-  const [selectedCount, setSelectedCount] = useState(1)
   const [nsfwChecker, setNsfwChecker] = useState(false)
   const [nsfwEnabled, setNsfwEnabled] = useState(false)
   const [prompt, setPrompt] = useState('')
@@ -61,7 +59,7 @@ export function ImageGeneratorForm({
   const unitCost = Number(
     (selectedQuality ? model?.quality_costs?.[selectedQuality] : undefined) ?? (model?.cost || 0)
   )
-  const cost = unitCost * selectedCount
+  const cost = unitCost
   const canAfford = credits >= cost
   const isFeedRemix = sourceFeedGenId !== null
   const needsReference = Boolean(model?.requires_reference) && references.length === 0
@@ -172,7 +170,6 @@ export function ImageGeneratorForm({
       model: selectedModel,
       ratio: selectedRatio,
       quality: selectedQuality,
-      count: selectedCount,
       nsfwChecker,
       nsfwEnabled,
       promptId: selectedPromptId,
@@ -192,7 +189,6 @@ export function ImageGeneratorForm({
     selectedModel,
     selectedRatio,
     selectedQuality,
-    selectedCount,
     nsfwChecker,
     nsfwEnabled,
     selectedPromptId,
@@ -257,23 +253,9 @@ export function ImageGeneratorForm({
 
         <div className="grid gap-3 lg:grid-cols-2">
           <div className="space-y-2">
-            <label className="text-sm font-medium text-foreground">Количество</label>
-            <div className="flex flex-wrap gap-2">
-              {[1, 2, 4, 6].map((count) => (
-                <button
-                  key={count}
-                  type="button"
-                  onClick={() => setSelectedCount(count)}
-                  className={cn(
-                    "rounded-lg border px-3 py-2 text-xs font-medium transition-all duration-200",
-                    selectedCount === count
-                      ? "border-gold/50 bg-gold/15 text-gold"
-                      : "border-border/50 bg-secondary/50 text-muted-foreground hover:bg-secondary hover:text-foreground"
-                  )}
-                >
-                  {count}x
-                </button>
-              ))}
+            <label className="text-sm font-medium text-foreground">Результат</label>
+            <div className="rounded-xl border border-border/50 bg-secondary/40 px-4 py-3 text-sm text-muted-foreground">
+              1 изображение
             </div>
           </div>
 
@@ -332,7 +314,7 @@ export function ImageGeneratorForm({
               Режим: <span className="text-foreground">{model?.requires_reference ? 'Edit / reference' : 'Text / image mix'}</span>
             </div>
             <div className="rounded-xl bg-background/40 px-3 py-2 text-muted-foreground">
-              Формат: <span className="text-foreground">{selectedRatio} • {selectedCount}x</span>
+              Формат: <span className="text-foreground">{selectedRatio} • 1x</span>
             </div>
           </div>
         </div>
@@ -447,7 +429,7 @@ export function ImageGeneratorForm({
               {selectedRatio}
               {model?.qualities?.length ? ` • ${selectedQuality}` : ''}
               {' • '}
-              {selectedCount}x
+              1x
             </p>
           </div>
           <div className="rounded-xl bg-secondary/40 p-3">
