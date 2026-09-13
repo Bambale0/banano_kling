@@ -98,6 +98,7 @@ class OpenRouterQwen38Service:
         system_prompt: str | None = None,
         json_response: bool = True,
         reasoning_effort: str | None = None,
+        model: str | None = None,
     ) -> dict[str, Any]:
         messages: list[dict[str, Any]] = []
         if system_prompt:
@@ -105,7 +106,7 @@ class OpenRouterQwen38Service:
         messages.append({"role": "user", "content": user_content})
 
         payload: dict[str, Any] = {
-            "model": self.model,
+            "model": str(model or self.model).strip(),
             "stream": False,
             "messages": messages,
             "temperature": 0.2,
@@ -130,6 +131,7 @@ class OpenRouterQwen38Service:
         system_prompt: str | None = None,
         json_response: bool = True,
         reasoning_effort: str | None = None,
+        model: str | None = None,
     ) -> str:
         if not self.enabled:
             raise RuntimeError("OPENROUTER_API_KEY is not configured")
@@ -143,6 +145,7 @@ class OpenRouterQwen38Service:
             system_prompt=system_prompt,
             json_response=json_response,
             reasoning_effort=reasoning_effort,
+            model=model,
         )
         timeout = aiohttp.ClientTimeout(total=self.timeout_seconds)
         last_error: Exception | None = None
@@ -235,6 +238,7 @@ class OpenRouterQwen38Service:
         image_url: str,
         system_prompt: str,
         user_instruction: str,
+        model: str | None = None,
     ) -> str:
         image_url = str(image_url or "").strip()
         if not image_url:
@@ -245,6 +249,7 @@ class OpenRouterQwen38Service:
                 {"type": "text", "text": user_instruction},
                 {"type": "image_url", "image_url": {"url": image_url}},
             ],
+            model=model,
         )
 
     async def analyze_video(

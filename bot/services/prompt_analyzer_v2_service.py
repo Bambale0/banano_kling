@@ -197,10 +197,12 @@ class PromptAnalyzerV2Service:
             raise RuntimeError("OPENROUTER_API_KEY is not configured")
 
         if image_url:
+            vision_model = str(config.QWEN38_VISION_MODEL or "").strip()
             raw_output = await openrouter_qwen38_service.analyze_image(
                 image_url=image_url,
                 system_prompt=SYSTEM_PROMPT,
                 user_instruction=user_instruction,
+                model=vision_model,
             )
         else:
             raw_output = await openrouter_qwen38_service.analyze_text(
@@ -208,9 +210,14 @@ class PromptAnalyzerV2Service:
                 user_instruction=user_instruction,
             )
 
+        provider = (
+            str(config.QWEN38_VISION_MODEL or "").strip()
+            if image_url
+            else openrouter_qwen38_service.model
+        )
         return _build_result(
             _parse_json_object(raw_output),
-            provider=openrouter_qwen38_service.model,
+            provider=provider,
         )
 
     async def _analyze_with_gpt55(

@@ -115,6 +115,10 @@ async def test_photo_prompt_v2_uses_qwen38_for_image_analysis(monkeypatch):
     qwen = AsyncMock()
     qwen.enabled = True
     qwen.model = "qwen/qwen3.8-max-0902"
+    monkeypatch.setattr(
+        "bot.services.prompt_analyzer_v2_service.config.QWEN38_VISION_MODEL",
+        "qwen/qwen3.8-27b",
+    )
     qwen.analyze_image.return_value = (
         '{"prompt_ru":"Русский Qwen промпт","prompt_en":"English Qwen prompt"}'
     )
@@ -128,8 +132,11 @@ async def test_photo_prompt_v2_uses_qwen38_for_image_analysis(monkeypatch):
         image_url="https://example.test/reference.jpg"
     )
 
-    assert result["provider"] == "qwen/qwen3.8-max-0902"
+    assert result["provider"] == "qwen/qwen3.8-27b"
     qwen.analyze_image.assert_awaited_once()
+    kwargs = qwen.analyze_image.await_args.kwargs
+    assert kwargs["image_url"] == "https://example.test/reference.jpg"
+    assert kwargs["model"] == "qwen/qwen3.8-27b"
     service._analyze_with_gpt55.assert_not_awaited()
 
 

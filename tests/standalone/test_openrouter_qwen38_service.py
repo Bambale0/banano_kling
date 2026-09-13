@@ -314,3 +314,23 @@ async def test_qwen_retries_empty_content_once(monkeypatch) -> None:
 
     assert json.loads(result)["prompt_ru"] == "ok"
     assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_qwen_image_can_override_model_per_request() -> None:
+    service = OpenRouterQwen38Service(
+        api_key="test-key",
+        base_url="https://openrouter.ai/api/v1",
+        model="qwen/qwen3.8-max-0902",
+    )
+    service._complete = AsyncMock(return_value='{"prompt_ru":"ru","prompt_en":"en"}')
+
+    await service.analyze_image(
+        image_url="https://example.test/photo.jpg",
+        system_prompt="system",
+        user_instruction="analyze image",
+        model="qwen/qwen3.8-27b",
+    )
+
+    kwargs = service._complete.await_args.kwargs
+    assert kwargs["model"] == "qwen/qwen3.8-27b"

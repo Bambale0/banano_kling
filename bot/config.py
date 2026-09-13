@@ -125,6 +125,9 @@ class Config:
     QWEN38_PROMPT_MODEL: str = os.getenv(
         "QWEN38_PROMPT_MODEL", "qwen/qwen3.8-max-0902"
     )
+    QWEN38_VISION_MODEL: str = os.getenv(
+        "QWEN38_VISION_MODEL", "qwen/qwen3.8-27b"
+    )
     QWEN38_PROMPT_REASONING_EFFORT: str = os.getenv(
         "QWEN38_PROMPT_REASONING_EFFORT", "medium"
     )
