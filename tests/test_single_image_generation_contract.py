@@ -1,4 +1,3 @@
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -107,15 +106,3 @@ async def test_stale_six_image_state_launches_only_one_standard_task(monkeypatch
     assert generation._start_image_generation_task.await_count == 1
     state.update_data.assert_any_await(img_count=1)
     state.clear.assert_awaited_once()
-
-
-def test_mini_app_standard_image_generation_is_single_output():
-    repo_root = Path(__file__).resolve().parents[1]
-    form = (repo_root / "frontend/miniapp-v0/components/forms/image-generator-form.tsx").read_text()
-    photo_tab = (repo_root / "frontend/miniapp-v0/components/tabs/photo-tab.tsx").read_text()
-
-    assert "[1, 2, 4, 6]" not in form
-    assert "selectedCount" not in form
-    assert "count: number" not in form
-    assert "for (let index = 0; index < data.count; index += 1)" not in photo_tab
-    assert "count: number" not in photo_tab

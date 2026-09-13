@@ -17,6 +17,7 @@ export function PhotoTab() {
     model: string
     ratio: string
     quality: string
+    count: number
     nsfwChecker: boolean
     nsfwEnabled: boolean
     promptId?: number | null
@@ -31,34 +32,43 @@ export function PhotoTab() {
     setIsSubmitting(true)
     setError(null)
     try {
-      const result = data.sourceFeedGenId
-        ? await remixFeedItem({
-            genId: data.sourceFeedGenId,
-            model: data.model,
-            ratio: data.ratio,
-            quality: data.quality,
-            prompt: data.prompt,
-            references: data.references,
-          })
-        : await generateImage({
-            model: data.model,
-            ratio: data.ratio,
-            quality: data.quality,
-            nsfwChecker: data.nsfwChecker,
-            nsfwEnabled: data.nsfwEnabled,
-            promptId: data.promptId,
-            sourceFeedGenId: data.sourceFeedGenId,
-            prompt: data.prompt,
-            references: data.references,
-          })
+      let lastTask: Task | null = null
+      let latestCredits = state.user.credits
 
-      addTask(result.task)
-      if (result.detail) {
-        setTaskDetail(result.detail)
+      for (let index = 0; index < data.count; index += 1) {
+        const result = data.sourceFeedGenId
+          ? await remixFeedItem({
+              genId: data.sourceFeedGenId,
+              model: data.model,
+              ratio: data.ratio,
+              quality: data.quality,
+              prompt: data.prompt,
+              references: data.references,
+            })
+          : await generateImage({
+              model: data.model,
+              ratio: data.ratio,
+              quality: data.quality,
+              nsfwChecker: data.nsfwChecker,
+              nsfwEnabled: data.nsfwEnabled,
+              promptId: data.promptId,
+              sourceFeedGenId: data.sourceFeedGenId,
+              prompt: data.prompt,
+              references: data.references,
+            })
+        addTask(result.task)
+        latestCredits = result.credits
+        lastTask = result.task
+        if (result.detail) {
+          setTaskDetail(result.detail)
+        }
       }
-      setCredits(result.credits)
-      setLastРезультат(result.task)
-      selectTask(result.task)
+
+      setCredits(latestCredits)
+      if (lastTask) {
+        setLastРезультат(lastTask)
+        selectTask(lastTask)
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось запустить фото')
     } finally {
