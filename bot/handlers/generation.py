@@ -3910,7 +3910,6 @@ def _build_image_creation_text(data: dict) -> str:
         "img_ratio",
         "auto" if current_service == "flux_pro" else "1:1",
     )
-    current_count = data.get("img_count", 1)
     reference_images = data.get("reference_images", [])
     nsfw_enabled = data.get("nsfw_enabled", False)
     img_quality = data.get("img_quality", "2K")
@@ -3918,13 +3917,12 @@ def _build_image_creation_text(data: dict) -> str:
     ratio_label = current_ratio.replace(":", "∶")
     # nano_quality_cost_display_v1
     unit_cost = _resolve_image_unit_cost(current_service, img_quality)
-    total_cost = unit_cost * current_count
 
     info_lines = [
         f"• Модель: <code>{get_image_model_label(current_service)}</code>",
         f"• Формат: <code>{ratio_label}</code>",
-        f"• Количество: <code>{current_count}</code>",
-        f"• Стоимость: <code>{unit_cost}🍌 × {current_count} = {total_cost}🍌</code>",
+        "• Результат: <code>1 изображение</code>",
+        f"• Стоимость: <code>{unit_cost}🍌</code>",
     ]
     if reference_images:
         info_lines.append(f"• Референсы: <code>{len(reference_images)}</code>")
@@ -5492,20 +5490,10 @@ async def handle_img_ratio_21_9(callback: types.CallbackQuery, state: FSMContext
 
 @router.callback_query(F.data.startswith("img_count_"))
 async def handle_img_count(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор количества изображений для пакетной генерации."""
-    try:
-        img_count = int(callback.data.replace("img_count_", ""))
-    except ValueError:
-        await callback.answer()
-        return
-
-    if img_count not in {1, 2, 4, 6}:
-        await callback.answer()
-        return
-
-    await state.update_data(img_count=img_count)
+    """Legacy quantity buttons now keep standard generation single-image only."""
+    await state.update_data(img_count=1)
     await _show_image_creation_screen(callback, state)
-    await callback.answer(f"Количество: {img_count}")
+    await callback.answer("Обычная генерация создаёт 1 фото")
 
 
 @router.callback_query(F.data == "img_quality_basic")
@@ -8363,7 +8351,15 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
 
     img_service = data.get("img_service", "nanobanana")
     img_ratio = data.get("img_ratio", "1:1")
-    img_count = data.get("img_count", 1)
+    previous_img_count = data.get("img_count", 1)
+    img_count = 1
+    if previous_img_count != 1:
+        logger.warning(
+            "Resetting stale standard image count for user_id=%s: %s -> 1",
+            message.from_user.id,
+            previous_img_count,
+        )
+        await state.update_data(img_count=1)
     img_quality = data.get("img_quality", "2K")
     img_nsfw_checker = data.get("img_nsfw_checker", False)
     reference_images = data.get("reference_images", [])
@@ -8419,7 +8415,7 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
 
     user = await get_or_create_user(message.from_user.id)
     unit_cost = _resolve_image_unit_cost(img_service, img_quality)
-    total_cost = unit_cost * img_count
+    total_cost = unit_cost
 
     if user.credits < total_cost:
         await message.answer(
@@ -8437,7 +8433,7 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
         "🖼 <b>Запускаю генерацию</b>\n"
         f"• Модель: <code>{model_label}</code>\n"
         f"• Формат: <code>{ratio_label}</code>\n"
-        f"• Количество: <code>{img_count}</code>\n"
+        "• Результат: <code>1 изображение</code>\n"
         f"• Референсы: <code>{len(reference_images)}</code>",
         parse_mode="HTML",
     )
@@ -8460,7 +8456,7 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
                 "🖼 <b>Задача создана и отправляется провайдеру</b>\n"
                 f"• Модель: <code>{model_label}</code>\n"
                 f"• Формат: <code>{ratio_label}</code>\n"
-                f"• Количество: <code>{img_count}</code>\n"
+                "• Результат: <code>1 изображение</code>\n"
                 f"• Референсы: <code>{len(reference_images)}</code>\n\n"
                 f"{ids_preview}\n\n"
                 "Жду ответ провайдера.",

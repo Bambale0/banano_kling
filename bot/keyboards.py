@@ -746,11 +746,6 @@ def get_create_image_keyboard(
             InlineKeyboardButton(text=("◉ 2K" if q == "2K" else "○ 2K"), callback_data="img_quality_2k"),
             InlineKeyboardButton(text=("◉ 4K" if q == "4K" else "○ 4K"), callback_data="img_quality_4k"),
         )
-    count_buttons = []
-    for count in [1, 2, 4, 6]:
-        marker = "◉" if current_count == count else "○"
-        count_buttons.append(InlineKeyboardButton(text=f"{marker} {count}x", callback_data=f"img_count_{count}"))
-    builder.row(*count_buttons[:2]); builder.row(*count_buttons[2:])
     if current_service in {"seedream_edit", "seedream_5_pro"}:
         basic_marker = "◉" if img_quality == "basic" else "○"
         high_marker = "◉" if img_quality == "high" else "○"
