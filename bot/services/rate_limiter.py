@@ -24,11 +24,11 @@ DEFAULT_RPM = 120
 WINDOW_SEC = 60
 CLEANUP_INTERVAL = 300  # 5 min
 
-_whitelist = set(
+_whitelist = {
     ip.strip()
     for ip in os.environ.get("RATE_LIMIT_WHITELIST", "").split(",")
     if ip.strip()
-)
+}
 
 
 class _SlidingWindowCounter:
@@ -68,6 +68,27 @@ _counters: dict[str, _SlidingWindowCounter] = defaultdict(_SlidingWindowCounter)
 _rate_limit = int(os.environ.get("RATE_LIMIT_RPM", str(DEFAULT_RPM)))
 
 
+def _is_exempt_request(request: web.Request) -> bool:
+    """Return True for routes that must not consume the API request budget.
+
+    Static/media GETs can fan out into dozens of parallel browser requests and
+    should never throttle the authenticated API calls that actually mutate or
+    load user state. Client telemetry is also excluded so a burst of diagnostic
+    logs cannot amplify a rate-limit incident.
+    """
+    path = request.path
+    if request.method == "GET":
+        if path == "/health":
+            return True
+        if path.startswith("/uploads/"):
+            return True
+        if path == "/mini-app" or (
+            path.startswith("/mini-app/") and not path.startswith("/mini-app/api/")
+        ):
+            return True
+    return path == "/mini-app/api/client-log"
+
+
 def _client_ip(request: web.Request) -> str:
     """Extract client IP from headers, falling back to remote address."""
     forwarded = request.headers.get("X-Forwarded-For", "")
@@ -101,8 +122,8 @@ async def rate_limiter_middleware(
 
     client_ip = _client_ip(request)
 
-    # Exempt health check and whitelisted IPs
-    if request.method == "GET" and request.path == "/health":
+    # Exempt non-API fan-out traffic and whitelisted IPs.
+    if _is_exempt_request(request):
         return await handler(request)
     if client_ip in _whitelist:
         return await handler(request)
