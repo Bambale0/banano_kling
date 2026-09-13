@@ -160,10 +160,9 @@ class TestRateLimiterMiddleware:
             ("GET", "/uploads/trend-previews/1/a.mp4"),
             ("GET", "/mini-app/"),
             ("GET", "/mini-app/index.html"),
-            ("POST", "/mini-app/api/client-log"),
         ],
     )
-    async def test_exempts_static_media_and_client_log(
+    async def test_exempts_static_and_media_fanout(
         self,
         clean_counters,
         method,
@@ -182,10 +181,17 @@ class TestRateLimiterMiddleware:
         handler.assert_awaited_once()
         assert _counters["1.2.3.4"].count() == 0
 
-    def test_api_routes_still_count_against_limit(self):
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/mini-app/api/bootstrap",
+            "/mini-app/api/client-log",
+        ],
+    )
+    def test_api_routes_still_count_against_limit(self, path):
         req = MagicMock()
         req.method = "POST"
-        req.path = "/mini-app/api/bootstrap"
+        req.path = path
         assert not _is_exempt_request(req)
 
     async def test_whitelisted_ip_always_passes(self, clean_counters):

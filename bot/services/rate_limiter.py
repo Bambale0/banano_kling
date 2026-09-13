@@ -73,8 +73,7 @@ def _is_exempt_request(request: web.Request) -> bool:
 
     Static/media GETs can fan out into dozens of parallel browser requests and
     should never throttle the authenticated API calls that actually mutate or
-    load user state. Client telemetry is also excluded so a burst of diagnostic
-    logs cannot amplify a rate-limit incident.
+    load user state.
     """
     path = request.path
     if request.method == "GET":
@@ -86,7 +85,7 @@ def _is_exempt_request(request: web.Request) -> bool:
             path.startswith("/mini-app/") and not path.startswith("/mini-app/api/")
         ):
             return True
-    return path == "/mini-app/api/client-log"
+    return False
 
 
 def _client_ip(request: web.Request) -> str:
