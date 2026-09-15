@@ -1078,3 +1078,83 @@ async def test_private_generation_repeat_does_not_credit_author(tmp_path, monkey
     assert overview["balance_rub"] == 0
     assert overview["prompt_repeat_balance_rub"] == 0
     assert overview["prompt_repeat_total_rub"] == 0
+
+
+@pytest.mark.asyncio
+async def test_orphan_cleanup_keeps_pruned_reference_used_by_repeatable_generation(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(database, "DATABASE_PATH", str(tmp_path / "snapshot-refs.db"))
+    monkeypatch.setattr(database, "SAVED_REFERENCES_MAX_PER_KIND", 1)
+
+    async def noop_invalidate(_telegram_id):
+        return None
+
+    monkeypatch.setattr(database, "_invalidate_saved_reference_cache", noop_invalidate)
+    await database.init_db()
+
+    user = await database.get_or_create_user(12346)
+    old_ref = (
+        tmp_path
+        / "static"
+        / "uploads"
+        / "refs"
+        / "image"
+        / "12346"
+        / "202609"
+        / "historical.png"
+    )
+    new_ref = old_ref.with_name("newest.png")
+    old_ref.parent.mkdir(parents=True, exist_ok=True)
+    old_ref.write_bytes(b"historical")
+    new_ref.write_bytes(b"newest")
+    old_url = old_ref.relative_to(tmp_path).as_posix()
+    new_url = new_ref.relative_to(tmp_path).as_posix()
+
+    await database.save_user_reference(
+        user.telegram_id,
+        kind="image",
+        file_url=old_url,
+        file_hash="historical",
+    )
+    await database.add_generation_task(
+        user.id,
+        user.telegram_id,
+        "snapshot-ref-repeat",
+        "image",
+        "banana_pro",
+        model="banana_pro",
+        aspect_ratio="1:1",
+        prompt="repeat this later",
+        cost=2,
+        request_data={
+            "reference_images": [old_url],
+            "source_reference_images": [old_url],
+        },
+    )
+    await database.complete_video_task(
+        "snapshot-ref-repeat",
+        "https://example.com/result.png",
+    )
+
+    # A newer saved reference prunes the old saved_references row, but the
+    # completed generation snapshot must remain a durable owner of the file.
+    await database.save_user_reference(
+        user.telegram_id,
+        kind="image",
+        file_url=new_url,
+        file_hash="newest",
+    )
+
+    async with db_backend.connect(database.DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM saved_references WHERE file_url = ?",
+            (old_url,),
+        )
+        assert (await cursor.fetchone())[0] == 0
+
+    old_mtime = 1_700_000_000
+    os.utime(old_ref, (old_mtime, old_mtime))
+    stats = await database.cleanup_orphaned_reference_files(max_age_seconds=1)
+
+    assert old_ref.exists()
+    assert stats["protected_generation_paths"] >= 1

@@ -166,6 +166,37 @@ RenderGrid results нельзя использовать как долговре
 
 Публичная лента считает временными как минимум `tempfile.aiquickdraw.com` и `cdn.rendergrid.io`. Если result не удалось локализовать, такой URL не должен считаться долговременным источником для повторов.
 
+### `RENDERGRID_RESULT_TTL_HOURS`
+
+Отдельный TTL для внешнего RenderGrid result URL. Значение по умолчанию:
+
+```dotenv
+RENDERGRID_RESULT_TTL_HOURS=24
+```
+
+После TTL `cdn.rendergrid.io` не отдаётся напрямую через feed/profile/history/task-detail/Mini App media: если durable-копии нет, generation возвращается как `media_unavailable`. Локальный `/uploads/feed/...` остаётся каноническим и TTL RenderGrid на него не распространяется.
+
+### Legacy RenderGrid reconciliation
+
+Production deploy после health-check запускает ограниченный reconciliation `scripts.backfill_rendergrid_image_results.py`. Он:
+
+- выбирает только completed image rows, всё ещё указывающие на `cdn.rendergrid.io`;
+- закрывает DB connection до сетевого скачивания;
+- проверяет локальный durable-файл;
+- делает compare-and-swap update по исходному `result_url`;
+- пишет telemetry `scanned/localized/updated/skipped_race/failed/next_before_id/exhausted`;
+- хранит cursor в persistent `/app/data/rendergrid-image-backfill-checkpoint.json`, поэтому следующий deploy продолжает проход, а не начинает с тех же failed rows.
+
+Deploy-параметры ограниченного прохода:
+
+```dotenv
+RENDERGRID_DEPLOY_BACKFILL_LIMIT=50
+RENDERGRID_DEPLOY_BACKFILL_CONCURRENCY=4
+RENDERGRID_DEPLOY_BACKFILL_MAX_BATCHES=1
+```
+
+Ошибки legacy reconciliation не откатывают здоровый deploy: runtime resolver всё равно не публикует просроченный внешний RenderGrid URL.
+
 ## 6. Database
 
 ### `DATABASE_URL`

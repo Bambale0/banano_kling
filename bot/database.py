@@ -47,6 +47,12 @@ FEED_EPHEMERAL_RESULT_HOSTS = {
     for host in os.getenv("FEED_EPHEMERAL_RESULT_HOSTS", "tempfile.aiquickdraw.com,cdn.rendergrid.io").split(",")
     if host.strip()
 }
+RENDERGRID_RESULT_TTL_HOURS = int(os.getenv("RENDERGRID_RESULT_TTL_HOURS", "24"))
+RENDERGRID_RESULT_HOSTS = {
+    host.strip().lower().lstrip(".")
+    for host in os.getenv("RENDERGRID_RESULT_HOSTS", "cdn.rendergrid.io").split(",")
+    if host.strip()
+}
 FEED_PUBLIC_TYPES = {"image", "video"}
 _last_public_feed_cleanup_at = 0.0
 _last_public_feed_cleanup_db_path: str | None = None
@@ -4118,11 +4124,16 @@ async def cleanup_saved_references(
 async def cleanup_orphaned_reference_files(max_age_seconds: int = 24 * 3600) -> dict[str, int]:
     base_dir = os.path.join("static", "uploads", "refs")
     if not os.path.exists(base_dir):
-        return {"removed_count": 0, "removed_bytes": 0}
+        return {
+            "removed_count": 0,
+            "removed_bytes": 0,
+            "protected_generation_paths": 0,
+        }
 
     from bot.services.media_input_utils import resolve_local_upload_path
 
     referenced_paths: set[str] = set()
+    generation_snapshot_urls: set[str] = set()
     async with db_backend.connect(DATABASE_PATH) as db:
         cursor = await db.execute(
             "SELECT file_url FROM saved_references WHERE file_url IS NOT NULL AND TRIM(file_url) != ''"
@@ -4139,16 +4150,100 @@ async def cleanup_orphaned_reference_files(max_age_seconds: int = 24 * 3600) -> 
         )
         rows.extend(await prompt_cursor.fetchall())
 
+        if db_backend.is_postgres():
+            snapshot_query = """
+                SELECT DISTINCT ref_url
+                FROM (
+                    SELECT ref #>> '{}' AS ref_url
+                    FROM generation_tasks gt
+                    CROSS JOIN LATERAL jsonb_path_query(
+                        CASE
+                            WHEN json_valid(gt.request_data) THEN gt.request_data::jsonb
+                            ELSE '{}'::jsonb
+                        END,
+                        '$.source_reference_images[*]'
+                    ) AS ref
+                    WHERE gt.status = 'completed'
+                      AND gt.type IN ('image', 'video')
+
+                    UNION
+
+                    SELECT ref #>> '{}' AS ref_url
+                    FROM generation_tasks gt
+                    CROSS JOIN LATERAL jsonb_path_query(
+                        CASE
+                            WHEN json_valid(gt.request_data) THEN gt.request_data::jsonb
+                            ELSE '{}'::jsonb
+                        END,
+                        '$.reference_images[*]'
+                    ) AS ref
+                    WHERE gt.status = 'completed'
+                      AND gt.type IN ('image', 'video')
+                ) refs
+                WHERE ref_url LIKE '%uploads/refs/%'
+            """
+        else:
+            snapshot_query = """
+                SELECT DISTINCT CAST(ref.value AS TEXT) AS ref_url
+                FROM generation_tasks gt,
+                     json_each(
+                         CASE
+                             WHEN json_valid(gt.request_data) THEN gt.request_data
+                             ELSE '{}'
+                         END,
+                         '$.source_reference_images'
+                     ) AS ref
+                WHERE gt.status = 'completed'
+                  AND gt.type IN ('image', 'video')
+                  AND CAST(ref.value AS TEXT) LIKE '%uploads/refs/%'
+
+                UNION
+
+                SELECT DISTINCT CAST(ref.value AS TEXT) AS ref_url
+                FROM generation_tasks gt,
+                     json_each(
+                         CASE
+                             WHEN json_valid(gt.request_data) THEN gt.request_data
+                             ELSE '{}'
+                         END,
+                         '$.reference_images'
+                     ) AS ref
+                WHERE gt.status = 'completed'
+                  AND gt.type IN ('image', 'video')
+                  AND CAST(ref.value AS TEXT) LIKE '%uploads/refs/%'
+            """
+        snapshot_cursor = await db.execute(snapshot_query)
+        snapshot_rows = await snapshot_cursor.fetchall()
+
+    def protect_url(source: str) -> bool:
+        local_path = resolve_local_upload_path(str(source or ""))
+        if not local_path:
+            return False
+        abs_path = os.path.abspath(local_path)
+        referenced_paths.add(abs_path)
+        base_path, _ext = os.path.splitext(abs_path)
+        for sibling_ext in (".png", ".jpg", ".jpeg", ".webp"):
+            sibling_path = base_path + sibling_ext
+            if os.path.exists(sibling_path):
+                referenced_paths.add(os.path.abspath(sibling_path))
+        return True
+
     for row in rows:
-        local_path = resolve_local_upload_path(str(row[0] or ""))
-        if local_path:
-            abs_path = os.path.abspath(local_path)
-            referenced_paths.add(abs_path)
-            base_path, _ext = os.path.splitext(abs_path)
-            for sibling_ext in (".png", ".jpg", ".jpeg", ".webp"):
-                sibling_path = base_path + sibling_ext
-                if os.path.exists(sibling_path):
-                    referenced_paths.add(os.path.abspath(sibling_path))
+        protect_url(str(row[0] or ""))
+
+    for row in snapshot_rows:
+        source = str(row[0] or "").strip()
+        if source:
+            generation_snapshot_urls.add(source)
+
+    protected_generation_paths = sum(
+        1 for source in generation_snapshot_urls if protect_url(source)
+    )
+    if protected_generation_paths:
+        logger.info(
+            "Orphan reference cleanup protected %s generation snapshot refs",
+            protected_generation_paths,
+        )
 
     now = time.time()
     removed_count = 0
@@ -4178,7 +4273,11 @@ async def cleanup_orphaned_reference_files(max_age_seconds: int = 24 * 3600) -> 
             except OSError:
                 pass
 
-    return {"removed_count": removed_count, "removed_bytes": removed_bytes}
+    return {
+        "removed_count": removed_count,
+        "removed_bytes": removed_bytes,
+        "protected_generation_paths": protected_generation_paths,
+    }
 
 
 async def cleanup_stale_local_generation_tasks(
@@ -5974,14 +6073,26 @@ def _is_ephemeral_feed_result_url(url: str) -> bool:
     return any(host == ephemeral or host.endswith(f".{ephemeral}") for ephemeral in FEED_EPHEMERAL_RESULT_HOSTS)
 
 
+def _feed_result_ttl_hours(url: str) -> int | None:
+    host = _feed_result_host(url)
+    if not host:
+        return None
+    if any(host == item or host.endswith(f".{item}") for item in RENDERGRID_RESULT_HOSTS):
+        return RENDERGRID_RESULT_TTL_HOURS
+    if any(host == item or host.endswith(f".{item}") for item in FEED_EPHEMERAL_RESULT_HOSTS):
+        return FEED_EPHEMERAL_RESULT_TTL_HOURS
+    return None
+
+
 def _is_feed_result_expired(row: db_backend.Row, url: str) -> bool:
-    if FEED_EPHEMERAL_RESULT_TTL_HOURS <= 0 or not _is_ephemeral_feed_result_url(url):
+    ttl_hours = _feed_result_ttl_hours(url)
+    if ttl_hours is None or ttl_hours <= 0:
         return False
     timestamp = _feed_row_timestamp(row)
     if not timestamp:
         return False
     now = datetime.now(timestamp.tzinfo) if timestamp.tzinfo else datetime.utcnow()
-    return now - timestamp > timedelta(hours=FEED_EPHEMERAL_RESULT_TTL_HOURS)
+    return now - timestamp > timedelta(hours=ttl_hours)
 
 
 def _is_feed_result_url_available(row: db_backend.Row, url: str) -> bool:
@@ -6011,6 +6122,11 @@ def _feed_result_urls(row: db_backend.Row) -> list[str]:
         if normalized and normalized not in available and _is_feed_result_url_available(row, normalized):
             available.append(normalized)
     return available
+
+
+def resolve_public_generation_result_urls(row: db_backend.Row | dict[str, Any]) -> list[str]:
+    """Resolve generation media through the same durability/TTL policy on every public surface."""
+    return _feed_result_urls(row)
 
 
 def _public_reference_urls(row: db_backend.Row, urls: Any) -> list[str]:
