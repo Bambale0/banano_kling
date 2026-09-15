@@ -123,6 +123,185 @@ def test_foreign_usd_webhook_matches_package_price_usd(monkeypatch):
     )
 
 
+def test_stale_pending_detection_is_timezone_safe():
+    assert safety._is_stale_pending(
+        "2000-01-01 00:00:00",
+        24,
+    )
+    assert not safety._is_stale_pending("", 24)
+
+
+@pytest.mark.asyncio
+async def test_reconcile_quarantine_is_scoped_to_credential():
+    await safety._save_reconcile_quarantine(
+        order_id="old-order",
+        payment_id="old-invoice",
+        credential_fingerprint="credential-a",
+        reason="provider_http_401",
+    )
+
+    assert await safety._load_reconcile_quarantined_orders("credential-a") == {
+        "old-order"
+    }
+    assert await safety._load_reconcile_quarantined_orders("credential-b") == set()
+
+
+@pytest.mark.asyncio
+async def test_stale_pending_auth_failure_is_quarantined(monkeypatch):
+    class FakeCursor:
+        async def fetchall(self):
+            return [
+                {
+                    "order_id": "old-order",
+                    "payment_id": "old-invoice",
+                    "created_at": "2000-01-01 00:00:00",
+                }
+            ]
+
+    class FakeDb:
+        row_factory = None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def execute(self, *_args, **_kwargs):
+            return FakeCursor()
+
+    transaction = SimpleNamespace(
+        order_id="old-order",
+        payment_id="old-invoice",
+        provider="lava",
+    )
+    quarantined = []
+
+    async def load_quarantined(_credential_fingerprint):
+        return set()
+
+    async def save_quarantine(**kwargs):
+        quarantined.append(kwargs)
+
+    async def invoice_id_for_contract(_payment_id):
+        return None
+
+    async def raw_invoice_response(_payment_id):
+        return {"ok": False, "status": 401, "error": {"error": "Invalid API key"}}
+
+    async def unexpected_provider_status(*_args, **_kwargs):
+        raise AssertionError("401 stale pending must stop before normal provider polling")
+
+    monkeypatch.setattr(safety.lava_service, "api_key", "test-key")
+    monkeypatch.setattr(safety.config, "LAVA_PENDING_TTL_HOURS", 24)
+    monkeypatch.setattr(safety.db_backend, "connect", lambda: FakeDb())
+    monkeypatch.setattr(safety, "_load_reconcile_quarantined_orders", load_quarantined)
+    monkeypatch.setattr(safety, "_save_reconcile_quarantine", save_quarantine)
+    monkeypatch.setattr(safety, "_invoice_id_for_contract", invoice_id_for_contract)
+    monkeypatch.setattr(safety.lava_service, "get_invoice_response", raw_invoice_response)
+    monkeypatch.setattr(safety, "_provider_status", unexpected_provider_status)
+
+    async def transaction_lookup(_order_id):
+        return transaction
+
+    monkeypatch.setattr(safety, "get_transaction_by_order", transaction_lookup)
+
+    results = await safety.safe_reconcile_lava_pending_transactions(
+        payments_module=_payments_module({"ok": True}),
+        limit=10,
+    )
+
+    fingerprint = safety._lava_credential_fingerprint()
+    assert quarantined == [
+        {
+            "order_id": "old-order",
+            "payment_id": "old-invoice",
+            "credential_fingerprint": fingerprint,
+            "reason": "provider_http_401",
+        }
+    ]
+    assert results == [
+        {
+            "order_id": "old-order",
+            "payment_id": "old-invoice",
+            "action": "stale_pending_quarantined",
+            "status": "pending",
+            "created_at": "2000-01-01 00:00:00",
+            "reason": "provider_http_401",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stale_pending_without_auth_failure_still_reconciles(monkeypatch):
+    class FakeCursor:
+        async def fetchall(self):
+            return [
+                {
+                    "order_id": "old-order",
+                    "payment_id": "old-invoice",
+                    "created_at": "2000-01-01 00:00:00",
+                }
+            ]
+
+    class FakeDb:
+        row_factory = None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def execute(self, *_args, **_kwargs):
+            return FakeCursor()
+
+    transaction = SimpleNamespace(
+        order_id="old-order",
+        payment_id="old-invoice",
+        provider="lava",
+    )
+
+    async def load_quarantined(_credential_fingerprint):
+        return set()
+
+    async def transaction_lookup(_order_id):
+        return transaction
+
+    async def invoice_id_for_contract(_payment_id):
+        return None
+
+    async def raw_invoice_response(_payment_id):
+        return {"ok": True, "status": "in_progress"}
+
+    async def provider_status(*_args, **_kwargs):
+        return "in_progress", "old-invoice"
+
+    monkeypatch.setattr(safety.lava_service, "api_key", "test-key")
+    monkeypatch.setattr(safety.config, "LAVA_PENDING_TTL_HOURS", 24)
+    monkeypatch.setattr(safety.db_backend, "connect", lambda: FakeDb())
+    monkeypatch.setattr(safety, "_load_reconcile_quarantined_orders", load_quarantined)
+    monkeypatch.setattr(safety, "get_transaction_by_order", transaction_lookup)
+    monkeypatch.setattr(safety, "_invoice_id_for_contract", invoice_id_for_contract)
+    monkeypatch.setattr(safety.lava_service, "get_invoice_response", raw_invoice_response)
+    monkeypatch.setattr(safety, "_provider_status", provider_status)
+
+    results = await safety.safe_reconcile_lava_pending_transactions(
+        payments_module=_payments_module({"ok": True}),
+        limit=10,
+    )
+
+    assert results == [
+        {
+            "order_id": "old-order",
+            "payment_id": "old-invoice",
+            "status": "in_progress",
+            "invoice_id": "old-invoice",
+            "action": "still_pending",
+        }
+    ]
+
+
 @pytest.mark.asyncio
 async def test_success_webhook_returns_503_while_provider_is_in_progress(monkeypatch):
     transaction = SimpleNamespace(

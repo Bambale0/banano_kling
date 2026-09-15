@@ -322,6 +322,13 @@ def install_miniapp_lava_payment_methods() -> None:
             raw_customer_email = str(body.get("customer_email") or "").strip()
             customer_email = normalize_lava_customer_email(raw_customer_email)
             if not customer_email:
+                miniapp_module.logger.info(
+                    "Mini App Lava payment validation rejected: "
+                    "provider=%s package_id=%s telegram_id=%s reason=customer_email_required",
+                    raw_provider,
+                    package_id,
+                    telegram_id,
+                )
                 return web.json_response(
                     {
                         "ok": False,

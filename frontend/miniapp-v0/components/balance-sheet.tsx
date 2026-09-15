@@ -155,6 +155,12 @@ export function BalanceSheet() {
     const selectedPackage = paymentPackages.find((item) => item.id === packageId)
     if (!selectedPackage) return
 
+    if (isLavaProvider(provider) && !customerEmailValid) {
+      toast.error('Укажите действующую почту для оплаты через Lava')
+      focusCustomerEmail()
+      return
+    }
+
     const loadingKey = `${packageId}:${provider}`
     setLoadingPayment(loadingKey)
     try {

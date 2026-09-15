@@ -3,6 +3,8 @@ import os
 # This must be set while pytest loads conftest, before test modules import
 # bot.config. Unit and integration tests must never read production .env files.
 os.environ["BANANO_SKIP_PROJECT_ENV"] = "1"
+# Pytest must never append synthetic provider warnings to production/runtime logs.
+os.environ["BANANO_DISABLE_FILE_LOGGING"] = "1"
 _PARTNER_POSTGRES_TEST = str(os.getenv("PARTNER_POSTGRES_TEST", "")).strip().lower() in {
     "1",
     "true",

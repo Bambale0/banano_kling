@@ -185,14 +185,20 @@ async def _lava_reconcile_loop(bot: Bot) -> None:
                 completed = sum(1 for item in results if item.get("action") == "completed")
                 failed = sum(1 for item in results if item.get("action") == "failed")
                 still_pending = sum(1 for item in results if item.get("action") == "still_pending")
+                stale_quarantined = sum(
+                    1
+                    for item in results
+                    if item.get("action") == "stale_pending_quarantined"
+                )
                 expired = sum(item.get("count", 0) for item in results if item.get("action") == "expired")
                 errors = sum(1 for item in results if item.get("error"))
                 logger.info(
-                    "Lava reconcile tick: checked=%s completed=%s failed=%s pending=%s expired=%s errors=%s",
+                    "Lava reconcile tick: checked=%s completed=%s failed=%s pending=%s stale=%s expired=%s errors=%s",
                     len(results),
                     completed,
                     failed,
                     still_pending,
+                    stale_quarantined,
                     expired,
                     errors,
                 )
