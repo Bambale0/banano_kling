@@ -726,11 +726,13 @@ async def safe_reconcile_lava_pending_transactions(
                     diagnostic = await lava_service.get_invoice_response(
                         diagnostic_lookup_id
                     )
-                    diagnostic_http_status = int(diagnostic.get("status") or 0)
-                    if (
-                        not diagnostic.get("ok")
-                        and diagnostic_http_status in {401, 403}
-                    ):
+                    diagnostic_http_status = 0
+                    if not diagnostic.get("ok"):
+                        try:
+                            diagnostic_http_status = int(diagnostic.get("status") or 0)
+                        except (TypeError, ValueError):
+                            diagnostic_http_status = 0
+                    if diagnostic_http_status in {401, 403}:
                         reason = f"provider_http_{diagnostic_http_status}"
                         await _save_reconcile_quarantine(
                             order_id=order_id,
