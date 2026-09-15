@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import hmac
 import logging
 import os
@@ -26,6 +27,7 @@ from bot.services.lava_service import lava_service
 logger = logging.getLogger(__name__)
 
 _BINDINGS_TABLE = "lava_payment_bindings"
+_RECONCILE_QUARANTINE_TABLE = "lava_reconcile_quarantine"
 _FAILED_STATUSES = {"cancelled", "canceled", "failed", "expired"}
 _PENDING_STATUSES = {"", "created", "in_progress", "pending", "processing"}
 _SUCCESS_STATUSES = {"completed", "success", "succeeded", "paid"}
@@ -60,6 +62,71 @@ def _is_stale_pending(value: Any, ttl_hours: int, *, now: datetime | None = None
     else:
         current = current.astimezone(timezone.utc)
     return (current - created_at).total_seconds() >= max(ttl_hours, 1) * 3600
+
+
+def _lava_credential_fingerprint() -> str:
+    api_key = str(getattr(lava_service, "api_key", "") or "").strip()
+    if not api_key:
+        return "disabled"
+    return hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16]
+
+
+async def _ensure_reconcile_quarantine_table() -> None:
+    async with db_backend.connect() as db:
+        await db.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {_RECONCILE_QUARANTINE_TABLE} (
+                order_id TEXT NOT NULL,
+                payment_id TEXT NOT NULL,
+                credential_fingerprint TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (order_id, credential_fingerprint)
+            )
+            """
+        )
+        await db.commit()
+
+
+async def _load_reconcile_quarantined_orders(
+    credential_fingerprint: str,
+) -> set[str]:
+    await _ensure_reconcile_quarantine_table()
+    async with db_backend.connect() as db:
+        db.row_factory = db_backend.Row
+        rows = await (
+            await db.execute(
+                f"SELECT order_id FROM {_RECONCILE_QUARANTINE_TABLE} "
+                "WHERE credential_fingerprint = ?",
+                (credential_fingerprint,),
+            )
+        ).fetchall()
+    return {str(row["order_id"]) for row in rows if row["order_id"]}
+
+
+async def _save_reconcile_quarantine(
+    *,
+    order_id: str,
+    payment_id: str,
+    credential_fingerprint: str,
+    reason: str,
+) -> None:
+    await _ensure_reconcile_quarantine_table()
+    async with db_backend.connect() as db:
+        await db.execute(
+            f"""
+            INSERT INTO {_RECONCILE_QUARANTINE_TABLE}
+                (order_id, payment_id, credential_fingerprint, reason, updated_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(order_id, credential_fingerprint) DO UPDATE SET
+                payment_id = excluded.payment_id,
+                reason = excluded.reason,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (order_id, payment_id, credential_fingerprint, reason),
+        )
+        await db.commit()
 
 
 async def _ensure_bindings_table() -> None:
@@ -622,6 +689,10 @@ async def safe_reconcile_lava_pending_transactions(
         ).fetchall()
 
     ttl_hours = max(int(getattr(config, "LAVA_PENDING_TTL_HOURS", 24) or 24), 1)
+    credential_fingerprint = _lava_credential_fingerprint()
+    quarantined_orders = await _load_reconcile_quarantined_orders(
+        credential_fingerprint
+    )
     results: list[dict[str, Any]] = []
     for row in rows:
         order_id = str(row["order_id"])
@@ -632,10 +703,7 @@ async def safe_reconcile_lava_pending_transactions(
             "payment_id": payment_id,
         }
 
-        # Old pending rows may belong to a previous Lava credential/account.
-        # Do not mutate financial state blindly, but stop polling them forever
-        # with the current API key. They remain pending for explicit audit.
-        if _is_stale_pending(created_at, ttl_hours):
+        if order_id in quarantined_orders:
             item.update(
                 action="stale_pending_quarantined",
                 status="pending",
@@ -650,6 +718,43 @@ async def safe_reconcile_lava_pending_transactions(
                 item.update(action="error", error="transaction_not_found")
                 results.append(item)
                 continue
+
+            if _is_stale_pending(created_at, ttl_hours):
+                mapped_invoice_id = await _invoice_id_for_contract(payment_id)
+                diagnostic_lookup_id = mapped_invoice_id or payment_id
+                if diagnostic_lookup_id:
+                    diagnostic = await lava_service.get_invoice_response(
+                        diagnostic_lookup_id
+                    )
+                    diagnostic_http_status = int(diagnostic.get("status") or 0)
+                    if (
+                        not diagnostic.get("ok")
+                        and diagnostic_http_status in {401, 403}
+                    ):
+                        reason = f"provider_http_{diagnostic_http_status}"
+                        await _save_reconcile_quarantine(
+                            order_id=order_id,
+                            payment_id=payment_id,
+                            credential_fingerprint=credential_fingerprint,
+                            reason=reason,
+                        )
+                        quarantined_orders.add(order_id)
+                        logger.warning(
+                            "Quarantined stale Lava pending order=%s "
+                            "payment_id=%s credential=%s reason=%s",
+                            order_id,
+                            payment_id,
+                            credential_fingerprint,
+                            reason,
+                        )
+                        item.update(
+                            action="stale_pending_quarantined",
+                            status="pending",
+                            created_at=str(created_at or ""),
+                            reason=reason,
+                        )
+                        results.append(item)
+                        continue
 
             status, invoice_id = await _provider_status(
                 transaction,
