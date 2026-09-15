@@ -132,6 +132,21 @@ def test_stale_pending_detection_is_timezone_safe():
 
 
 @pytest.mark.asyncio
+async def test_reconcile_quarantine_is_scoped_to_credential():
+    await safety._save_reconcile_quarantine(
+        order_id="old-order",
+        payment_id="old-invoice",
+        credential_fingerprint="credential-a",
+        reason="provider_http_401",
+    )
+
+    assert await safety._load_reconcile_quarantined_orders("credential-a") == {
+        "old-order"
+    }
+    assert await safety._load_reconcile_quarantined_orders("credential-b") == set()
+
+
+@pytest.mark.asyncio
 async def test_stale_pending_auth_failure_is_quarantined(monkeypatch):
     class FakeCursor:
         async def fetchall(self):
