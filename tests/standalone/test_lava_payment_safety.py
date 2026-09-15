@@ -163,7 +163,7 @@ async def test_stale_pending_reconcile_skips_provider_lookup(monkeypatch):
     async def unexpected_provider_lookup(*_args, **_kwargs):
         raise AssertionError("stale pending must not call Lava provider")
 
-    monkeypatch.setattr(safety.lava_service, "enabled", True)
+    monkeypatch.setattr(safety.lava_service, "api_key", "test-key")
     monkeypatch.setattr(safety.config, "LAVA_PENDING_TTL_HOURS", 24)
     monkeypatch.setattr(safety.db_backend, "connect", lambda: FakeDb())
     monkeypatch.setattr(safety, "get_transaction_by_order", unexpected_transaction_lookup)
