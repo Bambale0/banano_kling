@@ -73,6 +73,7 @@ from bot.database import (
     reject_prompt,
     remove_from_feed,
     remove_from_library,
+    resolve_public_generation_result_urls,
     save_user_channel_url,
     set_feed_blurred,
     share_to_feed,
@@ -1322,22 +1323,13 @@ async def _get_repeat_source_card(
     return await get_profile_generation_card(
         gen_id,
         viewer_user_id=viewer_user_id,
+        include_unavailable=True,
     )
 
 
 def _public_result_urls(payload: dict[str, Any]) -> list[str]:
-    urls = payload.get("result_urls") or []
-    if isinstance(urls, str):
-        try:
-            urls = json.loads(urls)
-        except (TypeError, json.JSONDecodeError):
-            urls = []
-    normalized = [str(item) for item in urls if str(item).strip()]
-    result_url = payload.get("result_url")
-    if result_url and result_url not in normalized:
-        normalized.insert(0, result_url)
-    missing = set(missing_local_upload_sources(normalized))
-    return [url for url in normalized if url not in missing]
+    """Use the canonical generation media resolver shared with feed/profile."""
+    return resolve_public_generation_result_urls(payload)
 
 
 def _payload_bool(value: Any, default: bool = False) -> bool:
@@ -1513,7 +1505,8 @@ async def _fetch_recent_tasks(telegram_id: int, limit: int = 8) -> list[dict[str
             SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                    result_url, result_urls, is_public_feed, is_prompt_library,
                source_feed_gen_id, feed_prompt_visible, feed_references_visible,
-               feed_blurred, is_profile_visible, is_adult_content, created_at
+               feed_blurred, is_profile_visible, is_adult_content,
+               completed_at, updated_at, created_at
             FROM generation_tasks
             WHERE telegram_id = ?
             ORDER BY created_at DESC
@@ -1544,6 +1537,7 @@ async def _fetch_recent_tasks(telegram_id: int, limit: int = 8) -> list[dict[str
                 "status": row["status"] or "pending",
                 "result_url": result_urls[0] if result_urls else None,
                 "result_urls": result_urls,
+                "media_unavailable": bool((row["status"] or "") == "completed" and not result_urls),
                 "created_at": row["created_at"],
                 "prompt_preview": "" if _task_prompt_hidden(row) else _task_preview(row["prompt"]),
                 "prompt_hidden": _task_prompt_hidden(row),
@@ -1573,7 +1567,7 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
             SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                    result_url, result_urls, is_public_feed, is_prompt_library,
                    source_feed_gen_id, feed_prompt_visible, feed_references_visible,
-                   feed_blurred, is_profile_visible, is_adult_content, created_at, request_data
+                   feed_blurred, is_profile_visible, is_adult_content, completed_at, updated_at, created_at, request_data
             FROM generation_tasks
             WHERE telegram_id = ? AND task_id = ?
             LIMIT 1
@@ -1587,7 +1581,7 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
                 SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                        result_url, result_urls, is_public_feed, is_prompt_library,
                        source_feed_gen_id, feed_prompt_visible, feed_references_visible,
-                       feed_blurred, is_profile_visible, is_adult_content, created_at, request_data
+                       feed_blurred, is_profile_visible, is_adult_content, completed_at, updated_at, created_at, request_data
                 FROM generation_tasks
                 WHERE telegram_id = ? AND id = ?
                 LIMIT 1
@@ -1601,7 +1595,7 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
                 SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                        result_url, result_urls, is_public_feed, is_prompt_library,
                        source_feed_gen_id, feed_prompt_visible, feed_references_visible,
-                       feed_blurred, is_profile_visible, is_adult_content, created_at, request_data
+                       feed_blurred, is_profile_visible, is_adult_content, completed_at, updated_at, created_at, request_data
                 FROM generation_tasks
                 WHERE telegram_id = ?
                   AND EXISTS (
@@ -1650,6 +1644,7 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
         "status": row["status"] or "pending",
         "result_url": result_urls[0] if result_urls else None,
         "result_urls": result_urls,
+        "media_unavailable": bool((row["status"] or "") == "completed" and not result_urls),
         "is_public_feed": bool(row["is_public_feed"]),
         "is_prompt_library": bool(row["is_prompt_library"]),
         "feed_prompt_visible": bool(row["feed_prompt_visible"]) if "feed_prompt_visible" in row.keys() else False,
@@ -3909,11 +3904,13 @@ async def _get_feed_remix_source_card(
         return await get_profile_generation_card(
             gen_id,
             viewer_user_id=viewer_user_id,
+            include_unavailable=True,
         )
 
     source = await get_feed_generation_card(
         gen_id,
         viewer_user_id=viewer_user_id,
+        include_unavailable=True,
     )
     if source:
         return source
@@ -3921,6 +3918,7 @@ async def _get_feed_remix_source_card(
     return await get_profile_generation_card(
         gen_id,
         viewer_user_id=viewer_user_id,
+        include_unavailable=True,
     )
 
 
@@ -4992,7 +4990,8 @@ async def miniapp_media(request: web.Request) -> web.StreamResponse:
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
         cursor = await db.execute(
-            "SELECT result_url, result_urls FROM generation_tasks WHERE task_id = ? LIMIT 1",
+            """SELECT result_url, result_urls, completed_at, updated_at, created_at
+               FROM generation_tasks WHERE task_id = ? LIMIT 1""",
             (task_id,),
         )
         row = await cursor.fetchone()

@@ -196,6 +196,22 @@ backfill_public_feed_videos() {
     fi
 }
 
+reconcile_rendergrid_legacy_images() {
+    local batch_limit="${RENDERGRID_DEPLOY_BACKFILL_LIMIT:-50}"
+    local concurrency="${RENDERGRID_DEPLOY_BACKFILL_CONCURRENCY:-4}"
+    local max_batches="${RENDERGRID_DEPLOY_BACKFILL_MAX_BATCHES:-1}"
+
+    log "Reconciling legacy RenderGrid images (limit=${batch_limit}, concurrency=${concurrency}, batches=${max_batches})"
+    if ! compose exec -T \
+        -e RENDERGRID_IMAGE_BACKFILL_LIMIT="${batch_limit}" \
+        -e RENDERGRID_IMAGE_BACKFILL_CONCURRENCY="${concurrency}" \
+        -e RENDERGRID_IMAGE_BACKFILL_MAX_BATCHES="${max_batches}" \
+        -e RENDERGRID_IMAGE_BACKFILL_CHECKPOINT_PATH="/app/data/rendergrid-image-backfill-checkpoint.json" \
+        bot python -m scripts.backfill_rendergrid_image_results; then
+        warn "RenderGrid legacy reconciliation reported failures; deployment continues with TTL/media_unavailable safeguards"
+    fi
+}
+
 rollback_to_systemd() {
     warn "Rolling back to systemd service"
     compose down --remove-orphans || true
@@ -240,6 +256,7 @@ deploy() {
 
     verify_running_miniapp_url
     backfill_public_feed_videos
+    reconcile_rendergrid_legacy_images
 
     if service_exists; then
         systemctl disable "$SYSTEMD_SERVICE" >/dev/null 2>&1 || true
@@ -284,6 +301,9 @@ Environment overrides:
   PULL_IMAGE=1 BANANO_IMAGE=ghcr.io/bambale0/banano-kling-bot:tanyapi
   HEALTH_TIMEOUT_SECONDS=180
   FEED_VIDEO_BACKFILL_LIMIT=50
+  RENDERGRID_DEPLOY_BACKFILL_LIMIT=50
+  RENDERGRID_DEPLOY_BACKFILL_CONCURRENCY=4
+  RENDERGRID_DEPLOY_BACKFILL_MAX_BATCHES=1
   PRODUCTION_BRANCH=tanyapi
   PRODUCTION_MINI_APP_URL=https://tanyapp.xn--e1aikcel5c5a.online/mini-app/
 USAGE

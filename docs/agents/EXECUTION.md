@@ -9,7 +9,6 @@
 - Surfaces: Telegram flat payment menu, legacy provider keyboards, Mini App balance sheet, E2E/static regression contracts.
 - Risk: duplicate choose_pay handlers make router order important; the production flat menu is owned by lava_checkout and decorated by miniapp_lava_payment_methods_compat.
 - Test plan: first update regression expectations and confirm RED, then implement order/labels, run focused pytest, Mini App E2E/build checks, review diff, CI, merge to tanyapi, verify exact deployed SHA and production smoke/logs.
-
 - RED evidence: focused contract suite initially failed 9 assertions on the old Lava-first / Robokassa-reserve ordering.
 - Implementation: Telegram flat menu, legacy reserve keyboards, Mini App balance UI and E2E were aligned to Robokassa → KASSA reserve → alternatives → Lava.
 - Documentation: robokassa.md and freekassa.md now describe the same verified priority.
@@ -20,3 +19,105 @@
   - Mini App ESLint: passed;
   - Next.js production export/build: passed;
   - critical Playwright browser E2E: passed.
+
+---
+
+## 2026-09-15 — RenderGrid legacy media and reference retention
+
+### Task
+Repair legacy RenderGrid media and reference-retention behavior without rewriting the working RenderGrid adapter.
+
+### Baseline
+- Original baseline SHA: `ac4f35c7c6f5726d586bfc17a9859f2161ac83d8`.
+- Rebasing target before PR: current `origin/tanyapi`, including payment-priority commit `cf6ce28`.
+- Task branch: `fix/rendergrid-legacy-storage-policy`.
+- Production container: `banano-kling-bot`.
+- Production DB: PostgreSQL database `banano_kling`.
+
+### Intended user-visible result
+- Old RenderGrid results are localized while their provider URLs are still alive.
+- A historical generation that can be repeated keeps its snapshot references even after the saved-reference row is pruned.
+- RenderGrid external result URLs stop leaking through history/task-detail and are treated with a 24h provider-specific lifetime.
+- Feed, profile, Mini App history/detail and repeat flows agree on media availability.
+- Backfill becomes an idempotent deploy/reconciliation step with bounded batches and telemetry.
+
+### Current-state audit
+Existing and reusable:
+- Fresh RenderGrid completion already localizes image results in `bot.main._persist_result_url_if_needed`.
+- `scripts/backfill_rendergrid_image_results.py` already verified a non-empty local file, updated `result_url/result_urls` with compare-and-swap, and emitted counters.
+- Feed/profile already use the database media availability resolver.
+- Production baseline found exactly 7,133 completed image rows still pointing at `cdn.rendergrid.io`.
+
+Confirmed gaps at task start:
+- Backfill had no cursor/checkpoint and could retry the same dead rows indefinitely.
+- Backfill was not part of deploy/reconciliation.
+- Orphan reference cleanup protected `saved_references` and active prompt previews, but not generation snapshots.
+- RenderGrid shared the generic ephemeral TTL (72h) instead of 24h.
+- Mini App recent-task history and task-detail used a separate URL parser and could expose old RenderGrid URLs directly.
+- Requested legacy/repeat regression matrix was incomplete.
+
+### Production evidence
+- Baseline 2026-09-15: exactly 7,133 completed image rows pointed at `cdn.rendergrid.io`.
+- Controlled batch 1: `scanned=100 localized=100 updated=100 skipped_race=0 failed=0`.
+- Controlled batch 2 localized another 500 rows; DB verification after commit showed 6,533 external RenderGrid rows remaining.
+- During the 500-row run PostgreSQL reported a deadlock while the old script held its DB connection across provider downloads. The backfill was then changed to fetch candidates, close DB, localize remotely, and reopen DB only for short CAS updates.
+- Production bot health remained `healthy`; no additional recovery batch is started until the merged transaction-safe version is deployed.
+- Snapshot-retention PostgreSQL query was executed against production successfully and resolved 95,982 unique historical local snapshot-ref URLs without transferring request_data JSON blobs to Python.
+
+### Data-safety / no-hardcode decisions
+- No blind bulk UPDATE: preserve compare-and-swap guard and validate the local file before mutation.
+- Backfill is bounded by batch size and cursor/checkpoint; failures are counted, not silently dropped.
+- Provider TTL is explicit and configurable; RenderGrid default is 24h.
+- Reference cleanup errs toward retention when a completed generation snapshot owns a local reference.
+- No schema rewrite is required.
+- Deploy reconciliation cursor is persisted under the existing `/app/data` persistent volume.
+
+### Observability
+Backfill/reconciliation emits:
+- scanned;
+- localized;
+- updated;
+- failed;
+- skipped_race;
+- next_before_id;
+- exhausted.
+
+Reference cleanup reports how many generation snapshot refs are protected.
+
+### Test seams / acceptance
+1. RenderGrid completed → local file → DB canonical URL.
+2. Old RenderGrid card resolves through shared availability policy.
+3. Repeat remains viable beyond 24h when canonical media/refs are local.
+4. Pruned saved-reference file remains while referenced by historical generation snapshot.
+5. Mini App profile/remix and history/task-detail do not emit stale direct RenderGrid URLs.
+6. Telegram repeat uses retained snapshot refs.
+7. Provider payload still receives correct references; no adapter rewrite/regression.
+8. Backfill cursor progresses past failures and CAS prevents races.
+9. Deploy reconciliation is bounded, persistent, idempotent and fail-safe.
+
+### Implementation status
+- [x] Audit current branch/runtime and confirm live legacy count.
+- [x] Run initial controlled production backfill batches; 600 rows localized.
+- [x] Add red regressions for snapshot retention, provider TTL/shared resolver and cursor progress.
+- [x] Implement generation-snapshot protection in orphan cleanup.
+- [x] Add provider-specific RenderGrid TTL and shared public result resolver.
+- [x] Route Mini App history/task-detail/media proxy through shared resolver.
+- [x] Add cursor/checkpoint-aware backfill telemetry and reconciliation entrypoint.
+- [x] Persist deploy reconciliation cursor under `/app/data`.
+- [x] Wire bounded reconciliation into production deploy.
+- [x] Add requested Mini App/Telegram/provider regression coverage.
+- [x] Update environment/provider docs to match async RenderGrid + durable localization reality.
+- [x] Focused regression matrix: 20/20 green before checkpoint change; 14/14 targeted green after checkpoint change; 11/11 cleanup/backfill tests green after query optimization.
+- [x] Run two-axis review (standards + spec), fix blockers.
+  - blocker fixed: deploy reconciliation now persists cursor across deploys;
+  - blocker fixed: orphan cleanup no longer fetches/parses ~198k request_data JSON blobs in Python;
+  - no unresolved high-severity review issue remains.
+- [ ] Full safe pytest suite / changed-lines CI lint on rebased PR head.
+- [ ] Push branch, open PR to `tanyapi`, verify CI, merge only when green.
+- [ ] Verify exact production SHA, health, smoke and telemetry.
+- [ ] Continue controlled production backfill and report current recovered/remaining totals.
+
+### Rollback
+- Code changes are normal git rollback.
+- Backfill only replaces provider URLs with verified local durable URLs; it does not delete source data/files.
+- CAS guard prevents overwriting concurrently changed rows.
