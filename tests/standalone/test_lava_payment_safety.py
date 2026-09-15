@@ -197,7 +197,6 @@ async def test_stale_pending_auth_failure_is_quarantined(monkeypatch):
     monkeypatch.setattr(safety.db_backend, "connect", lambda: FakeDb())
     monkeypatch.setattr(safety, "_load_reconcile_quarantined_orders", load_quarantined)
     monkeypatch.setattr(safety, "_save_reconcile_quarantine", save_quarantine)
-    monkeypatch.setattr(safety, "get_transaction_by_order", lambda _order_id: transaction)
     monkeypatch.setattr(safety, "_invoice_id_for_contract", invoice_id_for_contract)
     monkeypatch.setattr(safety.lava_service, "get_invoice_response", raw_invoice_response)
     monkeypatch.setattr(safety, "_provider_status", unexpected_provider_status)
