@@ -6,6 +6,7 @@ import hmac
 import logging
 import os
 from collections.abc import Iterable
+from datetime import datetime, timezone
 from types import ModuleType
 from typing import Any
 from urllib.parse import urlparse
@@ -30,6 +31,35 @@ _PENDING_STATUSES = {"", "created", "in_progress", "pending", "processing"}
 _SUCCESS_STATUSES = {"completed", "success", "succeeded", "paid"}
 _DEFAULT_LAVA_WEBHOOK_IP = "158.160.60.174"
 _INSTALL_MARKER = "_lava_payment_safety_installed"
+
+
+def _pending_created_at(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _is_stale_pending(value: Any, ttl_hours: int, *, now: datetime | None = None) -> bool:
+    created_at = _pending_created_at(value)
+    if created_at is None:
+        return False
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    else:
+        current = current.astimezone(timezone.utc)
+    return (current - created_at).total_seconds() >= max(ttl_hours, 1) * 3600
 
 
 async def _ensure_bindings_table() -> None:
@@ -584,21 +614,36 @@ async def safe_reconcile_lava_pending_transactions(
         db.row_factory = db_backend.Row
         rows = await (
             await db.execute(
-                "SELECT order_id, payment_id FROM transactions "
+                "SELECT order_id, payment_id, created_at FROM transactions "
                 "WHERE provider = 'lava' AND status = 'pending' "
                 "ORDER BY created_at DESC LIMIT ?",
                 (limit,),
             )
         ).fetchall()
 
+    ttl_hours = max(int(getattr(config, "LAVA_PENDING_TTL_HOURS", 24) or 24), 1)
     results: list[dict[str, Any]] = []
     for row in rows:
         order_id = str(row["order_id"])
         payment_id = str(row["payment_id"] or "")
+        created_at = row["created_at"]
         item: dict[str, Any] = {
             "order_id": order_id,
             "payment_id": payment_id,
         }
+
+        # Old pending rows may belong to a previous Lava credential/account.
+        # Do not mutate financial state blindly, but stop polling them forever
+        # with the current API key. They remain pending for explicit audit.
+        if _is_stale_pending(created_at, ttl_hours):
+            item.update(
+                action="stale_pending_quarantined",
+                status="pending",
+                created_at=str(created_at or ""),
+            )
+            results.append(item)
+            continue
+
         try:
             transaction = await get_transaction_by_order(order_id)
             if not transaction:
