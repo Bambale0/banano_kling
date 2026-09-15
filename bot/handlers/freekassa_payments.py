@@ -220,13 +220,9 @@ def _provider_keyboard(
     lava: bool,
 ) -> types.InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    if lava:
-        builder.button(
-            text="💳 Lava", callback_data=f"buy_lava_{package_id}"
-        )
     if freekassa:
         builder.button(
-            text="🇷🇺 РФ — KASSA",
+            text="↩️ Резерв · KASSA",
             callback_data=f"buy_freekassa_{package_id}",
         )
     if stars:
@@ -237,6 +233,10 @@ def _provider_keyboard(
         builder.button(
             text="₿ Криптовалюта (CryptoBot)",
             callback_data=f"buy_crypto_{package_id}",
+        )
+    if lava:
+        builder.button(
+            text="💳 Lava", callback_data=f"buy_lava_{package_id}"
         )
     builder.button(text="◀️ Назад", callback_data="menu_topup")
     builder.adjust(1)
@@ -303,7 +303,7 @@ async def _render_completed_payment(message, transaction, bonus_text: str = "") 
 async def choose_payment_method_freekassa(
     callback: types.CallbackQuery, state: FSMContext
 ):
-    """Show KASSA as the primary RUB provider and Lava as reserve."""
+    """Keep KASSA as a reserve surface and place Lava lower in the list."""
 
     package_id = callback.data.replace("choose_pay_", "", 1)
     package = preset_manager.get_package(package_id)

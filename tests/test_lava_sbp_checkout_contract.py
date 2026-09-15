@@ -184,7 +184,7 @@ def test_miniapp_payment_ui_has_separate_card_and_sbp_actions() -> None:
     assert "'lava_foreign_paypal'" in types_source
 
 
-def test_text_bot_uses_lava_primary_and_keeps_other_methods_as_reserve() -> None:
+def test_text_bot_uses_robokassa_primary_kassa_reserve_and_lava_lower() -> None:
     source = _read("bot/handlers/lava_checkout.py")
 
     assert 'callback_data=f"freekassa_card_{package_id}"' in source
@@ -193,11 +193,15 @@ def test_text_bot_uses_lava_primary_and_keeps_other_methods_as_reserve() -> None
     assert 'callback_data=f"buy_lava_sbp_{package_id}"' in source
     assert 'callback_data=f"buy_lava_foreign_card_{package_id}"' in source
     assert 'callback_data=f"buy_lava_foreign_paypal_{package_id}"' in source
+    assert "💳 СБП / карта · Robokassa" in source
+    assert "↩️ Резерв · KASSA · карта" in source
+    assert "↩️ Резерв · KASSA · СБП" in source
     assert "Карта · Lava" in source
     assert "СБП · Lava" in source
-    assert "Картой · KASSA" in source
-    assert "Резерв · Robokassa" in source
-    assert source.index("Картой · KASSA") < source.index("Резерв · Robokassa")
+    assert source.index("💳 СБП / карта · Robokassa") < source.index(
+        "↩️ Резерв · KASSA · карта"
+    )
+    assert source.index("↩️ Резерв · KASSA · СБП") < source.index("Карта · Lava")
     assert "Резерв · зарубежная оплата" in source
     assert "Резерв · зарубежная карта" in source
     assert "PayPal" in source
@@ -208,16 +212,15 @@ def test_text_bot_uses_lava_primary_and_keeps_other_methods_as_reserve() -> None
     assert "_allow_amount_fallback=False" in source
 
 
-def test_freekassa_legacy_provider_keyboard_puts_lava_first() -> None:
+def test_freekassa_legacy_provider_keyboard_marks_kassa_reserve_and_lava_last() -> None:
     source = _read("bot/handlers/freekassa_payments.py")
     callback_block = source.split(
         "async def initiate_freekassa_payment", 1
     )[1].split("@router.callback_query(F.data.startswith(\"check_freekassa_\"))", 1)[0]
 
     assert 'text="💳 Lava"' in source
-    assert 'text="🇷🇺 РФ — KASSA"' in source
-    assert "KASSA (резерв)" not in source
-    assert source.index('text="💳 Lava"') < source.index('text="🇷🇺 РФ — KASSA"')
+    assert 'text="↩️ Резерв · KASSA"' in source
+    assert source.index('text="↩️ Резерв · KASSA"') < source.index('text="💳 Lava"')
     assert 'callback_data=f"freekassa_card_{package_id}"' in source
     assert 'callback_data=f"freekassa_sbp_{package_id}"' in source
     assert 'provider="freekassa"' in callback_block
