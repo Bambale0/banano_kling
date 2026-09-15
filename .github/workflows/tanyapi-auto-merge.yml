@@ -1,0 +1,36 @@
+name: Tanya Auto Merge
+
+on:
+  pull_request_target:
+    branches: [tanyapi]
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: tanyapi-auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  enable-auto-merge:
+    name: Enable auto-merge after required checks
+    if: >-
+      ${{
+        github.event.pull_request.draft == false &&
+        github.event.pull_request.base.ref == 'tanyapi' &&
+        github.event.pull_request.head.repo.full_name == github.repository
+      }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Arm GitHub native auto-merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -Eeuo pipefail
+          gh pr merge "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --auto \
+            --squash

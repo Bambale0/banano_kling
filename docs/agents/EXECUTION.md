@@ -20,3 +20,12 @@
   - Mini App ESLint: passed;
   - Next.js production export/build: passed;
   - critical Playwright browser E2E: passed.
+
+## 2026-09-15 — tanyapi automatic merge gate
+
+- Root cause: PRs could become fully green but stay open indefinitely because no auto-merge mechanism existed.
+- Added `.github/workflows/tanyapi-auto-merge.yml`.
+- The workflow runs only for non-draft same-repository PRs targeting `tanyapi`.
+- It does not checkout PR code while holding write permissions.
+- It arms GitHub native `--auto --squash`; repository required checks remain the authority that allows the actual merge.
+- Regression contract added in `tests/test_tanyapi_auto_merge_workflow.py`.
