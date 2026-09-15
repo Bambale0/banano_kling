@@ -123,6 +123,68 @@ def test_foreign_usd_webhook_matches_package_price_usd(monkeypatch):
     )
 
 
+
+
+def test_stale_pending_detection_is_timezone_safe():
+    assert safety._is_stale_pending(
+        "2000-01-01 00:00:00",
+        24,
+    )
+    assert not safety._is_stale_pending("", 24)
+
+
+@pytest.mark.asyncio
+async def test_stale_pending_reconcile_skips_provider_lookup(monkeypatch):
+    class FakeCursor:
+        async def fetchall(self):
+            return [
+                {
+                    "order_id": "old-order",
+                    "payment_id": "old-invoice",
+                    "created_at": "2000-01-01 00:00:00",
+                }
+            ]
+
+    class FakeDb:
+        row_factory = None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def execute(self, *_args, **_kwargs):
+            return FakeCursor()
+
+    async def unexpected_transaction_lookup(_order_id):
+        raise AssertionError("stale pending must not load transaction")
+
+    async def unexpected_provider_lookup(*_args, **_kwargs):
+        raise AssertionError("stale pending must not call Lava provider")
+
+    monkeypatch.setattr(safety.lava_service, "enabled", True)
+    monkeypatch.setattr(safety.config, "LAVA_PENDING_TTL_HOURS", 24)
+    monkeypatch.setattr(safety.db_backend, "connect", lambda: FakeDb())
+    monkeypatch.setattr(safety, "get_transaction_by_order", unexpected_transaction_lookup)
+    monkeypatch.setattr(safety, "_provider_status", unexpected_provider_lookup)
+
+    results = await safety.safe_reconcile_lava_pending_transactions(
+        payments_module=_payments_module({"ok": True}),
+        limit=10,
+    )
+
+    assert results == [
+        {
+            "order_id": "old-order",
+            "payment_id": "old-invoice",
+            "action": "stale_pending_quarantined",
+            "status": "pending",
+            "created_at": "2000-01-01 00:00:00",
+        }
+    ]
+
+
 @pytest.mark.asyncio
 async def test_success_webhook_returns_503_while_provider_is_in_progress(monkeypatch):
     transaction = SimpleNamespace(
