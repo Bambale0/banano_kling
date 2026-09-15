@@ -295,7 +295,7 @@ export function BalanceSheet() {
               </div>
 
               <label className="block space-y-2" htmlFor="payment-customer-email">
-                <span className="text-sm font-medium text-foreground">Почта для оплаты Lava</span>
+                <span className="text-sm font-medium text-foreground">Почта для дополнительной оплаты через Lava</span>
                 <div className="relative">
                   <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <input
@@ -385,34 +385,22 @@ export function BalanceSheet() {
                         </div>
 
                         <div className="mt-4 grid grid-cols-2 gap-2">
-                          {lavaConfigured ? (
+                          {robokassaConfigured ? (
                             <>
-                              <p className="col-span-2 px-1 text-center text-[11px] text-muted-foreground">
-                                Lava · основной способ
+                              <p className="col-span-2 px-1 text-center text-[11px] font-medium text-foreground">
+                                Robokassa · основной способ
                               </p>
                               <Button
-                                onClick={() => handleTopup(pkg.id, 'lava_card')}
+                                onClick={() => handleTopup(pkg.id, 'robokassa')}
                                 disabled={Boolean(loadingPayment)}
-                                className="w-full bg-gold text-primary-foreground hover:bg-gold/90"
+                                className="col-span-2 w-full bg-gold text-primary-foreground hover:bg-gold/90"
                               >
-                                {cardLoading ? (
-                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                ) : (
-                                  <CreditCard className="mr-2 h-4 w-4" />
-                                )}
-                                Карта
-                              </Button>
-                              <Button
-                                onClick={() => handleTopup(pkg.id, 'lava_sbp')}
-                                disabled={Boolean(loadingPayment)}
-                                className="w-full bg-gold text-primary-foreground hover:bg-gold/90"
-                              >
-                                {sbpLoading ? (
+                                {robokassaLoading ? (
                                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                                 ) : (
                                   <QrCode className="mr-2 h-4 w-4" />
                                 )}
-                                СБП
+                                СБП / карта
                               </Button>
                             </>
                           ) : null}
@@ -449,26 +437,6 @@ export function BalanceSheet() {
                               </Button>
                             </>
                           ) : null}
-                          {robokassaConfigured ? (
-                            <>
-                              <p className="col-span-2 mt-1 px-1 text-center text-[11px] text-muted-foreground">
-                                Резерв · Robokassa
-                              </p>
-                              <Button
-                                onClick={() => handleTopup(pkg.id, 'robokassa')}
-                                disabled={Boolean(loadingPayment)}
-                                variant="outline"
-                                className="col-span-2 w-full border-border/60 bg-background/20 text-foreground hover:bg-secondary/50"
-                              >
-                                {robokassaLoading ? (
-                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                ) : (
-                                  <CreditCard className="mr-2 h-4 w-4" />
-                                )}
-                                Оплатить через Robokassa
-                              </Button>
-                            </>
-                          ) : null}
                           <Button
                             onClick={() => handleTopup(pkg.id, 'tribute' as PaymentProvider)}
                             disabled={Boolean(loadingPayment) || !tributeConfigured}
@@ -481,37 +449,6 @@ export function BalanceSheet() {
                             )}
                             Зарубежная / СНГ
                           </Button>
-                          {foreignConfigured ? (
-                            <>
-                              <p className="col-span-2 mt-1 px-1 text-center text-[11px] text-muted-foreground">
-                                Резерв · зарубежная
-                              </p>
-                              <Button
-                                onClick={() => handleTopup(pkg.id, 'lava_foreign_card')}
-                                disabled={Boolean(loadingPayment)}
-                                className="w-full bg-secondary text-foreground hover:bg-secondary/80"
-                              >
-                                {foreignCardLoading || foreignLoading ? (
-                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                ) : (
-                                  <Globe2 className="mr-2 h-4 w-4" />
-                                )}
-                                Карта
-                              </Button>
-                              <Button
-                                onClick={() => handleTopup(pkg.id, 'lava_foreign_paypal')}
-                                disabled={Boolean(loadingPayment)}
-                                className="w-full bg-secondary text-foreground hover:bg-secondary/80"
-                              >
-                                {foreignPayPalLoading ? (
-                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                ) : (
-                                  <Globe2 className="mr-2 h-4 w-4" />
-                                )}
-                                PayPal
-                              </Button>
-                            </>
-                          ) : null}
                           <Button
                             onClick={() => handleTopup(pkg.id, 'telegram_stars')}
                             disabled={Boolean(loadingPayment)}
@@ -525,6 +462,72 @@ export function BalanceSheet() {
                             )}
                             Stars · {starsPrice}⭐
                           </Button>
+                          {lavaConfigured ? (
+                            <>
+                              <p className="col-span-2 mt-1 px-1 text-center text-[11px] text-muted-foreground">
+                                Lava · дополнительный способ
+                              </p>
+                              <Button
+                                onClick={() => handleTopup(pkg.id, 'lava_card')}
+                                disabled={Boolean(loadingPayment)}
+                                variant="outline"
+                                className="w-full border-border/40 bg-background/10 text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
+                              >
+                                {cardLoading ? (
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                  <CreditCard className="mr-2 h-4 w-4" />
+                                )}
+                                Карта
+                              </Button>
+                              <Button
+                                onClick={() => handleTopup(pkg.id, 'lava_sbp')}
+                                disabled={Boolean(loadingPayment)}
+                                variant="outline"
+                                className="w-full border-border/40 bg-background/10 text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
+                              >
+                                {sbpLoading ? (
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                  <QrCode className="mr-2 h-4 w-4" />
+                                )}
+                                СБП
+                              </Button>
+                            </>
+                          ) : null}
+                          {foreignConfigured ? (
+                            <>
+                              <p className="col-span-2 mt-1 px-1 text-center text-[11px] text-muted-foreground">
+                                Резерв · зарубежная · Lava
+                              </p>
+                              <Button
+                                onClick={() => handleTopup(pkg.id, 'lava_foreign_card')}
+                                disabled={Boolean(loadingPayment)}
+                                variant="outline"
+                                className="w-full border-border/40 bg-background/10 text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
+                              >
+                                {foreignCardLoading || foreignLoading ? (
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Globe2 className="mr-2 h-4 w-4" />
+                                )}
+                                Карта
+                              </Button>
+                              <Button
+                                onClick={() => handleTopup(pkg.id, 'lava_foreign_paypal')}
+                                disabled={Boolean(loadingPayment)}
+                                variant="outline"
+                                className="w-full border-border/40 bg-background/10 text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
+                              >
+                                {foreignPayPalLoading ? (
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Globe2 className="mr-2 h-4 w-4" />
+                                )}
+                                PayPal
+                              </Button>
+                            </>
+                          ) : null}
                         </div>
                       </div>
                     )

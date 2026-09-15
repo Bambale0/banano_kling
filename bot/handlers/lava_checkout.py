@@ -191,41 +191,22 @@ def _payment_options_keyboard(
     freekassa: bool,
     robokassa: bool = False,
 ) -> types.InlineKeyboardMarkup:
-    """Show every enabled payment method as an independent option."""
+    """Show Robokassa first, KASSA as reserve, and Lava lower in the list."""
 
     builder = InlineKeyboardBuilder()
-    if lava_card:
+    if robokassa:
         builder.button(
-            text="💳 Карта · Lava",
-            callback_data=f"buy_lava_card_{package_id}",
-        )
-    if lava_sbp:
-        builder.button(
-            text="⚡ СБП · Lava",
-            callback_data=f"buy_lava_sbp_{package_id}",
+            text="💳 СБП / карта · Robokassa",
+            callback_data=f"buy_robokassa_{package_id}",
         )
     if freekassa:
         builder.button(
-            text="💳 Картой · KASSA",
+            text="↩️ Резерв · KASSA · карта",
             callback_data=f"freekassa_card_{package_id}",
         )
         builder.button(
-            text="⚡ СБП · KASSA",
+            text="↩️ Резерв · KASSA · СБП",
             callback_data=f"freekassa_sbp_{package_id}",
-        )
-    if robokassa:
-        builder.button(
-            text="↩️ Резерв · Robokassa",
-            callback_data=f"buy_robokassa_{package_id}",
-        )
-    if lava_foreign:
-        builder.button(
-            text="🌐 Резерв · зарубежная карта",
-            callback_data=f"buy_lava_foreign_card_{package_id}",
-        )
-        builder.button(
-            text="🌐 Резерв · PayPal",
-            callback_data=f"buy_lava_foreign_paypal_{package_id}",
         )
     if stars:
         builder.button(
@@ -236,6 +217,25 @@ def _payment_options_keyboard(
         builder.button(
             text="₿ Криптовалюта",
             callback_data=f"buy_crypto_{package_id}",
+        )
+    if lava_card:
+        builder.button(
+            text="💳 Карта · Lava",
+            callback_data=f"buy_lava_card_{package_id}",
+        )
+    if lava_sbp:
+        builder.button(
+            text="⚡ СБП · Lava",
+            callback_data=f"buy_lava_sbp_{package_id}",
+        )
+    if lava_foreign:
+        builder.button(
+            text="🌐 Резерв · зарубежная карта",
+            callback_data=f"buy_lava_foreign_card_{package_id}",
+        )
+        builder.button(
+            text="🌐 Резерв · PayPal",
+            callback_data=f"buy_lava_foreign_paypal_{package_id}",
         )
     builder.button(text="◀️ Назад", callback_data="menu_topup")
     builder.adjust(1)

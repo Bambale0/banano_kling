@@ -62,25 +62,25 @@ def _provider_keyboard(
     lava: bool,
 ) -> types.InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    if lava:
-        builder.button(text="💳 Lava", callback_data=f"buy_lava_{package_id}")
+    if robokassa:
+        builder.button(
+            text="💳 СБП / карта · Robokassa",
+            callback_data=f"buy_robokassa_{package_id}",
+        )
     if freekassa:
         builder.button(
             text="↩️ Резерв · KASSA",
             callback_data=f"buy_freekassa_{package_id}",
         )
-    if robokassa:
-        builder.button(
-            text="↩️ Резерв · Robokassa",
-            callback_data=f"buy_robokassa_{package_id}",
-        )
+    if stars:
+        builder.button(text="⭐ Telegram Stars", callback_data=f"buy_stars_{package_id}")
     if crypto:
         builder.button(
             text="₿ Криптовалюта (CryptoBot)",
             callback_data=f"buy_crypto_{package_id}",
         )
-    if stars:
-        builder.button(text="⭐ Telegram Stars", callback_data=f"buy_stars_{package_id}")
+    if lava:
+        builder.button(text="💳 Lava", callback_data=f"buy_lava_{package_id}")
     builder.button(text="◀️ Назад", callback_data="menu_topup")
     builder.adjust(1)
     return builder.as_markup()
@@ -470,7 +470,7 @@ async def _create_robokassa_miniapp_checkout(
 
 
 def install_robokassa_payment_surfaces() -> None:
-    """Expose Robokassa availability and Mini App checkout without replacing reserves."""
+    """Expose Robokassa as the primary checkout while retaining reserve methods."""
 
     import bot.miniapp as miniapp_module
 

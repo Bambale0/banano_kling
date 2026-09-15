@@ -46,61 +46,46 @@ def _decorate_text_payment_options(
     markup: InlineKeyboardMarkup,
     package_id: str,
 ) -> InlineKeyboardMarkup:
-    """Keep KASSA primary, then Tribute, with Lava methods left as reserves."""
+    """Keep Robokassa first, KASSA reserve next, then Tribute before Lava."""
 
     tribute_url = TRIBUTE_PACKAGE_LINKS.get(str(package_id))
     if not tribute_url:
         return markup
 
     reserve_label = "🌍 Зарубежная / СНГ"
-    star_labels = {"⭐ Stars", "⭐ Telegram Stars"}
     rows: list[list[InlineKeyboardButton]] = []
-    stars_rows: list[list[InlineKeyboardButton]] = []
 
     for row in markup.inline_keyboard:
         if any(button.text == reserve_label for button in row):
             continue
-        if len(row) == 1 and row[0].text in star_labels:
-            stars_rows.append(list(row))
-            continue
         rows.append(list(row))
 
     reserve_row = [InlineKeyboardButton(text=reserve_label, url=tribute_url)]
-    primary_kassa_callbacks = {
+    kassa_callbacks = {
         f"freekassa_card_{package_id}",
         f"freekassa_sbp_{package_id}",
-        # Keep already-sent legacy submenu buttons compatible.
         f"buy_freekassa_{package_id}",
     }
     kassa_indexes = [
         index
         for index, row in enumerate(rows)
-        if any(button.callback_data in primary_kassa_callbacks for button in row)
+        if any(button.callback_data in kassa_callbacks for button in row)
     ]
     if kassa_indexes:
         rows.insert(max(kassa_indexes) + 1, reserve_row)
     else:
-        first_lava_reserve = next(
-            (
-                index
-                for index, row in enumerate(rows)
-                if any((button.text or "").startswith("↩️ Резерв ·") for button in row)
-            ),
-            0,
-        )
-        rows.insert(first_lava_reserve, reserve_row)
-
-    back_index = next(
-        (
+        robokassa_indexes = [
             index
             for index, row in enumerate(rows)
-            if any(button.callback_data == "menu_topup" for button in row)
-        ),
-        len(rows),
-    )
-    for star_row in stars_rows:
-        rows.insert(back_index, star_row)
-        back_index += 1
+            if any(
+                str(button.callback_data or "").startswith("buy_robokassa_")
+                for button in row
+            )
+        ]
+        if robokassa_indexes:
+            rows.insert(max(robokassa_indexes) + 1, reserve_row)
+        else:
+            rows.insert(0, reserve_row)
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
