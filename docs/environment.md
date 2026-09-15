@@ -150,6 +150,22 @@ https://media.chillcreative.ru/uploads/...
 
 Включает сохранение provider result в локальное storage там, где поддерживается. Перед включением проверить disk capacity и cleanup policy.
 
+Для image results с хостов из `DURABLE_IMAGE_RESULT_HOSTS` локализация выполняется всегда, даже если этот флаг выключен: такие provider URLs считаются временными и не должны попадать в повторную генерацию после истечения TTL.
+
+### `DURABLE_IMAGE_RESULT_HOSTS`
+
+Список хостов provider image results, которые backend обязан сразу зеркалить в durable storage. Значение по умолчанию:
+
+```dotenv
+DURABLE_IMAGE_RESULT_HOSTS=cdn.rendergrid.io
+```
+
+RenderGrid results нельзя использовать как долговременное хранилище: после завершения задачи backend должен сохранить собственную копию и записать локальный URL в `generation_tasks.result_url`. Каталог durable storage исключён из обычной 24-часовой очистки uploads.
+
+### `FEED_EPHEMERAL_RESULT_HOSTS`
+
+Публичная лента считает временными как минимум `tempfile.aiquickdraw.com` и `cdn.rendergrid.io`. Если result не удалось локализовать, такой URL не должен считаться долговременным источником для повторов.
+
 ## 6. Database
 
 ### `DATABASE_URL`

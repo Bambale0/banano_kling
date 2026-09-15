@@ -96,6 +96,11 @@ CLEANUP_INTERVAL_SECONDS = 24 * 3600
 UPLOAD_RETENTION_SECONDS = 24 * 3600
 LOG_RETENTION_SECONDS = 24 * 3600
 ACTIVE_LOG_FILENAMES = {"bot.log"}
+DURABLE_IMAGE_RESULT_HOSTS = {
+    host.strip().lower().lstrip(".")
+    for host in os.getenv("DURABLE_IMAGE_RESULT_HOSTS", "cdn.rendergrid.io").split(",")
+    if host.strip()
+}
 
 YOOKASSA_RECONCILE_INTERVAL_SECONDS = 5 * 60
 YOOKASSA_RECONCILE_BATCH_SIZE = 50
@@ -871,6 +876,46 @@ async def _persist_result_url_if_needed(result_url: str | None, *, task_type: st
         return result_url
     if _is_local_static_result_url(candidate):
         return candidate
+
+    result_host = (urlparse(candidate).hostname or "").strip().lower().lstrip(".")
+    force_durable_image = (
+        str(task_type or "").strip().lower() == "image"
+        and any(
+            result_host == host or result_host.endswith(f".{host}")
+            for host in DURABLE_IMAGE_RESULT_HOSTS
+        )
+    )
+    if force_durable_image:
+        try:
+            from bot.services.feed_persist import persist_feed_result_urls
+
+            persisted = await persist_feed_result_urls(
+                [candidate],
+                require_local=True,
+            )
+            if persisted:
+                durable_url = str(persisted[0] or "").strip()
+                if durable_url:
+                    logger.info(
+                        "Persisted ephemeral provider image durably: host=%s source=%s target=%s",
+                        result_host,
+                        candidate,
+                        durable_url,
+                    )
+                    return durable_url
+            logger.warning(
+                "Failed to persist ephemeral provider image durably: host=%s url=%s",
+                result_host,
+                candidate,
+            )
+        except Exception:
+            logger.exception(
+                "Durable provider image persistence failed: host=%s url=%s",
+                result_host,
+                candidate,
+            )
+        return candidate
+
     if not getattr(config, "PERSIST_PROVIDER_RESULTS", False):
         return candidate
 

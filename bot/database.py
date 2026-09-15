@@ -44,7 +44,7 @@ FEED_PUBLIC_CLEANUP_INTERVAL_SECONDS = 999999999
 FEED_EPHEMERAL_RESULT_TTL_HOURS = int(os.getenv("FEED_EPHEMERAL_RESULT_TTL_HOURS", "72"))
 FEED_EPHEMERAL_RESULT_HOSTS = {
     host.strip().lower().lstrip(".")
-    for host in os.getenv("FEED_EPHEMERAL_RESULT_HOSTS", "tempfile.aiquickdraw.com").split(",")
+    for host in os.getenv("FEED_EPHEMERAL_RESULT_HOSTS", "tempfile.aiquickdraw.com,cdn.rendergrid.io").split(",")
     if host.strip()
 }
 FEED_PUBLIC_TYPES = {"image", "video"}
