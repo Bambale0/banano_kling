@@ -412,8 +412,12 @@ class LavaService:
 
         return fallback_offer_id
 
+    async def get_invoice_response(self, invoice_id: str) -> dict[str, Any]:
+        """Return the raw provider response, including HTTP failure metadata."""
+        return await self._request("GET", f"/api/v2/invoices/{invoice_id}")
+
     async def get_invoice(self, invoice_id: str) -> dict[str, Any] | None:
-        response = await self._request("GET", f"/api/v2/invoices/{invoice_id}")
+        response = await self.get_invoice_response(invoice_id)
         if not response.get("ok"):
             return None
         return response
