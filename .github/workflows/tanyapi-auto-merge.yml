@@ -6,16 +6,19 @@ on:
     types: [opened, reopened, synchronize, ready_for_review]
 
 permissions:
+  actions: write
+  checks: read
   contents: write
   pull-requests: write
+  statuses: read
 
 concurrency:
   group: tanyapi-auto-merge-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  enable-auto-merge:
-    name: Enable auto-merge after required checks
+  merge-after-green:
+    name: Merge when all PR workflows are green
     if: >-
       ${{
         github.event.pull_request.draft == false &&
@@ -23,14 +26,130 @@ jobs:
         github.event.pull_request.head.repo.full_name == github.repository
       }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
-      - name: Arm GitHub native auto-merge
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+      - name: Wait for exact PR head and every workflow run to pass
+        shell: bash
         run: |
           set -Eeuo pipefail
-          gh pr merge "$PR_NUMBER" \
-            --repo "$GITHUB_REPOSITORY" \
-            --auto \
-            --squash
+          deadline=$((SECONDS + 3300))
+
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+            state="$(jq -r '.state' <<< "$pr_json")"
+            draft="$(jq -r '.draft' <<< "$pr_json")"
+            base_ref="$(jq -r '.base.ref' <<< "$pr_json")"
+            head_sha="$(jq -r '.head.sha' <<< "$pr_json")"
+            head_repo="$(jq -r '.head.repo.full_name' <<< "$pr_json")"
+
+            [ "$state" = open ] || {
+              echo "PR #$PR_NUMBER is no longer open; nothing to merge."
+              exit 0
+            }
+            [ "$draft" = false ] || {
+              echo "PR #$PR_NUMBER became draft; nothing to merge."
+              exit 0
+            }
+            [ "$base_ref" = tanyapi ] || {
+              echo "::error::PR base moved away from tanyapi: $base_ref"
+              exit 1
+            }
+            [ "$head_repo" = "$GITHUB_REPOSITORY" ] || {
+              echo "::error::Only same-repository PRs can auto-merge."
+              exit 1
+            }
+            [ "$head_sha" = "$EXPECTED_HEAD_SHA" ] || {
+              echo "PR head changed from $EXPECTED_HEAD_SHA to $head_sha; a newer synchronize event owns the merge."
+              exit 0
+            }
+
+            runs="$(gh api --method GET               "repos/${GITHUB_REPOSITORY}/actions/runs"               -f head_sha="$EXPECTED_HEAD_SHA"               -f event=pull_request               -F per_page=100)"
+
+            main_ci_count="$(jq '[.workflow_runs[] | select(.name == "CI — Tanya TG Bot")] | length' <<< "$runs")"
+            if [ "$main_ci_count" -eq 0 ]; then
+              echo "Main CI has not appeared yet for $EXPECTED_HEAD_SHA"
+              sleep 10
+              continue
+            fi
+
+            pending="$(jq '[.workflow_runs[] | select(.status != "completed")] | length' <<< "$runs")"
+            failing="$(jq '[.workflow_runs[] | select(.status == "completed" and .conclusion != "success")] | length' <<< "$runs")"
+
+            echo "PR #$PR_NUMBER head=$EXPECTED_HEAD_SHA workflows=$(jq '.workflow_runs | length' <<< "$runs") pending=$pending failing=$failing"
+
+            if [ "$failing" -gt 0 ]; then
+              jq -r '.workflow_runs[] | select(.status == "completed" and .conclusion != "success") | "::error::\(.name): \(.conclusion) \(.html_url)"' <<< "$runs"
+              exit 1
+            fi
+
+            if [ "$pending" -gt 0 ]; then
+              sleep 15
+              continue
+            fi
+
+            main_ci_ok="$(jq '[.workflow_runs[] | select(.name == "CI — Tanya TG Bot" and .status == "completed" and .conclusion == "success")] | length' <<< "$runs")"
+            [ "$main_ci_ok" -gt 0 ] || {
+              echo "::error::Main CI did not finish successfully for $EXPECTED_HEAD_SHA"
+              exit 1
+            }
+
+            echo "All PR workflows registered for $EXPECTED_HEAD_SHA are green."
+            exit 0
+          done
+
+          echo "::error::Timed out waiting for all PR workflows for $EXPECTED_HEAD_SHA"
+          exit 1
+
+      - name: Squash merge exact green head
+        id: merge
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          result="$(gh api --method PUT             "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/merge"             -f sha="$EXPECTED_HEAD_SHA"             -f merge_method=squash)"
+          merged="$(jq -r '.merged // false' <<< "$result")"
+          merge_sha="$(jq -r '.sha // empty' <<< "$result")"
+          message="$(jq -r '.message // empty' <<< "$result")"
+
+          [ "$merged" = true ] && [ -n "$merge_sha" ] || {
+            echo "::error::GitHub refused auto-merge: $message"
+            exit 1
+          }
+
+          echo "merge_sha=$merge_sha" >> "$GITHUB_OUTPUT"
+          echo "Merged PR #$PR_NUMBER as $merge_sha"
+
+      - name: Dispatch exact post-merge CI and reliable production deploy
+        shell: bash
+        env:
+          MERGE_SHA: ${{ steps.merge.outputs.merge_sha }}
+        run: |
+          set -Eeuo pipefail
+
+          branch_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/tanyapi" --jq '.object.sha')"
+          [ "$branch_sha" = "$MERGE_SHA" ] || {
+            echo "::error::tanyapi moved before release dispatch: merge=$MERGE_SHA branch=$branch_sha"
+            exit 1
+          }
+
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref tanyapi
+
+          deadline=$((SECONDS + 120))
+          ci_run_id=""
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            ci_run_id="$(gh api --method GET               "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs"               -f head_sha="$MERGE_SHA"               -f event=workflow_dispatch               -f branch=tanyapi               -F per_page=10               --jq '.workflow_runs | sort_by(.created_at) | last | .id // empty')"
+            [ -n "$ci_run_id" ] && break
+            sleep 5
+          done
+
+          [ -n "$ci_run_id" ] || {
+            echo "::error::Exact workflow_dispatch CI did not appear for $MERGE_SHA"
+            exit 1
+          }
+
+          echo "Dispatched exact CI run $ci_run_id for $MERGE_SHA"
+          gh workflow run deploy-production-reliable.yml --repo "$GITHUB_REPOSITORY" --ref tanyapi
+          echo "Dispatched reliable production deploy for $MERGE_SHA"

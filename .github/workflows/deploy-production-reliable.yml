@@ -51,12 +51,17 @@ jobs:
             fi
           fi
 
+          ci_event=push
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            ci_event=workflow_dispatch
+          fi
+
           deadline=$((SECONDS + 2700))
           while [ "$SECONDS" -lt "$deadline" ]; do
             run="$(
               gh api --method GET \
                 "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs" \
-                -f head_sha="$GITHUB_SHA" -f event=push -f branch=tanyapi -F per_page=10 \
+                -f head_sha="$GITHUB_SHA" -f event="$ci_event" -f branch=tanyapi -F per_page=10 \
                 --jq '.workflow_runs | sort_by(.created_at) | last // {}'
             )"
             status="$(jq -r '.status // empty' <<< "$run")"

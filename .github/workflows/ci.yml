@@ -5,6 +5,7 @@ on:
     branches: [tanyapi]
   pull_request:
     branches: [tanyapi]
+  workflow_dispatch:
 
 permissions:
   contents: read

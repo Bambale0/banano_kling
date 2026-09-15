@@ -27,5 +27,6 @@
 - Added `.github/workflows/tanyapi-auto-merge.yml`.
 - The workflow runs only for non-draft same-repository PRs targeting `tanyapi`.
 - It does not checkout PR code while holding write permissions.
-- It arms GitHub native `--auto --squash`; repository required checks remain the authority that allows the actual merge.
+- Repository native auto-merge is disabled, so the workflow waits for the exact PR head and every registered PR Actions run to complete successfully, then performs an exact-head squash merge.
 - Regression contract added in `tests/test_tanyapi_auto_merge_workflow.py`.
+- Because merges performed by `GITHUB_TOKEN` do not reliably fan out normal push-triggered workflows, auto-merge explicitly dispatches `ci.yml` and then `deploy-production-reliable.yml` for the merged `tanyapi` head. Reliable deploy accepts `workflow_dispatch` CI as an exact-SHA gate.

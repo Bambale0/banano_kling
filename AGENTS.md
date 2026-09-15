@@ -27,7 +27,7 @@ Hard rules:
 - Do **not** use, merge into, modify, synchronize or prepare work for `dev` or `main` unless Igor explicitly requests it in the current task.
 - New work starts from the current `tanyapi` head.
 - Normal changes are made in a dedicated task branch and returned by PR to `tanyapi`.
-- Eligible non-draft same-repository PRs to `tanyapi` must have GitHub native auto-merge armed automatically; required repository checks decide when the squash merge is allowed. Do not leave a fully green eligible PR waiting for a manual merge.
+- Eligible non-draft same-repository PRs to `tanyapi` must be squash-merged automatically by the repository auto-merge workflow only after the exact PR head has completed all registered PR workflows successfully. Do not leave a fully green eligible PR waiting for a manual merge.
 - A merge/push into `tanyapi` is a production release event because production CI/CD watches this branch.
 - Never claim production is updated until the exact deployed SHA and post-deploy checks are verified.
 
@@ -444,7 +444,7 @@ Before merging a task PR to `tanyapi`:
 - deployment/config validation must pass;
 - no unresolved high-severity review issue may remain.
 
-Before merge, the repository auto-merge workflow must arm eligible `tanyapi` PRs; GitHub performs the squash merge only after required checks are satisfied.
+Before merge, the repository auto-merge workflow must verify the exact PR head, wait until every registered PR workflow is completed successfully, and only then perform the squash merge.
 
 After merge to `tanyapi`:
 
