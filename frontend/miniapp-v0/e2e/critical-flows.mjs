@@ -373,8 +373,14 @@ try {
 
   // Payment E2E: Lava is primary; KASSA is next; Robokassa stays below it as reserve.
   await page.locator('header button').last().click()
-  await page.getByLabel('Почта для оплаты Lava').fill('Buyer2026@Mail.ru')
 
+  // Empty/invalid Lava email is a client-side validation error and must not
+  // produce a noisy 400 request to the backend.
+  await page.getByRole('button', { name: 'Карта', exact: true }).first().click()
+  await page.getByText('Укажите действующую почту для оплаты через Lava', { exact: true }).waitFor()
+  assert.equal(paymentPayload, null)
+
+  await page.getByLabel('Почта для оплаты Lava').fill('Buyer2026@Mail.ru')
   await page.getByRole('button', { name: 'Карта', exact: true }).first().click()
   await page.waitForFunction(() => (
     Array.isArray(window.__openedLinks)
