@@ -4,7 +4,7 @@
 
 Документ описывает безопасный local/dev workflow для ветки `tanyapi` без использования production secrets и production data.
 
-Pytest изолирован от production `.env`: `tests/conftest.py` должен блокировать загрузку project env и очищать application settings до импорта config. Тесты не должны обращаться к production providers, Redis, database или webhook endpoints без явного live-test режима.
+Pytest изолирован от production `.env` и runtime-логов: `tests/conftest.py` должен блокировать загрузку project env, очищать application settings до импорта config и выставлять `BANANO_DISABLE_FILE_LOGGING=1`. Тесты не должны обращаться к production providers, Redis, database или webhook endpoints без явного live-test режима и не должны дописывать синтетические WARN/ERROR в `logs/bot.log`.
 
 ## 2. Требования
 
