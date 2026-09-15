@@ -28,6 +28,8 @@ def test_auto_merge_never_checks_out_pr_code_with_write_token() -> None:
     assert "contents: write" in source
     assert "actions/checkout" not in source
     assert "head.repo.full_name == github.repository" in source
+    assert "group: tanyapi-auto-merge" in source
+    assert "cancel-in-progress: false" in source
 
 
 def test_auto_merge_waits_for_exact_head_and_every_registered_pr_workflow() -> None:

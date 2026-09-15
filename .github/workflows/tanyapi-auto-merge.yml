@@ -13,8 +13,8 @@ permissions:
   statuses: read
 
 concurrency:
-  group: tanyapi-auto-merge-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: tanyapi-auto-merge
+  cancel-in-progress: false
 
 jobs:
   merge-after-green:
