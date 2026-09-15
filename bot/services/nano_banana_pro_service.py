@@ -6,7 +6,6 @@ import aiohttp
 from bot.services.media_input_utils import (
     image_sources_to_data_uris,
     image_sources_to_supported_image_urls,
-    is_local_upload_source,
 )
 from bot.services.kie_file_upload_service import kie_file_upload_service
 
@@ -245,7 +244,6 @@ class NanoBananaProService:
         self, task_id: str, max_attempts: int = 60, delay: float = 5.0
     ) -> Optional[Dict]:
         import asyncio
-        import json
 
         consecutive_failures = 0
         for attempt in range(max_attempts):

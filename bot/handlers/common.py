@@ -1,10 +1,10 @@
 import logging
 import html
+import json
 import time
 import mimetypes
 import re
 import uuid
-from datetime import datetime
 from math import floor
 from urllib.parse import urlparse
 
@@ -23,6 +23,8 @@ from bot.database import (
     PARTNER_INVITER_BONUS,
     REFERRAL_ANTIFRAUD_BLOCK_CODES,
     REFERRAL_ANTIFRAUD_BLOCK_REFERRER_IDS,
+    REFERRAL_ANTIFRAUD_MAX_PER_DAY,
+    REFERRAL_ANTIFRAUD_MAX_PER_HOUR,
     accept_partner_agreement,
     approve_partner_withdrawal,
     cancel_partner_withdrawal,
@@ -36,7 +38,6 @@ from bot.database import (
     get_partner_overview,
     get_popular_prompts,
     get_prompt_by_id,
-    get_referral_stats,
     get_partner_withdrawal_request,
     get_task_by_id,
     get_top_prompts,
@@ -76,7 +77,6 @@ from bot.keyboards import (
     get_partner_consent_keyboard,
     get_partner_program_keyboard,
     get_required_subscription_keyboard,
-    get_referral_keyboard,
 )
 from bot.services.preset_manager import preset_manager
 from bot.services.subscription_service import (
@@ -85,7 +85,7 @@ from bot.services.subscription_service import (
     check_required_channel_subscription,
     should_block_for_subscription,
 )
-from bot.states import AdminStates, GenerationStates, PaymentStates
+from bot.states import GenerationStates, PaymentStates
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -5053,7 +5053,6 @@ async def open_ai_admin_assistant_help(callback: types.CallbackQuery, state: FSM
 async def handle_motion_character_upload(message: types.Message, state: FSMContext):
     """Загрузка фото персонажа для motion control"""
     import os
-    import uuid
 
     from bot.config import config
 
@@ -5085,7 +5084,6 @@ async def handle_motion_character_upload(message: types.Message, state: FSMConte
 async def handle_motion_video_upload(message: types.Message, state: FSMContext):
     """Загрузка видео движения для motion control"""
     import os
-    import uuid
 
     from bot.config import config
     from bot.database import (

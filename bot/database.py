@@ -5560,7 +5560,6 @@ def _is_feed_result_url_available(row: db_backend.Row, url: str) -> bool:
     try:
         from bot.services.media_input_utils import (
             is_local_upload_source,
-            resolve_local_upload_path,
         )
 
         if is_local_upload_source(candidate):
