@@ -235,11 +235,29 @@ async def get_partner_application(application_id: int) -> dict[str, Any] | None:
         return _application_payload(await cursor.fetchone())
 
 
-async def get_pending_partner_applications(limit: int = 20) -> list[dict[str, Any]]:
+async def count_pending_partner_applications() -> int:
+    """Return the total number of pending partner applications."""
+
+    await ensure_partner_approval_schema()
+    async with db_backend.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM partner_applications WHERE status = 'pending'"
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return 0
+        return int(row[0])
+
+
+async def get_pending_partner_applications(
+    limit: int = 20,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
     """Return pending partner applications for the admin review queue."""
 
     await ensure_partner_approval_schema()
     safe_limit = max(1, min(int(limit or 20), 100))
+    safe_offset = max(0, int(offset or 0))
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
         cursor = await db.execute(
@@ -252,9 +270,9 @@ async def get_pending_partner_applications(limit: int = 20) -> list[dict[str, An
             JOIN users u ON u.id = pa.user_id
             WHERE pa.status = 'pending'
             ORDER BY pa.requested_at ASC, pa.id ASC
-            LIMIT ?
+            LIMIT ? OFFSET ?
             """,
-            (safe_limit,),
+            (safe_limit, safe_offset),
         )
         return [
             payload

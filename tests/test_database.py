@@ -1196,15 +1196,19 @@ async def test_pending_partner_applications_returns_pending_oldest_first(monkeyp
         admin_telegram_id=999999999,
     )
 
+    total_pending = await service.count_pending_partner_applications()
     pending = await service.get_pending_partner_applications(limit=10)
 
+    assert total_pending == 2
     assert [item["telegram_id"] for item in pending] == [1002, 1001]
     assert [item["status"] for item in pending] == ["pending", "pending"]
     assert pending[0]["source"] == "miniapp"
 
     limited = await service.get_pending_partner_applications(limit=1)
+    second_page = await service.get_pending_partner_applications(limit=1, offset=1)
 
     assert [item["telegram_id"] for item in limited] == [1002]
+    assert [item["telegram_id"] for item in second_page] == [1001]
 
 
 def test_admin_partner_applications_text_and_keyboard():
@@ -1222,20 +1226,40 @@ def test_admin_partner_applications_text_and_keyboard():
         }
     ]
 
-    text = admin._format_admin_partner_applications_text(applications)
-    keyboard = admin._admin_partner_applications_keyboard(applications)
+    text = admin._format_admin_partner_applications_text(
+        applications,
+        total_count=25,
+        page=0,
+    )
+    keyboard = admin._admin_partner_applications_keyboard(
+        applications,
+        total_count=25,
+        page=0,
+    )
     rows = keyboard.inline_keyboard
 
     assert "Заявки на активацию партнёрских ссылок" in text
-    assert "Ожидают решения: <code>1</code>" in text
+    assert "Ожидают решения всего: <code>25</code>" in text
+    assert "показаны <code>1-1</code>" in text
     assert "https://t.me/creator" in text
     assert "ID: <code>555777</code>" in text
     assert "заявка <code>#42</code>" in text
 
     assert rows[0][0].callback_data == "partner_app_approve_42"
     assert rows[0][1].callback_data == "partner_app_reject_42"
-    assert rows[-2][0].callback_data == "admin_partner_applications"
+    assert rows[-3][0].callback_data == "admin_partner_applications:1"
+    assert rows[-2][0].callback_data == "admin_partner_applications:0"
     assert rows[-1][0].callback_data == "admin_partners"
+
+    last_page_keyboard = admin._admin_partner_applications_keyboard(
+        applications,
+        total_count=25,
+        page=1,
+    )
+
+    assert last_page_keyboard.inline_keyboard[-3][0].callback_data == (
+        "admin_partner_applications:0"
+    )
 
 
 @pytest.mark.asyncio

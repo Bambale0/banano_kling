@@ -61,7 +61,10 @@ from bot.services.admin_ai_service import (
     summarize_plan_actions,
     validate_plan,
 )
-from bot.services.partner_approval_service import get_pending_partner_applications
+from bot.services.partner_approval_service import (
+    count_pending_partner_applications,
+    get_pending_partner_applications,
+)
 from bot.services.preset_manager import preset_manager
 from bot.services.subscription_service import (
     REQUIRED_CHANNEL_USERNAME,
@@ -869,11 +872,22 @@ def _format_partner_application_display(application: dict[str, Any]) -> str:
     return "—"
 
 
-def _format_admin_partner_applications_text(applications: list[dict]) -> str:
+ADMIN_PARTNER_APPLICATIONS_PAGE_SIZE = 20
+
+
+def _format_admin_partner_applications_text(
+    applications: list[dict],
+    *,
+    total_count: int,
+    page: int,
+    page_size: int = ADMIN_PARTNER_APPLICATIONS_PAGE_SIZE,
+) -> str:
+    start_number = page * page_size + 1
+    end_number = min(page * page_size + len(applications), total_count)
     lines = [
         "✅ <b>Заявки на активацию партнёрских ссылок</b>",
         "",
-        f"Ожидают решения: <code>{len(applications)}</code>",
+        f"Ожидают решения всего: <code>{total_count}</code>",
         "",
     ]
 
@@ -881,7 +895,9 @@ def _format_admin_partner_applications_text(applications: list[dict]) -> str:
         lines.append("Сейчас нет заявок в ожидании.")
         return "\n".join(lines)
 
-    lines.append("<b>Очередь:</b>")
+    lines.append(
+        f"<b>Очередь:</b> показаны <code>{start_number}-{end_number}</code>"
+    )
     for index, application in enumerate(applications, start=1):
         display = html_utils.escape(_format_partner_application_display(application))
         account_url = html_utils.escape(
@@ -889,8 +905,9 @@ def _format_admin_partner_applications_text(applications: list[dict]) -> str:
             quote=True,
         )
         source = html_utils.escape(str(application.get("source") or "—"))
+        queue_number = page * page_size + index
         lines.append(
-            f"{index}. <a href=\"{account_url}\">{display}</a>\n"
+            f"{queue_number}. <a href=\"{account_url}\">{display}</a>\n"
             f"   ID: <code>{application.get('telegram_id') or '—'}</code> "
             f"• заявка <code>#{application.get('id') or '—'}</code>\n"
             f"   Подана: <code>{application.get('requested_at') or '—'}</code> "
@@ -902,9 +919,13 @@ def _format_admin_partner_applications_text(applications: list[dict]) -> str:
 
 def _admin_partner_applications_keyboard(
     applications: list[dict],
+    *,
+    total_count: int,
+    page: int,
+    page_size: int = ADMIN_PARTNER_APPLICATIONS_PAGE_SIZE,
 ) -> types.InlineKeyboardMarkup:
     rows: list[list[types.InlineKeyboardButton]] = []
-    for application in applications[:20]:
+    for application in applications[:page_size]:
         application_id = int(application["id"])
         telegram_id = application.get("telegram_id") or "—"
         rows.append(
@@ -920,11 +941,29 @@ def _admin_partner_applications_keyboard(
             ]
         )
 
+    page_buttons: list[types.InlineKeyboardButton] = []
+    if page > 0:
+        page_buttons.append(
+            types.InlineKeyboardButton(
+                text="⬅️ Назад",
+                callback_data=f"admin_partner_applications:{page - 1}",
+            )
+        )
+    if (page + 1) * page_size < total_count:
+        page_buttons.append(
+            types.InlineKeyboardButton(
+                text="Вперёд ➡️",
+                callback_data=f"admin_partner_applications:{page + 1}",
+            )
+        )
+    if page_buttons:
+        rows.append(page_buttons)
+
     rows.append(
         [
             types.InlineKeyboardButton(
                 text="🔄 Обновить",
-                callback_data="admin_partner_applications",
+                callback_data=f"admin_partner_applications:{page}",
             )
         ]
     )
@@ -3648,7 +3687,7 @@ async def admin_partner_withdrawals(callback: types.CallbackQuery, state: FSMCon
     await callback.answer()
 
 
-@router.callback_query(F.data == "admin_partner_applications")
+@router.callback_query(F.data.startswith("admin_partner_applications"))
 async def admin_partner_applications(callback: types.CallbackQuery, state: FSMContext):
     """Показывает очередь заявок на активацию партнёрских ссылок."""
     if not is_admin(callback.from_user.id):
@@ -3656,11 +3695,31 @@ async def admin_partner_applications(callback: types.CallbackQuery, state: FSMCo
         return
 
     await state.clear()
-    applications = await get_pending_partner_applications(limit=20)
+    page = 0
+    if callback.data and ":" in callback.data:
+        try:
+            page = max(0, int(callback.data.rsplit(":", 1)[1]))
+        except (TypeError, ValueError):
+            page = 0
+    total_count = await count_pending_partner_applications()
+    max_page = max(0, (total_count - 1) // ADMIN_PARTNER_APPLICATIONS_PAGE_SIZE)
+    page = min(page, max_page)
+    applications = await get_pending_partner_applications(
+        limit=ADMIN_PARTNER_APPLICATIONS_PAGE_SIZE,
+        offset=page * ADMIN_PARTNER_APPLICATIONS_PAGE_SIZE,
+    )
     await _safe_admin_edit(
         callback,
-        _format_admin_partner_applications_text(applications),
-        reply_markup=_admin_partner_applications_keyboard(applications),
+        _format_admin_partner_applications_text(
+            applications,
+            total_count=total_count,
+            page=page,
+        ),
+        reply_markup=_admin_partner_applications_keyboard(
+            applications,
+            total_count=total_count,
+            page=page,
+        ),
         parse_mode="HTML",
         disable_web_page_preview=True,
     )
