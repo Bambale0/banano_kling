@@ -1,5 +1,26 @@
 # Execution ledger
 
+## 2026-09-19 — partner activation application queue
+
+- Baseline: `tanyapi` at current workspace head before task branch `fix/partner-activation-queue`.
+- Intended result: admins can open a visible list of pending partner activation applications from the partner admin menu and approve/reject them even when the original Telegram notification is buried.
+- Existing state: `partner_applications` already stores `pending/approved/rejected`, user submissions notify admins with inline approve/reject buttons, and `review_partner_application` performs the atomic activation by setting `users.partner_agreed_at`.
+- Gap: there is no admin queue screen that re-lists pending applications after the original notification is missed.
+- Reuse: keep the existing `partner_approval_service`, callback IDs `partner_app_approve_*` / `partner_app_reject_*`, and admin partner menu.
+- No-hardcode decision: no new mutable business values; the list limit is a bounded UI page size, not business configuration.
+- Schema/API/UI/FSM impact: no schema migration; Telegram admin UI gets one new callback screen. Mini App and user FSM are unchanged.
+- Security: admin-only callback guard remains server-side; pending list exposes Telegram profile links only to configured admins.
+- Observability: existing review path logs review-card update failures and user notification failures; queue retrieval is deterministic from DB.
+- Test plan: add service regression for pending-only ordering/limit and handler formatting/keyboard checks, then run focused pytest and compile touched modules.
+- Implementation: added `get_pending_partner_applications()`, a new admin partner-menu button, queue text/keyboard helpers, and `admin_partner_applications` callback using existing approve/reject callback IDs.
+- Verification:
+  - `./venv/bin/python -m pytest tests/test_database.py -q -k 'pending_partner_applications or admin_partner_applications'` → 2 passed.
+  - `python -m py_compile bot/services/partner_approval_service.py bot/handlers/admin.py tests/test_database.py` → passed.
+  - `./venv/bin/python -m ruff check --select I bot/services/partner_approval_service.py bot/handlers/admin.py tests/test_database.py` → passed.
+  - Full `ruff check` on the same files still fails on pre-existing unrelated `bot/handlers/admin.py` findings (timezone calls, old string concatenation style, broad exceptions, executable bit).
+
+---
+
 ## 2026-09-15 — payment provider priority
 
 - Baseline: tanyapi @ ac4f35c7c6f5.

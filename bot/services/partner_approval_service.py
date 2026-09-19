@@ -235,6 +235,34 @@ async def get_partner_application(application_id: int) -> dict[str, Any] | None:
         return _application_payload(await cursor.fetchone())
 
 
+async def get_pending_partner_applications(limit: int = 20) -> list[dict[str, Any]]:
+    """Return pending partner applications for the admin review queue."""
+
+    await ensure_partner_approval_schema()
+    safe_limit = max(1, min(int(limit or 20), 100))
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
+        cursor = await db.execute(
+            """
+            SELECT pa.id, pa.user_id, pa.status, pa.source, pa.requested_at,
+                   pa.reviewed_at, pa.reviewed_by_telegram_id,
+                   u.telegram_id, u.username, u.first_name, u.last_name,
+                   u.referral_code
+            FROM partner_applications pa
+            JOIN users u ON u.id = pa.user_id
+            WHERE pa.status = 'pending'
+            ORDER BY pa.requested_at ASC, pa.id ASC
+            LIMIT ?
+            """,
+            (safe_limit,),
+        )
+        return [
+            payload
+            for row in await cursor.fetchall()
+            if (payload := _application_payload(row)) is not None
+        ]
+
+
 async def submit_partner_application(
     telegram_id: int,
     *,

@@ -4,12 +4,12 @@ import json
 import os
 from unittest.mock import AsyncMock, MagicMock
 
-from bot import db as db_backend
 import pytest
 
 import bot.database as database
-from bot.services.preset_manager import PresetManager
+from bot import db as db_backend
 from bot.services.feed_persist import persist_feed_result_urls
+from bot.services.preset_manager import PresetManager
 
 
 class FakeConnection:
@@ -1158,3 +1158,81 @@ async def test_orphan_cleanup_keeps_pruned_reference_used_by_repeatable_generati
 
     assert old_ref.exists()
     assert stats["protected_generation_paths"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_pending_partner_applications_returns_pending_oldest_first(monkeypatch):
+    from bot.services import partner_approval_service as service
+
+    monkeypatch.setattr(service, "DATABASE_PATH", database.DATABASE_PATH)
+    monkeypatch.setattr(service, "_SCHEMA_READY", False)
+
+    await database.get_or_create_user(1001)
+    await database.get_or_create_user(1002)
+    await database.get_or_create_user(1003)
+
+    first = await service.submit_partner_application(1001, source="telegram_bot")
+    second = await service.submit_partner_application(1002, source="miniapp")
+    third = await service.submit_partner_application(1003, source="telegram_bot")
+
+    async with db_backend.connect(database.DATABASE_PATH) as db:
+        await db.execute(
+            "UPDATE partner_applications SET requested_at = ? WHERE id = ?",
+            ("2026-09-19 10:00:00", first["application_id"]),
+        )
+        await db.execute(
+            "UPDATE partner_applications SET requested_at = ? WHERE id = ?",
+            ("2026-09-19 09:00:00", second["application_id"]),
+        )
+        await db.execute(
+            "UPDATE partner_applications SET requested_at = ? WHERE id = ?",
+            ("2026-09-19 11:00:00", third["application_id"]),
+        )
+        await db.commit()
+
+    await service.review_partner_application(
+        int(third["application_id"]),
+        approve=True,
+        admin_telegram_id=999999999,
+    )
+
+    pending = await service.get_pending_partner_applications(limit=10)
+
+    assert [item["telegram_id"] for item in pending] == [1002, 1001]
+    assert [item["status"] for item in pending] == ["pending", "pending"]
+    assert pending[0]["source"] == "miniapp"
+
+    limited = await service.get_pending_partner_applications(limit=1)
+
+    assert [item["telegram_id"] for item in limited] == [1002]
+
+
+def test_admin_partner_applications_text_and_keyboard():
+    from bot.handlers import admin
+
+    applications = [
+        {
+            "id": 42,
+            "telegram_id": 555777,
+            "username": "creator",
+            "first_name": "Tanya",
+            "last_name": "",
+            "source": "telegram_bot",
+            "requested_at": "2026-09-19 12:30:00",
+        }
+    ]
+
+    text = admin._format_admin_partner_applications_text(applications)
+    keyboard = admin._admin_partner_applications_keyboard(applications)
+    rows = keyboard.inline_keyboard
+
+    assert "Заявки на активацию партнёрских ссылок" in text
+    assert "Ожидают решения: <code>1</code>" in text
+    assert "https://t.me/creator" in text
+    assert "ID: <code>555777</code>" in text
+    assert "заявка <code>#42</code>" in text
+
+    assert rows[0][0].callback_data == "partner_app_approve_42"
+    assert rows[0][1].callback_data == "partner_app_reject_42"
+    assert rows[-2][0].callback_data == "admin_partner_applications"
+    assert rows[-1][0].callback_data == "admin_partners"

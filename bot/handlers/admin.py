@@ -1,9 +1,9 @@
 import asyncio
 import csv
+import html as html_utils
 import io
 import json
 import logging
-import html as html_utils
 from collections import deque
 from datetime import datetime
 from pathlib import Path
@@ -25,7 +25,6 @@ from bot.database import (
     deduct_credits,
     export_users_for_admin,
     get_admin_finance_report,
-    get_admin_referral_burst_autobans,
     get_admin_partner_details,
     get_admin_partner_payment_report,
     get_admin_partner_stats,
@@ -33,20 +32,21 @@ from bot.database import (
     get_admin_prompt_details,
     get_admin_prompt_stats,
     get_admin_prompts,
+    get_admin_referral_burst_autobans,
     get_admin_stats,
     get_bot_setting,
     get_existing_user_stats,
     get_partner_withdrawal_request,
     get_pending_partner_withdrawals,
     get_promo_code_by_code,
-    get_promo_code_details,
     get_promo_code_by_id,
+    get_promo_code_details,
     get_user_stats,
     is_channel_subscription_required,
     normalize_promo_code,
-    set_maintenance_mode,
     reject_prompt,
     set_channel_subscription_required,
+    set_maintenance_mode,
     set_promo_code_active,
     set_user_banned,
 )
@@ -55,16 +55,17 @@ from bot.keyboards import (
     get_back_keyboard,
     get_main_menu_button_keyboard,
 )
-from bot.services.preset_manager import preset_manager
-from bot.services.subscription_service import (
-    REQUIRED_CHANNEL_USERNAME,
-    clear_required_subscription_cache,
-)
 from bot.services.admin_ai_service import (
     admin_ai_service,
     normalize_plan,
     summarize_plan_actions,
     validate_plan,
+)
+from bot.services.partner_approval_service import get_pending_partner_applications
+from bot.services.preset_manager import preset_manager
+from bot.services.subscription_service import (
+    REQUIRED_CHANNEL_USERNAME,
+    clear_required_subscription_cache,
 )
 from bot.states import AdminStates
 
@@ -691,6 +692,12 @@ def _admin_partners_keyboard(top_partners: list[dict]) -> types.InlineKeyboardMa
     rows: list[list[types.InlineKeyboardButton]] = [
         [
             types.InlineKeyboardButton(
+                text="✅ Заявки на активацию",
+                callback_data="admin_partner_applications",
+            )
+        ],
+        [
+            types.InlineKeyboardButton(
                 text="💸 Заявки на вывод",
                 callback_data="admin_partner_withdrawals",
             )
@@ -781,7 +788,9 @@ def _admin_partner_burst_autobans_keyboard(items: list[dict]) -> types.InlineKey
             ]
         )
 
-    rows.append([types.InlineKeyboardButton(text="🔙 К партнёрам", callback_data="admin_partners")])
+    rows.append(
+        [types.InlineKeyboardButton(text="🔙 К партнёрам", callback_data="admin_partners")]
+    )
     return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -833,6 +842,95 @@ def _admin_withdrawal_detail_keyboard(withdrawal_id: int) -> types.InlineKeyboar
             ],
         ]
     )
+
+
+def _partner_application_account_url(application: dict[str, Any]) -> str:
+    username = str(application.get("username") or "").strip().lstrip("@")
+    if username:
+        return f"https://t.me/{username}"
+    return f"tg://user?id={int(application['telegram_id'])}"
+
+
+def _format_partner_application_display(application: dict[str, Any]) -> str:
+    username = str(application.get("username") or "").strip().lstrip("@")
+    full_name = " ".join(
+        value
+        for value in (
+            str(application.get("first_name") or "").strip(),
+            str(application.get("last_name") or "").strip(),
+        )
+        if value
+    )
+    if full_name and username:
+        return f"{full_name} (@{username})"
+    if full_name:
+        return full_name
+    if username:
+        return f"@{username}"
+    return "—"
+
+
+def _format_admin_partner_applications_text(applications: list[dict]) -> str:
+    lines = [
+        "✅ <b>Заявки на активацию партнёрских ссылок</b>",
+        "",
+        f"Ожидают решения: <code>{len(applications)}</code>",
+        "",
+    ]
+
+    if not applications:
+        lines.append("Сейчас нет заявок в ожидании.")
+        return "\n".join(lines)
+
+    lines.append("<b>Очередь:</b>")
+    for index, application in enumerate(applications, start=1):
+        display = html_utils.escape(_format_partner_application_display(application))
+        account_url = html_utils.escape(
+            _partner_application_account_url(application),
+            quote=True,
+        )
+        source = html_utils.escape(str(application.get("source") or "—"))
+        lines.append(
+            f"{index}. <a href=\"{account_url}\">{display}</a>\n"
+            f"   ID: <code>{application.get('telegram_id') or '—'}</code> "
+            f"• заявка <code>#{application.get('id') or '—'}</code>\n"
+            f"   Подана: <code>{application.get('requested_at') or '—'}</code> "
+            f"• источник: <code>{source}</code>"
+        )
+
+    return "\n".join(lines)
+
+
+def _admin_partner_applications_keyboard(
+    applications: list[dict],
+) -> types.InlineKeyboardMarkup:
+    rows: list[list[types.InlineKeyboardButton]] = []
+    for application in applications[:20]:
+        application_id = int(application["id"])
+        telegram_id = application.get("telegram_id") or "—"
+        rows.append(
+            [
+                types.InlineKeyboardButton(
+                    text=f"✅ #{application_id} • ID {telegram_id}",
+                    callback_data=f"partner_app_approve_{application_id}",
+                ),
+                types.InlineKeyboardButton(
+                    text="❌",
+                    callback_data=f"partner_app_reject_{application_id}",
+                ),
+            ]
+        )
+
+    rows.append(
+        [
+            types.InlineKeyboardButton(
+                text="🔄 Обновить",
+                callback_data="admin_partner_applications",
+            )
+        ]
+    )
+    rows.append([types.InlineKeyboardButton(text="🔙 К партнёрам", callback_data="admin_partners")])
+    return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _chunk_buttons(
@@ -3551,6 +3649,25 @@ async def admin_partner_withdrawals(callback: types.CallbackQuery, state: FSMCon
     await callback.answer()
 
 
+@router.callback_query(F.data == "admin_partner_applications")
+async def admin_partner_applications(callback: types.CallbackQuery, state: FSMContext):
+    """Показывает очередь заявок на активацию партнёрских ссылок."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    await state.clear()
+    applications = await get_pending_partner_applications(limit=20)
+    await _safe_admin_edit(
+        callback,
+        _format_admin_partner_applications_text(applications),
+        reply_markup=_admin_partner_applications_keyboard(applications),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
+    await callback.answer()
+
+
 @router.callback_query(F.data == "admin_partner_burst_autobans")
 async def admin_partner_burst_autobans(callback: types.CallbackQuery, state: FSMContext):
     """Показывает отдельный экран со срабатываниями burst_autoban."""
@@ -4124,7 +4241,9 @@ async def _create_admin_broadcast_campaign(
     broadcast_media_type: str | None,
     broadcast_media_file_id: str | None,
 ) -> tuple[int, int]:
-    from bot.internal_admin_notification_schema import ensure_internal_admin_notification_schema
+    from bot.internal_admin_notification_schema import (
+        ensure_internal_admin_notification_schema,
+    )
     from bot.notification_service import ensure_notification_campaign_worker
 
     await ensure_internal_admin_notification_schema()
@@ -4244,7 +4363,11 @@ async def _run_admin_broadcast(
 ) -> None:
     """Выполняет рассылку с throttling и корректной обработкой ошибок."""
 
-    from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError, TelegramBadRequest
+    from aiogram.exceptions import (
+        TelegramBadRequest,
+        TelegramForbiddenError,
+        TelegramRetryAfter,
+    )
 
     async with db_backend.connect() as db:
         db.row_factory = db_backend.Row
