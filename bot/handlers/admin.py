@@ -91,15 +91,19 @@ async def _safe_admin_edit(
     *,
     reply_markup=None,
     parse_mode: str | None = "HTML",
+    disable_web_page_preview: bool | None = None,
 ) -> None:
+    message_kwargs = {
+        "reply_markup": reply_markup,
+        "parse_mode": parse_mode,
+    }
+    if disable_web_page_preview is not None:
+        message_kwargs["disable_web_page_preview"] = disable_web_page_preview
+
     message = callback.message
     if message is not None:
         try:
-            await message.edit_text(
-                text,
-                reply_markup=reply_markup,
-                parse_mode=parse_mode,
-            )
+            await message.edit_text(text, **message_kwargs)
             return
         except TelegramAPIError as exc:
             logger.warning(
@@ -108,11 +112,7 @@ async def _safe_admin_edit(
                 exc,
             )
             try:
-                await message.answer(
-                    text,
-                    reply_markup=reply_markup,
-                    parse_mode=parse_mode,
-                )
+                await message.answer(text, **message_kwargs)
                 return
             except TelegramAPIError as send_exc:
                 logger.warning(
@@ -124,8 +124,7 @@ async def _safe_admin_edit(
     await callback.bot.send_message(
         chat_id=callback.from_user.id,
         text=text,
-        reply_markup=reply_markup,
-        parse_mode=parse_mode,
+        **message_kwargs,
     )
 
 ADMIN_PROMPT_STATUS_TITLES = {

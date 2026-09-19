@@ -1236,3 +1236,27 @@ def test_admin_partner_applications_text_and_keyboard():
     assert rows[0][1].callback_data == "partner_app_reject_42"
     assert rows[-2][0].callback_data == "admin_partner_applications"
     assert rows[-1][0].callback_data == "admin_partners"
+
+
+@pytest.mark.asyncio
+async def test_safe_admin_edit_accepts_disable_web_page_preview():
+    from bot.handlers import admin
+
+    message = MagicMock()
+    message.edit_text = AsyncMock()
+    callback = MagicMock()
+    callback.message = message
+    callback.data = "admin_partner_applications"
+
+    await admin._safe_admin_edit(
+        callback,
+        "Application queue",
+        disable_web_page_preview=True,
+    )
+
+    message.edit_text.assert_awaited_once_with(
+        "Application queue",
+        reply_markup=None,
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )

@@ -1,5 +1,21 @@
 # Execution ledger
 
+## 2026-09-19 — admin partner applications button hotfix
+
+- Baseline: `tanyapi` at `6eadf4236544f853b87e243a43fb0d0b8b9bc74f`.
+- Symptom: admin pressed `✅ Заявки на активацию`; Telegram showed no visible result.
+- Evidence: production logs showed `TypeError: _safe_admin_edit() got an unexpected keyword argument 'disable_web_page_preview'` in `admin_partner_applications`; the callback reached the handler and failed during message rendering.
+- Fix: `_safe_admin_edit` now accepts `disable_web_page_preview` and passes it to `edit_text`, fallback `answer`, and direct `send_message`.
+- Regression: added `test_safe_admin_edit_accepts_disable_web_page_preview` for the exact argument combination used by the queue screen.
+- Verification before merge:
+  - `./venv/bin/python -m pytest tests/test_database.py -q -k 'pending_partner_applications or admin_partner_applications or safe_admin_edit'` → 3 passed.
+  - `./venv/bin/python -m py_compile bot/handlers/admin.py tests/test_database.py` → passed.
+  - `./venv/bin/python -m ruff check --select I bot/handlers/admin.py tests/test_database.py` → passed.
+  - `git diff --check` → passed.
+- Rollout plan: merge hotfix branch back to `tanyapi`, push, verify exact CI/deploy SHA, health, container revision and filtered logs.
+
+---
+
 ## 2026-09-19 — partner activation application queue
 
 - Baseline: `tanyapi` at current workspace head before task branch `fix/partner-activation-queue`.
