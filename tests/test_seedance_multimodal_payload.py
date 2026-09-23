@@ -61,11 +61,35 @@ def test_seedance_combines_identity_image_and_motion_video() -> None:
         "https://cdn.test/dance.mp4"
     ]
     assert "first_frame_url" not in payload["input"]
-    assert payload["input"]["prompt"] == prompt
-    assert "@image1" in payload["input"]["prompt"]
-    assert "@image2" in payload["input"]["prompt"]
-    assert "@image3" in payload["input"]["prompt"]
-    assert "@video1" in payload["input"]["prompt"]
+    assert payload["input"]["prompt"] == (
+        "девушка @Image1 одета в @Image2, движения танца с @Video1. "
+        "Атмосфера и фон из @Image3"
+    )
+
+
+def test_seedance_repairs_combined_ordinal_video_alias() -> None:
+    service = CaptureSeedanceService()
+    prompt = (
+        "@IMAGE 1 = лицо первого человека. @IMAGE 2 = лицо второго. "
+        "@IMAGE 3 = лицо третьего. @IMAGE 4 = видеореференс движений."
+    )
+
+    asyncio.run(
+        service.generate_video(
+            prompt=prompt,
+            reference_image_urls=[
+                "https://cdn.test/person1.jpg",
+                "https://cdn.test/person2.jpg",
+                "https://cdn.test/person3.jpg",
+            ],
+            reference_video_urls=["https://cdn.test/motion.mp4"],
+        )
+    )
+
+    assert service.last_payload["input"]["prompt"] == (
+        "@Image1 = лицо первого человека. @Image2 = лицо второго. "
+        "@Image3 = лицо третьего. @Video1 = видеореференс движений."
+    )
 
 
 def test_seedance_passes_user_prompt_through_unchanged() -> None:
@@ -79,13 +103,19 @@ def test_seedance_passes_user_prompt_through_unchanged() -> None:
 
 def test_seedance_truncates_prompt_only_at_provider_limit() -> None:
     service = CaptureSeedanceService()
-    prompt = "x" * 25_000
+    prompt = "@image1 " + ("x" * 25_000)
 
-    asyncio.run(service.generate_video(prompt=prompt))
+    asyncio.run(
+        service.generate_video(
+            prompt=prompt,
+            reference_image_urls=["https://cdn.test/person.jpg"],
+        )
+    )
 
     provider_prompt = service.last_payload["input"]["prompt"]
-    assert provider_prompt == prompt[: service.MAX_PROMPT_LENGTH]
-    assert len(provider_prompt) == 20_000
+    assert service.MAX_PROMPT_LENGTH == 20_000
+    assert provider_prompt.startswith("@Image1 ")
+    assert len(provider_prompt) == service.MAX_PROMPT_LENGTH
 
 
 def test_seedance_normalizes_duplicate_first_frame_from_old_repeat_payload() -> None:

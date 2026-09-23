@@ -143,7 +143,7 @@ FREEPIK_BASE_URL = "https://api.freepik.com/v1"
 | **Модель Kie.ai** | `bytedance/seedance-2` |
 | **Сервис** | `SeedanceService.generate_video()` |
 | **Вход** | prompt, duration (5-15), aspect_ratio (16:9/9:16/1:1), resolution (480p/720p/1080p), first_frame_url, last_frame_url, reference_image_urls (до 9), reference_video_urls (до 3), reference_audio_urls (1), return_last_frame, generate_audio, web_search |
-| **Особенности** | first/last-frame НЕ совместимы с multimodal references |
+| **Особенности** | first/last-frame НЕ совместимы с multimodal references. Перед отправкой provider boundary нормализует Seedance reference tags в канонический вид `@Image1`, `@Video1`, `@Audio1`; legacy-варианты с другим регистром/пробелами исправляются. Если старый prompt нумеровал все media одним рядом (`@IMAGE 4` при 3 image + 1 video), alias безопасно переводится в `@Video1`. |
 | **Цена** | 5🍌 (по умолчанию) |
 
 #### 2.1.10. Veo 3.1 (veo3, veo3_fast, veo3_lite)

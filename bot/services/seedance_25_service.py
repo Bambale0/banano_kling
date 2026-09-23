@@ -17,6 +17,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from bot.config import config
 from bot.services.kling_service import KlingService
+from bot.services.seedance_reference_binding import canonicalize_seedance_reference_tags
 
 logger = logging.getLogger(__name__)
 
@@ -171,12 +172,7 @@ class Seedance25Service(KlingService):
         if not self.kie_key:
             return {"success": False, "error": "KIE_AI_API_KEY is not configured"}
 
-        normalized_prompt = str(prompt or "").strip()
-        if len(normalized_prompt) > self.MAX_PROMPT_LENGTH:
-            return {
-                "success": False,
-                "error": f"Seedance 2.5 prompt exceeds {self.MAX_PROMPT_LENGTH} characters",
-            }
+        raw_prompt = str(prompt or "").strip()
 
         try:
             normalized_duration = self.normalize_duration(duration)
@@ -197,6 +193,25 @@ class Seedance25Service(KlingService):
             )
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
+
+        normalized_prompt = canonicalize_seedance_reference_tags(
+            raw_prompt,
+            image_count=len(image_urls),
+            video_count=len(video_urls),
+            audio_count=len(audio_urls),
+        )
+        if normalized_prompt != raw_prompt:
+            logger.info(
+                "Seedance 2.5 reference aliases normalized: images=%s videos=%s audio=%s",
+                len(image_urls),
+                len(video_urls),
+                len(audio_urls),
+            )
+        if len(normalized_prompt) > self.MAX_PROMPT_LENGTH:
+            return {
+                "success": False,
+                "error": f"Seedance 2.5 prompt exceeds {self.MAX_PROMPT_LENGTH} characters",
+            }
 
         normalized_ratio = str(aspect_ratio or "adaptive").strip().lower()
         if normalized_ratio not in self.ALLOWED_RATIOS:

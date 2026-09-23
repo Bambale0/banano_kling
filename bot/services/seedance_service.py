@@ -10,6 +10,7 @@ from bot.config import config
 from bot.services.kie_file_upload_service import kie_file_upload_service
 from bot.services.kling_service import KlingService
 from bot.services.media_input_utils import image_sources_to_provider_safe_png_urls
+from bot.services.seedance_reference_binding import canonicalize_seedance_reference_tags
 
 logger = logging.getLogger(__name__)
 
@@ -190,8 +191,28 @@ class SeedanceService(KlingService):
         except (TypeError, ValueError):
             normalized_duration = 5
 
+        provider_prompt = canonicalize_seedance_reference_tags(
+            prompt,
+            image_count=len(prepared_reference_image_urls),
+            video_count=len(limited_reference_video_urls),
+            audio_count=len(limited_reference_audio_urls),
+        )
+        if provider_prompt != prompt:
+            logger.info(
+                "Seedance reference aliases normalized: images=%s videos=%s audio=%s",
+                len(prepared_reference_image_urls),
+                len(limited_reference_video_urls),
+                len(limited_reference_audio_urls),
+            )
+        if len(provider_prompt) > self.MAX_PROMPT_LENGTH:
+            logger.warning(
+                "Seedance prompt truncated to provider limit: original=%s limit=%s",
+                len(provider_prompt),
+                self.MAX_PROMPT_LENGTH,
+            )
+
         input_data: dict[str, Any] = {
-            "prompt": prompt[: self.MAX_PROMPT_LENGTH],
+            "prompt": provider_prompt[: self.MAX_PROMPT_LENGTH],
             "duration": max(
                 self.MIN_DURATION,
                 min(normalized_duration, self.MAX_DURATION),

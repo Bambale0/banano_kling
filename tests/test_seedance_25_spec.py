@@ -153,3 +153,34 @@ def test_seedance_25_capability_registry_matches_kie_spec():
     assert capability.supports_nsfw_checker is True
     assert capability.supports_auto_duration is True
     assert capability.camera_control_via_prompt is True
+
+
+@pytest.mark.asyncio
+async def test_seedance_25_canonicalizes_reference_mentions(monkeypatch):
+    service = Seedance25Service(kie_key="test-key")
+    captured = {}
+
+    async def fake_kie_post(path, payload):
+        captured["payload"] = payload
+        return {"task_id": "task-bindings"}
+
+    monkeypatch.setattr(service, "_kie_post", fake_kie_post)
+
+    result = await service.generate_video(
+        prompt=(
+            "@IMAGE 1 = первый человек; @image2 = второй; "
+            "@IMAGE3 = третий; движения строго из @image 4."
+        ),
+        reference_image_urls=[
+            "https://example.com/p1.png",
+            "https://example.com/p2.png",
+            "https://example.com/p3.png",
+        ],
+        reference_video_urls=["https://example.com/motion.mp4"],
+    )
+
+    assert result["task_id"] == "task-bindings"
+    assert captured["payload"]["input"]["prompt"] == (
+        "@Image1 = первый человек; @Image2 = второй; "
+        "@Image3 = третий; движения строго из @Video1."
+    )
