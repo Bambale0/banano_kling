@@ -4768,6 +4768,13 @@ async def handle_video_media_skip(callback: types.CallbackQuery, state: FSMConte
         )
         return
     if current_v_type == "video":
+        existing_video_refs = _clean_unique_urls(data.get("v_reference_videos", []))
+        if current_model == "seedance_2" and existing_video_refs:
+            await callback.answer(
+                "Видео-референс уже загружен. Нажмите «К настройкам», чтобы использовать его.",
+                show_alert=True,
+            )
+            return
         await state.update_data(v_reference_videos=[])
     await state.update_data(video_flow_step="configure")
     await _show_video_creation_screen(callback, state)

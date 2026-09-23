@@ -253,3 +253,85 @@ def test_seedance_without_video_reference_keeps_base_price() -> None:
         7,
         ["https://cdn.test/a.mp4"],
     ) == 7
+
+
+def test_seedance_blocks_prompt_when_video_tag_has_no_video_reference() -> None:
+    service = CaptureSeedanceService()
+
+    result = asyncio.run(
+        service.generate_video(
+            prompt="@Image1 repeats the motion from @Video1.",
+            reference_image_urls=["https://cdn.test/person.jpg"],
+            reference_video_urls=[],
+        )
+    )
+
+    assert result["error"] == "missing_seedance_references"
+    assert "@Video1" in result["message"]
+    assert service.last_payload is None
+
+
+def test_seedance_video_media_screen_does_not_offer_skip_after_upload() -> None:
+    markup = seedance_multimodal_compat._seedance_media_keyboard(
+        {
+            "v_type": "video",
+            "reference_images": [],
+            "v_reference_videos": ["https://cdn.test/motion.mp4"],
+        }
+    )
+    callbacks = [
+        button.callback_data
+        for row in markup.inline_keyboard
+        for button in row
+        if button.callback_data
+    ]
+
+    assert "video_media_skip" not in callbacks
+    assert "video_media_continue" in callbacks
+
+
+def test_seedance_video_media_screen_offers_skip_before_upload() -> None:
+    markup = seedance_multimodal_compat._seedance_media_keyboard(
+        {
+            "v_type": "video",
+            "reference_images": [],
+            "v_reference_videos": [],
+        }
+    )
+    callbacks = [
+        button.callback_data
+        for row in markup.inline_keyboard
+        for button in row
+        if button.callback_data
+    ]
+
+    assert "video_media_skip" in callbacks
+
+
+@pytest.mark.asyncio
+async def test_seedance_stale_skip_callback_does_not_clear_uploaded_video() -> None:
+    state = SimpleNamespace(
+        get_data=AsyncMock(
+            return_value={
+                "v_type": "video",
+                "v_model": "seedance_2",
+                "v_reference_videos": ["https://cdn.test/motion.mp4"],
+            }
+        ),
+        update_data=AsyncMock(),
+    )
+    callback = SimpleNamespace(
+        answer=AsyncMock(),
+        message=SimpleNamespace(),
+    )
+
+    await seedance_multimodal_compat.generation_module.handle_video_media_skip(
+        callback,
+        state,
+    )
+
+    state.update_data.assert_not_awaited()
+    callback.answer.assert_awaited_once_with(
+        "Видео-референс уже загружен. Нажмите «К настройкам», чтобы использовать его.",
+        show_alert=True,
+    )
