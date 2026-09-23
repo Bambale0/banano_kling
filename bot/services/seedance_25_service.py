@@ -17,7 +17,10 @@ from urllib.parse import urlsplit, urlunsplit
 
 from bot.config import config
 from bot.services.kling_service import KlingService
-from bot.services.seedance_reference_binding import canonicalize_seedance_reference_tags
+from bot.services.seedance_reference_binding import (
+    canonicalize_seedance_reference_tags,
+    missing_seedance_reference_tags,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -207,6 +210,21 @@ class Seedance25Service(KlingService):
                 len(video_urls),
                 len(audio_urls),
             )
+        missing_tags = missing_seedance_reference_tags(
+            normalized_prompt,
+            image_count=len(image_urls),
+            video_count=len(video_urls),
+            audio_count=len(audio_urls),
+        )
+        if missing_tags:
+            return {
+                "success": False,
+                "error": (
+                    "Prompt references missing Seedance media: "
+                    + ", ".join(missing_tags)
+                ),
+            }
+
         if len(normalized_prompt) > self.MAX_PROMPT_LENGTH:
             return {
                 "success": False,

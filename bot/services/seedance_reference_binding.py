@@ -55,3 +55,35 @@ def canonicalize_seedance_reference_tags(
         return f"@Audio{index}"
 
     return _TAG_RE.sub(replace, text)
+
+
+def missing_seedance_reference_tags(
+    prompt: str,
+    *,
+    image_count: int = 0,
+    video_count: int = 0,
+    audio_count: int = 0,
+) -> list[str]:
+    """Return canonical prompt tags that do not have a matching uploaded asset."""
+
+    canonical = canonicalize_seedance_reference_tags(
+        prompt,
+        image_count=image_count,
+        video_count=video_count,
+        audio_count=audio_count,
+    )
+    limits = {
+        "image": max(0, int(image_count)),
+        "video": max(0, int(video_count)),
+        "audio": max(0, int(audio_count)),
+    }
+    missing: list[str] = []
+    for match in _TAG_RE.finditer(canonical):
+        kind = match.group("kind").lower()
+        kind = "image" if kind == "img" else kind
+        index = int(match.group("index"))
+        if index < 1 or index > limits[kind]:
+            tag = f"@{kind.title()}{index}"
+            if tag not in missing:
+                missing.append(tag)
+    return missing

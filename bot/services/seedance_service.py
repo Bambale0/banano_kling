@@ -10,7 +10,10 @@ from bot.config import config
 from bot.services.kie_file_upload_service import kie_file_upload_service
 from bot.services.kling_service import KlingService
 from bot.services.media_input_utils import image_sources_to_provider_safe_png_urls
-from bot.services.seedance_reference_binding import canonicalize_seedance_reference_tags
+from bot.services.seedance_reference_binding import (
+    canonicalize_seedance_reference_tags,
+    missing_seedance_reference_tags,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +207,27 @@ class SeedanceService(KlingService):
                 len(limited_reference_video_urls),
                 len(limited_reference_audio_urls),
             )
+        missing_tags = missing_seedance_reference_tags(
+            provider_prompt,
+            image_count=len(prepared_reference_image_urls),
+            video_count=len(limited_reference_video_urls),
+            audio_count=len(limited_reference_audio_urls),
+        )
+        if missing_tags:
+            logger.warning(
+                "Seedance request blocked: prompt references missing media tags=%s images=%s videos=%s audio=%s",
+                missing_tags,
+                len(prepared_reference_image_urls),
+                len(limited_reference_video_urls),
+                len(limited_reference_audio_urls),
+            )
+            return self._build_error(
+                "missing_seedance_references",
+                "Промпт ссылается на медиа, которого нет в текущей генерации: "
+                + ", ".join(missing_tags)
+                + ". Вернитесь к медиа и загрузите референс заново.",
+            )
+
         if len(provider_prompt) > self.MAX_PROMPT_LENGTH:
             logger.warning(
                 "Seedance prompt truncated to provider limit: original=%s limit=%s",

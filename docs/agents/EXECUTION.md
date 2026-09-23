@@ -183,12 +183,14 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Symptom: Seedance 2.0/2.5 accepted video references but frequently preserved performers from the donor video instead of replacing them with people from uploaded image references.
 - Reproduced from live generation metadata on 2026-09-23 with 3 image references + 1 video reference.
 - Reference video transport is healthy: sampled donor files are H.264/AAC, 720x1280, 30 fps, ~14.8s, ~5.7 MB.
-- Provider payload already contains separate `reference_image_urls` and `reference_video_urls`; this is not an upload-loss bug.
+- When a video survives the UI/FSM path, provider transport is healthy and KIE receives separate `reference_image_urls` and `reference_video_urls`.
+- A second bug was confirmed in live logs: at 19:52:11 a prompt that still referenced `@video1` was sent with `ref_images=3 ref_videos=0`; at 20:05:29 the same flow sent `ref_images=3 ref_videos=1`.
 
 ### Root cause
 - Runtime passed prompt reference aliases through verbatim.
 - Live prompts used incompatible variants such as `@image1`, `@video1`, `@IMAGE 1`, and a legacy combined ordinal where the fourth uploaded asset was called `@IMAGE 4` although the provider receives it as `reference_video_urls[0]`.
-- Seedance reference-to-video expects type-specific aliases such as `@Image1` and `@Video1`; invalid aliases can silently fail to bind the intended media role.
+- Seedance reference-to-video expects type-specific aliases such as `@Image1` and `@Video1`; invalid aliases can fail to bind the intended media role.
+- The Seedance 2.0 media screen exposed `Без видео-рефов` even after a video had already been uploaded. Its generic callback unconditionally cleared `v_reference_videos`, allowing a prompt containing `@Video1` to reach KIE with zero video references.
 - Historical note: a global Seedance prompt injection was intentionally removed in commit `cff2eb4`; this fix does not restore that global semantic injection.
 
 ### Fix
@@ -196,12 +198,14 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Canonicalize case/spacing: `@image1` / `@IMAGE 1` -> `@Image1`, `@video1` -> `@Video1`, and equivalent audio aliases.
 - Repair legacy combined ordinals using actual media counts: with 3 images + 1 video, `@IMAGE 4` -> `@Video1`.
 - Preserve prompt wording and existing KIE request fields/endpoints; no global role lock is injected.
-- Emit count-only telemetry when aliases are normalized; do not log prompt contents or media URLs.
+- Reject a Seedance request before provider submission when the canonical prompt references `@ImageN`/`@VideoN`/`@AudioN` that has no matching uploaded media.
+- Hide `Без видео-рефов` after a Seedance video has been uploaded, and make stale skip callbacks non-destructive.
+- Emit count-only telemetry when aliases are normalized or a request is blocked; do not log prompt contents or media URLs.
 
 ### Verification
 - RED: 4 focused binding tests failed before implementation.
 - GREEN: 4/4 focused tests after implementation.
-- Full Seedance regression set: 37/37 passed.
+- Expanded Seedance/continuity/repeat/trend regression set: 57/57 passed before the stale-callback regression was added; final focused suite is rerun before PR.
 - Real production media files validated with ffprobe and are within reference-video constraints.
 - Example transformation verified offline:
   - before: `@IMAGE 1 ... @IMAGE 4 = видеореференс`

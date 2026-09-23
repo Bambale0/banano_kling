@@ -184,3 +184,26 @@ async def test_seedance_25_canonicalizes_reference_mentions(monkeypatch):
         "@Image1 = первый человек; @Image2 = второй; "
         "@Image3 = третий; движения строго из @Video1."
     )
+
+
+@pytest.mark.asyncio
+async def test_seedance_25_blocks_missing_video_reference_tag(monkeypatch):
+    service = Seedance25Service(kie_key="test-key")
+    called = False
+
+    async def fake_kie_post(path, payload):
+        nonlocal called
+        called = True
+        return {"task_id": "should-not-run"}
+
+    monkeypatch.setattr(service, "_kie_post", fake_kie_post)
+
+    result = await service.generate_video(
+        prompt="@Image1 follows @Video1 exactly.",
+        reference_image_urls=["https://example.com/person.png"],
+        reference_video_urls=[],
+    )
+
+    assert result["success"] is False
+    assert "@Video1" in result["error"]
+    assert called is False
