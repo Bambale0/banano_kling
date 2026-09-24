@@ -203,6 +203,43 @@ class TestRunWatchdogCycle:
             assert recovered == 1
 
     @pytest.mark.asyncio
+    async def test_notifies_after_recovering_failed_provider_task(self):
+        from datetime import UTC, datetime, timedelta
+
+        stuck = [{
+            "id": 8,
+            "user_id": 42,
+            "telegram_id": 424242,
+            "task_id": "rendergrid-failed-1",
+            "model": "banana_2",
+            "cost": 1.5,
+            "request_data": '{"provider":"rendergrid"}',
+            "watchdog_age_minutes": 5,
+            "created_at": datetime.now(UTC) - timedelta(minutes=5),
+        }]
+        notify_failed = AsyncMock(return_value=True)
+
+        with (
+            patch("bot.services.task_watchdog.get_stuck_tasks", AsyncMock(return_value=stuck)),
+            patch(
+                "bot.services.task_watchdog.cleanup_stale_local_generation_tasks",
+                AsyncMock(return_value={"failed_count": 0, "refunded_credits": 0.0}),
+            ),
+            patch(
+                "bot.services.task_watchdog.check_task_with_provider",
+                AsyncMock(return_value="failed"),
+            ),
+            patch(
+                "bot.services.task_watchdog.force_fail_task",
+                AsyncMock(return_value=True),
+            ),
+        ):
+            recovered = await run_watchdog_cycle(on_failed=notify_failed)
+
+        assert recovered == 1
+        notify_failed.assert_awaited_once_with(stuck[0])
+
+    @pytest.mark.asyncio
     async def test_replays_completed_provider_task_via_recovery_callback(self):
         from datetime import UTC, datetime, timedelta
 
@@ -232,6 +269,51 @@ class TestRunWatchdogCycle:
 
         assert recovered == 1
         recover.assert_awaited_once_with(stuck[0])
+
+
+@pytest.mark.asyncio
+async def test_watchdog_failure_notification_reaches_user_with_refund_and_retry(
+    monkeypatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from bot import main as main_module
+
+    task = SimpleNamespace(
+        id=8,
+        user_id=42,
+        telegram_id=424242,
+        task_id="rendergrid-failed-1",
+        type="image",
+        model="banana_2",
+        cost=1.5,
+        request_data=(
+            '{"task_id_aliases":["img_watchdog_failed","rendergrid-failed-1"]}'
+        ),
+    )
+    bot = AsyncMock()
+    monkeypatch.setattr(
+        "bot.database.get_task_by_id",
+        AsyncMock(return_value=task),
+    )
+    monkeypatch.setattr(
+        main_module,
+        "_resolve_task_telegram_id",
+        AsyncMock(return_value=424242),
+    )
+
+    notified = await main_module._notify_watchdog_failed_task(
+        bot,
+        {"task_id": "rendergrid-failed-1"},
+    )
+
+    assert notified is True
+    bot.send_message.assert_awaited_once()
+    kwargs = bot.send_message.await_args.kwargs
+    assert kwargs["chat_id"] == 424242
+    assert "img_watchdog_failed" in kwargs["text"]
+    assert "Бананы за эту попытку уже возвращены." in kwargs["text"]
+    assert kwargs["reply_markup"] is not None
 
 
 class TestCheckTaskWithProvider:

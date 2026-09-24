@@ -1431,10 +1431,10 @@ async def _send_polled_nexus_image_result(
     from bot.database import complete_video_task, mark_task_delivery_status
     from bot.keyboards import get_image_result_keyboard
 
-    telegram_id = await _resolve_task_telegram_id(task, context="nexus_poller")
+    telegram_id = await _resolve_task_telegram_id(task, context="image_provider_poller")
     if not telegram_id:
         logger.error(
-            "Nexus poller: cannot resolve telegram_id for task %s",
+            "Image provider poller: cannot resolve telegram_id for task %s",
             getattr(task, "task_id", None),
         )
         return False
@@ -1486,13 +1486,13 @@ async def _send_polled_nexus_image_result(
                 )
                 preview_sent = True
                 logger.info(
-                    "Nexus poller: %s image preview sent as file-photo to user %s",
+                    "Image provider poller: %s image preview sent as file-photo to user %s",
                     service_name,
                     telegram_id,
                 )
             except Exception as exc:
                 logger.info(
-                    "Nexus poller: preview file-photo send failed for task %s (%s)",
+                    "Image provider poller: preview file-photo send failed for task %s (%s)",
                     task_lookup_id,
                     exc,
                 )
@@ -1508,13 +1508,13 @@ async def _send_polled_nexus_image_result(
             )
             preview_sent = True
             logger.info(
-                "Nexus poller: %s image preview sent via URL to user %s",
+                "Image provider poller: %s image preview sent via URL to user %s",
                 service_name,
                 telegram_id,
             )
         except Exception as exc:
             logger.info(
-                "Nexus poller: image URL send failed for task %s (%s)",
+                "Image provider poller: image URL send failed for task %s (%s)",
                 task_lookup_id,
                 exc,
             )
@@ -1539,7 +1539,7 @@ async def _send_polled_nexus_image_result(
                 )
             except Exception:
                 logger.exception(
-                    "Nexus poller: failed to send prompt follow-up for task %s",
+                    "Image provider poller: failed to send prompt follow-up for task %s",
                     task_lookup_id,
                 )
         return True
@@ -1559,7 +1559,7 @@ async def _send_polled_nexus_image_result(
         )
         fallback_sent = True
         logger.info(
-            "Nexus poller: fallback text sent for task %s to user %s",
+            "Image provider poller: fallback text sent for task %s to user %s",
             task_lookup_id,
             telegram_id,
         )
@@ -1567,13 +1567,13 @@ async def _send_polled_nexus_image_result(
         fallback_error = exc
         if _is_terminal_telegram_delivery_error(exc):
             logger.warning(
-                "Nexus poller: Telegram delivery terminally unavailable for task %s: %s",
+                "Image provider poller: Telegram delivery terminally unavailable for task %s: %s",
                 task_lookup_id,
                 exc,
             )
         else:
             logger.exception(
-                "Nexus poller: all Telegram delivery attempts failed for task %s",
+                "Image provider poller: all Telegram delivery attempts failed for task %s",
                 task_lookup_id,
             )
     if fallback_sent:
@@ -1597,7 +1597,7 @@ async def _send_polled_nexus_image_result(
         error=delivery_error,
     )
     logger.warning(
-        "Nexus poller: transient Telegram delivery failure kept recoverable for task %s",
+        "Image provider poller: transient Telegram delivery failure kept recoverable for task %s",
         task_lookup_id,
     )
     return False
@@ -1610,22 +1610,35 @@ async def _fail_polled_nexus_image_task(
     service_name: str = "Nano Banana",
     reason: str | None = None,
 ) -> bool:
-    from bot.database import add_credits, complete_video_task
     from bot.keyboards import get_failed_image_retry_keyboard
+    from bot.services.task_watchdog import force_fail_task
 
     task_lookup_id = provider_task_id or getattr(task, "task_id", "")
-    telegram_id = await _resolve_task_telegram_id(task, context="nexus_poller")
-    if telegram_id and getattr(task, "cost", None):
-        try:
-            await add_credits(telegram_id, task.cost)
-        except Exception:
-            logger.exception(
-                "Nexus poller: failed to refund credits for task %s",
-                task_lookup_id,
-            )
+    database_task_id = getattr(task, "id", None)
+    internal_user_id = getattr(task, "user_id", None)
+    if database_task_id is None or internal_user_id is None:
+        logger.error(
+            "Image provider poller cannot atomically fail task %s: missing database identity",
+            task_lookup_id,
+        )
+        return False
 
-    await complete_video_task(task_lookup_id, None)
+    claimed_failure = await force_fail_task(
+        int(database_task_id),
+        int(internal_user_id),
+        float(getattr(task, "cost", None) or 0),
+    )
+    if not claimed_failure:
+        logger.info(
+            "Image provider poller failure already reconciled for task %s",
+            task_lookup_id,
+        )
+        return False
 
+    telegram_id = await _resolve_task_telegram_id(
+        task,
+        context="image_provider_poller",
+    )
     if not telegram_id:
         return False
 
@@ -1649,7 +1662,7 @@ async def _fail_polled_nexus_image_task(
         return True
     except Exception:
         logger.exception(
-            "Nexus poller: failed to notify user about task failure %s",
+            "Image provider poller: failed to notify user about task failure %s",
             task_lookup_id,
         )
         return False
@@ -4846,6 +4859,88 @@ async def _replay_completed_kie_task(task: Mapping[str, Any]) -> bool:
     return bool(refreshed and refreshed.status == "completed")
 
 
+async def _notify_watchdog_failed_task(
+    bot_instance: Bot,
+    task_row: Mapping[str, Any],
+) -> bool:
+    """Notify a user after watchdog has atomically failed/refunded a task."""
+    from bot.database import get_task_by_id
+    from bot.keyboards import get_failed_image_retry_keyboard
+
+    provider_task_id = str(task_row.get("task_id") or "").strip()
+    if not provider_task_id:
+        return False
+
+    task = await get_task_by_id(provider_task_id)
+    if not task:
+        logger.warning(
+            "Watchdog failure notification skipped: task not found provider_task_id=%s",
+            provider_task_id,
+        )
+        return False
+
+    telegram_id = await _resolve_task_telegram_id(
+        task,
+        context="watchdog_failed_notification",
+    )
+    if not telegram_id:
+        logger.warning(
+            "Watchdog failure notification skipped: telegram_id unavailable task=%s",
+            provider_task_id,
+        )
+        return False
+
+    model_label = _get_task_model_label(
+        getattr(task, "model", None),
+        getattr(task, "type", None),
+    )
+    display_task_id = _public_task_id(task, provider_task_id)
+    refund_text = (
+        "\n\nБананы за эту попытку уже возвращены."
+        if getattr(task, "cost", None)
+        else "\n\nПопробуйте повторить попытку немного позже."
+    )
+
+    try:
+        await bot_instance.send_message(
+            chat_id=telegram_id,
+            text=_build_failure_notification_text(
+                service_name=model_label,
+                task_id=display_task_id,
+                reason="Сервис генерации завершил задачу с ошибкой.",
+                media_kind="результата",
+                refund_text=refund_text,
+            ),
+            parse_mode="HTML",
+            reply_markup=get_failed_image_retry_keyboard(
+                _task_callback_id(task, provider_task_id)
+            ),
+        )
+        logger.warning(
+            "Watchdog failure notification sent: task=%s user=%s model=%s refunded=%s",
+            provider_task_id,
+            telegram_id,
+            getattr(task, "model", None),
+            bool(getattr(task, "cost", None)),
+        )
+        return True
+    except Exception as exc:
+        if _is_terminal_telegram_delivery_error(exc):
+            logger.warning(
+                "Watchdog failure notification terminally unavailable: task=%s user=%s error=%s",
+                provider_task_id,
+                telegram_id,
+                exc,
+            )
+        else:
+            logger.exception(
+                "Watchdog failure notification failed: task=%s user=%s",
+                provider_task_id,
+                telegram_id,
+            )
+        return False
+
+
 async def main():
     """Главная функция"""
     # Создаём директорию для логов если её нет
@@ -4863,14 +4958,6 @@ async def main():
     await init_db()
     logger.info("Database initialized successfully")
 
-    # Запускаем Task Watchdog для зависших задач генерации
-    try:
-        from bot.services.task_watchdog import watchdog_loop
-        asyncio.create_task(watchdog_loop(on_completed=_replay_completed_kie_task))
-        logger.info("Task watchdog started")
-    except Exception:
-        logger.exception("Failed to start task watchdog")
-
     # Запускаем очистку rate limiter'а
     from bot.services.rate_limiter import start_cleanup_task
     start_cleanup_task()
@@ -4879,6 +4966,24 @@ async def main():
     bot = Bot(
         token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
+
+    # Watchdog is a recovery path for provider tasks that escaped normal
+    # webhook/poller handling. A recovered failure must not refund silently.
+    try:
+        from bot.services.task_watchdog import watchdog_loop
+
+        async def notify_watchdog_failure(task_row: Mapping[str, Any]) -> bool:
+            return await _notify_watchdog_failed_task(bot, task_row)
+
+        asyncio.create_task(
+            watchdog_loop(
+                on_completed=_replay_completed_kie_task,
+                on_failed=notify_watchdog_failure,
+            )
+        )
+        logger.info("Task watchdog started")
+    except Exception:
+        logger.exception("Failed to start task watchdog")
 
     try:
         asyncio.create_task(_image_provider_poller_loop(bot))

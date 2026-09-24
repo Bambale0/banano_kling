@@ -1,5 +1,56 @@
 # Execution ledger
 
+## 2026-09-24 — RenderGrid Banana delivery recovery
+
+### Incident
+- Baseline: `tanyapi` at `510a520a22f42d1a1b64190fdeeed234e6634bd4`.
+- User symptom: Banana 2/Pro shows “generation started”, then no result/failure message arrives.
+- Confirmed example: local task `img_9225b661def2`, RenderGrid creation `01a0d4a9-f4a2-798b-902e-f4140b506744`.
+- RenderGrid later returned terminal `failed` (safety filter); watchdog marked the DB task failed and refunded 1.5 bananas, but the user was not notified.
+- In the preceding 24h, logs showed 6 watchdog-recovered Banana failures (4 `banana_pro`, 2 `banana_2`) that followed the same silent-refund recovery path.
+
+### Root cause
+1. The shared image-provider poller selected a bounded set of the oldest pending image rows **before** filtering for managed providers. A backlog of unmanaged/KIE image rows could therefore exclude RenderGrid tasks from every poll cycle.
+2. Watchdog recovery correctly failed/refunded a terminal upstream failure, but had no failed-task notification callback. Recovery could therefore leave the user with only the original “generation started” message.
+
+### Intended result
+- Pending RenderGrid/Nexus image tasks cannot be starved by unrelated pending image providers.
+- Normal poller handles RenderGrid terminal states promptly.
+- If watchdog still recovers a failed/expired provider task, it sends the user a failure/refund message with the existing retry keyboard instead of refunding silently.
+- Refund remains single and atomic; notification failure never causes a second refund.
+- Poller/watchdog races are idempotent: whichever path atomically claims the pending task performs the refund and user notification; a late second path is a no-op.
+
+### Scope / safety
+- No DB schema or migration.
+- No provider payload/model/routing changes: Banana 2/Pro remain on RenderGrid.
+- No pricing/referral/payment changes.
+- No Mini App contract change.
+- Telegram `chat not found` remains a terminal Telegram delivery condition; completed media remains persisted by the existing delivery path.
+- The separate 28.1 MB Telegram error observed in the same log window came from the saved-reference preview screen, not generation-result delivery, and is outside this incident fix.
+
+### RED → GREEN
+- RED command covered the exact two failure modes:
+  - managed RenderGrid task behind older unmanaged pending image rows returned no poll candidate;
+  - `run_watchdog_cycle(on_failed=...)` was unsupported.
+- RED result: **2 failed**.
+- Added direct user-notification regression asserting the failure card includes the public task ID, refund text and retry keyboard.
+- GREEN focused regressions: **3 passed**.
+- Added poller/watchdog race regression: a watchdog refund followed by a late poller must not change balance or send a duplicate failure card.
+- Expanded RenderGrid/watchdog/delivery suite after the race fix: **48 passed**.
+- Full safe regression suite: **991 passed, 3 skipped**.
+
+### Implementation
+- `bot/services/nexus_task_poller.py`: scan pending image rows in bounded pages until the requested managed-provider batch is collected, eliminating pre-filter starvation.
+- `bot/services/task_watchdog.py`: support `on_failed` callback after an atomic fail/refund, including max-age forced failures; callback exceptions are isolated from financial state.
+- `bot/main.py`: wire watchdog failed recovery to Telegram using existing failure/retry UX and start watchdog only after the Bot instance exists.
+- Regression tests in `tests/test_rendergrid_provider_id_contract.py` and `tests/test_task_watchdog.py`.
+
+### Rollout
+- Task branch: `fix/rendergrid-delivery-recovery`.
+- Next: lint/compile/diff review → PR to `tanyapi` → required CI → native auto-merge when green → exact-SHA production deploy verification and post-deploy telemetry.
+
+---
+
 ## 2026-09-19 — admin partner applications pagination
 
 - Baseline: `tanyapi` at `4e56b65a8b9748ba7d3bb351039ede643cf7f1ba`.
