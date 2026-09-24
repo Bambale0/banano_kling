@@ -24,43 +24,60 @@ async def get_pending_provider_image_tasks(
     """Return pending images launched through providers that require polling."""
 
     safe_limit = max(1, min(int(limit or NEXUS_POLL_BATCH_SIZE), 50))
+    page_size = max(50, safe_limit * 5)
+    offset = 0
+    tasks: list[dict[str, Any]] = []
+
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
-        cursor = await db.execute(
-            """
-            SELECT id, user_id, telegram_id, task_id, type, model, prompt, cost,
-                   aspect_ratio, request_data, status, created_at, updated_at
-            FROM generation_tasks
-            WHERE status IN ('pending', 'processing')
-              AND type = 'image'
-            ORDER BY COALESCE(updated_at, created_at) ASC
-            LIMIT ?
-            """,
-            (safe_limit * 5,),
-        )
-        rows = await cursor.fetchall()
-        tasks: list[dict[str, Any]] = []
-        for row in rows:
-            task = dict(row)
-            raw_request_data = task.get("request_data")
-            if isinstance(raw_request_data, str) and raw_request_data.strip():
-                try:
-                    task["request_data"] = json.loads(raw_request_data)
-                except json.JSONDecodeError:
-                    logger.warning(
-                        "Nexus poller: invalid request_data JSON for task %s",
-                        task.get("task_id"),
-                    )
-                    task["request_data"] = {}
-            elif not isinstance(raw_request_data, dict):
-                task["request_data"] = {}
-            provider = str(task["request_data"].get("provider") or "").strip().lower()
-            if provider not in MANAGED_IMAGE_PROVIDERS:
-                continue
-            tasks.append(task)
-            if len(tasks) >= safe_limit:
+
+        while len(tasks) < safe_limit:
+            cursor = await db.execute(
+                """
+                SELECT id, user_id, telegram_id, task_id, type, model, prompt, cost,
+                       aspect_ratio, request_data, status, created_at, updated_at
+                FROM generation_tasks
+                WHERE status IN ('pending', 'processing')
+                  AND type = 'image'
+                ORDER BY COALESCE(updated_at, created_at) ASC, id ASC
+                LIMIT ? OFFSET ?
+                """,
+                (page_size, offset),
+            )
+            rows = await cursor.fetchall()
+            if not rows:
                 break
-        return tasks
+
+            for row in rows:
+                task = dict(row)
+                raw_request_data = task.get("request_data")
+                if isinstance(raw_request_data, str) and raw_request_data.strip():
+                    try:
+                        task["request_data"] = json.loads(raw_request_data)
+                    except json.JSONDecodeError:
+                        logger.warning(
+                            "Image provider poller: invalid request_data JSON for task %s",
+                            task.get("task_id"),
+                        )
+                        task["request_data"] = {}
+                elif not isinstance(raw_request_data, dict):
+                    task["request_data"] = {}
+
+                provider = str(
+                    task["request_data"].get("provider") or ""
+                ).strip().lower()
+                if provider not in MANAGED_IMAGE_PROVIDERS:
+                    continue
+
+                tasks.append(task)
+                if len(tasks) >= safe_limit:
+                    break
+
+            if len(rows) < page_size:
+                break
+            offset += len(rows)
+
+    return tasks
 
 
 async def get_pending_nexus_image_tasks(

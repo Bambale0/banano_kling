@@ -171,7 +171,8 @@ async def force_fail_task(task_id: int, user_id: int, cost: float) -> bool:
             """
             UPDATE generation_tasks
             SET status = 'failed',
-                completed_at = CURRENT_TIMESTAMP
+                completed_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
             WHERE id = ? AND status IN ('pending', 'processing')
             """,
             (task_id,),
@@ -190,7 +191,19 @@ async def force_fail_task(task_id: int, user_id: int, cost: float) -> bool:
         return True
 
 
-async def run_watchdog_cycle(on_completed=None) -> int:
+async def _notify_failed_recovery(on_failed, task: dict[str, Any], task_id: int) -> None:
+    if on_failed is None:
+        return
+    try:
+        await on_failed(task)
+    except Exception:
+        logger.exception(
+            "Watchdog: failed-task notification callback failed for task %s",
+            task_id,
+        )
+
+
+async def run_watchdog_cycle(on_completed=None, on_failed=None) -> int:
     """Один цикл watchdog: восстанавливает orphan и зависшие provider-задачи.
 
     Returns: количество переведённых в failed задач.
@@ -262,6 +275,7 @@ async def run_watchdog_cycle(on_completed=None) -> int:
                     tid, uid, model, cost,
                 )
                 recovered += 1
+                await _notify_failed_recovery(on_failed, task, tid)
             continue
 
         # Задачи старше MAX_STUCK_MINUTES — принудительно в failed.
@@ -274,6 +288,7 @@ async def run_watchdog_cycle(on_completed=None) -> int:
                     tid, uid, model, cost, MAX_STUCK_MINUTES, provider_status or "unknown",
                 )
                 recovered += 1
+                await _notify_failed_recovery(on_failed, task, tid)
             continue
 
     if recovered:
@@ -284,7 +299,7 @@ async def run_watchdog_cycle(on_completed=None) -> int:
     return recovered
 
 
-async def watchdog_loop(on_completed=None):
+async def watchdog_loop(on_completed=None, on_failed=None):
     """Бесконечный цикл watchdog, запускается при старте бота."""
     # Задержка при старте — даём БД инициализироваться
     await asyncio.sleep(15)
@@ -294,7 +309,10 @@ async def watchdog_loop(on_completed=None):
     )
     while True:
         try:
-            await run_watchdog_cycle(on_completed=on_completed)
+            await run_watchdog_cycle(
+                on_completed=on_completed,
+                on_failed=on_failed,
+            )
         except Exception:
             logger.exception("Watchdog cycle error")
         await asyncio.sleep(WATCHDOG_INTERVAL_SECONDS)
