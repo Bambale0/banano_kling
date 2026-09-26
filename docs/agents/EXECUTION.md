@@ -330,3 +330,35 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Task branch: `fix/tanyapi-pipeline-observability`.
 - PR target: `tanyapi` with auto-merge only after CI is green.
 - After merge/deploy: verify exact production SHA, `tanya/ci` and `tanya/deploy` commit statuses, then inspect fresh backend logs for trend/Seedance/webhook/errors.
+
+---
+
+## 2026-09-26 — Seedance 2.5 tagged trend production smoke
+
+### Incident
+- A controlled production smoke of published trend #1605 reached the dedicated Seedance 2.5 runtime but returned HTTP 502 before task creation.
+- Billing safety worked: the 72-credit debit was rolled back and the smoke account balance stayed unchanged.
+- Exact provider-bound error: Prompt references missing Seedance media: @Image1.
+
+### Root cause
+- The curated prompt uses a Seedance image binding (@Image1 after canonicalization).
+- Trend compatibility mapped every single uploaded photo to Seedance first_frame.
+- In first-frame mode the photo is not present in reference_image_urls, so the provider binding layer sees @Image1 as unbound and rejects the request before KIE task creation.
+
+### Fix
+- Keep ordinary single-photo Seedance trends on first_frame.
+- If the curated prompt explicitly binds an image reference, keep even one uploaded image in Seedance multimodal reference_image_urls.
+- Multi-photo trends remain multimodal.
+- No pricing, billing, task persistence, callback, or delivery contract changed.
+
+### Verification
+- RED regression: tagged single-photo trend launched as first_frame.
+- GREEN regression: tagged single-photo trend launches as multimodal; untagged single-photo behavior remains first_frame.
+- Expanded Seedance/trend suite: 59/59 passed.
+- Ruff changed Python: clean.
+- Full backend suite: 994 passed, 3 skipped; exit code 0.
+- Production smoke will be repeated after exact-SHA deployment and followed through provider callback, DB completion and Telegram delivery.
+
+### Rollout
+- Task branch: fix/tanyapi-seedance25-trend-image-binding.
+- PR target: tanyapi.

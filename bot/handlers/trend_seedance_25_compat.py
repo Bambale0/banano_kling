@@ -15,6 +15,7 @@ from aiohttp import web
 
 from bot.config import config
 from bot.services.preset_manager import preset_manager
+from bot.services.seedance_reference_binding import missing_seedance_reference_tags
 
 from . import generation as generation_module
 from . import seedance_25_public_release as public_release
@@ -57,9 +58,18 @@ async def _run_seedance25_trend(
     if resolution not in {"480p", "720p"}:
         resolution = "720p"
 
-    # Curated trends accept user photos. For Seedance 2.5 the first photo maps to
-    # first-frame I2V; any additional photos become multimodal references.
-    if len(references) == 1:
+    # Curated trends may bind uploaded photos explicitly in the prompt via
+    # Seedance tags such as @Image1. In that case even a single photo must stay
+    # in multimodal references; mapping it to first_frame leaves @Image1
+    # unbound and KIE rejects the task before creation.
+    missing_without_images = missing_seedance_reference_tags(
+        str(trend.prompt or ""),
+        image_count=0,
+        video_count=0,
+        audio_count=0,
+    )
+    uses_image_binding = any(tag.startswith("@Image") for tag in missing_without_images)
+    if len(references) == 1 and not uses_image_binding:
         scenario = "first_frame"
         first_frame = references[0]
         image_urls: list[str] = []

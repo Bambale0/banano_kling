@@ -81,3 +81,68 @@ async def test_seedance25_video_trend_uses_dedicated_provider_runtime(monkeypatc
     assert launched_payload["scenario"] == "first_frame"
     assert launched_payload["first_frame"] == "https://example.test/source.jpg"
     add_task.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_seedance25_tagged_single_image_trend_uses_multimodal_binding(monkeypatch) -> None:
+    from bot import miniapp as miniapp_module
+    from bot import trend_api
+
+    trend = SimpleNamespace(
+        trend_id=1605,
+        model="seedance_2_5",
+        prompt="Animate @Image1 with a cinematic orbit",
+        ratio="9:16",
+        reference_urls=("https://example.test/source.jpg",),
+        settings={"duration": 12, "seedance25_resolution": "720p"},
+    )
+    user = SimpleNamespace(id=101, credits=170)
+
+    monkeypatch.setattr(
+        compat.public_release,
+        "_public_model_meta",
+        lambda: {
+            "id": "seedance_2_5",
+            "ratios": ["adaptive", "9:16"],
+            "durations": list(range(4, 31)),
+        },
+    )
+    monkeypatch.setattr(
+        miniapp_module,
+        "get_video_model_label",
+        lambda _model: "Seedance 2.5",
+    )
+    monkeypatch.setattr(trend_api, "_validate_uploaded_references", lambda *_args: None)
+    monkeypatch.setattr(trend_api, "touch_saved_references", AsyncMock())
+    monkeypatch.setattr(trend_api, "_debit_for_generation", AsyncMock(return_value=(True, None)))
+    monkeypatch.setattr(trend_api, "_record_trend_use", AsyncMock())
+    monkeypatch.setattr(compat.public_release, "_validate_public_payload", AsyncMock())
+    provider = AsyncMock(return_value={"task_id": "seedance-trend-tagged"})
+    monkeypatch.setattr(compat.public_release, "_launch_provider", provider)
+    monkeypatch.setattr(
+        compat.public_release,
+        "_request_data",
+        lambda payload, **_kwargs: {
+            "seedance25_scenario": payload["scenario"],
+            "reference_images": payload["image_urls"],
+            "first_frame_url": payload["first_frame"],
+        },
+    )
+    monkeypatch.setattr(compat.generation_module, "add_generation_task", AsyncMock())
+    monkeypatch.setattr(
+        compat.generation_module,
+        "get_or_create_user",
+        AsyncMock(return_value=SimpleNamespace(credits=98)),
+    )
+
+    response = await compat._run_seedance25_trend(
+        telegram_id=123456,
+        user=user,
+        trend=trend,
+    )
+
+    assert response.status == 200
+    launched_payload = provider.await_args.args[0]
+    assert launched_payload["scenario"] == "multimodal"
+    assert launched_payload["first_frame"] is None
+    assert launched_payload["image_urls"] == ["https://example.test/source.jpg"]
