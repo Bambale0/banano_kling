@@ -265,3 +265,41 @@ Reference cleanup reports how many generation snapshot refs are protected.
 ### Rollback
 - Revert the shared alias normalizer integration in `seedance_service.py` and `seedance_25_service.py`.
 - No schema migration or persisted-data mutation is involved.
+
+---
+
+## 2026-09-26 — Seedance 2.5 trend launch regression
+
+### Incident
+- Production branch baseline: tanyapi at 9edef3dcdb9bdf98ef1c54ac365680250b3f7aed.
+- User report: curated trends configured for Seedance 2.5 do not generate.
+- Direct Seedance 2.5 generation is healthy in production: provider tasks are accepted, KIE callbacks arrive, tasks reach completed, and result MP4 URLs are persisted.
+- Trend history contains recent banana_pro, seedream_5_pro, and legacy seedance_2 tasks, but no seedance_2_5 trend task.
+- Production /mini-app/api/trends/run returned HTTP 400 during the reported flow before any Seedance provider task was created or credits were deducted.
+
+### Root cause
+- The dedicated Seedance 2.5 trend adapter called the legacy miniapp._find_video_model_meta("seedance_2_5").
+- Seedance 2.5 is intentionally injected dynamically by its compatibility/bootstrap layer and is not present in the legacy static VIDEO_MODELS registry.
+- Therefore every Seedance 2.5 curated trend that passed earlier user-field validation was rejected locally as "Seedance 2.5 сейчас недоступна" before provider submission.
+- Existing unit coverage masked the defect by monkeypatching the legacy lookup to return Seedance metadata.
+- A separate preflight on current trend #1605 also demonstrated its configured required "Цифры" user field; missing that field is correctly rejected before launch. Current frontend source has a regression test proving required trend fields are rendered and sent.
+
+### Fix
+- Resolve Seedance 2.5 trend capabilities from the dedicated public Seedance metadata provider instead of the legacy generic video-model registry.
+- Keep ratio/duration normalization, billing, provider payloads, task persistence, refunds, and all non-Seedance trend routing unchanged.
+- Update the regression test so the legacy lookup explicitly returns None; the Seedance trend must still reach its dedicated provider runtime.
+
+### Verification
+- RED: tests/test_trend_seedance_25_compat.py failed with TrendRunValidationError: Seedance 2.5 сейчас недоступна.
+- GREEN: focused Seedance trend regression passes after the fix.
+- Expanded backend trend/Seedance suite: 43/43 passed.
+- Frontend required-user-field contract: 1/1 passed.
+- Ruff on changed Python files: clean.
+- Full backend suite: 991 passed, 3 skipped; exit code 0.
+
+### Rollout
+- Task branch: fix/tanyapi-seedance25-trend-runtime.
+- PR target: tanyapi.
+- No schema/data migration.
+- No business-value hardcode added.
+- After merge: verify exact deployed SHA, submit a controlled Seedance 2.5 trend through the real Mini App path, confirm provider task creation/callback/result delivery, and inspect post-deploy logs.
