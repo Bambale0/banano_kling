@@ -10,7 +10,7 @@ from bot.handlers import trend_seedance_25_compat as compat
 @pytest.mark.asyncio
 async def test_seedance25_video_trend_uses_dedicated_provider_runtime(monkeypatch) -> None:
     from bot import miniapp as miniapp_module
-    import bot.trend_api as trend_api
+    from bot import trend_api
 
     trend = SimpleNamespace(
         trend_id=55,
@@ -22,11 +22,15 @@ async def test_seedance25_video_trend_uses_dedicated_provider_runtime(monkeypatc
     )
     user = SimpleNamespace(id=101, credits=100)
 
+    # Seedance 2.5 is injected into Mini App bootstrap dynamically and is not
+    # part of the generic VIDEO_MODELS registry. Trend execution must therefore
+    # use the dedicated Seedance metadata instead of treating it as unavailable.
+    monkeypatch.setattr(miniapp_module, "_find_video_model_meta", lambda _model: None)
     monkeypatch.setattr(
-        miniapp_module,
-        "_find_video_model_meta",
-        lambda model: {
-            "id": model,
+        compat.public_release,
+        "_public_model_meta",
+        lambda: {
+            "id": "seedance_2_5",
             "ratios": ["adaptive", "16:9"],
             "durations": [5, 6],
         },

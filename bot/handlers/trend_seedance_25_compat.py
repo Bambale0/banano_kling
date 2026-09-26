@@ -29,7 +29,7 @@ async def _run_seedance25_trend(
     trend: Any,
 ) -> web.Response:
     import bot.miniapp as miniapp_module
-    import bot.trend_api as trend_api
+    from bot import trend_api
 
     references = [str(value or "").strip() for value in trend.reference_urls if str(value or "").strip()]
     if not references:
@@ -38,9 +38,10 @@ async def _run_seedance25_trend(
     trend_api._validate_uploaded_references(references, miniapp_module)
     await trend_api.touch_saved_references(telegram_id, references, kind="image")
 
-    model_meta = miniapp_module._find_video_model_meta(MODEL_KEY)
-    if not model_meta:
-        raise trend_api.TrendRunValidationError("Seedance 2.5 сейчас недоступна")
+    # Seedance 2.5 is exposed through the dedicated compatibility bootstrap and
+    # is intentionally absent from the legacy VIDEO_MODELS registry. Using the
+    # generic lookup here makes every curated Seedance 2.5 trend unavailable.
+    model_meta = public_release._public_model_meta()
 
     supported_ratios = list(model_meta.get("ratios") or [])
     ratio = str(trend.ratio or "adaptive")
@@ -179,7 +180,7 @@ async def _run_seedance25_trend(
 
 
 def install_trend_seedance_25_compat() -> None:
-    import bot.trend_api as trend_api
+    from bot import trend_api
 
     if getattr(trend_api, "_seedance25_trend_compat_installed", False):
         return
