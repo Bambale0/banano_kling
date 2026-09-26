@@ -303,3 +303,30 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - No schema/data migration.
 - No business-value hardcode added.
 - After merge: verify exact deployed SHA, submit a controlled Seedance 2.5 trend through the real Mini App path, confirm provider task creation/callback/result delivery, and inspect post-deploy logs.
+
+---
+
+## 2026-09-26 — Production pipeline observability status repair
+
+### Incident
+- Production observability workflow failed after the Seedance 2.5 rollout while the actual reliable production deploy succeeded.
+- GitHub reports `.github/workflows/deploy-production.yml` as `disabled_manually` and `.github/workflows/deploy-production-reliable.yml` as `active`.
+- `publish-pipeline-pending-status.yml` still tried to discover runs for the disabled workflow, so it failed after publishing only the `tanya/ci` pending status.
+- The active reliable deploy workflow did not publish a terminal `tanya/deploy` commit status, so merely repointing observability would leave that context pending forever.
+
+### Fix
+- Point pending deploy status discovery at `deploy-production-reliable.yml`.
+- Add an always-running terminal status job to the reliable deployment workflow.
+- Publish `tanya/deploy=success` only when both exact-SHA CI verification and deployment succeed; otherwise publish failure with the release run URL.
+- Keep the disabled legacy production workflow disabled to avoid duplicate production deployments.
+
+### Verification
+- RED: new workflow-contract tests failed on the stale deploy filename and missing terminal status publisher.
+- GREEN: both workflow-contract tests pass after the change.
+- YAML parsing succeeds for both changed workflows.
+- Existing deployment workflow regression matrix: 19/19 passed before PR.
+
+### Rollout
+- Task branch: `fix/tanyapi-pipeline-observability`.
+- PR target: `tanyapi` with auto-merge only after CI is green.
+- After merge/deploy: verify exact production SHA, `tanya/ci` and `tanya/deploy` commit statuses, then inspect fresh backend logs for trend/Seedance/webhook/errors.
