@@ -39,6 +39,7 @@ const trend: PromptItem = {
   tags: ['trend', 'trend-video'],
   uses_count: 0,
   likes: 0,
+  repeat_cost: 20,
   preview_url: null,
   model: 'seedance_2',
   author_id: 1,
@@ -116,6 +117,7 @@ describe('TrendRunnerDialog user fields', () => {
     expect(ageInput).toHaveValue('')
     expect(screen.getByText('Возраст *')).toBeInTheDocument()
     expect(screen.getByText(/Скрытый prompt останется скрытым/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Сгенерировать · 20🍌/ })).toBeInTheDocument()
 
     const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement
     fireEvent.change(fileInput, {

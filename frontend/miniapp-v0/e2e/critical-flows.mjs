@@ -82,6 +82,7 @@ const curatedTrend = {
   tags: ['trend', 'trend-video'],
   uses_count: 2,
   likes: 3,
+  repeat_cost: 10,
   preview_url: 'https://cdn.example/curated.mp4',
   model: 'v3_pro',
   generation_settings: {
@@ -416,7 +417,7 @@ try {
 
   // Generic user trend E2E: uploading alone must NOT start generation anymore.
   const curatedCard = page.locator('article').filter({ hasText: curatedTrend.title })
-  await curatedCard.getByRole('button', { name: 'Повторить', exact: true }).click()
+  await curatedCard.getByRole('button', { name: 'Повторить · 10🍌', exact: true }).click()
   const trendRunner = page.getByRole('dialog')
   await trendRunner.getByText('Загрузите свои фото', { exact: true }).waitFor()
   assert.equal(await trendRunner.locator('select').count(), 0)
@@ -434,14 +435,14 @@ try {
     mimeType: 'image/jpeg',
     buffer: Buffer.from([255, 216, 255, 224, 0, 16, 74, 70, 73, 70]),
   })
-  await trendRunner.getByText('Сгенерировать · 1 фото', { exact: true }).waitFor()
+  await trendRunner.getByText('Сгенерировать · 10🍌', { exact: true }).waitFor()
   await page.waitForTimeout(100)
   assert.equal(trendGenerationPayload, null, 'Uploading a trend reference must not auto-run')
 
   const generatedResponse = page.waitForResponse((response) =>
     new URL(response.url()).pathname.endsWith('/trends/run'),
   )
-  await trendRunner.getByRole('button', { name: 'Сгенерировать · 1 фото', exact: true }).click()
+  await trendRunner.getByRole('button', { name: 'Сгенерировать · 10🍌', exact: true }).click()
   await generatedResponse
 
   assert.equal(trendGenerationPayload?.trend_id, curatedTrend.id)

@@ -14,7 +14,6 @@ from typing import Any
 from aiohttp import web
 
 from bot.config import config
-from bot.services.preset_manager import preset_manager
 from bot.services.seedance_reference_binding import missing_seedance_reference_tags
 
 from . import generation as generation_module
@@ -102,13 +101,11 @@ async def _run_seedance25_trend(
     except ValueError as exc:
         raise trend_api.TrendRunValidationError(str(exc)) from exc
 
-    cost = float(
-        preset_manager.get_video_cost_with_quality(
-            MODEL_KEY,
-            duration,
-            resolution,
+    cost = trend_api.estimate_trend_repeat_cost(trend)
+    if cost is None:
+        raise trend_api.TrendRunValidationError(
+            "Не удалось определить стоимость Seedance 2.5 тренда"
         )
-    )
     debited, debit_error = await trend_api._debit_for_generation(telegram_id, user, cost)
     if debit_error is not None:
         return debit_error

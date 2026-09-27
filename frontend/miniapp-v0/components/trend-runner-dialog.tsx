@@ -18,6 +18,7 @@ import {
   runTrend,
 } from '@/lib/trend-api'
 import { mediaAspectRatio, normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
+import { formatTrendRepeatCost } from '@/lib/trend-price'
 import type { PromptItem, TrendUserField, UploadedFile } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
@@ -93,6 +94,7 @@ export function TrendRunnerDialog({
   const [trendPreviewFailed, setTrendPreviewFailed] = useState(false)
 
   const pinterestRepeat = isPinterestRepeatItem(trend)
+  const repeatCost = formatTrendRepeatCost(trend?.repeat_cost)
   const busy = phase === 'uploading' || phase === 'generating'
   const maxPinterestAngles = pinterestModel === 'seedream_5_pro' ? 3 : MAX_PINTEREST_ANGLES
   const isVideoTrend = trend?.generation_settings?.kind === 'video'
@@ -810,9 +812,9 @@ export function TrendRunnerDialog({
             ? 'Генерирую…'
             : pinterestRepeat
               ? 'Создать →'
-              : exactSlots
-                ? `Сгенерировать · ${completedReferences.length}/${exactReferenceCount}`
-                : `Сгенерировать · ${completedReferences.length} фото`}
+              : repeatCost
+                ? 'Сгенерировать · ' + repeatCost + '🍌'
+                : 'Сгенерировать'}
         </Button>
 
         {pinterestRepeat && !readyToGenerate ? (
