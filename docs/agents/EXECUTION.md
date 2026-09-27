@@ -385,6 +385,7 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Mini App Jest: 47/47 passed.
 - Mini App ESLint: clean.
 - Mini App production build/TypeScript: clean.
+- Mini App critical browser E2E: passed after updating the expected repeat-price labels.
 - Added regressions for dynamic backend photo/video pricing, trend-card price display and runner price display.
 
 ### Rollout
