@@ -362,3 +362,32 @@ Reference cleanup reports how many generation snapshot refs are protected.
 ### Rollout
 - Task branch: fix/tanyapi-seedance25-trend-image-binding.
 - PR target: tanyapi.
+
+---
+
+## 2026-09-27 — Trend repeat price preview
+
+### Goal
+- Show the user the exact retail cost of repeating a curated photo/video trend before they upload references or launch generation.
+- Keep pricing server-owned and derived from the administrator-configured model, duration, quality and resolution stored in generation_settings.
+
+### Implementation
+- Added a single backend repeat-cost estimator that resolves current pricing from the same runtime pricing functions used by trend execution.
+- Image trend execution, generic video trend execution and dedicated Seedance 2.5 trend execution now reuse that estimator for the actual debit amount.
+- Trend list/detail responses include repeat_cost; newly created admin trends receive the price immediately in the submit response.
+- Mini App trend cards render `Повторить · <price>🍌`.
+- Trend runner renders `Сгенерировать · <price>🍌`; the old photo-count label was removed from the launch button while reference counts remain in the upload UI.
+- No pricing values are hardcoded in the frontend.
+
+### Verification
+- Backend pricing/trend focused suite: 24/24 passed.
+- Expanded production backend suite: 996 passed, 3 skipped.
+- Mini App Jest: 47/47 passed.
+- Mini App ESLint: clean.
+- Mini App production build/TypeScript: clean.
+- Added regressions for dynamic backend photo/video pricing, trend-card price display and runner price display.
+
+### Rollout
+- Task branch: feature/tanyapi-trend-repeat-price.
+- PR target: tanyapi with auto-merge after required CI gates.
+- After deployment verify exact backend/Mini App SHA and live repeat_cost values for existing production trends.

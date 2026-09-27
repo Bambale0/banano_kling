@@ -2,6 +2,7 @@ import pytest
 
 from bot.trend_api import (
     TrendRunValidationError,
+    estimate_trend_repeat_cost,
     parse_trend_run_request,
     trusted_trend_run,
 )
@@ -245,3 +246,45 @@ def test_legacy_template_tokens_continue_to_work():
             ("https://example.test/ref.jpg",),
             {"Возраст": "тридцать", "Имя": "Игорь"},
         )
+
+
+
+def test_repeat_cost_uses_same_dynamic_photo_pricing(monkeypatch):
+    from bot import miniapp
+
+    monkeypatch.setattr(miniapp, "_resolve_image_unit_cost", lambda model, quality: 2.75)
+
+    cost = estimate_trend_repeat_cost(_trend())
+
+    assert cost == 2.75
+
+
+def test_repeat_cost_uses_saved_video_duration_and_quality(monkeypatch):
+    from bot.services.preset_manager import preset_manager
+
+    seen = {}
+
+    def fake_cost(model, duration, quality):
+        seen.update(model=model, duration=duration, quality=quality)
+        return 72
+
+    monkeypatch.setattr(preset_manager, "get_video_cost_with_quality", fake_cost)
+
+    cost = estimate_trend_repeat_cost(
+        _trend(
+            category="video",
+            model="seedance_2_5",
+            generation_settings={
+                "kind": "video",
+                "user_input": "photo",
+                "model": "seedance_2_5",
+                "ratio": "9:16",
+                "scenario": "imgtxt",
+                "duration": 12,
+                "seedance25_resolution": "720p",
+            },
+        )
+    )
+
+    assert cost == 72.0
+    assert seen == {"model": "seedance_2_5", "duration": 12, "quality": "720p"}

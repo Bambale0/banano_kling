@@ -9,6 +9,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { deactivatePrompt, fetchPromptLink, fetchPrompts, submitPrompt, uploadFile } from '@/lib/api'
 import { updateTrendPreview } from '@/lib/trend-admin-api'
 import { mediaAspectRatio, normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
+import { formatTrendRepeatCost } from '@/lib/trend-price'
 import { TrendRunnerDialog } from '@/components/trend-runner-dialog'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import {
@@ -561,6 +562,7 @@ export function TrendsTab() {
             const posterUrl = trend.preview_poster_url
               ? normalizeMiniAppMediaUrl(trend.preview_poster_url)
               : ''
+            const repeatCost = formatTrendRepeatCost(trend.repeat_cost)
             return (
               <article key={trend.id} className="glass min-w-0 overflow-hidden rounded-2xl border border-border/50">
                 <div className="relative bg-secondary/40">
@@ -638,7 +640,7 @@ export function TrendsTab() {
                 <div className="space-y-2.5 p-3">
                   <div><h4 className="line-clamp-2 text-sm font-semibold text-foreground">{trend.title}</h4>{trend.description ? <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{trend.description}</p> : null}</div>
                   <div className="truncate rounded-lg bg-secondary/55 px-2 py-1.5 text-[10px] text-muted-foreground">{modelLabel || trend.model}</div>
-                  <Button type="button" size="sm" className="w-full bg-gold text-primary-foreground hover:bg-gold/90" onClick={() => applyTrend(trend)}><Repeat2 className="h-3.5 w-3.5" />Повторить</Button>
+                  <Button type="button" size="sm" className="w-full bg-gold text-primary-foreground hover:bg-gold/90" onClick={() => applyTrend(trend)}><Repeat2 className="h-3.5 w-3.5" />{repeatCost ? 'Повторить · ' + repeatCost + '🍌' : 'Повторить'}</Button>
                   <div className={isAdmin ? 'grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2' : 'grid'}>
                     <Button type="button" size="sm" variant="secondary" onClick={() => void handleCopyLink(trend)}>{copiedId === trend.id ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}{copiedId === trend.id ? 'Скопировано' : 'Ссылка'}</Button>
                     {isAdmin ? <Button type="button" variant="secondary" size="sm" className="min-w-0 px-2 text-xs" onClick={() => openEditTrend(trend)} aria-label="Редактировать тренд"><Pencil className="h-3.5 w-3.5" /><span className="truncate">Редактировать</span></Button> : null}
