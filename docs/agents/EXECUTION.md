@@ -1,5 +1,42 @@
 # Execution ledger
 
+## 2026-09-28 — Seedance 2.5 feed publication diagnosis
+
+### Incident
+- Baseline: `tanyapi` at `b5cf3ecc27e55086cf39796754ca4a422b7db3f8`.
+- User symptom: a Seedance 2.5 video cannot be published to the public feed from the bot; one user reportedly cannot publish the same model from Studio/Mini App either.
+- Concrete production row from the screenshot: task `4d622e9b69934e975d5bcb3ca957e395`, DB id `274093`, model `seedance_2_5`, type `video`, status `completed`, result `https://tempfile.aiquickdraw.com/seedance/...mp4`, `completed_at=NULL`, not yet public/profile-visible.
+- Production logs show repeated media reads for that task through `/mini-app/api/media/...`, but no nearby `POST /mini-app/api/generations/share` line tied to that task id. Separate bot logs show feed publication can be rejected before share when the callback task id points to a row the guard does not consider ready.
+
+### Intended result
+- Completed Seedance 2.5 videos can be published to the general feed and profile from both Telegram result buttons and Mini App Studio.
+- Publication returns a normal feed/profile card and preserves prompt/reference visibility options.
+- External provider video results are localized to durable feed storage when possible; publication does not fail merely because localization falls back for video.
+
+### Current-state audit
+- Reuse: `share_to_feed`, `publication_scope_compat.share_to_feed_scoped`, `persist_feed_result_urls`, Mini App `/generations/share`, Telegram `feedpub_*`.
+- Seedance 2.5 completion is handled by `bot/handlers/seedance_25_fullstack.py` and stores `result_url/result_urls/status`, but currently leaves `completed_at` unset.
+- Feed availability uses shared `_feed_result_urls` TTL policy and timestamps from `completed_at`, `updated_at`, `created_at`.
+- No schema or pricing change expected.
+
+### Test plan
+- Add a focused backend regression for a completed `seedance_2_5` video with `completed_at=NULL` and a `tempfile.aiquickdraw.com/seedance/*.mp4` result.
+- Verify both generic `database.share_to_feed` and scoped publication behavior remain able to return a public card.
+- Run focused pytest plus py_compile for touched modules.
+
+### Result
+- Root cause confirmed for the Telegram side: Seedance 2.5 result delivery used its own send path and did not attach the standard video result keyboard, so users had no bot-side publication action for completed Seedance 2.5 videos.
+- Mini App API/core publication guard accepts the reported completed Seedance 2.5 video shape; no model-specific publication block was found there.
+- Fix: attach `get_video_result_keyboard(..., model="seedance_2_5")` to Seedance 2.5 result messages for direct URL send, downloaded-file send and fallback text send paths.
+- Fix: set `completed_at` when the Seedance 2.5 webhook stores a successful result, keeping feed TTL/card metadata aligned with other completed generations.
+- Verification:
+  - `./venv/bin/python -m pytest tests/test_seedance_25_fullstack.py -q -k 'result_message_has_feed_keyboard or seedance25_model_meta or miniapp_repeat_keeps_source_lineage'` — passed, 4 tests.
+  - `./venv/bin/python -m pytest tests/test_database.py -q -k 'seedance25_video_without_completed_at'` — passed, 1 test.
+  - `./venv/bin/python -m py_compile bot/handlers/seedance_25_fullstack.py bot/handlers/seedance_25_public_release.py` — passed.
+  - `./venv/bin/python -m pytest tests/test_seedance_25_fullstack.py tests/test_video_generation_compat.py tests/test_trend_seedance_25_compat.py -q` — passed, 14 tests.
+  - `./venv/bin/python -m pytest tests/test_seedance_25_fullstack.py tests/test_database.py -q` — passed, 49 tests.
+- No production write/deploy was performed during diagnosis.
+
 ## 2026-09-24 — RenderGrid Banana delivery recovery
 
 ### Incident

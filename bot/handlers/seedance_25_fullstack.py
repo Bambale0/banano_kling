@@ -619,6 +619,14 @@ async def _send_seedance25_results(
     if duration is not None:
         caption += f"\n• Длительность: <code>{'Auto' if int(duration) == -1 else str(duration) + 'с'}</code>"
     caption += "\n• Admin preview: <code>без списания</code>"
+    from bot import keyboards as keyboard_module
+
+    result_markup = keyboard_module.get_video_result_keyboard(
+        video_url,
+        task_id=task_id,
+        model=MODEL_KEY,
+        is_public_feed=False,
+    )
 
     delivered = False
     suffix = ".mov" if output_format == "mov" else ".mp4"
@@ -630,6 +638,7 @@ async def _send_seedance25_results(
                 caption=caption,
                 parse_mode="HTML",
                 supports_streaming=True,
+                reply_markup=result_markup,
             )
             delivered = True
         except Exception:
@@ -646,6 +655,7 @@ async def _send_seedance25_results(
                         caption=caption,
                         parse_mode="HTML",
                         supports_streaming=True,
+                        reply_markup=result_markup,
                     )
                 else:
                     await bot.send_document(
@@ -653,6 +663,7 @@ async def _send_seedance25_results(
                         document=FSInputFile(tmp_path, filename=f"seedance25-{task_id}.mov"),
                         caption=caption,
                         parse_mode="HTML",
+                        reply_markup=result_markup,
                     )
                 delivered = True
             finally:
@@ -668,6 +679,7 @@ async def _send_seedance25_results(
                 caption + f"\n\n🔗 Оригинал:\n{video_url}",
                 parse_mode="HTML",
                 disable_web_page_preview=False,
+                reply_markup=result_markup,
             )
         except Exception:
             logger.exception("Seedance 2.5 result notification failed")
@@ -720,12 +732,17 @@ async def _store_task_result(task_id: str, video_url: str | None, urls: list[str
         await db.execute(
             """
             UPDATE generation_tasks
-            SET result_url = ?, result_urls = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+            SET result_url = ?,
+                result_urls = ?,
+                status = ?,
+                completed_at = CASE WHEN ? = 'completed' THEN CURRENT_TIMESTAMP ELSE completed_at END,
+                updated_at = CURRENT_TIMESTAMP
             WHERE task_id = ?
             """,
             (
                 video_url,
                 json.dumps(urls, ensure_ascii=False),
+                "completed" if success else "failed",
                 "completed" if success else "failed",
                 task_id,
             ),
