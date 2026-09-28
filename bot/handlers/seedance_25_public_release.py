@@ -653,6 +653,14 @@ async def _public_send_results(
     )
     if duration is not None:
         caption += f"\n• Длительность: <code>{'Auto' if int(duration) == -1 else str(duration) + 'с'}</code>"
+    from bot import keyboards as keyboard_module
+
+    result_markup = keyboard_module.get_video_result_keyboard(
+        video_url,
+        task_id=task_id,
+        model=MODEL_KEY,
+        is_public_feed=False,
+    )
 
     delivered = False
     suffix = ".mov" if output_format == "mov" else ".mp4"
@@ -664,6 +672,7 @@ async def _public_send_results(
                 caption=caption,
                 parse_mode="HTML",
                 supports_streaming=True,
+                reply_markup=result_markup,
             )
             delivered = True
         except Exception:
@@ -680,6 +689,7 @@ async def _public_send_results(
                         caption=caption,
                         parse_mode="HTML",
                         supports_streaming=True,
+                        reply_markup=result_markup,
                     )
                 else:
                     await bot.send_document(
@@ -687,6 +697,7 @@ async def _public_send_results(
                         document=types.FSInputFile(temp_path, filename=f"seedance25-{task_id}.mov"),
                         caption=caption,
                         parse_mode="HTML",
+                        reply_markup=result_markup,
                     )
                 delivered = True
             finally:
@@ -701,6 +712,7 @@ async def _public_send_results(
             caption + f"\n\n🔗 Оригинал:\n{video_url}",
             parse_mode="HTML",
             disable_web_page_preview=False,
+            reply_markup=result_markup,
         )
 
     if last_frame_url:

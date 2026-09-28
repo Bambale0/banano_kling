@@ -9,6 +9,7 @@ import pytest
 
 import bot.handlers.seedance_25_public_release as public_release
 import bot.miniapp as miniapp_module
+from bot.handlers import seedance_25_fullstack as fullstack_module
 
 from bot.handlers.seedance_25_fullstack import (
     MAX_VIDEO_PIXELS,
@@ -196,3 +197,90 @@ async def test_seedance25_miniapp_repeat_keeps_source_lineage_and_rewards_author
         repeat_task_id='seedance-repeat-task',
         credits_spent=12.0,
     )
+
+
+@pytest.mark.asyncio
+async def test_seedance25_public_result_message_has_feed_keyboard(monkeypatch):
+    class FakeBot:
+        def __init__(self):
+            self.video_kwargs = None
+
+        async def send_video(self, _telegram_id, **kwargs):
+            self.video_kwargs = kwargs
+
+    sentinel_markup = object()
+    monkeypatch.setattr(
+        public_release.fullstack,
+        "_extension_from_url",
+        lambda _url: "mp4",
+    )
+
+    import bot.keyboards as keyboard_module
+
+    keyboard_call = {}
+
+    def fake_keyboard(video_url, *, task_id, model, is_public_feed):
+        keyboard_call.update(
+            {
+                "video_url": video_url,
+                "task_id": task_id,
+                "model": model,
+                "is_public_feed": is_public_feed,
+            }
+        )
+        return sentinel_markup
+
+    monkeypatch.setattr(keyboard_module, "get_video_result_keyboard", fake_keyboard)
+    bot = FakeBot()
+
+    await public_release._public_send_results(
+        {"bot": bot},
+        612441694,
+        "seedance-task-123",
+        "https://cdn.example/result.mp4",
+        None,
+        {"duration": 12, "charged_cost": 72, "seedance25_scenario": "multimodal"},
+    )
+
+    assert bot.video_kwargs is not None
+    assert bot.video_kwargs["reply_markup"] is sentinel_markup
+    assert keyboard_call == {
+        "video_url": "https://cdn.example/result.mp4",
+        "task_id": "seedance-task-123",
+        "model": "seedance_2_5",
+        "is_public_feed": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_seedance25_fullstack_result_message_has_feed_keyboard(monkeypatch):
+    class FakeBot:
+        def __init__(self):
+            self.video_kwargs = None
+
+        async def send_video(self, _telegram_id, **kwargs):
+            self.video_kwargs = kwargs
+
+    sentinel_markup = object()
+    monkeypatch.setattr(fullstack_module, "_extension_from_url", lambda _url: "mp4")
+
+    import bot.keyboards as keyboard_module
+
+    monkeypatch.setattr(
+        keyboard_module,
+        "get_video_result_keyboard",
+        lambda *_args, **_kwargs: sentinel_markup,
+    )
+    bot = FakeBot()
+
+    await fullstack_module._send_seedance25_results(
+        {"bot": bot},
+        612441694,
+        "seedance-task-123",
+        "https://cdn.example/result.mp4",
+        None,
+        {"duration": 12, "v_duration": 12, "seedance25_scenario": "multimodal"},
+    )
+
+    assert bot.video_kwargs is not None
+    assert bot.video_kwargs["reply_markup"] is sentinel_markup

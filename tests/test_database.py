@@ -872,6 +872,82 @@ async def test_feed_publication_is_visible_in_feed_and_profile(tmp_path, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_share_to_feed_accepts_completed_seedance25_video_without_completed_at(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(database, "DATABASE_PATH", str(tmp_path / "seedance25_feed.db"))
+    await database.init_db()
+
+    async def keep_result_urls(urls, **_kwargs):
+        return list(urls)
+
+    monkeypatch.setattr(
+        "bot.services.feed_persist.persist_feed_result_urls",
+        keep_result_urls,
+    )
+
+    user = await database.get_or_create_user(612441694)
+    result_url = "https://tempfile.aiquickdraw.com/seedance/1790510401294-4n0819083ol.mp4"
+    task_id = "4d622e9b69934e975d5bcb3ca957e395"
+    await database.add_generation_task(
+        user.id,
+        user.telegram_id,
+        task_id,
+        "video",
+        "miniapp_video",
+        model="seedance_2_5",
+        duration=12,
+        aspect_ratio="9:16",
+        prompt="seedance 2.5 feed publication",
+        cost=72,
+        request_data={
+            "v_model": "seedance_2_5",
+            "seedance25_scenario": "multimodal",
+            "task_id_aliases": [task_id],
+        },
+    )
+    async with database.db_backend.connect(database.DATABASE_PATH) as db:
+        await db.execute(
+            """
+            UPDATE generation_tasks
+            SET status = 'completed',
+                result_url = ?,
+                result_urls = ?,
+                completed_at = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE task_id = ?
+            """,
+            (result_url, json.dumps([result_url]), task_id),
+        )
+        await db.commit()
+
+    card = await database.share_to_feed(task_id, user.id, publication_scope="feed")
+
+    assert card is not None
+    assert card["task_id"] == task_id
+    assert card["model"] == "seedance_2_5"
+    assert card["gen_type"] == "video"
+    assert card["publication_scope"] == "feed"
+    assert card["result_urls"] == [result_url]
+    assert card["media_unavailable"] is False
+
+    async with database.db_backend.connect(database.DATABASE_PATH) as db:
+        db.row_factory = database.db_backend.Row
+        cursor = await db.execute(
+            """
+            SELECT is_public_feed, is_profile_visible
+            FROM generation_tasks
+            WHERE task_id = ?
+            """,
+            (task_id,),
+        )
+        row = await cursor.fetchone()
+    assert bool(row["is_public_feed"]) is True
+    assert bool(row["is_profile_visible"]) is True
+
+
+@pytest.mark.asyncio
 async def test_profile_owner_can_toggle_blur_without_general_feed(tmp_path, monkeypatch):
     monkeypatch.setattr(database, "DATABASE_PATH", str(tmp_path / "profile_blur.db"))
     await database.init_db()
