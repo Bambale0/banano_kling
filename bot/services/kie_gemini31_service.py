@@ -29,11 +29,12 @@ class MediaAnalysisTrace:
     telegram_user_id: int | None = None
     request_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     provider: str = "existing"
+    instruction_revision: str = ""
     started: float = field(default_factory=time.monotonic)
 
     def log(self, event: str, *, error: str = "", status: int | None = None) -> None:
         logger.info(
-            "media_analysis event=%s provider=%s request_id=%s user_id=%s status=%s error=%s elapsed_ms=%s",
+            "media_analysis event=%s provider=%s request_id=%s user_id=%s status=%s error=%s elapsed_ms=%s instruction_revision=%s",
             event,
             self.provider,
             self.request_id,
@@ -41,8 +42,10 @@ class MediaAnalysisTrace:
             status,
             error,
             int((time.monotonic() - self.started) * 1000),
+            self.instruction_revision,
             extra={
                 "analysis_event": event,
+                "analysis_instruction_revision": self.instruction_revision,
                 "analysis_provider": self.provider,
                 "request_id": self.request_id,
                 "telegram_user_id": self.telegram_user_id,
@@ -89,8 +92,19 @@ def trace_analysis_provider(
     trace = _analysis_trace.get()
     if trace is not None:
         trace.provider = provider
+        if provider != "kie_gemini31":
+            trace.instruction_revision = ""
         if fallback_error is not None:
             trace.log("fallback", error=type(fallback_error).__name__)
+
+
+def trace_analysis_instructions(revision: str) -> None:
+    """Associate the effective guidance version with this analysis outcome."""
+    trace = _analysis_trace.get()
+    if trace is not None:
+        trace.provider = "kie_gemini31"
+        trace.instruction_revision = revision
+        trace.log("instructions_selected")
 
 
 async def media_analysis_provider() -> str:

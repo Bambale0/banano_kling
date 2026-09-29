@@ -1,5 +1,20 @@
 # Execution ledger
 
+## 2026-09-29 — Gemini photo-analysis instructions
+
+- User clarified: improve Gemini instructions for photo analysis. Baseline fresh tanyapi cba7d59. Branch fix/gemini-photo-instructions.
+- Audit: both PhotoPromptService and PromptAnalyzerV2Service route photo-only input through Gemini3.1Pro and fall back to Qwen. They currently reuse generic system prompts with editorial/photorealistic bias and conflicting reference-preservation guidance. Output contracts differ: classic structured9fields and V2 RU/EN only. Voice/video keep existing prompts/providers.
+- Goal: faithful visual reconstruction in the reference medium, explicit edits take precedence over defaults, concrete composition/pose/light/material cues, no invented unseen details/EXIF/identity, equivalent RU/EN prompts, proportional detail without filler.
+- Reuse provider adapter, bot_settings (audited author/time), existing parser and billing. Shared Gemini-only guidance with per-surface fixed JSON contracts; admin-only /gemini_photo_prompt view/set/reset. No schema, price, FSM, UI or provider changes.
+- No-hardcode: editable analysis guidance stored via existing bot_settings with versioned default; schema/output constraints remain technical constants. Validation bounds content size; prompt revision logged without source text or media.
+- Test seams preselected by AGENTS: public analysis services against local HTTP provider + real isolated settings DB; authenticated admin handler via mocked Telegram boundary; full regression; synthetic live Gemini result inspected for fidelity and explicit edits.
+- Verification:1054 passed/3skipped before final trace changes. Live synthetic V2 Gemini30.0s and classic14.3s both retained two colored shapes/positions/flat2D medium, applied only requested pink background, agreed RU/EN. No customer data or credits. Spec/Standards reviews no blockers; trace-correlation suggestion implemented with RED→GREEN tests linking selected instruction revision/request/outcome and clearing Gemini revision on Qwen fallback. Added inline admin editing and unauthorized download regressions.
+- Progress: public-service HTTP tests RED (configured guidance absent from Gemini request on both surfaces) → GREEN; admin tests RED (command absent) → GREEN.46 focused tests passed. Full regression and synthetic live evaluation running.
+- TODO: [x] RED configured guidance reaches both public photo surfaces; [x] minimal shared builder/integration; [x] admin auth/edit/reset regressions; [ ] regressions/real synthetic eval/review; [ ] PR exact CI/merge/autodeploy; [ ] runtime SHA/health/prompt revision.
+- Checklist: both schemas retained; custom guidance applies without release; default/reset works; unauthorized/empty/oversized updates rejected without mutation; Qwen/voice/video behavior preserved; user intent and image remain present; no prompts/media/secrets in telemetry; normal responsiveness retained.
+- Rollout: normal PR to tanyapi, exact merge CI and autodeploy, production read-only config inspection plus synthetic photo analysis (no user balances/media). Rollback via PR revert or admin config reset. Final release evidence in PR.
+
+
 ## 2026-09-29 — Ordinary bot command/button latency incident
 
 - Additional root cause before release: unconditional startup tracemalloc.start(25) traces every allocation. Synthetic JSON workload inside production container: tracing off0.0156s,1frame0.2123s,25frames0.7143s (~46x overhead). SQL/privacy optimizations alone cannot explain/fix this shared-event-loop CPU tax.

@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 import aiohttp
 
 from bot.config import config
+from bot.services.gemini_photo_instructions import gemini_photo_system_prompt
 from bot.services.kie_gemini31_service import (
     KieGemini31Service,
     media_analysis_provider,
@@ -638,7 +639,7 @@ class PhotoPromptService:
                 ).analyze_media(
                     media_url=image_url,
                     user_instruction=user_instruction,
-                    system_prompt=SYSTEM_PROMPT,
+                    system_prompt=await gemini_photo_system_prompt('photo'),
                 )
                 return _build_result(_parse_json_object(raw), provider="")
             except (RuntimeError, ValueError, TypeError) as exc:
