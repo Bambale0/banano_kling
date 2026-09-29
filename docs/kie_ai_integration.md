@@ -626,3 +626,7 @@ TELEGRAM_STARS_ENABLED=1
 4. **pricing_final.py** — содержит только image-модели. Видео-цены рассчитываются динамически через `preset_manager`.
 5. **VeoService** и **GeminiOmniService** — единственные сервисы, которые **НЕ наследуют** `KlingService` и имеют собственные эндпоинты.
 6. **Кэш KieFileUploadService** — 48 часов. При перезапуске бота кэш сбрасывается.
+
+### Seedance 2.5 prompt length (2026-09-29)
+
+Seedance 2.5 (`bytedance/seedance-2-5`) accepts up to **30,000 Unicode characters** in the prompt, matching the [KIE input schema](https://docs.kie.ai/market/bytedance/seedance-2-5). The adapter, Telegram validation and public/admin Mini App forms enforce this technical maximum; longer prompts are rejected rather than truncated. Mini App is the entry point for prompts exceeding Telegram's single-message size. This does not change generation pricing or account quotas.

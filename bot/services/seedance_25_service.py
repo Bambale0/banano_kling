@@ -72,7 +72,8 @@ class Seedance25Service(KlingService):
     MIN_DURATION = 4
     MAX_DURATION = 30
     AUTO_DURATION = -1
-    MAX_PROMPT_LENGTH = 5000
+    # KIE prompt schema: https://docs.kie.ai/market/bytedance/seedance-2-5
+    MAX_PROMPT_LENGTH = 30_000
 
     MAX_REFERENCE_IMAGES = 30
     MAX_REFERENCE_VIDEOS = 10

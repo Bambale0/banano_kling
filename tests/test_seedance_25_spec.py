@@ -119,7 +119,7 @@ async def test_seedance_25_rejects_out_of_spec_values():
     assert (await service.generate_video(prompt="x", resolution="1080p"))["success"] is False
     assert (await service.generate_video(prompt="x", aspect_ratio="2:3"))["success"] is False
     assert (await service.generate_video(prompt="x", output_format="webm"))["success"] is False
-    assert (await service.generate_video(prompt="x" * 5001))["success"] is False
+    assert (await service.generate_video(prompt="x" * 30001))["success"] is False
 
 
 def test_seedance_25_capability_registry_matches_kie_spec():
@@ -207,3 +207,33 @@ async def test_seedance_25_blocks_missing_video_reference_tag(monkeypatch):
     assert result["success"] is False
     assert "@Video1" in result["error"]
     assert called is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("length", [5001, 30000])
+async def test_seedance25_long_prompt_reaches_provider_intact(monkeypatch, length):
+    service = Seedance25Service(kie_key="test-key")
+    captured = {}
+
+    async def fake_post(path, payload):
+        captured.update(payload)
+        return {"task_id": "long-prompt"}
+
+    monkeypatch.setattr(service, "_kie_post", fake_post)
+    prompt = "я" * (length - 1) + "🎬"
+    result = await service.generate_video(prompt=prompt)
+    assert result.get("task_id") == "long-prompt"
+    assert captured["input"]["prompt"] == prompt
+
+
+@pytest.mark.asyncio
+async def test_seedance25_overlong_prompt_never_calls_provider(monkeypatch):
+    service = Seedance25Service(kie_key="test-key")
+
+    async def unexpected_post(*args, **kwargs):
+        pytest.fail("Overlong prompt must be rejected before provider launch")
+
+    monkeypatch.setattr(service, "_kie_post", unexpected_post)
+    result = await service.generate_video(prompt="я" * 30001)
+    assert result["success"] is False
+    assert "30000" in result["error"]

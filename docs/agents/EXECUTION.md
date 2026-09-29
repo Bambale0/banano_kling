@@ -1,5 +1,33 @@
 # Execution ledger
 
+## 2026-09-29 — Seedance 2.5 prompt limit
+
+- Baseline: `932e48dec9de5be2f84cc92cf351377c92c3491c` (`origin/tanyapi`). Isolated branch `fix/seedance25-prompt-limit`.
+- Intended result: accept up to 30,000 prompt characters without truncation in Seedance 2.5, aligning Telegram, public/admin Mini App and provider validation.
+- Audit: provider adapter and both forms enforce 5,000; Telegram checks use the adapter constant but messages duplicate 5,000. Existing provider/handler tests can be reused. No prefactor required beyond shared UI contract constant.
+- Provider evidence: https://docs.kie.ai/market/bytedance/seedance-2-5 retrieved 2026-09-29; embedded OpenAPI prompt schema states `maxLength: 30000`, description “Max length: 30000 characters”.
+- No-hardcode decision: this is an external API technical maximum, not a business quota; retain adapter constant and share one frontend contract constant. No admin setting, pricing, schema, migration, routing or payment change.
+- Related inquiry: trend copy endpoint currently omits referral code although link builder/parser support `prompt_ID_ref_CODE`. Explanation only pending clarification of requested behavior.
+- Logs: targeted scan of current/previous bot log found no prompt-length error matches. No production mutation.
+- Risks: JavaScript UTF-16 length must count Unicode code points to match Python. Telegram single-message size remains a separate constraint; Mini App supports long text.
+- Verification: provider payload boundary at 5,001/30,000/30,001; public scenario guard; relevant Seedance regression suites; frontend type/build checks. Existing auth/payment/provider-response/refund behavior is unchanged. No DB/migration integration required; no live paid generation required.
+- Observability: preserve existing validation errors and generation telemetry; no new log of prompt text.
+- Rollout: PR to `tanyapi`; production update must be verified separately after merge. Rollback through reverting the PR.
+- Steps: (1) regression tests red; (2) align adapter, Telegram copy and forms; (3) tests/build/review; (4) PR and report.
+- Progress: implemented adapter maximum 30,000, shared frontend constant, Unicode-aware counters and Telegram text derived from adapter constant. Public/admin forms and shared server guard accept the boundary and reject 30,001.
+- Skills/guidance: Bambale0/skills `diagnosing-bugs` (reproduction/regression loop; narrowed to an outdated documented limit); Bambale0/claw README (existing architecture/config/release discipline); anthropics/skills `webapp-testing` inspected (browser guidance; component tests used here).
+- Verification evidence:
+  - `/root/tanya/banano_kling/venv/bin/python -m pytest tests/test_seedance_25_spec.py -q -k 'long_prompt or overlong_prompt'` before implementation: 3 expected failures, old 5,000-character rejection.
+  - `/root/tanya/banano_kling/venv/bin/python -m pytest tests/test_seedance_25_spec.py tests/test_seedance_25_fullstack.py tests/test_seedance_25_new_priority.py tests/test_seedance_25_telegram_compat.py tests/test_trend_seedance_25_compat.py -q`: 33 passed.
+  - `npm --prefix frontend/miniapp-v0 test -- --runInBand seedance25-prompt-limit`: 19 suites / 49 tests passed (worktree path matches the filter, so all frontend suites ran), including both forms' Unicode boundaries.
+  - `npm run build` in frontend: passed, including TypeScript and static export.
+  - `eslint components/forms/seedance25-public-form.tsx components/forms/seedance25-admin-form.tsx components/forms/seedance25-prompt-limit.test.tsx lib/seedance25-api.ts`: passed.
+  - `python -m compileall -q` for the three touched backend modules and `git diff --check`: passed.
+  - Full-file Ruff reports 12 pre-existing findings in adapter/preview; changed-line check is the repository CI gate. No unrelated cleanup.
+  - Initial broader pytest invocation referenced `test_video_generation_compat.py`, which exists only in the original checkout, not the baseline Git tree; no tests ran for that invocation. Corrected invocation above passes.
+- Remaining verification: CI for PR, browser E2E and live generation/deployment smoke have not been run. No production update claimed. No DB/config/admin migration.
+
+
 ## 2026-09-28 — Seedance 2.5 feed publication diagnosis
 
 ### Incident

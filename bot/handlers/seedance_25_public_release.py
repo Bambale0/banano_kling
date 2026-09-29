@@ -192,7 +192,7 @@ async def _public_show_screen(target, state: FSMContext, *, edit: bool = True) -
         f"{media_hint}\n\n"
         "🎥 Движение камеры и lock объектива задавайте прямо в промпте.\n\n"
         f"{billing_line}{auto_note}\n\n"
-        "После настройки отправьте промпт до 5000 символов."
+        f"После настройки отправьте промпт до {seedance_25_service.MAX_PROMPT_LENGTH} символов."
     )
     markup = preview_module._seedance_25_keyboard(data)
 
@@ -235,7 +235,7 @@ def _scenario_payload(data: dict[str, Any], prompt: str) -> dict[str, Any]:
 async def _validate_public_payload(payload: dict[str, Any], *, is_admin: bool) -> None:
     scenario = payload["scenario"]
     if len(payload["prompt"]) > seedance_25_service.MAX_PROMPT_LENGTH:
-        raise ValueError("Промпт Seedance 2.5 — максимум 5000 символов")
+        raise ValueError(f"Промпт Seedance 2.5 — максимум {seedance_25_service.MAX_PROMPT_LENGTH} символов")
     if scenario == "text" and not payload["prompt"]:
         raise ValueError("Для Text-to-Video нужен промпт")
     if scenario in {"first_frame", "first_last"} and not payload["first_frame"]:
