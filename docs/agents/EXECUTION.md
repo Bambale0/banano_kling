@@ -1,5 +1,25 @@
 # Execution ledger
 
+## 2026-09-29 — Ordinary bot command/button latency incident
+
+- User reports slow ordinary Telegram commands/buttons after combined release; baseline production and origin/tanyapi `3c3b96a`. Dedicated branch `fix/bot-response-latency`.
+- Evidence: healthy container occupies ~100% of one CPU; Telegram pending_update_count0; update durations reach34,649ms. Initial external health3.317s; six local health samples0.086–0.349s show intermittent rather than constant stalls.
+- Twenty-second nonblocking py-spy sample: heavy Mini App bootstrap/privacy work on shared event loop. 15-minute logs:915 bootstrap requests,373 updates. Ten-minute bootstrap response median13,844bytes/max21,705bytes, so no huge response payload.
+- PostgreSQL diagnosis: history query by telegram_id/created_at has no matching index; EXPLAIN ANALYZE visits~279k rows/47,869blocks,68.44ms at low contention. Concurrent completion/repeat queries use task_id OR JSON alias EXISTS and scan every row even for indexed canonical IDs; observed active queries4–27s.
+- Privacy resolver calls enriched public trend list merely to compare prompt text, unnecessarily deserializing settings and computing success counters.
+- Ranked hypotheses: shared event-loop work; expensive DB scans/pool pressure; Telegram network. Evidence supports first2; queue0.
+- Plan: add concurrent history index (non-destructive; persist in schema setup), fast canonical task resolution retaining alias fallback and repeat-credit idempotency, lean privacy lookup preserving fail-closed/legacy behavior. No prices/provider defaults/referral economics changed.
+- Public test seams: database task completion/repeat invariants + isolated DB alias cases, task API sanitization/privacy, backend regression and deployed latency/telemetry. Add regression before code for identified scan pattern where feasible. Fresh read-only EXPLAIN and update duration/CPU samples compare production before/after.
+- Rollout: normal task PR to tanyapi with CI; verify exact deployment and original latency signals. No customer messages/synthetic paid generation. Temporary profiler output only under/tmp.
+- Index applied online: `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_generation_tasks_telegram_created ON generation_tasks (telegram_id, created_at DESC)`. PostgreSQL EXPLAIN changed parallel sequential scan~279k rows/47,869blocks (68.440ms) to index scan~15blocks (0.133ms). Schema bootstrap now keeps the index for future installs. Rollback if necessary: DROP INDEX CONCURRENTLY; retaining this additive index across code rollback is safe.
+- RED canonical completion regression on200 historical tasks observed400 irrelevant json_valid evaluations across update/reward lookup. GREEN after indexed canonical fast paths:0. Original alias fallback retained.
+- RED privacy regression: oldest approved recipe outside top100 leaked through legacy task sanitization; GREEN with raw recipe projection instead of enriched/paginated catalog. No prompt/settings/counter expansion needed; explicit trend/source tasks skip recipe lookup.
+- Focused database/task/alias/privacy/referral/watchdog suites:85 passed. Additional persisted alias→canonical→alias completion replay: reward credited once; combined new privacy/completion tests7 passed.
+- Read-only production-data privacy benchmark (8recent tasks, no user media/logged prompts): legacy un-enriched implementation11.7/8.9ms, candidate4.8/6.5ms. Actual running legacy path also computes catalog success counters, which this conservative comparison omits.
+- Two independent reviews (Spec/Standards): no blockers. Nonblocking full-catalog recipe scaling remains, measured above; avoid speculative caching of privacy decisions. New ignored test file explicitly force-added for CI. Existing mock-SQL completion tests adjusted for canonical parameter count; behavior tests cover persisted completion and reward.
+- Source syntax and whitespace checks; changed-line Ruff before PR. Full safe suite in progress.
+- TODO: [x] history index/preflight; [x] regression RED; [x] fixes GREEN; [x] expanded focused regressions/review; [ ] full suite/PR/CI/merge/autodeploy; [ ] production measurements. Final release SHA/telemetry recorded in PR/delivery report.
+
 ## 2026-09-29 — Resumed combined release verification
 
 - Recovered task branch at `8ac64fa`; remote PR #208 still at `6b919ee`; production and fresh `origin/tanyapi` both `932e48d`.

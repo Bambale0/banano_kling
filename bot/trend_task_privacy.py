@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from bot import db as db_backend
-from bot.database import DATABASE_PATH, get_prompts_by_tag
+from bot.database import DATABASE_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -33,12 +33,6 @@ async def _protected_task_ids(task_ids: list[str]) -> set[str]:
     if not normalized:
         return set()
 
-    trend_prompts = {
-        str(item.get("prompt_text") or "").strip()
-        for item in await get_prompts_by_tag("trend", limit=500)
-        if str(item.get("prompt_text") or "").strip()
-    }
-
     placeholders = ",".join("?" for _ in normalized)
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
@@ -53,15 +47,31 @@ async def _protected_task_ids(task_ids: list[str]) -> set[str]:
         rows = await cursor.fetchall()
 
     protected: set[str] = set()
+    legacy_candidates: dict[str, str] = {}
     for row in rows:
         task_id = str(row["task_id"] or "").strip()
         action_type = str(row["action_type"] or "").strip().lower()
         prompt = str(row["prompt"] or "").strip()
-        inherited_prompt = bool(row["source_feed_gen_id"])
-        curated_trend = action_type == "trend"
-        legacy_trend = bool(prompt and prompt in trend_prompts)
-        if inherited_prompt or curated_trend or legacy_trend:
+        if row["source_feed_gen_id"] or action_type == "trend":
             protected.add(task_id)
+        elif prompt:
+            legacy_candidates[task_id] = prompt
+
+    if legacy_candidates:
+        # Privacy only needs recipes, not public cards, settings or success metrics.
+        # Do not paginate: historical matches must remain protected beyond page one.
+        async with db_backend.connect(DATABASE_PATH) as db:
+            cursor = await db.execute(
+                """SELECT prompt_text FROM user_prompts
+                   WHERE status = 'approved' AND is_public = 1 AND tags LIKE ?""",
+                ('%"trend"%',),
+            )
+            recipes = await cursor.fetchall()
+        trend_prompts = {str(row[0] or "").strip() for row in recipes}
+        protected.update(
+            task_id for task_id, prompt in legacy_candidates.items()
+            if prompt in trend_prompts
+        )
     return protected
 
 

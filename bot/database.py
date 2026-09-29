@@ -584,6 +584,9 @@ async def _ensure_prompt_feed_schema(db: db_backend.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_generation_tasks_user_created ON generation_tasks(user_id, created_at DESC)"
     )
     await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_generation_tasks_telegram_created ON generation_tasks(telegram_id, created_at DESC)"
+    )
+    await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_generation_tasks_feed ON generation_tasks(is_public_feed, status, created_at DESC)"
     )
     await db.execute(
@@ -5234,25 +5237,31 @@ async def _credit_feed_repeat_on_webhook_completion(task_lookup_id: str) -> None
         async with db_backend.connect(DATABASE_PATH) as db:
             db.row_factory = db_backend.Row
             cursor = await db.execute(
-                """SELECT task_id, user_id, cost, source_feed_gen_id
-                   FROM generation_tasks
-                   WHERE task_id = ?
-                      OR EXISTS (
-                          SELECT 1
-                          FROM json_each(
-                              CASE
-                                  WHEN json_valid(generation_tasks.request_data)
-                                  THEN generation_tasks.request_data
-                                  ELSE '{}'
-                              END,
-                              '$.task_id_aliases'
-                          )
-                          WHERE CAST(value AS TEXT) = ?
-                      )
-                   LIMIT 1""",
-                (task_lookup_id, task_lookup_id),
+                "SELECT task_id, user_id, cost, source_feed_gen_id FROM generation_tasks WHERE task_id = ?",
+                (task_lookup_id,),
             )
             row = await cursor.fetchone()
+            if row is None:
+                cursor = await db.execute(
+                    """SELECT task_id, user_id, cost, source_feed_gen_id
+                       FROM generation_tasks
+                       WHERE task_id = ?
+                          OR EXISTS (
+                              SELECT 1
+                              FROM json_each(
+                                  CASE
+                                      WHEN json_valid(generation_tasks.request_data)
+                                      THEN generation_tasks.request_data
+                                      ELSE '{}'
+                                  END,
+                                  '$.task_id_aliases'
+                              )
+                              WHERE CAST(value AS TEXT) = ?
+                          )
+                       LIMIT 1""",
+                    (task_lookup_id, task_lookup_id),
+                )
+                row = await cursor.fetchone()
         if not row or row["source_feed_gen_id"] is None:
             return
         credited = await credit_feed_prompt_repeat(
@@ -5316,24 +5325,32 @@ async def complete_video_task(task_id: str, result_url: str) -> bool:
     lookup_value = str(task_id or "").strip()
     async with db_backend.connect(DATABASE_PATH) as db:
         final_status = "completed" if result_url else "failed"
+        # Canonical provider IDs are indexed. Only legacy aliases need JSON lookup.
         cursor = await db.execute(
-            """UPDATE generation_tasks 
+            """UPDATE generation_tasks
                SET status = ?, result_url = ?, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-               WHERE task_id = ?
-                  OR EXISTS (
-                      SELECT 1
-                      FROM json_each(
-                          CASE
-                              WHEN json_valid(generation_tasks.request_data)
-                              THEN generation_tasks.request_data
-                              ELSE '{}'
-                          END,
-                          '$.task_id_aliases'
-                      )
-                      WHERE CAST(value AS TEXT) = ?
-                  )""",
-            (final_status, result_url, lookup_value, lookup_value),
+               WHERE task_id = ?""",
+            (final_status, result_url, lookup_value),
         )
+        if int(getattr(cursor, "rowcount", 0) or 0) <= 0:
+            cursor = await db.execute(
+                """UPDATE generation_tasks
+                   SET status = ?, result_url = ?, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                   WHERE task_id = ?
+                      OR EXISTS (
+                          SELECT 1
+                          FROM json_each(
+                              CASE
+                                  WHEN json_valid(generation_tasks.request_data)
+                                  THEN generation_tasks.request_data
+                                  ELSE '{}'
+                              END,
+                              '$.task_id_aliases'
+                          )
+                          WHERE CAST(value AS TEXT) = ?
+                      )""",
+                (final_status, result_url, lookup_value, lookup_value),
+            )
         await db.commit()
         updated = int(getattr(cursor, "rowcount", 0) or 0)
         if updated <= 0:
