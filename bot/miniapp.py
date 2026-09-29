@@ -3286,7 +3286,10 @@ async def miniapp_prompt_link(request: web.Request) -> web.Response:
         if not (prompt["status"] == "approved" and prompt["is_public"]) and prompt["author_id"] != user.id:
             return web.json_response({"ok": False, "error": "Промпт недоступен"}, status=403)
         me = await request.app["bot"].get_me()
-        link = build_prompt_link(me.username, prompt_id) if me.username else config.mini_app_url
+        link = (
+            build_prompt_link(me.username, prompt_id, user.referral_code)
+            if me.username else config.mini_app_url
+        )
         return web.json_response({"ok": True, "prompt": prompt, "link": link})
     except Exception as e:
         return _miniapp_error_response(e, log_message="Mini App prompt link failed")

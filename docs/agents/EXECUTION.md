@@ -1,5 +1,37 @@
 # Execution ledger
 
+## 2026-09-29 — Personalized trend links and combined production release
+
+### Scope and audit
+- Authorized: user requests trend referral links, detailed TODO/TDD/checklist and merge into `tanyapi`.
+- Fresh baseline `origin/tanyapi`: `932e48dec9de5be2f84cc92cf351377c92c3491c`; existing PR #208 head `6b919ee671882d73a2e5dfc6681d3f5a4d80b3fe`, previous CI fully green. Continue same isolated task branch for combined release.
+- Existing: authenticated `/mini-app/api/prompts/link` and v1 alias; builder supports `prompt_ID_ref_CODE`; backend referral parser and frontend navigation support combined parameter. Each registered account already has its own referral code. Missing: endpoint supplies no code.
+- Reuse real user context, persisted referral code, existing builder/parser, attribution and privacy middleware. No prefactor or schema/config/admin change required. No hardcoded business values.
+- Product result: copying a trend link attaches the copying account's code (including partners), opens the chosen trend, and applies existing referral eligibility/commission rules. Ordinary users retain the existing ability to invite; copying never upgrades partner status.
+- Security: never accept caller-supplied referral_code/user_id, never use trend author's code. Existing template permissions and hidden prompt protection remain. Legacy links stay valid. No payment/provider mutation in link generation.
+- Observability: existing HTTP logs plus attribution events (`source`, start_param, user/referrer IDs, reason) cover the flow. Tests verify rejection/idempotency; no raw initData/prompt logging.
+- Telegram: links deliberately use Mini App `startapp`; Telegram trend navigation remains unchanged. Bot `/start` legacy sharing is not a new surface in this task.
+
+### Detailed TODO / acceptance checklist
+1. [ ] RED: actual HTTP copy-link response contains authenticated sharer's code, not template author's or supplied spoof code.
+2. [ ] GREEN: minimal endpoint change reusing link builder. No referral mutation while copying.
+3. [ ] Security/API: invalid/missing signature rejected; missing/private template denied; public response hides prompt; no-code fallback retains plain link; v1 alias has same ownership behavior.
+4. [ ] Attribution: combined link attaches eligible visitor once; self-referral and reassignment rejected; repeated clicks do not duplicate bonus. Existing payment/partner suites remain green.
+5. [ ] UI/navigation: copy button copies exact response URL; old/new startapp parameters open same template; errors remain visible; browser E2E exercises clipboard.
+6. [ ] Seedance combined regression: 30,000 accepted / 30,001 rejected and no truncation; both forms Unicode-aware.
+7. [ ] Documentation: describe copying-account attribution, existing eligibility, legacy links and no changes to economics.
+8. [ ] Verification: focused backend; referral regressions; all frontend tests/build; browser E2E; changed-line Ruff; deployment shell syntax; clean diff.
+9. [ ] Review: Standards and Spec against baseline/spec here, fix blockers; update PR title/body to combined final scope.
+10. [ ] Release: push, exact-head CI green, merge PR to `tanyapi`, record exact merge SHA.
+11. [ ] Production: exact merge CI/autodeploy success; container revision/health; Mini App revision/static content; authenticated copy-link read-only smoke; prompt limit; fresh error telemetry. No paid generation or live referral mutation needed.
+
+### Test seams and rollout
+- Public HTTP (signed Telegram initData + isolated DB; mock Telegram network only), public referral service/DB interfaces, UI clipboard and start-param navigation, browser E2E, deployed read-only smoke. These are the repository-mandated public seams; no separate permission pause required under AGENTS.md autonomy.
+- DB integration applies for identity/attribution; migrations N/A; payment/refund regressions apply without economic changes; provider contract remains Seedance maxLength only.
+- Rollback: revert combined PR through `tanyapi` CI/CD. No manual deployment while autodeploy is healthy.
+- Progress: preflight complete, RED slice next.
+
+
 ## 2026-09-29 — Seedance 2.5 prompt limit
 
 - Baseline: `932e48dec9de5be2f84cc92cf351377c92c3491c` (`origin/tanyapi`). Isolated branch `fix/seedance25-prompt-limit`.
