@@ -2,6 +2,11 @@
 
 ## 2026-09-29 — Ordinary bot command/button latency incident
 
+- Additional root cause before release: unconditional startup tracemalloc.start(25) traces every allocation. Synthetic JSON workload inside production container: tracing off0.0156s,1frame0.2123s,25frames0.7143s (~46x overhead). SQL/privacy optimizations alone cannot explain/fix this shared-event-loop CPU tax.
+- TDD memory diagnostics:6 regressions RED on unconditional tracing/default dump/config, then explicit opt-in implementation. MEMORY_TRACING_ENABLED defaults0; MEMORY_TRACING_FRAMES defaults1, validated/clamped1..25. RSS/GC/process reports remain available without allocation tracing; dumps report tracing enabled/disabled explicitly. External pre-existing tracing remains respected.
+- Additional memory Spec/Standards reviews: no blockers. Six memory regressions and combined diagnostics/privacy/completion13 passed; pre-existing runtime tracing regression added on review recommendation. New test force-added despite tests/* ignore.
+- Full local suite before this addition1039 passed/3skipped; previous-head CI checks succeeded through browser E2E. Rerun affected suite/review and exact final-head CI; no merge before these changes pass.
+
 - User reports slow ordinary Telegram commands/buttons after combined release; baseline production and origin/tanyapi `3c3b96a`. Dedicated branch `fix/bot-response-latency`.
 - Evidence: healthy container occupies ~100% of one CPU; Telegram pending_update_count0; update durations reach34,649ms. Initial external health3.317s; six local health samples0.086–0.349s show intermittent rather than constant stalls.
 - Twenty-second nonblocking py-spy sample: heavy Mini App bootstrap/privacy work on shared event loop. 15-minute logs:915 bootstrap requests,373 updates. Ten-minute bootstrap response median13,844bytes/max21,705bytes, so no huge response payload.
