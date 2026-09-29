@@ -9,10 +9,13 @@
 - Frontend: all 19 suites / 50 tests passed; production build/typecheck/static export passed; critical browser E2E passed against freshly copied build.
 - Frontend lint initially scanned untracked generated `.e2e-server` output (4,096 generated-file errors); source lint `npx eslint . --ignore-pattern .e2e-server` passed. Generated fixture is not committed.
 - Deployment shell syntax and diff whitespace passed.
-- Live synthetic Gemini photo data-URI smoke first timed out at a diagnostic 120-second cap; retry at configured 180 seconds pending. Initial video fixture URL used the wrong static prefix and returned 404 before any video provider call; corrected to verified `/uploads/` route.
+- Live synthetic Gemini smoke: photo JPEG data URI returned "Red" in 126.8s; video URL returned "blue" in 9.1s; actual PhotoPromptService with its production system prompt/parser returned populated Russian/English prompts in 31.4s with Gemini confirmed by terminal telemetry. No user media or account balance was used. Temporary video fixture removed.
+- Initial diagnostic photo attempt timed out at120s, exposing nginx120s as a real release risk. Corrected only exact `/mini-app/api/photo-to-prompt` locations in production backend and both frontend vhosts to900s (default bounded Gemini+Qwen chain ~722s plus overhead). Existing proxy/CORS/security headers copied intact. Original broader route timeouts and dev/VK untouched.
+- Nginx files: `/etc/nginx/sites-enabled/banano-kling.conf` (first production HTTPS block), `/etc/nginx/sites-available/tanyapp.chillcreative.ru.conf`, `/etc/nginx/sites-available/tanyapp.xn--e1aikcel5c5a.online.conf`. Backups: `/root/<filename>.pre-gemini-20260929T152124Z`; restore those files, `nginx -t`, reload for rollback. Successful syntax test/reload; all3 analysis endpoints reject unsigned requests with401; health remains200. Existing unrelated nginx TLS warnings preserved.
+- Diagnostic video fixture initially used wrong URL then restrictive temporary-directory permissions; corrected to readable `/uploads/` fixture before the successful provider call.
 - Full safe backend regression: 1,029 passed / 3 skipped in 249.36s (run started before final observability edits). Final affected media/handler/billing suites: 61 passed. Final PR CI reruns the entire tree.
 - Standards finding resolved with task-local correlation across provider/fallback/terminal outcomes and caller user identity; RED test failed on missing correlation context, then GREEN. Sanitized failure categories and no media/prompt/key in logs. Changed-line Ruff: 0; new files formatted.
-- Remaining: real provider smoke results, PR push/exact-head CI, authorized merge to `tanyapi`, exact merge CI/autodeploy, production read-only API/static/telemetry verification.
+- Remaining: exact-head CI, authorized merge to `tanyapi`, exact merge CI/autodeploy, production read-only API/static/telemetry verification. Final merge/deploy evidence is recorded in PR #208 and the delivery report because the release SHA cannot be embedded in its own commit.
 
 ## 2026-09-29 — KIE Gemini 3.1 Pro media analysis (scope addition)
 
