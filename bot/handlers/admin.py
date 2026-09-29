@@ -2411,6 +2411,59 @@ def _build_admin_partner_xls(report: dict) -> tuple[bytes, str]:
     return "".join(parts).encode("utf-8"), filename
 
 
+@router.message(Command("gemini_photo_prompt"))
+async def cmd_gemini_photo_prompt(message: types.Message) -> None:
+    """Inspect or edit Gemini-only photo instructions with an audited setting."""
+    if not message.from_user or not is_admin(message.from_user.id):
+        await message.answer("⛔ Только для администратора.")
+        return
+    from bot.services.gemini_photo_instructions import (
+        get_photo_instructions,
+        reset_photo_instructions,
+        save_photo_instructions,
+    )
+
+    usage = (
+        "/gemini_photo_prompt — скачать текущие инструкции\n"
+        "/gemini_photo_prompt set ТЕКСТ — заменить инструкции\n"
+        "Или ответьте командой /gemini_photo_prompt set на сообщение с инструкциями.\n"
+        "/gemini_photo_prompt reset — вернуть стандартные инструкции."
+    )
+    parts = str(message.text or "").split(maxsplit=2)
+    action = parts[1].lower() if len(parts) > 1 else ""
+    if not action:
+        current = await get_photo_instructions()
+        await message.answer_document(
+            document=BufferedInputFile(
+                current.encode("utf-8"), filename="gemini-photo-instructions.txt"
+            ),
+            caption="Инструкции Gemini для анализа фото. Формат JSON задаётся отдельно.",
+        )
+        await message.answer(usage)
+        return
+    if action == "reset" and len(parts) == 2:
+        await reset_photo_instructions(admin_id=message.from_user.id)
+    elif action == "set":
+        reply = message.reply_to_message
+        content = parts[2] if len(parts) == 3 else (
+            str(reply.text or reply.caption or "") if reply else ""
+        )
+        try:
+            await save_photo_instructions(content, admin_id=message.from_user.id)
+        except ValueError as exc:
+            await message.answer(str(exc) + "\n\n" + usage)
+            return
+    else:
+        await message.answer(usage)
+        return
+    logger.info(
+        "Gemini photo instructions updated: admin_id=%s action=%s",
+        message.from_user.id,
+        action,
+    )
+    await message.answer("Инструкции Gemini сохранены. Применятся к следующему анализу фото.")
+
+
 @router.message(Command("analysis_provider"))
 async def cmd_analysis_provider(message: types.Message) -> None:
     """Inspect or change the shared photo/video analyzer without a release."""

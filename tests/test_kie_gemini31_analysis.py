@@ -333,6 +333,7 @@ async def test_analysis_trace_links_provider_and_terminal_fallback_to_user(
         )
         assert any(r.analysis_event == "fallback" for r in records)
         assert records[-1].analysis_provider == "qwen38"
+        assert records[-1].analysis_instruction_revision == ""
     else:
         assert any(r.analysis_event == "provider_success" for r in records)
         assert records[-1].analysis_provider == "kie_gemini31"
