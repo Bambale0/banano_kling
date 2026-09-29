@@ -3155,6 +3155,7 @@ async def miniapp_photo_to_prompt(request: web.Request) -> web.Response:
 
         try:
             result = await photo_prompt_service.analyze_photo(
+                telegram_user_id=telegram_id,
                 image_url=image_url,
                 preserve=preserve,
                 goal=goal,
@@ -3288,7 +3289,8 @@ async def miniapp_prompt_link(request: web.Request) -> web.Response:
         me = await request.app["bot"].get_me()
         link = (
             build_prompt_link(me.username, prompt_id, user.referral_code)
-            if me.username else config.mini_app_url
+            if me.username
+            else config.mini_app_url
         )
         return web.json_response({"ok": True, "prompt": prompt, "link": link})
     except Exception as e:

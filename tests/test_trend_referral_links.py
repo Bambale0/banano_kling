@@ -15,7 +15,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from bot import database, miniapp
 from bot.browser_auth import trend_prompt_privacy_middleware
 from bot.config import config
-from bot.services import referral_service
+from bot.services import partner_approval_service, referral_service
 
 
 def signed_init_data(telegram_id, start_param=None):
@@ -36,6 +36,11 @@ async def sharing_client(monkeypatch):
     monkeypatch.setattr(miniapp, "DATABASE_PATH", database.DATABASE_PATH)
     monkeypatch.setattr(referral_service, "DATABASE_PATH", database.DATABASE_PATH)
     monkeypatch.setattr(miniapp, "_mini_app_referral_last_attempt", {})
+    monkeypatch.setattr(partner_approval_service, "DATABASE_PATH", database.DATABASE_PATH)
+    monkeypatch.setattr(partner_approval_service, "_SCHEMA_READY", False)
+    monkeypatch.setattr(partner_approval_service, "_SCHEMA_LOCK", None)
+    partner_approval_service.install_partner_referral_approval_guard()
+    monkeypatch.setattr(miniapp, "process_referral_click", referral_service.process_referral_click)
     for module_name in ("bot.handlers.trend_success_compat", "bot.trend_task_privacy"):
         module = sys.modules.get(module_name)
         if module is not None:
@@ -132,6 +137,14 @@ async def test_combined_trend_link_attaches_once_and_preserves_first_referrer(sh
     trend = await public_trend()
     sharer = await database.get_or_create_user(81002)
     other = await database.get_or_create_user(81003)
+    for partner in (sharer, other):
+        application = await partner_approval_service.submit_partner_application(
+            partner.telegram_id, source="telegram_bot",
+        )
+        approved = await partner_approval_service.review_partner_application(
+            application["application_id"], approve=True, admin_telegram_id=999999999,
+        )
+        assert approved["ok"] is True
     start = f"prompt_{trend['id']}_ref_{sharer.referral_code}"
     for code in [start, start, f"prompt_{trend['id']}_ref_{other.referral_code}"]:
         response = await sharing_client.post("/mini-app/api/prompts/link", json={
@@ -150,6 +163,12 @@ async def test_combined_trend_link_attaches_once_and_preserves_first_referrer(sh
 async def test_self_and_legacy_trend_links_do_not_attach(sharing_client):
     trend = await public_trend()
     sharer = await database.get_or_create_user(81002)
+    application = await partner_approval_service.submit_partner_application(
+        sharer.telegram_id, source="telegram_bot",
+    )
+    await partner_approval_service.review_partner_application(
+        application["application_id"], approve=True, admin_telegram_id=999999999,
+    )
     for start in [f"prompt_{trend['id']}", f"prompt_{trend['id']}_ref_{sharer.referral_code}"]:
         response = await sharing_client.post("/mini-app/api/prompts/link", json={
             "init_data": signed_init_data(sharer.telegram_id, start), "prompt_id": trend["id"],
@@ -164,3 +183,18 @@ def test_link_builder_preserves_plain_link_without_referral_code():
     from bot.miniapp_links import prompt_link
 
     assert prompt_link("test_bot", 42, None) == "https://t.me/test_bot?startapp=prompt_42"
+
+
+@pytest.mark.asyncio
+async def test_unapproved_sharer_link_does_not_bypass_partner_approval(sharing_client):
+    trend = await public_trend()
+    sharer = await database.get_or_create_user(81002)
+    response = await sharing_client.post("/mini-app/api/prompts/link", json={
+        "init_data": signed_init_data(81004, f"prompt_{trend['id']}_ref_{sharer.referral_code}"),
+        "prompt_id": trend["id"],
+    })
+    assert response.status == 200
+    visitor = await database.get_or_create_user(81004)
+    assert visitor.referred_by is None
+    updated = await database.get_or_create_user(sharer.telegram_id)
+    assert updated.referral_earned == sharer.referral_earned
