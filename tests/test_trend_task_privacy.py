@@ -119,3 +119,32 @@ def test_shared_prompt_detail_is_sanitized_even_for_admin_contract() -> None:
     assert "payload = await sanitize_task_api_payload(payload)" in source
     assert 'task_detail_path = f"{miniapp_root}/api/task-detail"' in source
     assert 'bootstrap_path = f"{miniapp_root}/api/bootstrap"' in source
+
+
+@pytest.mark.asyncio
+async def test_legacy_privacy_covers_trends_outside_catalog_page(monkeypatch):
+    from bot import database
+    from bot import db as db_backend
+
+    monkeypatch.setattr(trend_task_privacy, "DATABASE_PATH", database.DATABASE_PATH)
+    user = await database.get_or_create_user(920002)
+    async with db_backend.connect(database.DATABASE_PATH) as connection:
+        await connection.executemany(
+            "INSERT INTO user_prompts (author_id, title, prompt_text, tags, status, is_public, uses_count) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [(user.id, f"Trend {i}", f"recipe-{i}", '["trend"]', "approved", 1, i)
+             for i in range(101)],
+        )
+        await connection.commit()
+    await database.add_generation_task(
+        user.id, user.telegram_id, "legacy-trend-task", "image", "test", prompt="recipe-0",
+    )
+    await database.add_generation_task(
+        user.id, user.telegram_id, "ordinary-task", "image", "test", prompt="ordinary user prompt",
+    )
+    result = await trend_task_privacy.sanitize_task_api_payload({"recent_tasks": [
+        {"task_id": "legacy-trend-task", "prompt_preview": "recipe-0"},
+        {"task_id": "ordinary-task", "prompt_preview": "ordinary user prompt"},
+    ]})
+    assert result["recent_tasks"][0]["prompt_hidden"] is True
+    assert result["recent_tasks"][0]["prompt_preview"] == ""
+    assert result["recent_tasks"][1]["prompt_preview"] == "ordinary user prompt"

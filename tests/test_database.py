@@ -91,7 +91,7 @@ async def test_complete_video_task_marks_completed_with_result_url(monkeypatch):
     assert result is True
     sql, params = conn.execute.await_args.args
     assert "UPDATE generation_tasks" in sql
-    assert params == ("completed", "http://result.url", "task-ok", "task-ok")
+    assert params == ("completed", "http://result.url", "task-ok")
     conn.commit.assert_awaited_once()
     credit.assert_awaited_once_with("task-ok")
 
@@ -110,7 +110,7 @@ async def test_complete_video_task_marks_failed_without_result_url(monkeypatch):
     assert result is True
     sql, params = conn.execute.await_args.args
     assert "UPDATE generation_tasks" in sql
-    assert params == ("failed", None, "task-fail", "task-fail")
+    assert params == ("failed", None, "task-fail")
     conn.commit.assert_awaited_once()
     credit.assert_not_awaited()
 
