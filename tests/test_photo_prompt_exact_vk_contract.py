@@ -113,6 +113,8 @@ async def test_exact_vk_request_is_sent_to_apiyi(monkeypatch: pytest.MonkeyPatch
 async def test_main_telegram_photo_service_uses_qwen38_not_legacy_vk_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from bot import database
+    await database.set_bot_setting("media_analysis_provider", "qwen38")
     captured: dict[str, str] = {}
 
     class FakeQwen:

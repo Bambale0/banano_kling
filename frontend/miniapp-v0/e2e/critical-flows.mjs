@@ -171,6 +171,7 @@ try {
   const context = await browser.newContext({ viewport: { width: 430, height: 900 } })
   const page = await context.newPage()
 
+  let copiedTrendPayload = null
   let paymentPayload = null
   let promptsPayload = null
   let trendGenerationPayload = null
@@ -179,6 +180,10 @@ try {
   const uploadQueue = []
 
   await page.addInitScript(() => {
+    window.__copiedText = ''
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+      writeText: async (text) => { window.__copiedText = text },
+    } })
     window.__openedLinks = []
     window.__telegramEventHandlers = {}
     window.Telegram = {
@@ -219,6 +224,14 @@ try {
   await page.route('**/mini-app/api/**', async (route) => {
     const request = route.request()
     const path = new URL(request.url()).pathname
+
+    if (path.endsWith('/prompts/link')) {
+      copiedTrendPayload = JSON.parse(request.postData() || '{}')
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        ok: true, link: `https://t.me/test_bot?startapp=prompt_${curatedTrend.id}_ref_E2EADMIN`,
+      }) })
+      return
+    }
 
     if (path.endsWith('/bootstrap')) {
       await route.fulfill({
@@ -362,6 +375,14 @@ try {
   assert.equal(promptsPayload?.source, 'tag')
   assert.equal(promptsPayload?.tag, 'trend')
   assert.equal(await page.getByText('Ordinary Prompt', { exact: true }).count(), 0)
+
+  // Copy the server-owned personal link unchanged, including template and referrer.
+  await page.getByRole('button', { name: 'Ссылка', exact: true }).first().click()
+  await page.getByRole('button', { name: 'Скопировано', exact: true }).waitFor()
+  assert.equal(copiedTrendPayload?.prompt_id, curatedTrend.id)
+  assert.equal(copiedTrendPayload?.referral_code, undefined)
+  assert.equal(await page.evaluate(() => window.__copiedText),
+    `https://t.me/test_bot?startapp=prompt_${curatedTrend.id}_ref_E2EADMIN`)
 
   // Telegram can keep the WebView alive between openings. Re-activation must
   // restore the product default for sessions without an actionable deep link.

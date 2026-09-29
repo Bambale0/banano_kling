@@ -29,6 +29,7 @@ def referral_code_from_start_param(start_param: Any) -> str:
       - remix_ID_ref_CODE    → CODE
       - posts_ID_ref_CODE    → CODE
       - profile_ID_ref_CODE  → CODE (or profile code itself)
+      - prompt_ID_ref_CODE   → CODE
       - prompt_ID            → "" (no referral)
       - start=CODE / startapp=CODE  → CODE
 

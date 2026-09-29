@@ -7,6 +7,9 @@ export type Seedance25Scenario = 'text' | 'first_frame' | 'first_last' | 'multim
 export type Seedance25Resolution = '480p' | '720p'
 export type Seedance25OutputFormat = 'mp4' | 'mov'
 
+// KIE technical contract; keep aligned with Seedance25Service.MAX_PROMPT_LENGTH.
+export const SEEDANCE25_MAX_PROMPT_LENGTH = 30_000
+
 const DIRECT_VIDEO_UPLOAD_BYTES = 45 * 1024 * 1024
 const VIDEO_CHUNK_BYTES = 7 * 1024 * 1024
 const MAX_VIDEO_BYTES = 200 * 1024 * 1024

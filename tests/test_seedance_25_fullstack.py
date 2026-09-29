@@ -284,3 +284,18 @@ async def test_seedance25_fullstack_result_message_has_feed_keyboard(monkeypatch
 
     assert bot.video_kwargs is not None
     assert bot.video_kwargs["reply_markup"] is sentinel_markup
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("length", [5001, 30000, 30001])
+async def test_public_payload_prompt_limit_matches_provider(monkeypatch, length):
+    validate_sources = AsyncMock()
+    monkeypatch.setattr(fullstack_module, "_validate_seedance_sources", validate_sources)
+    payload = public_release._scenario_payload({}, "я" * (length - 1) + "🎬")
+    if length > 30000:
+        with pytest.raises(ValueError, match="30000"):
+            await public_release._validate_public_payload(payload, is_admin=False)
+        validate_sources.assert_not_awaited()
+    else:
+        await public_release._validate_public_payload(payload, is_admin=False)
+        validate_sources.assert_awaited_once()

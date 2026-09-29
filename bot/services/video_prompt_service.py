@@ -1,4 +1,4 @@
-"""Video-to-prompt service with OpenRouter Qwen 3.8 primary and KIE fallback."""
+"""Video-to-prompt service with configurable Gemini/Qwen primary and KIE fallback."""
 
 import asyncio
 import base64
@@ -12,6 +12,12 @@ from typing import Any, Dict, Optional
 import aiohttp
 
 from bot.config import config
+from bot.services.kie_gemini31_service import (
+    KieGemini31Service,
+    media_analysis_provider,
+    trace_analysis_provider,
+    trace_media_analysis,
+)
 from bot.services.openrouter_qwen38_service import openrouter_qwen38_service
 from bot.services.photo_prompt_service import (
     GPT_MAX_ATTEMPTS as GPT55_MAX_ATTEMPTS,
@@ -512,6 +518,7 @@ class VideoPromptService:
             raise RuntimeError("Видео слишком большое для frame fallback")
         return video_bytes
 
+    @trace_media_analysis
     async def analyze_video(
         self,
         *,
@@ -520,6 +527,7 @@ class VideoPromptService:
         duration_seconds: int | float = 0,
         filename: str = "reference_video.mp4",
         video_bytes: bytes | None = None,
+        telegram_user_id: int | None = None,
     ) -> Dict[str, Any]:
         video_url = (video_url or "").strip()
         if not video_url:
@@ -535,9 +543,24 @@ class VideoPromptService:
                 effective_duration = probed_duration
 
         user_instruction = _build_video_prompt_instruction(effective_duration)
+        if await media_analysis_provider() == "kie_gemini31":
+            try:
+                raw = await KieGemini31Service(
+                    api_key=self.api_key, base_url=self.base_url
+                ).analyze_media(
+                    media_url=video_url,
+                    user_instruction=user_instruction,
+                )
+                return _build_video_result(
+                    _parse_video_json_object(raw), provider=KieGemini31Service.MODEL
+                )
+            except (RuntimeError, ValueError, TypeError) as exc:
+                trace_analysis_provider("qwen38", fallback_error=exc)
+
         qwen_error: Exception | None = None
 
         if openrouter_qwen38_service.enabled:
+            trace_analysis_provider("qwen38")
             try:
                 raw_output = await openrouter_qwen38_service.analyze_video(
                     video_url=video_url,
@@ -558,6 +581,7 @@ class VideoPromptService:
                 TypeError,
             ) as exc:
                 qwen_error = exc
+                trace_analysis_provider("gpt55", fallback_error=exc)
                 logger.warning(
                     "Qwen 3.8 video analysis failed; falling back to KIE: %s",
                     exc,
@@ -577,6 +601,7 @@ class VideoPromptService:
             "Content-Type": "application/json",
         }
 
+        trace_analysis_provider("gpt55")
         native_error: Exception | None = None
         try:
             return await self._analyze_with_gpt55(
@@ -588,6 +613,7 @@ class VideoPromptService:
             )
         except Exception as exc:
             native_error = exc
+            trace_analysis_provider("gpt55_frames", fallback_error=exc)
             logger.warning(
                 "Native GPT-5.5 video input failed, falling back to sampled frames: %s",
                 exc,

@@ -251,7 +251,7 @@ async def _show_seedance_25_screen(target, state: FSMContext, *, edit: bool = Tr
         "движение камеры и lock объектива задавайте в промпте.\n\n"
         f"💰 Текущая цена из админ-прайса: <code>{quote}</code>🍌{auto_note}.\n"
         "Администратору списание не производится.\n\n"
-        "После настройки просто отправьте промпт (до 5000 символов)."
+        f"После настройки просто отправьте промпт (до {seedance_25_service.MAX_PROMPT_LENGTH} символов)."
     )
     markup = _seedance_25_keyboard(data)
 
@@ -375,7 +375,7 @@ async def _run_seedance_25_message(message: types.Message, state: FSMContext, pr
         await message.answer("❌ Для этого режима загрузите и последний кадр.")
         return
     if len(str(prompt or "")) > seedance_25_service.MAX_PROMPT_LENGTH:
-        await message.answer("❌ Промпт Seedance 2.5 — максимум 5000 символов.")
+        await message.answer(f"❌ Промпт Seedance 2.5 — максимум {seedance_25_service.MAX_PROMPT_LENGTH} символов.")
         return
 
     quote = _price_quote(data)

@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react'
 import { uploadFile } from '@/lib/api'
 import {
   generateSeedance25,
+  SEEDANCE25_MAX_PROMPT_LENGTH,
   type Seedance25GenerateResponse,
   type Seedance25OutputFormat,
   type Seedance25Resolution,
@@ -191,6 +192,7 @@ export function Seedance25AdminForm({ model: rawModel, onQueued, onSavedReferenc
   const [webSearch, setWebSearch] = useState(false)
   const [nsfwChecker, setNsfwChecker] = useState(false)
   const [prompt, setPrompt] = useState('')
+  const promptLength = Array.from(prompt.trim()).length
 
   const [firstFrame, setFirstFrame] = useState<RefWithDuration | null>(null)
   const [lastFrame, setLastFrame] = useState<RefWithDuration | null>(null)
@@ -293,8 +295,8 @@ export function Seedance25AdminForm({ model: rawModel, onQueued, onSavedReferenc
   const submit = async () => {
     setError(null)
     setQueued(null)
-    if (prompt.length > 5000) {
-      setError('Промпт — максимум 5000 символов')
+    if (promptLength > SEEDANCE25_MAX_PROMPT_LENGTH) {
+      setError(`Промпт — максимум ${SEEDANCE25_MAX_PROMPT_LENGTH} символов`)
       return
     }
 
@@ -491,7 +493,7 @@ export function Seedance25AdminForm({ model: rawModel, onQueued, onSavedReferenc
       <section className="space-y-2">
         <div className="flex items-center justify-between gap-3">
           <label className="text-sm font-medium">Промпт</label>
-          <span className={`text-xs ${prompt.length > 5000 ? 'text-destructive' : 'text-muted-foreground'}`}>{prompt.length}/5000</span>
+          <span className={`text-xs ${promptLength > SEEDANCE25_MAX_PROMPT_LENGTH ? 'text-destructive' : 'text-muted-foreground'}`}>{promptLength}/{SEEDANCE25_MAX_PROMPT_LENGTH}</span>
         </div>
         <textarea
           value={prompt}
@@ -518,7 +520,7 @@ export function Seedance25AdminForm({ model: rawModel, onQueued, onSavedReferenc
 
       <button
         type="button"
-        disabled={submitting || uploading || prompt.length > 5000}
+        disabled={submitting || uploading || promptLength > SEEDANCE25_MAX_PROMPT_LENGTH}
         onClick={() => void submit()}
         className="w-full rounded-xl border border-cyan/50 bg-cyan/15 px-4 py-3 text-sm font-semibold text-cyan transition hover:bg-cyan/20 disabled:cursor-not-allowed disabled:opacity-50"
       >

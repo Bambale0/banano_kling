@@ -948,6 +948,8 @@ def test_video_prompt_user_content_passes_video_as_input_file():
 
 @pytest.mark.asyncio
 async def test_video_prompt_service_passes_video_file_to_gpt55():
+    from bot import database
+    await database.set_bot_setting("media_analysis_provider", "qwen38")
     service = VideoPromptService(api_key="test")
     captured = {}
 
@@ -1126,6 +1128,8 @@ def test_photo_prompt_gpt_user_content_allows_audio_without_image():
 
 @pytest.mark.asyncio
 async def test_photo_prompt_service_uses_qwen38_for_image_only(monkeypatch):
+    from bot import database
+    await database.set_bot_setting("media_analysis_provider", "qwen38")
     service = PhotoPromptService(api_key="legacy-test-key")
     qwen = AsyncMock()
     qwen.enabled = True

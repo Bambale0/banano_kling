@@ -2411,6 +2411,44 @@ def _build_admin_partner_xls(report: dict) -> tuple[bytes, str]:
     return "".join(parts).encode("utf-8"), filename
 
 
+@router.message(Command("analysis_provider"))
+async def cmd_analysis_provider(message: types.Message) -> None:
+    """Inspect or change the shared photo/video analyzer without a release."""
+    if not message.from_user or not is_admin(message.from_user.id):
+        await message.answer("⛔ Только для администратора.")
+        return
+    from bot.database import set_bot_setting
+    from bot.services.kie_gemini31_service import (
+        MEDIA_ANALYSIS_PROVIDERS,
+        media_analysis_provider,
+    )
+
+    parts = str(message.text or "").split()
+    if len(parts) > 1:
+        provider = parts[1].lower()
+        if len(parts) != 2 or provider not in MEDIA_ANALYSIS_PROVIDERS:
+            await message.answer(
+                "Используйте /analysis_provider kie_gemini31 или /analysis_provider qwen38"
+            )
+            return
+        await set_bot_setting(
+            "media_analysis_provider",
+            provider,
+            updated_by_telegram_id=message.from_user.id,
+        )
+        logger.info(
+            "Media analysis provider updated: admin_id=%s provider=%s",
+            message.from_user.id,
+            provider,
+        )
+    current = await media_analysis_provider()
+    await message.answer(
+        f"Анализ фото и видео: {current}\n"
+        "/analysis_provider kie_gemini31 — Gemini 3.1 Pro через KIE\n"
+        "/analysis_provider qwen38 — Qwen через OpenRouter"
+    )
+
+
 @router.message(Command("admin"))
 async def cmd_admin(message: types.Message):
     """Открывает админ-панель"""

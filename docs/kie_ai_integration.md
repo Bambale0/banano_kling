@@ -257,12 +257,24 @@ FREEPIK_BASE_URL = "https://api.freepik.com/v1"
 
 ### 2.3. Текстовые / Чат-модели (Text/Chat)
 
-#### 2.3.1. GPT-5.5 + Responses API
+#### 2.3.1. Gemini 3.1 Pro — анализ фото и видео
+
+Основной маршрут `PhotoPromptService`, `VideoPromptService` и фото-входа `PromptAnalyzerV2Service` — `KieGemini31Service`: `POST /gemini-3.1-pro/v1/chat/completions`, Bearer `KIE_AI_API_KEY`. [Контракт KIE](https://docs.kie.ai/market/gemini/gemini-3-1-pro): фото и видео передаются одинаково через `image_url.url`, `stream=false`, `include_thoughts=false`, `reasoning_effort=high`. Видео передаётся целиком.
+
+Выбор хранится в `bot_settings.media_analysis_provider`: `kie_gemini31` по умолчанию, `qwen38` для переключения обратно. Администратор может посмотреть его командой `/analysis_provider` и изменить через `/analysis_provider kie_gemini31` или `/analysis_provider qwen38`. Изменение аудируется через `updated_by_telegram_id`; другие аккаунты не имеют доступа. Новая миграция не требуется.
+
+При ошибке Gemini сохраняется Qwen fallback; у видео остаётся последующая GPT-цепочка. Голосовые и чисто текстовые сценарии остаются на прежних маршрутах. Цена анализа и возврат при итоговой ошибке не меняются.
+
+Настройки транспорта: `KIE_MEDIA_ANALYSIS_TIMEOUT_SECONDS` (по умолчанию 180, ограничен 1–300 сек на попытку), `KIE_MEDIA_ANALYSIS_MAX_ATTEMPTS` (по умолчанию 2, ограничен 1–3). Повторяются сетевые ошибки, HTTP 429 и 5xx; HTTP 4xx, пустой/некорректный ответ не повторяются. Логи связывают модель, request_id, user_id, попытку, статус, конечный результат и переход на резервного провайдера; категории ошибок не содержат медиа, промпта, тела ответа или ключа.
+
+Для синхронного Mini App анализа `POST /mini-app/api/photo-to-prompt` production nginx использует отдельный exact location с `proxy_read_timeout 900s` на `tanyapi.chillcreative.ru`, `tanyapp.chillcreative.ru` и `tanyapp.xn--e1aikcel5c5a.online`. Это покрывает стандартную ограниченную цепочку Gemini + Qwen; остальные API остаются на прежнем таймауте. При повышении попыток/таймаутов провайдеров нужно согласовать общий бюджет с прокси. Деплой Mini App не управляет nginx; конфигурация хранится на сервере. Проверено на синтетических фото и видео 2026-09-29.
+
+#### GPT-5.5 + Responses API — голос и резервный маршрут
 
 | Параметр | Значение |
 |---|---|
 | **Эндпоинт** | `POST /codex/v1/responses` |
-| **Используется** | PhotoPromptService, VideoPromptService (анализ изображений/видео) |
+| **Используется** | Голосовой вход PhotoPromptService/PromptAnalyzerV2Service и резервный анализ VideoPromptService |
 | **Модель** | `gpt-5-5` (переменная `PHOTO_PROMPT_MODEL`) |
 | **Дополнительно** | Поддержка аудио-входа (max 10MB), видео-входа (max 30MB / 60s) |
 
@@ -626,3 +638,7 @@ TELEGRAM_STARS_ENABLED=1
 4. **pricing_final.py** — содержит только image-модели. Видео-цены рассчитываются динамически через `preset_manager`.
 5. **VeoService** и **GeminiOmniService** — единственные сервисы, которые **НЕ наследуют** `KlingService` и имеют собственные эндпоинты.
 6. **Кэш KieFileUploadService** — 48 часов. При перезапуске бота кэш сбрасывается.
+
+### Seedance 2.5 prompt length (2026-09-29)
+
+Seedance 2.5 (`bytedance/seedance-2-5`) accepts up to **30,000 Unicode characters** in the prompt, matching the [KIE input schema](https://docs.kie.ai/market/bytedance/seedance-2-5). The adapter, Telegram validation and public/admin Mini App forms enforce this technical maximum; longer prompts are rejected rather than truncated. Mini App is the entry point for prompts exceeding Telegram's single-message size. This does not change generation pricing or account quotas.

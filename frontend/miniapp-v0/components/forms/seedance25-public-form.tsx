@@ -4,6 +4,7 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { uploadFile } from '@/lib/api'
 import {
   generateSeedance25,
+  SEEDANCE25_MAX_PROMPT_LENGTH,
   uploadSeedance25Video,
   type Seedance25GenerateResponse,
   type Seedance25OutputFormat,
@@ -254,6 +255,7 @@ export function Seedance25PublicForm({ model, credits, isAdmin, onQueued, onSave
   const [webSearch, setWebSearch] = useState(false)
   const [nsfwChecker, setNsfwChecker] = useState(false)
   const [prompt, setPrompt] = useState('')
+  const promptLength = Array.from(prompt.trim()).length
 
   const [firstFrame, setFirstFrame] = useState<RefItem | null>(null)
   const [lastFrame, setLastFrame] = useState<RefItem | null>(null)
@@ -378,7 +380,7 @@ export function Seedance25PublicForm({ model, credits, isAdmin, onQueued, onSave
     setError(null)
     setQueued(null)
     try {
-      if (prompt.length > 5000) throw new Error('Промпт — максимум 5000 символов')
+      if (promptLength > SEEDANCE25_MAX_PROMPT_LENGTH) throw new Error(`Промпт — максимум ${SEEDANCE25_MAX_PROMPT_LENGTH} символов`)
       if (duration === -1 && !isAdmin) throw new Error('Автоматическая длительность доступна только администратору')
 
       const first = firstSource.trim() || firstFrame?.file.url || null
@@ -648,7 +650,7 @@ export function Seedance25PublicForm({ model, credits, isAdmin, onQueued, onSave
           />
           <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
             <span>Совет: движение камеры пишите прямо здесь — например, «плавный наезд, без зума»</span>
-            <span className={prompt.length > 5000 ? 'text-destructive' : ''}>{prompt.length}/5000</span>
+            <span className={promptLength > SEEDANCE25_MAX_PROMPT_LENGTH ? 'text-destructive' : ''}>{promptLength}/{SEEDANCE25_MAX_PROMPT_LENGTH}</span>
           </div>
         </div>
       </section>
@@ -777,7 +779,7 @@ export function Seedance25PublicForm({ model, credits, isAdmin, onQueued, onSave
 
       <button
         type="button"
-        disabled={submitting || uploading || !canAfford || prompt.length > 5000}
+        disabled={submitting || uploading || !canAfford || promptLength > SEEDANCE25_MAX_PROMPT_LENGTH}
         onClick={() => void submit()}
         className="w-full rounded-2xl border border-cyan/50 bg-cyan/15 px-4 py-3.5 text-sm font-semibold text-cyan transition hover:bg-cyan/20 disabled:cursor-not-allowed disabled:opacity-50"
       >
