@@ -1,4 +1,4 @@
-"""Video-to-prompt service with OpenRouter Qwen 3.8 primary and KIE fallback."""
+"""Video-to-prompt service with configurable Gemini/Qwen primary and KIE fallback."""
 
 import asyncio
 import base64
@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional
 import aiohttp
 
 from bot.config import config
+from bot.services.kie_gemini31_service import KieGemini31Service, media_analysis_provider
 from bot.services.openrouter_qwen38_service import openrouter_qwen38_service
 from bot.services.photo_prompt_service import (
     GPT_MAX_ATTEMPTS as GPT55_MAX_ATTEMPTS,
@@ -535,6 +536,15 @@ class VideoPromptService:
                 effective_duration = probed_duration
 
         user_instruction = _build_video_prompt_instruction(effective_duration)
+        if await media_analysis_provider() == "kie_gemini31":
+            try:
+                raw = await KieGemini31Service(api_key=self.api_key, base_url=self.base_url).analyze_media(
+                    media_url=video_url, user_instruction=user_instruction,
+                )
+                return _build_video_result(_parse_video_json_object(raw), provider=KieGemini31Service.MODEL)
+            except (RuntimeError, ValueError, TypeError) as exc:
+                logger.warning("Gemini video analysis failed; using existing fallback: %s", type(exc).__name__)
+
         qwen_error: Exception | None = None
 
         if openrouter_qwen38_service.enabled:

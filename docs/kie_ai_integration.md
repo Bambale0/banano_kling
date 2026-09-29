@@ -257,12 +257,22 @@ FREEPIK_BASE_URL = "https://api.freepik.com/v1"
 
 ### 2.3. Текстовые / Чат-модели (Text/Chat)
 
-#### 2.3.1. GPT-5.5 + Responses API
+#### 2.3.1. Gemini 3.1 Pro — анализ фото и видео
+
+Основной маршрут `PhotoPromptService`, `VideoPromptService` и фото-входа `PromptAnalyzerV2Service` — `KieGemini31Service`: `POST /gemini-3.1-pro/v1/chat/completions`, Bearer `KIE_AI_API_KEY`. [Контракт KIE](https://docs.kie.ai/market/gemini/gemini-3-1-pro): фото и видео передаются одинаково через `image_url.url`, `stream=false`, `include_thoughts=false`, `reasoning_effort=high`. Видео передаётся целиком.
+
+Выбор хранится в `bot_settings.media_analysis_provider`: `kie_gemini31` по умолчанию, `qwen38` для переключения обратно. Администратор может посмотреть его командой `/analysis_provider` и изменить через `/analysis_provider kie_gemini31` или `/analysis_provider qwen38`. Изменение аудируется через `updated_by_telegram_id`; другие аккаунты не имеют доступа. Новая миграция не требуется.
+
+При ошибке Gemini сохраняется Qwen fallback; у видео остаётся последующая GPT-цепочка. Голосовые и чисто текстовые сценарии остаются на прежних маршрутах. Цена анализа и возврат при итоговой ошибке не меняются.
+
+Настройки транспорта: `KIE_MEDIA_ANALYSIS_TIMEOUT_SECONDS` (по умолчанию 180, ограничен 1–300 сек на попытку), `KIE_MEDIA_ANALYSIS_MAX_ATTEMPTS` (по умолчанию 2, ограничен 1–3). Повторяются сетевые ошибки, HTTP 429 и 5xx; HTTP 4xx, пустой/некорректный ответ не повторяются. Логи содержат модель, request_id, попытку, статус и время без медиа, промпта и ключа.
+
+#### GPT-5.5 + Responses API — голос и резервный маршрут
 
 | Параметр | Значение |
 |---|---|
 | **Эндпоинт** | `POST /codex/v1/responses` |
-| **Используется** | PhotoPromptService, VideoPromptService (анализ изображений/видео) |
+| **Используется** | Голосовой вход PhotoPromptService/PromptAnalyzerV2Service и резервный анализ VideoPromptService |
 | **Модель** | `gpt-5-5` (переменная `PHOTO_PROMPT_MODEL`) |
 | **Дополнительно** | Поддержка аудио-входа (max 10MB), видео-входа (max 30MB / 60s) |
 

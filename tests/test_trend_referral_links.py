@@ -2,6 +2,7 @@
 import hashlib
 import hmac
 import json
+import sys
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -35,6 +36,13 @@ async def sharing_client(monkeypatch):
     monkeypatch.setattr(miniapp, "DATABASE_PATH", database.DATABASE_PATH)
     monkeypatch.setattr(referral_service, "DATABASE_PATH", database.DATABASE_PATH)
     monkeypatch.setattr(miniapp, "_mini_app_referral_last_attempt", {})
+    for module_name in ("bot.handlers.trend_success_compat", "bot.trend_task_privacy"):
+        module = sys.modules.get(module_name)
+        if module is not None:
+            monkeypatch.setattr(module, "DATABASE_PATH", database.DATABASE_PATH)
+            if hasattr(module, "_SCHEMA_READY"):
+                monkeypatch.setattr(module, "_SCHEMA_READY", False)
+                monkeypatch.setattr(module, "_SCHEMA_LOCK", None)
     await database.set_channel_subscription_required(False)
     app = web.Application(middlewares=[trend_prompt_privacy_middleware])
     app["trend_prompt_privacy_root"] = "/mini-app"
@@ -150,3 +158,9 @@ async def test_self_and_legacy_trend_links_do_not_attach(sharing_client):
     updated = await database.get_or_create_user(sharer.telegram_id)
     assert updated.referred_by is None
     assert updated.referral_earned == sharer.referral_earned
+
+
+def test_link_builder_preserves_plain_link_without_referral_code():
+    from bot.miniapp_links import prompt_link
+
+    assert prompt_link("test_bot", 42, None) == "https://t.me/test_bot?startapp=prompt_42"

@@ -111,6 +111,8 @@ async def test_analyzer_rejects_empty_input():
 
 @pytest.mark.asyncio
 async def test_photo_prompt_v2_uses_qwen38_for_image_analysis(monkeypatch):
+    from bot import database
+    await database.set_bot_setting("media_analysis_provider", "qwen38")
     service = PromptAnalyzerV2Service(api_key="legacy-test-key")
     qwen = AsyncMock()
     qwen.enabled = True
@@ -142,6 +144,8 @@ async def test_photo_prompt_v2_uses_qwen38_for_image_analysis(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_photo_prompt_v2_uses_qwen38_for_text_analysis(monkeypatch):
+    from bot import database
+    await database.set_bot_setting("media_analysis_provider", "qwen38")
     service = PromptAnalyzerV2Service(api_key="legacy-test-key")
     qwen = AsyncMock()
     qwen.enabled = True

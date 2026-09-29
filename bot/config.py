@@ -141,6 +141,9 @@ class Config:
         os.getenv("QWEN38_PROMPT_MAX_ATTEMPTS", "2")
     )
 
+    KIE_MEDIA_ANALYSIS_TIMEOUT_SECONDS: int = int(os.getenv("KIE_MEDIA_ANALYSIS_TIMEOUT_SECONDS", "180"))
+    KIE_MEDIA_ANALYSIS_MAX_ATTEMPTS: int = int(os.getenv("KIE_MEDIA_ANALYSIS_MAX_ATTEMPTS", "2"))
+
     PHOTO_PROMPT_MODEL: str = os.getenv("PHOTO_PROMPT_MODEL", "gpt-5-5")
 
     # APIYI Vision — analysis photo in prompt (like VK bot)

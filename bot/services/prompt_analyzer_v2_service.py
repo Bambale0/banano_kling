@@ -16,6 +16,7 @@ from typing import Any, Dict, Optional
 import aiohttp
 
 from bot.config import config
+from bot.services.kie_gemini31_service import KieGemini31Service, media_analysis_provider
 from bot.services.openrouter_qwen38_service import openrouter_qwen38_service
 
 logger = logging.getLogger(__name__)
@@ -470,6 +471,15 @@ class PromptAnalyzerV2Service:
             + "\n\n".join(input_notes)
             + "\n\nReturn only prompt_ru and prompt_en according to the JSON schema."
         )
+        if image_url and not has_audio and await media_analysis_provider() == "kie_gemini31":
+            try:
+                raw = await KieGemini31Service(api_key=self.api_key, base_url=self.base_url).analyze_media(
+                    media_url=image_url, user_instruction=user_instruction, system_prompt=SYSTEM_PROMPT,
+                )
+                return _build_result(_parse_json_object(raw), provider=KieGemini31Service.MODEL)
+            except (RuntimeError, ValueError, TypeError) as exc:
+                logger.warning("Gemini V2 photo analysis failed; using Qwen fallback: %s", type(exc).__name__)
+
         if not has_audio:
             return await self._analyze_with_qwen38(
                 image_url=image_url,

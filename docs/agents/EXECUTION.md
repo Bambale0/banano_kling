@@ -1,5 +1,17 @@
 # Execution ledger
 
+## 2026-09-29 — KIE Gemini 3.1 Pro media analysis (scope addition)
+
+- User supplied https://kie.ai/gemini-3-1-pro for photo/video analysis. Existing photo, video and V2 photo analyzer share user flows and parsers; Qwen primary, GPT/Claude voice and video fallback exist. Assume replacement of current media primary, preserving text-only/voice paths.
+- Contract verified: https://docs.kie.ai/market/gemini/gemini-3-1-pro, POST `/gemini-3.1-pro/v1/chat/completions`, Bearer KIE key; photo/video both use content `type=image_url`, `image_url.url`; `stream=false`, `include_thoughts=false`, supported `reasoning_effort=high`. Do not send undocumented max_tokens or OpenRouter reasoning fields.
+- TODO/TDD: (1) adapter HTTP tests RED with media payload/response and finite errors; (2) implement explicit adapter; (3) public photo/video service tests RED then route through Gemini; (4) preserve existing voice/text behavior and fallback; (5) add validated DB setting `media_analysis_provider` and authenticated `/analysis_provider` command with audit; (6) regression/refund checks; (7) review, documentation, combined CI/release.
+- Runtime choice: `kie_gemini31` default / `qwen38` rollback; database setting avoids source changes for selection. Existing `KIE_AI_API_KEY` secret; no new credential or migration. Timeout/retry managed config with bounded values. Existing billing unchanged.
+- Observability: provider/model, request correlation ID, attempt, HTTP status and duration; never log media, prompt, credentials or provider response body.
+- Risks: external media access and malformed/provider failure; finite timeout/retry and existing user refund handling. Native video URL preserves full video (not just frames); existing fallback remains available. Live smoke uses synthetic media only if run.
+- Test seams: local HTTP provider server, public analysis services with external provider boundary fake, admin command/real settings DB, existing billing suites. No generation-provider migration or new UI.
+- Progress: adapter contract RED (module absent, 2 cases) → GREEN; photo/video/V2 public services RED (old Qwen path, 3 cases) → GREEN; admin switch RED (missing command) → implemented. Existing Qwen tests explicitly select the supported rollback setting. Transport invalid-response, 401, 429 retry, timeout and fallback regression tests added.
+
+
 ## 2026-09-29 — Personalized trend links and combined production release
 
 ### Scope and audit
@@ -13,15 +25,15 @@
 - Telegram: links deliberately use Mini App `startapp`; Telegram trend navigation remains unchanged. Bot `/start` legacy sharing is not a new surface in this task.
 
 ### Detailed TODO / acceptance checklist
-1. [ ] RED: actual HTTP copy-link response contains authenticated sharer's code, not template author's or supplied spoof code.
-2. [ ] GREEN: minimal endpoint change reusing link builder. No referral mutation while copying.
-3. [ ] Security/API: invalid/missing signature rejected; missing/private template denied; public response hides prompt; no-code fallback retains plain link; v1 alias has same ownership behavior.
-4. [ ] Attribution: combined link attaches eligible visitor once; self-referral and reassignment rejected; repeated clicks do not duplicate bonus. Existing payment/partner suites remain green.
-5. [ ] UI/navigation: copy button copies exact response URL; old/new startapp parameters open same template; errors remain visible; browser E2E exercises clipboard.
-6. [ ] Seedance combined regression: 30,000 accepted / 30,001 rejected and no truncation; both forms Unicode-aware.
-7. [ ] Documentation: describe copying-account attribution, existing eligibility, legacy links and no changes to economics.
-8. [ ] Verification: focused backend; referral regressions; all frontend tests/build; browser E2E; changed-line Ruff; deployment shell syntax; clean diff.
-9. [ ] Review: Standards and Spec against baseline/spec here, fix blockers; update PR title/body to combined final scope.
+1. [x] RED: actual HTTP copy-link response contains authenticated sharer's code, not template author's or supplied spoof code.
+2. [x] GREEN: minimal endpoint change reusing link builder. No referral mutation while copying.
+3. [x] Security/API: invalid/missing signature rejected; missing/private template denied; public response hides prompt; no-code fallback retains plain link; v1 alias has same ownership behavior.
+4. [x] Attribution: combined link attaches eligible visitor once; self-referral and reassignment rejected; repeated clicks do not duplicate bonus. Existing payment/partner suites remain green.
+5. [x] UI/navigation: copy button copies exact response URL; old/new startapp parameters open same template; errors remain visible; browser E2E exercises clipboard.
+6. [x] Seedance combined regression: 30,000 accepted / 30,001 rejected and no truncation; both forms Unicode-aware.
+7. [x] Documentation: describe copying-account attribution, existing eligibility, legacy links and no changes to economics.
+8. [x] Verification: focused backend; referral regressions; all frontend tests/build; browser E2E; changed-line Ruff; deployment shell syntax; clean diff.
+9. [x] Review: Standards and Spec against baseline/spec here, fix blockers; update PR title/body to combined final scope.
 10. [ ] Release: push, exact-head CI green, merge PR to `tanyapi`, record exact merge SHA.
 11. [ ] Production: exact merge CI/autodeploy success; container revision/health; Mini App revision/static content; authenticated copy-link read-only smoke; prompt limit; fresh error telemetry. No paid generation or live referral mutation needed.
 
@@ -29,7 +41,7 @@
 - Public HTTP (signed Telegram initData + isolated DB; mock Telegram network only), public referral service/DB interfaces, UI clipboard and start-param navigation, browser E2E, deployed read-only smoke. These are the repository-mandated public seams; no separate permission pause required under AGENTS.md autonomy.
 - DB integration applies for identity/attribution; migrations N/A; payment/refund regressions apply without economic changes; provider contract remains Seedance maxLength only.
 - Rollback: revert combined PR through `tanyapi` CI/CD. No manual deployment while autodeploy is healthy.
-- Progress: preflight complete, RED slice next.
+- Progress: signed HTTP test RED (missing `_ref_`) → minimal endpoint change → GREEN. Isolated referral/Seedance/privacy suites: 77 passed; frontend: 19 suites / 50 tests passed; browser E2E (clipboard included): passed. Broad-run fixture failures identified stale module DB path/schema-cache state and fixed in test isolation only. Review Standards/Spec: no blockers; requested no-code fallback test added. Release checks pending combined Gemini addition.
 
 
 ## 2026-09-29 — Seedance 2.5 prompt limit
