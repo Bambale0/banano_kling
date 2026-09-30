@@ -158,6 +158,58 @@ async def test_gemini_retries_invalid_or_empty_200_then_succeeds(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("media_url", "media_kind"),
+    [
+        ("https://example.test/photo.jpg", "image"),
+        ("https://example.test/video.mp4", "video"),
+    ],
+)
+async def test_gemini_body_500_falls_back_to_openrouter_gemini(
+    media_url, media_kind, monkeypatch
+):
+    from unittest.mock import AsyncMock
+
+    from bot.services import kie_gemini31_service as module
+
+    calls = []
+
+    async def provider(request):
+        calls.append(1)
+        return web.json_response({"code": 500, "msg": "upstream unavailable"})
+
+    fallback = AsyncMock()
+    fallback.enabled = True
+    fallback.model = "google/gemini-3.1-pro-preview"
+    fallback.analyze_media.return_value = "Recovered by OpenRouter Gemini"
+    monkeypatch.setattr(
+        module, "openrouter_gemini31_service", fallback, raising=False
+    )
+
+    app = web.Application()
+    app.router.add_post("/gemini-3.1-pro/v1/chat/completions", provider)
+    async with TestServer(app) as server:
+        service = module.KieGemini31Service(
+            api_key="test", base_url=str(server.make_url("")).rstrip("/")
+        )
+        result = await service.analyze_media(
+            media_url=media_url,
+            media_kind=media_kind,
+            user_instruction="Analyze",
+            system_prompt="JSON only",
+        )
+
+    assert result == "Recovered by OpenRouter Gemini"
+    assert len(calls) == 1
+    fallback.analyze_media.assert_awaited_once_with(
+        media_url=media_url,
+        media_kind=media_kind,
+        user_instruction="Analyze",
+        system_prompt="JSON only",
+    )
+
+
+@pytest.mark.asyncio
 async def test_gemini_retries_rate_limit_then_succeeds(monkeypatch):
     from bot.config import config
     from bot.services.kie_gemini31_service import KieGemini31Service
@@ -215,14 +267,20 @@ async def test_admin_can_switch_media_analysis_but_user_cannot(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_gemini_timeout_is_finite(monkeypatch):
+async def test_gemini_timeout_falls_back_to_openrouter_gemini(monkeypatch):
     import asyncio
+    from unittest.mock import AsyncMock
 
     from bot.config import config
-    from bot.services.kie_gemini31_service import KieGemini31Service
+    from bot.services import kie_gemini31_service as module
 
     monkeypatch.setattr(config, "KIE_MEDIA_ANALYSIS_TIMEOUT_SECONDS", 1)
     monkeypatch.setattr(config, "KIE_MEDIA_ANALYSIS_MAX_ATTEMPTS", 1)
+
+    fallback = AsyncMock()
+    fallback.enabled = True
+    fallback.analyze_media.return_value = "Recovered after timeout"
+    monkeypatch.setattr(module, "openrouter_gemini31_service", fallback)
 
     async def provider(request):
         await asyncio.sleep(2)
@@ -231,13 +289,22 @@ async def test_gemini_timeout_is_finite(monkeypatch):
     app = web.Application()
     app.router.add_post("/gemini-3.1-pro/v1/chat/completions", provider)
     async with TestServer(app) as server:
-        service = KieGemini31Service(
+        service = module.KieGemini31Service(
             api_key="test", base_url=str(server.make_url("")).rstrip("/")
         )
-        with pytest.raises(RuntimeError, match="network failure"):
-            await service.analyze_media(
-                media_url="https://example.test/video.mp4", user_instruction="Analyze"
-            )
+        result = await service.analyze_media(
+            media_url="https://example.test/video.mp4",
+            media_kind="video",
+            user_instruction="Analyze",
+        )
+
+    assert result == "Recovered after timeout"
+    fallback.analyze_media.assert_awaited_once_with(
+        media_url="https://example.test/video.mp4",
+        media_kind="video",
+        user_instruction="Analyze",
+        system_prompt=None,
+    )
 
 
 @pytest.mark.asyncio

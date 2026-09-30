@@ -549,6 +549,7 @@ class VideoPromptService:
                 api_key=self.api_key, base_url=self.base_url
             ).analyze_media(
                 media_url=video_url,
+                media_kind="video",
                 user_instruction=user_instruction,
             )
             return _build_video_result(

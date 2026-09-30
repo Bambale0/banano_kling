@@ -493,6 +493,7 @@ class PromptAnalyzerV2Service:
                     api_key=self.api_key, base_url=self.base_url
                 ).analyze_media(
                     media_url=image_url,
+                    media_kind="image",
                     user_instruction=user_instruction,
                     system_prompt=await gemini_photo_system_prompt("v2"),
                 )
