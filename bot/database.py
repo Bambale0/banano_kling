@@ -5291,7 +5291,7 @@ async def mark_task_delivery_status(
 ) -> bool:
     """Persist Telegram delivery outcome separately from provider completion."""
     normalized_status = str(status or "").strip().lower()
-    if normalized_status not in {"result_ready", "delivered", "failed", "pending"}:
+    if normalized_status not in {"result_ready", "delivered", "failed", "pending", "link_sent"}:
         raise ValueError(f"Unsupported delivery status: {status}")
 
     task = await get_task_by_id(task_id)
@@ -5299,7 +5299,11 @@ async def mark_task_delivery_status(
         return False
 
     request_data = _parse_json_dict(task.request_data)
-    request_data["delivery_status"] = normalized_status
+    # A link notification is intermediate work, not release of the media lease.
+    if normalized_status != "link_sent" or request_data.get("delivery_status") != "delivering":
+        request_data["delivery_status"] = normalized_status
+    if normalized_status == "link_sent":
+        request_data["delivery_link_sent"] = True
     if normalized_status == "result_ready":
         request_data.setdefault("result_ready_at", datetime.utcnow().isoformat())
     else:
@@ -5368,7 +5372,7 @@ async def claim_task_delivery(task_id: str, *, lease_seconds: int = 300) -> bool
             """
             UPDATE generation_tasks
             SET request_data = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ? AND request_data = ?
+            WHERE id = ? AND COALESCE(request_data, '{}') = ?
             """,
             (new_json, int(task.id), old_json),
         )

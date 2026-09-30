@@ -617,7 +617,7 @@ async def _claim_async_refund(task_id: str) -> tuple[int, float] | None:
             )
             if int(getattr(cursor, "rowcount", 0) or 0) != 1:
                 await db.rollback()
-                return None
+                raise RuntimeError(f"Seedance 2.5 refund claim changed; retry task {task_id}")
 
             credit_cursor = await db.execute(
                 """
@@ -669,6 +669,7 @@ async def _public_process_payload(app: web.Application, payload: dict[str, Any])
                 )
         except Exception:
             logger.exception("Seedance 2.5 async refund failed for task %s", task_id)
+            return False
     return await fullstack._process_seedance25_payload_original(app, payload)
 
 
@@ -745,13 +746,15 @@ async def _public_send_results(
                         reply_markup=result_markup,
                     )
                 delivered = True
+            except Exception:
+                logger.exception("Seedance 2.5 file delivery failed for task %s", task_id)
             finally:
                 try:
                     os.unlink(temp_path)
                 except OSError:
                     pass
 
-    if not delivered:
+    if not delivered and not request_data.get("delivery_link_sent"):
         try:
             await bot.send_message(
                 telegram_id,
@@ -760,7 +763,7 @@ async def _public_send_results(
                 disable_web_page_preview=False,
                 reply_markup=result_markup,
             )
-            delivered = True
+            await fullstack._mark_seedance25_delivery(task_id, "link_sent")
         except Exception:
             logger.exception(
                 "Seedance 2.5 fallback link delivery failed for task %s",

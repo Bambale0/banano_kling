@@ -701,3 +701,24 @@ Reference cleanup reports how many generation snapshot refs are protected.
 3. Commit/push task branch and open PR to tanyapi.
 4. Merge only after required CI is green.
 5. Verify exact production SHA, container health, and live telemetry shows KIE Gemini 3.1 primary with KIE Gemini 3.8 fallback and no openrouter_gemini31 fallback.
+
+## 2026-09-30 — Complete PR #216: Seedance delivery and refund recovery
+
+- Baseline: `tanyapi` at `5b33cdf86074b0314955151d76b5147824abc5ae`; reviewed PR head `f159adc13dcde099e3ee46449c93bd0de17afa66`.
+- Scope: Seedance 2.5 provider completion, Telegram file delivery and failed-generation refunds. Banana changes explicitly excluded; isolated worktree preserves unrelated working changes.
+- Existing: provider adapters, dedicated webhook, periodic reconciliation and request_data JSON delivery metadata. Partial: refund atomicity and delivery leases. Missing: markerless completion recovery, distinction between link and media delivery, protection against duplicate success overwriting a lease.
+- Evidence: production logs show CDN timeout/connection reset followed by fallback text and a misleading delivered marker. This PR fixes the Seedance 2.5 path; legacy Seedance 2.0/Grok sender in bot/main.py is outside this PR.
+- Reuse: existing DB facade, periodic reconciliation, provider lookup, Telegram adapter. No migration, provider schema, pricing, admin UI or Mini App API change. Financial invariant: at most one refund, committed with its marker; transient DB errors leave recovery eligible.
+- Risks: webhook/watchdog concurrency, process death between completion and delivery, unavailable CDN, expired Telegram delivery lease, starvation by older failed deliveries.
+- No-hardcode: download retry/timeout/backoff and delivery timeout/retry age use environment configuration. Delivery window uses immutable completed_at, not updated_at. No secrets added.
+- Observability: task ID and delivery_status distinguish pending media, link_sent, delivering and delivered; delivery_link_sent suppresses repeated fallback texts. Existing refund logs retain task ID.
+- Verification layers: backend/domain and DB integration required; PostgreSQL contention check required; webhook/reconcile and Mini App backend regression required. UI/FSM contracts and provider payload unchanged; existing CI browser E2E retained. No new migration. Production health/SHA/log smoke after CI deploy.
+- Steps:
+  1. Inspect PR, CI, production evidence and three GitHub review findings — complete.
+  2. Independent standards/spec review via Bambale0/skills code-review — identified link-only false delivery, success replay race, retry window and missing docs.
+  3. Add regressions — refund exception, link-only delivery and markerless completion reproduced failures before fixes.
+  4. Fix recovery and concurrency, document settings — in progress.
+  5. Focused/full checks, review final changes, push same PR — pending.
+  6. Merge to tanyapi after CI, verify exact deployed SHA/health/telemetry — pending.
+- Guidance: Bambale0/skills diagnosing-bugs, code-review; Bambale0/claw QA_AUDIT_CHECKLIST; anthropics/skills webapp-testing (existing browser CI, no frontend changes).
+- Refinement after second review: persisting link_sent retains the delivering lease until the attempt finishes; dedicated DB regression checks a concurrent claim remains blocked. Delivery has an explicit total timeout shorter than its lease; cancellation removes partial downloads.

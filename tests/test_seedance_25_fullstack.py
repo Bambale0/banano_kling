@@ -457,3 +457,101 @@ async def test_seedance25_failcode_400_triggers_public_refund(monkeypatch):
     assert handled is True
     refund.assert_awaited_once_with("seedance-copyright-400")
     original.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_refund_database_error_keeps_failure_retryable(monkeypatch):
+    original = AsyncMock()
+    monkeypatch.setattr(public_release, '_claim_async_refund', AsyncMock(side_effect=RuntimeError('db unavailable')))
+    monkeypatch.setattr(fullstack_module, '_process_seedance25_payload_original', original)
+    handled = await public_release._public_process_payload({}, {'data': {'taskId': 'retry-refund', 'state': 'fail'}})
+    assert handled is False
+    original.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_link_only_delivery_remains_retryable_without_repeated_notifications(monkeypatch):
+    bot = SimpleNamespace(send_video=AsyncMock(side_effect=RuntimeError('CDN unavailable')), send_message=AsyncMock())
+    monkeypatch.setattr(fullstack_module, '_download_to_temp', AsyncMock(return_value=None))
+    mark = AsyncMock()
+    monkeypatch.setattr(fullstack_module, '_mark_seedance25_delivery', mark)
+    args = ({'bot': bot}, 123, 'link-only', 'https://example.com/video.mp4', None)
+    assert await public_release._public_send_results(*args, {}) is False
+    bot.send_message.assert_awaited_once()
+    mark.assert_awaited_once_with('link-only', 'link_sent')
+    assert await public_release._public_send_results(*args, {'delivery_link_sent': True}) is False
+    bot.send_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_success_replay_cannot_reset_delivery_lease():
+    from bot import database
+    user = await database.get_or_create_user(123456)
+    await database.add_generation_task(user.id, 123456, 'success-race', 'video', 'no_preset_video', model='seedance_2_5', request_data='{}')
+    await fullstack_module._store_task_result('success-race', 'https://example.com/video.mp4', [], success=True)
+    assert await database.claim_task_delivery('success-race')
+    await fullstack_module._store_task_result('success-race', 'https://example.com/video.mp4', [], success=True)
+    assert not await database.claim_task_delivery('success-race')
+    task = await database.get_task_by_id('success-race')
+    assert json.loads(task.request_data)['delivery_status'] == 'delivering'
+
+
+@pytest.mark.asyncio
+async def test_completed_without_delivery_marker_is_reconciled(monkeypatch):
+    import asyncio
+    from bot import database
+    user = await database.get_or_create_user(123456)
+    await database.add_generation_task(user.id, 123456, 'crash-after-store', 'video', 'no_preset_video', model='seedance_2_5', request_data='{}')
+    await fullstack_module._store_task_result('crash-after-store', 'https://example.com/video.mp4', [], success=True)
+    process = AsyncMock()
+    monkeypatch.setattr(fullstack_module, '_process_seedance25_payload', process)
+    sleep = AsyncMock(side_effect=[None, asyncio.CancelledError()])
+    monkeypatch.setattr(fullstack_module.asyncio, 'sleep', sleep)
+    with pytest.raises(asyncio.CancelledError):
+        await fullstack_module._seedance25_reconcile_loop({})
+    process.assert_awaited_once_with({}, {'code': 200, 'data': {'taskId': 'crash-after-store'}})
+
+@pytest.mark.asyncio
+async def test_refund_and_watchdog_credit_only_once(monkeypatch):
+    from bot import database
+    from bot.services import task_watchdog
+    from bot.services.task_watchdog import force_fail_task
+    monkeypatch.setattr(task_watchdog, "DATABASE_PATH", database.DATABASE_PATH)
+    user = await database.get_or_create_user(123456)
+    before = user.credits
+    await database.add_generation_task(user.id, 123456, 'refund-once', 'video', 'no_preset_video', model='seedance_2_5', cost=10, request_data={'refund_on_failure': True, 'charged_cost': 10})
+    assert await public_release._claim_async_refund('refund-once') == (123456, 10)
+    task = await database.get_task_by_id('refund-once')
+    assert await force_fail_task(task.id, user.id, 10)
+    assert await public_release._claim_async_refund('refund-once') is None
+    assert not await force_fail_task(task.id, user.id, 10)
+    assert (await database.get_or_create_user(123456)).credits == before + 10
+
+
+@pytest.mark.asyncio
+async def test_success_callbacks_share_one_delivery_claim(monkeypatch):
+    import asyncio
+    from bot import database
+    user = await database.get_or_create_user(123456)
+    await database.add_generation_task(user.id, 123456, 'concurrent-success', 'video', 'no_preset_video', model='seedance_2_5', request_data='{}')
+    original_load = fullstack_module._load_task_row
+    pending_reads = 0
+    barrier = asyncio.Event()
+
+    async def load(task_id):
+        nonlocal pending_reads
+        row = await original_load(task_id)
+        if row['status'] == 'pending':
+            pending_reads += 1
+            if pending_reads == 2:
+                barrier.set()
+            await barrier.wait()
+        return row
+
+    send = AsyncMock(return_value=True)
+    monkeypatch.setattr(fullstack_module, '_load_task_row', load)
+    monkeypatch.setattr(fullstack_module, '_send_seedance25_results', send)
+    payload = {'data': {'taskId': 'concurrent-success', 'state': 'success', 'resultJson': json.dumps({'resultUrls': ['https://example.com/video.mp4']})}}
+    await asyncio.wait_for(asyncio.gather(*(fullstack_module._process_seedance25_payload({}, payload) for _ in range(2))), 5)
+    send.assert_awaited_once()
+    task = await database.get_task_by_id('concurrent-success')
+    assert json.loads(task.request_data)['delivery_status'] == 'delivered'

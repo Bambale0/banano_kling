@@ -1416,3 +1416,15 @@ async def test_safe_admin_edit_accepts_disable_web_page_preview():
         parse_mode="HTML",
         disable_web_page_preview=True,
     )
+
+@pytest.mark.asyncio
+async def test_link_notification_preserves_active_media_delivery_lease():
+    user = await database.get_or_create_user(123456)
+    await database.add_generation_task(user.id, 123456, 'link-lease', 'video', 'no_preset_video', request_data='{}')
+    assert await database.claim_task_delivery('link-lease')
+    assert await database.mark_task_delivery_status('link-lease', 'link_sent')
+    assert not await database.claim_task_delivery('link-lease')
+    task = await database.get_task_by_id('link-lease')
+    data = json.loads(task.request_data)
+    assert data['delivery_status'] == 'delivering'
+    assert data['delivery_link_sent'] is True

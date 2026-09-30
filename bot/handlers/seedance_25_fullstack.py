@@ -78,6 +78,9 @@ SEEDANCE25_RESULT_DOWNLOAD_TIMEOUT_SECONDS = max(
 SEEDANCE25_RESULT_DOWNLOAD_RETRY_DELAY_SECONDS = max(
     0.0, float(os.getenv("SEEDANCE25_RESULT_DOWNLOAD_RETRY_DELAY_SECONDS", "1"))
 )
+SEEDANCE25_DELIVERY_TIMEOUT_SECONDS = max(30, int(os.getenv("SEEDANCE25_DELIVERY_TIMEOUT_SECONDS", "360")))
+SEEDANCE25_DELIVERY_RETRY_DAYS = max(1, min(30, int(os.getenv("SEEDANCE25_DELIVERY_RETRY_DAYS", "7"))))
+
 
 _RECONCILE_TASK_KEY = "seedance25_reconcile_task"
 
@@ -624,6 +627,10 @@ async def _download_to_temp(url: str, suffix: str, max_bytes: int = 50 * 1024 * 
                     finally:
                         tmp.close()
             return tmp_path
+        except asyncio.CancelledError:
+            if tmp_path and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+            raise
         except (asyncio.TimeoutError, aiohttp.ClientError, OSError):
             if tmp_path and os.path.exists(tmp_path):
                 try:
@@ -730,13 +737,15 @@ async def _send_seedance25_results(
                         reply_markup=result_markup,
                     )
                 delivered = True
+            except Exception:
+                logger.exception("Seedance 2.5 file delivery failed for task %s", task_id)
             finally:
                 try:
                     os.unlink(tmp_path)
                 except OSError:
                     pass
 
-    if not delivered:
+    if not delivered and not request_data.get("delivery_link_sent"):
         try:
             await bot.send_message(
                 telegram_id,
@@ -745,7 +754,7 @@ async def _send_seedance25_results(
                 disable_web_page_preview=False,
                 reply_markup=result_markup,
             )
-            delivered = True
+            await _mark_seedance25_delivery(task_id, "link_sent")
         except Exception:
             logger.exception("Seedance 2.5 result notification failed")
 
@@ -770,7 +779,7 @@ async def _send_seedance25_results(
                                 caption=frame_caption,
                                 parse_mode="HTML",
                             )
-                            return
+                            return delivered
                 await bot.send_message(telegram_id, frame_caption + f"\n{last_frame_url}", parse_mode="HTML")
             except Exception:
                 logger.exception("Seedance 2.5 last-frame delivery failed")
@@ -847,7 +856,7 @@ async def _store_task_result(task_id: str, video_url: str | None, urls: list[str
                 status = ?,
                 completed_at = CASE WHEN ? = 'completed' THEN CURRENT_TIMESTAMP ELSE completed_at END,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE task_id = ?
+            WHERE task_id = ? AND status IN ('pending', 'processing')
             """,
             (
                 video_url,
@@ -872,7 +881,7 @@ async def _mark_seedance25_delivery(
 
 
 def _stored_result_urls(row) -> list[str]:
-    raw = row["result_urls"] if "result_urls" in row else None
+    raw = dict(row).get("result_urls")
     if isinstance(raw, list):
         urls = [str(item).strip() for item in raw if str(item).strip()]
     else:
@@ -890,7 +899,7 @@ def _stored_result_urls(row) -> list[str]:
 async def _claim_seedance25_delivery(task_id: str) -> bool:
     from bot.database import claim_task_delivery
 
-    return await claim_task_delivery(task_id, lease_seconds=300)
+    return await claim_task_delivery(task_id, lease_seconds=SEEDANCE25_DELIVERY_TIMEOUT_SECONDS + 60)
 
 
 async def _retry_seedance25_delivery(
@@ -914,14 +923,14 @@ async def _retry_seedance25_delivery(
         return False
 
     try:
-        delivered = await _send_seedance25_results(
+        delivered = await asyncio.wait_for(_send_seedance25_results(
             app,
             telegram_id,
             task_id,
             video_url,
             last_frame_url if request_data.get("return_last_frame") else None,
             request_data,
-        )
+        ), timeout=SEEDANCE25_DELIVERY_TIMEOUT_SECONDS)
     except Exception as exc:
         logger.exception("Seedance 2.5 delivery attempt crashed for task %s", task_id)
         await _mark_seedance25_delivery(task_id, "pending", error=str(exc))
@@ -1007,7 +1016,6 @@ async def _process_seedance25_payload(app: web.Application, payload: dict[str, A
         return False
 
     await _store_task_result(task_id, video_url, urls, success=True)
-    await _mark_seedance25_delivery(task_id, "result_ready")
     refreshed = await _load_task_row(task_id)
     if not refreshed:
         return False
@@ -1043,7 +1051,7 @@ async def _seedance25_reconcile_loop(app: web.Application) -> None:
         try:
             if db_backend.is_postgres():
                 recent_completed_expr = (
-                    "updated_at >= CURRENT_TIMESTAMP - INTERVAL '7 days'"
+                    f"COALESCE(completed_at, created_at) >= CURRENT_TIMESTAMP - INTERVAL '{SEEDANCE25_DELIVERY_RETRY_DAYS} days'"
                 )
                 delivery_state_expr = (
                     "CASE WHEN json_valid(request_data) "
@@ -1051,7 +1059,7 @@ async def _seedance25_reconcile_loop(app: web.Application) -> None:
                 )
             else:
                 recent_completed_expr = (
-                    "updated_at >= datetime(CURRENT_TIMESTAMP, '-7 days')"
+                    f"COALESCE(completed_at, created_at) >= datetime(CURRENT_TIMESTAMP, '-{SEEDANCE25_DELIVERY_RETRY_DAYS} days')"
                 )
                 delivery_state_expr = (
                     "CASE WHEN json_valid(request_data) "
@@ -1070,12 +1078,11 @@ async def _seedance25_reconcile_loop(app: web.Application) -> None:
                                 status = 'completed'
                                 AND result_url IS NOT NULL
                                 AND {recent_completed_expr}
-                                AND {delivery_state_expr}
-                                    IN ('result_ready', 'pending', 'delivering')
+                                AND COALESCE({delivery_state_expr}, '')
+                                    IN ('', 'result_ready', 'pending', 'delivering', 'link_sent')
                             )
                       )
-                    ORDER BY CASE WHEN status = 'pending' THEN 0 ELSE 1 END,
-                             created_at ASC
+                    ORDER BY COALESCE(updated_at, created_at) ASC, id ASC
                     LIMIT 50
                     """,
                     (MODEL_KEY,),
@@ -1092,9 +1099,11 @@ async def _seedance25_reconcile_loop(app: web.Application) -> None:
                     except (TypeError, json.JSONDecodeError):
                         request_data = {}
                     if str(request_data.get("delivery_status") or "").lower() not in {
+                        "",
                         "result_ready",
                         "pending",
                         "delivering",
+                        "link_sent",
                     }:
                         continue
                     await _process_seedance25_payload(

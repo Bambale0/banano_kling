@@ -168,23 +168,6 @@ async def force_fail_task(task_id: int, user_id: int, cost: float) -> bool:
     """Переводит задачу в failed и идемпотентно возвращает credits пользователю."""
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
-        request_data: dict[str, Any] = {}
-        if cost and cost > 0:
-            existing_cursor = await db.execute(
-                "SELECT request_data FROM generation_tasks WHERE id = ? LIMIT 1",
-                (task_id,),
-            )
-            existing = await existing_cursor.fetchone()
-            if existing:
-                raw_request = existing["request_data"] if hasattr(existing, "keys") else existing[0]
-                if isinstance(raw_request, str):
-                    try:
-                        request_data = json.loads(raw_request)
-                    except (TypeError, json.JSONDecodeError):
-                        request_data = {}
-                elif isinstance(raw_request, dict):
-                    request_data = raw_request
-
         cursor = await db.execute(
             """
             UPDATE generation_tasks
@@ -192,11 +175,23 @@ async def force_fail_task(task_id: int, user_id: int, cost: float) -> bool:
                 completed_at = CURRENT_TIMESTAMP,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ? AND status IN ('pending', 'processing')
+            RETURNING request_data
             """,
             (task_id,),
         )
-        if cursor.rowcount == 0:
+        existing = await cursor.fetchone()
+        if not existing:
             return False
+
+        # UPDATE acquires the row lock before RETURNING the current marker.
+        # A webhook refund committed while we waited is visible here.
+        raw_request = existing["request_data"] if hasattr(existing, "keys") else existing[0]
+        try:
+            request_data = json.loads(raw_request) if isinstance(raw_request, str) else raw_request
+        except (TypeError, json.JSONDecodeError):
+            request_data = {}
+        if not isinstance(request_data, dict):
+            request_data = {}
 
         # Seedance 2.5 public failures can refund atomically in the webhook
         # before the watchdog observes the same upstream failure. Do not credit
