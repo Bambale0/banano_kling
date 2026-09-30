@@ -140,14 +140,15 @@ class Config:
     QWEN38_PROMPT_MAX_ATTEMPTS: int = int(
         os.getenv("QWEN38_PROMPT_MAX_ATTEMPTS", "2")
     )
-    OPENROUTER_GEMINI31_MODEL: str = os.getenv(
-        "OPENROUTER_GEMINI31_MODEL", "google/gemini-3.1-pro-preview"
+    KIE_MEDIA_ANALYSIS_FALLBACK_MODEL: str = os.getenv(
+        "KIE_MEDIA_ANALYSIS_FALLBACK_MODEL", "gemini-3-5-flash-thinking"
     )
-    OPENROUTER_GEMINI31_TIMEOUT_SECONDS: int = int(
-        os.getenv("OPENROUTER_GEMINI31_TIMEOUT_SECONDS", "180")
+    KIE_MEDIA_ANALYSIS_FALLBACK_ENDPOINT: str = os.getenv(
+        "KIE_MEDIA_ANALYSIS_FALLBACK_ENDPOINT",
+        "/gemini-3-5-flash-openai/v1/chat/completions",
     )
-    OPENROUTER_GEMINI31_MAX_ATTEMPTS: int = int(
-        os.getenv("OPENROUTER_GEMINI31_MAX_ATTEMPTS", "2")
+    KIE_MEDIA_ANALYSIS_FALLBACK_MAX_ATTEMPTS: int = int(
+        os.getenv("KIE_MEDIA_ANALYSIS_FALLBACK_MAX_ATTEMPTS", "2")
     )
 
     KIE_MEDIA_ANALYSIS_TIMEOUT_SECONDS: int = int(os.getenv("KIE_MEDIA_ANALYSIS_TIMEOUT_SECONDS", "180"))

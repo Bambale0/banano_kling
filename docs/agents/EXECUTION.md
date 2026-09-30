@@ -625,3 +625,28 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Latest 100 WAN rows: 89 completed / 11 failed; completed p50 31.3s, p95 38.8s, max 41.1s.
 - Fresh failures on Sep 28 were KIE green-net moderation (input/output image), not transport failures.
 - Existing WAN auto-retry intentionally covers timeout failures only; moderation failures were not auto-retried.
+
+---
+
+## 2026-09-30 — KIE-only Gemini fallback
+
+### Requirement
+- Media analysis must not use OpenRouter as an automatic fallback.
+- Primary: KIE Gemini 3.1 Pro.
+- Fallback: another Gemini model through KIE only.
+
+### Evidence
+- KIE Gemini 3 Flash and Gemini 2.5 Flash returned application code 422 (channel not supported) on the production KIE key.
+- KIE Gemini 3.5 Flash OpenAI-compatible endpoint /gemini-3-5-flash-openai/v1/chat/completions with model gemini-3-5-flash-thinking succeeded live for both image and video inputs.
+
+### Fix
+- Removed automatic OpenRouter Gemini 3.1 fallback adapter and config.
+- KIE Gemini 3.1 Pro remains primary.
+- KIE Gemini 3.5 Flash is the only automatic fallback for body code>=500, retry exhaustion, malformed/empty terminal responses, or network exhaustion.
+- Fallback endpoint/model/max attempts are env-configurable.
+
+### Verification
+- Focused regression: 8 passed.
+- Full isolated backend gate: 1346 passed, 2 skipped.
+- Ruff focused checks passed.
+- No openrouter_gemini31 / OPENROUTER_GEMINI31 references remain in bot/tests/deployment/.env.example.
