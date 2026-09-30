@@ -62,6 +62,14 @@ _analysis_trace: ContextVar[MediaAnalysisTrace | None] = ContextVar(
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
+_CONTENT_VALIDATION_ERRORS = (
+    AssertionError,
+    KeyError,
+    TypeError,
+    ValueError,
+    RuntimeError,
+)
+
 
 def trace_media_analysis(
     method: Callable[_P, Awaitable[_R]],
@@ -343,7 +351,7 @@ class KieGemini31Service:
                         if content_validator is not None:
                             try:
                                 content_validator(content)
-                            except Exception as exc:
+                            except _CONTENT_VALIDATION_ERRORS as exc:
                                 logger.warning(
                                     "media_analysis provider=kie model=%s request_id=%s "
                                     "attempt=%s fallback=true semantic_invalid=%s",
@@ -492,7 +500,7 @@ class KieGemini31Service:
                         if content_validator is not None:
                             try:
                                 content_validator(content)
-                            except Exception as exc:
+                            except _CONTENT_VALIDATION_ERRORS as exc:
                                 logger.warning(
                                     "media_analysis provider=kie model=%s request_id=%s "
                                     "attempt=%s semantic_invalid=%s status=%s",
