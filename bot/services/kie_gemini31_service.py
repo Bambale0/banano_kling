@@ -240,8 +240,12 @@ class KieGemini31Service:
                 raise RuntimeError("KIE Gemini fallback is not configured")
 
             fallback_payload = dict(payload)
-            fallback_payload["model"] = fallback_model
-            trace.provider = "kie_gemini35_flash"
+            # KIE routes this OpenAI-compatible API by the model-specific endpoint.
+            # Its documented request body omits `model`; sending it made video
+            # analysis stall in live contract testing while the same request
+            # completed normally without the field.
+            fallback_payload.pop("model", None)
+            trace.provider = "kie_gemini_fallback"
             trace.log("fallback", error=error)
 
             for fallback_attempt in range(1, fallback_attempts + 1):
