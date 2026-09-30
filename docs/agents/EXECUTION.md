@@ -650,3 +650,54 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Full isolated backend gate: 1346 passed, 2 skipped.
 - Ruff focused checks passed.
 - No openrouter_gemini31 / OPENROUTER_GEMINI31 references remain in bot/tests/deployment/.env.example.
+
+
+---
+
+## 2026-09-30 — KIE Gemini 3.8 Flash fallback
+
+### Requirement
+- Keep media analysis entirely on KIE when Gemini is selected.
+- Primary remains KIE Gemini 3.1 Pro.
+- Automatic fallback must use KIE Gemini 3.8 Flash, not OpenRouter and not Qwen.
+
+### Baseline
+- Branch baseline: tanyapi.
+- Baseline SHA: 028214567f2ade09dca1b5d7dac8faa8c56e82ae.
+- PR #213 already removed OpenRouter from the automatic fallback chain but defaulted the KIE fallback to Gemini 3.5 Flash.
+- Production container observed before this patch was still on older SHA 7545686254b36a468008a4af86b3c216448d901c, where OpenRouter fallback was still active.
+
+### Provider contract
+- Official KIE endpoint: /gemini-3-8-flash-openai/v1/chat/completions.
+- Fallback model identifier retained for configuration and telemetry: gemini-3-8-flash; the endpoint-specific request body omits model.
+- KIE documents the endpoint as multimodal and uses the unified image_url media envelope for media inputs.
+- KIE's endpoint-specific request example omits the model field; live contract testing confirmed this matters for video on the production key.
+- Existing bounded timeout/retry behavior is preserved.
+
+### Implementation
+- Default KIE media-analysis fallback model changed from Gemini 3.5 Flash to Gemini 3.8 Flash.
+- Default fallback endpoint changed to the Gemini 3.8 Flash OpenAI-compatible endpoint.
+- Fallback requests omit the redundant model field and rely on the model-specific KIE endpoint; the configured model name is retained for telemetry.
+- Fallback trace provider changed from the stale model-specific kie_gemini35_flash label to kie_gemini_fallback; the concrete KIE model remains present in the structured provider log.
+- No OpenRouter fallback is introduced.
+- Fallback model/endpoint/attempt count remain environment-configurable.
+
+### TDD evidence
+- RED: body-code-500 image/video fallback regression failed because telemetry still reported kie_gemini35_flash.
+- GREEN: body-code-500 image/video fallback regression passed after telemetry fix.
+- RED: timeout fallback regression failed against the Gemini 3.8 endpoint while defaults still pointed to Gemini 3.5.
+- GREEN: timeout fallback regression passed after updating the defaults.
+- Focused media-analysis suite after implementation: 23 passed.
+- Focused Ruff checks passed.
+- Full backend gate from the isolated worktree before the provider-contract refinement: 1058 passed, 3 skipped.
+- Live KIE 3.8 image smoke on the production API key succeeded.
+- Live KIE 3.8 video smoke with an explicit model field timed out at 120s; the same 107 KB public MP4 without the model field returned HTTP 200 in 20.13s with a valid description.
+- Added a regression asserting the fallback request body does not include model; RED before the fix, GREEN after the fix.
+- Final full backend gate after the provider-contract refinement: 1058 passed, 3 skipped, 88 warnings.
+
+### Rollout plan
+1. Run focused lint and full backend pytest from the isolated worktree.
+2. Review diff against tanyapi.
+3. Commit/push task branch and open PR to tanyapi.
+4. Merge only after required CI is green.
+5. Verify exact production SHA, container health, and live telemetry shows KIE Gemini 3.1 primary with KIE Gemini 3.8 fallback and no openrouter_gemini31 fallback.

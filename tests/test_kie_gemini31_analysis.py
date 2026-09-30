@@ -165,21 +165,22 @@ async def test_gemini_retries_invalid_or_empty_200_then_succeeds(
         ("https://example.test/video.mp4", "video"),
     ],
 )
-async def test_gemini_body_500_falls_back_to_kie_gemini35(
-    media_url, media_kind, monkeypatch
+async def test_gemini_body_500_falls_back_to_kie_gemini38(
+    media_url, media_kind, monkeypatch, caplog
 ):
+    caplog.set_level("INFO", logger="bot.services.kie_gemini31_service")
     from bot.config import config
     from bot.services.kie_gemini31_service import KieGemini31Service
 
     monkeypatch.setattr(
         config,
         "KIE_MEDIA_ANALYSIS_FALLBACK_ENDPOINT",
-        "/gemini-3-5-flash-openai/v1/chat/completions",
+        "/gemini-3-8-flash-openai/v1/chat/completions",
     )
     monkeypatch.setattr(
         config,
         "KIE_MEDIA_ANALYSIS_FALLBACK_MODEL",
-        "gemini-3-5-flash-thinking",
+        "gemini-3-8-flash",
     )
     primary_calls = []
     fallback_calls = []
@@ -189,17 +190,14 @@ async def test_gemini_body_500_falls_back_to_kie_gemini35(
         return web.json_response({"code": 500, "msg": "upstream unavailable"})
 
     async def fallback(request):
-        fallback_calls.append(await request.json())
+        fallback_calls.append({"path": request.path, "payload": await request.json()})
         return web.json_response(
-            {"choices": [{"message": {"content": "Recovered by KIE Gemini 3.5"}}]}
+            {"choices": [{"message": {"content": "Recovered by KIE Gemini 3.8"}}]}
         )
 
     app = web.Application()
     app.router.add_post("/gemini-3.1-pro/v1/chat/completions", primary)
-    app.router.add_post(
-        "/gemini-3-5-flash-openai/v1/chat/completions",
-        fallback,
-    )
+    app.router.add_post("/{tail:.*}", fallback)
     async with TestServer(app) as server:
         service = KieGemini31Service(
             api_key="test", base_url=str(server.make_url("")).rstrip("/")
@@ -211,11 +209,13 @@ async def test_gemini_body_500_falls_back_to_kie_gemini35(
             system_prompt="JSON only",
         )
 
-    assert result == "Recovered by KIE Gemini 3.5"
+    assert result == "Recovered by KIE Gemini 3.8"
     assert len(primary_calls) == 1
     assert len(fallback_calls) == 1
-    assert fallback_calls[0]["model"] == "gemini-3-5-flash-thinking"
-    media_part = fallback_calls[0]["messages"][-1]["content"][-1]
+    assert fallback_calls[0]["path"] == "/gemini-3-8-flash-openai/v1/chat/completions"
+    assert "model" not in fallback_calls[0]["payload"]
+    assert "provider=kie_gemini_fallback" in caplog.text
+    media_part = fallback_calls[0]["payload"]["messages"][-1]["content"][-1]
     assert media_part == {"type": "image_url", "image_url": {"url": media_url}}
 
 
@@ -277,7 +277,7 @@ async def test_admin_can_switch_media_analysis_but_user_cannot(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_gemini_timeout_falls_back_to_kie_gemini35(monkeypatch):
+async def test_gemini_timeout_falls_back_to_default_kie_gemini38(monkeypatch):
     import asyncio
 
     from bot.config import config
@@ -299,7 +299,7 @@ async def test_gemini_timeout_falls_back_to_kie_gemini35(monkeypatch):
     app = web.Application()
     app.router.add_post("/gemini-3.1-pro/v1/chat/completions", primary)
     app.router.add_post(
-        "/gemini-3-5-flash-openai/v1/chat/completions",
+        "/gemini-3-8-flash-openai/v1/chat/completions",
         fallback,
     )
     async with TestServer(app) as server:

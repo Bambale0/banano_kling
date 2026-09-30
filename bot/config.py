@@ -141,11 +141,11 @@ class Config:
         os.getenv("QWEN38_PROMPT_MAX_ATTEMPTS", "2")
     )
     KIE_MEDIA_ANALYSIS_FALLBACK_MODEL: str = os.getenv(
-        "KIE_MEDIA_ANALYSIS_FALLBACK_MODEL", "gemini-3-5-flash-thinking"
+        "KIE_MEDIA_ANALYSIS_FALLBACK_MODEL", "gemini-3-8-flash"
     )
     KIE_MEDIA_ANALYSIS_FALLBACK_ENDPOINT: str = os.getenv(
         "KIE_MEDIA_ANALYSIS_FALLBACK_ENDPOINT",
-        "/gemini-3-5-flash-openai/v1/chat/completions",
+        "/gemini-3-8-flash-openai/v1/chat/completions",
     )
     KIE_MEDIA_ANALYSIS_FALLBACK_MAX_ATTEMPTS: int = int(
         os.getenv("KIE_MEDIA_ANALYSIS_FALLBACK_MAX_ATTEMPTS", "2")
