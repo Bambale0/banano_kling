@@ -558,3 +558,42 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Task branch: feature/tanyapi-trend-repeat-price.
 - PR target: tanyapi with auto-merge after required CI gates.
 - After deployment verify exact backend/Mini App SHA and live repeat_cost values for existing production trends.
+
+---
+
+## 2026-09-30 — Gemini 3.1 media analysis stays on Gemini
+
+### Incident
+- Production tanyapi logged 13 provider_failure provider=kie_gemini31 error=invalid_response events in the previous 10 hours.
+- Fresh example request_id=95f5d5ee6b694ae0bcf7e7876cce41e7 received HTTP 200 from KIE, was classified as invalid_response, and automatically fell back to Qwen 3.8.
+- Product requirement: when media_analysis_provider=kie_gemini31, photo/video/v2 media analysis must remain on Gemini; Qwen may only run when explicitly selected by the admin setting.
+
+### Baseline
+- Branch: tanyapi
+- SHA: 0ac2d3e3f4a951b216b5fd1d8cc82297a7d42920
+- KIE Gemini adapter treated malformed/empty HTTP-200 responses as terminal on the first attempt.
+- Photo, video and v2 services caught Gemini runtime errors and automatically routed to Qwen.
+
+### Fix
+- Retry malformed/empty successful HTTP responses within the bounded Gemini attempt budget.
+- Accept standard string content and text-block content without logging provider/user content.
+- Add sanitized response-shape telemetry (keys/types/finish reason/body code only) for malformed responses.
+- Remove implicit Qwen fallback when Gemini is selected. Explicit media_analysis_provider=qwen38 behavior remains supported.
+
+### Verification
+- RED regression before implementation: 5/5 focused tests failed on the old behavior.
+- GREEN focused regression after implementation: 5/5 passed.
+- Full Gemini media-analysis file: 21/21 passed in project venv.
+- Adjacent suite exposed one pre-existing prompt_analyzer_v2 text-only Qwen test failure; the same test fails unchanged at baseline SHA, so it is outside this fix.
+
+### Rollout
+- Task branch: fix/gemini31-invalid-response-retry.
+- PR target: tanyapi.
+- After merge: verify exact deployed SHA, bot health, live Gemini-only media-analysis smoke and telemetry (provider_retry/provider_success, no automatic fallback provider=qwen38).
+
+### Review
+- Standards axis: bounded retry remains configuration-driven; no secrets or provider/user content are logged; response telemetry records structural metadata only; no payment/FSM/schema contract changed; no debug instrumentation remains.
+- Spec axis: when media_analysis_provider=kie_gemini31, photo/video/v2 image analysis no longer falls through to Qwen; malformed/empty HTTP-200 responses retry Gemini within the existing attempt budget. Qwen executes only when explicitly selected.
+- Explicit Qwen routing tests now select qwen38 through the same bot setting used in production. Existing prompt-v2 text-only explicit-Qwen routing was aligned with that contract.
+- Production bot setting re-verified as kie_gemini31 after isolated tests.
+- Final isolated backend gate: ruff checks passed; full pytest 1344 passed, 2 skipped, 123 warnings.

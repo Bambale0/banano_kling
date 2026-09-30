@@ -628,24 +628,18 @@ class PhotoPromptService:
             f"Return valid JSON only according to the required schema."
         )
 
-        if (
-            has_image
-            and not has_audio
-            and await media_analysis_provider() == "kie_gemini31"
-        ):
-            try:
+        if has_image and not has_audio:
+            provider = await media_analysis_provider()
+            if provider == "kie_gemini31":
                 raw = await KieGemini31Service(
                     api_key=self.api_key, base_url=self.base_url
                 ).analyze_media(
                     media_url=image_url,
                     user_instruction=user_instruction,
-                    system_prompt=await gemini_photo_system_prompt('photo'),
+                    system_prompt=await gemini_photo_system_prompt("photo"),
                 )
                 return _build_result(_parse_json_object(raw), provider="")
-            except (RuntimeError, ValueError, TypeError) as exc:
-                trace_analysis_provider("qwen38", fallback_error=exc)
 
-        if has_image and not has_audio:
             trace_analysis_provider("qwen38")
             return await self._analyze_with_qwen38(
                 image_url=image_url,

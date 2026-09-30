@@ -143,6 +143,9 @@ def test_qwen_raw_video_payload_has_only_user_message() -> None:
 
 @pytest.mark.asyncio
 async def test_video_prompt_uses_qwen38_before_kie(monkeypatch) -> None:
+    from bot.database import set_bot_setting
+
+    await set_bot_setting("media_analysis_provider", "qwen38")
     qwen = video_module.openrouter_qwen38_service
     monkeypatch.setattr(qwen, "enabled", True)
     monkeypatch.setattr(qwen, "model", "qwen/qwen3.8-max-0902")
@@ -176,6 +179,9 @@ async def test_video_prompt_uses_qwen38_before_kie(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_video_prompt_prefers_probed_file_duration(monkeypatch) -> None:
+    from bot.database import set_bot_setting
+
+    await set_bot_setting("media_analysis_provider", "qwen38")
     qwen = video_module.openrouter_qwen38_service
     monkeypatch.setattr(qwen, "enabled", True)
     monkeypatch.setattr(qwen, "model", "qwen/qwen3.8-max-0902")
