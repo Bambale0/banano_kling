@@ -551,6 +551,7 @@ class VideoPromptService:
                 media_url=video_url,
                 media_kind="video",
                 user_instruction=user_instruction,
+                content_validator=_parse_video_json_object,
             )
             return _build_video_result(
                 _parse_video_json_object(raw), provider=KieGemini31Service.MODEL

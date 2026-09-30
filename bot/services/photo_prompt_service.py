@@ -638,6 +638,7 @@ class PhotoPromptService:
                     media_kind="image",
                     user_instruction=user_instruction,
                     system_prompt=await gemini_photo_system_prompt("photo"),
+                    content_validator=_parse_json_object,
                 )
                 return _build_result(_parse_json_object(raw), provider="")
 
