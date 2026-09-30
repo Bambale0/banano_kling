@@ -100,20 +100,14 @@ async def test_media_services_default_to_gemini(surface, monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "status,body",
-    [(401, {}), (200, {}), (200, {"choices": [{"message": {"content": ""}}]})],
-)
-async def test_gemini_rejects_auth_and_invalid_responses_without_retry(
-    status, body, monkeypatch
-):
+async def test_gemini_rejects_auth_without_retry(monkeypatch):
     from bot.services.kie_gemini31_service import KieGemini31Service
 
     calls = []
 
     async def provider(request):
         calls.append(1)
-        return web.json_response(body, status=status)
+        return web.json_response({}, status=401)
 
     app = web.Application()
     app.router.add_post("/gemini-3.1-pro/v1/chat/completions", provider)
@@ -126,6 +120,41 @@ async def test_gemini_rejects_auth_and_invalid_responses_without_retry(
                 media_url="https://example.test/video.mp4", user_instruction="Analyze"
             )
     assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "first_body",
+    [{}, {"choices": [{"message": {"content": ""}}]}],
+)
+async def test_gemini_retries_invalid_or_empty_200_then_succeeds(
+    first_body, monkeypatch
+):
+    from bot.config import config
+    from bot.services.kie_gemini31_service import KieGemini31Service
+
+    monkeypatch.setattr(config, "KIE_MEDIA_ANALYSIS_MAX_ATTEMPTS", 2)
+    calls = []
+
+    async def provider(request):
+        calls.append(1)
+        if len(calls) == 1:
+            return web.json_response(first_body)
+        return web.json_response(
+            {"choices": [{"message": {"content": "Recovered by Gemini"}}]}
+        )
+
+    app = web.Application()
+    app.router.add_post("/gemini-3.1-pro/v1/chat/completions", provider)
+    async with TestServer(app) as server:
+        service = KieGemini31Service(
+            api_key="test", base_url=str(server.make_url("")).rstrip("/")
+        )
+        result = await service.analyze_media(
+            media_url="https://example.test/video.mp4", user_instruction="Analyze"
+        )
+    assert result == "Recovered by Gemini"
+    assert len(calls) == 2
 
 
 @pytest.mark.asyncio
@@ -213,7 +242,7 @@ async def test_gemini_timeout_is_finite(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("surface", ["photo", "video", "v2_photo"])
-async def test_gemini_failure_preserves_existing_qwen_fallback(surface, monkeypatch):
+async def test_selected_gemini_does_not_auto_fallback_to_qwen(surface, monkeypatch):
     from unittest.mock import AsyncMock
 
     from bot.config import config
@@ -245,25 +274,27 @@ async def test_gemini_failure_preserves_existing_qwen_fallback(surface, monkeypa
         monkeypatch.setattr(
             config, "KIE_BASE_URL", str(server.make_url("")).rstrip("/")
         )
-        if surface == "photo":
-            result = await module.PhotoPromptService(api_key="test").analyze_photo(
-                image_url="https://example.test/photo.jpg"
-            )
-        elif surface == "video":
-            result = await module.VideoPromptService(api_key="test").analyze_video(
-                video_url="https://example.test/video.mp4"
-            )
-        else:
-            result = await module.PromptAnalyzerV2Service(
-                api_key="test"
-            ).analyze_prompt(image_url="https://example.test/photo.jpg")
-    assert result["prompt_ru"] == "Fallback result"
+        with pytest.raises(RuntimeError):
+            if surface == "photo":
+                await module.PhotoPromptService(api_key="test").analyze_photo(
+                    image_url="https://example.test/photo.jpg"
+                )
+            elif surface == "video":
+                await module.VideoPromptService(api_key="test").analyze_video(
+                    video_url="https://example.test/video.mp4"
+                )
+            else:
+                await module.PromptAnalyzerV2Service(
+                    api_key="test"
+                ).analyze_prompt(image_url="https://example.test/photo.jpg")
+    qwen.analyze_image.assert_not_awaited()
+    qwen.analyze_video.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("surface", ["photo", "video", "v2_photo"])
 @pytest.mark.parametrize("malformed", [False, True])
-async def test_analysis_trace_links_provider_and_terminal_fallback_to_user(
+async def test_analysis_trace_links_gemini_retry_to_user(
     surface, malformed, monkeypatch, caplog
 ):
     import logging
@@ -278,14 +309,15 @@ async def test_analysis_trace_links_provider_and_terminal_fallback_to_user(
 
     sensitive = "PRIVATE_MEDIA_OR_PROMPT"
     output = '{"prompt_ru":"Результат","prompt_en":"Result"}'
+    calls = 0
 
     async def provider(request):
+        nonlocal calls
+        calls += 1
+        if malformed and calls == 1:
+            return web.json_response({"private": sensitive})
         return web.json_response(
-            {"private": sensitive}
-            if malformed
-            else {
-                "choices": [{"message": {"content": output}}],
-            }
+            {"choices": [{"message": {"content": output}}]}
         )
 
     qwen = AsyncMock()
@@ -320,6 +352,9 @@ async def test_analysis_trace_links_provider_and_terminal_fallback_to_user(
                 api_key=sensitive
             ).analyze_prompt(image_url=url, telegram_user_id=81002)
     assert result["prompt_en"] == "Result"
+    assert calls == (2 if malformed else 1)
+    qwen.analyze_image.assert_not_awaited()
+    qwen.analyze_video.assert_not_awaited()
     records = [r for r in caplog.records if hasattr(r, "analysis_event")]
     assert records
     assert len({r.request_id for r in records}) == 1
@@ -327,16 +362,13 @@ async def test_analysis_trace_links_provider_and_terminal_fallback_to_user(
     assert records[-1].analysis_event == "operation_success"
     if malformed:
         assert any(
-            r.analysis_event == "provider_failure"
+            r.analysis_event == "provider_retry"
             and r.error_category == "invalid_response"
             for r in records
         )
-        assert any(r.analysis_event == "fallback" for r in records)
-        assert records[-1].analysis_provider == "qwen38"
-        assert records[-1].analysis_instruction_revision == ""
-    else:
-        assert any(r.analysis_event == "provider_success" for r in records)
-        assert records[-1].analysis_provider == "kie_gemini31"
+        assert not any(r.analysis_event == "fallback" for r in records)
+    assert any(r.analysis_event == "provider_success" for r in records)
+    assert records[-1].analysis_provider == "kie_gemini31"
     assert sensitive not in caplog.text
 
 

@@ -114,6 +114,60 @@ async def media_analysis_provider() -> str:
     return value
 
 
+def _extract_chat_content(data: Any) -> str:
+    """Extract text from KIE/OpenAI-compatible chat completions safely."""
+
+    if not isinstance(data, dict):
+        raise TypeError("response body must be an object")
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise KeyError("choices")
+    first = choices[0]
+    if not isinstance(first, dict):
+        raise TypeError("choice must be an object")
+    message = first.get("message")
+    if not isinstance(message, dict):
+        raise KeyError("message")
+    content = message.get("content")
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str) and item.strip():
+                parts.append(item.strip())
+            elif isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str) and text.strip():
+                    parts.append(text.strip())
+        return "\n".join(parts).strip()
+    raise TypeError("message.content must be text or text blocks")
+
+
+def _safe_response_shape(data: Any) -> str:
+    """Return bounded structural metadata without response/user content."""
+
+    if not isinstance(data, dict):
+        return f"body_type={type(data).__name__}"
+    keys = ",".join(sorted(str(key) for key in data)[:12])
+    choices = data.get("choices")
+    choices_type = type(choices).__name__
+    choices_len = len(choices) if isinstance(choices, list) else -1
+    content_type = "missing"
+    finish_reason = ""
+    if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+        finish_reason = str(choices[0].get("finish_reason") or "")[:32]
+        message = choices[0].get("message")
+        if isinstance(message, dict):
+            content_type = type(message.get("content")).__name__
+    raw_code = data.get("code")
+    code = str(raw_code)[:16] if raw_code is not None else ""
+    return (
+        f"keys={keys} choices_type={choices_type} choices_len={choices_len} "
+        f"content_type={content_type} finish_reason={finish_reason} body_code={code}"
+    )
+
+
 class KieGemini31Service:
     MODEL = "gemini-3.1-pro"
     ENDPOINT = "/gemini-3.1-pro/v1/chat/completions"
@@ -193,15 +247,33 @@ class KieGemini31Service:
                             raise RuntimeError(
                                 f"KIE Gemini 3.1 Pro: HTTP {response.status} (request_id={request_id})"
                             )
+                        data: Any = None
                         try:
                             data = await response.json(content_type=None)
-                            content = data["choices"][0]["message"]["content"]
+                            content = _extract_chat_content(data)
                         except (
                             json.JSONDecodeError,
                             KeyError,
                             IndexError,
                             TypeError,
                         ) as exc:
+                            logger.warning(
+                                "media_analysis provider=kie model=%s request_id=%s "
+                                "attempt=%s retryable=invalid_response status=%s shape=%s",
+                                self.MODEL,
+                                request_id,
+                                attempt,
+                                response.status,
+                                _safe_response_shape(data),
+                            )
+                            if attempt < attempts:
+                                trace.log(
+                                    "provider_retry",
+                                    error="invalid_response",
+                                    status=response.status,
+                                )
+                                await asyncio.sleep(2 ** (attempt - 1))
+                                continue
                             trace.log(
                                 "provider_failure",
                                 error="invalid_response",
@@ -210,7 +282,24 @@ class KieGemini31Service:
                             raise RuntimeError(
                                 "KIE Gemini 3.1 Pro returned an invalid response"
                             ) from exc
-                        if not isinstance(content, str) or not content.strip():
+                        if not content:
+                            logger.warning(
+                                "media_analysis provider=kie model=%s request_id=%s "
+                                "attempt=%s retryable=empty_content status=%s shape=%s",
+                                self.MODEL,
+                                request_id,
+                                attempt,
+                                response.status,
+                                _safe_response_shape(data),
+                            )
+                            if attempt < attempts:
+                                trace.log(
+                                    "provider_retry",
+                                    error="empty_content",
+                                    status=response.status,
+                                )
+                                await asyncio.sleep(2 ** (attempt - 1))
+                                continue
                             trace.log(
                                 "provider_failure",
                                 error="empty_content",
@@ -220,7 +309,7 @@ class KieGemini31Service:
                                 "KIE Gemini 3.1 Pro returned empty content"
                             )
                         trace.log("provider_success", status=response.status)
-                        return content.strip()
+                        return content
                 except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
                     logger.warning(
                         "media_analysis provider=kie model=%s request_id=%s attempt=%s error=%s",

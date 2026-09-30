@@ -543,19 +543,17 @@ class VideoPromptService:
                 effective_duration = probed_duration
 
         user_instruction = _build_video_prompt_instruction(effective_duration)
-        if await media_analysis_provider() == "kie_gemini31":
-            try:
-                raw = await KieGemini31Service(
-                    api_key=self.api_key, base_url=self.base_url
-                ).analyze_media(
-                    media_url=video_url,
-                    user_instruction=user_instruction,
-                )
-                return _build_video_result(
-                    _parse_video_json_object(raw), provider=KieGemini31Service.MODEL
-                )
-            except (RuntimeError, ValueError, TypeError) as exc:
-                trace_analysis_provider("qwen38", fallback_error=exc)
+        provider = await media_analysis_provider()
+        if provider == "kie_gemini31":
+            raw = await KieGemini31Service(
+                api_key=self.api_key, base_url=self.base_url
+            ).analyze_media(
+                media_url=video_url,
+                user_instruction=user_instruction,
+            )
+            return _build_video_result(
+                _parse_video_json_object(raw), provider=KieGemini31Service.MODEL
+            )
 
         qwen_error: Exception | None = None
 

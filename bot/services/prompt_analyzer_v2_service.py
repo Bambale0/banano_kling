@@ -479,31 +479,26 @@ class PromptAnalyzerV2Service:
             + "\n\n".join(input_notes)
             + "\n\nReturn only prompt_ru and prompt_en according to the JSON schema."
         )
-        if (
-            image_url
-            and not has_audio
-            and await media_analysis_provider() == "kie_gemini31"
-        ):
-            try:
+        if not has_audio:
+            provider = await media_analysis_provider()
+            if provider == "qwen38":
+                trace_analysis_provider("qwen38")
+                return await self._analyze_with_qwen38(
+                    image_url=image_url,
+                    user_instruction=user_instruction,
+                )
+
+            if image_url:
                 raw = await KieGemini31Service(
                     api_key=self.api_key, base_url=self.base_url
                 ).analyze_media(
                     media_url=image_url,
                     user_instruction=user_instruction,
-                    system_prompt=await gemini_photo_system_prompt('v2'),
+                    system_prompt=await gemini_photo_system_prompt("v2"),
                 )
                 return _build_result(
                     _parse_json_object(raw), provider=KieGemini31Service.MODEL
                 )
-            except (RuntimeError, ValueError, TypeError) as exc:
-                trace_analysis_provider("qwen38", fallback_error=exc)
-
-        if not has_audio:
-            trace_analysis_provider("qwen38")
-            return await self._analyze_with_qwen38(
-                image_url=image_url,
-                user_instruction=user_instruction,
-            )
 
         if not self.api_key:
             raise RuntimeError("KIE_AI_API_KEY is not configured for voice input")
