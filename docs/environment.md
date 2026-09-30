@@ -379,3 +379,27 @@ PY
 ```
 
 Никогда не отправлять полный вывод `.env` в чат или issue.
+
+### Seedance 2.5 result delivery
+
+These settings affect result transport, not generation pricing or provider payloads:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `SEEDANCE25_RESULT_DOWNLOAD_ATTEMPTS` | `2` | Download attempts per delivery cycle, minimum 1 |
+| `SEEDANCE25_RESULT_DOWNLOAD_TIMEOUT_SECONDS` | `120` | Timeout per download, minimum 30 seconds |
+| `SEEDANCE25_RESULT_DOWNLOAD_RETRY_DELAY_SECONDS` | `1` | Linear retry delay in seconds, minimum 0 |
+| `SEEDANCE25_DELIVERY_TIMEOUT_SECONDS` | `360` | Total delivery-attempt deadline, minimum 30 seconds; lease lasts 60 seconds longer |
+| `SEEDANCE25_DELIVERY_RETRY_DAYS` | `7` | Recovery window after completion, range 1–30 days |
+
+A generated result is saved before Telegram delivery. `request_data.delivery_status`
+tracks delivery separately: `delivering` holds a lease, `pending` needs retry,
+`link_sent` records only a fallback link, and `delivered` means media was sent.
+`delivery_link_sent` suppresses duplicate fallback links while file retries continue.
+Completion and its result_ready marker are committed atomically. Legacy completed
+tasks without markers are not automatically resent. Reconciliation
+uses `completed_at` (or legacy `created_at`) for the retry window, so repeated
+attempts cannot extend it indefinitely. After this window, the stored result remains
+available but automatic file delivery stops; inspect provider URL availability and
+Telegram errors before operator recovery. No automatic refund is issued for a
+completed generation whose Telegram file delivery fails.

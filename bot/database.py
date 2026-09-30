@@ -5,7 +5,7 @@ import os
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, Iterable, List, Optional
 from urllib.parse import urlparse
 
@@ -5291,7 +5291,7 @@ async def mark_task_delivery_status(
 ) -> bool:
     """Persist Telegram delivery outcome separately from provider completion."""
     normalized_status = str(status or "").strip().lower()
-    if normalized_status not in {"delivered", "failed", "pending"}:
+    if normalized_status not in {"result_ready", "delivered", "failed", "pending", "link_sent"}:
         raise ValueError(f"Unsupported delivery status: {status}")
 
     task = await get_task_by_id(task_id)
@@ -5299,9 +5299,16 @@ async def mark_task_delivery_status(
         return False
 
     request_data = _parse_json_dict(task.request_data)
-    request_data["delivery_status"] = normalized_status
-    request_data["delivery_attempts"] = int(request_data.get("delivery_attempts") or 0) + 1
-    request_data["delivery_updated_at"] = datetime.utcnow().isoformat()
+    # A link notification is intermediate work, not release of the media lease.
+    if normalized_status != "link_sent" or request_data.get("delivery_status") != "delivering":
+        request_data["delivery_status"] = normalized_status
+    if normalized_status == "link_sent":
+        request_data["delivery_link_sent"] = True
+    if normalized_status == "result_ready":
+        request_data.setdefault("result_ready_at", datetime.now(UTC).isoformat())
+    else:
+        request_data["delivery_attempts"] = int(request_data.get("delivery_attempts") or 0) + 1
+    request_data["delivery_updated_at"] = datetime.now(UTC).isoformat()
     if error:
         request_data["delivery_error"] = str(error)[:500]
     else:
@@ -5318,6 +5325,59 @@ async def mark_task_delivery_status(
         )
         await db.commit()
         return int(getattr(cursor, "rowcount", 0) or 0) > 0
+
+
+async def claim_task_delivery(task_id: str, *, lease_seconds: int = 300) -> bool:
+    """Atomically claim one Telegram delivery attempt.
+
+    A short lease prevents webhook/reconcile races from sending the same result
+    twice. After a crash the lease expires and reconciliation may claim again.
+    """
+    task = await get_task_by_id(task_id)
+    if not task:
+        return False
+
+    old_json = task.request_data or "{}"
+    request_data = _parse_json_dict(old_json)
+    current_status = str(request_data.get("delivery_status") or "").strip().lower()
+    if current_status in {"delivered", "failed"}:
+        return False
+
+    now = datetime.now(UTC)
+    if current_status == "delivering":
+        claimed_at_raw = str(
+            request_data.get("delivery_claimed_at")
+            or request_data.get("delivery_updated_at")
+            or ""
+        ).strip()
+        if claimed_at_raw:
+            try:
+                claimed_at = datetime.fromisoformat(claimed_at_raw.replace("Z", "+00:00"))
+                if claimed_at.tzinfo is None:
+                    claimed_at = claimed_at.replace(tzinfo=UTC)
+                if now - claimed_at < timedelta(seconds=max(30, int(lease_seconds))):
+                    return False
+            except (TypeError, ValueError):
+                pass
+
+    request_data["delivery_status"] = "delivering"
+    request_data["delivery_attempts"] = int(request_data.get("delivery_attempts") or 0) + 1
+    request_data["delivery_claimed_at"] = now.isoformat()
+    request_data["delivery_updated_at"] = now.isoformat()
+    request_data.pop("delivery_error", None)
+    new_json = json.dumps(request_data, ensure_ascii=False)
+
+    async with db_backend.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            UPDATE generation_tasks
+            SET request_data = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND COALESCE(request_data, '{}') = ?
+            """,
+            (new_json, int(task.id), old_json),
+        )
+        await db.commit()
+        return int(getattr(cursor, "rowcount", 0) or 0) == 1
 
 
 async def complete_video_task(task_id: str, result_url: str) -> bool:

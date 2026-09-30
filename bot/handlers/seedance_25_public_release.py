@@ -578,6 +578,12 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
 
 
 async def _claim_async_refund(task_id: str) -> tuple[int, float] | None:
+    """Atomically refund one failed paid Seedance 2.5 task.
+
+    The refund marker and balance credit are committed in the same DB
+    transaction so a crash cannot leave the marker without the money
+    being restored.
+    """
     row = await fullstack._load_task_row(task_id)
     if not row or str(row["status"] or "").lower() != "pending":
         return None
@@ -587,43 +593,83 @@ async def _claim_async_refund(task_id: str) -> tuple[int, float] | None:
         return None
     if not request_data.get("refund_on_failure") or request_data.get("refund_claimed"):
         return None
+
     cost = float(request_data.get("charged_cost") or row["cost"] or 0)
     if cost <= 0:
         return None
 
+    telegram_id = int(row["telegram_id"])
+    internal_user_id = int(row["user_id"])
     old_json = row["request_data"] or "{}"
     request_data["refund_claimed"] = True
+    request_data["refund_state"] = "refunded"
     new_json = json.dumps(request_data, ensure_ascii=False, separators=(",", ":"))
+
     async with fullstack.db_backend.connect() as db:
-        cursor = await db.execute(
-            """
-            UPDATE generation_tasks
-            SET request_data = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE task_id = ? AND status = 'pending' AND request_data = ?
-            """,
-            (new_json, task_id, old_json),
-        )
-        await db.commit()
-        if int(getattr(cursor, "rowcount", 0) or 0) != 1:
-            return None
-    return int(row["telegram_id"]), cost
+        try:
+            cursor = await db.execute(
+                """
+                UPDATE generation_tasks
+                SET request_data = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE task_id = ? AND status = 'pending' AND request_data = ?
+                """,
+                (new_json, task_id, old_json),
+            )
+            if int(getattr(cursor, "rowcount", 0) or 0) != 1:
+                await db.rollback()
+                raise RuntimeError(f"Seedance 2.5 refund claim changed; retry task {task_id}")
+
+            credit_cursor = await db.execute(
+                """
+                UPDATE users
+                SET credits = credits + ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (cost, internal_user_id),
+            )
+            if int(getattr(credit_cursor, "rowcount", 0) or 0) != 1:
+                raise RuntimeError(
+                    f"Seedance 2.5 refund user row missing for task {task_id}"
+                )
+            await db.commit()
+        except Exception:
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+            raise
+
+    return telegram_id, cost
 
 
 async def _public_process_payload(app: web.Application, payload: dict[str, Any]) -> bool:
     data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
     task_id = str((data or {}).get("taskId") or payload.get("taskId") or "").strip()
     state = str((data or {}).get("state") or payload.get("state") or "").lower()
-    code = int(payload.get("code") or 200)
-    is_failure = state in {"fail", "failed", "error"} or code in {501, 500, 422, 402, 429, 455, 505}
+    try:
+        code = int(payload.get("code") or 200)
+    except (TypeError, ValueError):
+        code = 200
+    provider_fail_code = str((data or {}).get("failCode") or "").strip()
+    failure_codes = {"400", "501", "500", "422", "402", "429", "455", "505"}
+    is_failure = (
+        state in {"fail", "failed", "error"}
+        or str(code) in failure_codes
+        or provider_fail_code in failure_codes
+    )
     if is_failure and task_id:
-        claimed = await _claim_async_refund(task_id)
-        if claimed:
-            telegram_id, cost = claimed
-            try:
-                await generation_module.add_credits(telegram_id, cost)
-                logger.info("Seedance 2.5 refunded %.2f credits for failed task %s", cost, task_id)
-            except Exception:
-                logger.exception("Seedance 2.5 async refund failed for task %s", task_id)
+        try:
+            claimed = await _claim_async_refund(task_id)
+            if claimed:
+                _telegram_id, cost = claimed
+                logger.info(
+                    "Seedance 2.5 refunded %.2f credits atomically for failed task %s",
+                    cost,
+                    task_id,
+                )
+        except Exception:
+            logger.exception("Seedance 2.5 async refund failed for task %s", task_id)
+            return False
     return await fullstack._process_seedance25_payload_original(app, payload)
 
 
@@ -634,7 +680,7 @@ async def _public_send_results(
     video_url: str,
     last_frame_url: str | None,
     request_data: dict[str, Any],
-) -> None:
+) -> bool:
     bot = app["bot"]
     output_format = str(request_data.get("output_format") or fullstack._extension_from_url(video_url) or "mp4").lower()
     resolution = str(request_data.get("resolution") or "720p")
@@ -700,20 +746,29 @@ async def _public_send_results(
                         reply_markup=result_markup,
                     )
                 delivered = True
+            except Exception:
+                logger.exception("Seedance 2.5 file delivery failed for task %s", task_id)
             finally:
                 try:
                     os.unlink(temp_path)
                 except OSError:
                     pass
 
-    if not delivered:
-        await bot.send_message(
-            telegram_id,
-            caption + f"\n\n🔗 Оригинал:\n{video_url}",
-            parse_mode="HTML",
-            disable_web_page_preview=False,
-            reply_markup=result_markup,
-        )
+    if not delivered and not request_data.get("delivery_link_sent"):
+        try:
+            await bot.send_message(
+                telegram_id,
+                caption + f"\n\n🔗 Оригинал:\n{video_url}",
+                parse_mode="HTML",
+                disable_web_page_preview=False,
+                reply_markup=result_markup,
+            )
+            await fullstack._mark_seedance25_delivery(task_id, "link_sent")
+        except Exception:
+            logger.exception(
+                "Seedance 2.5 fallback link delivery failed for task %s",
+                task_id,
+            )
 
     if last_frame_url:
         try:
@@ -724,11 +779,19 @@ async def _public_send_results(
                 parse_mode="HTML",
             )
         except Exception:
-            await bot.send_message(
-                telegram_id,
-                f"🖼 Последний кадр Seedance 2.5:\n{last_frame_url}",
-                disable_web_page_preview=False,
-            )
+            try:
+                await bot.send_message(
+                    telegram_id,
+                    f"🖼 Последний кадр Seedance 2.5:\n{last_frame_url}",
+                    disable_web_page_preview=False,
+                )
+            except Exception:
+                logger.exception(
+                    "Seedance 2.5 last-frame fallback delivery failed for task %s",
+                    task_id,
+                )
+
+    return delivered
 
 
 def install_seedance_25_public_release() -> None:
