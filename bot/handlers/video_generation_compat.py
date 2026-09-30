@@ -175,6 +175,7 @@ async def repeat_advanced_video_result(callback: types.CallbackQuery, state: FSM
     restored = build_repeat_video_state(
         request_data,
         include_private_media=bool(task.user_id == user.id),
+        task=task,
     )
     if not restored.get("user_prompt"):
         restored["user_prompt"] = str(task.prompt or "")
