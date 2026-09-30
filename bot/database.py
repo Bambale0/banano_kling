@@ -5327,6 +5327,47 @@ async def mark_task_delivery_status(
         return int(getattr(cursor, "rowcount", 0) or 0) > 0
 
 
+async def store_task_result_ready(task_id: str, result_url: str) -> bool:
+    """Store the canonical provider result before Telegram delivery.
+
+    The delivery lease is preserved when a webhook/watchdog attempt already
+    holds it. This gives reconciliation a durable result URL without falsely
+    marking the generation completed or the media delivered.
+    """
+    canonical_url = str(result_url or "").strip()
+    if not canonical_url:
+        return False
+
+    task = await get_task_by_id(task_id)
+    if not task:
+        return False
+
+    old_json = task.request_data or "{}"
+    request_data = _parse_json_dict(old_json)
+    current_status = str(request_data.get("delivery_status") or "").strip().lower()
+    if current_status in {"delivered", "failed"}:
+        return False
+
+    now = datetime.now(UTC)
+    if current_status not in {"delivering", "pending", "link_sent", "result_ready"}:
+        request_data["delivery_status"] = "result_ready"
+    request_data.setdefault("result_ready_at", now.isoformat())
+    request_data["delivery_updated_at"] = now.isoformat()
+    new_json = json.dumps(request_data, ensure_ascii=False)
+
+    async with db_backend.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            UPDATE generation_tasks
+            SET result_url = ?, request_data = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND COALESCE(request_data, '{}') = ?
+            """,
+            (canonical_url, new_json, int(task.id), old_json),
+        )
+        await db.commit()
+        return int(getattr(cursor, "rowcount", 0) or 0) == 1
+
+
 async def claim_task_delivery(task_id: str, *, lease_seconds: int = 300) -> bool:
     """Atomically claim one Telegram delivery attempt.
 

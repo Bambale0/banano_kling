@@ -164,7 +164,7 @@ RenderGrid results нельзя использовать как долговре
 
 ### `FEED_EPHEMERAL_RESULT_HOSTS`
 
-Публичная лента считает временными как минимум `tempfile.aiquickdraw.com` и `cdn.rendergrid.io`. Если result не удалось локализовать, такой URL не должен считаться долговременным источником для повторов.
+Публичная лента считает временными как минимум `tempfile.aiquickdraw.com` и `cdn.rendergrid.io`. Эти же хосты считаются ephemeral и в runtime-доставке provider results: готовый image/video result сначала принудительно локализуется в backend storage, даже если `PERSIST_PROVIDER_RESULTS=false`, и уже локальный URL сохраняется как канонический для recovery. Если локализация временно не удалась, исходный provider URL остаётся аварийным источником, а Telegram media delivery не должна считаться завершённой только из-за отправленной текстовой ссылки.
 
 ### `RENDERGRID_RESULT_TTL_HOURS`
 
@@ -379,6 +379,22 @@ PY
 ```
 
 Никогда не отправлять полный вывод `.env` в чат или issue.
+
+### KIE result delivery recovery
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `KIE_DELIVERY_LEASE_SECONDS` | `600` | Prevent duplicate KIE webhook/watchdog media delivery while one attempt is active; minimum 120 seconds |
+| `EPHEMERAL_RESULT_PERSIST_ATTEMPTS` | `2` | Durable-localization attempts for ephemeral provider image/video results; range 1–4 |
+| `EPHEMERAL_RESULT_PERSIST_RETRY_DELAY_SECONDS` | `1` | Linear delay between localization attempts; minimum 0 seconds |
+
+For KIE results on hosts listed in `FEED_EPHEMERAL_RESULT_HOSTS`, the backend
+tries to create a durable local copy before Telegram delivery. The canonical
+result URL is stored in `generation_tasks.result_url` while the task remains
+recoverable. A text/link fallback is recorded as `link_sent`, not
+`delivered`; media failure returns the delivery state to `pending` so the
+watchdog can retry after the lease expires. `completed` + `delivered` are
+written only after Telegram actually accepts image/video media.
 
 ### Seedance 2.5 result delivery
 
