@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -299,3 +300,160 @@ async def test_public_payload_prompt_limit_matches_provider(monkeypatch, length)
     else:
         await public_release._validate_public_payload(payload, is_admin=False)
         validate_sources.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_seedance25_result_download_retries_after_timeout(monkeypatch):
+    calls = {"count": 0}
+
+    class FakeContent:
+        async def iter_chunked(self, _size):
+            yield b"video"
+
+    class FakeResponse:
+        status = 200
+        content_length = 5
+        content = FakeContent()
+
+    class FakeRequestContext:
+        async def __aenter__(self):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise TimeoutError("slow CDN")
+            return FakeResponse()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, *_args, **_kwargs):
+            return FakeRequestContext()
+
+    monkeypatch.setattr(
+        fullstack_module.aiohttp,
+        "ClientSession",
+        lambda *args, **kwargs: FakeSession(),
+    )
+    monkeypatch.setattr(
+        fullstack_module,
+        "SEEDANCE25_RESULT_DOWNLOAD_RETRY_DELAY_SECONDS",
+        0,
+    )
+
+    path = await fullstack_module._download_to_temp(
+        "https://cdn.example/result.mp4",
+        ".mp4",
+    )
+
+    try:
+        assert path is not None
+        assert calls["count"] == 2
+        assert Path(path).read_bytes() == b"video"
+    finally:
+        if path:
+            Path(path).unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
+async def test_seedance25_public_delivery_returns_false_when_all_channels_fail(monkeypatch):
+    class FakeBot:
+        async def send_video(self, *_args, **_kwargs):
+            raise RuntimeError("telegram url send failed")
+
+        async def send_message(self, *_args, **_kwargs):
+            raise RuntimeError("telegram text send failed")
+
+    monkeypatch.setattr(fullstack_module, "_download_to_temp", AsyncMock(return_value=None))
+
+    delivered = await public_release._public_send_results(
+        {"bot": FakeBot()},
+        612441694,
+        "seedance-task-undelivered",
+        "https://cdn.example/result.mp4",
+        None,
+        {
+            "duration": 12,
+            "charged_cost": 72,
+            "seedance25_scenario": "multimodal",
+        },
+    )
+
+    assert delivered is False
+
+
+@pytest.mark.asyncio
+async def test_seedance25_completed_undelivered_result_is_retried(monkeypatch):
+    row = {
+        "task_id": "seedance-retry-1",
+        "model": "seedance_2_5",
+        "status": "completed",
+        "telegram_id": 612441694,
+        "result_url": "https://cdn.example/result.mp4",
+        "result_urls": json.dumps(["https://cdn.example/result.mp4"]),
+        "duration": 12,
+        "request_data": json.dumps(
+            {
+                "duration": 12,
+                "seedance25_scenario": "multimodal",
+                "delivery_status": "pending",
+            }
+        ),
+    }
+    send_result = AsyncMock(return_value=True)
+    monkeypatch.setattr(fullstack_module, "_load_task_row", AsyncMock(return_value=row))
+    monkeypatch.setattr(fullstack_module, "_claim_seedance25_delivery", AsyncMock(return_value=True))
+    monkeypatch.setattr(fullstack_module, "_send_seedance25_results", send_result)
+
+    handled = await fullstack_module._process_seedance25_payload(
+        {"bot": object()},
+        {"code": 200, "data": {"taskId": "seedance-retry-1"}},
+    )
+
+    assert handled is True
+    send_result.assert_awaited_once()
+
+
+def test_seedance25_copyright_failure_is_classified():
+    assert fullstack_module._is_seedance25_copyright_failure(
+        400,
+        "input image may be related to copyright restrictions",
+    )
+    assert not fullstack_module._is_seedance25_copyright_failure(
+        500,
+        "upstream timeout",
+    )
+
+
+@pytest.mark.asyncio
+async def test_seedance25_failcode_400_triggers_public_refund(monkeypatch):
+    refund = AsyncMock(return_value=(612441694, 72.0))
+    original = AsyncMock(return_value=True)
+    monkeypatch.setattr(public_release, "_claim_async_refund", refund)
+    monkeypatch.setattr(
+        fullstack_module,
+        "_process_seedance25_payload_original",
+        original,
+        raising=False,
+    )
+
+    handled = await public_release._public_process_payload(
+        {"bot": object()},
+        {
+            "code": 200,
+            "data": {
+                "taskId": "seedance-copyright-400",
+                "failCode": 400,
+                "failMsg": "input image may be related to copyright restrictions",
+            },
+        },
+    )
+
+    assert handled is True
+    refund.assert_awaited_once_with("seedance-copyright-400")
+    original.assert_awaited_once()

@@ -13,6 +13,7 @@ Kie webhook flows. It patches only the Seedance 2.5 seams:
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import logging
 import os
@@ -67,6 +68,16 @@ MAX_MEDIA_DURATION = 30.0
 MAX_TOTAL_VIDEO_DURATION = 30.0
 MIN_FPS = 24.0
 MAX_FPS = 60.0
+
+SEEDANCE25_RESULT_DOWNLOAD_ATTEMPTS = max(
+    1, int(os.getenv("SEEDANCE25_RESULT_DOWNLOAD_ATTEMPTS", "2"))
+)
+SEEDANCE25_RESULT_DOWNLOAD_TIMEOUT_SECONDS = max(
+    30, int(os.getenv("SEEDANCE25_RESULT_DOWNLOAD_TIMEOUT_SECONDS", "120"))
+)
+SEEDANCE25_RESULT_DOWNLOAD_RETRY_DELAY_SECONDS = max(
+    0.0, float(os.getenv("SEEDANCE25_RESULT_DOWNLOAD_RETRY_DELAY_SECONDS", "1"))
+)
 
 _RECONCILE_TASK_KEY = "seedance25_reconcile_task"
 
@@ -566,34 +577,87 @@ def _classify_results(urls: list[str], request_data: dict[str, Any]) -> tuple[st
 
 
 async def _download_to_temp(url: str, suffix: str, max_bytes: int = 50 * 1024 * 1024) -> str | None:
-    tmp_path: str | None = None
-    try:
-        async with aiohttp.ClientSession(headers={"User-Agent": "Mozilla/5.0", "Accept": "*/*"}) as session:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=180)) as resp:
-                if resp.status != 200:
-                    return None
-                if resp.content_length and resp.content_length > max_bytes:
-                    return None
-                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-                tmp_path = tmp.name
-                downloaded = 0
+    retryable_statuses = {408, 425, 429, 500, 502, 503, 504}
+
+    for attempt in range(1, SEEDANCE25_RESULT_DOWNLOAD_ATTEMPTS + 1):
+        tmp_path: str | None = None
+        try:
+            async with aiohttp.ClientSession(
+                headers={"User-Agent": "Mozilla/5.0", "Accept": "*/*"}
+            ) as session:
+                async with session.get(
+                    url,
+                    timeout=aiohttp.ClientTimeout(
+                        total=SEEDANCE25_RESULT_DOWNLOAD_TIMEOUT_SECONDS
+                    ),
+                ) as resp:
+                    if resp.status != 200:
+                        if (
+                            resp.status in retryable_statuses
+                            and attempt < SEEDANCE25_RESULT_DOWNLOAD_ATTEMPTS
+                        ):
+                            logger.warning(
+                                "Seedance 2.5 result download HTTP %s; retrying attempt=%s/%s",
+                                resp.status,
+                                attempt + 1,
+                                SEEDANCE25_RESULT_DOWNLOAD_ATTEMPTS,
+                            )
+                            if SEEDANCE25_RESULT_DOWNLOAD_RETRY_DELAY_SECONDS:
+                                await asyncio.sleep(
+                                    SEEDANCE25_RESULT_DOWNLOAD_RETRY_DELAY_SECONDS
+                                    * attempt
+                                )
+                            continue
+                        return None
+                    if resp.content_length and resp.content_length > max_bytes:
+                        return None
+
+                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+                    tmp_path = tmp.name
+                    downloaded = 0
+                    try:
+                        async for chunk in resp.content.iter_chunked(64 * 1024):
+                            downloaded += len(chunk)
+                            if downloaded > max_bytes:
+                                raise ValueError("result too large")
+                            tmp.write(chunk)
+                    finally:
+                        tmp.close()
+            return tmp_path
+        except (asyncio.TimeoutError, aiohttp.ClientError, OSError):
+            if tmp_path and os.path.exists(tmp_path):
                 try:
-                    async for chunk in resp.content.iter_chunked(64 * 1024):
-                        downloaded += len(chunk)
-                        if downloaded > max_bytes:
-                            raise ValueError("result too large")
-                        tmp.write(chunk)
-                finally:
-                    tmp.close()
-        return tmp_path
-    except Exception:
-        logger.exception("Seedance 2.5 result download failed: %s", url)
-        if tmp_path and os.path.exists(tmp_path):
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-        return None
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+            if attempt < SEEDANCE25_RESULT_DOWNLOAD_ATTEMPTS:
+                logger.warning(
+                    "Seedance 2.5 result download transient failure; retrying attempt=%s/%s",
+                    attempt + 1,
+                    SEEDANCE25_RESULT_DOWNLOAD_ATTEMPTS,
+                    exc_info=True,
+                )
+                if SEEDANCE25_RESULT_DOWNLOAD_RETRY_DELAY_SECONDS:
+                    await asyncio.sleep(
+                        SEEDANCE25_RESULT_DOWNLOAD_RETRY_DELAY_SECONDS * attempt
+                    )
+                continue
+            logger.exception(
+                "Seedance 2.5 result download failed after %s attempts: %s",
+                attempt,
+                url,
+            )
+            return None
+        except Exception:
+            logger.exception("Seedance 2.5 result download failed: %s", url)
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+            return None
+
+    return None
 
 
 async def _send_seedance25_results(
@@ -603,7 +667,7 @@ async def _send_seedance25_results(
     video_url: str,
     last_frame_url: str | None,
     request_data: dict[str, Any],
-) -> None:
+) -> bool:
     bot = app["bot"]
     output_format = str(request_data.get("output_format") or _extension_from_url(video_url) or "mp4").lower()
     resolution = str(request_data.get("resolution") or "720p")
@@ -681,6 +745,7 @@ async def _send_seedance25_results(
                 disable_web_page_preview=False,
                 reply_markup=result_markup,
             )
+            delivered = True
         except Exception:
             logger.exception("Seedance 2.5 result notification failed")
 
@@ -709,6 +774,51 @@ async def _send_seedance25_results(
                 await bot.send_message(telegram_id, frame_caption + f"\n{last_frame_url}", parse_mode="HTML")
             except Exception:
                 logger.exception("Seedance 2.5 last-frame delivery failed")
+
+    return delivered
+
+
+def _is_seedance25_copyright_failure(code: int | str | None, fail_msg: str | None) -> bool:
+    text = str(fail_msg or "").strip().lower()
+    if not text:
+        return False
+    markers = (
+        "copyright",
+        "intellectual property",
+        "copyright restrictions",
+        "copyright restriction",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _seedance25_failure_text(
+    task_id: str,
+    *,
+    code: int | str | None,
+    fail_msg: str,
+    request_data: dict[str, Any],
+) -> str:
+    if _is_seedance25_copyright_failure(code, fail_msg):
+        reason = (
+            "KIE/ByteDance отклонил один из исходных материалов из-за "
+            "ограничений авторских прав. Попробуйте другой референс или исходник."
+        )
+    else:
+        reason = str(fail_msg or "ошибка провайдера").strip()[:600]
+
+    if request_data.get("admin_free"):
+        billing = "Списаний не было."
+    elif request_data.get("refund_claimed"):
+        billing = "🍌 Списание возвращено автоматически."
+    else:
+        billing = "🍌 Если списание прошло, возврат будет выполнен автоматически."
+
+    return (
+        "❌ <b>Seedance 2.5 не завершилась</b>\n"
+        f"ID: <code>{html.escape(task_id)}</code>\n"
+        f"Причина: {html.escape(reason)}\n\n"
+        f"{billing}"
+    )
 
 
 async def _load_task_row(task_id: str):
@@ -750,6 +860,85 @@ async def _store_task_result(task_id: str, video_url: str | None, urls: list[str
         await db.commit()
 
 
+async def _mark_seedance25_delivery(
+    task_id: str,
+    status: str,
+    *,
+    error: str | None = None,
+) -> None:
+    from bot.database import mark_task_delivery_status
+
+    await mark_task_delivery_status(task_id, status, error=error)
+
+
+def _stored_result_urls(row) -> list[str]:
+    raw = row["result_urls"] if "result_urls" in row else None
+    if isinstance(raw, list):
+        urls = [str(item).strip() for item in raw if str(item).strip()]
+    else:
+        try:
+            parsed = json.loads(raw or "[]")
+        except (TypeError, json.JSONDecodeError):
+            parsed = []
+        urls = [str(item).strip() for item in parsed if str(item).strip()] if isinstance(parsed, list) else []
+    result_url = str(row["result_url"] or "").strip()
+    if result_url and result_url not in urls:
+        urls.insert(0, result_url)
+    return urls
+
+
+async def _claim_seedance25_delivery(task_id: str) -> bool:
+    from bot.database import claim_task_delivery
+
+    return await claim_task_delivery(task_id, lease_seconds=300)
+
+
+async def _retry_seedance25_delivery(
+    app: web.Application,
+    row,
+    request_data: dict[str, Any],
+) -> bool:
+    task_id = str(row["task_id"] or "").strip()
+    if not await _claim_seedance25_delivery(task_id):
+        return False
+
+    telegram_id = int(row["telegram_id"])
+    urls = _stored_result_urls(row)
+    video_url, last_frame_url = _classify_results(urls, request_data)
+    if not video_url:
+        await _mark_seedance25_delivery(
+            task_id,
+            "pending",
+            error="completed Seedance 2.5 task has no stored video URL",
+        )
+        return False
+
+    try:
+        delivered = await _send_seedance25_results(
+            app,
+            telegram_id,
+            task_id,
+            video_url,
+            last_frame_url if request_data.get("return_last_frame") else None,
+            request_data,
+        )
+    except Exception as exc:
+        logger.exception("Seedance 2.5 delivery attempt crashed for task %s", task_id)
+        await _mark_seedance25_delivery(task_id, "pending", error=str(exc))
+        return False
+
+    if delivered:
+        await _mark_seedance25_delivery(task_id, "delivered")
+        return True
+
+    await _mark_seedance25_delivery(
+        task_id,
+        "pending",
+        error="Telegram/CDN delivery failed; reconciliation scheduled",
+    )
+    return False
+
+
 async def _process_seedance25_payload(app: web.Application, payload: dict[str, Any]) -> bool:
     data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
     task_id = str((data or {}).get("taskId") or payload.get("taskId") or "").strip()
@@ -759,8 +948,6 @@ async def _process_seedance25_payload(app: web.Application, payload: dict[str, A
     row = await _load_task_row(task_id)
     if not row or str(row["model"] or "") != MODEL_KEY:
         return False
-    if str(row["status"] or "").lower() in {"completed", "failed"}:
-        return True
 
     try:
         request_data = json.loads(row["request_data"] or "{}")
@@ -768,20 +955,41 @@ async def _process_seedance25_payload(app: web.Application, payload: dict[str, A
         request_data = {}
     request_data.setdefault("duration", row["duration"])
 
+    row_status = str(row["status"] or "").lower()
+    if row_status == "failed":
+        return True
+    if row_status == "completed":
+        delivery_status = str(request_data.get("delivery_status") or "").lower()
+        if delivery_status == "delivered":
+            return True
+        await _retry_seedance25_delivery(app, row, request_data)
+        return True
+
     state = str((data or {}).get("state") or payload.get("state") or "").lower()
-    code = int(payload.get("code") or 200)
+    try:
+        code = int(payload.get("code") or (data or {}).get("failCode") or 200)
+    except (TypeError, ValueError):
+        code = 200
+    fail_code = (data or {}).get("failCode") or code
     fail_msg = str((data or {}).get("failMsg") or payload.get("msg") or "")
     telegram_id = int(row["telegram_id"])
 
-    if state in {"fail", "failed", "error"} or code in {501, 500, 422, 402, 429, 455, 505}:
+    failure_codes = {"400", "501", "500", "422", "402", "429", "455", "505"}
+    if (
+        state in {"fail", "failed", "error"}
+        or str(code) in failure_codes
+        or str(fail_code) in failure_codes
+    ):
         await _store_task_result(task_id, None, [], success=False)
         try:
             await app["bot"].send_message(
                 telegram_id,
-                "❌ <b>Seedance 2.5 не завершилась</b>\n"
-                f"ID: <code>{task_id}</code>\n"
-                f"Причина: <code>{fail_msg[:600] or 'provider error'}</code>\n\n"
-                "Admin preview — списаний не было.",
+                _seedance25_failure_text(
+                    task_id,
+                    code=fail_code,
+                    fail_msg=fail_msg,
+                    request_data=request_data,
+                ),
                 parse_mode="HTML",
             )
         except Exception:
@@ -794,19 +1002,21 @@ async def _process_seedance25_payload(app: web.Application, payload: dict[str, A
     urls = _extract_result_urls(payload)
     if not urls:
         return False
-    video_url, last_frame_url = _classify_results(urls, request_data)
+    video_url, _last_frame_url = _classify_results(urls, request_data)
     if not video_url:
         return False
 
     await _store_task_result(task_id, video_url, urls, success=True)
-    await _send_seedance25_results(
-        app,
-        telegram_id,
-        task_id,
-        video_url,
-        last_frame_url if request_data.get("return_last_frame") else None,
-        request_data,
-    )
+    await _mark_seedance25_delivery(task_id, "result_ready")
+    refreshed = await _load_task_row(task_id)
+    if not refreshed:
+        return False
+    try:
+        refreshed_request = json.loads(refreshed["request_data"] or "{}")
+    except (TypeError, json.JSONDecodeError):
+        refreshed_request = dict(request_data)
+    refreshed_request.setdefault("duration", refreshed["duration"])
+    await _retry_seedance25_delivery(app, refreshed, refreshed_request)
     return True
 
 
@@ -831,15 +1041,42 @@ async def _seedance25_reconcile_loop(app: web.Application) -> None:
     await asyncio.sleep(15)
     while True:
         try:
+            if db_backend.is_postgres():
+                recent_completed_expr = (
+                    "updated_at >= CURRENT_TIMESTAMP - INTERVAL '7 days'"
+                )
+                delivery_state_expr = (
+                    "CASE WHEN json_valid(request_data) "
+                    "THEN request_data::jsonb ->> 'delivery_status' ELSE NULL END"
+                )
+            else:
+                recent_completed_expr = (
+                    "updated_at >= datetime(CURRENT_TIMESTAMP, '-7 days')"
+                )
+                delivery_state_expr = (
+                    "CASE WHEN json_valid(request_data) "
+                    "THEN json_extract(request_data, '$.delivery_status') ELSE NULL END"
+                )
             async with db_backend.connect() as db:
                 db.row_factory = db_backend.Row
                 cursor = await db.execute(
-                    """
-                    SELECT task_id
+                    f"""
+                    SELECT task_id, status, request_data
                     FROM generation_tasks
-                    WHERE model = ? AND status = 'pending'
-                    ORDER BY created_at ASC
-                    LIMIT 25
+                    WHERE model = ?
+                      AND (
+                            status = 'pending'
+                            OR (
+                                status = 'completed'
+                                AND result_url IS NOT NULL
+                                AND {recent_completed_expr}
+                                AND {delivery_state_expr}
+                                    IN ('result_ready', 'pending', 'delivering')
+                            )
+                      )
+                    ORDER BY CASE WHEN status = 'pending' THEN 0 ELSE 1 END,
+                             created_at ASC
+                    LIMIT 50
                     """,
                     (MODEL_KEY,),
                 )
@@ -848,6 +1085,24 @@ async def _seedance25_reconcile_loop(app: web.Application) -> None:
                 task_id = str(row["task_id"] or "")
                 if not task_id:
                     continue
+                status = str(row["status"] or "").lower()
+                if status == "completed":
+                    try:
+                        request_data = json.loads(row["request_data"] or "{}")
+                    except (TypeError, json.JSONDecodeError):
+                        request_data = {}
+                    if str(request_data.get("delivery_status") or "").lower() not in {
+                        "result_ready",
+                        "pending",
+                        "delivering",
+                    }:
+                        continue
+                    await _process_seedance25_payload(
+                        app,
+                        {"code": 200, "data": {"taskId": task_id}},
+                    )
+                    continue
+
                 task_data = await kie_market_service.get_task_status(task_id)
                 if not task_data:
                     continue

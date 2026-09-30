@@ -78,6 +78,62 @@ async def test_mark_task_delivery_status_persists_delivery_metadata(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_claim_task_delivery_sets_atomic_lease(monkeypatch):
+    task = database.GenerationTask(
+        id=9,
+        user_id=1,
+        task_id="seedance-ready",
+        type="video",
+        preset_id="no_preset_video",
+        request_data=json.dumps({"delivery_status": "result_ready"}),
+    )
+    monkeypatch.setattr(database, "get_task_by_id", AsyncMock(return_value=task))
+
+    conn = FakeConnection()
+    cursor = MagicMock()
+    cursor.rowcount = 1
+    conn.execute.return_value = cursor
+    monkeypatch.setattr(database.db_backend, "connect", lambda *_args, **_kwargs: conn)
+
+    claimed = await database.claim_task_delivery("seedance-ready", lease_seconds=300)
+
+    assert claimed is True
+    _sql, params = conn.execute.await_args.args
+    payload = json.loads(params[0])
+    assert payload["delivery_status"] == "delivering"
+    assert payload["delivery_attempts"] == 1
+    assert payload["delivery_claimed_at"]
+    assert params[1] == 9
+
+
+@pytest.mark.asyncio
+async def test_claim_task_delivery_respects_active_lease(monkeypatch):
+    from datetime import UTC, datetime
+
+    task = database.GenerationTask(
+        id=10,
+        user_id=1,
+        task_id="seedance-delivering",
+        type="video",
+        preset_id="no_preset_video",
+        request_data=json.dumps(
+            {
+                "delivery_status": "delivering",
+                "delivery_claimed_at": datetime.now(UTC).isoformat(),
+            }
+        ),
+    )
+    monkeypatch.setattr(database, "get_task_by_id", AsyncMock(return_value=task))
+    connect = MagicMock()
+    monkeypatch.setattr(database.db_backend, "connect", connect)
+
+    claimed = await database.claim_task_delivery("seedance-delivering", lease_seconds=300)
+
+    assert claimed is False
+    connect.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_complete_video_task_marks_completed_with_result_url(monkeypatch):
     conn = FakeConnection()
     monkeypatch.setattr(database.db_backend, "connect", lambda *_args, **_kwargs: conn)

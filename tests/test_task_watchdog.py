@@ -99,6 +99,29 @@ class TestForceFailTask:
             assert result is False
 
     @pytest.mark.asyncio
+    async def test_skips_double_refund_when_webhook_already_refunded(self):
+        mock_db = AsyncMock()
+
+        existing_cursor = AsyncMock()
+        existing_cursor.fetchone.return_value = {
+            "request_data": '{"refund_claimed": true, "refund_state": "refunded"}'
+        }
+        update_cursor = AsyncMock()
+        update_cursor.rowcount = 1
+        mock_db.execute.side_effect = [existing_cursor, update_cursor]
+
+        mock_connect = AsyncMock()
+        mock_connect.__aenter__.return_value = mock_db
+
+        with patch("bot.services.task_watchdog.db_backend.connect", return_value=mock_connect):
+            result = await force_fail_task(task_id=1, user_id=42, cost=10.0)
+
+        assert result is True
+        assert mock_db.execute.call_count == 2
+        executed_sql = [call.args[0] for call in mock_db.execute.await_args_list]
+        assert not any("UPDATE users" in sql for sql in executed_sql)
+
+    @pytest.mark.asyncio
     async def test_skips_refund_when_cost_zero(self):
         mock_db = AsyncMock()
         cursor = AsyncMock()
