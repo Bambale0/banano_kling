@@ -17,6 +17,7 @@ import aiohttp
 
 from bot.config import config
 from bot.database import get_bot_setting
+from bot.services.openrouter_gemini31_service import openrouter_gemini31_service
 
 logger = logging.getLogger(__name__)
 MEDIA_ANALYSIS_PROVIDERS = frozenset({"kie_gemini31", "qwen38"})
@@ -182,11 +183,14 @@ class KieGemini31Service:
         self,
         *,
         media_url: str,
+        media_kind: str = "image",
         user_instruction: str,
         system_prompt: str | None = None,
     ) -> str:
         trace = _analysis_trace.get() or MediaAnalysisTrace()
         trace.provider = "kie_gemini31"
+        if media_kind not in {"image", "video"}:
+            raise ValueError("media_kind must be image or video")
         if not self.api_key:
             trace.log("provider_failure", error="missing_credentials")
             raise RuntimeError("KIE_AI_API_KEY is not configured for media analysis")
@@ -217,6 +221,24 @@ class KieGemini31Service:
         )
         request_id = trace.request_id
         started = time.monotonic()
+
+        async def openrouter_fallback(error: str) -> str:
+            if not openrouter_gemini31_service.enabled:
+                trace.log("provider_failure", error=error)
+                raise RuntimeError(
+                    "Gemini 3.1 fallback transport is not configured"
+                )
+            trace.provider = "openrouter_gemini31"
+            trace.log("fallback", error=error)
+            content = await openrouter_gemini31_service.analyze_media(
+                media_url=media_url,
+                media_kind=media_kind,
+                user_instruction=user_instruction,
+                system_prompt=system_prompt,
+            )
+            trace.log("provider_success")
+            return content
+
         async with aiohttp.ClientSession(timeout=timeout) as session:
             for attempt in range(1, attempts + 1):
                 try:
@@ -239,6 +261,10 @@ class KieGemini31Service:
                             await asyncio.sleep(2 ** (attempt - 1))
                             continue
                         if response.status >= 400:
+                            if response.status == 429 or response.status >= 500:
+                                return await openrouter_fallback(
+                                    f"kie_http_{response.status}"
+                                )
                             trace.log(
                                 "provider_failure",
                                 error="http_error",
@@ -250,13 +276,31 @@ class KieGemini31Service:
                         data: Any = None
                         try:
                             data = await response.json(content_type=None)
+                            if isinstance(data, dict):
+                                try:
+                                    body_code = int(data.get("code", 0) or 0)
+                                except (TypeError, ValueError):
+                                    body_code = 0
+                                if body_code >= 500:
+                                    logger.warning(
+                                        "media_analysis provider=kie model=%s request_id=%s "
+                                        "attempt=%s transient_body_code=%s shape=%s",
+                                        self.MODEL,
+                                        request_id,
+                                        attempt,
+                                        body_code,
+                                        _safe_response_shape(data),
+                                    )
+                                    return await openrouter_fallback(
+                                        f"kie_body_{body_code}"
+                                    )
                             content = _extract_chat_content(data)
                         except (
                             json.JSONDecodeError,
                             KeyError,
                             IndexError,
                             TypeError,
-                        ) as exc:
+                        ):
                             logger.warning(
                                 "media_analysis provider=kie model=%s request_id=%s "
                                 "attempt=%s retryable=invalid_response status=%s shape=%s",
@@ -274,14 +318,7 @@ class KieGemini31Service:
                                 )
                                 await asyncio.sleep(2 ** (attempt - 1))
                                 continue
-                            trace.log(
-                                "provider_failure",
-                                error="invalid_response",
-                                status=response.status,
-                            )
-                            raise RuntimeError(
-                                "KIE Gemini 3.1 Pro returned an invalid response"
-                            ) from exc
+                            return await openrouter_fallback("invalid_response")
                         if not content:
                             logger.warning(
                                 "media_analysis provider=kie model=%s request_id=%s "
@@ -300,14 +337,7 @@ class KieGemini31Service:
                                 )
                                 await asyncio.sleep(2 ** (attempt - 1))
                                 continue
-                            trace.log(
-                                "provider_failure",
-                                error="empty_content",
-                                status=response.status,
-                            )
-                            raise RuntimeError(
-                                "KIE Gemini 3.1 Pro returned empty content"
-                            )
+                            return await openrouter_fallback("empty_content")
                         trace.log("provider_success", status=response.status)
                         return content
                 except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
@@ -319,9 +349,6 @@ class KieGemini31Service:
                         type(exc).__name__,
                     )
                     if attempt == attempts:
-                        trace.log("provider_failure", error=type(exc).__name__)
-                        raise RuntimeError(
-                            f"KIE Gemini 3.1 Pro network failure (request_id={request_id})"
-                        ) from exc
+                        return await openrouter_fallback(type(exc).__name__)
                     await asyncio.sleep(2 ** (attempt - 1))
         raise RuntimeError("KIE Gemini 3.1 Pro exhausted attempts")

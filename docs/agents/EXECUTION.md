@@ -597,3 +597,31 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Explicit Qwen routing tests now select qwen38 through the same bot setting used in production. Existing prompt-v2 text-only explicit-Qwen routing was aligned with that contract.
 - Production bot setting re-verified as kie_gemini31 after isolated tests.
 - Final isolated backend gate: ruff checks passed; full pytest 1344 passed, 2 skipped, 123 warnings.
+
+---
+
+## 2026-09-30 — Gemini 3.1 provider-to-provider fallback
+
+### Incident
+- Production smoke after PR #211 confirmed KIE Gemini 3.1 Pro can return HTTP 200 with application body code=500.
+- KIE retry remained on Gemini but two consecutive body=500 responses still caused terminal failure.
+- KIE Gemini 3 Flash and Gemini 2.5 Flash channels returned application 422 (channel not supported) for this account.
+- OpenRouter exposes google/gemini-3.1-pro-preview and live smoke succeeded for both image and video inputs.
+
+### Fix
+- Keep KIE gemini-3.1-pro as primary transport.
+- On KIE upstream/transient exhaustion or body code>=500, fall back to OpenRouter google/gemini-3.1-pro-preview.
+- Preserve media kind so image fallback sends image_url and video fallback sends video_url.
+- Qwen is not part of this fallback chain.
+
+### Verification
+- Focused body-500 fallback tests cover image and video.
+- Timeout fallback regression updated to Gemini->Gemini behavior.
+- Full isolated backend gate: 1346 passed, 2 skipped.
+- Ruff focused checks passed.
+
+### WAN audit
+- Production model is wan/2-7-image-pro through KIE.
+- Latest 100 WAN rows: 89 completed / 11 failed; completed p50 31.3s, p95 38.8s, max 41.1s.
+- Fresh failures on Sep 28 were KIE green-net moderation (input/output image), not transport failures.
+- Existing WAN auto-retry intentionally covers timeout failures only; moderation failures were not auto-retried.
