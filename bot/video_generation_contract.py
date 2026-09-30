@@ -64,6 +64,18 @@ def normalize_video_request(payload: dict[str, Any] | None) -> dict[str, Any]:
     model = normalize_video_model_key(source.get("v_model") or source.get("model"))
     capability = get_video_capability(model)
 
+    # Mini App / public Seedance 2.5 persists provider-oriented keys instead of
+    # the Telegram repeat contract (no user_prompt / v_duration / v_ratio).
+    # Normalize them here so both repeat paths restore identical parameters.
+    if source.get("user_prompt") in (None, "") and source.get("prompt"):
+        source["user_prompt"] = source.get("prompt")
+    if source.get("v_duration") in (None, "") and source.get("duration") is not None:
+        source["v_duration"] = source.get("duration")
+    if source.get("v_duration") in (None, "") and source.get("duration_s") is not None:
+        source["v_duration"] = source.get("duration_s")
+    if source.get("v_ratio") in (None, "") and source.get("aspect_ratio"):
+        source["v_ratio"] = source.get("aspect_ratio")
+
     normalized: dict[str, Any] = {
         key: source[key]
         for key in VIDEO_REQUEST_KEYS
@@ -129,8 +141,24 @@ def build_repeat_video_state(
     request_data: dict[str, Any] | None,
     *,
     include_private_media: bool,
+    task: Any | None = None,
 ) -> dict[str, Any]:
     restored = normalize_video_request(request_data)
+    # Legacy Mini App rows keep prompt/duration/ratio on task columns only.
+    if task is not None:
+        if not restored.get("user_prompt"):
+            fallback_prompt = str(getattr(task, "prompt", "") or "").strip()
+            if fallback_prompt:
+                restored["user_prompt"] = fallback_prompt
+        try:
+            legacy_duration = int(getattr(task, "duration", 0) or 0)
+        except (TypeError, ValueError):
+            legacy_duration = 0
+        if legacy_duration > 0 and str(restored.get("v_duration")) == "5":
+            restored["v_duration"] = legacy_duration
+        legacy_ratio = str(getattr(task, "aspect_ratio", "") or "").strip()
+        if legacy_ratio and str(restored.get("v_ratio")) == "16:9":
+            restored["v_ratio"] = legacy_ratio
     if not include_private_media:
         for key in (
             "v_image_url",

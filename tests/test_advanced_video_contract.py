@@ -71,6 +71,34 @@ def test_repeat_keeps_private_media_for_owner():
     assert state["v_reference_audio"] == ["audio"]
 
 
+def test_repeat_restores_legacy_miniapp_seedance25_params():
+    from types import SimpleNamespace
+
+    legacy_task = SimpleNamespace(
+        prompt="miniapp seedance prompt",
+        duration=9,
+        aspect_ratio="9:16",
+    )
+    state = build_repeat_video_state(
+        {
+            "source": "miniapp",
+            "release": "seedance_2_5_public",
+            "v_model": "seedance_2_5",
+            "v_type": "video",
+            "seedance25_scenario": "multimodal",
+            "resolution": "720p",
+            "reference_images": ["image"],
+        },
+        include_private_media=True,
+        task=legacy_task,
+    )
+    assert state["user_prompt"] == "miniapp seedance prompt"
+    assert int(state["v_duration"]) == 9
+    assert state["v_ratio"] == "9:16"
+    assert state["reference_images"] == ["image"]
+    assert state["v_model"] == "seedance_2_5"
+
+
 @pytest.mark.asyncio
 async def test_kling_4k_payload_keeps_mode(monkeypatch):
     service = KlingService(kie_key="test")
