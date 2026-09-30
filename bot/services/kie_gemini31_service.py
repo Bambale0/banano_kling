@@ -241,7 +241,7 @@ class KieGemini31Service:
 
             fallback_payload = dict(payload)
             fallback_payload["model"] = fallback_model
-            trace.provider = "kie_gemini35_flash"
+            trace.provider = "kie_gemini38_flash"
             trace.log("fallback", error=error)
 
             for fallback_attempt in range(1, fallback_attempts + 1):
@@ -469,7 +469,5 @@ class KieGemini31Service:
                         attempt,
                         type(exc).__name__,
                     )
-                    if attempt == attempts:
-                        return await kie_fallback(session, type(exc).__name__)
-                    await asyncio.sleep(2 ** (attempt - 1))
+                    return await kie_fallback(session, type(exc).__name__)
         raise RuntimeError("KIE Gemini 3.1 Pro exhausted attempts")

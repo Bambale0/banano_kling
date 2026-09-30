@@ -650,3 +650,24 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Full isolated backend gate: 1346 passed, 2 skipped.
 - Ruff focused checks passed.
 - No openrouter_gemini31 / OPENROUTER_GEMINI31 references remain in bot/tests/deployment/.env.example.
+
+---
+
+## 2026-09-30 — KIE Gemini 3.8 fallback + primary timeout
+
+### Evidence
+- KIE Gemini 3.8 Flash OpenAI-compatible endpoint was live-tested with the production KIE key.
+- Both the public image smoke and the existing tanyapi video URL returned HTTP 200 with non-empty content.
+- A production KIE Gemini 3.1 smoke exceeded 210 seconds because the default timeout was 180s and primary attempts=2.
+
+### Fix
+- Fallback model: gemini-3-8-flash.
+- Fallback endpoint: /gemini-3-8-flash-openai/v1/chat/completions.
+- Primary KIE Gemini 3.1 timeout default reduced from 180s to 90s.
+- First aiohttp/network timeout now falls back immediately to KIE Gemini 3.8 instead of retrying Gemini 3.1.
+- Automatic fallback remains KIE-only; OpenRouter is not used in this path.
+
+### Verification
+- Focused fallback/timeout regression: 3 passed.
+- Full isolated backend suite: 1346 passed, 2 skipped.
+- Ruff focused checks passed.
