@@ -396,7 +396,8 @@ A generated result is saved before Telegram delivery. `request_data.delivery_sta
 tracks delivery separately: `delivering` holds a lease, `pending` needs retry,
 `link_sent` records only a fallback link, and `delivered` means media was sent.
 `delivery_link_sent` suppresses duplicate fallback links while file retries continue.
-Completed tasks with a missing delivery marker are also recovered. Reconciliation
+Completion and its result_ready marker are committed atomically. Legacy completed
+tasks without markers are not automatically resent. Reconciliation
 uses `completed_at` (or legacy `created_at`) for the retry window, so repeated
 attempts cannot extend it indefinitely. After this window, the stored result remains
 available but automatic file delivery stops; inspect provider URL availability and

@@ -848,7 +848,8 @@ async def _load_task_row(task_id: str):
 
 async def _store_task_result(task_id: str, video_url: str | None, urls: list[str], *, success: bool) -> None:
     async with db_backend.connect() as db:
-        await db.execute(
+        db.row_factory = db_backend.Row
+        cursor = await db.execute(
             """
             UPDATE generation_tasks
             SET result_url = ?,
@@ -857,6 +858,7 @@ async def _store_task_result(task_id: str, video_url: str | None, urls: list[str
                 completed_at = CASE WHEN ? = 'completed' THEN CURRENT_TIMESTAMP ELSE completed_at END,
                 updated_at = CURRENT_TIMESTAMP
             WHERE task_id = ? AND status IN ('pending', 'processing')
+            RETURNING request_data
             """,
             (
                 video_url,
@@ -866,6 +868,21 @@ async def _store_task_result(task_id: str, video_url: str | None, urls: list[str
                 task_id,
             ),
         )
+        claimed = await cursor.fetchone()
+        if claimed and success:
+            # The result and recovery marker commit together while the row is
+            # locked. Legacy completed rows without markers are not replayed.
+            try:
+                metadata = json.loads(claimed["request_data"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                metadata = {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            metadata["delivery_status"] = "result_ready"
+            await db.execute(
+                "UPDATE generation_tasks SET request_data = ? WHERE task_id = ?",
+                (json.dumps(metadata, ensure_ascii=False), task_id),
+            )
         await db.commit()
 
 
@@ -969,7 +986,7 @@ async def _process_seedance25_payload(app: web.Application, payload: dict[str, A
         return True
     if row_status == "completed":
         delivery_status = str(request_data.get("delivery_status") or "").lower()
-        if delivery_status == "delivered":
+        if delivery_status in {"", "delivered", "failed"}:
             return True
         await _retry_seedance25_delivery(app, row, request_data)
         return True
@@ -1078,8 +1095,8 @@ async def _seedance25_reconcile_loop(app: web.Application) -> None:
                                 status = 'completed'
                                 AND result_url IS NOT NULL
                                 AND {recent_completed_expr}
-                                AND COALESCE({delivery_state_expr}, '')
-                                    IN ('', 'result_ready', 'pending', 'delivering', 'link_sent')
+                                AND {delivery_state_expr}
+                                    IN ('result_ready', 'pending', 'delivering', 'link_sent')
                             )
                       )
                     ORDER BY COALESCE(updated_at, created_at) ASC, id ASC
@@ -1099,7 +1116,6 @@ async def _seedance25_reconcile_loop(app: web.Application) -> None:
                     except (TypeError, json.JSONDecodeError):
                         request_data = {}
                     if str(request_data.get("delivery_status") or "").lower() not in {
-                        "",
                         "result_ready",
                         "pending",
                         "delivering",

@@ -496,12 +496,14 @@ async def test_success_replay_cannot_reset_delivery_lease():
 
 
 @pytest.mark.asyncio
-async def test_completed_without_delivery_marker_is_reconciled(monkeypatch):
+async def test_completion_atomically_persists_recovery_marker(monkeypatch):
     import asyncio
     from bot import database
     user = await database.get_or_create_user(123456)
     await database.add_generation_task(user.id, 123456, 'crash-after-store', 'video', 'no_preset_video', model='seedance_2_5', request_data='{}')
     await fullstack_module._store_task_result('crash-after-store', 'https://example.com/video.mp4', [], success=True)
+    task = await database.get_task_by_id('crash-after-store')
+    assert json.loads(task.request_data)['delivery_status'] == 'result_ready'
     process = AsyncMock()
     monkeypatch.setattr(fullstack_module, '_process_seedance25_payload', process)
     sleep = AsyncMock(side_effect=[None, asyncio.CancelledError()])
@@ -555,3 +557,47 @@ async def test_success_callbacks_share_one_delivery_claim(monkeypatch):
     send.assert_awaited_once()
     task = await database.get_task_by_id('concurrent-success')
     assert json.loads(task.request_data)['delivery_status'] == 'delivered'
+
+
+@pytest.mark.asyncio
+async def test_legacy_completed_task_is_not_automatically_redelivered(monkeypatch):
+    from bot import database
+    user = await database.get_or_create_user(123456)
+    await database.add_generation_task(user.id, 123456, 'legacy-complete', 'video', 'no_preset_video', model='seedance_2_5', request_data='{}')
+    async with fullstack_module.db_backend.connect() as db:
+        await db.execute("UPDATE generation_tasks SET status='completed',result_url='https://example.com/video.mp4' WHERE task_id='legacy-complete'")
+        await db.commit()
+    send = AsyncMock()
+    monkeypatch.setattr(fullstack_module, '_send_seedance25_results', send)
+    await fullstack_module._process_seedance25_payload({}, {'data': {'taskId': 'legacy-complete', 'state': 'success'}})
+    send.assert_not_awaited()
+
+@pytest.mark.asyncio
+async def test_completion_marker_failure_rolls_back_result():
+    from bot import database
+    user = await database.get_or_create_user(123456)
+    await database.add_generation_task(user.id, 123456, 'atomic-result', 'video', 'no_preset_video', model='seedance_2_5', request_data='{}')
+    async with fullstack_module.db_backend.connect() as db:
+        await db.execute("CREATE TRIGGER reject_marker BEFORE UPDATE OF request_data ON generation_tasks BEGIN SELECT RAISE(ABORT, 'marker unavailable'); END")
+        await db.commit()
+    with pytest.raises(fullstack_module.db_backend.IntegrityError, match='marker unavailable'):
+        await fullstack_module._store_task_result('atomic-result', 'https://example.com/video.mp4', [], success=True)
+    task = await database.get_task_by_id('atomic-result')
+    assert task.status == 'pending'
+    assert task.result_url is None
+
+
+@pytest.mark.asyncio
+async def test_refund_credit_failure_rolls_back_marker():
+    from bot import database
+    user = await database.get_or_create_user(123456)
+    await database.add_generation_task(user.id, 123456, 'atomic-refund', 'video', 'no_preset_video', model='seedance_2_5', cost=10, request_data={'refund_on_failure': True, 'charged_cost': 10})
+    async with fullstack_module.db_backend.connect() as db:
+        await db.execute("CREATE TRIGGER reject_credit BEFORE UPDATE OF credits ON users BEGIN SELECT RAISE(ABORT, 'credit unavailable'); END")
+        await db.commit()
+    with pytest.raises(fullstack_module.db_backend.IntegrityError, match='credit unavailable'):
+        await public_release._claim_async_refund('atomic-refund')
+    task = await database.get_task_by_id('atomic-refund')
+    assert task.status == 'pending'
+    assert not json.loads(task.request_data).get('refund_claimed')
+    assert (await database.get_or_create_user(123456)).credits == user.credits
