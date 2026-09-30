@@ -722,3 +722,4 @@ Reference cleanup reports how many generation snapshot refs are protected.
   6. Merge to tanyapi after CI, verify exact deployed SHA/health/telemetry — pending.
 - Guidance: Bambale0/skills diagnosing-bugs, code-review; Bambale0/claw QA_AUDIT_CHECKLIST; anthropics/skills webapp-testing (existing browser CI, no frontend changes).
 - Refinement after second review: persisting link_sent retains the delivering lease until the attempt finishes; dedicated DB regression checks a concurrent claim remains blocked. Delivery has an explicit total timeout shorter than its lease; cancellation removes partial downloads.
+- Local verification: full safe backend suite `1072 passed, 3 skipped`; final focused suite after link-lease regression `87 passed`. PostgreSQL 16 isolated contention harness passed: watchdog waited on webhook row lock and observed the committed refund marker; concurrent webhook refund transactions credited once. No production writes during checks.

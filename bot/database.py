@@ -5305,10 +5305,10 @@ async def mark_task_delivery_status(
     if normalized_status == "link_sent":
         request_data["delivery_link_sent"] = True
     if normalized_status == "result_ready":
-        request_data.setdefault("result_ready_at", datetime.utcnow().isoformat())
+        request_data.setdefault("result_ready_at", datetime.now(UTC).isoformat())
     else:
         request_data["delivery_attempts"] = int(request_data.get("delivery_attempts") or 0) + 1
-    request_data["delivery_updated_at"] = datetime.utcnow().isoformat()
+    request_data["delivery_updated_at"] = datetime.now(UTC).isoformat()
     if error:
         request_data["delivery_error"] = str(error)[:500]
     else:
