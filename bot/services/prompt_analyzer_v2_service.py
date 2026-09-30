@@ -496,6 +496,7 @@ class PromptAnalyzerV2Service:
                     media_kind="image",
                     user_instruction=user_instruction,
                     system_prompt=await gemini_photo_system_prompt("v2"),
+                    content_validator=_parse_json_object,
                 )
                 return _build_result(
                     _parse_json_object(raw), provider=KieGemini31Service.MODEL

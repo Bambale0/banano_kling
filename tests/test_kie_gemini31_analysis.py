@@ -495,3 +495,62 @@ async def test_analysis_terminal_failure_is_sanitized_and_does_not_leak_context(
             for r in operation
         )
     assert secret not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_gemini_semantically_invalid_200_falls_back_to_kie_gemini38(monkeypatch):
+    import json
+
+    from bot.config import config
+    from bot.services.kie_gemini31_service import KieGemini31Service
+
+    monkeypatch.setattr(config, "KIE_MEDIA_ANALYSIS_MAX_ATTEMPTS", 2)
+    monkeypatch.setattr(config, "KIE_MEDIA_ANALYSIS_FALLBACK_MAX_ATTEMPTS", 1)
+    primary_calls = []
+    fallback_calls = []
+
+    async def primary(request):
+        primary_calls.append(1)
+        return web.json_response(
+            {"choices": [{"message": {"content": "not valid json"}}]}
+        )
+
+    async def fallback(request):
+        fallback_calls.append(1)
+        return web.json_response(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"prompt_ru":"Готово","prompt_en":"Done"}'
+                        }
+                    }
+                ]
+            }
+        )
+
+    def validate_json(content: str) -> None:
+        parsed = json.loads(content)
+        assert parsed["prompt_ru"]
+        assert parsed["prompt_en"]
+
+    app = web.Application()
+    app.router.add_post("/gemini-3.1-pro/v1/chat/completions", primary)
+    app.router.add_post(
+        "/gemini-3-8-flash-openai/v1/chat/completions",
+        fallback,
+    )
+    async with TestServer(app) as server:
+        service = KieGemini31Service(
+            api_key="test", base_url=str(server.make_url("")).rstrip("/")
+        )
+        result = await service.analyze_media(
+            media_url="https://example.test/photo.jpg",
+            media_kind="image",
+            user_instruction="Analyze",
+            content_validator=validate_json,
+        )
+
+    assert result == '{"prompt_ru":"Готово","prompt_en":"Done"}'
+    assert len(primary_calls) == 1
+    assert len(fallback_calls) == 1

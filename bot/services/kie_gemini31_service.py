@@ -62,6 +62,14 @@ _analysis_trace: ContextVar[MediaAnalysisTrace | None] = ContextVar(
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
+_CONTENT_VALIDATION_ERRORS = (
+    AssertionError,
+    KeyError,
+    TypeError,
+    ValueError,
+    RuntimeError,
+)
+
 
 def trace_media_analysis(
     method: Callable[_P, Awaitable[_R]],
@@ -185,6 +193,7 @@ class KieGemini31Service:
         media_kind: str = "image",
         user_instruction: str,
         system_prompt: str | None = None,
+        content_validator: Callable[[str], Any] | None = None,
     ) -> str:
         trace = _analysis_trace.get() or MediaAnalysisTrace()
         trace.provider = "kie_gemini31"
@@ -339,6 +348,30 @@ class KieGemini31Service:
                                 "KIE Gemini fallback returned empty content"
                             )
 
+                        if content_validator is not None:
+                            try:
+                                content_validator(content)
+                            except _CONTENT_VALIDATION_ERRORS as exc:
+                                logger.warning(
+                                    "media_analysis provider=kie model=%s request_id=%s "
+                                    "attempt=%s fallback=true semantic_invalid=%s",
+                                    fallback_model,
+                                    request_id,
+                                    fallback_attempt,
+                                    type(exc).__name__,
+                                )
+                                if fallback_attempt < fallback_attempts:
+                                    await asyncio.sleep(2 ** (fallback_attempt - 1))
+                                    continue
+                                trace.log(
+                                    "provider_failure",
+                                    error="fallback_invalid_content",
+                                    status=response.status,
+                                )
+                                raise RuntimeError(
+                                    "KIE Gemini fallback returned unusable content"
+                                ) from exc
+
                         trace.log("provider_success", status=response.status)
                         return content
                 except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
@@ -463,6 +496,24 @@ class KieGemini31Service:
                                 await asyncio.sleep(2 ** (attempt - 1))
                                 continue
                             return await kie_fallback(session, "empty_content")
+
+                        if content_validator is not None:
+                            try:
+                                content_validator(content)
+                            except _CONTENT_VALIDATION_ERRORS as exc:
+                                logger.warning(
+                                    "media_analysis provider=kie model=%s request_id=%s "
+                                    "attempt=%s semantic_invalid=%s status=%s",
+                                    self.MODEL,
+                                    request_id,
+                                    attempt,
+                                    type(exc).__name__,
+                                    response.status,
+                                )
+                                return await kie_fallback(
+                                    session, "invalid_content"
+                                )
+
                         trace.log("provider_success", status=response.status)
                         return content
                 except (aiohttp.ClientError, asyncio.TimeoutError) as exc:

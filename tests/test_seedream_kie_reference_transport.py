@@ -75,3 +75,43 @@ async def test_strict_kie_upload_drops_missing_local_reference(monkeypatch):
     )
 
     assert result == ""
+
+
+@pytest.mark.asyncio
+async def test_seedream_5_pro_caps_prompt_before_provider(monkeypatch):
+    captured: dict[str, object] = {}
+
+    async def fake_upload(sources, **_kwargs):
+        return ["https://tempfile.redpandaai.co/seedream/reference.png"]
+
+    async def fake_kie_post(endpoint, payload):
+        captured["endpoint"] = endpoint
+        captured["payload"] = payload
+        return {"task_id": "task-long-prompt"}
+
+    monkeypatch.setattr(
+        seedream_module.kie_file_upload_service,
+        "upload_local_image_sources",
+        fake_upload,
+    )
+    monkeypatch.setattr(seedream_module.seedream_service, "_kie_post", fake_kie_post)
+
+    result = await seedream_module.seedream_service.generate_image(
+        prompt="x" * 5756,
+        image_urls=["https://example.test/reference.png"],
+        model="seedream/5-pro-image-to-image",
+    )
+
+    assert result == {"task_id": "task-long-prompt"}
+    assert captured["endpoint"] == "/api/v1/jobs/createTask"
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert len(payload["input"]["prompt"]) == 5000
+
+
+def test_seedream_45_keeps_existing_6000_char_cap():
+    normalized = seedream_module.seedream_service._normalize_prompt(
+        "x" * 6500,
+        model="seedream/4.5-edit",
+    )
+    assert len(normalized) == 6000
