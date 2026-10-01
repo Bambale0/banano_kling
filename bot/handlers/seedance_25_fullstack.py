@@ -34,6 +34,7 @@ from PIL import Image
 from bot import db as db_backend
 from bot.config import config
 from bot.services.kie_market_service import kie_market_service
+from bot.services.kie_webhook_verification import serialize_kie_callback
 from bot.services.media_input_utils import resolve_local_upload_path
 from bot.services.preset_manager import preset_manager
 from bot.services.seedance_25_service import (
@@ -1075,20 +1076,24 @@ async def _process_seedance25_payload(app: web.Application, payload: dict[str, A
     return True
 
 
+@serialize_kie_callback
 async def seedance25_webhook(request: web.Request) -> web.Response:
     try:
         payload = await request.json()
     except Exception:
         return web.Response(status=200)
 
-    if not kie_market_service.verify_webhook_signature(payload, request.headers):
-        logger.warning("Rejected Seedance 2.5 webhook with invalid signature")
-        return web.Response(status=401)
+    from bot.services.kie_webhook_verification import canonical_kie_callback
+
+    payload, verification_status = await canonical_kie_callback(payload)
+    if payload is None:
+        return web.Response(status=verification_status)
 
     try:
         await _process_seedance25_payload(request.app, payload)
     except Exception:
         logger.exception("Seedance 2.5 dedicated webhook failed")
+        return web.Response(status=503)
     return web.Response(status=200)
 
 

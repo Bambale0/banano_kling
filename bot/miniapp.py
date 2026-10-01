@@ -2610,6 +2610,53 @@ async def miniapp_asset(request: web.Request) -> web.Response:
     response.headers["Expires"] = "0"
     return response
 
+def _miniapp_client_log_url(value: Any, limit: int) -> str:
+    # Launch URLs may carry signed Telegram init data in either component.
+    # Keep the asset/page location, never its query or fragment.
+    location = str(value or "").split("?", 1)[0].split("#", 1)[0]
+    return _miniapp_client_log_text(location, limit)
+
+
+def _miniapp_client_log_text(value: Any, limit: int) -> str:
+    def safe_url(match: re.Match) -> str:
+        try:
+            parsed = urlparse(match.group())
+            return parsed._replace(
+                netloc=parsed.netloc.rsplit("@", 1)[-1], query="", fragment=""
+            ).geturl()
+        except ValueError:
+            return "[invalid-url]"
+
+    text = str(value or "")
+    text = re.sub(r"https?://[^\s<>\"')]+", safe_url, text, flags=re.IGNORECASE)
+    text = re.sub(
+        r"((?:https?://|/)[^\s<>\"'?#]*)[?#][^\s<>\"')]*",
+        r"\1",
+        text,
+    )
+    # Telegram embeds bot credentials in the URL path rather than a query.
+    text = re.sub(r"\bbot\d+:[A-Za-z0-9_-]+", "bot[redacted]", text)
+    # Cover common header, JSON and key=value representations from error text.
+    text = re.sub(
+        r'''(["']?\b(?:init_data|tgWebAppData|hash|token|signature|authorization|'''
+        r'''api[_-]?key|bot[_-]?token|access[_-]?token)\b["']?\s*[:=]\s*)'''
+        r'''(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|'''
+        r'''(?:Bearer|Basic)\s+[^\s,;&}\]]+|[^\s,;&}\]]+)''',
+        r"\1[redacted]",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return text[:limit]
+
+
+def _miniapp_client_log_number(value: Any, default: int | None = 0) -> int | None:
+    try:
+        return int(value) if value is not None else default
+    except (TypeError, ValueError, OverflowError):
+        # Never put untrusted conversion errors (which include the value) in logs.
+        return default
+
+
 async def miniapp_client_log(request: web.Request) -> web.Response:
     try:
         try:
@@ -2620,25 +2667,24 @@ async def miniapp_client_log(request: web.Request) -> web.Response:
         if not isinstance(payload, dict):
             payload = {"payload": str(payload)[:2000]}
         compact = {
-            "event": str(payload.get("event") or "")[:80],
-            "href": str(payload.get("href") or "")[:500],
-            "search": str(payload.get("search") or "")[:500],
-            "hash_len": int(payload.get("hash_len") or len(str(payload.get("hash") or ""))),
+            "event": _miniapp_client_log_text(payload.get("event"), 80),
+            "href": _miniapp_client_log_url(payload.get("href"), 500),
+            "hash_len": _miniapp_client_log_number(payload.get("hash_len") or len(str(payload.get("hash") or ""))),
             "has_tg": bool(payload.get("has_tg")),
             "has_webapp": bool(payload.get("has_webapp")),
-            "init_data_len": int(payload.get("init_data_len") or 0),
-            "message": str(payload.get("message") or "")[:500],
-            "source": str(payload.get("source") or "")[:200],
-            "file_kind": str(payload.get("file_kind") or "")[:80],
-            "file_name": str(payload.get("file_name") or "")[:200],
-            "file_type": str(payload.get("file_type") or "")[:120],
-            "file_size": int(payload.get("file_size") or 0),
-            "duration_ms": int(payload.get("duration_ms") or 0),
-            "status": int(payload.get("status") or 0),
-            "lineno": payload.get("lineno"),
-            "colno": payload.get("colno"),
-            "user_agent": request.headers.get("User-Agent", "")[:300],
-            "ip": request.headers.get("X-Forwarded-For", request.remote or "")[:80],
+            "init_data_len": _miniapp_client_log_number(payload.get("init_data_len")),
+            "message": _miniapp_client_log_text(payload.get("message"), 500),
+            "source": _miniapp_client_log_url(payload.get("source"), 200),
+            "file_kind": _miniapp_client_log_text(payload.get("file_kind"), 80),
+            "file_name": _miniapp_client_log_text(payload.get("file_name"), 200),
+            "file_type": _miniapp_client_log_text(payload.get("file_type"), 120),
+            "file_size": _miniapp_client_log_number(payload.get("file_size")),
+            "duration_ms": _miniapp_client_log_number(payload.get("duration_ms")),
+            "status": _miniapp_client_log_number(payload.get("status")),
+            "lineno": _miniapp_client_log_number(payload.get("lineno"), None),
+            "colno": _miniapp_client_log_number(payload.get("colno"), None),
+            "user_agent": _miniapp_client_log_text(request.headers.get("User-Agent"), 300),
+            "ip": _miniapp_client_log_text(request.headers.get("X-Forwarded-For", request.remote or ""), 80),
         }
         logger.warning("Mini App client log: %s", compact)
     except Exception:

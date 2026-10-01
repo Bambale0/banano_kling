@@ -3951,6 +3951,7 @@ async def _prune_saved_references_for_user_id(
     user_id: int,
     kind: str,
     keep_latest: int = SAVED_REFERENCES_MAX_PER_KIND,
+    keep_reference_id: int | None = None,
 ) -> tuple[int, list[str]]:
     safe_keep_latest = max(1, int(keep_latest or SAVED_REFERENCES_MAX_PER_KIND))
     db.row_factory = db_backend.Row
@@ -3959,10 +3960,11 @@ async def _prune_saved_references_for_user_id(
         SELECT id, file_url
         FROM saved_references
         WHERE user_id = ? AND kind = ?
-        ORDER BY COALESCE(last_used_at, created_at) DESC, id DESC
+        ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END,
+                 COALESCE(last_used_at, created_at) DESC, id DESC
         LIMIT -1 OFFSET ?
         """,
-        (user_id, kind, safe_keep_latest),
+        (user_id, kind, keep_reference_id, safe_keep_latest),
     )
     stale_rows = await cursor.fetchall()
     if not stale_rows:
@@ -4422,6 +4424,10 @@ async def save_user_reference(
     user = await get_or_create_user(telegram_id)
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
+        if db_backend.is_postgres():
+            # Serialize this user's uploads through commit so separate READ
+            # COMMITTED snapshots cannot each retain more than the limit.
+            await db.execute("SELECT id FROM users WHERE id = ? FOR UPDATE", (user.id,))
         await db.execute(
             """
             INSERT INTO saved_references (user_id, kind, file_url, file_hash, original_filename, content_type, source)
@@ -4436,14 +4442,8 @@ async def save_user_reference(
             """,
             (user.id, kind, file_url, file_hash, original_filename, content_type, source),
         )
-        await db.commit()
-        await _prune_saved_references_for_user_id(
-            db,
-            user_id=user.id,
-            kind=kind,
-            keep_latest=SAVED_REFERENCES_MAX_PER_KIND,
-        )
-        await db.commit()
+        # Read our upsert before releasing the transaction. Another upload can
+        # otherwise prune this row between commit and the read below.
         cursor = await db.execute(
             """
             SELECT *
@@ -4454,8 +4454,17 @@ async def save_user_reference(
             (user.id, kind, file_hash),
         )
         row = await cursor.fetchone()
+        reference = _saved_reference_from_row(row)
+        await _prune_saved_references_for_user_id(
+            db,
+            user_id=user.id,
+            kind=kind,
+            keep_latest=SAVED_REFERENCES_MAX_PER_KIND,
+            keep_reference_id=reference.id,
+        )
+        await db.commit()
     await _invalidate_saved_reference_cache(telegram_id)
-    return _saved_reference_from_row(row)
+    return reference
 
 
 async def touch_saved_references(telegram_id: int, file_urls: list[str], kind: Optional[str] = None) -> None:
