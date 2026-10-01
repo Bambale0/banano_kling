@@ -71,6 +71,28 @@ docker compose -f compose.backend.yml logs --tail=200 bot
 docker inspect banano-kling-bot --format '{{json .State.Health}}'
 ```
 
+Application logs are persisted in the mounted `logs/` directory. `bot.log`
+rotates daily at midnight UTC; log timestamps are also UTC regardless of the
+host timezone. The default keeps seven daily archives plus the active file.
+`BANANO_LOG_RETENTION_DAYS` configures both the archive count and the age limit
+used by the daily log cleanup. It accepts an integer of at least `3` days;
+missing values default to `7`, and invalid values fall back to `7` with a
+startup warning. Set it in the backend environment and restart the container
+to apply a change. Existing installations need no environment change to use
+the seven-day default. Previously deleted history cannot be recovered by
+increasing retention.
+
+Docker stdout logs have their own size-based rotation (`20m` × `5` files in
+Compose); they do not guarantee a time window. Use the persisted application
+files for multi-day incident review. Keep access restricted because runtime
+logs can contain user/task identifiers.
+
+The safe pytest suite forces `BANANO_DISABLE_FILE_LOGGING=1` before importing
+bot modules. Test collection and fixture failures therefore cannot append
+synthetic errors to the application's `logs/bot.log`, even when tests run from
+the production checkout. Logging regression tests use temporary directories
+and isolated subprocesses to exercise rotation.
+
 ## Roll back to systemd
 
 ```bash

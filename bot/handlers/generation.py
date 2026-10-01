@@ -19,16 +19,14 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from PIL import Image
+from PIL import Image, ImageOps
 
 from bot import db as db_backend
 from bot.config import config
-from bot.quality_pricing import QUALITY_COSTS, SEEDREAM_5_PRO_QUALITY_COSTS
 from bot.database import (
-    add_credits,
-    add_generation_history,
-    add_generation_task,
     _merge_task_id_aliases,
+    add_credits,
+    add_generation_task,
     check_can_afford,
     complete_video_task,
     credit_feed_prompt_repeat,
@@ -71,8 +69,9 @@ from bot.keyboards import (
     get_video_type_label,
 )
 from bot.miniapp_links import feed_bot_link, feed_link
-from bot.services.gemini_service import gemini_service
+from bot.quality_pricing import QUALITY_COSTS, SEEDREAM_5_PRO_QUALITY_COSTS
 from bot.services.gemini_omni_service import gemini_omni_service
+from bot.services.gemini_service import gemini_service
 from bot.services.gpt_image_service import gpt_image_service
 from bot.services.grok_service import grok_service
 from bot.services.media_input_utils import (
@@ -83,8 +82,8 @@ from bot.services.media_input_utils import (
 from bot.services.nano_banana_2_service import nano_banana_2_service
 from bot.services.nano_banana_pro_service import nano_banana_pro_service
 from bot.services.preset_manager import preset_manager
-from bot.services.seedream_service import seedream_service
 from bot.services.reference_storage_service import save_reference_file
+from bot.services.seedream_service import seedream_service
 from bot.services.veo_service import veo_service
 from bot.services.wan27_service import wan27_service
 from bot.states import GenerationStates
@@ -4491,6 +4490,17 @@ async def _update_reference_upload_message(bot: Bot, chat_id: int, message_id: i
     )
 
 
+def _saved_reference_preview_bytes(local_path: str) -> bytes:
+    """Build a Telegram-sized preview without modifying the reusable original."""
+    with Image.open(local_path) as image:
+        preview = ImageOps.exif_transpose(image).convert("RGB")
+        preview.thumbnail((2048, 2048), Image.Resampling.LANCZOS)
+        buffer = io.BytesIO()
+        preview.save(buffer, format="JPEG", quality=85, optimize=True)
+        preview.close()
+    return buffer.getvalue()
+
+
 async def _send_saved_reference_preview(
     target_message: types.Message,
     state: FSMContext,
@@ -4511,7 +4521,7 @@ async def _send_saved_reference_preview(
     caption = (
         f"📚 <b>Сохранённый реф</b>\n"
         f"• {safe_index + 1} из {len(refs)}\n"
-        f"• Файл: <code>{filename[:64]}</code>\n"
+        f"• Файл: <code>{html.escape(filename[:64])}</code>\n"
         f"• Сохранён: <code>{created_at}</code>\n"
         f"• Статус: <code>{'уже добавлен в текущую сессию' if already_selected else 'готов к использованию'}</code>"
     )
@@ -4540,14 +4550,25 @@ async def _send_saved_reference_preview(
             )
             return None
 
-        with open(local_path, "rb") as f:
-            image_bytes = f.read()
-        return await target_message.answer_photo(
-            photo=types.BufferedInputFile(image_bytes, filename=filename),
-            caption=caption,
-            parse_mode="HTML",
-            reply_markup=reply_markup,
-        )
+        try:
+            image_bytes = await asyncio.to_thread(_saved_reference_preview_bytes, local_path)
+            return await target_message.answer_photo(
+                photo=types.BufferedInputFile(image_bytes, filename="reference-preview.jpg"),
+                caption=caption,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+            )
+        except (OSError, ValueError, Image.DecompressionBombError, TelegramBadRequest) as exc:
+            logger.warning(
+                "Saved reference preview unavailable: reference_id=%s reason=%s",
+                ref.id,
+                type(exc).__name__,
+            )
+            return await target_message.answer(
+                caption,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+            )
 
 
 @router.callback_query(F.data == "savedref_noop")

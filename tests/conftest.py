@@ -3,6 +3,9 @@ import os
 # This must be set while pytest loads conftest, before test modules import
 # bot.config. Unit and integration tests must never read production .env files.
 os.environ["BANANO_SKIP_PROJECT_ENV"] = "1"
+# Importing bot.main configures logging during test collection. Force this even
+# when a production-like shell exported another value, before any bot imports.
+os.environ["BANANO_DISABLE_FILE_LOGGING"] = "1"
 _PARTNER_POSTGRES_TEST = str(os.getenv("PARTNER_POSTGRES_TEST", "")).strip().lower() in {
     "1",
     "true",
@@ -16,7 +19,7 @@ _PARTNER_POSTGRES_TEST = str(os.getenv("PARTNER_POSTGRES_TEST", "")).strip().low
 # contract before bot modules are imported. The dedicated partner PostgreSQL
 # job is the only exception: it must preserve its explicit ephemeral CI DSN.
 for _name in (
-    "ALLOW_NSFW", "CRYPTOBOT_API_TOKEN", "DATABASE_URL", "DEBUG",
+    "ALLOW_NSFW", "BANANO_LOG_RETENTION_DAYS", "CRYPTOBOT_API_TOKEN", "DATABASE_URL", "DEBUG",
     "DOWNLOAD_EXTERNAL_IMAGES", "FREEKASSA_API_KEY", "FREEKASSA_CURRENCY",
     "FREEKASSA_MERCHANT_ID", "FREEKASSA_SECRET_WORD", "FREEKASSA_SECRET_WORD_2",
     "FREEKASSA_VERIFY_IP", "FREEKASSA_WEBHOOK_PATH", "INTERNAL_API_ALLOWED_NETWORKS",

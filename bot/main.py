@@ -40,6 +40,7 @@ import aiohttp
 
 from bot import db as db_backend
 from bot.config import config
+from bot.services.kie_webhook_verification import serialize_kie_callback
 from bot.services.delivery_state import (
     is_terminal_telegram_delivery_error as _is_terminal_telegram_delivery_error,
 )
@@ -94,7 +95,24 @@ from bot.services.yookassa_service import yookassa_service
 
 CLEANUP_INTERVAL_SECONDS = 24 * 3600
 UPLOAD_RETENTION_SECONDS = 24 * 3600
-LOG_RETENTION_SECONDS = 24 * 3600
+
+
+def _configured_log_retention_days() -> int:
+    """Keep at least a 72-hour incident window, including on invalid config."""
+    try:
+        days = int(os.environ.get("BANANO_LOG_RETENTION_DAYS", "7"))
+        if days >= 3:
+            return days
+    except ValueError:
+        pass
+    logging.getLogger(__name__).warning(
+        "BANANO_LOG_RETENTION_DAYS must be an integer >= 3; using 7 days"
+    )
+    return 7
+
+
+LOG_RETENTION_DAYS = _configured_log_retention_days()
+LOG_RETENTION_SECONDS = LOG_RETENTION_DAYS * 24 * 3600
 ACTIVE_LOG_FILENAMES = {"bot.log"}
 DURABLE_IMAGE_RESULT_HOSTS = {
     host.strip().lower().lstrip(".")
@@ -296,12 +314,14 @@ def _configure_logging() -> None:
     formatter = logging.Formatter(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
+    formatter.converter = time.gmtime
     file_handler = TimedRotatingFileHandler(
         "logs/bot.log",
         when="midnight",
         interval=1,
-        backupCount=1,
+        backupCount=LOG_RETENTION_DAYS,
         encoding="utf-8",
+        utc=True,
     )
     file_handler.setFormatter(formatter)
 
@@ -4000,6 +4020,7 @@ async def handle_wanx_webhook(request: web.Request) -> web.Response:
         logger.exception(f"WanX webhook error: {e}")
         return web.Response(status=500)
 
+@serialize_kie_callback
 async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
     """Обработчик уведомлений от Kie.ai (Nano Banana 2) API"""
     try:
@@ -4014,7 +4035,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 skip_secret_check = False
 
             if skip_secret_check:
-                logger.info("Kie.ai webhook secret check skipped for verified KIE Market relay")
+                logger.info("Kie.ai Market callback uses authenticated provider status verification")
             else:
                 secret = config.KIE_AI_WEBHOOK_SECRET
                 if secret:
@@ -4042,10 +4063,19 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             logger.warning(f"Kie.ai webhook received invalid JSON: {e}")
             return web.Response(status=200)
 
-        logger.info("Kie.ai webhook parsed data: %s", _preview_log_payload(data))
+        from bot.services.kie_webhook_verification import canonical_kie_callback
+
+        data, verification_status = await canonical_kie_callback(data)
+        if data is None:
+            return web.Response(status=verification_status)
+
+        logger.info(
+            "Kie.ai canonical task verified: task_id=%s state=%s",
+            data["data"].get("taskId"),
+            data["data"].get("state") or data["data"].get("status"),
+        )
 
         from bot.database import (
-            add_credits,
             complete_video_task,
             get_task_by_id,
             mark_task_delivery_status,
@@ -4548,12 +4578,11 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                     "не вернула картинку."
                 )
             logger.error(
-                "%s task %s FAILED: failCode=%s, failMsg=%s, data=%s",
+                "%s task %s FAILED: failCode=%s, failMsg=%s",
                 service_name,
                 task_id,
                 fail_code,
                 fail_msg,
-                _preview_log_payload(webhook_data),
             )
 
             if task and (
@@ -4617,10 +4646,13 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         retry_error,
                     )
 
-            if task and task.cost and task.cost > 0:
-                await add_credits(telegram_id, task.cost)
+            from bot.services.task_watchdog import force_fail_task
 
-            await complete_video_task(task_id, None)
+            if not task or not await force_fail_task(
+                task.id, task.user_id, task.cost or 0,
+                expected_provider_task_id=task_id,
+            ):
+                return web.Response(status=200)
 
             if telegram_id:
                 bot_instance = request.app["bot"]
@@ -4666,7 +4698,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
 
     except Exception as e:
         logger.exception(f"Kie.ai webhook error: {e}")
-        return web.Response(status=200)
+        return web.Response(status=503)
 
 async def handle_kie_market_webhook(request: web.Request) -> web.Response:
     """Webhook for KIE Market models such as nano-banana-2-lite."""
@@ -4682,23 +4714,15 @@ async def handle_kie_market_webhook(request: web.Request) -> web.Response:
             logger.warning("KIE Market webhook received invalid JSON: %s", exc)
             return web.Response(status=200)
 
-        from bot.services.kie_market_service import kie_market_service
-
-        if not kie_market_service.verify_webhook_signature(
-            payload=payload,
-            headers=request.headers,
-        ):
-            return web.json_response(
-                {"ok": False, "error": "bad signature"},
-                status=401,
-            )
-
+        # The shared handler fetches the authoritative provider record.
+        # Callback HMAC does not authenticate result/status fields and is not
+        # required for this wakeup-only endpoint.
         request["skip_kie_ai_secret_check"] = True
         request._read_bytes = raw_body
         return await handle_kie_ai_webhook(request)
     except Exception as exc:
         logger.exception("KIE Market webhook error: %s", exc)
-        return web.Response(status=200)
+        return web.Response(status=503)
 
 def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
     """Настройка aiohttp сервера для вебхуков"""

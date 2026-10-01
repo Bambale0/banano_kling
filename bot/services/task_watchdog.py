@@ -164,10 +164,18 @@ async def check_task_with_provider(
     return None
 
 
-async def force_fail_task(task_id: int, user_id: int, cost: float) -> bool:
+async def force_fail_task(
+    task_id: int,
+    user_id: int,
+    cost: float,
+    *,
+    expected_provider_task_id: str | None = None,
+) -> bool:
     """Переводит задачу в failed и идемпотентно возвращает credits пользователю."""
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
+        provider_guard = " AND task_id = ?" if expected_provider_task_id is not None else ""
+        parameters = (task_id, expected_provider_task_id) if provider_guard else (task_id,)
         cursor = await db.execute(
             """
             UPDATE generation_tasks
@@ -175,9 +183,8 @@ async def force_fail_task(task_id: int, user_id: int, cost: float) -> bool:
                 completed_at = CURRENT_TIMESTAMP,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ? AND status IN ('pending', 'processing')
-            RETURNING request_data
-            """,
-            (task_id,),
+            """ + provider_guard + " RETURNING request_data",
+            parameters,
         )
         existing = await cursor.fetchone()
         if not existing:
@@ -198,12 +205,26 @@ async def force_fail_task(task_id: int, user_id: int, cost: float) -> bool:
         # twice when that marker is already committed.
         already_refunded = bool(request_data.get("refund_claimed"))
         if cost and cost > 0 and not already_refunded:
-            await db.execute(
+            credit_cursor = await db.execute(
                 "UPDATE users SET credits = credits + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (cost, user_id),
             )
+            if int(credit_cursor.rowcount or 0) != 1:
+                raise RuntimeError(f"Refund user missing for task {task_id}")
+            request_data["refund_claimed"] = True
+            request_data["refund_state"] = "refunded"
+            await db.execute(
+                "UPDATE generation_tasks SET request_data = ? WHERE id = ?",
+                (json.dumps(request_data, ensure_ascii=False), task_id),
+            )
 
         await db.commit()
+        logger.info(
+            "Task failure committed: task_id=%s provider_task_id=%s refunded_credits=%s",
+            task_id,
+            expected_provider_task_id,
+            cost if cost and cost > 0 and not already_refunded else 0,
+        )
         return True
 
 
