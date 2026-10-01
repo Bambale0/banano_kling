@@ -807,3 +807,37 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Delivery is not yet claimed: mandatory PR CI, runtime PostgreSQL CI, production exact SHA/autodeploy/health/log smoke remain. No migrations, price changes, manual financial repair, credential rotation or Nginx mutation. New technical retention environment setting is optional (default7days).
 
 - Final changed-line Ruff gate: **0 relevant diagnostics**, 470 legacy diagnostics outside changed lines ignored by repository policy (16 changed Python files). New optional type and touched import order corrected; focused Telegram/reference suite then **8 passed, 1 PG-only skipped**. Changed runtime files compile; final diff check clean.
+
+---
+
+## 2026-10-02 — Seedance 2.5 provider-classified edit fallback
+
+### Incident and root cause
+- Baseline and production before this change: `tanyapi` at `efba53e0818c5f72cce58851d6b1513e271975b1`.
+- Provider task `703fa69cddd2c08a3a2c2dcc25dc7fe7` used one valid 13.087-second video reference but was submitted with `duration=12`; KIE classified the prompt as video editing and required `duration=-1`.
+- After the explicit-edit release, task `f8137388b44852d38c03f639e1ba26c3` reproduced the same failure with the edit toggle off and additionally required `ratio=adaptive`. This proved that the manual mode fixed only explicit intent; KIE can still reclassify an ordinary multimodal prompt server-side.
+
+### Fix
+- Before normal failure/refund handling, a matching admin-free Seedance 2.5 video task receives one atomic fallback attempt with `video_editing=true`, `duration=-1` and `ratio=adaptive`.
+- The fallback is limited to pending multimodal tasks with exactly one locally valid 4–30 second source video. Legacy rows without the explicit edit flag remain eligible; malformed, already-editing, paid, wrong-model and wrong-type rows are rejected.
+- A compare-and-swap claim in `request_data` deduplicates webhook/reconciler races. The successful replacement keeps the same generation row, replaces the provider task ID and stores old/new aliases so stale callbacks cannot complete, fail or refund the replacement.
+- Paid tasks are not silently converted to editing because their quoted duration can differ from source duration. They retain the existing atomic failure/refund path.
+
+### Billing invariant
+- Seedance admin/test launches now persist `cost=0`, `charged=false` and `charged_cost=0`; the nominal configured price is retained separately as `price_quote` (and `admin_price_quote` on admin-only paths).
+- Free admin repeats no longer reward a trend author from credits that were never charged.
+- The generic watchdog now treats explicit `admin_free=true`, `charged=false` or `refund_on_failure=false` as non-refundable even if a legacy row contains a non-zero nominal cost. Legacy paid rows without these markers remain refundable.
+- Production read-only audit found no pending/processing admin Seedance row requiring a cost backfill; historical terminal failures were not mutated.
+
+### Verification
+- RED reproduced the original ordering bug: the public failure wrapper refunded before any compatible retry. Separate unit and PostgreSQL RED tests proved that the watchdog credited 5 bananas to an explicitly uncharged task.
+- Focused Seedance/KIE/refund/watchdog gate: **123 passed, 6 skipped**.
+- Disposable PostgreSQL 16 gate: **9 passed**, including concurrent callback deduplication, atomic provider task replacement and no credit for uncharged admin tasks.
+- Final safe backend suite: **1191 passed, 10 skipped**, 87 pre-existing warnings.
+- `git diff --check` and changed Python compilation passed. No paid provider generation, balance mutation, old-task replay or database migration was performed.
+
+### Rollout and observability
+- New technical setting `SEEDANCE25_EDIT_RETRY_CLAIM_TTL_SECONDS` defaults to 300 seconds with a minimum of 30 seconds; no production override is required.
+- Success log: `Seedance 2.5 auto-retried provider-classified edit` with old/new task IDs and effective settings. Watchdog failure logs include actual refunded credits and whether billing markers disabled refund.
+- Release gates: latest-head GitHub CI, independent PR review where available, automatic merge to `tanyapi`, exact deployed SHA/health/source verification and post-deploy error-log audit. No live paid smoke is authorized for this change.
+- Residual risk: provider task creation and local task-ID attachment cannot be one distributed transaction. A hard process death in that narrow window can orphan an upstream task; CAS failures record the replacement ID and emit a critical log for reconciliation.

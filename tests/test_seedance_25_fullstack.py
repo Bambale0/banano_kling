@@ -1,6 +1,7 @@
 # ruff: noqa: I001
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -198,6 +199,62 @@ async def test_seedance25_miniapp_repeat_keeps_source_lineage_and_rewards_author
         repeat_task_id='seedance-repeat-task',
         credits_spent=12.0,
     )
+
+
+@pytest.mark.asyncio
+async def test_seedance25_admin_repeat_is_free_and_does_not_reward_author(monkeypatch):
+    user = SimpleNamespace(id=502)
+    monkeypatch.setattr(
+        miniapp_module,
+        "_get_user_context",
+        AsyncMock(return_value=(700002, {"user": user})),
+    )
+    monkeypatch.setattr(public_release.config, "is_admin", lambda _telegram_id: True)
+    monkeypatch.setattr(
+        miniapp_module,
+        "_get_repeat_source_card",
+        AsyncMock(return_value={"gen_type": "video", "model": "seedance_2_5", "source_feed_gen_id": 8}),
+    )
+    monkeypatch.setattr(
+        miniapp_module,
+        "get_or_create_user",
+        AsyncMock(return_value=SimpleNamespace(credits=100)),
+    )
+    repeat_credit = AsyncMock(return_value=True)
+    monkeypatch.setattr(miniapp_module, "credit_feed_prompt_repeat", repeat_credit)
+    add_task = AsyncMock(return_value=True)
+    monkeypatch.setattr(public_release.generation_module, "add_generation_task", add_task)
+    monkeypatch.setattr(public_release, "_validate_public_payload", AsyncMock(return_value=None))
+    monkeypatch.setattr(public_release.preview_module, "_price_quote", lambda _data: 12.0)
+    monkeypatch.setattr(
+        public_release,
+        "_launch_provider",
+        AsyncMock(return_value={"task_id": "seedance-admin-repeat"}),
+    )
+
+    response = await public_release._public_miniapp_generate(
+        SimpleNamespace(app={}),
+        {
+            "init_data": "signed",
+            "source_feed_gen_id": 42,
+            "seedance25_scenario": "text",
+            "prompt": "same prompt",
+            "v_duration": 10,
+            "v_ratio": "9:16",
+            "seedance25_resolution": "720p",
+        },
+    )
+
+    assert response.status == 200
+    payload = json.loads(response.body.decode("utf-8"))
+    assert payload["cost"] == 12.0
+    assert payload["admin_free"] is True
+    stored = add_task.await_args.kwargs
+    assert stored["cost"] == 0
+    assert stored["request_data"]["charged"] is False
+    assert stored["request_data"]["charged_cost"] == 0
+    assert stored["request_data"]["price_quote"] == 12.0
+    repeat_credit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -601,3 +658,340 @@ async def test_refund_credit_failure_rolls_back_marker():
     assert task.status == 'pending'
     assert not json.loads(task.request_data).get('refund_claimed')
     assert (await database.get_or_create_user(123456)).credits == user.credits
+
+
+_EDIT_PARAMETER_FAILURE = (
+    "The parameters `ratio` and `duration` specified in the request are not valid. "
+    "Seedance identified your task as video editing based on your prompt. "
+    "Issues: [0] `ratio` must be `adaptive`. [1] `duration` must be -1."
+)
+
+
+def _edit_failure_payload(task_id: str, message: str = _EDIT_PARAMETER_FAILURE) -> dict:
+    return {
+        "code": 200,
+        "data": {
+            "taskId": task_id,
+            "state": "fail",
+            "failCode": "400",
+            "failMsg": message,
+        },
+    }
+
+
+def _edit_request_data(*, admin_free: object = True, **overrides) -> dict:
+    paid = admin_free is False
+    data = {
+        "source": "miniapp",
+        "release": "seedance_2_5_public",
+        "v_model": "seedance_2_5",
+        "v_type": "video",
+        "seedance25_scenario": "multimodal",
+        "seedance25_video_editing": False,
+        "duration": 12,
+        "aspect_ratio": "9:16",
+        "reference_images": ["https://example.test/person.png"],
+        "v_reference_videos": ["https://example.test/source.mp4"],
+        "reference_audios": [],
+        "resolution": "480p",
+        "generate_audio": True,
+        "return_last_frame": False,
+        "output_format": "mp4",
+        "web_search": False,
+        "nsfw_checker": False,
+        "charged": paid,
+        "charged_cost": 72.0 if paid else 0.0,
+        "admin_free": admin_free,
+        "refund_on_failure": paid,
+        "refund_claimed": False,
+    }
+    data.update(overrides)
+    return data
+
+
+async def _add_edit_task(
+    task_id: str,
+    telegram_id: int,
+    *,
+    request_data: dict | None = None,
+    duration: int = 12,
+    aspect_ratio: str = "9:16",
+    prompt: str = "Replace the person in @Video1 with @Image1",
+    cost: float = 0.0,
+    model: str = "seedance_2_5",
+    task_type: str = "video",
+):
+    from bot import database
+
+    user = await database.get_or_create_user(telegram_id)
+    await database.add_generation_task(
+        user.id,
+        telegram_id,
+        task_id,
+        task_type,
+        "no_preset_video",
+        model=model,
+        duration=duration,
+        aspect_ratio=aspect_ratio,
+        prompt=prompt,
+        cost=cost,
+        request_data=request_data or _edit_request_data(),
+    )
+    return user
+
+
+@pytest.mark.asyncio
+async def test_provider_classified_video_editing_retries_before_refund(monkeypatch):
+    """A legacy admin task is atomically requeued with the provider-required settings."""
+    from bot import database
+    from bot.services.kie_webhook_verification import canonical_kie_callback
+
+    telegram_id = 612441694
+    old_task_id = "seedance-edit-fallback-old"
+    new_task_id = "seedance-edit-fallback-new"
+    request_data = _edit_request_data()
+    request_data.pop("seedance25_video_editing")  # Legacy task 703fa... shape.
+    await _add_edit_task(old_task_id, telegram_id, request_data=request_data)
+
+    relaunch = AsyncMock(return_value={"task_id": new_task_id})
+    source_probe = AsyncMock(return_value=13.087)
+    refund = AsyncMock(return_value=None)
+    original_failure = AsyncMock(return_value=True)
+    monkeypatch.setattr(fullstack_module, "_validate_local_source", source_probe)
+    monkeypatch.setattr(fullstack_module.seedance_25_service, "generate_video", relaunch)
+    monkeypatch.setattr(public_release, "_claim_async_refund", refund)
+    monkeypatch.setattr(
+        fullstack_module,
+        "_process_seedance25_payload_original",
+        original_failure,
+    )
+
+    handled = await public_release._public_process_payload(
+        {"bot": SimpleNamespace(send_message=AsyncMock())},
+        _edit_failure_payload(old_task_id),
+    )
+
+    assert handled is True
+    refund.assert_not_awaited()
+    original_failure.assert_not_awaited()
+    source_probe.assert_awaited_once_with("https://example.test/source.mp4", "video")
+    relaunch.assert_awaited_once()
+    kwargs = relaunch.await_args.kwargs
+    assert kwargs["video_editing"] is True
+    assert kwargs["duration"] == -1
+    assert kwargs["aspect_ratio"] == "adaptive"
+    assert kwargs["reference_image_urls"] == ["https://example.test/person.png"]
+    assert kwargs["reference_video_urls"] == ["https://example.test/source.mp4"]
+
+    task = await database.get_task_by_id(old_task_id)
+    assert task is not None
+    assert task.task_id == new_task_id
+    assert task.status == "pending"
+    assert task.duration == -1
+    assert task.aspect_ratio == "adaptive"
+    stored = json.loads(task.request_data)
+    assert stored["seedance25_video_editing"] is True
+    assert stored["seedance25_edit_source_duration"] == 13.087
+    assert stored["seedance25_edit_auto_retry_attempt"] == 1
+    assert stored["seedance25_edit_auto_retry_from_task_id"] == old_task_id
+    assert stored["provider_task_id"] == new_task_id
+    assert stored["task_id_aliases"] == [old_task_id, new_task_id]
+
+    # A delayed callback for the replaced provider task must not fail the retry.
+    canonical, status = await canonical_kie_callback(_edit_failure_payload(old_task_id))
+    assert canonical is None
+    assert status == 200
+
+
+@pytest.mark.asyncio
+async def test_paid_provider_classified_edit_refunds_without_unpriced_retry(monkeypatch):
+    """Public users keep the quoted-duration contract; auto edit is admin-free only."""
+    telegram_id = 612441695
+    task_id = "seedance-paid-edit-classification"
+    await _add_edit_task(
+        task_id,
+        telegram_id,
+        request_data=_edit_request_data(admin_free=False),
+        cost=72.0,
+    )
+
+    relaunch = AsyncMock(return_value={"task_id": "must-not-launch"})
+    refund = AsyncMock(return_value=(telegram_id, 72.0))
+    original_failure = AsyncMock(return_value=True)
+    monkeypatch.setattr(fullstack_module.seedance_25_service, "generate_video", relaunch)
+    monkeypatch.setattr(public_release, "_claim_async_refund", refund)
+    monkeypatch.setattr(
+        fullstack_module,
+        "_process_seedance25_payload_original",
+        original_failure,
+    )
+
+    assert await public_release._public_process_payload(
+        {"bot": object()}, _edit_failure_payload(task_id)
+    )
+
+    relaunch.assert_not_awaited()
+    refund.assert_awaited_once_with(task_id)
+    original_failure.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_edit_auto_retry_requires_strict_admin_free_marker(monkeypatch):
+    provider = AsyncMock()
+    monkeypatch.setattr(fullstack_module.seedance_25_service, "generate_video", provider)
+
+    for index, marker in enumerate((False, "false", 1, None), start=1):
+        task_id = f"seedance-edit-admin-marker-{index}"
+        await _add_edit_task(
+            task_id,
+            612441700 + index,
+            request_data=_edit_request_data(admin_free=marker),
+        )
+        assert not await fullstack_module._auto_retry_seedance25_video_editing(
+            task_id, _EDIT_PARAMETER_FAILURE
+        )
+
+    provider.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("model", "task_type"),
+    [("seedance_2", "video"), ("seedance_2_5", "image")],
+)
+async def test_edit_auto_retry_only_handles_seedance25_video_tasks(
+    monkeypatch, model, task_type
+):
+    provider = AsyncMock()
+    monkeypatch.setattr(fullstack_module.seedance_25_service, "generate_video", provider)
+    task_id = f"seedance-edit-wrong-{model}-{task_type}"
+    await _add_edit_task(
+        task_id,
+        612441720,
+        model=model,
+        task_type=task_type,
+    )
+
+    assert not await fullstack_module._auto_retry_seedance25_video_editing(
+        task_id, _EDIT_PARAMETER_FAILURE
+    )
+    provider.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_seedance_edit_auto_retry_is_claimed_once_under_concurrency(monkeypatch):
+    from bot import database
+
+    old_task_id = "seedance-edit-concurrent-old"
+    new_task_id = "seedance-edit-concurrent-new"
+    await _add_edit_task(old_task_id, 612441696)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def provider_launch(**_kwargs):
+        started.set()
+        await release.wait()
+        return {"task_id": new_task_id}
+
+    relaunch = AsyncMock(side_effect=provider_launch)
+    monkeypatch.setattr(fullstack_module.seedance_25_service, "generate_video", relaunch)
+
+    first = asyncio.create_task(
+        fullstack_module._auto_retry_seedance25_video_editing(
+            old_task_id, _EDIT_PARAMETER_FAILURE
+        )
+    )
+    await asyncio.wait_for(started.wait(), timeout=5)
+    second = await fullstack_module._auto_retry_seedance25_video_editing(
+        old_task_id, _EDIT_PARAMETER_FAILURE
+    )
+    release.set()
+
+    assert second is True
+    assert await asyncio.wait_for(first, timeout=5) is True
+    relaunch.assert_awaited_once()
+    task = await database.get_task_by_id(old_task_id)
+    assert task is not None
+    assert task.task_id == new_task_id
+    assert task.status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_seedance_edit_auto_retry_rejects_source_shorter_than_four_seconds(
+    monkeypatch,
+):
+    task_id = "seedance-edit-source-too-short"
+    await _add_edit_task(task_id, 612441697)
+    provider = AsyncMock()
+    monkeypatch.setattr(
+        fullstack_module,
+        "_validate_local_source",
+        AsyncMock(return_value=3.999),
+    )
+    monkeypatch.setattr(fullstack_module.seedance_25_service, "generate_video", provider)
+
+    assert not await fullstack_module._auto_retry_seedance25_video_editing(
+        task_id, _EDIT_PARAMETER_FAILURE
+    )
+    provider.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_seedance_edit_auto_retry_launch_failure_falls_through_once(monkeypatch):
+    task_id = "seedance-edit-retry-launch-failed"
+    await _add_edit_task(task_id, 612441698)
+    relaunch = AsyncMock(return_value={"success": False, "error": "provider unavailable"})
+    original_failure = AsyncMock(return_value=True)
+    monkeypatch.setattr(fullstack_module.seedance_25_service, "generate_video", relaunch)
+    monkeypatch.setattr(public_release, "_claim_async_refund", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        fullstack_module,
+        "_process_seedance25_payload_original",
+        original_failure,
+    )
+
+    assert await public_release._public_process_payload(
+        {"bot": object()}, _edit_failure_payload(task_id)
+    )
+
+    relaunch.assert_awaited_once()
+    original_failure.assert_awaited_once()
+    row = await fullstack_module._load_task_row(task_id)
+    stored = json.loads(row["request_data"])
+    assert stored["seedance25_edit_auto_retry_attempt"] == 1
+    assert stored["seedance25_edit_auto_retry_state"] == "create_failed"
+
+
+@pytest.mark.asyncio
+async def test_seedance_edit_auto_retry_does_not_loop_after_provider_retry(monkeypatch):
+    task_id = "seedance-edit-retry-terminal"
+    request_data = _edit_request_data(
+        seedance25_video_editing=True,
+        seedance25_edit_auto_retry_attempt=1,
+        duration=-1,
+        aspect_ratio="adaptive",
+    )
+    await _add_edit_task(
+        task_id,
+        612441699,
+        request_data=request_data,
+        duration=-1,
+        aspect_ratio="adaptive",
+    )
+
+    relaunch = AsyncMock()
+    original_failure = AsyncMock(return_value=True)
+    monkeypatch.setattr(fullstack_module.seedance_25_service, "generate_video", relaunch)
+    monkeypatch.setattr(public_release, "_claim_async_refund", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        fullstack_module,
+        "_process_seedance25_payload_original",
+        original_failure,
+    )
+
+    assert await public_release._public_process_payload(
+        {"bot": object()}, _edit_failure_payload(task_id)
+    )
+
+    relaunch.assert_not_awaited()
+    original_failure.assert_awaited_once()
