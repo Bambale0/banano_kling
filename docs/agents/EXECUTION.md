@@ -1,5 +1,20 @@
 # Execution ledger
 
+## 2026-10-01 — Seedance 2.0 photo-reference prompt regression
+
+- Baseline: `origin/tanyapi` `1840ba0dd4f39ceadfd58023f10b0654c1fbcbb8`; branch `fix/seedance20-photo-ref-prompt`.
+- Reported production symptom: Telegram Seedance 2.0 shows `Фото-референсы: 1/9`, but typing a prompt can answer `Сначала отправьте стартовое фото.` instead of launching.
+- Runtime evidence: at `2026-10-01 09:59:56 UTC` user prompt reached `handle_video_prompt_text`; no video launch followed. Source inspection reproduced the contradiction: Seedance compatibility stores every photo in `reference_images` with `v_image_url=None`, while the legacy prompt guard still requires `v_image_url` whenever `video_flow_step != configure`.
+- Root cause: the reference-only compatibility layer patches Seedance media/provider launch semantics, but the legacy text-prompt precondition runs before that launcher wrapper and still assumes first-frame semantics.
+- Intended result: Seedance 2.0 `Фото + Текст` accepts a non-empty `reference_images` set as its required media even when the flow is still on the media step; other models retain their existing start-frame validation. Empty Seedance photo mode asks for a photo-reference, not a start frame.
+- No-hardcode/schema/provider impact: no pricing, provider routing, DB schema, payment/referral, Mini App or Seedance provider payload changes. Existing `seedance_2` technical model contract is reused.
+- TDD: added a regression that reproduces `v_model=seedance_2`, `v_type=imgtxt`, `v_image_url=None`, one `reference_images` URL, `video_flow_step=media`. Before fix: 1 failed / 3 passed because launch was blocked. After fix: 4 passed.
+- Focused verification: Seedance reference-only, multimodal, 2.5 compatibility and prompt-flow suites — 53 passed; `py_compile` for generation and compatibility handlers passed.
+- Full safe regression on the task worktree: 1081 passed, 3 skipped, 87 warnings in 44.42s. Targeted Ruff on the regression test and `git diff --check` passed.
+- Rollout: PR to `tanyapi`, CI, merge, automatic production deploy, then exact deployed SHA/health and Telegram reference-only smoke. No manual paid generation unless explicitly needed; use admin/free smoke path.
+- Changed-line Ruff gate: relevant=0, ignored legacy findings=93 across the two touched Python files; `git diff --check origin/tanyapi...HEAD` passed.
+- Remaining: [x] changed-line lint/diff review; [x] full safe regression; [ ] PR/CI/merge; [ ] production exact-SHA + smoke/log verification.
+
 ## 2026-09-29 — Gemini photo-analysis instructions
 
 - User clarified: improve Gemini instructions for photo analysis. Baseline fresh tanyapi cba7d59. Branch fix/gemini-photo-instructions.
