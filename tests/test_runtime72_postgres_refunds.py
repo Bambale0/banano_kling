@@ -2,6 +2,7 @@
 import asyncio
 import json
 import os
+from unittest.mock import AsyncMock
 
 import psycopg
 import pytest
@@ -101,3 +102,142 @@ async def test_preexisting_refund_marker_prevents_watchdog_double_credit():
     assert status == 'failed'
     assert data['refund_state'] == 'refunded'
     assert credits == 100
+
+
+@pytest.mark.asyncio
+async def test_watchdog_does_not_credit_explicitly_uncharged_admin_task():
+    task_id, user_id = await create_task(
+        request_data={
+            "admin_free": True,
+            "charged": False,
+            "charged_cost": 0,
+            "refund_on_failure": False,
+            "refund_claimed": False,
+        }
+    )
+
+    assert await force_fail_task(
+        task_id,
+        user_id,
+        5,
+        expected_provider_task_id="current-provider-task",
+    ) is True
+
+    status, data, completed_at, credits = await state(task_id, user_id)
+    assert status == "failed"
+    assert completed_at is not None
+    assert credits == 100
+    assert data["refund_claimed"] is False
+    assert data.get("refund_state") != "refunded"
+
+
+@pytest.mark.asyncio
+async def test_seedance_edit_retry_claim_is_atomic_on_postgres(monkeypatch):
+    """Webhook and reconciler may observe one failure, but launch one replacement."""
+    from bot.handlers import seedance_25_fullstack as fullstack
+
+    telegram_id = 741853
+    old_task_id = "pg-seedance-edit-old"
+    new_task_id = "pg-seedance-edit-new"
+    request_data = {
+        "seedance25_scenario": "multimodal",
+        "seedance25_video_editing": False,
+        "duration": 12,
+        "aspect_ratio": "9:16",
+        "reference_images": ["https://example.test/person.png"],
+        "v_reference_videos": ["https://example.test/source.mp4"],
+        "reference_audios": [],
+        "resolution": "720p",
+        "admin_free": True,
+        "refund_on_failure": False,
+    }
+    async with await psycopg.AsyncConnection.connect(
+        os.environ["DATABASE_URL"]
+    ) as connection:
+        await connection.execute(
+            "ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS prompt TEXT"
+        )
+        await connection.execute(
+            "ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS duration INTEGER"
+        )
+        await connection.execute(
+            "ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS aspect_ratio TEXT"
+        )
+        await connection.execute(
+            "ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS model TEXT"
+        )
+        await connection.execute(
+            "ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS type TEXT"
+        )
+        cursor = await connection.execute(
+            """
+            INSERT INTO users(telegram_id, credits) VALUES(%s, 100)
+            ON CONFLICT(telegram_id) DO UPDATE SET credits = 100 RETURNING id
+            """,
+            (telegram_id,),
+        )
+        user_id = (await cursor.fetchone())[0]
+        await connection.execute(
+            """
+            INSERT INTO generation_tasks(
+                user_id, task_id, status, cost, request_data,
+                prompt, duration, aspect_ratio, model, type
+            ) VALUES(
+                %s, %s, 'pending', 0, %s, %s, 12, '9:16',
+                'seedance_2_5', 'video'
+            )
+            """,
+            (
+                user_id,
+                old_task_id,
+                json.dumps(request_data),
+                "Edit @Video1 with @Image1",
+            ),
+        )
+        await connection.commit()
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def launch(**_kwargs):
+        started.set()
+        await release.wait()
+        return {"task_id": new_task_id}
+
+    provider = AsyncMock(side_effect=launch)
+    monkeypatch.setattr(fullstack.seedance_25_service, "generate_video", provider)
+    fail_msg = (
+        "Seedance identified your task as video editing; "
+        "ratio must be adaptive and duration must be -1."
+    )
+
+    first = asyncio.create_task(
+        fullstack._auto_retry_seedance25_video_editing(old_task_id, fail_msg)
+    )
+    await asyncio.wait_for(started.wait(), timeout=5)
+    second = await fullstack._auto_retry_seedance25_video_editing(
+        old_task_id, fail_msg
+    )
+    release.set()
+
+    assert second is True
+    assert await asyncio.wait_for(first, timeout=5) is True
+    provider.assert_awaited_once()
+
+    async with await psycopg.AsyncConnection.connect(
+        os.environ["DATABASE_URL"]
+    ) as connection:
+        cursor = await connection.execute(
+            """
+            SELECT task_id, status, duration, aspect_ratio, request_data
+            FROM generation_tasks
+            WHERE task_id = %s
+            """,
+            (new_task_id,),
+        )
+        row = await cursor.fetchone()
+    assert row is not None
+    assert row[:4] == (new_task_id, "pending", -1, "adaptive")
+    stored = json.loads(row[4])
+    assert stored["task_id_aliases"] == [old_task_id, new_task_id]
+    assert stored["seedance25_edit_auto_retry_attempt"] == 1

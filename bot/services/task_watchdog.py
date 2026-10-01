@@ -171,7 +171,7 @@ async def force_fail_task(
     *,
     expected_provider_task_id: str | None = None,
 ) -> bool:
-    """Переводит задачу в failed и идемпотентно возвращает credits пользователю."""
+    """Переводит задачу в failed и возвращает только реально списанные credits."""
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
         provider_guard = " AND task_id = ?" if expected_provider_task_id is not None else ""
@@ -200,11 +200,22 @@ async def force_fail_task(
         if not isinstance(request_data, dict):
             request_data = {}
 
-        # Seedance 2.5 public failures can refund atomically in the webhook
-        # before the watchdog observes the same upstream failure. Do not credit
-        # twice when that marker is already committed.
+        # Webhook refunds and the watchdog share this row-level transaction.
+        # Explicit billing markers take precedence over a legacy/non-zero cost:
+        # admin/test tasks may retain a nominal quote but were never charged.
         already_refunded = bool(request_data.get("refund_claimed"))
-        if cost and cost > 0 and not already_refunded:
+        refund_disabled = (
+            request_data.get("admin_free") is True
+            or request_data.get("charged") is False
+            or request_data.get("refund_on_failure") is False
+        )
+        should_refund = bool(
+            cost
+            and cost > 0
+            and not already_refunded
+            and not refund_disabled
+        )
+        if should_refund:
             credit_cursor = await db.execute(
                 "UPDATE users SET credits = credits + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (cost, user_id),
@@ -220,10 +231,12 @@ async def force_fail_task(
 
         await db.commit()
         logger.info(
-            "Task failure committed: task_id=%s provider_task_id=%s refunded_credits=%s",
+            "Task failure committed: task_id=%s provider_task_id=%s "
+            "refunded_credits=%s refund_disabled=%s",
             task_id,
             expected_provider_task_id,
-            cost if cost and cost > 0 and not already_refunded else 0,
+            cost if should_refund else 0,
+            refund_disabled,
         )
         return True
 

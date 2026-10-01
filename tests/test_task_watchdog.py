@@ -123,6 +123,28 @@ class TestForceFailTask:
         assert not any("UPDATE users" in sql for sql in executed_sql)
 
     @pytest.mark.asyncio
+    async def test_skips_refund_for_explicitly_uncharged_admin_task(self):
+        mock_db = AsyncMock()
+        existing_cursor = AsyncMock()
+        existing_cursor.fetchone.return_value = {
+            "request_data": (
+                '{"admin_free": true, "charged": false, '
+                '"refund_on_failure": false}'
+            )
+        }
+        mock_db.execute.return_value = existing_cursor
+        mock_connect = AsyncMock()
+        mock_connect.__aenter__.return_value = mock_db
+
+        with patch("bot.services.task_watchdog.db_backend.connect", return_value=mock_connect):
+            result = await force_fail_task(task_id=1, user_id=42, cost=10.0)
+
+        assert result is True
+        assert mock_db.execute.call_count == 1
+        executed_sql = [call.args[0] for call in mock_db.execute.await_args_list]
+        assert not any("UPDATE users" in sql for sql in executed_sql)
+
+    @pytest.mark.asyncio
     async def test_skips_refund_when_cost_zero(self):
         mock_db = AsyncMock()
         cursor = AsyncMock()
@@ -381,4 +403,3 @@ class TestWatchdogLoop:
                 except StopAsyncIteration:
                     pass
                 assert mock_cycle.awaited
-

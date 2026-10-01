@@ -421,7 +421,7 @@ async def _run_seedance_25_message(message: types.Message, state: FSMContext, pr
             duration=duration,
             aspect_ratio=ratio,
             prompt=prompt,
-            cost=quote,
+            cost=0.0,
             request_data={
                 "source": "telegram",
                 "preview": "seedance_2_5_admin",
@@ -438,8 +438,13 @@ async def _run_seedance_25_message(message: types.Message, state: FSMContext, pr
                 "output_format": data.get("seedance25_output_format", "mp4"),
                 "web_search": bool(data.get("seedance25_web_search", False)),
                 "nsfw_checker": bool(data.get("seedance25_nsfw_checker", False)),
-                "admin_price_quote": quote,
+                "price_quote": float(quote),
+                "admin_price_quote": float(quote),
+                "charged": False,
+                "charged_cost": 0.0,
                 "admin_free": True,
+                "refund_on_failure": False,
+                "refund_claimed": False,
             },
         )
         await message.answer(

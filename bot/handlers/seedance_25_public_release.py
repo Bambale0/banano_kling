@@ -305,6 +305,8 @@ async def _launch_provider(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _request_data(payload: dict[str, Any], *, is_admin: bool, quote: float, source: str) -> dict[str, Any]:
+    price_quote = float(quote)
+    charged_cost = 0.0 if is_admin else price_quote
     return {
         "source": source,
         "release": "seedance_2_5_public",
@@ -325,8 +327,9 @@ def _request_data(payload: dict[str, Any], *, is_admin: bool, quote: float, sour
         "output_format": payload["output_format"],
         "web_search": payload["web_search"],
         "nsfw_checker": payload["nsfw_checker"],
+        "price_quote": price_quote,
         "charged": not is_admin,
-        "charged_cost": float(quote),
+        "charged_cost": charged_cost,
         "admin_free": is_admin,
         "refund_on_failure": not is_admin,
         "refund_claimed": False,
@@ -391,7 +394,7 @@ async def _public_message_launch(message: types.Message, state: FSMContext, prom
             duration=payload["duration"],
             aspect_ratio=payload["ratio"],
             prompt=payload["prompt"],
-            cost=quote,
+            cost=0.0 if is_admin else quote,
             request_data=_request_data(payload, is_admin=is_admin, quote=quote, source="telegram"),
         )
         await processing.delete()
@@ -557,13 +560,13 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
             duration=payload["duration"],
             aspect_ratio=payload["ratio"],
             prompt=payload["prompt"],
-            cost=quote,
+            cost=0.0 if is_admin else quote,
             request_data=request_data,
             source_feed_gen_id=source_feed_gen_id,
             parent_generation_id=(immediate_parent_id if source_feed_gen_id else None),
             action_type="repeat" if source_feed_gen_id else None,
         )
-        if source_feed_gen_id:
+        if source_feed_gen_id and not is_admin:
             try:
                 await miniapp_module.credit_feed_prompt_repeat(
                     immediate_parent_id,
@@ -689,6 +692,17 @@ async def _public_process_payload(app: web.Application, payload: dict[str, Any])
         or provider_fail_code in failure_codes
     )
     if is_failure and task_id:
+        fail_msg = str((data or {}).get("failMsg") or payload.get("msg") or "")
+        try:
+            if await fullstack._auto_retry_seedance25_video_editing(task_id, fail_msg):
+                return True
+        except Exception:
+            logger.exception(
+                "Seedance 2.5 edit fallback preflight failed before refund: task_id=%s",
+                task_id,
+            )
+            return False
+        payload["_seedance25_edit_retry_checked"] = True
         try:
             claimed = await _claim_async_refund(task_id)
             if claimed:

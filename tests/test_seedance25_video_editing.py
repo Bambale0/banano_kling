@@ -37,8 +37,13 @@ async def test_admin_telegram_edit_persists_effective_provider_settings():
         await public._public_message_launch(message, state, "Edit the input video")
     payload = launch.call_args.args[0]
     assert (payload["duration"], payload["ratio"]) == (-1, "adaptive")
-    assert store.call_args.kwargs["request_data"]["seedance25_video_editing"] is True
-    assert store.call_args.kwargs["duration"] == -1
+    stored = store.call_args.kwargs
+    assert stored["request_data"]["seedance25_video_editing"] is True
+    assert stored["duration"] == -1
+    assert stored["cost"] == 0
+    assert stored["request_data"]["charged"] is False
+    assert stored["request_data"]["charged_cost"] == 0
+    assert stored["request_data"]["price_quote"] > 0
 
 
 @pytest.mark.asyncio
@@ -66,6 +71,11 @@ async def test_miniapp_edit_entitlement_and_effective_response(admin, flag, expe
     else:
         result = json.loads(response.body)
         assert (result["duration"], result["aspect_ratio"]) == (-1, "adaptive")
+        stored = store.call_args.kwargs
+        assert stored["cost"] == 0
+        assert stored["request_data"]["charged"] is False
+        assert stored["request_data"]["charged_cost"] == 0
+        assert stored["request_data"]["price_quote"] == result["cost"]
 
 
 @pytest.mark.asyncio
@@ -109,8 +119,12 @@ async def test_public_normal_reference_launch_keeps_selected_settings_and_charge
     assert response.status == 200
     debit.assert_awaited_once_with(123, 96)
     assert (launch.call_args.args[0]["duration"], launch.call_args.args[0]["ratio"]) == (12, "16:9")
-    assert store.call_args.kwargs["request_data"]["seedance25_video_editing"] is False
-    assert store.call_args.kwargs["request_data"]["charged_cost"] == 96
+    stored = store.call_args.kwargs
+    assert stored["request_data"]["seedance25_video_editing"] is False
+    assert stored["cost"] == 96
+    assert stored["request_data"]["charged"] is True
+    assert stored["request_data"]["charged_cost"] == 96
+    assert stored["request_data"]["price_quote"] == 96
 
 
 def test_repeat_contract_preserves_editing_intent():
@@ -186,3 +200,28 @@ def test_editing_failure_has_actionable_hint_without_retry(error, hinted):
     text = fullstack._seedance25_failure_text("test", code=422, fail_msg=error, request_data={"admin_free": True})
     assert ("Выберите режим «Редактировать видео»" in text) is hinted
     assert "Списаний не было" in text
+
+@pytest.mark.asyncio
+async def test_legacy_admin_preview_persists_zero_charge_and_nominal_quote():
+    from bot.handlers import seedance_25_preview as preview
+
+    state = SimpleNamespace(get_data=AsyncMock(return_value={
+        "seedance25_scenario": "text",
+        "v_duration": 12,
+        "v_ratio": "16:9",
+        "seedance25_resolution": "720p",
+    }), clear=AsyncMock())
+    message = SimpleNamespace(from_user=SimpleNamespace(id=123), answer=AsyncMock())
+    message.answer.return_value = SimpleNamespace(delete=AsyncMock())
+    with patch.object(preview, "_price_quote", return_value=96), \
+         patch.object(preview.seedance_25_service, "generate_video", AsyncMock(return_value={"task_id": "preview-admin"})), \
+         patch.object(preview.generation_module, "get_or_create_user", AsyncMock(return_value=SimpleNamespace(id=1))), \
+         patch.object(preview.generation_module, "add_generation_task", AsyncMock()) as store:
+        await preview._run_seedance_25_message(message, state, "Create a video")
+
+    stored = store.call_args.kwargs
+    assert stored["cost"] == 0
+    assert stored["request_data"]["charged"] is False
+    assert stored["request_data"]["charged_cost"] == 0
+    assert stored["request_data"]["price_quote"] == 96
+    assert stored["request_data"]["admin_price_quote"] == 96
