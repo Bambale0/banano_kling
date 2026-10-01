@@ -34,7 +34,7 @@ router = Router()
 PUBLIC_VIDEO_MODEL_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Kling", ("v3_std", "v3_pro", "v3_4k", "v26_pro")),
     ("Motion и Avatar", ("motion_control_v26", "motion_control_v30", "glow", "avatar_std", "avatar_pro")),
-    ("Seedance и Grok", ("seedance_2_5", "seedance_2", "seedance_2_fast", "grok_imagine", "grok_imagine_v15")),
+    ("Seedance и Grok", ("seedance_2_5", "seedance_2", "grok_imagine", "grok_imagine_v15")),
     ("Veo", ("veo3", "veo3_fast", "veo3_lite")),
     ("Gemini Omni", ("gemini_omni_video", "gemini_omni_audio", "gemini_omni_character")),
 )
