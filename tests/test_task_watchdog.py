@@ -145,6 +145,32 @@ class TestForceFailTask:
         assert not any("UPDATE users" in sql for sql in executed_sql)
 
     @pytest.mark.asyncio
+    async def test_skips_refund_for_admin_without_billing_markers(self):
+        from bot.config import config
+
+        task_cursor = AsyncMock()
+        task_cursor.fetchone.return_value = {"request_data": "{}"}
+        admin_cursor = AsyncMock()
+        admin_cursor.fetchone.return_value = {"telegram_id": 741862}
+        update_cursor = AsyncMock()
+        update_cursor.rowcount = 1
+        mock_db = AsyncMock()
+        mock_db.execute.side_effect = [task_cursor, admin_cursor, update_cursor]
+        mock_connect = AsyncMock()
+        mock_connect.__aenter__.return_value = mock_db
+
+        with (
+            patch("bot.services.task_watchdog.db_backend.connect", return_value=mock_connect),
+            patch.object(config, "ADMIN_IDS_STR", "741862"),
+        ):
+            result = await force_fail_task(task_id=1, user_id=42, cost=10.0)
+
+        assert result is True
+        executed_sql = [call.args[0] for call in mock_db.execute.await_args_list]
+        assert any("SELECT telegram_id FROM users" in sql for sql in executed_sql)
+        assert not any("UPDATE users SET credits" in sql for sql in executed_sql)
+
+    @pytest.mark.asyncio
     async def test_skips_refund_when_cost_zero(self):
         mock_db = AsyncMock()
         cursor = AsyncMock()

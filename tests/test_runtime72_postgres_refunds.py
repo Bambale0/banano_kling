@@ -24,12 +24,12 @@ async def refund_postgres_schema(isolated_database):
         yield
 
 
-async def create_task(*, request_data=None):
+async def create_task(*, request_data=None, telegram_id=741852):
     async with await psycopg.AsyncConnection.connect(os.environ['DATABASE_URL']) as connection:
         cursor = await connection.execute('''
-            INSERT INTO users(telegram_id, credits) VALUES(741852, 100)
+            INSERT INTO users(telegram_id, credits) VALUES(%s, 100)
             ON CONFLICT(telegram_id) DO UPDATE SET credits = 100 RETURNING id
-        ''')
+        ''', (telegram_id,))
         user_id = (await cursor.fetchone())[0]
         cursor = await connection.execute('''
             INSERT INTO generation_tasks(user_id, task_id, status, cost, request_data)
@@ -38,6 +38,37 @@ async def create_task(*, request_data=None):
         task_id = (await cursor.fetchone())[0]
         await connection.commit()
     return task_id, user_id
+
+
+async def ensure_prompt_repeat_events_schema():
+    async with await psycopg.AsyncConnection.connect(
+        os.environ["DATABASE_URL"]
+    ) as connection:
+        await connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS prompt_repeat_events (
+                id BIGSERIAL PRIMARY KEY,
+                author_id BIGINT NOT NULL REFERENCES users(id),
+                repeater_id BIGINT NOT NULL REFERENCES users(id),
+                source_type TEXT NOT NULL,
+                source_id BIGINT NOT NULL,
+                repeat_task_id TEXT,
+                credits_spent DOUBLE PRECISION DEFAULT 0,
+                amount_rub DOUBLE PRECISION NOT NULL DEFAULT 10,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        await connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS
+                uq_prompt_repeat_events_repeat_task_id
+            ON prompt_repeat_events(repeat_task_id)
+            WHERE repeat_task_id IS NOT NULL
+              AND TRIM(repeat_task_id) <> ''
+            """
+        )
+        await connection.commit()
 
 
 async def state(task_id, user_id):
@@ -102,6 +133,28 @@ async def test_preexisting_refund_marker_prevents_watchdog_double_credit():
     assert status == 'failed'
     assert data['refund_state'] == 'refunded'
     assert credits == 100
+
+
+@pytest.mark.asyncio
+async def test_watchdog_does_not_refund_admin_legacy_row(monkeypatch):
+    from bot.config import config
+
+    monkeypatch.setattr(config, "ADMIN_IDS_STR", "741862")
+    task_id, user_id = await create_task(telegram_id=741862)
+
+    assert await force_fail_task(
+        task_id,
+        user_id,
+        5,
+        expected_provider_task_id="current-provider-task",
+    ) is True
+
+    status, data, completed_at, credits = await state(task_id, user_id)
+    assert status == "failed"
+    assert completed_at is not None
+    assert credits == 100
+    assert data.get("refund_claimed") is not True
+    assert data.get("refund_state") != "refunded"
 
 
 @pytest.mark.asyncio
@@ -241,3 +294,196 @@ async def test_seedance_edit_retry_claim_is_atomic_on_postgres(monkeypatch):
     stored = json.loads(row[4])
     assert stored["task_id_aliases"] == [old_task_id, new_task_id]
     assert stored["seedance25_edit_auto_retry_attempt"] == 1
+
+
+@pytest.mark.asyncio
+async def test_prompt_repeat_reward_requires_positive_spend_on_postgres(monkeypatch):
+    from bot import database
+
+    await ensure_prompt_repeat_events_schema()
+    async with await psycopg.AsyncConnection.connect(
+        os.environ["DATABASE_URL"]
+    ) as connection:
+        await connection.execute("TRUNCATE prompt_repeat_events")
+        author_cursor = await connection.execute(
+            """
+            INSERT INTO users(
+                telegram_id, credits, partner_balance_rub,
+                prompt_repeat_balance_rub, prompt_repeat_total_rub
+            ) VALUES(741860, 100, 0, 0, 0)
+            ON CONFLICT(telegram_id) DO UPDATE SET
+                partner_balance_rub = 0,
+                prompt_repeat_balance_rub = 0,
+                prompt_repeat_total_rub = 0
+            RETURNING id
+            """
+        )
+        author_id = (await author_cursor.fetchone())[0]
+        repeater_cursor = await connection.execute(
+            """
+            INSERT INTO users(telegram_id, credits) VALUES(741861, 100)
+            ON CONFLICT(telegram_id) DO UPDATE SET credits = 100
+            RETURNING id
+            """
+        )
+        repeater_id = (await repeater_cursor.fetchone())[0]
+        admin_cursor = await connection.execute(
+            """
+            INSERT INTO users(telegram_id, credits) VALUES(741862, 100)
+            ON CONFLICT(telegram_id) DO UPDATE SET credits = 100
+            RETURNING id
+            """
+        )
+        admin_id = (await admin_cursor.fetchone())[0]
+        await connection.commit()
+
+    async with db_backend.connect() as db:
+        for credits_spent in (0, float("nan"), float("inf")):
+            assert await database._credit_prompt_repeat_reward_in_db(
+                db,
+                author_id=author_id,
+                repeater_id=repeater_id,
+                source_type="feed",
+                source_id=123,
+                repeat_task_id="postgres-free-repeat",
+                credits_spent=credits_spent,
+            ) is False
+        await db.commit()
+
+    async with await psycopg.AsyncConnection.connect(
+        os.environ["DATABASE_URL"]
+    ) as connection:
+        cursor = await connection.execute(
+            "SELECT COUNT(*) FROM prompt_repeat_events"
+        )
+        assert (await cursor.fetchone())[0] == 0
+        cursor = await connection.execute(
+            """
+            SELECT partner_balance_rub, prompt_repeat_balance_rub,
+                   prompt_repeat_total_rub
+            FROM users WHERE id = %s
+            """,
+            (author_id,),
+        )
+        assert tuple(await cursor.fetchone()) == (0, 0, 0)
+
+    from bot.config import config
+
+    monkeypatch.setattr(config, "ADMIN_IDS_STR", "741862")
+    async with db_backend.connect() as db:
+        assert await database._credit_prompt_repeat_reward_in_db(
+            db,
+            author_id=author_id,
+            repeater_id=admin_id,
+            source_type="feed",
+            source_id=123,
+            repeat_task_id="postgres-admin-repeat",
+            credits_spent=2.5,
+        ) is False
+        await db.commit()
+
+    async with db_backend.connect() as db:
+        assert await database._credit_prompt_repeat_reward_in_db(
+            db,
+            author_id=author_id,
+            repeater_id=repeater_id,
+            source_type="feed",
+            source_id=123,
+            repeat_task_id="postgres-paid-repeat",
+            credits_spent=2.5,
+        ) is True
+        await db.commit()
+
+    async with await psycopg.AsyncConnection.connect(
+        os.environ["DATABASE_URL"]
+    ) as connection:
+        cursor = await connection.execute(
+            """
+            SELECT credits_spent, amount_rub
+            FROM prompt_repeat_events
+            WHERE repeat_task_id = %s
+            """,
+            ("postgres-paid-repeat",),
+        )
+        assert tuple(await cursor.fetchone()) == (2.5, 10)
+        cursor = await connection.execute(
+            """
+            SELECT partner_balance_rub, prompt_repeat_balance_rub,
+                   prompt_repeat_total_rub
+            FROM users WHERE id = %s
+            """,
+            (author_id,),
+        )
+        assert tuple(await cursor.fetchone()) == (10, 10, 10)
+
+@pytest.mark.asyncio
+async def test_concurrent_prompt_repeat_reward_credits_once_on_postgres():
+    from bot import database
+
+    await ensure_prompt_repeat_events_schema()
+    async with await psycopg.AsyncConnection.connect(
+        os.environ["DATABASE_URL"]
+    ) as connection:
+        await connection.execute("TRUNCATE prompt_repeat_events")
+        author_cursor = await connection.execute(
+            """
+            INSERT INTO users(
+                telegram_id, credits, partner_balance_rub,
+                prompt_repeat_balance_rub, prompt_repeat_total_rub
+            ) VALUES(741870, 100, 0, 0, 0)
+            ON CONFLICT(telegram_id) DO UPDATE SET
+                partner_balance_rub = 0,
+                prompt_repeat_balance_rub = 0,
+                prompt_repeat_total_rub = 0
+            RETURNING id
+            """
+        )
+        author_id = (await author_cursor.fetchone())[0]
+        repeater_cursor = await connection.execute(
+            """
+            INSERT INTO users(telegram_id, credits) VALUES(741871, 100)
+            ON CONFLICT(telegram_id) DO UPDATE SET credits = 100
+            RETURNING id
+            """
+        )
+        repeater_id = (await repeater_cursor.fetchone())[0]
+        await connection.commit()
+
+    async def credit_once():
+        from bot.postgres_aiosqlite import connect as direct_postgres_connect
+
+        async with direct_postgres_connect() as db:
+            credited = await database._credit_prompt_repeat_reward_in_db(
+                db,
+                author_id=author_id,
+                repeater_id=repeater_id,
+                source_type="feed",
+                source_id=987,
+                repeat_task_id="postgres-repeat-race",
+                credits_spent=2.5,
+            )
+            if credited:
+                await db.commit()
+            return credited
+
+    results = await asyncio.gather(*(credit_once() for _ in range(4)))
+    assert results.count(True) == 1
+    assert results.count(False) == 3
+
+    async with await psycopg.AsyncConnection.connect(
+        os.environ["DATABASE_URL"]
+    ) as connection:
+        cursor = await connection.execute(
+            "SELECT COUNT(*) FROM prompt_repeat_events WHERE repeat_task_id = %s",
+            ("postgres-repeat-race",),
+        )
+        assert (await cursor.fetchone())[0] == 1
+        cursor = await connection.execute(
+            """
+            SELECT partner_balance_rub, prompt_repeat_balance_rub,
+                   prompt_repeat_total_rub
+            FROM users WHERE id = %s
+            """,
+            (author_id,),
+        )
+        assert tuple(await cursor.fetchone()) == (10, 10, 10)

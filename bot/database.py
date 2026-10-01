@@ -6,6 +6,7 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from math import isfinite
 from typing import Any, Iterable, List, Optional
 from urllib.parse import urlparse
 
@@ -615,6 +616,14 @@ async def _ensure_prompt_feed_schema(db: db_backend.Connection) -> None:
     )
     await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_prompt_repeat_events_author ON prompt_repeat_events(author_id, created_at DESC)"
+    )
+    await db.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_prompt_repeat_events_repeat_task_id
+        ON prompt_repeat_events(repeat_task_id)
+        WHERE repeat_task_id IS NOT NULL
+          AND TRIM(repeat_task_id) <> ''
+        """
     )
 
 
@@ -5754,23 +5763,51 @@ async def _credit_prompt_repeat_reward_in_db(
 ) -> bool:
     if not author_id or not repeater_id or author_id == repeater_id:
         return False
-    reward = round(float(amount_rub or 0), 2)
-    if reward <= 0:
+    try:
+        spent = float(credits_spent or 0)
+    except (TypeError, ValueError):
+        return False
+    if not isfinite(spent) or spent <= 0:
+        return False
+    try:
+        reward = round(float(amount_rub or 0), 2)
+    except (TypeError, ValueError):
+        return False
+    if not isfinite(reward) or reward <= 0:
         return False
 
-    # Idempotency: одна задача-повтор не должна начисляться дважды
-    # (например, синхронное начисление при запуске + webhook о завершении).
-    if repeat_task_id:
-        cursor = await db.execute(
-            "SELECT 1 FROM prompt_repeat_events WHERE repeat_task_id = ? LIMIT 1",
-            (str(repeat_task_id),),
-        )
-        if await cursor.fetchone():
-            return False
+    cursor = await db.execute(
+        "SELECT telegram_id FROM users WHERE id = ? LIMIT 1",
+        (repeater_id,),
+    )
+    repeater = await cursor.fetchone()
+    if not repeater:
+        return False
+    raw_telegram_id = (
+        repeater["telegram_id"] if hasattr(repeater, "keys") else repeater[0]
+    )
+    try:
+        repeater_telegram_id = int(raw_telegram_id)
+    except (TypeError, ValueError):
+        return False
+    from bot.config import config
 
-    await db.execute(
+    if config.is_admin(repeater_telegram_id):
+        logger.info(
+            "Prompt repeat reward skipped for admin repeater: "
+            "repeater_id=%s repeat_task_id=%s",
+            repeater_id,
+            repeat_task_id,
+        )
+        return False
+
+    normalized_repeat_task_id = str(repeat_task_id or "").strip() or None
+    # Schema-backed idempotency: launch and webhook completion may race in
+    # different processes. The unique partial index is the source of truth;
+    # INSERT OR IGNORE maps to ON CONFLICT DO NOTHING on PostgreSQL.
+    insert_cursor = await db.execute(
         """
-        INSERT INTO prompt_repeat_events (
+        INSERT OR IGNORE INTO prompt_repeat_events (
             author_id, repeater_id, source_type, source_id,
             repeat_task_id, credits_spent, amount_rub
         )
@@ -5781,12 +5818,19 @@ async def _credit_prompt_repeat_reward_in_db(
             repeater_id,
             source_type[:32],
             int(source_id),
-            (repeat_task_id or None),
-            float(credits_spent or 0),
+            normalized_repeat_task_id,
+            spent,
             reward,
         ),
     )
-    await db.execute(
+    if int(getattr(insert_cursor, "rowcount", 0) or 0) != 1:
+        logger.info(
+            "Prompt repeat reward already claimed: repeat_task_id=%s",
+            normalized_repeat_task_id,
+        )
+        return False
+
+    update_cursor = await db.execute(
         """
         UPDATE users
         SET partner_balance_rub = COALESCE(partner_balance_rub, 0) + ?,
@@ -5797,6 +5841,10 @@ async def _credit_prompt_repeat_reward_in_db(
         """,
         (reward, reward, reward, author_id),
     )
+    if int(getattr(update_cursor, "rowcount", 0) or 0) != 1:
+        raise RuntimeError(
+            f"Prompt repeat author balance update failed: author_id={author_id}"
+        )
     return True
 
 

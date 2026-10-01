@@ -841,3 +841,38 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Success log: `Seedance 2.5 auto-retried provider-classified edit` with old/new task IDs and effective settings. Watchdog failure logs include actual refunded credits and whether billing markers disabled refund.
 - Release gates: latest-head GitHub CI, independent PR review where available, automatic merge to `tanyapi`, exact deployed SHA/health/source verification and post-deploy error-log audit. No live paid smoke is authorized for this change.
 - Residual risk: provider task creation and local task-ID attachment cannot be one distributed transaction. A hard process death in that narrow window can orphan an upstream task; CAS failures record the replacement ID and emit a critical log for reconciliation.
+
+---
+
+## 2026-10-02 — Prompt-repeat reward and admin billing invariants
+
+### Release interception
+- Seedance PR #224 merged as `7d9626b8cc8d1f4345a03ab5006da83afcf19299`, but its automatic deploy run `36931442700` was cancelled before the SSH/deploy step after a final financial review found a generic reward-path defect.
+- Production stayed on `efba53e0818c5f72cce58851d6b1513e271975b1`; container image label, start time, public Mini App revision and health endpoint all confirmed that no partial deploy occurred.
+
+### Root cause
+- `_credit_prompt_repeat_reward_in_db()` trusted the caller's nominal `credits_spent` value. Admin generation paths skip the actual credit debit but several generic image/video repeat paths still passed the displayed positive price, so an admin repeat could credit the source author 10 RUB.
+- Task completion calls the same helper again. The old idempotency sequence was `SELECT` followed by `INSERT` without a UNIQUE constraint, so launch and webhook completion could race and both award the author.
+- `force_fail_task()` could also refund a legacy admin task whose row contained a nominal non-zero `cost` but lacked newer `admin_free/charged/refund_on_failure` markers.
+
+### Fix
+- Repeat rewards now require positive finite spend and a positive finite reward amount. The repeater is resolved from the database and current admins are rejected centrally, independent of the launch path.
+- `prompt_repeat_events` has a partial UNIQUE index on non-empty `repeat_task_id`. Reward creation uses `INSERT OR IGNORE`, translated to `ON CONFLICT DO NOTHING` on PostgreSQL; only the transaction that inserts the event may update author balances.
+- The author balance update must affect exactly one row or the transaction fails. Duplicate callbacks log the claimed task ID; admin attempts log the internal repeater ID without exposing Telegram identifiers.
+- The watchdog now resolves the task owner's Telegram identity inside the same transaction and disables refunds for admins even when a legacy row has no billing markers.
+
+### Production audit
+- Read-only audit before migration: 36,985 repeat reward events, 34,431 non-empty task IDs, zero duplicate task-ID groups and no existing unique index. The index is therefore safe to create on deployment; the duplicate audit must be repeated immediately before rollout.
+- Historical audit found 187 reward events (1,870 RUB) associated with current admin accounts across 36 authors. Five events (50 RUB) are explicitly marked `admin_free=true` / `charged=false`; 182 older rows predate billing markers. Some affected authors have completed withdrawals, so no automatic clawback, event deletion or balance mutation was performed.
+- This release stops new admin rewards and duplicate awards. Historical reconciliation remains a separate accounting operation requiring confirmation of admin membership at event time and treatment of already withdrawn funds.
+
+### Verification
+- RED: four concurrent SQLite calls created four events and credited 40 RUB for one repeat task. Separate RED tests proved that a positive-price admin repeat credited an author and that watchdog refunded a legacy admin task.
+- Focused database/task/watchdog/Seedance gate: 182 passed.
+- Disposable PostgreSQL 16 workflow: 12 passed, including four concurrent connections, exactly one event / 10 RUB, admin reward rejection and admin refund rejection.
+- Final safe backend suite: **1211 passed, 13 skipped**, 96 pre-existing warnings. No production writes, balance repairs, withdrawals, paid provider calls or old-task replays were performed.
+
+### Rollout requirements
+- Repeat the production duplicate audit immediately before deployment. If any duplicate `repeat_task_id` appears, stop rollout and reconcile before creating the UNIQUE index.
+- Require exact-head validation, safe suite, browser E2E and production Docker image checks; deploy only the final merged `tanyapi` SHA.
+- Post-deploy verify the UNIQUE index, exact image/container/public revision, health, changed runtime sources and error logs. Re-audit new admin reward events and pending admin tasks with refundable nominal cost.

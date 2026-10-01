@@ -13,6 +13,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from bot import db as db_backend
+from bot.config import config
 from bot.database import DATABASE_PATH, cleanup_stale_local_generation_tasks
 
 logger = logging.getLogger(__name__)
@@ -164,6 +165,21 @@ async def check_task_with_provider(
     return None
 
 
+async def _is_admin_user(db: db_backend.Connection, user_id: int) -> bool:
+    cursor = await db.execute(
+        "SELECT telegram_id FROM users WHERE id = ? LIMIT 1",
+        (user_id,),
+    )
+    row = await cursor.fetchone()
+    if not row:
+        return False
+    raw_telegram_id = row["telegram_id"] if hasattr(row, "keys") else row[0]
+    try:
+        return config.is_admin(int(raw_telegram_id))
+    except (TypeError, ValueError):
+        return False
+
+
 async def force_fail_task(
     task_id: int,
     user_id: int,
@@ -209,6 +225,10 @@ async def force_fail_task(
             or request_data.get("charged") is False
             or request_data.get("refund_on_failure") is False
         )
+        admin_user = False
+        if cost and cost > 0 and not already_refunded and not refund_disabled:
+            admin_user = await _is_admin_user(db, user_id)
+            refund_disabled = admin_user
         should_refund = bool(
             cost
             and cost > 0
@@ -232,11 +252,12 @@ async def force_fail_task(
         await db.commit()
         logger.info(
             "Task failure committed: task_id=%s provider_task_id=%s "
-            "refunded_credits=%s refund_disabled=%s",
+            "refunded_credits=%s refund_disabled=%s admin_user=%s",
             task_id,
             expected_provider_task_id,
             cost if should_refund else 0,
             refund_disabled,
+            admin_user,
         )
         return True
 
