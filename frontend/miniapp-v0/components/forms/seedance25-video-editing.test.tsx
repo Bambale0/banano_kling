@@ -73,3 +73,14 @@ it('quotes the existing Auto estimate while preserving the remembered fixed dura
   fireEvent.click(screen.getByLabelText('Редактировать видео'))
   expect(screen.getByText(/базовая цена 48🍌 × 2 = 96🍌/)).toBeInTheDocument()
 })
+
+it('quotes video-reference multiplier in the legacy admin editing form', () => {
+  const model = { id: 'seedance_2_5', quality_costs: { '720p': 4 } } as any
+  const { container } = render(<Seedance25AdminForm model={model} />)
+  fireEvent.click(screen.getByRole('button', { name: /Мультимодально/ }))
+  fireEvent.change(container.querySelector('input[type="range"]')!, { target: { value: '12' } })
+  fireEvent.change(screen.getByPlaceholderText(/video refs/), { target: { value: 'asset://source-video' } })
+  expect(screen.getByText('96🍌')).toBeInTheDocument()
+  fireEvent.click(screen.getByLabelText('Редактировать видео'))
+  expect(screen.getByText('40🍌')).toBeInTheDocument()
+})

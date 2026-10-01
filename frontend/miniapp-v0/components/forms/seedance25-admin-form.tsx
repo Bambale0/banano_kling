@@ -216,11 +216,13 @@ export function Seedance25AdminForm({ model: rawModel, onQueued, onSavedReferenc
     () => videos.reduce((sum, item) => sum + (item.duration || 0), 0),
     [videos],
   )
-  const priceQuote = useMemo(() => {
+  const hasVideoReference = scenario === 'multimodal' && (videos.length > 0 || videoAssets.trim().length > 0)
+  const basePrice = useMemo(() => {
     const seconds = videoEditing || duration === -1 ? 5 : duration
     const perSecond = Number(model?.quality_costs?.[resolution] ?? 0)
     return perSecond ? Math.round(perSecond * seconds * 2) / 2 : 0
   }, [duration, videoEditing, model?.quality_costs, resolution])
+  const priceQuote = hasVideoReference ? basePrice * 2 : basePrice
 
   const uploadImage = async (file: File, target: 'first' | 'last' | 'refs') => {
     const ext = extension(file.name)
