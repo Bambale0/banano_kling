@@ -380,9 +380,10 @@ PY
 
 Никогда не отправлять полный вывод `.env` в чат или issue.
 
-### Seedance 2.5 result delivery
+### Seedance 2.5 reliability
 
-These settings affect result transport, not generation pricing or provider payloads:
+These settings control result transport and one-time edit-fallback coordination.
+They do not change generation pricing:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
