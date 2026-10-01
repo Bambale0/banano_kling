@@ -12,7 +12,8 @@
 - Focused verification: Seedance reference-only, multimodal, 2.5 compatibility and prompt-flow suites — 53 passed; `py_compile` for generation and compatibility handlers passed.
 - Full safe regression on the task worktree: 1081 passed, 3 skipped, 87 warnings in 44.42s. Targeted Ruff on the regression test and `git diff --check` passed.
 - Rollout: PR to `tanyapi`, CI, merge, automatic production deploy, then exact deployed SHA/health and Telegram reference-only smoke. No manual paid generation unless explicitly needed; use admin/free smoke path.
-- Remaining: [ ] changed-line lint/diff review; [x] full safe regression; [ ] PR/CI/merge; [ ] production exact-SHA + smoke/log verification.
+- Changed-line Ruff gate: relevant=0, ignored legacy findings=93 across the two touched Python files; `git diff --check origin/tanyapi...HEAD` passed.
+- Remaining: [x] changed-line lint/diff review; [x] full safe regression; [ ] PR/CI/merge; [ ] production exact-SHA + smoke/log verification.
 
 ## 2026-09-29 — Gemini photo-analysis instructions
 
