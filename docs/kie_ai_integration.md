@@ -642,3 +642,13 @@ TELEGRAM_STARS_ENABLED=1
 ### Seedance 2.5 prompt length (2026-09-29)
 
 Seedance 2.5 (`bytedance/seedance-2-5`) accepts up to **30,000 Unicode characters** in the prompt, matching the [KIE input schema](https://docs.kie.ai/market/bytedance/seedance-2-5). The adapter, Telegram validation and public/admin Mini App forms enforce this technical maximum; longer prompts are rejected rather than truncated. Mini App is the entry point for prompts exceeding Telegram's single-message size. This does not change generation pricing or account quotas.
+
+### Seedance 2.5 video editing (2026-10-01)
+
+Telegram's **По референсам → Редактировать видео** and the Mini App multimodal form expose an explicit admin editing option. Provide exactly one source video of **4–30 seconds**, plus optional image/audio references, and describe the edit in the prompt. Output duration and aspect ratio follow the source video. Fixed duration/ratio controls are locked while editing is selected; switching it off restores ordinary reference-generation controls.
+
+The local `seedance25_video_editing` boolean is stored in generation `request_data` and preserved during repeat. It is never sent as a provider API field: the shared adapter sends the documented `duration=-1` and `aspect_ratio=adaptive`. The [KIE contract](https://docs.kie.ai/market/bytedance/seedance-2-5) has no explicit task-intent field; the provider still classifies the prompt. Having a video reference alone does not activate editing, so ordinary reference generation retains its chosen duration and ratio.
+
+Editing retains the existing **admin-only Auto entitlement** and free admin launch. Non-admin editing requests are rejected before charging or creating a provider task. Paid editing requires a separate deterministic pricing design based on trusted source duration; no price, multiplier, refund or automatic paid retry rule changes here. Admin price display remains the existing five-second Auto estimate, not the actual source duration.
+
+Local uploaded source duration is checked server-side; editing rejects sources below four seconds or above thirty. Ordinary video references keep the existing 2–30 second bounds. External URLs and `asset://` inputs have no locally probed metadata, so the provider validates their duration. Failed jobs are not automatically resubmitted; the editing-constraint error includes a localized hint to select the editing option.

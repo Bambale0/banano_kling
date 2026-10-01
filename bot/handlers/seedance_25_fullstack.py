@@ -356,6 +356,13 @@ async def _miniapp_seedance25_generate(request: web.Request, body: dict[str, Any
         )
 
     user = ctx["user"]
+    video_editing = body.get("seedance25_video_editing", False)
+    if not isinstance(video_editing, bool):
+        return web.json_response({"ok": False, "error": "Некорректный режим редактирования видео"}, status=400)
+    if video_editing and not config.is_admin(telegram_id):
+        # Public installation rewrites _is_admin into a feature-access check.
+        # Editing privileges must still use the real administrator check.
+        return web.json_response({"ok": False, "error": "Редактирование видео пока доступно только администратору"}, status=400)
     prompt = str(body.get("prompt") or "").strip()
     scenario = str(body.get("seedance25_scenario") or "text").strip().lower()
     if scenario not in {"text", "first_frame", "first_last", "multimodal"}:
@@ -410,6 +417,15 @@ async def _miniapp_seedance25_generate(request: web.Request, body: dict[str, Any
             return web.json_response({"ok": False, "error": "Добавьте хотя бы один мультимодальный референс"}, status=400)
 
     try:
+        if video_editing:
+            # Editing entitlement is checked above and by the public wrapper.
+            if scenario != "multimodal" or len(video_urls) != 1:
+                raise ValueError("Для редактирования выберите режим по референсам и одно исходное видео 4–30 секунд")
+            source_duration = await _validate_local_source(video_urls[0], "video")
+            if source_duration is not None and not 4 <= source_duration <= 30:
+                raise ValueError("Для редактирования исходное видео должно быть 4–30 секунд")
+            duration = -1
+            ratio = "adaptive"
         await _validate_seedance_sources(
             first_frame_url=first_frame,
             last_frame_url=last_frame,
@@ -458,6 +474,7 @@ async def _miniapp_seedance25_generate(request: web.Request, body: dict[str, Any
         web_search=web_search,
         nsfw_checker=nsfw_checker,
         callBackUrl=get_seedance25_callback_url(),
+        **({"video_editing": True} if video_editing else {}),
     )
     if not result or not result.get("task_id"):
         error = result.get("error") if isinstance(result, dict) else "provider response has no task_id"
@@ -481,6 +498,9 @@ async def _miniapp_seedance25_generate(request: web.Request, body: dict[str, Any
             "v_model": MODEL_KEY,
             "v_type": "text" if scenario == "text" else "imgtxt" if scenario in {"first_frame", "first_last"} else "video",
             "seedance25_scenario": scenario,
+            "seedance25_video_editing": video_editing,
+            "duration": duration,
+            "aspect_ratio": ratio,
             "first_frame_url": first_frame,
             "last_frame_url": last_frame,
             "reference_images": image_urls,
@@ -815,6 +835,16 @@ def _seedance25_failure_text(
     else:
         reason = str(fail_msg or "ошибка провайдера").strip()[:600]
 
+    error_text = str(fail_msg or "").lower()
+    editing_hint = ""
+    if all(part in error_text for part in ("video editing", "duration", "must be -1")):
+        editing_hint = (
+            "\n\nПровайдер определил задачу как редактирование видео. "
+            "Выберите режим «Редактировать видео» и одно исходное видео 4–30 секунд; "
+            "длительность и формат кадра сохраняются из исходника. "
+            "Этот режим пока доступен администратору."
+        )
+
     if request_data.get("admin_free"):
         billing = "Списаний не было."
     elif request_data.get("refund_claimed"):
@@ -825,7 +855,7 @@ def _seedance25_failure_text(
     return (
         "❌ <b>Seedance 2.5 не завершилась</b>\n"
         f"ID: <code>{html.escape(task_id)}</code>\n"
-        f"Причина: {html.escape(reason)}\n\n"
+        f"Причина: {html.escape(reason)}{editing_hint}\n\n"
         f"{billing}"
     )
 
