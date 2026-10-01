@@ -6872,7 +6872,12 @@ async def handle_video_prompt_text(message: types.Message, state: FSMContext):
     data = await state.get_data()
     generation_type = data.get("generation_type", "")
     v_type = data.get("v_type", "")
-    is_gemini_omni_video = data.get("v_model") == "gemini_omni_video"
+    current_model = data.get("v_model")
+    is_gemini_omni_video = current_model == "gemini_omni_video"
+    has_seedance_photo_reference = (
+        current_model == "seedance_2"
+        and bool(_clean_unique_urls(data.get("reference_images", [])))
+    )
     if (
         generation_type == "video"
         and v_type in ("imgtxt", "avatar", "video", "character")
@@ -6882,8 +6887,12 @@ async def handle_video_prompt_text(message: types.Message, state: FSMContext):
             v_type == "imgtxt"
             and not data.get("v_image_url")
             and not is_gemini_omni_video
+            and not has_seedance_photo_reference
         ):
-            await message.answer("Сначала отправьте стартовое фото.")
+            if current_model == "seedance_2":
+                await message.answer("Сначала отправьте хотя бы одно фото-референс.")
+            else:
+                await message.answer("Сначала отправьте стартовое фото.")
             return
         if v_type == "avatar":
             if not data.get("v_image_url"):

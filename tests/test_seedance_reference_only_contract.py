@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
+from bot.handlers import generation as generation_module
 from bot.handlers.seedance_multimodal_compat import (
     default_video_type,
     reference_only_seedance_media_inputs,
@@ -70,3 +73,59 @@ async def test_seedance_provider_downgrades_legacy_first_frame_to_reference(monk
         "https://files.example/person.png",
         "https://files.example/style.png",
     ]
+
+
+class _PromptState:
+    def __init__(self, data: dict):
+        self.data = dict(data)
+
+    async def get_state(self):
+        return "GenerationStates:waiting_for_video_prompt"
+
+    async def get_data(self):
+        return dict(self.data)
+
+    async def update_data(self, **kwargs):
+        self.data.update(kwargs)
+
+
+class _PromptMessage:
+    def __init__(self, text: str):
+        self.text = text
+        self.from_user = SimpleNamespace(id=123456789)
+        self.answers: list[str] = []
+
+    async def answer(self, text: str, *args, **kwargs):
+        self.answers.append(text)
+
+
+@pytest.mark.asyncio
+async def test_seedance_prompt_accepts_reference_only_photo_from_media_step(monkeypatch):
+    launched: dict[str, str] = {}
+
+    async def fake_launch(message, state, prompt):
+        launched["prompt"] = prompt
+
+    monkeypatch.setattr(
+        generation_module,
+        "run_no_preset_video_from_message",
+        fake_launch,
+    )
+    state = _PromptState(
+        {
+            "generation_type": "video",
+            "v_type": "imgtxt",
+            "v_model": "seedance_2",
+            "v_image_url": None,
+            "reference_images": ["https://files.example/reference.png"],
+            "video_flow_step": "media",
+        }
+    )
+    message = _PromptMessage("Оживить фото")
+
+    await generation_module.handle_video_prompt_text(message, state)
+
+    assert launched == {"prompt": "Оживить фото"}
+    assert state.data["video_flow_step"] == "configure"
+    assert state.data["user_prompt"] == "Оживить фото"
+    assert not any("стартовое фото" in answer.lower() for answer in message.answers)
