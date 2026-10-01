@@ -68,6 +68,12 @@ const bootstrapPayload = {
       supports: ['text', 'imgtxt'],
       costs: { '5': 8, '10': 16 },
     },
+    {
+      id: 'seedance_2_5', label: 'Seedance 2.5', description: 'Seedance references and editing',
+      durations: [-1, 5, 12], ratios: ['adaptive', '16:9'], supports: ['text', 'imgtxt', 'video'],
+      costs: { '-1': 20, '5': 20, '12': 48 }, quality_costs: { '480p': 3, '720p': 4 },
+    },
+
   ],
   recent_tasks: [],
   saved_references: [],
@@ -171,6 +177,7 @@ try {
   const context = await browser.newContext({ viewport: { width: 430, height: 900 } })
   const page = await context.newPage()
 
+  let seedanceGenerationPayload = null
   let copiedTrendPayload = null
   let paymentPayload = null
   let promptsPayload = null
@@ -239,6 +246,17 @@ try {
         contentType: 'application/json',
         body: JSON.stringify(bootstrapPayload),
       })
+      return
+    }
+
+    if (path.endsWith('/generate-video')) {
+      seedanceGenerationPayload = JSON.parse(request.postData() || '{}')
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        ok: true, status: 'queued', task_id: 'seedance-edit-e2e', credits: 125,
+        cost: 0, model_label: 'Seedance 2.5', admin_free: bootstrapPayload.is_admin,
+        resolution: '720p', duration: seedanceGenerationPayload.v_duration,
+        aspect_ratio: seedanceGenerationPayload.v_ratio, scenario: 'multimodal',
+      }) })
       return
     }
 
@@ -601,6 +619,43 @@ try {
 
   await page.locator('label').filter({ hasText: 'Видео-нейросеть' }).locator('select').selectOption('v3_fast')
   assert.equal(await uploadedPreview.count(), 1)
+
+  // Exercise the exported Seedance UI with mocked provider transport only.
+  for (const editing of [true, false]) {
+    bootstrapPayload.is_admin = editing
+    await page.goto(`${baseUrl}?tgWebAppData=query_id%3De2e`, { waitUntil: 'networkidle' })
+    await page.getByRole('button', { name: 'Видео', exact: true }).click()
+    const durationSlider = page.getByLabel('Длительность видео', { exact: true })
+    await durationSlider.waitFor()
+    await durationSlider.focus()
+    await durationSlider.press('Home')
+    for (let second = 4; second < 12; second += 1) await durationSlider.press('ArrowRight')
+    await page.getByRole('button', { name: '16:9', exact: true }).click()
+    await page.getByText('Для продвинутых: добавить URL или Asset ID', { exact: true }).click()
+    await page.getByLabel('Видео — по одному URL / asset:// на строку', { exact: true }).fill('https://cdn.example/source.mp4')
+    await page.getByLabel('Промпт для Seedance 2.5', { exact: true }).fill('Replace the background in this video')
+    if (editing) {
+      await page.getByLabel('Редактировать видео', { exact: true }).check()
+      assert.equal(await durationSlider.isDisabled(), true)
+      assert.equal(await page.getByRole('button', { name: '16:9', exact: true }).isDisabled(), true)
+      await page.getByText(/Одно исходное видео, 4–30 секунд/).waitFor()
+      // Toggling off restores remembered generation parameters.
+      await page.getByLabel('Редактировать видео', { exact: true }).uncheck()
+      assert.equal(await durationSlider.inputValue(), '12')
+      assert.equal(await durationSlider.isEnabled(), true)
+      await page.getByLabel('Редактировать видео', { exact: true }).check()
+    } else {
+      assert.equal(await page.getByLabel('Редактировать видео', { exact: true }).count(), 0)
+      assert.equal(await durationSlider.isEnabled(), true)
+    }
+    const generationRequest = page.waitForResponse((response) => response.url().endsWith('/generate-video') && response.status() === 200)
+    await page.getByRole('button', { name: /Создать видео/ }).click()
+    await generationRequest
+    assert.equal(seedanceGenerationPayload.seedance25_video_editing, editing)
+    assert.equal(seedanceGenerationPayload.v_duration, editing ? -1 : 12)
+    assert.equal(seedanceGenerationPayload.v_ratio, editing ? 'adaptive' : '16:9')
+    assert.deepEqual(seedanceGenerationPayload.v_reference_videos, ['https://cdn.example/source.mp4'])
+  }
 
   console.log('Mini App critical browser E2E passed')
 } finally {
