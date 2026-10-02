@@ -1223,4 +1223,3 @@ async def seedance_info(callback: types.CallbackQuery) -> None:
             parse_mode="HTML",
         )
     await callback.answer()
-

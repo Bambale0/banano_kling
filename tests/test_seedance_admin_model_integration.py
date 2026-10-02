@@ -65,4 +65,3 @@ def test_admin_labels_cover_all_seedance_models():
         "seedance_2_fast": "Seedance 2.0 Fast",
     }.items():
         assert f'"{key}": "{label}"' in source
-
