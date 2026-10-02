@@ -132,6 +132,15 @@ _TELEGRAM_WEBHOOK_TASKS: set[asyncio.Task] = set()
 TELEGRAM_WEBHOOK_CONCURRENCY_LIMIT = 8
 _TELEGRAM_WEBHOOK_SEMAPHORE = asyncio.Semaphore(TELEGRAM_WEBHOOK_CONCURRENCY_LIMIT)
 _IMAGE_PROVIDER_POLL_IN_FLIGHT: set[str] = set()
+KIE_DELIVERY_LEASE_SECONDS = max(
+    120, int(os.getenv("KIE_DELIVERY_LEASE_SECONDS", "600"))
+)
+EPHEMERAL_RESULT_PERSIST_ATTEMPTS = max(
+    1, min(4, int(os.getenv("EPHEMERAL_RESULT_PERSIST_ATTEMPTS", "2")))
+)
+EPHEMERAL_RESULT_PERSIST_RETRY_DELAY_SECONDS = max(
+    0.0, float(os.getenv("EPHEMERAL_RESULT_PERSIST_RETRY_DELAY_SECONDS", "1"))
+)
 
 USER_BOT_COMMANDS = [
     BotCommand(command="start", description="Текстовый бот и главное меню"),
@@ -902,42 +911,65 @@ async def _persist_result_url_if_needed(result_url: str | None, *, task_type: st
         return candidate
 
     result_host = (urlparse(candidate).hostname or "").strip().lower().lstrip(".")
-    force_durable_image = (
-        str(task_type or "").strip().lower() == "image"
-        and any(
-            result_host == host or result_host.endswith(f".{host}")
-            for host in DURABLE_IMAGE_RESULT_HOSTS
-        )
-    )
-    if force_durable_image:
-        try:
-            from bot.services.feed_persist import persist_feed_result_urls
+    from bot.database import FEED_EPHEMERAL_RESULT_HOSTS
 
-            persisted = await persist_feed_result_urls(
-                [candidate],
-                require_local=True,
-            )
-            if persisted:
-                durable_url = str(persisted[0] or "").strip()
-                if durable_url:
-                    logger.info(
-                        "Persisted ephemeral provider image durably: host=%s source=%s target=%s",
-                        result_host,
-                        candidate,
-                        durable_url,
-                    )
-                    return durable_url
-            logger.warning(
-                "Failed to persist ephemeral provider image durably: host=%s url=%s",
-                result_host,
-                candidate,
-            )
-        except Exception:
-            logger.exception(
-                "Durable provider image persistence failed: host=%s url=%s",
-                result_host,
-                candidate,
-            )
+    durable_hosts = set(FEED_EPHEMERAL_RESULT_HOSTS)
+    if str(task_type or "").strip().lower() == "image":
+        durable_hosts.update(DURABLE_IMAGE_RESULT_HOSTS)
+    force_durable_result = any(
+        result_host == host or result_host.endswith(f".{host}")
+        for host in durable_hosts
+    )
+    if force_durable_result:
+        from bot.services.feed_persist import persist_feed_result_urls
+
+        for attempt in range(1, EPHEMERAL_RESULT_PERSIST_ATTEMPTS + 1):
+            try:
+                persisted = await persist_feed_result_urls(
+                    [candidate],
+                    require_local=True,
+                )
+                if persisted:
+                    durable_url = str(persisted[0] or "").strip()
+                    if durable_url:
+                        logger.info(
+                            "Persisted ephemeral provider result durably: type=%s host=%s source=%s target=%s attempt=%s",
+                            task_type,
+                            result_host,
+                            candidate,
+                            durable_url,
+                            attempt,
+                        )
+                        return durable_url
+            except Exception:
+                logger.exception(
+                    "Durable provider result persistence failed: type=%s host=%s url=%s attempt=%s/%s",
+                    task_type,
+                    result_host,
+                    candidate,
+                    attempt,
+                    EPHEMERAL_RESULT_PERSIST_ATTEMPTS,
+                )
+            if attempt < EPHEMERAL_RESULT_PERSIST_ATTEMPTS:
+                delay = EPHEMERAL_RESULT_PERSIST_RETRY_DELAY_SECONDS * attempt
+                logger.warning(
+                    "Retrying ephemeral provider result persistence: type=%s host=%s attempt=%s/%s delay=%.1fs",
+                    task_type,
+                    result_host,
+                    attempt + 1,
+                    EPHEMERAL_RESULT_PERSIST_ATTEMPTS,
+                    delay,
+                )
+                if delay:
+                    await asyncio.sleep(delay)
+
+        logger.warning(
+            "Failed to persist ephemeral provider result durably after retries: type=%s host=%s url=%s attempts=%s",
+            task_type,
+            result_host,
+            candidate,
+            EPHEMERAL_RESULT_PERSIST_ATTEMPTS,
+        )
         return candidate
 
     if not getattr(config, "PERSIST_PROVIDER_RESULTS", False):
@@ -2828,8 +2860,11 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             video_url = data["data"].get("result_video_url")
             if task_id and video_url:
                 from bot.database import (
+                    claim_task_delivery,
                     complete_video_task,
                     get_task_by_id,
+                    mark_task_delivery_status,
+                    store_task_result_ready,
                 )
                 from bot.keyboards import get_video_result_keyboard
 
@@ -2852,10 +2887,27 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                         task, context="kling_success_code200"
                     )
                     if telegram_id:
+                        if not await claim_task_delivery(
+                            task_id,
+                            lease_seconds=KIE_DELIVERY_LEASE_SECONDS,
+                        ):
+                            logger.info(
+                                "Kie.ai Kling delivery already claimed or finalized: task=%s user=%s",
+                                task_id,
+                                telegram_id,
+                            )
+                            return web.Response(status=200)
                         video_url = await _persist_result_url_if_needed(
                             video_url,
                             task_type=task.type if task else "video",
                         )
+                        if not await store_task_result_ready(task_id, video_url):
+                            logger.warning(
+                                "Kie.ai Kling result_ready persistence lost race: task=%s user=%s",
+                                task_id,
+                                telegram_id,
+                            )
+                            return web.Response(status=200)
                         bot_instance = request.app["bot"]
                         try:
                             caption = f"✅ <b>Видео ({_html_fragment(model_display)}) готово!</b>\\n\\nID: <code>{_html_fragment(task_id)}</code>"
@@ -2882,6 +2934,8 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                             )
 
                             delivered = False
+                            link_sent = False
+                            delivery_metadata = _extract_task_request_data(task)
                             media_caption = _build_single_result_caption(
                                 _with_original_link(caption, video_url),
                                 task,
@@ -2908,7 +2962,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                     caption=media_caption,
                                     reply_markup=video_kb,
                                 )
-                            if not delivered:
+                            if not delivered and not delivery_metadata.get("delivery_link_sent"):
                                 try:
                                     await _send_plain_result_link(
                                         bot_instance,
@@ -2919,17 +2973,28 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                         result_url=video_url,
                                         reply_markup=video_kb,
                                     )
-                                    delivered = True
+                                    link_sent = True
+                                    await mark_task_delivery_status(task_id, "link_sent")
                                 except Exception as link_e:
                                     logger.error(
                                         f"Failed to send {model_display} video link to {telegram_id}: {link_e}"
                                     )
-                            await complete_video_task(task_id, video_url)
                             if delivered:
+                                await complete_video_task(task_id, video_url)
+                                await mark_task_delivery_status(task_id, "delivered")
                                 logger.info(f"{model_display} video sent to {telegram_id}")
                             else:
+                                await mark_task_delivery_status(
+                                    task_id,
+                                    "pending",
+                                    error="Telegram/CDN media delivery failed; reconciliation scheduled",
+                                )
                                 logger.warning(
-                                    f"{model_display} result stored but Telegram delivery failed for {telegram_id}"
+                                    "%s media delivery pending after provider success: task=%s user=%s link_sent=%s",
+                                    model_display,
+                                    task_id,
+                                    telegram_id,
+                                    link_sent or bool(delivery_metadata.get("delivery_link_sent")),
                                 )
                         except Exception as e:
                             logger.error(
@@ -2954,8 +3019,11 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             if task_id:
                 from bot.database import (
                     add_credits,
+                    claim_task_delivery,
                     complete_video_task,
                     get_task_by_id,
+                    mark_task_delivery_status,
+                    store_task_result_ready,
                 )
 
                 task = await get_task_by_id(task_id)
@@ -2978,13 +3046,30 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                         task, context="kie_legacy"
                     )
                     if telegram_id:
-                        video_url = await _persist_result_url_if_needed(
-                            video_url,
-                            task_type=task.type if task else "video",
-                        )
                         bot_instance = request.app["bot"]
                         try:
                             if status in {"success", "completed"} and video_url:
+                                if not await claim_task_delivery(
+                                    task_id,
+                                    lease_seconds=KIE_DELIVERY_LEASE_SECONDS,
+                                ):
+                                    logger.info(
+                                        "Kie.ai legacy delivery already claimed or finalized: task=%s user=%s",
+                                        task_id,
+                                        telegram_id,
+                                    )
+                                    return web.Response(status=200)
+                                video_url = await _persist_result_url_if_needed(
+                                    video_url,
+                                    task_type=task.type if task else "video",
+                                )
+                                if not await store_task_result_ready(task_id, video_url):
+                                    logger.warning(
+                                        "Kie.ai legacy result_ready persistence lost race: task=%s user=%s",
+                                        task_id,
+                                        telegram_id,
+                                    )
+                                    return web.Response(status=200)
                                 # Success case
                                 model_display = _get_task_model_label(
                                     task.model, task.type
@@ -3031,6 +3116,8 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                     is_public_feed=task.is_public_feed if task else False,
                                 )
                                 delivered = False
+                                link_sent = False
+                                delivery_metadata = _extract_task_request_data(task)
                                 tmp_file = None
                                 try:
                                     async with aiohttp.ClientSession() as sess:
@@ -3094,40 +3181,55 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                         logger.error(
                                             f"Kie.ai video URL send failed: {url_e}"
                                         )
-                                        try:
-                                            await _send_plain_result_link(
-                                                bot_instance,
-                                                telegram_id,
-                                                media_label="Видео",
-                                                model_label=model_display,
-                                                task_id=task_id,
-                                                result_url=video_url,
-                                                reply_markup=video_kb,
-                                                notice=(
-                                                    "Telegram не смог прикрепить видео файлом "
-                                                    "из-за ограничения размера."
-                                                ),
-                                            )
-                                            delivered = True
-                                            logger.info(
-                                                f"Kie.ai video link sent to {telegram_id}"
-                                            )
-                                        except Exception as link_e:
-                                            logger.error(
-                                                f"Kie.ai video link fallback failed: {link_e}"
-                                            )
+                                        if not delivery_metadata.get("delivery_link_sent"):
+                                            try:
+                                                await _send_plain_result_link(
+                                                    bot_instance,
+                                                    telegram_id,
+                                                    media_label="Видео",
+                                                    model_label=model_display,
+                                                    task_id=task_id,
+                                                    result_url=video_url,
+                                                    reply_markup=video_kb,
+                                                    notice=(
+                                                        "Telegram не смог прикрепить видео файлом "
+                                                        "из-за ограничения размера."
+                                                    ),
+                                                )
+                                                link_sent = True
+                                                await mark_task_delivery_status(
+                                                    task_id,
+                                                    "link_sent",
+                                                )
+                                                logger.info(
+                                                    "Kie.ai video fallback link sent to %s; media delivery remains pending",
+                                                    telegram_id,
+                                                )
+                                            except Exception as link_e:
+                                                logger.error(
+                                                    f"Kie.ai video link fallback failed: {link_e}"
+                                                )
                                 finally:
                                     if tmp_file and os.path.exists(tmp_file):
                                         try:
                                             os.remove(tmp_file)
                                         except Exception:
                                             pass
-                                await complete_video_task(task_id, video_url)
                                 if delivered:
+                                    await complete_video_task(task_id, video_url)
+                                    await mark_task_delivery_status(task_id, "delivered")
                                     logger.info(f"Kie.ai result sent to {telegram_id}")
                                 else:
+                                    await mark_task_delivery_status(
+                                        task_id,
+                                        "pending",
+                                        error="Telegram/CDN media delivery failed; reconciliation scheduled",
+                                    )
                                     logger.warning(
-                                        f"Kie.ai result stored but Telegram delivery failed for {telegram_id}"
+                                        "Kie.ai media delivery pending after provider success: task=%s user=%s link_sent=%s",
+                                        task_id,
+                                        telegram_id,
+                                        link_sent or bool(delivery_metadata.get("delivery_link_sent")),
                                     )
                             else:
                                 # Fail case
@@ -4082,9 +4184,12 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
         )
 
         from bot.database import (
+            add_credits,
+            claim_task_delivery,
             complete_video_task,
             get_task_by_id,
             mark_task_delivery_status,
+            store_task_result_ready,
         )
         from bot.keyboards import (
             get_gemini_omni_result_keyboard,
@@ -4286,6 +4391,17 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 logger.error(f"Cannot find telegram_id for user_id {task.user_id}")
                 return web.Response(status=200)
 
+            if not await claim_task_delivery(
+                task_id,
+                lease_seconds=KIE_DELIVERY_LEASE_SECONDS,
+            ):
+                logger.info(
+                    "Kie.ai delivery already claimed or finalized: task=%s user=%s",
+                    task_id,
+                    telegram_id,
+                )
+                return web.Response(status=200)
+
             logger.info(
                 f"Found {service_name} task for user {task.user_id}, telegram_id: {telegram_id}, preset: {task.preset_id}"
             )
@@ -4294,6 +4410,13 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 result_url,
                 task_type=task.type if task else ("video" if is_video else "image"),
             )
+            if not await store_task_result_ready(task_id, result_url):
+                logger.warning(
+                    "Kie.ai result_ready persistence lost race: task=%s user=%s",
+                    task_id,
+                    telegram_id,
+                )
+                return web.Response(status=200)
 
             reference_preview_urls = _extract_reference_image_urls(
                 task,
@@ -4512,19 +4635,33 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                                     prompt_e,
                                 )
                 else:
-                    await _send_plain_result_link(
-                        bot_instance,
-                        telegram_id,
-                        media_label="Видео" if is_video else "Изображение",
-                        model_label=model_label,
-                        task_id=task_id,
-                        result_url=result_url,
-                        reply_markup=kb_link,
+                    delivery_metadata = _extract_task_request_data(task)
+                    if not delivery_metadata.get("delivery_link_sent"):
+                        await _send_plain_result_link(
+                            bot_instance,
+                            telegram_id,
+                            media_label="Видео" if is_video else "Изображение",
+                            model_label=model_label,
+                            task_id=task_id,
+                            result_url=result_url,
+                            reply_markup=kb_link,
+                        )
+                        await mark_task_delivery_status(task_id, "link_sent")
+                        logger.info(
+                            "%s fallback link sent to user %s; media delivery remains pending",
+                            service_name,
+                            telegram_id,
+                        )
+                    await mark_task_delivery_status(
+                        task_id,
+                        "pending",
+                        error="Telegram/CDN media delivery failed; reconciliation scheduled",
                     )
-                    await complete_video_task(task_id, result_url)
-                    await mark_task_delivery_status(task_id, "delivered")
-                    logger.info(
-                        f"{service_name} fallback text sent to user {telegram_id}"
+                    logger.warning(
+                        "%s media delivery pending after provider success: task=%s user=%s",
+                        service_name,
+                        task_id,
+                        telegram_id,
                     )
             except Exception as send_e:
                 if _is_terminal_telegram_delivery_error(send_e):
