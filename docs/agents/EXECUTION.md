@@ -913,3 +913,26 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Repeat the production duplicate audit immediately before deployment. If any duplicate `repeat_task_id` appears, stop rollout and reconcile before creating the UNIQUE index.
 - Require exact-head validation, safe suite, browser E2E and production Docker image checks; deploy only the final merged `tanyapi` SHA.
 - Post-deploy verify the UNIQUE index, exact image/container/public revision, health, changed runtime sources and error logs. Re-audit new admin reward events and pending admin tasks with refundable nominal cost.
+
+
+---
+
+## 2026-10-02 - Grok start-frame Telegram regression
+
+- Baseline: `0b2263c7fed108007506cfb347ead6cb410162ab`; isolated branch `fix/grok-start-frame-20261002`.
+- User-visible failure: after selecting Grok in the public video menu, a photo is rejected as text-only input; the following prompt fails for missing start image.
+- Root cause: `video_generation_compat.select_advanced_video_model` uses `_initial_type_for_model`, whose default `text` incorrectly applies to both Grok image-to-video models. Legacy model-selection handlers already use `imgtxt`, so testing only those handlers misses the public-menu defect.
+- Separate safety defect: the direct message launcher checks the mandatory Grok start frame after debiting credits, then compensates and clears the session.
+- RED: offline production-image test container ran `pytest tests/test_grok_start_frame_flow.py -q --tb=short`: **20 failed, 7 passed**. Failures reproduce wrong initial mode, discarded photo/document, stale session rejection, and debit-before-validation for both Grok models.
+- Plan: reuse the existing Grok model set; correct the actual public selector; normalize stale Grok state at screen/upload/launch boundaries without discarding media; reject missing images before any monetary/provider side effect, preserving prompt/settings. No prices, providers, model identifiers, schema or migrations change.
+- Verification: real FSM and handlers through provider payload/task persistence with external IO mocked; include Telegram photo, JPEG/PNG/WebP documents, legacy state, both models and unaffected model types. Then relevant and full safe suites, lint/diff review, CI and exact-SHA deployment verification. No paid generations or production database writes.
+- Mini App is not changed: this defect is the Telegram selector/FSM path. Provider payloads and shared model capabilities remain unchanged.
+- Diagnosis considered: incorrect selector state (reproduced); failed media download (ruled out in the reproducer: handler exits before download); upstream rejection (ruled out: no provider request is made).
+
+### Verification results
+- GREEN: 35 Grok regression cases, including the registered aggregate router and real prompt-coalescing middleware; synthetic image bytes, Telegram IO, provider HTTP and monetary side effects are isolated.
+- Focused regression gate: **129 passed** (Grok flow, advanced video contract, keyboard/provider contracts, Mini App continuity, prompt coalescing).
+- Full safe suite in a disposable production-image container with networking disabled: **1304 passed, 13 skipped**, 96 existing warnings.
+- First full-container run exposed three harness issues, not patched application tests: inherited `WEBHOOK_BIND_HOST=0.0.0.0` masked the configuration default, and nested pytest processes did not inherit `/testdeps` after resetting PYTHONPATH. Removing that image-level override in the test process and adding a disposable test-dependency `.pth` fixed them; the original failing config/logging tests pass unchanged.
+- No production/container source edits, balance updates, paid provider calls, task replays, schema changes or routing changes were made. Release remains gated on PR checks and exact deployed-SHA verification.
+- Review: original Grok model names, modes, resolutions and reference limits are preserved. Missing-photo rejection retains the prompt and settings; only the erroneous Grok input type is normalized. Other video models return unchanged from the normalizer.

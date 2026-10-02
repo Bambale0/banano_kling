@@ -1631,6 +1631,21 @@ _GROK_V15_VIDEO_RATIOS = {
 _GROK_VIDEO_MODELS = {"grok_imagine", "grok_imagine_v15"}
 
 
+async def _normalize_grok_video_state(state: FSMContext) -> dict:
+    """Repair legacy text-mode sessions without clearing their media/settings."""
+    data = await state.get_data()
+    model = data.get("v_model")
+    previous_type = data.get("v_type")
+    if model in _GROK_VIDEO_MODELS and previous_type != "imgtxt":
+        data = await state.update_data(v_type="imgtxt")
+        logger.info(
+            "Grok video input mode normalized: model=%s previous_type=%s type=imgtxt",
+            model,
+            previous_type,
+        )
+    return data
+
+
 def _grok_video_ratio_from_image_task(task, model: str = "grok_imagine") -> str:
     ratio = str(getattr(task, "aspect_ratio", "") or "").strip()
     if model == "grok_imagine_v15":
@@ -3407,7 +3422,7 @@ async def _show_video_creation_screen(
     Показывает единый экран создания видео с параметрами и промптом.
     Используется после загрузки референсов или при пропуске.
     """
-    data = await state.get_data()
+    data = await _normalize_grok_video_state(state)
 
     # Получаем текущие параметры
     current_v_type = data.get("v_type", "text")
@@ -6580,7 +6595,7 @@ async def process_photo_for_video_prompt_state(
     Обрабатывает фото для imgtxt видео в состоянии waiting_for_video_prompt.
     Первое фото - v_image_url (старт кадр), остальные - reference_images (до 8 рефов, total 9).
     """
-    data = await state.get_data()
+    data = await _normalize_grok_video_state(state)
     v_type = data.get("v_type")
     current_model = data.get("v_model", "v3_std")
     is_gemini_omni_video = current_model == "gemini_omni_video"
@@ -7316,9 +7331,25 @@ async def run_no_preset_video_from_message(
     message: types.Message, state: FSMContext, prompt: str
 ):
     """Запускает видео генерацию без пресета (новый UX с v_type, v_model и т.д.)"""
-    data = await state.get_data()
+    data = await _normalize_grok_video_state(state)
     v_type = data.get("v_type", "text")
     v_model = data.get("v_model", "v3_std")
+    if v_model in _GROK_VIDEO_MODELS and not str(data.get("v_image_url") or "").strip():
+        # Validate before user lookup/debit: a missing frame is not a paid attempt.
+        await state.update_data(user_prompt=prompt)
+        await state.set_state(GenerationStates.waiting_for_video_prompt)
+        logger.info(
+            "Video input rejected: user_id=%s model=%s reason=missing_start_image phase=precharge",
+            message.from_user.id,
+            v_model,
+        )
+        await message.answer(
+            "Сначала отправьте стартовое фото.\n"
+            "Параметры и описание сохранены. После загрузки фото повторите текстовый запрос.",
+            reply_markup=get_main_menu_button_keyboard(),
+        )
+        return
+
     max_video_refs = get_max_video_references(v_model)
     raw_video_urls = _clean_unique_urls(data.get("v_reference_videos", []))
 
@@ -7577,16 +7608,6 @@ async def run_no_preset_video_from_message(
             )
 
         elif v_model == "grok_imagine":
-            if not image_url:
-                await message.answer(
-                    "❌ Grok Imagine требует стартовое изображение (фото+текст режим)."
-                )
-                if not is_admin:
-                    await add_credits(message.from_user.id, cost)
-                await processing_msg.delete()
-                await state.clear()
-                return
-
             result = await grok_service.generate_image_to_video(
                 image_urls=[image_url] + image_refs[:6],
                 prompt=prompt,
@@ -7599,16 +7620,6 @@ async def run_no_preset_video_from_message(
                 ),
             )
         elif v_model == "grok_imagine_v15":
-            if not image_url:
-                await message.answer(
-                    "❌ Grok Imagine 1.5 требует стартовое изображение."
-                )
-                if not is_admin:
-                    await add_credits(message.from_user.id, cost)
-                await processing_msg.delete()
-                await state.clear()
-                return
-
             result = await grok_service.generate_image_to_video_v15(
                 image_urls=[image_url],
                 prompt=prompt,
