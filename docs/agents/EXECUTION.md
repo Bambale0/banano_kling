@@ -1,5 +1,16 @@
 # Execution ledger
 
+## 2026-10-02 — Mini App Telegram availability and upload telemetry
+
+- Baseline: `origin/tanyapi` / production `7c5431061f2eae448087aa56219e56873fe8aeba`; branch `fix/miniapp-chat-telemetry`.
+- Production evidence: Mini App users who had never opened the bot generated repeated `TelegramBadRequest: chat not found` warnings/errors during start/result/failure notifications. Normal upload lifecycle events (`upload-start`, fallback start and HTTP 200 response) were all logged through one unconditional `logger.warning` call.
+- Root causes: terminal Telegram delivery was conflated with generation/delivery failure (`failed`) or left retryable (`pending` in Seedance 2.5); client telemetry had no severity classifier. Frontend status values were checked and successful responses genuinely carried HTTP 200.
+- Contract: completed generation results remain available in Mini App. `chat not found`, blocked bot and deactivated user become terminal delivery status `unavailable` with stable reason codes and no automatic retry; transient network/rate-limit failures remain `pending`. These expected availability states log at INFO without tracebacks. Upload interactions log at DEBUG, successful upload responses at INFO, and failed/network/unknown client events remain WARNING.
+- TDD: public-seam regressions cover severity classification, structured Telegram reasons, DB persistence/claim behavior, Mini App start notification, image-result/failure notifications, Seedance 2.5 terminal and transient delivery, and no fallback download after a terminal send error.
+- Scope: request-data delivery metadata, Telegram notification/error handling and log severity only. No schema migration, prices, balances, refunds, provider payloads, model routing or frontend wire fields change.
+- Verification: focused delivery/telemetry/database matrix `143 passed`; full safe backend suite `1269 passed, 13 skipped`; Python compileall, import-order lint and diff whitespace passed. Static propagation review confirms `unavailable` is internal request metadata, old `failed/delivered` behavior is preserved, and transient failures remain retryable.
+- Rollout: PR to `tanyapi`, exact-SHA CI/autodeploy, then production telemetry checks for HTTP 200 upload events and terminal Telegram availability without WARNING/ERROR or repeated Seedance retries.
+
 ## 2026-10-02 — Telegram backup part retention leak
 
 - Baseline after rebase: `origin/tanyapi` `cb76a3b2656bb4444f29ec4f74208b29cbca12e8`; branch `fix/backup-telegram-parts-retention`.

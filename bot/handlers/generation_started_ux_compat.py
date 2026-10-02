@@ -21,7 +21,10 @@ from typing import Any
 
 from aiogram import BaseMiddleware
 
-from bot.services.delivery_state import is_terminal_telegram_delivery_error
+from bot.services.delivery_state import (
+    is_terminal_telegram_delivery_error,
+    terminal_telegram_delivery_reason,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -247,12 +250,12 @@ def _install_miniapp_started_notifier() -> None:
             )
         except Exception as exc:
             if is_terminal_telegram_delivery_error(exc):
-                logger.warning(
-                    "Mini App generation start notification unavailable: telegram_id=%s local_task_id=%s provider_task_id=%s error=%s",
+                logger.info(
+                    "Mini App Telegram notification unavailable: event=generation_started reason=%s telegram_id=%s local_task_id=%s provider_task_id=%s",
+                    terminal_telegram_delivery_reason(exc),
                     telegram_id,
                     local_task_id,
                     provider_task_id,
-                    exc,
                 )
             else:
                 logger.exception(

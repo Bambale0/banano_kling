@@ -109,3 +109,72 @@ async def test_client_log_numeric_fields_cannot_leak_text_or_raise_logged_except
     assert len(captured) == 1
     assert "SECRET_" not in json.dumps(captured)
     assert exceptions == []
+
+
+@pytest.mark.asyncio
+async def test_successful_upload_response_is_info_not_warning(monkeypatch):
+    infos = []
+    warnings = []
+    monkeypatch.setattr(
+        miniapp.logger, "info", lambda _message, data: infos.append(data)
+    )
+    monkeypatch.setattr(
+        miniapp.logger, "warning", lambda _message, data: warnings.append(data)
+    )
+
+    response = await miniapp.miniapp_client_log(
+        ClientLogRequest(
+            {
+                "event": "upload-json-fallback-response",
+                "status": 200,
+                "duration_ms": 913,
+                "file_kind": "image_reference",
+            }
+        )
+    )
+
+    assert response.status == 200
+    assert len(infos) == 1
+    assert infos[0]["event"] == "upload-json-fallback-response"
+    assert infos[0]["status"] == 200
+    assert warnings == []
+
+
+@pytest.mark.asyncio
+async def test_upload_interaction_event_is_debug_not_warning(monkeypatch):
+    debug = []
+    warnings = []
+    monkeypatch.setattr(
+        miniapp.logger, "debug", lambda _message, data: debug.append(data)
+    )
+    monkeypatch.setattr(
+        miniapp.logger, "warning", lambda _message, data: warnings.append(data)
+    )
+
+    await miniapp.miniapp_client_log(
+        ClientLogRequest({"event": "upload-area-pointer-down"})
+    )
+
+    assert len(debug) == 1
+    assert debug[0]["event"] == "upload-area-pointer-down"
+    assert warnings == []
+
+
+@pytest.mark.asyncio
+async def test_failed_upload_response_remains_warning(monkeypatch):
+    infos = []
+    warnings = []
+    monkeypatch.setattr(
+        miniapp.logger, "info", lambda _message, data: infos.append(data)
+    )
+    monkeypatch.setattr(
+        miniapp.logger, "warning", lambda _message, data: warnings.append(data)
+    )
+
+    await miniapp.miniapp_client_log(
+        ClientLogRequest({"event": "upload-response", "status": 503})
+    )
+
+    assert infos == []
+    assert len(warnings) == 1
+    assert warnings[0]["status"] == 503

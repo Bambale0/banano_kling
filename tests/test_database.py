@@ -1904,3 +1904,52 @@ async def test_only_one_active_private_seedance_trend_can_use_a_source_generatio
         source_generation_id=123450,
     )
     assert replacement is not None
+
+
+@pytest.mark.asyncio
+async def test_mark_task_delivery_status_supports_terminal_unavailable(monkeypatch):
+    task = database.GenerationTask(
+        id=71,
+        user_id=1,
+        task_id="telegram-unavailable",
+        type="image",
+        preset_id="preset",
+        request_data=json.dumps({"delivery_status": "pending"}),
+    )
+    monkeypatch.setattr(database, "get_task_by_id", AsyncMock(return_value=task))
+
+    conn = FakeConnection()
+    cursor = MagicMock()
+    cursor.rowcount = 1
+    conn.execute.return_value = cursor
+    monkeypatch.setattr(database.db_backend, "connect", lambda *_args, **_kwargs: conn)
+
+    assert await database.mark_task_delivery_status(
+        "telegram-unavailable",
+        "unavailable",
+        error="chat_not_found",
+    )
+
+    _sql, params = conn.execute.await_args.args
+    payload = json.loads(params[0])
+    assert payload["delivery_status"] == "unavailable"
+    assert payload["delivery_error"] == "chat_not_found"
+
+
+@pytest.mark.asyncio
+async def test_claim_task_delivery_does_not_retry_unavailable(monkeypatch):
+    task = database.GenerationTask(
+        id=72,
+        user_id=1,
+        task_id="telegram-unavailable",
+        type="image",
+        preset_id="preset",
+        request_data=json.dumps({"delivery_status": "unavailable"}),
+    )
+    monkeypatch.setattr(database, "get_task_by_id", AsyncMock(return_value=task))
+
+    connect = MagicMock()
+    monkeypatch.setattr(database.db_backend, "connect", connect)
+
+    assert await database.claim_task_delivery("telegram-unavailable") is False
+    connect.assert_not_called()

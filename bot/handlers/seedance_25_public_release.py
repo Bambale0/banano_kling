@@ -27,6 +27,10 @@ from aiogram import types
 from aiogram.fsm.context import FSMContext
 
 from bot.config import config
+from bot.services.delivery_state import (
+    is_terminal_telegram_delivery_error,
+    terminal_telegram_delivery_reason,
+)
 from bot.services.preset_manager import preset_manager
 from bot.services.seedance_25_service import (
     get_seedance25_callback_url,
@@ -771,7 +775,9 @@ async def _public_send_results(
                 reply_markup=result_markup,
             )
             delivered = True
-        except Exception:
+        except Exception as exc:
+            if is_terminal_telegram_delivery_error(exc):
+                raise
             logger.info("Seedance 2.5 URL delivery failed; trying downloaded file")
 
     if not delivered:
@@ -796,7 +802,9 @@ async def _public_send_results(
                         reply_markup=result_markup,
                     )
                 delivered = True
-            except Exception:
+            except Exception as exc:
+                if is_terminal_telegram_delivery_error(exc):
+                    raise
                 logger.exception("Seedance 2.5 file delivery failed for task %s", task_id)
             finally:
                 try:
@@ -814,7 +822,9 @@ async def _public_send_results(
                 reply_markup=result_markup,
             )
             await fullstack._mark_seedance25_delivery(task_id, "link_sent")
-        except Exception:
+        except Exception as exc:
+            if is_terminal_telegram_delivery_error(exc):
+                raise
             logger.exception(
                 "Seedance 2.5 fallback link delivery failed for task %s",
                 task_id,
@@ -835,11 +845,19 @@ async def _public_send_results(
                     f"🖼 Последний кадр Seedance 2.5:\n{last_frame_url}",
                     disable_web_page_preview=False,
                 )
-            except Exception:
-                logger.exception(
-                    "Seedance 2.5 last-frame fallback delivery failed for task %s",
-                    task_id,
-                )
+            except Exception as exc:
+                if is_terminal_telegram_delivery_error(exc):
+                    logger.info(
+                        "Telegram delivery unavailable: event=seedance25_last_frame reason=%s task_id=%s telegram_id=%s",
+                        terminal_telegram_delivery_reason(exc),
+                        task_id,
+                        telegram_id,
+                    )
+                else:
+                    logger.exception(
+                        "Seedance 2.5 last-frame fallback delivery failed for task %s",
+                        task_id,
+                    )
 
     return delivered
 

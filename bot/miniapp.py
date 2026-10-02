@@ -2687,6 +2687,34 @@ def _miniapp_client_log_text(value: Any, limit: int) -> str:
     return text[:limit]
 
 
+_MINIAPP_CLIENT_DEBUG_EVENTS = frozenset(
+    {
+        "upload-area-pointer-down",
+        "upload-file-selected",
+        "upload-input-change-empty",
+        "upload-input-click",
+        "upload-json-fallback-start",
+        "upload-json-preferred-start",
+        "upload-start",
+    }
+)
+_MINIAPP_CLIENT_RESPONSE_EVENTS = frozenset(
+    {"upload-response", "upload-json-fallback-response"}
+)
+
+
+def _miniapp_client_log_level(compact: dict[str, Any]) -> str:
+    """Classify sanitized telemetry without treating normal uploads as incidents."""
+
+    event = str(compact.get("event") or "").strip().lower()
+    status = _miniapp_client_log_number(compact.get("status")) or 0
+    if event in _MINIAPP_CLIENT_DEBUG_EVENTS:
+        return "debug"
+    if event in _MINIAPP_CLIENT_RESPONSE_EVENTS and 200 <= status < 400:
+        return "info"
+    return "warning"
+
+
 def _miniapp_client_log_number(value: Any, default: int | None = 0) -> int | None:
     try:
         return int(value) if value is not None else default
@@ -2724,7 +2752,9 @@ async def miniapp_client_log(request: web.Request) -> web.Response:
             "user_agent": _miniapp_client_log_text(request.headers.get("User-Agent"), 300),
             "ip": _miniapp_client_log_text(request.headers.get("X-Forwarded-For", request.remote or ""), 80),
         }
-        logger.warning("Mini App client log: %s", compact)
+        getattr(logger, _miniapp_client_log_level(compact))(
+            "Mini App client log: %s", compact
+        )
     except Exception:
         logger.exception("Mini App client log failed")
     return web.json_response({"ok": True})
