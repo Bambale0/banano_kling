@@ -186,6 +186,7 @@ export function Seedance25AdminForm({ model: rawModel, onQueued, onSavedReferenc
   const [resolution, setResolution] = useState<Seedance25Resolution>('720p')
   const [ratio, setRatio] = useState<(typeof RATIOS)[number]>('adaptive')
   const [duration, setDuration] = useState(5)
+  const [videoEditing, setVideoEditing] = useState(false)
   const [outputFormat, setOutputFormat] = useState<Seedance25OutputFormat>('mp4')
   const [generateAudio, setGenerateAudio] = useState(true)
   const [returnLastFrame, setReturnLastFrame] = useState(false)
@@ -215,11 +216,13 @@ export function Seedance25AdminForm({ model: rawModel, onQueued, onSavedReferenc
     () => videos.reduce((sum, item) => sum + (item.duration || 0), 0),
     [videos],
   )
-  const priceQuote = useMemo(() => {
-    const seconds = duration === -1 ? 5 : duration
+  const hasVideoReference = scenario === 'multimodal' && (videos.length > 0 || videoAssets.trim().length > 0)
+  const basePrice = useMemo(() => {
+    const seconds = videoEditing || duration === -1 ? 5 : duration
     const perSecond = Number(model?.quality_costs?.[resolution] ?? 0)
     return perSecond ? Math.round(perSecond * seconds * 2) / 2 : 0
-  }, [duration, model?.quality_costs, resolution])
+  }, [duration, videoEditing, model?.quality_costs, resolution])
+  const priceQuote = hasVideoReference ? basePrice * 2 : basePrice
 
   const uploadImage = async (file: File, target: 'first' | 'last' | 'refs') => {
     const ext = extension(file.name)
@@ -276,6 +279,7 @@ export function Seedance25AdminForm({ model: rawModel, onQueued, onSavedReferenc
   }
 
   const resetMediaForScenario = (next: Seedance25Scenario) => {
+    setVideoEditing(false)
     setScenario(next)
     setError(null)
     if (next === 'text') {
@@ -323,12 +327,17 @@ export function Seedance25AdminForm({ model: rawModel, onQueued, onSavedReferenc
         throw new Error('Добавьте хотя бы один мультимодальный референс')
       }
 
+      if (videoEditing) {
+        if (scenario !== 'multimodal' || new Set(refsVideos).size !== 1) throw new Error('Для редактирования добавьте ровно одно исходное видео')
+        if (videos.some((item) => item.duration != null && (item.duration < 4 || item.duration > 30))) throw new Error('Исходное видео для редактирования должно длиться 4–30 секунд')
+      }
       setSubmitting(true)
       const result = await generateSeedance25({
         scenario,
         prompt: prompt.trim(),
-        ratio,
-        duration,
+        ratio: videoEditing ? 'adaptive' : ratio,
+        duration: videoEditing ? -1 : duration,
+        videoEditing,
         resolution,
         outputFormat,
         generateAudio,
@@ -389,19 +398,28 @@ export function Seedance25AdminForm({ model: rawModel, onQueued, onSavedReferenc
         </div>
       </section>
 
-      <section className="space-y-2">
-        <label className="text-sm font-medium">Формат кадра</label>
+      {scenario === 'multimodal' ? (
+        <section className="space-y-2 rounded-xl border border-cyan/30 p-3">
+          <label className="flex items-center gap-2 text-sm font-medium">
+            <input type="checkbox" checked={videoEditing} onChange={(event) => setVideoEditing(event.target.checked)} />
+            Редактировать видео
+          </label>
+          <p className="text-xs text-muted-foreground">Одно исходное видео, 4–30 секунд. Результат сохранит длительность и формат исходного видео. Для обычной генерации по референсам оставьте переключатель выключенным.</p>
+        </section>
+      ) : null}
+      <fieldset disabled={videoEditing} className="space-y-2">
+        <label className="text-sm font-medium">Формат кадра{videoEditing ? ' · как в исходном видео' : ''}</label>
         <div className="flex flex-wrap gap-2">
           {RATIOS.map((value) => (
-            <PillButton key={value} active={ratio === value} onClick={() => setRatio(value)}>{value}</PillButton>
+            <PillButton key={value} active={(videoEditing ? 'adaptive' : ratio) === value} onClick={() => setRatio(value)}>{value}</PillButton>
           ))}
         </div>
-      </section>
+      </fieldset>
 
-      <section className="space-y-2">
+      <fieldset disabled={videoEditing} className="space-y-2">
         <div className="flex items-center justify-between gap-3">
           <label className="text-sm font-medium">Длительность</label>
-          <span className="text-xs text-muted-foreground">{duration === -1 ? 'Auto' : `${duration} сек`}</span>
+          <span className="text-xs text-muted-foreground">{videoEditing ? 'Как в исходном видео' : duration === -1 ? 'Auto' : `${duration} сек`}</span>
         </div>
         <div className="flex items-center gap-2">
           <PillButton active={duration === -1} onClick={() => setDuration(-1)}>Auto</PillButton>
@@ -416,7 +434,7 @@ export function Seedance25AdminForm({ model: rawModel, onQueued, onSavedReferenc
           />
           <button type="button" onClick={() => setDuration((value) => Math.min(30, value === -1 ? 5 : value + 1))} className="rounded-xl border border-border/50 px-3 py-2 text-sm">+</button>
         </div>
-      </section>
+      </fieldset>
 
       <section className="grid gap-2 sm:grid-cols-2">
         <Toggle value={generateAudio} onChange={setGenerateAudio} label="🔊 Генерировать аудио" />

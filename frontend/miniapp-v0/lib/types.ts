@@ -207,6 +207,7 @@ export interface TrendGenerationSettings {
   preview_type?: 'image' | 'video'
   reference_count?: number
   reference_labels?: string[]
+  automatic_hidden_references?: boolean
   user_fields?: TrendUserField[]
   quality?: string
   count?: number

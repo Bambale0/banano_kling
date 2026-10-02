@@ -13,6 +13,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from bot import db as db_backend
+from bot.config import config
 from bot.database import DATABASE_PATH, cleanup_stale_local_generation_tasks
 
 logger = logging.getLogger(__name__)
@@ -164,10 +165,33 @@ async def check_task_with_provider(
     return None
 
 
-async def force_fail_task(task_id: int, user_id: int, cost: float) -> bool:
-    """Переводит задачу в failed и идемпотентно возвращает credits пользователю."""
+async def _is_admin_user(db: db_backend.Connection, user_id: int) -> bool:
+    cursor = await db.execute(
+        "SELECT telegram_id FROM users WHERE id = ? LIMIT 1",
+        (user_id,),
+    )
+    row = await cursor.fetchone()
+    if not row:
+        return False
+    raw_telegram_id = row["telegram_id"] if hasattr(row, "keys") else row[0]
+    try:
+        return config.is_admin(int(raw_telegram_id))
+    except (TypeError, ValueError):
+        return False
+
+
+async def force_fail_task(
+    task_id: int,
+    user_id: int,
+    cost: float,
+    *,
+    expected_provider_task_id: str | None = None,
+) -> bool:
+    """Переводит задачу в failed и возвращает только реально списанные credits."""
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
+        provider_guard = " AND task_id = ?" if expected_provider_task_id is not None else ""
+        parameters = (task_id, expected_provider_task_id) if provider_guard else (task_id,)
         cursor = await db.execute(
             """
             UPDATE generation_tasks
@@ -175,9 +199,8 @@ async def force_fail_task(task_id: int, user_id: int, cost: float) -> bool:
                 completed_at = CURRENT_TIMESTAMP,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ? AND status IN ('pending', 'processing')
-            RETURNING request_data
-            """,
-            (task_id,),
+            """ + provider_guard + " RETURNING request_data",
+            parameters,
         )
         existing = await cursor.fetchone()
         if not existing:
@@ -193,17 +216,49 @@ async def force_fail_task(task_id: int, user_id: int, cost: float) -> bool:
         if not isinstance(request_data, dict):
             request_data = {}
 
-        # Seedance 2.5 public failures can refund atomically in the webhook
-        # before the watchdog observes the same upstream failure. Do not credit
-        # twice when that marker is already committed.
+        # Webhook refunds and the watchdog share this row-level transaction.
+        # Explicit billing markers take precedence over a legacy/non-zero cost:
+        # admin/test tasks may retain a nominal quote but were never charged.
         already_refunded = bool(request_data.get("refund_claimed"))
-        if cost and cost > 0 and not already_refunded:
-            await db.execute(
+        refund_disabled = (
+            request_data.get("admin_free") is True
+            or request_data.get("charged") is False
+            or request_data.get("refund_on_failure") is False
+        )
+        admin_user = False
+        if cost and cost > 0 and not already_refunded and not refund_disabled:
+            admin_user = await _is_admin_user(db, user_id)
+            refund_disabled = admin_user
+        should_refund = bool(
+            cost
+            and cost > 0
+            and not already_refunded
+            and not refund_disabled
+        )
+        if should_refund:
+            credit_cursor = await db.execute(
                 "UPDATE users SET credits = credits + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (cost, user_id),
             )
+            if int(credit_cursor.rowcount or 0) != 1:
+                raise RuntimeError(f"Refund user missing for task {task_id}")
+            request_data["refund_claimed"] = True
+            request_data["refund_state"] = "refunded"
+            await db.execute(
+                "UPDATE generation_tasks SET request_data = ? WHERE id = ?",
+                (json.dumps(request_data, ensure_ascii=False), task_id),
+            )
 
         await db.commit()
+        logger.info(
+            "Task failure committed: task_id=%s provider_task_id=%s "
+            "refunded_credits=%s refund_disabled=%s admin_user=%s",
+            task_id,
+            expected_provider_task_id,
+            cost if should_refund else 0,
+            refund_disabled,
+            admin_user,
+        )
         return True
 
 

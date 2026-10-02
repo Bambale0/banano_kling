@@ -7,6 +7,75 @@ from bot.services.seedance_25_service import Seedance25Service
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("video_editing,expected_duration,expected_ratio", [(True, -1, "adaptive"), (False, 12, "9:16")])
+async def test_seedance_25_editing_preserves_reference_generation(monkeypatch, video_editing, expected_duration, expected_ratio):
+    service = Seedance25Service(kie_key="test-key")
+    captured = {}
+
+    async def fake_kie_post(path, payload):
+        captured.update(payload)
+        return {"task_id": "editing-test"}
+
+    monkeypatch.setattr(service, "_kie_post", fake_kie_post)
+    result = await service.generate_video(
+        prompt="Replace the background of @Video1",
+        duration=12,
+        aspect_ratio="9:16",
+        reference_video_urls=["https://example.com/source.mp4"],
+        video_editing=video_editing,
+    )
+    assert result["success"] is True
+    assert captured["input"]["duration"] == expected_duration
+    assert captured["input"]["aspect_ratio"] == expected_ratio
+    assert "video_editing" not in captured["input"]
+    assert result["duration"] == expected_duration
+    assert result["aspect_ratio"] == expected_ratio
+    assert result["video_editing"] is video_editing
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("videos", [[], ["https://example.com/one.mp4", "https://example.com/two.mp4"]])
+async def test_seedance_25_editing_requires_one_video(monkeypatch, videos):
+    service = Seedance25Service(kie_key="test-key")
+
+    async def no_provider_call(*args):
+        pytest.fail("Invalid editing inputs must not reach KIE")
+
+    monkeypatch.setattr(service, "_kie_post", no_provider_call)
+    result = await service.generate_video(prompt="Edit video", video_editing=True, reference_video_urls=videos)
+    assert result["success"] is False
+    assert "exactly one video" in result["error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("video_editing", ["false", "true", 0, 1, None])
+async def test_seedance_25_editing_rejects_non_boolean_intent(monkeypatch, video_editing):
+    service = Seedance25Service(kie_key="test-key")
+
+    async def no_provider_call(*args):
+        pytest.fail("Invalid editing intent must not reach KIE")
+
+    monkeypatch.setattr(service, "_kie_post", no_provider_call)
+    result = await service.generate_video(prompt="Edit video", video_editing=video_editing)
+    assert result["success"] is False
+    assert "boolean" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_seedance_25_editing_does_not_bypass_regular_input_validation(monkeypatch):
+    service = Seedance25Service(kie_key="test-key")
+
+    async def no_provider_call(*args):
+        pytest.fail("Invalid ordinary parameters must not reach KIE")
+
+    monkeypatch.setattr(service, "_kie_post", no_provider_call)
+    arguments = {"prompt": "Edit video", "video_editing": True, "reference_video_urls": ["https://example.com/source.mp4"]}
+    assert (await service.generate_video(**arguments, duration=3))["success"] is False
+    assert (await service.generate_video(**arguments, aspect_ratio="2:3"))["success"] is False
+    assert (await service.generate_video(**arguments, first_frame_url="https://example.com/first.png"))["success"] is False
+
+
+@pytest.mark.asyncio
 async def test_seedance_25_full_multimodal_payload(monkeypatch):
     service = Seedance25Service(kie_key="test-key")
     captured = {}

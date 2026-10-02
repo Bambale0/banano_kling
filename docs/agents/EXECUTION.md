@@ -1,5 +1,57 @@
 # Execution ledger
 
+## 2026-10-02 — Mini App Telegram availability and upload telemetry
+
+- Baseline: `origin/tanyapi` / production `7c5431061f2eae448087aa56219e56873fe8aeba`; branch `fix/miniapp-chat-telemetry`.
+- Production evidence: Mini App users who had never opened the bot generated repeated `TelegramBadRequest: chat not found` warnings/errors during start/result/failure notifications. Normal upload lifecycle events (`upload-start`, fallback start and HTTP 200 response) were all logged through one unconditional `logger.warning` call.
+- Root causes: terminal Telegram delivery was conflated with generation/delivery failure (`failed`) or left retryable (`pending` in Seedance 2.5); client telemetry had no severity classifier. Frontend status values were checked and successful responses genuinely carried HTTP 200.
+- Contract: completed generation results remain available in Mini App. `chat not found`, blocked bot and deactivated user become terminal delivery status `unavailable` with stable reason codes and no automatic retry; transient network/rate-limit failures remain `pending`. These expected availability states log at INFO without tracebacks. Upload interactions log at DEBUG, successful upload responses at INFO, and failed/network/unknown client events remain WARNING.
+- TDD: public-seam regressions cover severity classification, structured Telegram reasons, DB persistence/claim behavior, Mini App start notification, image-result/failure notifications, Seedance 2.5 terminal and transient delivery, and no fallback download after a terminal send error.
+- Scope: request-data delivery metadata, Telegram notification/error handling and log severity only. No schema migration, prices, balances, refunds, provider payloads, model routing or frontend wire fields change.
+- Verification: focused delivery/telemetry/database matrix `143 passed`; full safe backend suite `1269 passed, 13 skipped`; Python compileall, import-order lint and diff whitespace passed. Static propagation review confirms `unavailable` is internal request metadata, old `failed/delivered` behavior is preserved, and transient failures remain retryable.
+- Rollout: PR to `tanyapi`, exact-SHA CI/autodeploy, then production telemetry checks for HTTP 200 upload events and terminal Telegram availability without WARNING/ERROR or repeated Seedance retries.
+
+## 2026-10-02 — Telegram backup part retention leak
+
+- Baseline after rebase: `origin/tanyapi` `cb76a3b2656bb4444f29ec4f74208b29cbca12e8`; branch `fix/backup-telegram-parts-retention`.
+- Production evidence: root filesystem is 81% used with 167 GiB free; project backups occupy ~58 GiB and `backups/telegram-parts` alone occupies ~53 GiB. `static/uploads` is a separate 293 GiB lifecycle concern and is not touched by this fix.
+- Root cause: every backup uses a timestamped `archive_name`, but `backup_db.sh` deletes only `${archive_name}.part-*` before splitting. A new timestamp can never match chunks from earlier backups, so every Telegram transport chunk is retained permanently.
+- Intended result: the dedicated part directory contains no stale/current `*.part-*` after a completed send; unrelated files are preserved. The backup archive/dumps and Telegram delivery behavior remain unchanged.
+- TDD: an integration test copies the real script into a temporary project, stubs SQLite and Telegram transport, creates a stale chunk, forces archive splitting, and asserts the directory is clean. RED retained six part files. A second RED pass showed stale chunks also survived a later direct/small-archive send. GREEN removes stale chunks before either send path and current split chunks after all admins are processed, while preserving unrelated files.
+- Scope: `scripts/backup_db.sh`, one integration regression and this ledger. No DB schema, generation, payment, provider, Mini App, pricing or user-data mutation.
+- Safety: cleanup is limited to direct files matching `*.part-*` inside the dedicated `telegram-parts` directory while the existing backup flock serializes invocations. Non-part files are retained.
+- Verification: shell syntax, Ruff format/check, diff whitespace and focused integration test passed; full safe suite after rebase `1256 passed, 13 skipped`. Five-axis review found no scope, symlink, concurrency or unrelated-file deletion blocker.
+- Rollout: changed-line Ruff, rebase onto current `tanyapi`, separate PR, exact-SHA CI/deploy verification. Existing production chunks will be cleaned only after the code is deployed and no backup invocation is active.
+
+## 2026-10-02 — Seedance private-trend implicit reference bindings
+
+- Baseline: `origin/tanyapi` / production merge `82ccc5651e092a152e2e042b4b8e6d789896aa2e`; branch `fix/seedance-trend-implicit-bindings`.
+- Production audit: checkout, container and Mini App are on the exact merge SHA; CI/deploy statuses are green; schema/indexes are present; no private-reference trends have been published yet.
+- Real-data read-only compatibility check: among 250 recent completed Seedance tasks, 90 contained an identity image plus at least one additional image/video/audio reference. The compiler accepted 27 and blocked 63: 54 prompts had no explicit `@ImageN/@VideoN/@AudioN` bindings and 9 omitted the identity slot.
+- Exact user-visible failure: the admin selects the creator identity and hidden outfit/object/video refs, but publication returns `Prompt must reference every retained media slot` or cannot produce a usable recipe even though the compiler's own identity guard already defines those roles.
+- Root cause: `compile_seedance_trend_recipe()` validates that every retained slot is mentioned **before** appending `SEEDANCE_TREND_IDENTITY_CONTRACT_V1`, while that appended guard is the canonical source of automatically generated bindings for admin-selected assets.
+- Invariant: explicit prompt references to excluded/missing media must still fail closed. Selected retained assets may be absent from the original prompt; the compiler must add exact bindings in its guard, keep `@Image1` as the sole identity source, and preserve independent image/video/audio numbering.
+- Scope: compiler + focused tests + reference documentation only. No schema, prices, provider routing, billing, auth, UI controls or external API fields change.
+- TDD loop: implicit prompt regression failed with `Prompt must reference every retained media slot: @Image1, @Image2, @Video1`; after moving completeness validation to the final compiled prompt, it passes. A second regression covers an explicit fixed asset with an omitted identity binding. Review then found that a blank source prompt could become guard-only; a new regression failed because no exception was raised, then passed after adding an explicit non-empty source-prompt invariant. Existing excluded-media and over-limit cases remain fail-closed.
+- Verification: compiler/admin/runtime/privacy/storage matrix `105 passed`; final compiler suite `14 passed`; focused Mini App publisher/runner/idempotency `3 suites / 8 tests`; final full safe backend suite `1255 passed, 13 skipped`; Ruff format/check, compileall, changed-line gate and diff whitespace passed. Candidate compiler replay against the same production sample accepts `90/90` eligible tasks with the default first image as identity, never persists that identity, and includes every selected image/video/audio slot. All `10/10` eligible tasks from the latest 24 hours have locally available fixed assets for durable persistence. Five-axis review found no remaining correctness/security/architecture/performance blocker; empty prompts, excluded media and prompt limits remain fail-closed before provider launch.
+- Production health audit: exact merge SHA across branch/checkout/container/Mini App; healthy container with zero restarts/OOM; schema/indexes present; no stale idempotency claims or orphan assets. One unrelated Telegram `chat not found` notification error occurred after a correct failure/refund commit. Disk usage is 81% with 167 GiB free.
+- Rollout: focused tests, changed-line Ruff, full safe regression, PR to `tanyapi`, exact-SHA CI/autodeploy and post-deploy read-only smoke. No paid KIE generation.
+
+## 2026-10-01 — Seedance 2.0 photo-reference prompt regression
+
+- Baseline: `origin/tanyapi` `1840ba0dd4f39ceadfd58023f10b0654c1fbcbb8`; branch `fix/seedance20-photo-ref-prompt`.
+- Reported production symptom: Telegram Seedance 2.0 shows `Фото-референсы: 1/9`, but typing a prompt can answer `Сначала отправьте стартовое фото.` instead of launching.
+- Runtime evidence: at `2026-10-01 09:59:56 UTC` user prompt reached `handle_video_prompt_text`; no video launch followed. Source inspection reproduced the contradiction: Seedance compatibility stores every photo in `reference_images` with `v_image_url=None`, while the legacy prompt guard still requires `v_image_url` whenever `video_flow_step != configure`.
+- Root cause: the reference-only compatibility layer patches Seedance media/provider launch semantics, but the legacy text-prompt precondition runs before that launcher wrapper and still assumes first-frame semantics.
+- Intended result: Seedance 2.0 `Фото + Текст` accepts a non-empty `reference_images` set as its required media even when the flow is still on the media step; other models retain their existing start-frame validation. Empty Seedance photo mode asks for a photo-reference, not a start frame.
+- No-hardcode/schema/provider impact: no pricing, provider routing, DB schema, payment/referral, Mini App or Seedance provider payload changes. Existing `seedance_2` technical model contract is reused.
+- TDD: added a regression that reproduces `v_model=seedance_2`, `v_type=imgtxt`, `v_image_url=None`, one `reference_images` URL, `video_flow_step=media`. Before fix: 1 failed / 3 passed because launch was blocked. After fix: 4 passed.
+- Focused verification: Seedance reference-only, multimodal, 2.5 compatibility and prompt-flow suites — 53 passed; `py_compile` for generation and compatibility handlers passed.
+- Full safe regression on the task worktree: 1081 passed, 3 skipped, 87 warnings in 44.42s. Targeted Ruff on the regression test and `git diff --check` passed.
+- Rollout: PR to `tanyapi`, CI, merge, automatic production deploy, then exact deployed SHA/health and Telegram reference-only smoke. No manual paid generation unless explicitly needed; use admin/free smoke path.
+- Changed-line Ruff gate: relevant=0, ignored legacy findings=93 across the two touched Python files; `git diff --check origin/tanyapi...HEAD` passed.
+- Remaining: [x] changed-line lint/diff review; [x] full safe regression; [ ] PR/CI/merge; [ ] production exact-SHA + smoke/log verification.
+
 ## 2026-09-29 — Gemini photo-analysis instructions
 
 - User clarified: improve Gemini instructions for photo analysis. Baseline fresh tanyapi cba7d59. Branch fix/gemini-photo-instructions.
@@ -728,3 +780,159 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Final code verification at b2e4027: full safe suite `1076 passed, 3 skipped` (39.19s); changed-line Ruff gate passed; deployment shell syntax passed. Additional regressions prove result+marker rollback and refund+credit rollback. Isolated PostgreSQL confirmed atomic completion marker, duplicate-success lease preservation and single credit under webhook/watchdog contention. Final independent spec review found no confirmed blocker.
 - Excluded Banana tracked WIP is preserved as stash `fad97979e13142b792d86268f385efd308cbfb8d`; production checkout now has no tracked edits blocking CI deploy. No Banana changes are included in PR #216.
 - Steps 1–5 complete locally; latest-head GitHub CI and subsequent merge/deploy verification remain release gates. Post-merge SHA, CI/deploy links and smoke evidence will be recorded in the PR delivery report.
+
+## 2026-10-01 — Seedance 2.5 explicit video editing
+
+- Baseline: `tanyapi` / `b5fcf18f0025c91e684233798bea06d232c177e7`; isolated branch `fix/seedance25-edit-duration`.
+- Reported provider task `703fa69cddd2c08a3a2c2dcc25dc7fe7`: read-only KIE record confirmed terminal `fail`, code `400`, input duration `12`, ratio `adaptive`, one video reference. Provider classified the prompt as editing and required duration `-1`. Production image label matched baseline SHA; no generation replay or production write performed.
+- Existing: adapter supports Auto, shared public Telegram/Mini App launch, atomic failure refund, reference normalization, local ffprobe validation, repeat restoration. Missing: explicit editing intent and consistent constrained settings. Reuse those seams; no preliminary refactor needed.
+- Ranked hypotheses: (1) prompt-classified editing with numeric duration causes this error (confirmed by provider record); (2) source below four seconds could cause a further rejection (validate local media); (3) non-adaptive ratio could fail editing (already adaptive in this incident); (4) duplicate callback/accounting issues cannot explain provider duration validation.
+- Intended result: explicit admin editing sends `-1/adaptive` with exactly one source video; ordinary reference generation retains selected settings. Editing controls explain source length 4–30 and preserved source ratio/duration. Public editing rejected before any debit or provider call.
+- No-hardcode: `-1`, `adaptive`, source duration bounds and one chosen edit source are technical contract/product input constraints, not prices. Existing admin price configuration, video-reference multiplier and admin-free entitlement preserved. No DB migration/env/admin pricing change; editing stored in request_data JSON.
+- Risks: provider chooses task type from prompt; KIE publishes no explicit task-intent field. Mode makes settings compatible, not a promise of provider intent. Admin external URLs/asset IDs have no trusted local metadata; provider validates duration. Public editing remains unavailable until deterministic server-probed source-duration pricing is designed. No automatic retry of failed paid tasks.
+- Observability: log editing intent and effective duration/ratio; retain provider/task IDs; actionable hint for the captured provider constraint failure. Never log source URLs or full prompts for this change.
+- Verification layers: provider payload, public API/admin permission, Telegram controls, request persistence/repeat, media preflight and frontend user submission require regressions. DB migration N/A (JSON flag); payment invariants preserved and failure/refund regressions run. Trends photo-only and unchanged. Backend safe suite, frontend Jest/type/build and changed-line lint required. Production smoke/SHA/telemetry only if released; no paid live generation authorized by this fix.
+- Acceptance: explicit editing normalizes stale fixed settings; normal video-reference generation unchanged; malformed flags/no or multiple source videos fail prelaunch; paid users cannot bypass restriction; local source <4s fails; repeat restores intent; UI wire settings agree with backend; refund idempotency remains intact.
+- Guidance: Bambale0/skills diagnosing-bugs → TDD → code-review; Bambale0/claw QA_AUDIT_CHECKLIST; anthropics/skills webapp-testing. Three subagents independently audited provider, flows/billing and frontend, then received separate file ownership for implementation.
+- Steps:
+  1. Inspect exact production failure, current tanyapi and provider contract — complete.
+  2. Independent provider/flow/UI diagnosis and minimal scope — complete.
+  3. Regression RED → implementation GREEN at adapter, launch, controls and frontend seams — in progress. Adapter 10 failures before fix, 21 tests pass after. Telegram controls four failures reproduce missing editing toggle/locks/repeat flag.
+  4. Focused/full regression, type/build/lint, independent review — pending.
+  5. Commit/push and PR to tanyapi; release only after CI gate — pending.
+- Original source read-only ffprobe: 12.095 seconds, 720×1280, 30 FPS; one image and one video reference in actual KIE request. Source duration is valid, isolating the wrong request parameter as the cause.
+- Independent Standards and Spec reviews found UI Auto-estimate mismatch and missing Mini App source-repeat enrichment. Both fixed: UI/backend share existing five-second Auto estimate; real repeat enrichment preserves strict editing flag and effective parameters. No confirmed high-severity issue remains after follow-up review.
+- Final local verification: safe backend `BOT_TOKEN=<test> PYTHONPATH=. python -m pytest tests/ --ignore=tests/live -m 'not live_smoke' -q --tb=short`: **1122 passed, 3 skipped**, 40.69s. Initial full gate before continuity refinement: 1117 passed, 3 skipped. Public launch/continuity focused regressions: 27 passed; adapter: 21 passed; Telegram controls/compat: 8 passed.
+- Frontend: `npm --prefix frontend/miniapp-v0 test -- --runInBand seedance25 video-tab-repeat feed-video-repeat`: **21 suites / 58 tests passed**. `tsc --noEmit --incremental false`, targeted ESLint, `npm run build` static export passed. `node e2e/critical-flows.mjs` passed against rebuilt export, including existing payment/trend/Pinterest journeys and new admin editing/public fixed-duration wire-payload assertions; API/provider transport mocked, no charged generation.
+- `git diff --check`, backend deployment/backup/cdn shell syntax passed. Full-file Ruff has legacy diagnostics outside changed lines; final changed-line gate is the repository release check. New ignored regression files explicitly staged with `git add -f`.
+- Steps 1–4 complete locally. Commit/PR and GitHub gates remain; no production release or live generation claimed at this point.
+- PR #222 opened at `f9020210d6d8bf17a22928aabf982d086de38e22`. GitHub Python/deploy validation and safe backend suite passed. Secondary browser CI stopped at existing npm audit vulnerabilities (Next.js and brace-expansion), before browser execution; automatic merge disabled until resolved.
+- Release-blocker refinement: Next.js minimum `^16.3.6`, locked `16.3.8`; brace-expansion patched in each existing major (`1.1.21`, `2.1.7`, `5.0.12`). Official advisories: [Next.js](https://github.com/advisories/GHSA-vcvr-r3jv-pc5j), [brace-expansion](https://github.com/advisories/GHSA-q2hr-2g5m-vwhr). Only these dependency families updated; no force upgrade. An isolated node_modules install avoids changing the production checkout's dependencies.
+- Corrected legacy admin-form reference estimate to include the existing x2 multiplier, matching shared public launch; no charge/pricing policy change. Its editing regression checks the five-second Auto estimate.
+- Final dependency verification: `npm ci --ignore-scripts` passed; `npm audit --audit-level=high` reports **0 vulnerabilities**; full frontend Jest **21 suites / 59 tests passed**; TypeScript without incremental output, full ESLint, production export build (Next 16.3.8), expanded Chromium E2E all passed. Backend unchanged since the 1122-test safe gate. Generated browser export moved outside checkout; git diff check clean. New latest-head GitHub CI remains mandatory before merge.
+
+
+## Project-wide 72-hour diagnosis — 2026-10-01
+
+- Baseline: current `tanyapi` SHA `d5b4d27e1fdf67189da5a2f4fd70cc491bdd3f1a`; isolated branch `agent/project-debug-72h-20261001`. Production worktree and existing untracked files preserved.
+- Requested window: 2026-09-28 18:42:55 UTC through 2026-10-01 18:42:55 UTC (21:42:55 Moscow). Destination: evidence-backed inventory of runtime failures, data/payment invariants, infrastructure availability and frontend critical journeys; reproduce and address confirmed defects within this scope.
+- Guidance refreshed: Bambale0/skills diagnosing-bugs (evidence → minimal reproduction → regression), wayfinder-style investigation map; Bambale0/claw QA audit checklist; anthropics/skills webapp-testing.
+- Investigation ownership: runtime/providers/Telegram; DB/payments/refunds; deploy/nginx/history coverage; Mini App/auth/browser; root cross-cutting observability and synthesis. All production investigation read-only. No customer generation/payment replay or balance repair is implied.
+- Current audit: backend healthy at baseline. Actual application file history begins Sep30; handler retains one rotation; Docker current container begins Oct1 18:38 UTC. Need older journal/nginx/archive discovery before claiming 72h coverage. Runtime error totals include synthetic pytest fixture activity and must be separated from real production incidents. Actual DB is PostgreSQL, SQLite path is fallback only.
+- Reuse: existing logs, task/provider IDs, generation/payment repositories, frontend guarded browser smoke, safe pytest suite and deployed revision endpoints. No preliminary refactor planned.
+- Risks/blockers: incomplete historical application logs, test pollution of application logs, secrets/private prompts in raw logs, incomplete billing/delivery markers. Only sanitized aggregates/code evidence enter Git; private diagnostics remain in restricted /tmp directory.
+- No-hardcode/config/migration: no business policy changes planned. Any retention/observability adjustment must use typed environment configuration where mutable; schema/API/UI/FSM changes only if confirmed evidence requires them.
+- Verification plan: DB read-only invariants; classified log counts and coverage; health/SHA/nginx/backup metadata; browser journeys with all mutations mocked; test-first fixes at applicable public seams. Existing full regression evidence from immediately preceding release may be reused where code unchanged; new tests only for new findings.
+- Rollout: findings/report first; any code fix receives focused and applicable full checks, independent review, PR to tanyapi and exact-SHA CI/autodeploy/smoke. Documentation-only findings do not require a manual production deploy.
+- Steps:
+  1. Establish fixed window, baseline and archive coverage — complete; application history limitation documented.
+  2. Parallel runtime, DB, infrastructure and frontend investigations — complete.
+  3. Correlate real incidents, reproduce actionable defects and classify resolved/external/unknown cases — complete.
+  4. Apply verified fixes with regressions where justified; document limitations — complete.
+  5. Independent review and local checks complete; PR, CI and exact deployment verification pending.
+
+- Coverage established: PostgreSQL and nginx span requested72h; application files only Sep30 00:00:04..Oct1 18:42:55UTC (~42h43), first29h17 irrecoverable from available archives. Shared nginx lacks host/timing fields, so5xx subset is not full service rate. Found historical255-upstream-timeout outage Sep29 12:31:19..12:53:58UTC; missing application history prevents root-cause claim.
+- Confirmed RED/GREEN: oversized saved reference photo (8 runtime failures), media→More edit (1), concurrent saved reference None row (6), insufficient log retention/test log pollution, latent telemetry credential logging. SQLite reference tests passed; actual isolatedPG16 exposed weaker initial fix, now per-user FOR UPDATE verified with observed lock contention and cap preserved. Standards review caught additional telemetry credential forms, now covered.
+- Data totals:8024tasks=7494completed+530failed; no older2h nonterminal or completedmissingURL. Watchdog19/19timeouttasks laterdelivered.349completedpayments; negative balances/orphans/duplicatecommission/referral/promo keys zero. Refund history has incomplete markers; no blanket financial-clean claim.
+- New critical evidence: missing/unreliable KIEHMAC lets callback payload drive status; repeated generic failure refunded twice in an isolatedpublic-handler repro. Igor clarified HMAC does not work (alreadytested). Design adjusted: allthreeKIE endpoints treat callback only as taskIDsignal and fetch authoritative provider record; no HMAC requirement. Unknown/currentID/terminal guards, pending nofail, transientlookup503, atomic genericrefund with expectedproviderID required. No manualfinancialrepair or callbackreplay.
+- Verification seams expanded to provider trust/refundconcurrency/retryalias and actualPostgreSQL. No schema/businesspricing changes. Runtime log retention newtypedenv BANANO_LOG_RETENTION_DAYS defaults7minimum3; UTC sharedcleanup. README corrected toactualDocker/frontenddeployment and strict tanyapiworkflow.
+- Independent review underway: Standards(ops) and Spec separate; dedicatedsecurityreview for KIE. Comprehensive sanitized report: docs/agents/PROJECT_DEBUG_72H_2026-10-01.md.
+
+- Final local gate: `BANANO_SKIP_PROJECT_ENV=1 BANANO_DISABLE_FILE_LOGGING=1 PYTHONPATH=. /root/tanya/banano_kling/venv/bin/python -m pytest tests/ --ignore=tests/live -m 'not live_smoke' -q --tb=short` → **1179 passed, 8 skipped**, 66.00s. Skips include dedicated PostgreSQL-only cases; separate disposable PostgreSQL16 run `pytest tests/test_runtime72_saved_references.py tests/test_runtime72_postgres_refunds.py -q --tb=short` with guarded runtime test flags → **7 passed**. Temporary PG container/socket removed after verification.
+- Focused callback/Telegram/watchdog regressions **86 passed**; independent security review **80 passed**, exact actual paid-retry helper differential: serialization bypassed creates2 provider tasks, current handler creates1 (all transport mocked). Both Standards and Spec reviews cleared final changes; previous findings (PG isolation and additional credential representations) corrected.
+- Published baseline Mini App Chromium critical journeys passed with all API writes mocked, no uncaught JS exceptions; current frontend code unchanged by this patch. Existing API/auth/telemetry focused suite45 passed. New logging filesystem/subprocess suite9 passed after9 RED failures. Bash syntax of deploy/backup/CDN and diff checks passed.
+- Delivery is not yet claimed: mandatory PR CI, runtime PostgreSQL CI, production exact SHA/autodeploy/health/log smoke remain. No migrations, price changes, manual financial repair, credential rotation or Nginx mutation. New technical retention environment setting is optional (default7days).
+
+- Final changed-line Ruff gate: **0 relevant diagnostics**, 470 legacy diagnostics outside changed lines ignored by repository policy (16 changed Python files). New optional type and touched import order corrected; focused Telegram/reference suite then **8 passed, 1 PG-only skipped**. Changed runtime files compile; final diff check clean.
+
+---
+
+## 2026-10-02 — Seedance 2.5 provider-classified edit fallback
+
+### Incident and root cause
+- Baseline and production before this change: `tanyapi` at `efba53e0818c5f72cce58851d6b1513e271975b1`.
+- Provider task `703fa69cddd2c08a3a2c2dcc25dc7fe7` used one valid 13.087-second video reference but was submitted with `duration=12`; KIE classified the prompt as video editing and required `duration=-1`.
+- After the explicit-edit release, task `f8137388b44852d38c03f639e1ba26c3` reproduced the same failure with the edit toggle off and additionally required `ratio=adaptive`. This proved that the manual mode fixed only explicit intent; KIE can still reclassify an ordinary multimodal prompt server-side.
+
+### Fix
+- Before normal failure/refund handling, a matching admin-free Seedance 2.5 video task receives one atomic fallback attempt with `video_editing=true`, `duration=-1` and `ratio=adaptive`.
+- The fallback is limited to pending multimodal tasks with exactly one locally valid 4–30 second source video. Legacy rows without the explicit edit flag remain eligible; malformed, already-editing, paid, wrong-model and wrong-type rows are rejected.
+- A compare-and-swap claim in `request_data` deduplicates webhook/reconciler races. The successful replacement keeps the same generation row, replaces the provider task ID and stores old/new aliases so stale callbacks cannot complete, fail or refund the replacement.
+- Paid tasks are not silently converted to editing because their quoted duration can differ from source duration. They retain the existing atomic failure/refund path.
+
+### Billing invariant
+- Seedance admin/test launches now persist `cost=0`, `charged=false` and `charged_cost=0`; the nominal configured price is retained separately as `price_quote` (and `admin_price_quote` on admin-only paths).
+- Free admin repeats no longer reward a trend author from credits that were never charged.
+- The generic watchdog now treats explicit `admin_free=true`, `charged=false` or `refund_on_failure=false` as non-refundable even if a legacy row contains a non-zero nominal cost. Legacy paid rows without these markers remain refundable.
+- Production read-only audit found no pending/processing admin Seedance row requiring a cost backfill; historical terminal failures were not mutated.
+
+### Verification
+- RED reproduced the original ordering bug: the public failure wrapper refunded before any compatible retry. Separate unit and PostgreSQL RED tests proved that the watchdog credited 5 bananas to an explicitly uncharged task.
+- Focused Seedance/KIE/refund/watchdog gate: **123 passed, 6 skipped**.
+- Disposable PostgreSQL 16 gate: **9 passed**, including concurrent callback deduplication, atomic provider task replacement and no credit for uncharged admin tasks.
+- Final safe backend suite: **1191 passed, 10 skipped**, 87 pre-existing warnings.
+- `git diff --check` and changed Python compilation passed. No paid provider generation, balance mutation, old-task replay or database migration was performed.
+
+### Rollout and observability
+- New technical setting `SEEDANCE25_EDIT_RETRY_CLAIM_TTL_SECONDS` defaults to 300 seconds with a minimum of 30 seconds; no production override is required.
+- Success log: `Seedance 2.5 auto-retried provider-classified edit` with old/new task IDs and effective settings. Watchdog failure logs include actual refunded credits and whether billing markers disabled refund.
+- Release gates: latest-head GitHub CI, independent PR review where available, automatic merge to `tanyapi`, exact deployed SHA/health/source verification and post-deploy error-log audit. No live paid smoke is authorized for this change.
+- Residual risk: provider task creation and local task-ID attachment cannot be one distributed transaction. A hard process death in that narrow window can orphan an upstream task; CAS failures record the replacement ID and emit a critical log for reconciliation.
+
+---
+
+## 2026-10-02 — Prompt-repeat reward and admin billing invariants
+
+### Release interception
+- Seedance PR #224 merged as `7d9626b8cc8d1f4345a03ab5006da83afcf19299`, but its automatic deploy run `36931442700` was cancelled before the SSH/deploy step after a final financial review found a generic reward-path defect.
+- Production stayed on `efba53e0818c5f72cce58851d6b1513e271975b1`; container image label, start time, public Mini App revision and health endpoint all confirmed that no partial deploy occurred.
+
+### Root cause
+- `_credit_prompt_repeat_reward_in_db()` trusted the caller's nominal `credits_spent` value. Admin generation paths skip the actual credit debit but several generic image/video repeat paths still passed the displayed positive price, so an admin repeat could credit the source author 10 RUB.
+- Task completion calls the same helper again. The old idempotency sequence was `SELECT` followed by `INSERT` without a UNIQUE constraint, so launch and webhook completion could race and both award the author.
+- `force_fail_task()` could also refund a legacy admin task whose row contained a nominal non-zero `cost` but lacked newer `admin_free/charged/refund_on_failure` markers.
+
+### Fix
+- Repeat rewards now require positive finite spend and a positive finite reward amount. The repeater is resolved from the database and current admins are rejected centrally, independent of the launch path.
+- `prompt_repeat_events` has a partial UNIQUE index on non-empty `repeat_task_id`. Reward creation uses `INSERT OR IGNORE`, translated to `ON CONFLICT DO NOTHING` on PostgreSQL; only the transaction that inserts the event may update author balances.
+- The author balance update must affect exactly one row or the transaction fails. Duplicate callbacks log the claimed task ID; admin attempts log the internal repeater ID without exposing Telegram identifiers.
+- The watchdog now resolves the task owner's Telegram identity inside the same transaction and disables refunds for admins even when a legacy row has no billing markers.
+
+### Production audit
+- Read-only audit before migration: 36,985 repeat reward events, 34,431 non-empty task IDs, zero duplicate task-ID groups and no existing unique index. The index is therefore safe to create on deployment; the duplicate audit must be repeated immediately before rollout.
+- Historical audit found 187 reward events (1,870 RUB) associated with current admin accounts across 36 authors. Five events (50 RUB) are explicitly marked `admin_free=true` / `charged=false`; 182 older rows predate billing markers. Some affected authors have completed withdrawals, so no automatic clawback, event deletion or balance mutation was performed.
+- This release stops new admin rewards and duplicate awards. Historical reconciliation remains a separate accounting operation requiring confirmation of admin membership at event time and treatment of already withdrawn funds.
+
+### Verification
+- RED: four concurrent SQLite calls created four events and credited 40 RUB for one repeat task. Separate RED tests proved that a positive-price admin repeat credited an author and that watchdog refunded a legacy admin task.
+- Focused database/task/watchdog/Seedance gate: 182 passed.
+- Disposable PostgreSQL 16 workflow: 12 passed, including four concurrent connections, exactly one event / 10 RUB, admin reward rejection and admin refund rejection.
+- Final safe backend suite: **1211 passed, 13 skipped**, 96 pre-existing warnings. No production writes, balance repairs, withdrawals, paid provider calls or old-task replays were performed.
+
+### Rollout requirements
+- Repeat the production duplicate audit immediately before deployment. If any duplicate `repeat_task_id` appears, stop rollout and reconcile before creating the UNIQUE index.
+- Require exact-head validation, safe suite, browser E2E and production Docker image checks; deploy only the final merged `tanyapi` SHA.
+- Post-deploy verify the UNIQUE index, exact image/container/public revision, health, changed runtime sources and error logs. Re-audit new admin reward events and pending admin tasks with refundable nominal cost.
+
+
+---
+
+## 2026-10-02 - Grok start-frame Telegram regression
+
+- Baseline: `0b2263c7fed108007506cfb347ead6cb410162ab`; isolated branch `fix/grok-start-frame-20261002`.
+- User-visible failure: after selecting Grok in the public video menu, a photo is rejected as text-only input; the following prompt fails for missing start image.
+- Root cause: `video_generation_compat.select_advanced_video_model` uses `_initial_type_for_model`, whose default `text` incorrectly applies to both Grok image-to-video models. Legacy model-selection handlers already use `imgtxt`, so testing only those handlers misses the public-menu defect.
+- Separate safety defect: the direct message launcher checks the mandatory Grok start frame after debiting credits, then compensates and clears the session.
+- RED: offline production-image test container ran `pytest tests/test_grok_start_frame_flow.py -q --tb=short`: **20 failed, 7 passed**. Failures reproduce wrong initial mode, discarded photo/document, stale session rejection, and debit-before-validation for both Grok models.
+- Plan: reuse the existing Grok model set; correct the actual public selector; normalize stale Grok state at screen/upload/launch boundaries without discarding media; reject missing images before any monetary/provider side effect, preserving prompt/settings. No prices, providers, model identifiers, schema or migrations change.
+- Verification: real FSM and handlers through provider payload/task persistence with external IO mocked; include Telegram photo, JPEG/PNG/WebP documents, legacy state, both models and unaffected model types. Then relevant and full safe suites, lint/diff review, CI and exact-SHA deployment verification. No paid generations or production database writes.
+- Mini App is not changed: this defect is the Telegram selector/FSM path. Provider payloads and shared model capabilities remain unchanged.
+- Diagnosis considered: incorrect selector state (reproduced); failed media download (ruled out in the reproducer: handler exits before download); upstream rejection (ruled out: no provider request is made).
+
+### Verification results
+- GREEN: 35 Grok regression cases, including the registered aggregate router and real prompt-coalescing middleware; synthetic image bytes, Telegram IO, provider HTTP and monetary side effects are isolated.
+- Focused regression gate: **129 passed** (Grok flow, advanced video contract, keyboard/provider contracts, Mini App continuity, prompt coalescing).
+- Full safe suite in a disposable production-image container with networking disabled: **1304 passed, 13 skipped**, 96 existing warnings.
+- First full-container run exposed three harness issues, not patched application tests: inherited `WEBHOOK_BIND_HOST=0.0.0.0` masked the configuration default, and nested pytest processes did not inherit `/testdeps` after resetting PYTHONPATH. Removing that image-level override in the test process and adding a disposable test-dependency `.pth` fixed them; the original failing config/logging tests pass unchanged.
+- No production/container source edits, balance updates, paid provider calls, task replays, schema changes or routing changes were made. Release remains gated on PR checks and exact deployed-SHA verification.
+- Review: original Grok model names, modes, resolutions and reference limits are preserved. Missing-photo rejection retains the prompt and settings; only the erroneous Grok input type is normalized. Other video models return unchanged from the normalizer.

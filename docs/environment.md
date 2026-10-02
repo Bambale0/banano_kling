@@ -380,9 +380,10 @@ PY
 
 Никогда не отправлять полный вывод `.env` в чат или issue.
 
-### Seedance 2.5 result delivery
+### Seedance 2.5 reliability
 
-These settings affect result transport, not generation pricing or provider payloads:
+These settings control result transport and one-time edit-fallback coordination.
+They do not change generation pricing:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -391,10 +392,14 @@ These settings affect result transport, not generation pricing or provider paylo
 | `SEEDANCE25_RESULT_DOWNLOAD_RETRY_DELAY_SECONDS` | `1` | Linear retry delay in seconds, minimum 0 |
 | `SEEDANCE25_DELIVERY_TIMEOUT_SECONDS` | `360` | Total delivery-attempt deadline, minimum 30 seconds; lease lasts 60 seconds longer |
 | `SEEDANCE25_DELIVERY_RETRY_DAYS` | `7` | Recovery window after completion, range 1–30 days |
+| `SEEDANCE25_EDIT_RETRY_CLAIM_TTL_SECONDS` | `300` | One-time edit fallback claim TTL, minimum 30 seconds; prevents duplicate provider launches |
 
 A generated result is saved before Telegram delivery. `request_data.delivery_status`
 tracks delivery separately: `delivering` holds a lease, `pending` needs retry,
-`link_sent` records only a fallback link, and `delivered` means media was sent.
+`link_sent` records only a fallback link, `delivered` means media was sent, and
+`unavailable` is terminal when Telegram reports `chat not found`, a blocked bot,
+or a deactivated user. The stored result remains available in Mini App and no
+automatic Telegram retry is scheduled for `unavailable`.
 `delivery_link_sent` suppresses duplicate fallback links while file retries continue.
 Completion and its result_ready marker are committed atomically. Legacy completed
 tasks without markers are not automatically resent. Reconciliation

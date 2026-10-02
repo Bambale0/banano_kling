@@ -19,6 +19,7 @@ export interface Seedance25GeneratePayload {
   prompt: string
   ratio: 'adaptive' | '16:9' | '9:16' | '1:1' | '4:3' | '3:4' | '21:9'
   duration: number
+  videoEditing?: boolean
   resolution: Seedance25Resolution
   outputFormat: Seedance25OutputFormat
   generateAudio: boolean
@@ -167,8 +168,9 @@ export async function generateSeedance25(
             : 'imgtxt',
       seedance25_scenario: payload.scenario,
       prompt: payload.prompt,
-      v_ratio: payload.ratio,
-      v_duration: payload.duration,
+      v_ratio: payload.videoEditing ? 'adaptive' : payload.ratio,
+      v_duration: payload.videoEditing ? -1 : payload.duration,
+      seedance25_video_editing: payload.videoEditing === true,
       seedance25_resolution: payload.resolution,
       seedance25_output_format: payload.outputFormat,
       seedance25_generate_audio: payload.generateAudio,

@@ -5,13 +5,13 @@ from typing import Any
 from bot.model_capabilities import get_video_capability, normalize_video_model_key
 from bot.video_reference_policy import normalize_reference_urls
 
-
 VIDEO_REQUEST_KEYS = (
     "source",
     "generation_type",
     "v_model",
     "v_type",
     "v_duration",
+    "seedance25_video_editing",
     "v_ratio",
     "v_mode",
     "user_prompt",
@@ -99,6 +99,9 @@ def normalize_video_request(payload: dict[str, Any] | None) -> dict[str, Any]:
     if capability and capability.aspect_ratios and ratio not in capability.aspect_ratios:
         ratio = capability.aspect_ratios[0]
     normalized["v_ratio"] = ratio
+    if model == "seedance_2_5" and source.get("seedance25_video_editing") is True:
+        normalized["v_duration"] = -1
+        normalized["v_ratio"] = "adaptive"
 
     image_limit = capability.max_reference_images if capability else 0
     video_limit = capability.max_reference_videos if capability else 0

@@ -123,6 +123,13 @@ archive: ${archive_size}
 sha256: ${archive_sha256}
 source: ${db_abs}"
 
+    mkdir -p "$PARTS_DIR"
+    # Part files are transient Telegram transport artifacts. The archive name
+    # contains a timestamp, so matching only the current name leaves every
+    # previous backup's chunks behind forever. The backup lock guarantees
+    # that no other invocation is using this dedicated directory.
+    find "$PARTS_DIR" -mindepth 1 -maxdepth 1 -type f -name '*.part-*' -delete
+
     if [ "$(stat -c '%s' "$archive_path")" -le "$TELEGRAM_DOCUMENT_MAX_BYTES" ]; then
         IFS=',' read -ra admin_array <<< "$admin_ids"
         for admin_id in "${admin_array[@]}"; do
@@ -139,8 +146,6 @@ source: ${db_abs}"
             return 1
         fi
 
-        mkdir -p "$PARTS_DIR"
-        find "$PARTS_DIR" -type f -name "${archive_name}.part-*" -delete
         split -b "$TELEGRAM_DOCUMENT_MAX_BYTES" -d -a 3 "$archive_path" "$PARTS_DIR/${archive_name}.part-"
         mapfile -t part_files < <(find "$PARTS_DIR" -type f -name "${archive_name}.part-*" | sort)
         part_count="${#part_files[@]}"
@@ -165,6 +170,10 @@ sha256: ${archive_sha256}"
                 send_document "$bot_token" "$admin_id" "$part_file" "$part_name" "$caption" || failures=1
             done
         done
+
+        if [ "${#part_files[@]}" -gt 0 ]; then
+            rm -f -- "${part_files[@]}"
+        fi
     fi
 
     if [ "$valid_admins" -eq 0 ]; then

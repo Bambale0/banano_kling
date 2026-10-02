@@ -3347,8 +3347,8 @@ async def show_more_menu(callback: types.CallbackQuery, state: FSMContext):
         f"🍌 Баланс: <code>{user.credits}</code> бананов\n\n"
         "Здесь находятся баланс, помощь, поддержка и публичная оферта."
     )
-    await callback.message.edit_text(
-        text, reply_markup=get_more_menu_keyboard(), parse_mode="HTML"
+    await _safe_show_text(
+        callback.message, text, reply_markup=get_more_menu_keyboard(), parse_mode="HTML"
     )
     await callback.answer()
 

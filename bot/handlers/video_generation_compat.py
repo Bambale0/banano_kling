@@ -17,6 +17,7 @@ from bot.database import (
     get_task_by_id,
 )
 from bot.handlers.generation import (
+    _GROK_VIDEO_MODELS,
     _show_video_creation_screen,
     run_no_preset_video_from_callback,
 )
@@ -71,6 +72,8 @@ def _advanced_video_models_keyboard(current_model: str | None = None) -> types.I
 
 
 def _initial_type_for_model(model: str) -> str:
+    if model in _GROK_VIDEO_MODELS:
+        return "imgtxt"
     if model in {"motion_control_v26", "motion_control_v30", "glow"}:
         return "motion"
     if model in {"avatar_std", "avatar_pro"}:

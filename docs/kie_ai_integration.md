@@ -529,6 +529,20 @@ NON_KLING_MODELS = {
 - **Полный URL:** `config.kie_notification_url`
 - **Обработчик:** `KIE_AI_WEBHOOK_PATH`
 
+#### Подтверждение результата KIE (2026-10-01)
+
+Маршруты `/webhook/kie_ai`, `/webhooks/kie` и `/webhook/kie_seedance25` используют callback как сигнал с task ID. Статус, ошибка и ссылки из входящего payload не являются основанием для изменения задачи: обработчик получает текущую запись через авторизованный provider API. Market использует `GET /api/v1/jobs/recordInfo`, Veo — `GET /api/v1/veo/record-info`, выбранный по сохранённой модели задачи.
+
+HMAC не является обязательным условием обработки: в используемой интеграции его работоспособность не подтверждена владельцем. [Документированный HMAC](https://docs.kie.ai/common-api/webhook-verification) подписывает ID и timestamp, а проверка provider record также подтверждает статус и URL результата. Существующий optional query-secret generic-маршрута сохраняется как дополнительный фильтр.
+
+- Неизвестные, завершённые и устаревшие ID после retry игнорируются; актуальность проверяется повторно после provider GET.
+- Состояния pending/generating не переводят задачу в failed. Ошибка получения записи, неизвестный формат или несовпавший task ID возвращают HTTP503 без изменения задачи, чтобы событие можно было повторить.
+- Окончательный generic failure использует атомарный переход pending/processing→failed и возврат в одной транзакции, с проверкой текущего provider ID. Повторный callback не начисляет возврат второй раз. Новые выполненные возвраты сохраняют refund_claimed/refund_state.
+- Обработка callback одной задачи сериализуется в текущем единственном bot process: блокировка охватывает provider GET, запуск платного retry и доставку. Повтор после смены provider ID игнорируется. Перед переходом к нескольким bot workers потребуется межпроцессный processing claim; текущая блокировка такой гарантии не даёт.
+- Поток Seedance 2.5 сохраняет существующее транзакционное подтверждение возврата и периодическую сверку/доставку результата.
+
+Контракты: [Market recordInfo](https://docs.kie.ai/market/common/get-task-detail), [Veo record-info](https://docs.kie.ai/old-model/veo3-api/get-veo-3-video-details). Для Veo successFlag0 означает обработку,1 — успех,2/3 — отказ.
+
 ### 9.2. Другие вебхуки
 
 | Сервис | Путь | Свойство config |
@@ -642,3 +656,13 @@ TELEGRAM_STARS_ENABLED=1
 ### Seedance 2.5 prompt length (2026-09-29)
 
 Seedance 2.5 (`bytedance/seedance-2-5`) accepts up to **30,000 Unicode characters** in the prompt, matching the [KIE input schema](https://docs.kie.ai/market/bytedance/seedance-2-5). The adapter, Telegram validation and public/admin Mini App forms enforce this technical maximum; longer prompts are rejected rather than truncated. Mini App is the entry point for prompts exceeding Telegram's single-message size. This does not change generation pricing or account quotas.
+
+### Seedance 2.5 video editing (2026-10-01)
+
+Telegram's **По референсам → Редактировать видео** and the Mini App multimodal form expose an explicit admin editing option. Provide exactly one source video of **4–30 seconds**, plus optional image/audio references, and describe the edit in the prompt. Output duration and aspect ratio follow the source video. Fixed duration/ratio controls are locked while editing is selected; switching it off restores ordinary reference-generation controls.
+
+The local `seedance25_video_editing` boolean is stored in generation `request_data` and preserved during repeat. It is never sent as a provider API field: the shared adapter sends the documented `duration=-1` and `aspect_ratio=adaptive`. The [KIE contract](https://docs.kie.ai/market/bytedance/seedance-2-5) has no explicit task-intent field; the provider still classifies the prompt. Having a video reference alone does not activate editing, so ordinary reference generation retains its chosen duration and ratio.
+
+Editing retains the existing **admin-only Auto entitlement** and free admin launch. Non-admin editing requests are rejected before charging or creating a provider task. Paid editing requires a separate deterministic pricing design based on trusted source duration; no price, multiplier, refund or automatic paid retry rule changes here. Admin price display remains the existing five-second Auto estimate, not the actual source duration.
+
+Local uploaded source duration is checked server-side; editing rejects sources below four seconds or above thirty. Ordinary video references keep the existing 2–30 second bounds. External URLs and `asset://` inputs have no locally probed metadata, so the provider validates their duration. Failed jobs are not automatically resubmitted; the editing-constraint error includes a localized hint to select the editing option.

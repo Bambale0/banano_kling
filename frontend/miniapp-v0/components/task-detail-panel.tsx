@@ -18,9 +18,10 @@ import {
 } from '@/lib/api'
 import { toast } from 'sonner'
 import { copyTextToClipboard } from '@/lib/clipboard'
+import { SeedanceTrendPublisher } from '@/components/seedance-trend-publisher'
 
 export function TaskDetailPanel() {
-  const { taskDetail, isTaskDetailOpen, closeTaskDetail, updateTask } = useApp()
+  const { state, taskDetail, isTaskDetailOpen, closeTaskDetail, updateTask } = useApp()
   const [publishBusy, setPublishBusy] = useState(false)
   const [libraryBusy, setLibraryBusy] = useState(false)
   const [feedPromptVisible, setFeedPromptVisible] = useState(false)
@@ -183,6 +184,17 @@ export function TaskDetailPanel() {
   const canSavePrompt = Boolean(
     taskDetail &&
       taskDetail.type === 'image' &&
+      taskDetail.prompt_actions_allowed !== false &&
+      !taskDetail.prompt_hidden
+  )
+
+  const canPublishSeedanceTrend = Boolean(
+    state.user.isAdmin &&
+      taskDetail &&
+      taskDetail.type === 'video' &&
+      taskDetail.status === 'completed' &&
+      taskDetail.result_url &&
+      (taskDetail.model === 'seedance_2' || taskDetail.model === 'seedance_2_5') &&
       taskDetail.prompt_actions_allowed !== false &&
       !taskDetail.prompt_hidden
   )
@@ -407,6 +419,7 @@ export function TaskDetailPanel() {
               {/* Actions */}
               {taskDetail.status === 'completed' && taskDetail.result_url && (
                 <div className="space-y-2">
+                  {canPublishSeedanceTrend ? <SeedanceTrendPublisher task={taskDetail} /> : null}
                   {canPublishToFeed && publicationEditorOpen ? (
                 <div className="rounded-xl border border-border/50 bg-secondary/35 p-3">
                   <p className="mb-3 text-sm font-semibold text-foreground">Куда опубликовать?</p>

@@ -1,5 +1,6 @@
 """Stable unit tests for database helpers."""
 
+import asyncio
 import json
 import os
 from unittest.mock import AsyncMock, MagicMock
@@ -172,8 +173,9 @@ async def test_complete_video_task_marks_failed_without_result_url(monkeypatch):
 
 
 class FakeCursor:
-    def __init__(self, row):
+    def __init__(self, row=None, *, rowcount=-1):
         self._row = row
+        self.rowcount = rowcount
 
     async def fetchone(self):
         return self._row
@@ -227,13 +229,12 @@ async def test_webhook_completion_swallows_errors(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_prompt_repeat_reward_dedupes_by_repeat_task_id(monkeypatch):
+async def test_prompt_repeat_reward_atomic_conflict_does_not_credit_author(monkeypatch):
     conn = FakeConnection()
-
-    async def fake_fetchone():
-        return (1,)
-
-    conn.fetchone = fake_fetchone
+    conn.execute.side_effect = [
+        FakeCursor({"telegram_id": 100042}),
+        FakeCursor(rowcount=0),
+    ]
     monkeypatch.setattr(database.db_backend, "connect", lambda *_args, **_kwargs: conn)
 
     result = await database._credit_prompt_repeat_reward_in_db(
@@ -247,10 +248,11 @@ async def test_prompt_repeat_reward_dedupes_by_repeat_task_id(monkeypatch):
     )
 
     assert result is False
-    # Only the dedup SELECT must run — no INSERT, no balance UPDATE
-    assert conn.execute.await_count == 1
-    sql = conn.execute.await_args.args[0]
-    assert "prompt_repeat_events" in sql
+    assert conn.execute.await_count == 2
+    executed_sql = [call.args[0] for call in conn.execute.await_args_list]
+    assert "SELECT telegram_id FROM users" in executed_sql[0]
+    assert "INSERT OR IGNORE INTO prompt_repeat_events" in executed_sql[1]
+    assert not any("UPDATE users" in sql for sql in executed_sql)
     conn.commit.assert_not_awaited()
 
 
@@ -1428,3 +1430,526 @@ async def test_link_notification_preserves_active_media_delivery_lease():
     data = json.loads(task.request_data)
     assert data['delivery_status'] == 'delivering'
     assert data['delivery_link_sent'] is True
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "credits_spent",
+    [None, 0, 0.0, -1, "0", "invalid", float("nan"), float("inf"), -float("inf")],
+)
+async def test_prompt_repeat_reward_requires_positive_credits_spent(credits_spent):
+    conn = FakeConnection()
+
+    credited = await database._credit_prompt_repeat_reward_in_db(
+        conn,
+        author_id=15943,
+        repeater_id=20100,
+        source_type="feed",
+        source_id=186039,
+        repeat_task_id="free-repeat-task",
+        credits_spent=credits_spent,
+    )
+
+    assert credited is False
+    conn.execute.assert_not_awaited()
+    conn.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("amount_rub", [None, 0, -1, "invalid", float("nan"), float("inf")])
+async def test_prompt_repeat_reward_requires_positive_finite_reward(amount_rub):
+    conn = FakeConnection()
+
+    credited = await database._credit_prompt_repeat_reward_in_db(
+        conn,
+        author_id=15943,
+        repeater_id=20100,
+        source_type="feed",
+        source_id=186039,
+        repeat_task_id="invalid-reward-task",
+        credits_spent=2.5,
+        amount_rub=amount_rub,
+    )
+
+    assert credited is False
+    conn.execute.assert_not_awaited()
+    conn.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_admin_repeat_with_positive_quote_does_not_credit_author(
+    tmp_path, monkeypatch
+):
+    from bot.config import config
+
+    monkeypatch.setattr(config, "ADMIN_IDS_STR", "100054")
+    monkeypatch.setattr(
+        database,
+        "DATABASE_PATH",
+        str(tmp_path / "admin-repeat-no-reward.db"),
+    )
+    await database.init_db()
+
+    author = await database.get_or_create_user(100053)
+    admin = await database.get_or_create_user(100054)
+    await database.add_generation_task(
+        author.id,
+        author.telegram_id,
+        "admin-repeat-source",
+        "image",
+        "miniapp_image",
+        model="banana_pro",
+        aspect_ratio="1:1",
+        prompt="Source",
+        cost=2.5,
+    )
+    await database.complete_video_task(
+        "admin-repeat-source",
+        "https://example.com/source.png",
+    )
+    source = await database.share_to_feed(
+        "admin-repeat-source",
+        author.id,
+        publication_scope="profile",
+    )
+    assert source is not None
+
+    credited = await database.credit_feed_prompt_repeat(
+        source["id"],
+        admin.id,
+        repeat_task_id="admin-repeat-child",
+        credits_spent=2.5,
+    )
+
+    assert credited is False
+    overview = await database.get_partner_overview(author.telegram_id)
+    assert overview["prompt_repeat_balance_rub"] == 0
+    assert overview["prompt_repeat_total_rub"] == 0
+    async with database.db_backend.connect(database.DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM prompt_repeat_events WHERE repeat_task_id = ?",
+            ("admin-repeat-child",),
+        )
+        assert (await cursor.fetchone())[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_webhook_completion_does_not_reward_zero_cost_feed_repeat(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        database,
+        "DATABASE_PATH",
+        str(tmp_path / "zero-cost-repeat-reward.db"),
+    )
+    await database.init_db()
+
+    author = await database.get_or_create_user(100051)
+    repeater = await database.get_or_create_user(100052)
+    await database.add_generation_task(
+        author.id,
+        author.telegram_id,
+        "zero-cost-repeat-source",
+        "video",
+        "test",
+        model="seedance_2_5",
+        prompt="Source",
+        cost=0,
+    )
+    await database.complete_video_task(
+        "zero-cost-repeat-source",
+        "https://example.com/source.mp4",
+    )
+    source = await database.share_to_feed(
+        "zero-cost-repeat-source",
+        author.id,
+        publication_scope="profile",
+    )
+    assert source is not None
+
+    await database.add_generation_task(
+        repeater.id,
+        repeater.telegram_id,
+        "zero-cost-repeat-child",
+        "video",
+        "no_preset_video",
+        model="seedance_2_5",
+        prompt="Repeat",
+        cost=0,
+        source_feed_gen_id=source["id"],
+        request_data={
+            "admin_free": True,
+            "charged": False,
+            "charged_cost": 0,
+            "refund_on_failure": False,
+        },
+    )
+
+    assert await database.complete_video_task(
+        "zero-cost-repeat-child",
+        "https://example.com/repeat.mp4",
+    )
+
+    overview = await database.get_partner_overview(author.telegram_id)
+    assert overview["prompt_repeat_balance_rub"] == 0
+    assert overview["prompt_repeat_total_rub"] == 0
+    async with database.db_backend.connect(database.DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM prompt_repeat_events WHERE repeat_task_id = ?",
+            ("zero-cost-repeat-child",),
+        )
+        assert (await cursor.fetchone())[0] == 0
+
+@pytest.mark.asyncio
+async def test_prompt_repeat_schema_has_unique_nonempty_task_id_index(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        database,
+        "DATABASE_PATH",
+        str(tmp_path / "prompt-repeat-schema.db"),
+    )
+    await database.init_db()
+
+    async with database.db_backend.connect(database.DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            SELECT sql
+            FROM sqlite_master
+            WHERE type = 'index'
+              AND name = 'uq_prompt_repeat_events_repeat_task_id'
+            """
+        )
+        row = await cursor.fetchone()
+
+    assert row is not None
+    sql = str(row[0]).upper()
+    assert "UNIQUE INDEX" in sql
+    assert "REPEAT_TASK_ID" in sql
+    assert "WHERE" in sql
+
+
+@pytest.mark.asyncio
+async def test_concurrent_prompt_repeat_reward_credits_once_on_sqlite(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        database,
+        "DATABASE_PATH",
+        str(tmp_path / "prompt-repeat-concurrency.db"),
+    )
+    await database.init_db()
+
+    author = await database.get_or_create_user(100061)
+    repeater = await database.get_or_create_user(100062)
+    await database.add_generation_task(
+        author.id,
+        author.telegram_id,
+        "repeat-race-source",
+        "image",
+        "miniapp_image",
+        model="banana_pro",
+        prompt="Source",
+        cost=2.5,
+    )
+    await database.complete_video_task(
+        "repeat-race-source",
+        "https://example.com/source.png",
+    )
+    source = await database.share_to_feed(
+        "repeat-race-source",
+        author.id,
+        publication_scope="profile",
+    )
+    assert source is not None
+
+    results = await asyncio.gather(
+        *[
+            database.credit_feed_prompt_repeat(
+                source["id"],
+                repeater.id,
+                repeat_task_id="sqlite-repeat-race",
+                credits_spent=2.5,
+            )
+            for _ in range(4)
+        ]
+    )
+
+    assert results.count(True) == 1
+    assert results.count(False) == 3
+    overview = await database.get_partner_overview(author.telegram_id)
+    assert overview["prompt_repeat_balance_rub"] == 10
+    assert overview["prompt_repeat_total_rub"] == 10
+    async with database.db_backend.connect(database.DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM prompt_repeat_events WHERE repeat_task_id = ?",
+            ("sqlite-repeat-race",),
+        )
+        assert (await cursor.fetchone())[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_seedance_trend_assets_are_persisted_typed_and_ordered(monkeypatch):
+    from bot.handlers import trend_success_compat
+
+    monkeypatch.setattr(trend_success_compat, "DATABASE_PATH", database.DATABASE_PATH)
+    monkeypatch.setattr(trend_success_compat, "_SCHEMA_READY", False)
+    await trend_success_compat.ensure_trend_generation_run_schema()
+    user = await database.get_or_create_user(1000991)
+    prompt = await database.create_prompt(
+        author_id=user.id,
+        prompt_text="Use @Image1 with @Image2 and @Video1",
+        title="Private Seedance refs",
+        category="video",
+        model="seedance_2_5",
+        tags=["trend", "trend-video", "seedance-private-references"],
+        generation_settings={
+            "kind": "video",
+            "user_input": "photo",
+            "model": "seedance_2_5",
+            "ratio": "adaptive",
+            "duration": 12,
+            "reference_contract": "seedance_identity_first",
+        },
+        source_generation_id=991001,
+        trend_reference_assets=[
+            {
+                "media_type": "video",
+                "position": 1,
+                "source_position": 1,
+                "file_url": "https://example.test/trend-assets/motion.mp4",
+                "file_hash": "b" * 64,
+                "mime_type": "video/mp4",
+                "size_bytes": 1234,
+                "label": "@Video1",
+            },
+            {
+                "media_type": "image",
+                "position": 2,
+                "source_position": 3,
+                "file_url": "https://example.test/trend-assets/dress.png",
+                "file_hash": "a" * 64,
+                "mime_type": "image/png",
+                "size_bytes": 321,
+                "label": "@Image2",
+            },
+        ],
+    )
+
+    assert prompt is not None
+    assets = await database.list_trend_reference_assets(prompt["id"])
+    assert [(item["media_type"], item["position"]) for item in assets] == [
+        ("image", 2),
+        ("video", 1),
+    ]
+    assert assets[0]["source_position"] == 3
+    assert assets[0]["role"] == "fixed_hidden"
+    assert assets[1]["file_hash"] == "b" * 64
+
+
+@pytest.mark.asyncio
+async def test_seedance_trend_assets_reject_duplicate_typed_positions():
+    user = await database.get_or_create_user(1000992)
+    with pytest.raises(ValueError, match="Duplicate trend reference position"):
+        await database.create_prompt(
+            author_id=user.id,
+            prompt_text="Use @Image1 and @Image2",
+            title="Invalid assets",
+            trend_reference_assets=[
+                {
+                    "media_type": "image",
+                    "position": 2,
+                    "source_position": 2,
+                    "file_url": "https://example.test/a.png",
+                    "file_hash": "c" * 64,
+                    "mime_type": "image/png",
+                    "size_bytes": 100,
+                },
+                {
+                    "media_type": "image",
+                    "position": 2,
+                    "source_position": 3,
+                    "file_url": "https://example.test/b.png",
+                    "file_hash": "d" * 64,
+                    "mime_type": "image/png",
+                    "size_bytes": 100,
+                },
+            ],
+        )
+
+
+@pytest.mark.asyncio
+async def test_trend_run_claim_is_atomic_replayable_and_payload_bound(monkeypatch):
+    from bot.handlers import trend_success_compat
+
+    monkeypatch.setattr(trend_success_compat, "DATABASE_PATH", database.DATABASE_PATH)
+    monkeypatch.setattr(trend_success_compat, "_SCHEMA_READY", False)
+    await trend_success_compat.ensure_trend_generation_run_schema()
+    user = await database.get_or_create_user(1000993)
+    prompt = await database.create_prompt(
+        author_id=user.id,
+        prompt_text="@Image1 wears @Image2",
+        title="Idempotent trend",
+        category="video",
+        model="seedance_2",
+        tags=["trend", "trend-video"],
+        generation_settings={
+            "kind": "video",
+            "user_input": "photo",
+            "model": "seedance_2",
+            "ratio": "9:16",
+            "duration": 10,
+        },
+    )
+    assert prompt is not None
+
+    first = await database.reserve_trend_run_claim(
+        user_id=user.id,
+        trend_id=prompt["id"],
+        client_request_id="trend_claim_123456",
+        request_hash="a" * 64,
+    )
+    processing = await database.reserve_trend_run_claim(
+        user_id=user.id,
+        trend_id=prompt["id"],
+        client_request_id="trend_claim_123456",
+        request_hash="a" * 64,
+    )
+    conflict = await database.reserve_trend_run_claim(
+        user_id=user.id,
+        trend_id=prompt["id"],
+        client_request_id="trend_claim_123456",
+        request_hash="b" * 64,
+    )
+
+    assert first["claimed"] is True
+    assert processing == {"claimed": False, "status": "processing"}
+    assert conflict["claimed"] is False
+    assert conflict["conflict"] is True
+
+    completed = await database.complete_trend_run_claim(
+        user_id=user.id,
+        trend_id=prompt["id"],
+        client_request_id="trend_claim_123456",
+        status="completed",
+        http_status=200,
+        response_payload={"ok": True, "task_id": "provider-task-1"},
+        task_id="provider-task-1",
+    )
+    duplicate_completion = await database.complete_trend_run_claim(
+        user_id=user.id,
+        trend_id=prompt["id"],
+        client_request_id="trend_claim_123456",
+        status="completed",
+        http_status=200,
+        response_payload={"ok": True, "task_id": "provider-task-2"},
+        task_id="provider-task-2",
+    )
+    replay = await database.reserve_trend_run_claim(
+        user_id=user.id,
+        trend_id=prompt["id"],
+        client_request_id="trend_claim_123456",
+        request_hash="a" * 64,
+    )
+
+    assert completed is True
+    assert duplicate_completion is False
+    assert replay["claimed"] is False
+    assert replay["status"] == "completed"
+    assert replay["task_id"] == "provider-task-1"
+    assert replay["response"] == {"ok": True, "task_id": "provider-task-1"}
+
+
+@pytest.mark.asyncio
+async def test_only_one_active_private_seedance_trend_can_use_a_source_generation(monkeypatch):
+    from bot import db as db_backend
+    from bot.handlers import trend_success_compat
+
+    monkeypatch.setattr(trend_success_compat, "DATABASE_PATH", database.DATABASE_PATH)
+    monkeypatch.setattr(trend_success_compat, "_SCHEMA_READY", False)
+    await trend_success_compat.ensure_trend_generation_run_schema()
+    user = await database.get_or_create_user(1000994)
+    first = await database.create_prompt(
+        author_id=user.id,
+        prompt_text="@Image1 wears @Image2",
+        title="First private trend",
+        category="video",
+        model="seedance_2",
+        tags=["trend", "trend-video", "seedance-private-references"],
+        generation_settings={"kind": "video", "ratio": "9:16"},
+        source_generation_id=123450,
+    )
+    assert first is not None
+
+    with pytest.raises(db_backend.IntegrityError):
+        await database.create_prompt(
+            author_id=user.id,
+            prompt_text="@Image1 wears @Image2",
+            title="Duplicate private trend",
+            category="video",
+            model="seedance_2",
+            tags=["trend", "trend-video", "seedance-private-references"],
+            generation_settings={"kind": "video", "ratio": "9:16"},
+            source_generation_id=123450,
+        )
+
+    await database.deactivate_prompt(first["id"])
+    replacement = await database.create_prompt(
+        author_id=user.id,
+        prompt_text="@Image1 wears @Image2",
+        title="Replacement private trend",
+        category="video",
+        model="seedance_2",
+        tags=["trend", "trend-video", "seedance-private-references"],
+        generation_settings={"kind": "video", "ratio": "9:16"},
+        source_generation_id=123450,
+    )
+    assert replacement is not None
+
+
+@pytest.mark.asyncio
+async def test_mark_task_delivery_status_supports_terminal_unavailable(monkeypatch):
+    task = database.GenerationTask(
+        id=71,
+        user_id=1,
+        task_id="telegram-unavailable",
+        type="image",
+        preset_id="preset",
+        request_data=json.dumps({"delivery_status": "pending"}),
+    )
+    monkeypatch.setattr(database, "get_task_by_id", AsyncMock(return_value=task))
+
+    conn = FakeConnection()
+    cursor = MagicMock()
+    cursor.rowcount = 1
+    conn.execute.return_value = cursor
+    monkeypatch.setattr(database.db_backend, "connect", lambda *_args, **_kwargs: conn)
+
+    assert await database.mark_task_delivery_status(
+        "telegram-unavailable",
+        "unavailable",
+        error="chat_not_found",
+    )
+
+    _sql, params = conn.execute.await_args.args
+    payload = json.loads(params[0])
+    assert payload["delivery_status"] == "unavailable"
+    assert payload["delivery_error"] == "chat_not_found"
+
+
+@pytest.mark.asyncio
+async def test_claim_task_delivery_does_not_retry_unavailable(monkeypatch):
+    task = database.GenerationTask(
+        id=72,
+        user_id=1,
+        task_id="telegram-unavailable",
+        type="image",
+        preset_id="preset",
+        request_data=json.dumps({"delivery_status": "unavailable"}),
+    )
+    monkeypatch.setattr(database, "get_task_by_id", AsyncMock(return_value=task))
+
+    connect = MagicMock()
+    monkeypatch.setattr(database.db_backend, "connect", connect)
+
+    assert await database.claim_task_delivery("telegram-unavailable") is False
+    connect.assert_not_called()

@@ -9,13 +9,13 @@ rather than the text-bot post link.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from functools import wraps
-from typing import Any, Iterable
+from typing import Any
 
 from aiohttp import web
 
 from bot.database import get_generation_task_payload
-
 
 _REPEAT_LIST_ALIASES: dict[str, tuple[str, ...]] = {
     "reference_images": ("reference_images", "reference_image_urls"),
@@ -54,6 +54,7 @@ _REPEAT_SCALAR_ALIASES: dict[str, tuple[str, ...]] = {
     ),
     "audio_url": ("audio_url", "audio_reference"),
     "seedance25_scenario": ("seedance25_scenario", "scenario"),
+    "seedance25_video_editing": ("seedance25_video_editing",),
     "seedance25_resolution": ("seedance25_resolution", "resolution"),
     "seedance25_output_format": ("seedance25_output_format", "output_format"),
     "seedance25_generate_audio": ("seedance25_generate_audio", "generate_audio"),
@@ -231,6 +232,11 @@ def enrich_video_repeat_body(
     #  video form. Preserve the source scenario, while letting media explicitly
     #  selected in the repeat form override the matching source inputs.
     if str(normalized.get("v_model") or "").strip() == "seedance_2_5":
+        # Keep strict booleans: malformed values pass through to launch validation,
+        # while an explicit False deliberately opts out of the source edit recipe.
+        if normalized.get("seedance25_video_editing") is True:
+            normalized["v_duration"] = -1
+            normalized["v_ratio"] = "adaptive"
         restored_scenario = str(
             _first_value(
                 request_data,
