@@ -76,6 +76,7 @@ def _short(text: Any, limit: int = 220) -> str:
 def get_admin_test_lab_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="🖼 GPT Image 2.5", callback_data="admin_test_gpt25")
+    builder.button(text="🍌 Gemini 3 Pro Image · OpenRouter", callback_data="admin_gmi:open")
     builder.button(text="🎬 Seedance API", callback_data="admin_seedance_lab")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
     builder.adjust(1)
@@ -87,7 +88,8 @@ def _test_lab_text() -> str:
         "🧪 <b>Тест</b>\n\n"
         "Закрытый контур для проверки новых моделей. "
         "Он доступен только Telegram-админам и не списывает бананы.\n\n"
-        "Сейчас подключено: <b>GPT Image 2.5</b> и <b>Seedance API</b>."
+        "Сейчас подключено: <b>GPT Image 2.5</b>, <b>Gemini 3 Pro Image · OpenRouter</b> "
+        "и <b>Seedance API</b>."
     )
 
 

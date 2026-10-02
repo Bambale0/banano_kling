@@ -74,6 +74,7 @@ from . import (
 )
 from . import repeat_result_compat as repeat_result_compat_module
 from .admin_seedance_test_lab import router as admin_seedance_test_lab_router
+from .admin_gemini_image_lab import router as admin_gemini_image_lab_router
 from .admin_test_lab import router as admin_test_lab_router
 from .admin_user_ban import router as admin_user_ban_router
 from .batch_generation import router as batch_generation_router
@@ -124,6 +125,7 @@ admin_router.include_router(admin_user_ban_router)
 admin_router.include_router(banana_resolution_pricing_router)
 admin_router.include_router(admin_test_lab_router)
 admin_router.include_router(admin_seedance_test_lab_router)
+admin_router.include_router(admin_gemini_image_lab_router)
 admin_router.include_router(admin_module.router)
 
 # Keep payment safety fixes without changing the established user-facing flow.
