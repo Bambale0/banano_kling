@@ -309,8 +309,12 @@ def compile_seedance_trend_recipe(
         "video": video_mapping,
         "audio": audio_mapping,
     }
+    source_prompt = str(prompt or "").strip()
+    if not source_prompt:
+        raise SeedanceTrendRecipeError("The source task prompt is empty")
+
     canonical_source_prompt = canonicalize_seedance_reference_tags(
-        str(prompt or "").strip(),
+        source_prompt,
         image_count=source_counts["image"],
         video_count=source_counts["video"],
         audio_count=source_counts["audio"],

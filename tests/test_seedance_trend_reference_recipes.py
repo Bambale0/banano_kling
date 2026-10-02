@@ -81,6 +81,21 @@ def test_compiler_replaces_author_identity_with_user_image_one() -> None:
     assert "SEEDANCE_TREND_IDENTITY_CONTRACT_V1" in recipe.prompt
 
 
+def test_compiler_rejects_empty_source_prompt() -> None:
+    with pytest.raises(SeedanceTrendRecipeError, match="prompt is empty"):
+        compile_seedance_trend_recipe(
+            prompt="   ",
+            model="seedance_2",
+            source_images=[FACE, DRESS],
+            source_videos=[],
+            source_audios=[],
+            identity_image_index=1,
+            fixed_image_indices=[2],
+            fixed_video_indices=[],
+            fixed_audio_indices=[],
+        )
+
+
 def test_compiler_injects_bindings_for_implicit_reference_prompt() -> None:
     recipe = compile_seedance_trend_recipe(
         prompt=(
