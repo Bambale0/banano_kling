@@ -5512,7 +5512,7 @@ def _normalize_trend_reference_assets(
     seen_hashes: set[tuple[str, str]] = set()
     for raw_asset in list(assets or []):
         if not isinstance(raw_asset, dict):
-            raise ValueError("Trend reference asset must be an object")
+            raise TypeError("Trend reference asset must be an object")
         media_type = str(raw_asset.get("media_type") or "").strip().lower()
         if media_type not in {"image", "video", "audio"}:
             raise ValueError(f"Unsupported trend reference media type: {media_type}")
@@ -5771,7 +5771,7 @@ async def get_active_seedance_trend_by_source_generation(
     source_generation_id: int,
     *,
     author_id: int,
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
         cursor = await db.execute(

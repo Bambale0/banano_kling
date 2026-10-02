@@ -521,6 +521,9 @@ async def _ensure_postgres_helpers(conn: psycopg.AsyncConnection) -> None:
                 "ALTER TABLE \"user_prompts\" ADD COLUMN IF NOT EXISTS \"generation_settings\" TEXT DEFAULT '{}'"
             )
             await cur.execute(
+                "ALTER TABLE \"user_prompts\" ADD COLUMN IF NOT EXISTS \"tags\" TEXT DEFAULT '[]'"
+            )
+            await cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS trend_reference_assets (
                     id BIGSERIAL PRIMARY KEY,
