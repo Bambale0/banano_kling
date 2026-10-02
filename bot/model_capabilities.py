@@ -126,6 +126,16 @@ VIDEO_MODEL_CAPABILITIES: Mapping[str, VideoModelCapability] = {
         supports_auto_duration=True,
         camera_control_via_prompt=True,
     ),
+    "seedance_2_mini": VideoModelCapability(
+        key="seedance_2_mini", label="Seedance 2.0 Mini", provider="seedance",
+        durations=tuple(range(4, 16)),
+        aspect_ratios=("1:1", "4:3", "3:4", "16:9", "9:16", "21:9"),
+        resolutions=("480p", "720p"),
+        supports_start_image=True, supports_end_image=True,
+        supports_reference_images=True, max_reference_images=9,
+        supports_reference_videos=True, max_reference_videos=3,
+        supports_audio_input=True, max_reference_audio=3,
+    ),
     "seedance_2_fast": VideoModelCapability(
         key="seedance_2_fast", label="Seedance 2.0 Fast", provider="seedance",
         durations=(5, 10, 15), aspect_ratios=("16:9", "9:16", "1:1"),
@@ -196,9 +206,16 @@ VIDEO_MODEL_ALIASES: Mapping[str, str] = {
     "motion_control": "motion_control_v26",
     "kling-2.6/motion-control": "motion_control_v26",
     "kling-3.0/motion-control": "motion_control_v30",
+    "seedance-2.0": "seedance_2",
+    "seedance_2.0": "seedance_2",
+    "bytedance/seedance-2": "seedance_2",
     "seedance-2.5": "seedance_2_5",
     "seedance_2.5": "seedance_2_5",
     "bytedance/seedance-2-5": "seedance_2_5",
+    "seedance-2.0-mini": "seedance_2_mini",
+    "seedance_2.0_mini": "seedance_2_mini",
+    "seedance-2.0-fast": "seedance_2_fast",
+    "seedance_2.0_fast": "seedance_2_fast",
     "gemini_omni": "gemini_omni_video",
 }
 

@@ -1057,6 +1057,33 @@ VIDEO_MODEL_LABELS = {
     "gemini_omni_audio": "Gemini Omni Audio",
     "gemini_omni_character": "Gemini Omni Character",
     "glow": "Kling Glow",
+    "seedance_2_5": "Seedance 2.5",
+    "seedance_2": "Seedance 2.0",
+    "seedance_2_mini": "Seedance 2.0 Mini",
+    "seedance_2_fast": "Seedance 2.0 Fast",
+}
+
+SEEDANCE_ADMIN_PRICE_MODELS = {
+    "seedance_2_5": {
+        "duration_min": 4,
+        "duration_max": 30,
+        "resolutions": ("480p", "720p", "1080p"),
+    },
+    "seedance_2": {
+        "duration_min": 4,
+        "duration_max": 15,
+        "resolutions": ("480p", "720p", "1080p", "4k"),
+    },
+    "seedance_2_mini": {
+        "duration_min": 4,
+        "duration_max": 15,
+        "resolutions": ("480p", "720p"),
+    },
+    "seedance_2_fast": {
+        "duration_min": 4,
+        "duration_max": 15,
+        "resolutions": ("480p", "720p"),
+    },
 }
 
 
@@ -1087,19 +1114,29 @@ def _model_per_sec(model_cfg: dict) -> str:
 
 
 def _admin_video_prices_keyboard() -> types.InlineKeyboardMarkup:
-    """Одна кнопка на модель с отображением цены за секунду."""
+    """Одна кнопка на модель; Seedance видны даже до настройки розничной цены."""
     video_models = (
         preset_manager.get_price_config()
         .get("costs_reference", {})
         .get("video_models", {})
     )
+    model_keys = list(video_models)
+    for model_key in SEEDANCE_ADMIN_PRICE_MODELS:
+        if model_key not in model_keys:
+            model_keys.append(model_key)
+
     buttons = []
-    for model_key, model_cfg in video_models.items():
-        per_sec = _model_per_sec(model_cfg)
+    for model_key in model_keys:
+        model_cfg = video_models.get(model_key)
+        price_text = (
+            f"{_model_per_sec(model_cfg)}🍌/с"
+            if model_cfg
+            else "цена не настроена"
+        )
         label = VIDEO_MODEL_LABELS.get(model_key, model_key)
         buttons.append(
             types.InlineKeyboardButton(
-                text=f"{label} • {per_sec}🍌/с",
+                text=f"{label} • {price_text}",
                 callback_data=f"admin_video_model_{model_key}",
             )
         )
@@ -1110,7 +1147,7 @@ def _admin_video_prices_keyboard() -> types.InlineKeyboardMarkup:
 
 
 def _admin_video_model_keyboard(model_key: str) -> types.InlineKeyboardMarkup:
-    """Детальный экран модели: каждая длительность + кнопка 'цена за 1с'."""
+    """Детальный экран модели, включая ещё не настроенные Seedance quality prices."""
     video_models = (
         preset_manager.get_price_config()
         .get("costs_reference", {})
@@ -1119,10 +1156,24 @@ def _admin_video_model_keyboard(model_key: str) -> types.InlineKeyboardMarkup:
     model_cfg = video_models.get(model_key, {})
     quality_costs = model_cfg.get("quality_costs", {})
     duration_costs = model_cfg.get("duration_costs", {})
-    quality_order = {"720p": 0, "1080p": 1, "4k": 2}
+    quality_order = {"480p": 0, "720p": 1, "1080p": 2, "4k": 3}
+    seedance_spec = SEEDANCE_ADMIN_PRICE_MODELS.get(model_key)
 
     buttons = []
-    if quality_costs:
+    if seedance_spec:
+        for quality in sorted(
+            seedance_spec["resolutions"],
+            key=lambda q: (quality_order.get(str(q).lower(), 99), str(q)),
+        ):
+            cost = quality_costs.get(quality)
+            value = f"{cost}🍌/с" if cost is not None else "не настроено"
+            buttons.append(
+                types.InlineKeyboardButton(
+                    text=f"{quality} → {value}",
+                    callback_data=f"admin_price_video_{model_key}_q{quality}",
+                )
+            )
+    elif quality_costs:
         for quality in sorted(
             quality_costs.keys(),
             key=lambda q: (quality_order.get(str(q).lower(), 99), str(q)),
@@ -1231,6 +1282,15 @@ def _update_price_value(target: str, key: str, field: str, value):
     if target == "video":
         video_models = price_config["costs_reference"]["video_models"]
         model = video_models.get(key)
+        seedance_spec = SEEDANCE_ADMIN_PRICE_MODELS.get(key)
+        if not model and seedance_spec:
+            model = {
+                "default_duration": 5,
+                "duration_min": seedance_spec["duration_min"],
+                "duration_max": seedance_spec["duration_max"],
+                "quality_costs": {},
+            }
+            video_models[key] = model
         if not model:
             raise KeyError("video")
         if field == "persec":
@@ -1259,10 +1319,12 @@ def _update_price_value(target: str, key: str, field: str, value):
             model[target_key] = value
         elif field.startswith("q"):
             quality = field[1:]
-            quality_costs = model.get("quality_costs")
-            if not quality_costs or quality not in quality_costs:
+            if seedance_spec and quality not in seedance_spec["resolutions"]:
                 raise KeyError("video_quality")
-            old_value = quality_costs[quality]
+            quality_costs = model.setdefault("quality_costs", {})
+            if not seedance_spec and quality not in quality_costs:
+                raise KeyError("video_quality")
+            old_value = quality_costs.get(quality)
             quality_costs[quality] = value
         else:
             duration_costs = model.setdefault("duration_costs", {})
@@ -2896,17 +2958,29 @@ async def admin_video_model(callback: types.CallbackQuery):
         .get("video_models", {})
     )
     model_cfg = video_models.get(model_key)
-    if not model_cfg:
+    seedance_spec = SEEDANCE_ADMIN_PRICE_MODELS.get(model_key)
+    if not model_cfg and not seedance_spec:
         await callback.answer("Модель не найдена", show_alert=True)
         return
 
+    model_cfg = model_cfg or {}
     label = VIDEO_MODEL_LABELS.get(model_key, model_key)
-    per_sec = _model_per_sec(model_cfg)
+    per_sec = _model_per_sec(model_cfg) if model_cfg else "не настроено"
     quality_costs = model_cfg.get("quality_costs", {})
     duration_costs = model_cfg.get("duration_costs", {})
-    quality_order = {"720p": 0, "1080p": 1, "4k": 2}
+    quality_order = {"480p": 0, "720p": 1, "1080p": 2, "4k": 3}
 
-    if quality_costs:
+    if seedance_spec:
+        lines = "\n".join(
+            (
+                f"• {quality} → <code>{quality_costs[quality]}</code>🍌/с"
+                if quality in quality_costs
+                else f"• {quality} → <i>не настроено</i>"
+            )
+            for quality in seedance_spec["resolutions"]
+        )
+        detail = f"Цены по качеству за 1 секунду:\n{lines}"
+    elif quality_costs:
         lines = "\n".join(
             f"• {quality} → <code>{cost}</code>🍌/с"
             for quality, cost in sorted(
@@ -3057,9 +3131,11 @@ async def admin_price_video(callback: types.CallbackQuery, state: FSMContext):
         .get("video_models", {})
     )
     model = video_models.get(model_key)
-    if not model:
+    seedance_spec = SEEDANCE_ADMIN_PRICE_MODELS.get(model_key)
+    if not model and not seedance_spec:
         await callback.answer("Модель не найдена", show_alert=True)
         return
+    model = model or {}
 
     model_label = VIDEO_MODEL_LABELS.get(model_key, model_key)
     return_to = f"admin_video_model_{model_key}"
@@ -3077,6 +3153,9 @@ async def admin_price_video(callback: types.CallbackQuery, state: FSMContext):
         param_label = "базовая цена"
     elif field.startswith("q"):
         quality = field[1:]
+        if seedance_spec and quality not in seedance_spec["resolutions"]:
+            await callback.answer("Это качество не поддерживается моделью", show_alert=True)
+            return
         quality_costs = model.get("quality_costs") or {}
         current_value = quality_costs.get(quality)
         hint_text = f"Введите стоимость качества <b>{quality}</b> за <b>1 секунду</b>."
@@ -3086,7 +3165,7 @@ async def admin_price_video(callback: types.CallbackQuery, state: FSMContext):
         hint_text = f"Введите новую стоимость для длительности <b>{field} сек</b>."
         param_label = f"{field} сек"
 
-    if current_value is None:
+    if current_value is None and not (seedance_spec and field.startswith("q")):
         await callback.answer("Цена не найдена", show_alert=True)
         return
 
@@ -3099,9 +3178,14 @@ async def admin_price_video(callback: types.CallbackQuery, state: FSMContext):
         return_to=return_to,
     )
 
+    current_text = (
+        f"<code>{current_value}</code>🍌"
+        if current_value is not None
+        else "<i>не настроено</i>"
+    )
     await callback.message.edit_text(
         f"🎬 <b>{model_label}</b> — {param_label}\n\n"
-        f"Текущее значение: <code>{current_value}</code>🍌\n\n"
+        f"Текущее значение: {current_text}\n\n"
         f"{hint_text}",
         reply_markup=get_back_keyboard(return_to),
         parse_mode="HTML",
@@ -3145,9 +3229,14 @@ async def admin_process_price_value(message: types.Message, state: FSMContext):
             "Все длительности пересчитаны автоматически."
         )
     else:
+        old_text = (
+            f"<code>{old_value}</code>"
+            if old_value is not None
+            else "<i>не настроено</i>"
+        )
         success_text = (
             "✅ <b>Цена обновлена</b>\n\n"
-            f"Было: <code>{old_value}</code>\n"
+            f"Было: {old_text}\n"
             f"Стало: <code>{new_value}</code>"
         )
 

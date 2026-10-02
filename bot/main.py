@@ -465,6 +465,9 @@ class AccessGuardMiddleware(BaseMiddleware):
         return raw_state in {
             "AdminTestLabStates:gpt25_prompt",
             "AdminTestLabStates:gpt25_references",
+            "SeedanceAdminTestStates:prompt",
+            "SeedanceAdminTestStates:references",
+            "SeedanceAdminTestStates:frames",
         }
 
     async def __call__(
