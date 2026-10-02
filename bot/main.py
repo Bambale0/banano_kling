@@ -468,6 +468,8 @@ class AccessGuardMiddleware(BaseMiddleware):
             "SeedanceAdminTestStates:prompt",
             "SeedanceAdminTestStates:references",
             "SeedanceAdminTestStates:frames",
+            "GeminiImageLabStates:prompt",
+            "GeminiImageLabStates:references",
         }
 
     async def __call__(
