@@ -791,6 +791,23 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Excluded Banana tracked WIP is preserved as stash `fad97979e13142b792d86268f385efd308cbfb8d`; production checkout now has no tracked edits blocking CI deploy. No Banana changes are included in PR #216.
 - Steps 1–5 complete locally; latest-head GitHub CI and subsequent merge/deploy verification remain release gates. Post-merge SHA, CI/deploy links and smoke evidence will be recorded in the PR delivery report.
 
+
+## 2026-10-01 — KIE durable result delivery recovery
+
+- Baseline: `tanyapi` / `origin/tanyapi` at `1840ba0dd4f39ceadfd58023f10b0654c1fbcbb8`; task branch `fix/kie-result-delivery-recovery`.
+- Production evidence: KIE returned provider `state=success` and a `tempfile.aiquickdraw.com` result, while media retrieval intermittently timed out/truncated and Telegram returned `failed to get HTTP URL content`. Example Seedream task `8f4c6fc0c07ecc592fe819cf5b75a2ee` recovered on a later download attempt.
+- Root cause: provider generation and webhook completion were healthy; temporary KIE CDN delivery was intermittent. Legacy KIE paths amplified the outage by treating a plain result link as delivered and, in one path, calling `complete_video_task()` even when media delivery failed.
+- Scope: KIE/Kling result delivery in `bot/main.py`, shared delivery metadata in `bot/database.py`, durable localization of ephemeral provider URLs, and regression tests. No provider payload, model selection, pricing, balance/refund or frontend changes.
+- Runtime contract: `success -> delivery lease -> durable localization with bounded retry/backoff -> persist canonical result_url/result_ready metadata -> Telegram media -> completed+delivered`.
+- Link fallback is intermediate only: `delivery_link_sent=true` suppresses duplicate links, then delivery returns to `pending` so watchdog/reconciliation can retry the media after the lease expires.
+- Ephemeral result hosts from `FEED_EPHEMERAL_RESULT_HOSTS` are force-localized for image/video delivery even with `PERSIST_PROVIDER_RESULTS=false`. Defaults: two attempts, 1s linear delay. KIE delivery lease defaults to 600s.
+- Concurrency: `claim_task_delivery()` prevents webhook/watchdog double-send; `store_task_result_ready()` uses compare-and-swap on request metadata and preserves an active `delivering` lease while storing the canonical URL.
+- Regression coverage: generic KIE image success + failed Telegram media/link fallback remains recoverable; Kling KIE `code=200` video path does not complete on link-only fallback; ephemeral KIE video is localized when global persistence is off; localization retries after the first transient failure; DB result-ready persistence preserves the lease.
+- Focused verification: `92 passed`; focused Ruff and `git diff --check` passed; changed-line Ruff across modified Python files reported 0 issues.
+- Full backend verification: `1372 passed, 2 skipped, 1 failed`. The sole failure is pre-existing/out-of-scope `tests/test_seedream_service.py::test_seedream_text_prompt_limit_increased_to_six_thousand_chars`: test expects 6000 while current `seedream_service.py` truncates to 5000. Neither Seedream file is changed by this branch.
+- Review: standards/spec pass found and corrected one ordering issue in the legacy KIE payload so all three active KIE success paths now claim the lease before localization/result-ready persistence. No confirmed KIE delivery blocker remains locally.
+- Release gates: push task branch, open PR to `tanyapi`, merge only with required GitHub CI green, then verify exact deployed SHA/container health and passive production telemetry. No paid generation is required for smoke.
+
 ## 2026-10-01 — Seedance 2.5 explicit video editing
 
 - Baseline: `tanyapi` / `b5fcf18f0025c91e684233798bea06d232c177e7`; isolated branch `fix/seedance25-edit-duration`.
