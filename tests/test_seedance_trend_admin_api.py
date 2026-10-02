@@ -8,7 +8,9 @@ from bot import seedance_trend_admin_api as api
 
 
 @pytest.mark.asyncio
-async def test_source_task_allows_owned_generation_from_ordinary_saved_prompt(monkeypatch):
+async def test_source_task_allows_owned_generation_from_ordinary_saved_prompt(
+    monkeypatch,
+):
     from bot import miniapp as miniapp_module
 
     user = SimpleNamespace(id=81)
@@ -108,7 +110,7 @@ async def test_publish_seedance_trend_persists_recipe_and_returns_only_public_me
         "status": "completed",
         "duration": 10,
         "aspect_ratio": "9:16",
-        "prompt": "@Image1 wears @Image2 while following @Video1.",
+        "prompt": "Dress the person in the supplied outfit and follow the supplied motion.",
         "result_url": "https://provider.example.test/result.mp4",
         "request_data": {
             "v_image_url": "https://source.example.test/creator.jpg",
@@ -219,9 +221,12 @@ async def test_publish_seedance_trend_persists_recipe_and_returns_only_public_me
     assert kwargs["trend_reference_assets"] == persisted_assets
     assert kwargs["model"] == "seedance_2"
     assert kwargs["prompt_text"].startswith(
-        "@Image1 wears @Image2 while following @Video1."
+        "Dress the person in the supplied outfit and follow the supplied motion."
     )
     assert "SEEDANCE_TREND_IDENTITY_CONTRACT_V1" in kwargs["prompt_text"]
+    assert "@Image1 is the only identity/person source" in kwargs["prompt_text"]
+    assert "@Image2" in kwargs["prompt_text"]
+    assert "@Video1" in kwargs["prompt_text"]
     assert "creator.jpg" not in json.dumps(kwargs)
 
 

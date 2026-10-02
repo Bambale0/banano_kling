@@ -354,13 +354,7 @@ def compile_seedance_trend_recipe(
             "Prompt references media excluded from the trend: " + ", ".join(missing)
         )
 
-    mentioned = _mentioned_tags(remapped_prompt)
     required = {"@Image1", *(asset.label for asset in assets)}
-    unmentioned = sorted(required - mentioned)
-    if unmentioned:
-        raise SeedanceTrendRecipeError(
-            "Prompt must reference every retained media slot: " + ", ".join(unmentioned)
-        )
 
     guard_lines = [
         f"{PROMPT_MARKER}",
@@ -406,6 +400,13 @@ def compile_seedance_trend_recipe(
     compiled_prompt = (
         remapped_prompt if PROMPT_MARKER in remapped_prompt else remapped_prompt + guard
     )
+    unmentioned = sorted(required - _mentioned_tags(compiled_prompt))
+    if unmentioned:
+        raise SeedanceTrendRecipeError(
+            "Compiled prompt is missing retained media bindings: "
+            + ", ".join(unmentioned)
+        )
+
     prompt_limit = _PROMPT_LIMITS[normalized_model]
     if len(compiled_prompt) > prompt_limit:
         raise SeedanceTrendRecipeError(
