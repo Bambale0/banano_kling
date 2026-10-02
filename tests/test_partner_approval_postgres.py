@@ -108,7 +108,8 @@ async def _bootstrap_production_like_partner_schema() -> None:
             await cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS user_prompts (
-                    id BIGSERIAL PRIMARY KEY
+                    id BIGSERIAL PRIMARY KEY,
+                    status TEXT DEFAULT 'pending'
                 )
                 """
             )
