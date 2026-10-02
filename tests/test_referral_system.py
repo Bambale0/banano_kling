@@ -466,6 +466,9 @@ async def test_lava_webhook_completes_transaction_by_order_id(monkeypatch):
         return "completed"
 
     monkeypatch.setattr(payments_module, "_resolve_lava_provider_status", _fake_status)
+    monkeypatch.setattr(
+        payments_module.config, "LAVA_WEBHOOK_SECRET", "test-lava-webhook-key"
+    )
 
     user = await database.get_or_create_user(4303)
     initial_credits = user.credits
@@ -486,6 +489,7 @@ async def test_lava_webhook_completes_transaction_by_order_id(monkeypatch):
                 b'"clientUtm":{"order_id":"lava-webhook-order"}}'
             )
         ),
+        headers={"X-Api-Key": "test-lava-webhook-key"},
         app={"bot": bot},
     )
 
@@ -497,6 +501,46 @@ async def test_lava_webhook_completes_transaction_by_order_id(monkeypatch):
     transaction = await database.get_transaction_by_order("lava-webhook-order")
     assert transaction.status == "completed"
     bot.send_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_lava_webhook_rejects_invalid_api_key(monkeypatch):
+    from bot.handlers import payments as payments_module
+    from bot.handlers.payments import handle_lava_webhook
+
+    monkeypatch.setattr(
+        payments_module.config, "LAVA_WEBHOOK_SECRET", "expected-lava-webhook-key"
+    )
+    request = SimpleNamespace(
+        read=AsyncMock(
+            return_value=b'{"eventType":"payment.success","status":"success"}'
+        ),
+        headers={"X-Api-Key": "wrong-key"},
+        app={"bot": SimpleNamespace(send_message=AsyncMock())},
+    )
+
+    response = await handle_lava_webhook(request)
+
+    assert response.status == 401
+
+
+@pytest.mark.asyncio
+async def test_lava_webhook_fails_closed_without_configured_key(monkeypatch):
+    from bot.handlers import payments as payments_module
+    from bot.handlers.payments import handle_lava_webhook
+
+    monkeypatch.setattr(payments_module.config, "LAVA_WEBHOOK_SECRET", "")
+    request = SimpleNamespace(
+        read=AsyncMock(
+            return_value=b'{"eventType":"payment.success","status":"success"}'
+        ),
+        headers={},
+        app={"bot": SimpleNamespace(send_message=AsyncMock())},
+    )
+
+    response = await handle_lava_webhook(request)
+
+    assert response.status == 403
 
 
 def test_commission_awarded_to_level1_and_level2(tmp_path, monkeypatch):

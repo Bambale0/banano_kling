@@ -1,9 +1,3 @@
-from bot.database import (
-    PARTNER_INVITER_BONUS,
-    PARTNER_LEVEL1_PERCENT,
-    PARTNER_LEVEL2_PERCENT,
-    PARTNER_NEW_USER_BONUS,
-)
 
 PARTNER_PROGRAM_TEXT = (
     "💼 <b>Партнёрам</b>\n\n"

@@ -4,7 +4,7 @@ import os
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from aiogram import types
-from aiogram.types import CopyTextButton, InlineKeyboardButton, WebAppInfo
+from aiogram.types import InlineKeyboardButton, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.config import config

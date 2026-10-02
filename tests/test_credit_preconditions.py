@@ -4,6 +4,8 @@ Pragmatic-programmer: Design by Contract — preconditions must be
 checked at function entry before any side effects.
 """
 
+from types import SimpleNamespace
+
 import pytest
 
 
@@ -69,14 +71,18 @@ class TestDeductCreditsPreconditions:
 
         mock_db = mocker.patch("bot.database.db_backend")
         mock_conn = mocker.AsyncMock()
-        mock_conn.execute = mocker.AsyncMock()
+        mock_cursor = mocker.AsyncMock()
+        mock_cursor.fetchone.return_value = None
+        # BEGIN IMMEDIATE, then SELECT credits.
+        mock_conn.execute = mocker.AsyncMock(side_effect=[None, mock_cursor])
         mock_db.connect.return_value.__aenter__.return_value = mock_conn
-        # Mock config.is_admin to return False
-        mocker.patch("bot.database.config.is_admin", return_value=False)
+        # deduct_credits imports config lazily from bot.config.
+        mocker.patch("bot.config.config.is_admin", return_value=False)
 
         result = await deduct_credits(telegram_id=12345, amount=10)
         assert result is False  # Not enough credits, but process reached DB
         mock_db.connect.assert_called_once()
+        mock_conn.rollback.assert_awaited_once()
 
 
 class TestCheckCanAffordType:
@@ -86,18 +92,16 @@ class TestCheckCanAffordType:
     async def test_check_can_afford_accepts_int(self, mocker):
         from bot.database import check_can_afford
 
-        mocker.patch("bot.database.config.is_admin", return_value=False)
-        mock_db = mocker.patch("bot.database.db_backend")
-        mock_cursor = mocker.AsyncMock()
-        mock_cursor.fetchone.return_value = {"credits": 100}
-        mock_conn = mocker.AsyncMock()
-        mock_conn.execute.return_value = mock_cursor
-        mock_conn.__aenter__.return_value = mock_conn
-        mock_db.connect.return_value = mock_conn
+        mocker.patch("bot.config.config.is_admin", return_value=False)
+        get_user = mocker.patch(
+            "bot.database.get_or_create_user",
+            new=mocker.AsyncMock(return_value=SimpleNamespace(credits=100)),
+        )
 
         result = await check_can_afford(telegram_id=12345, amount=10)
         # True = can afford (100 >= 10)
         assert result is True
+        get_user.assert_awaited_once_with(12345)
 
     @pytest.mark.asyncio
     async def test_check_can_afford_signature_is_int(self):
