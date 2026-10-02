@@ -913,3 +913,38 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Repeat the production duplicate audit immediately before deployment. If any duplicate `repeat_task_id` appears, stop rollout and reconcile before creating the UNIQUE index.
 - Require exact-head validation, safe suite, browser E2E and production Docker image checks; deploy only the final merged `tanyapi` SHA.
 - Post-deploy verify the UNIQUE index, exact image/container/public revision, health, changed runtime sources and error logs. Re-audit new admin reward events and pending admin tasks with refundable nominal cost.
+
+---
+
+## 2026-10-02 - Grok Telegram start-image regression
+
+### Baseline and scope
+- Production `tanyapi`: `0b2263c7fed108007506cfb347ead6cb410162ab`.
+- Task branch: `fix/grok-start-image-state`.
+- User-visible failure: select Grok in the video menu, upload a photo, send a prompt; the bot discards the photo with a text-only prompt and later reports a missing start image.
+- Read-only production evidence showed a matching launch at 11:58 UTC with a 6-credit debit followed by an immediate 6-credit refund. No customer balances or original jobs are modified by this fix.
+
+### Root cause and implementation
+- The priority `advanced_v_model_*` router bypasses the older `_apply_video_model_selection` path. Its `_initial_type_for_model` returned `text` for both Grok video variants, despite their existing Telegram adapters requiring a start image.
+- The photo handler rejected the attachment before downloading/persisting it because `v_type` was not `imgtxt`. The later message-launch validation happened after billing and cleared the conversation state.
+- Reuse the existing Grok model set for the advanced selector and normalize stale Grok FSM types at render, photo, prompt and submit boundaries without clearing media/settings.
+- Move the missing-start-image check before price/balance/provider operations. Keep model, settings and prompt so the user can attach a photo and retry; remove unreachable post-debit Grok checks.
+- Logs record mode repair and pre-billing input rejection without prompts, URLs or secrets.
+- No provider/model IDs, tariffs, limits, migration, configuration or Mini App API contract changes. Mini App does not use this Telegram FSM selector; its provider service remains unchanged.
+
+### Test-first evidence
+- `PYTHONPATH=. python -m pytest -q tests/test_grok_video_input_flow.py --disable-warnings --tb=short` on the unmodified baseline: **16 failed, 1 passed**. Failures assert the exact incorrect type, lost image and unwanted debit.
+- The same command after the patch: **17 passed**. Tests dispatch through the real production router stack with real aiogram messages/FSM and prompt coalescing. Only Telegram transport, media persistence, billing/task persistence and provider HTTP boundaries are mocked.
+- Coverage: both Grok variants, photo/document, old `text`/missing/`video` states, direct launch and text submission without a photo, complete outgoing provider payload and preserved task media metadata. Non-Grok text mode remains unchanged.
+- Full safe regression suite and final release gates are in progress. No paid live generation is authorized or executed for this task.
+
+### Release plan and residual scope
+- Publish a focused PR to `tanyapi`, require passing exact-head CI and review, then use production CI/autodeploy. Verify the exact deployed SHA, health and changed-source fingerprints before claiming deployment.
+- The original discarded attachment cannot be recovered from FSM: affected users must upload it again once. New/stale sessions are repaired when next used.
+- Existing upload concurrency and already-precharged callback-repeat accounting are outside this message/photo selector fix; no claim of a global billing or concurrency audit is made.
+
+### Extended local verification
+- Added same-flow recovery (missing image -> upload -> retry), invalid-image validation, and prompt preservation on the media step. Focused Grok/video/keyboard/Mini App continuity/billing gate: **119 passed**, including **23 new Grok cases**.
+- Initial full safe suite in the exported Python 3.13 sandbox: **1276 passed, 13 skipped, 10 failed**. Three failures are missing baseline archive fixtures (`compose.backend.yml`, `schema_postgres.sql`, `legal/public-offer.pdf`); seven share a logging-clock fixture incompatibility (`time.time` is patched, while this sandbox's `LogRecord` uses `time.time_ns`).
+- Re-ran the first clock case in an unmodified baseline worktree: the same failure reproduced. Neither unrelated tests nor production logging were changed. Full exact-head Python 3.12 CI remains the release gate; the local full run is not reported as green.
+- `git diff --check` and compilation of both changed handlers plus the regression module passed.

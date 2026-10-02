@@ -126,6 +126,8 @@ img_count_4              img_count_6
 
 Типы: `text | imgtxt | video | avatar | motion | audio | character`
 
+Grok Imagine / Grok Imagine 1.5: `advanced_v_model_*` и старые кнопки открывают `imgtxt`. Стартовое фото принимается как photo или image-document. Старые сессии с ошибочным `v_type=text` нормализуются без сброса фото и настроек. При запуске текстом без фото бот сохраняет промпт, просит стартовое фото и не списывает бананы.
+
 ### Callback-контракт:
 ```
 create_video_new          video_change_model
