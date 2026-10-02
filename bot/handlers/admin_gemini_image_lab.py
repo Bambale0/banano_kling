@@ -50,7 +50,11 @@ def _lock(admin_id: int) -> asyncio.Lock:
 async def load_session(admin_id: int) -> dict[str, Any]:
     value = await get_bot_setting(f"gemini_image_lab:{admin_id}")
     if value:
-        return json.loads(value)
+        data = json.loads(value)
+        data.setdefault(
+            "last_success", data["job"] if data["job"].get("status") == "ready" else {}
+        )
+        return data
     return {
         "prompt": "",
         "references": [],
@@ -60,6 +64,7 @@ async def load_session(admin_id: int) -> dict[str, Any]:
         "timeout": 240,
         "nonce": uuid.uuid4().hex[:16],
         "job": {},
+        "last_success": {},
     }
 
 
@@ -135,7 +140,7 @@ async def _dashboard(
         rows.append([("🔄 Статус", "open")])
     else:
         rows.append([("🚀 Создать", f"generate:{data['nonce']}")])
-    if job.get("status") == "ready":
+    if data["last_success"]:
         rows.extend(
             [
                 [("📥 Получить результат", "result"), ("✏️ Доработать", "edit")],
@@ -189,7 +194,7 @@ async def _deliver(bot, admin_id: int, job: dict[str, Any]) -> None:
         await bot.send_document(
             chat_id=admin_id,
             document=FSInputFile(path),
-            caption="Оригинал без сжатия",
+            caption="Оригинал без сжатия\n" + caption,
             reply_markup=_back(),
         )
     logger.info(
@@ -229,10 +234,11 @@ async def _run(
             else "Не удалось сохранить результат. Проверьте статус OpenRouter перед новым запуском.",
         )
         logger.warning(
-            "gemini_image_lab failed admin_id=%s request_id=%s error_type=%s elapsed=%.1f",
+            "gemini_image_lab failed admin_id=%s request_id=%s error_type=%s error_code=%s elapsed=%.1f",
             admin_id,
             job["id"],
             type(exc).__name__,
+            getattr(exc, "code", "local_storage_or_validation"),
             time.monotonic() - started,
         )
     # Persist before delivery, independent of the current FSM/menu.
@@ -241,6 +247,8 @@ async def _run(
         if data["job"].get("id") != job["id"]:
             return
         data["job"] = job
+        if job["status"] == "ready":
+            data["last_success"] = job
         await save_session(admin_id, data)
     logger.info(
         "gemini_image_lab completed admin_id=%s request_id=%s provider_id=%s status=%s elapsed=%.1f",
@@ -410,9 +418,9 @@ async def handle_callback(callback: types.CallbackQuery, state: FSMContext):
                     raise ImageProviderError("Ключ OpenRouter не настроен на сервере.")
                 settings = {key: data[key] for key in _FIELDS}
                 if action == "repeat":
-                    if job.get("status") != "ready":
+                    if not data["last_success"]:
                         raise ValueError("Нет готового запроса для повтора.")
-                    settings = dict(job["settings"])
+                    settings = dict(data["last_success"]["settings"])
                 caps = await openrouter_image_service.capabilities()
                 openrouter_image_service.build_payload(
                     capabilities=caps,
@@ -438,11 +446,13 @@ async def handle_callback(callback: types.CallbackQuery, state: FSMContext):
                 )
                 _start(_run(callback.bot, admin_id, job, caps))
             elif action == "result":
+                job = data["last_success"]
                 if job.get("status") != "ready":
                     raise ValueError("Готового результата пока нет.")
                 await _deliver(callback.bot, admin_id, job)
                 return
             elif action == "edit":
+                job = data["last_success"]
                 if job.get("status") != "ready":
                     raise ValueError("Сначала создайте изображение.")
                 path = _job_path(job, job["files"][0])

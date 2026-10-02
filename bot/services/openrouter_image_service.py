@@ -24,6 +24,10 @@ MAX_RESPONSE_BYTES = 64 * 1024 * 1024
 class ImageProviderError(RuntimeError):
     """Safe for displaying: never includes raw provider payloads or credentials."""
 
+    def __init__(self, message: str, *, code: str = "provider_error"):
+        super().__init__(message)
+        self.code = code
+
 
 @dataclass
 class GeneratedImage:
@@ -75,16 +79,11 @@ class OpenRouterImageService:
             endpoints = data.get("endpoints") if isinstance(data, dict) else None
             if not isinstance(endpoints, list) or not endpoints:
                 raise ImageProviderError("Модель временно недоступна в OpenRouter.")
-            valid = [
-                e
-                for e in endpoints
-                if isinstance(e, dict)
-                and e.get("provider_tag")
-                and isinstance(e.get("supported_parameters"), dict)
-            ]
+            valid = [e for e in endpoints if self._valid_endpoint(e)]
             if not valid:
                 raise ImageProviderError(
-                    "OpenRouter не вернул доступных провайдеров модели."
+                    "OpenRouter не вернул доступных провайдеров модели.",
+                    code="capabilities_invalid",
                 )
             self._capabilities = valid
             self._cached_at = time.monotonic()
@@ -93,6 +92,41 @@ class OpenRouterImageService:
             raise ImageProviderError(
                 "Не удалось загрузить параметры OpenRouter. Повторите позже."
             ) from exc
+
+    @staticmethod
+    def _valid_endpoint(endpoint: Any) -> bool:
+        if not isinstance(endpoint, dict):
+            return False
+        if (
+            not isinstance(endpoint.get("provider_name"), str)
+            or not endpoint["provider_name"]
+        ):
+            return False
+        tag = endpoint.get("provider_tag")
+        if not isinstance(tag, str) or not tag or len(tag.encode()) > 40:
+            return False  # Telegram callback_data is bounded to 64 bytes.
+        params = endpoint.get("supported_parameters")
+        if not isinstance(params, dict):
+            return False
+        for field in ("resolution", "aspect_ratio"):
+            parameter = params.get(field)
+            if not isinstance(parameter, dict):
+                return False
+            values = parameter.get("values")
+            if (
+                not isinstance(values, list)
+                or not values
+                or not all(
+                    isinstance(v, str) and 0 < len(v.encode()) <= 12 for v in values
+                )
+            ):
+                return False
+        references = params.get("input_references")
+        return (
+            isinstance(references, dict)
+            and type(references.get("max")) is int
+            and references["max"] >= 0
+        )
 
     @staticmethod
     def options(
@@ -178,7 +212,9 @@ class OpenRouterImageService:
 
     async def generate(self, *, timeout: int = 240, **kwargs: Any) -> ImageResult:
         if not self.enabled:
-            raise ImageProviderError("Ключ OpenRouter не настроен на сервере.")
+            raise ImageProviderError(
+                "Ключ OpenRouter не настроен на сервере.", code="not_configured"
+            )
         payload = self.build_payload(**kwargs)
         try:
             # No automatic POST retry: an interrupted request may already be billed.
@@ -203,19 +239,22 @@ class OpenRouterImageService:
                         messages.get(
                             response.status,
                             f"OpenRouter не выполнил запрос (HTTP {response.status}). Автоповтор отключён.",
-                        )
+                        ),
+                        code=f"http_{response.status}",
                     )
                 raw = bytearray()
                 async for chunk in response.content.iter_chunked(64 * 1024):
                     raw.extend(chunk)
                     if len(raw) > MAX_RESPONSE_BYTES:
                         raise ImageProviderError(
-                            "Ответ OpenRouter слишком большой. Попробуйте меньшее разрешение."
+                            "Ответ OpenRouter слишком большой. Попробуйте меньшее разрешение.",
+                            code="response_too_large",
                         )
                 data = json.loads(raw)
             if not isinstance(data, dict) or data.get("error"):
                 raise ImageProviderError(
-                    "OpenRouter вернул ошибку. Измените запрос или попробуйте позже."
+                    "OpenRouter вернул ошибку. Измените запрос или попробуйте позже.",
+                    code="provider_rejection",
                 )
             images = []
             for item in data.get("data") or []:
@@ -232,7 +271,8 @@ class OpenRouterImageService:
                 images.append(GeneratedImage(image_data, extension))
             if not images:
                 raise ImageProviderError(
-                    "Изображение не получено: возможен отказ модели. Попробуйте изменить промпт."
+                    "Изображение не получено: возможен отказ модели. Попробуйте изменить промпт.",
+                    code="empty_result",
                 )
             return ImageResult(
                 images,
@@ -241,11 +281,13 @@ class OpenRouterImageService:
             )
         except asyncio.TimeoutError as exc:
             raise ImageProviderError(
-                "Время ожидания истекло. Запрос мог выполниться у провайдера. Автоповтора нет; проверьте OpenRouter Activity перед новым запуском."
+                "Время ожидания истекло. Запрос мог выполниться у провайдера. Автоповтора нет; проверьте OpenRouter Activity перед новым запуском.",
+                code="timeout",
             ) from exc
         except aiohttp.ClientError as exc:
             raise ImageProviderError(
-                "Соединение с OpenRouter прервано. Запрос мог выполниться; автоповтора нет."
+                "Соединение с OpenRouter прервано. Запрос мог выполниться; автоповтора нет.",
+                code="network_interrupted",
             ) from exc
         except (
             ValueError,
@@ -257,7 +299,8 @@ class OpenRouterImageService:
             Image.DecompressionBombError,
         ) as exc:
             raise ImageProviderError(
-                "OpenRouter вернул некорректный ответ. Автоповтор отключён."
+                "OpenRouter вернул некорректный ответ. Автоповтор отключён.",
+                code="response_invalid",
             ) from exc
 
 
