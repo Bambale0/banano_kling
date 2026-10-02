@@ -27,6 +27,10 @@ from aiogram import types
 from aiogram.fsm.context import FSMContext
 
 from bot.config import config
+from bot.services.delivery_state import (
+    is_terminal_telegram_delivery_error,
+    terminal_telegram_delivery_reason,
+)
 from bot.services.preset_manager import preset_manager
 from bot.services.seedance_25_service import (
     get_seedance25_callback_url,
@@ -147,10 +151,14 @@ async def _public_show_screen(target, state: FSMContext, *, edit: bool = True) -
     images = len(data.get("reference_images") or [])
     videos = len(data.get("v_reference_videos") or [])
     audios = len(data.get("seedance25_reference_audio_urls") or [])
-    duration = int(data.get("v_duration", 5))
-    quote = preview_module._price_quote(data)
     user_id = getattr(getattr(target, "from_user", None), "id", None)
     is_admin = bool(user_id and config.is_admin(int(user_id)))
+    editing = data.get("seedance25_video_editing") is True
+    display_data = dict(data, seedance25_editing_allowed=is_admin)
+    if editing:
+        display_data.update(v_duration=-1, v_ratio="adaptive")
+    duration = int(display_data.get("v_duration", 5))
+    quote = preview_module._price_quote(display_data)
 
     if scenario == "first_frame":
         media_hint = f"Загрузите <b>1 фото</b> как первый кадр. Сейчас: {'✅' if first else '—'}"
@@ -165,6 +173,13 @@ async def _public_show_screen(target, state: FSMContext, *, edit: bool = True) -
             f"Фото <code>{images}/30</code>, видео <code>{videos}/10</code>, "
             f"аудио <code>{audios}/10</code>. Видео суммарно ≤30с."
         )
+        if editing:
+            media_hint = (
+                "Редактирование: загрузите <b>одно исходное видео 4–30с</b>. "
+                "Длительность и формат кадра сохраняются из исходника. "
+                "Для внешних ссылок длительность проверяет провайдер. "
+                f"Сейчас видео: <code>{videos}/1</code>."
+            )
     else:
         media_hint = "Медиа не требуется — отправьте текстовый промпт."
 
@@ -182,7 +197,7 @@ async def _public_show_screen(target, state: FSMContext, *, edit: bool = True) -
         "🆕 <b>Seedance 2.5 · NEW</b>\n\n"
         f"Сценарий: <b>{preview_module._scenario_label(scenario)}</b>\n"
         f"Качество: <code>{data.get('seedance25_resolution', '720p')}</code> · "
-        f"Формат кадра: <code>{data.get('v_ratio', 'adaptive')}</code> · "
+        f"Формат кадра: <code>{display_data.get('v_ratio', 'adaptive')}</code> · "
         f"Длительность: <code>{_duration_label(duration)}</code>\n"
         f"Выход: <code>{data.get('seedance25_output_format', 'mp4')}</code> · "
         f"аудио: <code>{'on' if data.get('seedance25_generate_audio', True) else 'off'}</code>\n"
@@ -194,7 +209,7 @@ async def _public_show_screen(target, state: FSMContext, *, edit: bool = True) -
         f"{billing_line}{auto_note}\n\n"
         f"После настройки отправьте промпт до {seedance_25_service.MAX_PROMPT_LENGTH} символов."
     )
-    markup = preview_module._seedance_25_keyboard(data)
+    markup = preview_module._seedance_25_keyboard(display_data)
 
     if isinstance(target, types.CallbackQuery):
         await target.message.edit_text(text, reply_markup=markup, parse_mode="HTML")
@@ -207,6 +222,9 @@ async def _public_show_screen(target, state: FSMContext, *, edit: bool = True) -
 
 
 def _scenario_payload(data: dict[str, Any], prompt: str) -> dict[str, Any]:
+    editing = data.get("seedance25_video_editing", False)
+    if not isinstance(editing, bool):
+        raise ValueError("Некорректный режим редактирования видео")  # noqa: TRY004 - user-input validation maps to HTTP 400
     scenario = str(data.get("seedance25_scenario") or "text")
     first = data.get("seedance25_first_frame_url") if scenario in {"first_frame", "first_last"} else None
     last = data.get("seedance25_last_frame_url") if scenario == "first_last" else None
@@ -216,8 +234,9 @@ def _scenario_payload(data: dict[str, Any], prompt: str) -> dict[str, Any]:
     return {
         "scenario": scenario,
         "prompt": str(prompt or "").strip(),
-        "duration": int(data.get("v_duration", 5)),
-        "ratio": str(data.get("v_ratio") or "adaptive"),
+        "duration": -1 if editing else int(data.get("v_duration", 5)),
+        "ratio": "adaptive" if editing else str(data.get("v_ratio") or "adaptive"),
+        "seedance25_video_editing": editing,
         "resolution": str(data.get("seedance25_resolution") or "720p"),
         "first_frame": str(first or "").strip() or None,
         "last_frame": str(last or "").strip() or None,
@@ -232,8 +251,24 @@ def _scenario_payload(data: dict[str, Any], prompt: str) -> dict[str, Any]:
     }
 
 
-async def _validate_public_payload(payload: dict[str, Any], *, is_admin: bool) -> None:
+async def _validate_public_payload(
+    payload: dict[str, Any],
+    *,
+    is_admin: bool,
+    trusted_trend: bool = False,
+) -> None:
     scenario = payload["scenario"]
+    editing = payload.get("seedance25_video_editing", False)
+    if not isinstance(editing, bool):
+        raise ValueError("Некорректный режим редактирования видео")  # noqa: TRY004 - user-input validation maps to HTTP 400
+    if editing:
+        if not is_admin and not trusted_trend:
+            raise ValueError("Редактирование видео пока доступно только администратору: длительность определяется исходником")
+        if scenario != "multimodal" or len(payload["video_urls"]) != 1:
+            raise ValueError("Для редактирования выберите режим по референсам и одно исходное видео 4–30 секунд")
+        duration = await fullstack._validate_local_source(payload["video_urls"][0], "video")
+        if duration is not None and not 4 <= duration <= 30:
+            raise ValueError("Для редактирования исходное видео должно быть 4–30 секунд")
     if len(payload["prompt"]) > seedance_25_service.MAX_PROMPT_LENGTH:
         raise ValueError(f"Промпт Seedance 2.5 — максимум {seedance_25_service.MAX_PROMPT_LENGTH} символов")
     if scenario == "text" and not payload["prompt"]:
@@ -246,7 +281,7 @@ async def _validate_public_payload(payload: dict[str, Any], *, is_admin: bool) -
         payload["image_urls"] or payload["video_urls"] or payload["audio_urls"]
     ):
         raise ValueError("Добавьте хотя бы один мультимодальный референс")
-    if payload["duration"] == -1 and not is_admin:
+    if payload["duration"] == -1 and not is_admin and not trusted_trend:
         raise ValueError("Auto-длительность пока доступна только администратору; выберите 4–30 секунд")
     await fullstack._validate_seedance_sources(
         first_frame_url=payload["first_frame"],
@@ -274,16 +309,22 @@ async def _launch_provider(payload: dict[str, Any]) -> dict[str, Any]:
         web_search=payload["web_search"],
         nsfw_checker=payload["nsfw_checker"],
         callBackUrl=get_seedance25_callback_url(),
+        **({"video_editing": True} if payload.get("seedance25_video_editing") is True else {}),
     )
 
 
 def _request_data(payload: dict[str, Any], *, is_admin: bool, quote: float, source: str) -> dict[str, Any]:
+    price_quote = float(quote)
+    charged_cost = 0.0 if is_admin else price_quote
     return {
         "source": source,
         "release": "seedance_2_5_public",
         "v_model": MODEL_KEY,
         "v_type": "text" if payload["scenario"] == "text" else "imgtxt" if payload["scenario"] in {"first_frame", "first_last"} else "video",
         "seedance25_scenario": payload["scenario"],
+        "seedance25_video_editing": payload.get("seedance25_video_editing", False),
+        "duration": payload["duration"],
+        "aspect_ratio": payload["ratio"],
         "first_frame_url": payload["first_frame"],
         "last_frame_url": payload["last_frame"],
         "reference_images": payload["image_urls"],
@@ -295,8 +336,9 @@ def _request_data(payload: dict[str, Any], *, is_admin: bool, quote: float, sour
         "output_format": payload["output_format"],
         "web_search": payload["web_search"],
         "nsfw_checker": payload["nsfw_checker"],
+        "price_quote": price_quote,
         "charged": not is_admin,
-        "charged_cost": float(quote),
+        "charged_cost": charged_cost,
         "admin_free": is_admin,
         "refund_on_failure": not is_admin,
         "refund_claimed": False,
@@ -307,15 +349,15 @@ def _request_data(payload: dict[str, Any], *, is_admin: bool, quote: float, sour
 
 async def _public_message_launch(message: types.Message, state: FSMContext, prompt: str) -> None:
     data = await state.get_data()
-    payload = _scenario_payload(data, prompt)
     is_admin = config.is_admin(message.from_user.id)
     try:
+        payload = _scenario_payload(data, prompt)
         await _validate_public_payload(payload, is_admin=is_admin)
     except ValueError as exc:
         await message.answer(f"❌ {exc}")
         return
 
-    quote = float(preview_module._price_quote(data))
+    quote = float(preview_module._price_quote(dict(data, v_duration=payload["duration"], v_ratio=payload["ratio"])))
     if not is_admin and not await generation_module.check_can_afford(message.from_user.id, quote):
         credits = await generation_module.get_user_credits(message.from_user.id)
         await message.answer(
@@ -361,7 +403,7 @@ async def _public_message_launch(message: types.Message, state: FSMContext, prom
             duration=payload["duration"],
             aspect_ratio=payload["ratio"],
             prompt=payload["prompt"],
-            cost=quote,
+            cost=0.0 if is_admin else quote,
             request_data=_request_data(payload, is_admin=is_admin, quote=quote, source="telegram"),
         )
         await processing.delete()
@@ -434,6 +476,7 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
 
     data = {
         "seedance25_scenario": str(body.get("seedance25_scenario") or "text").strip().lower(),
+        "seedance25_video_editing": body.get("seedance25_video_editing", False),
         "v_duration": int(body.get("v_duration", 5)),
         "v_ratio": str(body.get("v_ratio") or "adaptive").strip().lower(),
         "seedance25_resolution": str(body.get("seedance25_resolution") or "720p").strip().lower(),
@@ -472,13 +515,13 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
     else:
         data.update(seedance25_first_frame_url=None, seedance25_last_frame_url=None)
 
-    payload = _scenario_payload(data, str(body.get("prompt") or ""))
     try:
+        payload = _scenario_payload(data, str(body.get("prompt") or ""))
         await _validate_public_payload(payload, is_admin=is_admin)
     except ValueError as exc:
         return web.json_response({"ok": False, "error": str(exc)}, status=400)
 
-    quote = float(preview_module._price_quote(data))
+    quote = float(preview_module._price_quote(dict(data, v_duration=payload["duration"], v_ratio=payload["ratio"])))
     if not is_admin and not await miniapp_module.check_can_afford(telegram_id, quote):
         fresh = await miniapp_module.get_or_create_user(telegram_id)
         return web.json_response(
@@ -526,13 +569,13 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
             duration=payload["duration"],
             aspect_ratio=payload["ratio"],
             prompt=payload["prompt"],
-            cost=quote,
+            cost=0.0 if is_admin else quote,
             request_data=request_data,
             source_feed_gen_id=source_feed_gen_id,
             parent_generation_id=(immediate_parent_id if source_feed_gen_id else None),
             action_type="repeat" if source_feed_gen_id else None,
         )
-        if source_feed_gen_id:
+        if source_feed_gen_id and not is_admin:
             try:
                 await miniapp_module.credit_feed_prompt_repeat(
                     immediate_parent_id,
@@ -658,6 +701,17 @@ async def _public_process_payload(app: web.Application, payload: dict[str, Any])
         or provider_fail_code in failure_codes
     )
     if is_failure and task_id:
+        fail_msg = str((data or {}).get("failMsg") or payload.get("msg") or "")
+        try:
+            if await fullstack._auto_retry_seedance25_video_editing(task_id, fail_msg):
+                return True
+        except Exception:
+            logger.exception(
+                "Seedance 2.5 edit fallback preflight failed before refund: task_id=%s",
+                task_id,
+            )
+            return False
+        payload["_seedance25_edit_retry_checked"] = True
         try:
             claimed = await _claim_async_refund(task_id)
             if claimed:
@@ -721,7 +775,9 @@ async def _public_send_results(
                 reply_markup=result_markup,
             )
             delivered = True
-        except Exception:
+        except Exception as exc:
+            if is_terminal_telegram_delivery_error(exc):
+                raise
             logger.info("Seedance 2.5 URL delivery failed; trying downloaded file")
 
     if not delivered:
@@ -746,7 +802,9 @@ async def _public_send_results(
                         reply_markup=result_markup,
                     )
                 delivered = True
-            except Exception:
+            except Exception as exc:
+                if is_terminal_telegram_delivery_error(exc):
+                    raise
                 logger.exception("Seedance 2.5 file delivery failed for task %s", task_id)
             finally:
                 try:
@@ -764,7 +822,9 @@ async def _public_send_results(
                 reply_markup=result_markup,
             )
             await fullstack._mark_seedance25_delivery(task_id, "link_sent")
-        except Exception:
+        except Exception as exc:
+            if is_terminal_telegram_delivery_error(exc):
+                raise
             logger.exception(
                 "Seedance 2.5 fallback link delivery failed for task %s",
                 task_id,
@@ -785,11 +845,19 @@ async def _public_send_results(
                     f"🖼 Последний кадр Seedance 2.5:\n{last_frame_url}",
                     disable_web_page_preview=False,
                 )
-            except Exception:
-                logger.exception(
-                    "Seedance 2.5 last-frame fallback delivery failed for task %s",
-                    task_id,
-                )
+            except Exception as exc:
+                if is_terminal_telegram_delivery_error(exc):
+                    logger.info(
+                        "Telegram delivery unavailable: event=seedance25_last_frame reason=%s task_id=%s telegram_id=%s",
+                        terminal_telegram_delivery_reason(exc),
+                        task_id,
+                        telegram_id,
+                    )
+                else:
+                    logger.exception(
+                        "Seedance 2.5 last-frame fallback delivery failed for task %s",
+                        task_id,
+                    )
 
     return delivered
 

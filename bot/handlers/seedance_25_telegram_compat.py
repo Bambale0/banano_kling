@@ -30,6 +30,7 @@ def _clear_seedance_keyboard(data: dict):
     resolution = str(data.get("seedance25_resolution") or "720p")
     ratio = str(data.get("v_ratio") or "adaptive")
     duration = int(data.get("v_duration", 5))
+    editing = data.get("seedance25_video_editing") is True and scenario == "multimodal"
 
     # What the user wants to create — human labels instead of API terminology.
     builder.button(
@@ -58,16 +59,25 @@ def _clear_seedance_keyboard(data: dict):
         callback_data="s25_resolution_720p",
     )
 
-    builder.button(text="➖", callback_data="s25_duration_minus")
-    builder.button(
-        text=f"⏱ {'Авто' if duration == -1 else f'{duration} сек'}",
-        callback_data="ignore",
-    )
-    builder.button(text="➕", callback_data="s25_duration_plus")
-    builder.button(
-        text=_selected(duration == -1, "🤖 Auto"),
-        callback_data="s25_duration_auto",
-    )
+    if scenario == "multimodal" and data.get("seedance25_editing_allowed") is True:
+        builder.button(
+            text=_selected(editing, "✂️ Редактировать видео"),
+            callback_data="s25_toggle_editing",
+        )
+
+    if editing:
+        builder.button(text="⏱ Длительность исходного видео", callback_data="ignore")
+    else:
+        builder.button(text="➖", callback_data="s25_duration_minus")
+        builder.button(
+            text=f"⏱ {'Авто' if duration == -1 else f'{duration} сек'}",
+            callback_data="ignore",
+        )
+        builder.button(text="➕", callback_data="s25_duration_plus")
+        builder.button(
+            text=_selected(duration == -1, "🤖 Auto"),
+            callback_data="s25_duration_auto",
+        )
 
     for value, label in (
         ("adaptive", "📐 Авто"),
@@ -78,10 +88,11 @@ def _clear_seedance_keyboard(data: dict):
         ("3:4", "3:4"),
         ("21:9", "21:9"),
     ):
-        builder.button(
-            text=_selected(ratio == value, label),
-            callback_data=f"s25_ratio_{value.replace(':', '_')}",
-        )
+        if not editing:
+            builder.button(
+                text=_selected(ratio == value, label),
+                callback_data=f"s25_ratio_{value.replace(':', '_')}",
+            )
 
     builder.button(
         text=f"🔊 Звук: {'ВКЛ' if data.get('seedance25_generate_audio', True) else 'ВЫКЛ'}",
@@ -248,6 +259,9 @@ def _repeat_state_payload(task, request_data: dict, prompt: str) -> dict:
 
     duration = int(request_data.get("v_duration", getattr(task, "duration", None) or 5))
     ratio = str(request_data.get("v_ratio") or getattr(task, "aspect_ratio", None) or "adaptive")
+    editing = request_data.get("seedance25_video_editing") is True
+    if editing:
+        duration, ratio = -1, "adaptive"
     resolution = str(
         request_data.get("resolution")
         or request_data.get("seedance25_resolution")
@@ -272,6 +286,7 @@ def _repeat_state_payload(task, request_data: dict, prompt: str) -> dict:
         "v_reference_videos": video_refs,
         "user_prompt": prompt,
         "seedance25_scenario": scenario,
+        "seedance25_video_editing": editing,
         "seedance25_first_frame_url": first_frame,
         "seedance25_last_frame_url": last_frame,
         "seedance25_reference_audio_urls": audio_refs,

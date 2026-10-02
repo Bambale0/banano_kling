@@ -6,45 +6,28 @@
 
 ## Ветки и выпуск
 
-Проект использует отдельные DEV- и production-контуры:
+Рабочая линия проекта — `tanyapi`, согласно [AGENTS.md](AGENTS.md):
 
 ```text
-feature/* -> PR в dev -> строгий CI -> автодеплой DEV-бота и DEV Mini App
-          -> ручной Telegram smoke -> PR dev -> tanyapi
-          -> автодеплой production-бота и production Mini App
+tanyapi → feature/* | fix/* | agent/* → PR в tanyapi
+        → проверки и review → merge → production CI → автодеплой → smoke
 ```
 
-| Ветка | Назначение | Deploy |
-| --- | --- | --- |
-| `feature/*`, `fix/*`, `agent/*` | изолированная разработка | только CI в PR |
-| `dev` | тестовый Telegram-бот и тестовая Mini App | автоматический DEV deploy после зелёного CI |
-| `tanyapi` | production source of truth | автоматический production deploy |
-| `main` | default/историческая ветка репозитория | не участвует в release flow NEUROMIX |
-
-DEV использует отдельные bot token, webhook, Mini App URL, checkout, Docker project/container, базу, Redis namespace, media и тестовые payment credentials. Полная подготовка описана в [docs/development-deployment.md](docs/development-deployment.md).
+Слияние в `tanyapi` запускает production-релиз. Ветки `dev` и `main` не участвуют в обычной работе агентов; отдельный DEV-контур используется только по прямому указанию Игоря. Его историческая конфигурация описана в [docs/development-deployment.md](docs/development-deployment.md).
 
 ## Production-схема
 
-Production всегда соответствует ветке `tanyapi`.
+Проверено 2026-10-01:
 
-| Компонент | Адрес | Сервер | Назначение |
-| --- | --- | --- | --- |
-| Telegram Mini App | `https://cdn.chillcreative.ru/mini-app/` | `91.200.84.187` | Статический Next.js export и reverse proxy к API |
-| Backend API | `https://tanyapi.chillcreative.ru` | `144.76.188.75` | Telegram webhook, Mini App API, webhooks провайдеров и платежей |
-| Media origin/CDN | `https://media.chillcreative.ru/uploads/...` | `144.76.188.75` через Cloudflare | Nginx-раздача существующей папки `static/uploads` |
-| Backend checkout | — | `144.76.188.75` | `/root/tanya/banano_kling`, строго ветка `tanyapi` |
-| Backend service | — | `144.76.188.75` | `banano-kling.service` |
+| Компонент | Адрес / размещение | Назначение |
+| --- | --- | --- |
+| Telegram Mini App | `https://tanyapp.xn--e1aikcel5c5a.online/mini-app/` | Nginx, статический Next.js export и reverse proxy к API |
+| Backend API | `https://tanyapi.chillcreative.ru` | Telegram webhook, Mini App API, webhooks провайдеров и платежей |
+| Media origin/CDN | `https://media.chillcreative.ru/uploads/...` | Nginx-раздача `static/uploads` через Cloudflare |
+| Production checkout | `144.76.188.75`, `/root/tanya/banano_kling`, ветка `tanyapi` | Backend и актуальный frontend Nginx размещены на этом сервере |
+| Backend runtime | Docker container `banano-kling-bot` | Compose, localhost API `127.0.0.1:1888`; старый `banano-kling.service` отключён |
 
-Поток production-запросов:
-
-```text
-Telegram WebView
-    ├── HTML / CSS / JS ──> cdn.chillcreative.ru ──> Nginx static export
-    ├── /mini-app/api/* ──> cdn.chillcreative.ru ──HTTPS─> tanyapi.chillcreative.ru
-    └── /uploads/feed/* ──> media.chillcreative.ru ──Cloudflare─> Nginx ──> static/uploads
-```
-
-Публичный backend проходит через HTTPS-домен. Открывать внешний доступ к `aiohttp :1888` для frontend-сервера не требуется.
+Mini App загружает HTML/CSS/JS с frontend-домена, а `/mini-app/api/*` проксируется к backend. Внешний доступ к порту `1888` не требуется. Исходные файлы production хранятся в `static/uploads`; текущую конфигурацию доменов нужно сверять с runtime и активным Nginx, а не с историческими SSH-профилями.
 
 ## Основные возможности
 
@@ -108,38 +91,13 @@ Telegram WebView
 
 ## Рабочий процесс разработчика
 
-### 1. Создание изменения
+1. Получить текущий `origin/tanyapi` и создать отдельную task-ветку или worktree.
+2. Добавить регрессию, внести изменение, пройти соответствующие backend/frontend проверки и review.
+3. Открыть PR в `tanyapi`; дождаться зелёных обязательных CI-проверок.
+4. После merge проверить production CI и автодеплой для точного merge SHA.
+5. Сверить SHA контейнера и Mini App `revision.txt`, health и smoke изменённого сценария, затем проверить логи.
 
-Создавать ветку от актуального `dev`:
-
-```bash
-git fetch --prune origin
-git switch dev
-git pull --ff-only origin dev
-git switch -c feature/my-change
-```
-
-### 2. Проверка в DEV
-
-- открыть PR `feature/my-change -> dev`;
-- дождаться `CI — Tanya development`;
-- после review выполнить merge в `dev`;
-- дождаться automatic DEV backend/frontend deploy;
-- полностью закрыть DEV Mini App и открыть её через DEV-бота;
-- пройти smoke сценария изменения.
-
-### 3. Выпуск в production
-
-После подтверждения DEV:
-
-- открыть release PR `dev -> tanyapi`;
-- не добавлять в него непроверенные изменения;
-- дождаться production CI;
-- выполнить merge в `tanyapi`;
-- дождаться production backend/frontend autodeploy;
-- пройти короткий production smoke.
-
-Не выполнять обычный production deploy вручную и не использовать `main` как release branch.
+Обычный production deploy выполняет CI/CD. Ручной deploy используется для явно согласованного восстановления или диагностики.
 
 ## Локальные проверки
 
@@ -153,7 +111,7 @@ python -m py_compile $(find bot tests scripts -name '*.py')
 
 ### Frontend
 
-Актуальный frontend gate основан на production build и Browser E2E. Старый Jest smoke-файл не является release gate, пока не будет переписан под текущие API и компоненты.
+Актуальный frontend gate основан на production build и Browser E2E. Jest проверяет компоненты и API-контракты; browser E2E проверяет критические пользовательские сценарии с подменёнными внешними API.
 
 ```bash
 cd frontend/miniapp-v0
@@ -178,7 +136,7 @@ grep -q '_next/static' out/index.html
 
 ## Ручные production-команды
 
-Команды ниже предназначены для диагностики, первоначальной настройки или аварийного восстановления. Обычный выпуск выполняется GitHub Actions после merge `dev -> tanyapi`.
+Команды ниже предназначены для диагностики, первоначальной настройки или аварийного восстановления. Обычный выпуск выполняется GitHub Actions после merge task PR в `tanyapi`.
 
 ### Backend status
 

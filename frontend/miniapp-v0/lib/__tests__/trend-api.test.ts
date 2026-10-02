@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { runTrend } from '../trend-api'
+import { runTrend, TrendRunRequestError } from '../trend-api'
 
 describe('runTrend', () => {
   beforeEach(() => {
@@ -45,7 +45,12 @@ describe('runTrend', () => {
     })
     global.fetch = fetchMock as unknown as typeof fetch
 
-    const result = await runTrend(42, ['https://example.test/reference.jpg'])
+    const result = await runTrend(
+      42,
+      ['https://example.test/reference.jpg'],
+      {},
+      'trend-request-123',
+    )
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
@@ -57,6 +62,7 @@ describe('runTrend', () => {
       init_data: 'signed-init-data',
       trend_id: 42,
       reference_urls: ['https://example.test/reference.jpg'],
+      client_request_id: 'trend-request-123',
     })
     expect(body).not.toHaveProperty('model')
     expect(body).not.toHaveProperty('prompt')
@@ -94,7 +100,12 @@ describe('runTrend', () => {
     })
     global.fetch = fetchMock as unknown as typeof fetch
 
-    await runTrend(42, ['https://example.test/reference.jpg'], { Возраст: '28' })
+    await runTrend(
+      42,
+      ['https://example.test/reference.jpg'],
+      { Возраст: '28' },
+      'trend-request-456',
+    )
 
     const [, options] = fetchMock.mock.calls[0] as [string, RequestInit]
     const body = JSON.parse(String(options.body))
@@ -102,10 +113,48 @@ describe('runTrend', () => {
       init_data: 'signed-init-data',
       trend_id: 42,
       reference_urls: ['https://example.test/reference.jpg'],
+      client_request_id: 'trend-request-456',
       user_values: { Возраст: '28' },
     })
     expect(body).not.toHaveProperty('prompt')
     expect(body).not.toHaveProperty('generation_settings')
+  })
+
+  it('allows a new request id after an explicit terminal failure', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: async () => JSON.stringify({
+        ok: false,
+        error: 'Provider rejected the request and credits were returned',
+        retry_same_request: false,
+      }),
+    }) as unknown as typeof fetch
+
+    await expect(
+      runTrend(42, ['https://example.test/reference.jpg'], {}, 'trend-request-terminal'),
+    ).rejects.toMatchObject<Partial<TrendRunRequestError>>({
+      message: 'Provider rejected the request and credits were returned',
+      retrySameRequest: false,
+    })
+  })
+
+  it('keeps the same request id for an uncertain in-flight failure', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: async () => JSON.stringify({
+        ok: false,
+        error: 'Не удалось запустить тренд. Попробуйте ещё раз.',
+        retry_same_request: true,
+      }),
+    }) as unknown as typeof fetch
+
+    await expect(
+      runTrend(42, ['https://example.test/reference.jpg'], {}, 'trend-request-uncertain'),
+    ).rejects.toMatchObject<Partial<TrendRunRequestError>>({
+      retrySameRequest: true,
+    })
   })
 
   it('keeps all generation controls out of the user trend runner', () => {

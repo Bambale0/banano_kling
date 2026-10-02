@@ -147,3 +147,38 @@ async def test_failed_miniapp_launch_does_not_claim_generation_started() -> None
     )
 
     assert bot.messages == []
+
+
+@pytest.mark.asyncio
+async def test_miniapp_start_chat_unavailable_is_info_not_warning(monkeypatch):
+    class UnavailableBot:
+        async def send_message(self, **_kwargs):
+            raise RuntimeError("Bad Request: chat not found")
+
+    infos = []
+    warnings = []
+    exceptions = []
+    module = importlib.import_module("bot.handlers.generation_started_ux_compat")
+    monkeypatch.setattr(module.logger, "info", lambda *args: infos.append(args))
+    monkeypatch.setattr(module.logger, "warning", lambda *args: warnings.append(args))
+    monkeypatch.setattr(
+        module.logger, "exception", lambda *args: exceptions.append(args)
+    )
+
+    await miniapp_module._notify_miniapp_image_task_queued(
+        {"bot": UnavailableBot()},
+        123,
+        {
+            "status": "queued",
+            "task_id": "provider-trace-id",
+            "local_task_id": "img-trace-id",
+        },
+        img_service="banana_pro",
+        img_ratio="9:16",
+        unit_cost=2.5,
+    )
+
+    assert len(infos) == 1
+    assert "chat_not_found" in str(infos[0])
+    assert warnings == []
+    assert exceptions == []

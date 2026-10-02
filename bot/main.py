@@ -40,8 +40,10 @@ import aiohttp
 
 from bot import db as db_backend
 from bot.config import config
+from bot.services.kie_webhook_verification import serialize_kie_callback
 from bot.services.delivery_state import (
     is_terminal_telegram_delivery_error as _is_terminal_telegram_delivery_error,
+    terminal_telegram_delivery_reason as _terminal_telegram_delivery_reason,
 )
 from bot.database import (
     cleanup_orphaned_reference_files,
@@ -94,7 +96,24 @@ from bot.services.yookassa_service import yookassa_service
 
 CLEANUP_INTERVAL_SECONDS = 24 * 3600
 UPLOAD_RETENTION_SECONDS = 24 * 3600
-LOG_RETENTION_SECONDS = 24 * 3600
+
+
+def _configured_log_retention_days() -> int:
+    """Keep at least a 72-hour incident window, including on invalid config."""
+    try:
+        days = int(os.environ.get("BANANO_LOG_RETENTION_DAYS", "7"))
+        if days >= 3:
+            return days
+    except ValueError:
+        pass
+    logging.getLogger(__name__).warning(
+        "BANANO_LOG_RETENTION_DAYS must be an integer >= 3; using 7 days"
+    )
+    return 7
+
+
+LOG_RETENTION_DAYS = _configured_log_retention_days()
+LOG_RETENTION_SECONDS = LOG_RETENTION_DAYS * 24 * 3600
 ACTIVE_LOG_FILENAMES = {"bot.log"}
 DURABLE_IMAGE_RESULT_HOSTS = {
     host.strip().lower().lstrip(".")
@@ -305,12 +324,14 @@ def _configure_logging() -> None:
     formatter = logging.Formatter(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
+    formatter.converter = time.gmtime
     file_handler = TimedRotatingFileHandler(
         "logs/bot.log",
         when="midnight",
         interval=1,
-        backupCount=1,
+        backupCount=LOG_RETENTION_DAYS,
         encoding="utf-8",
+        utc=True,
     )
     file_handler.setFormatter(formatter)
 
@@ -1043,10 +1064,10 @@ async def _send_original_file(bot_instance: Bot, telegram_id: int, result_url: s
         return True
     except Exception as e:
         if _is_terminal_telegram_delivery_error(e):
-            logger.warning(
-                "Original file delivery unavailable for user %s: %s",
+            logger.info(
+                "Telegram delivery unavailable: event=original_file reason=%s telegram_id=%s",
+                _terminal_telegram_delivery_reason(e),
                 telegram_id,
-                e,
             )
         else:
             logger.error(f"Failed to send original file to {telegram_id}: {e}")
@@ -1598,10 +1619,11 @@ async def _send_polled_nexus_image_result(
     except Exception as exc:
         fallback_error = exc
         if _is_terminal_telegram_delivery_error(exc):
-            logger.warning(
-                "Image provider poller: Telegram delivery terminally unavailable for task %s: %s",
+            logger.info(
+                "Telegram delivery unavailable: event=image_result reason=%s task_id=%s telegram_id=%s",
+                _terminal_telegram_delivery_reason(exc),
                 task_lookup_id,
-                exc,
+                telegram_id,
             )
         else:
             logger.exception(
@@ -1618,8 +1640,8 @@ async def _send_polled_nexus_image_result(
         await complete_video_task(task_lookup_id, persisted_url)
         await mark_task_delivery_status(
             task_lookup_id,
-            "failed",
-            error=delivery_error,
+            "unavailable",
+            error=_terminal_telegram_delivery_reason(fallback_error),
         )
         return True
 
@@ -1692,11 +1714,19 @@ async def _fail_polled_nexus_image_task(
             reply_markup=get_failed_image_retry_keyboard(_task_callback_id(task, task_lookup_id)),
         )
         return True
-    except Exception:
-        logger.exception(
-            "Image provider poller: failed to notify user about task failure %s",
-            task_lookup_id,
-        )
+    except Exception as exc:
+        if _is_terminal_telegram_delivery_error(exc):
+            logger.info(
+                "Telegram delivery unavailable: event=image_failure reason=%s task_id=%s telegram_id=%s",
+                _terminal_telegram_delivery_reason(exc),
+                task_lookup_id,
+                telegram_id,
+            )
+        else:
+            logger.exception(
+                "Image provider poller: failed to notify user about task failure %s",
+                task_lookup_id,
+            )
         return False
 
 async def _poll_single_image_provider_task(bot_instance: Bot, task_row: dict[str, Any]) -> None:
@@ -2630,16 +2660,11 @@ async def errors_handler(event: types.ErrorEvent):
     # Обработка ошибок Telegram API
     if isinstance(error, TelegramBadRequest):
         error_msg = str(error).lower()
-        if "chat not found" in error_msg:
-            logger.warning(
-                f"Chat not found error (user deleted chat or blocked bot): {error}"
+        if _is_terminal_telegram_delivery_error(error):
+            logger.info(
+                "Telegram delivery unavailable: event=dispatcher_error reason=%s",
+                _terminal_telegram_delivery_reason(error),
             )
-            return True
-        elif "bot was blocked" in error_msg:
-            logger.warning(f"Bot was blocked by user: {error}")
-            return True
-        elif "user is deactivated" in error_msg:
-            logger.warning(f"User is deactivated: {error}")
             return True
         elif "message is not modified" in error_msg:
             return True
@@ -2707,12 +2732,11 @@ async def handle_telegram_webhook(
                     await dp.feed_update(bot, update)
             except TelegramBadRequest as e:
                 error_msg = str(e).lower()
-                if (
-                    "chat not found" in error_msg
-                    or "bot was blocked" in error_msg
-                    or "user is deactivated" in error_msg
-                ):
-                    logger.warning(f"Chat error (safe to ignore): {e}")
+                if _is_terminal_telegram_delivery_error(e):
+                    logger.info(
+                        "Telegram delivery unavailable: event=webhook_update reason=%s",
+                        _terminal_telegram_delivery_reason(e),
+                    )
                     return
                 if "query is too old" in error_msg or "query id is invalid" in error_msg:
                     logger.info(f"Ignoring stale callback query in background task: {e}")
@@ -2732,12 +2756,11 @@ async def handle_telegram_webhook(
         # Ошибки Telegram API (chat not found, user blocked bot, etc.)
         # Возвращаем 200, чтобы Telegram не повторял запрос
         error_msg = str(e).lower()
-        if (
-            "chat not found" in error_msg
-            or "bot was blocked" in error_msg
-            or "user is deactivated" in error_msg
-        ):
-            logger.warning(f"Chat error (safe to ignore): {e}")
+        if _is_terminal_telegram_delivery_error(e):
+            logger.info(
+                "Telegram delivery unavailable: event=webhook_request reason=%s",
+                _terminal_telegram_delivery_reason(e),
+            )
             return web.Response(text="OK", status=200)
         logger.exception(f"Telegram API error: {e}")
         return web.Response(text="Bad Request", status=200)
@@ -4102,6 +4125,7 @@ async def handle_wanx_webhook(request: web.Request) -> web.Response:
         logger.exception(f"WanX webhook error: {e}")
         return web.Response(status=500)
 
+@serialize_kie_callback
 async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
     """Обработчик уведомлений от Kie.ai (Nano Banana 2) API"""
     try:
@@ -4116,7 +4140,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 skip_secret_check = False
 
             if skip_secret_check:
-                logger.info("Kie.ai webhook secret check skipped for verified KIE Market relay")
+                logger.info("Kie.ai Market callback uses authenticated provider status verification")
             else:
                 secret = config.KIE_AI_WEBHOOK_SECRET
                 if secret:
@@ -4144,7 +4168,17 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             logger.warning(f"Kie.ai webhook received invalid JSON: {e}")
             return web.Response(status=200)
 
-        logger.info("Kie.ai webhook parsed data: %s", _preview_log_payload(data))
+        from bot.services.kie_webhook_verification import canonical_kie_callback
+
+        data, verification_status = await canonical_kie_callback(data)
+        if data is None:
+            return web.Response(status=verification_status)
+
+        logger.info(
+            "Kie.ai canonical task verified: task_id=%s state=%s",
+            data["data"].get("taskId"),
+            data["data"].get("state") or data["data"].get("status"),
+        )
 
         from bot.database import (
             add_credits,
@@ -4585,10 +4619,11 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                             await _send_used_prompt_message(bot_instance, telegram_id, task, result_url)
                         except Exception as prompt_e:
                             if _is_terminal_telegram_delivery_error(prompt_e):
-                                logger.warning(
-                                    "Prompt follow-up delivery unavailable for user %s: %s",
+                                logger.info(
+                                    "Telegram delivery unavailable: event=prompt_followup reason=%s telegram_id=%s task_id=%s",
+                                    _terminal_telegram_delivery_reason(prompt_e),
                                     telegram_id,
-                                    prompt_e,
+                                    task_id,
                                 )
                             else:
                                 logger.error(
@@ -4627,11 +4662,12 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                     )
             except Exception as send_e:
                 if _is_terminal_telegram_delivery_error(send_e):
-                    logger.warning(
-                        "%s result delivery terminally unavailable for user %s: %s",
+                    logger.info(
+                        "Telegram delivery unavailable: event=generation_result reason=%s service=%s telegram_id=%s task_id=%s",
+                        _terminal_telegram_delivery_reason(send_e),
                         service_name,
                         telegram_id,
-                        send_e,
+                        task_id,
                     )
                 else:
                     logger.error(
@@ -4642,11 +4678,8 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         await complete_video_task(task_id, result_url)
                         await mark_task_delivery_status(
                             task_id,
-                            "failed",
-                            error=str(send_e),
-                        )
-                        logger.warning(
-                            f"{service_name} result stored but Telegram delivery is terminally unavailable for {telegram_id}"
+                            "unavailable",
+                            error=_terminal_telegram_delivery_reason(send_e),
                         )
                     else:
                         await mark_task_delivery_status(
@@ -4684,12 +4717,11 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                     "не вернула картинку."
                 )
             logger.error(
-                "%s task %s FAILED: failCode=%s, failMsg=%s, data=%s",
+                "%s task %s FAILED: failCode=%s, failMsg=%s",
                 service_name,
                 task_id,
                 fail_code,
                 fail_msg,
-                _preview_log_payload(webhook_data),
             )
 
             if task and (
@@ -4753,10 +4785,13 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         retry_error,
                     )
 
-            if task and task.cost and task.cost > 0:
-                await add_credits(telegram_id, task.cost)
+            from bot.services.task_watchdog import force_fail_task
 
-            await complete_video_task(task_id, None)
+            if not task or not await force_fail_task(
+                task.id, task.user_id, task.cost or 0,
+                expected_provider_task_id=task_id,
+            ):
+                return web.Response(status=200)
 
             if telegram_id:
                 bot_instance = request.app["bot"]
@@ -4802,7 +4837,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
 
     except Exception as e:
         logger.exception(f"Kie.ai webhook error: {e}")
-        return web.Response(status=200)
+        return web.Response(status=503)
 
 async def handle_kie_market_webhook(request: web.Request) -> web.Response:
     """Webhook for KIE Market models such as nano-banana-2-lite."""
@@ -4818,23 +4853,15 @@ async def handle_kie_market_webhook(request: web.Request) -> web.Response:
             logger.warning("KIE Market webhook received invalid JSON: %s", exc)
             return web.Response(status=200)
 
-        from bot.services.kie_market_service import kie_market_service
-
-        if not kie_market_service.verify_webhook_signature(
-            payload=payload,
-            headers=request.headers,
-        ):
-            return web.json_response(
-                {"ok": False, "error": "bad signature"},
-                status=401,
-            )
-
+        # The shared handler fetches the authoritative provider record.
+        # Callback HMAC does not authenticate result/status fields and is not
+        # required for this wakeup-only endpoint.
         request["skip_kie_ai_secret_check"] = True
         request._read_bytes = raw_body
         return await handle_kie_ai_webhook(request)
     except Exception as exc:
         logger.exception("KIE Market webhook error: %s", exc)
-        return web.Response(status=200)
+        return web.Response(status=503)
 
 def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
     """Настройка aiohttp сервера для вебхуков"""
@@ -5052,7 +5079,7 @@ async def _notify_watchdog_failed_task(
                 _task_callback_id(task, provider_task_id)
             ),
         )
-        logger.warning(
+        logger.info(
             "Watchdog failure notification sent: task=%s user=%s model=%s refunded=%s",
             provider_task_id,
             telegram_id,
@@ -5062,11 +5089,11 @@ async def _notify_watchdog_failed_task(
         return True
     except Exception as exc:
         if _is_terminal_telegram_delivery_error(exc):
-            logger.warning(
-                "Watchdog failure notification terminally unavailable: task=%s user=%s error=%s",
+            logger.info(
+                "Telegram delivery unavailable: event=watchdog_failure reason=%s task_id=%s telegram_id=%s",
+                _terminal_telegram_delivery_reason(exc),
                 provider_task_id,
                 telegram_id,
-                exc,
             )
         else:
             logger.exception(

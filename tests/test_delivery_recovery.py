@@ -32,6 +32,9 @@ class FakeRequest(dict):
     async def read(self) -> bytes:
         return json.dumps(self._payload).encode("utf-8")
 
+    async def json(self) -> dict:
+        return self._payload
+
 
 @pytest.mark.asyncio
 async def test_kie_success_link_fallback_stays_recoverable(monkeypatch):
@@ -73,6 +76,10 @@ async def test_kie_success_link_fallback_stays_recoverable(monkeypatch):
     mark_delivery = AsyncMock(return_value=True)
     store_result = AsyncMock(return_value=True)
     monkeypatch.setattr(bot.database, "get_task_by_id", AsyncMock(return_value=task))
+    monkeypatch.setattr(
+        "bot.services.kie_webhook_verification.kie_market_service.get_task_status",
+        AsyncMock(return_value=payload["data"]),
+    )
     monkeypatch.setattr(bot.database, "claim_task_delivery", AsyncMock(return_value=True))
     monkeypatch.setattr(bot.database, "complete_video_task", complete)
     monkeypatch.setattr(bot.database, "mark_task_delivery_status", mark_delivery)
@@ -156,3 +163,20 @@ async def test_kie_kling_link_fallback_does_not_complete_task(monkeypatch):
     link_fallback.assert_awaited_once()
     statuses = [call.args[1] for call in mark_delivery.await_args_list]
     assert statuses == ["link_sent", "pending"]
+
+def test_terminal_telegram_delivery_reason_is_structured():
+    from bot.services.delivery_state import terminal_telegram_delivery_reason
+
+    assert (
+        terminal_telegram_delivery_reason("Bad Request: chat not found")
+        == "chat_not_found"
+    )
+    assert (
+        terminal_telegram_delivery_reason("Forbidden: bot was blocked by the user")
+        == "bot_blocked"
+    )
+    assert (
+        terminal_telegram_delivery_reason("Bad Request: user is deactivated")
+        == "user_deactivated"
+    )
+    assert terminal_telegram_delivery_reason("network error") is None

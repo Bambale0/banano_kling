@@ -165,6 +165,7 @@ class Seedance25Service(KlingService):
         reference_image_urls: list[str] | None = None,
         reference_video_urls: list[str] | None = None,
         reference_audio_urls: list[str] | None = None,
+        video_editing: bool = False,
         return_last_frame: bool = False,
         generate_audio: bool = True,
         output_format: str = "mp4",
@@ -175,6 +176,9 @@ class Seedance25Service(KlingService):
         """Create a Seedance 2.5 task through Kie's unified jobs endpoint."""
         if not self.kie_key:
             return {"success": False, "error": "KIE_AI_API_KEY is not configured"}
+
+        if not isinstance(video_editing, bool):
+            return {"success": False, "error": "Seedance 2.5 video_editing must be a boolean"}
 
         raw_prompt = str(prompt or "").strip()
 
@@ -197,6 +201,9 @@ class Seedance25Service(KlingService):
             )
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
+
+        if video_editing and len(video_urls) != 1:
+            return {"success": False, "error": "Seedance 2.5 video editing requires exactly one video reference"}
 
         normalized_prompt = canonicalize_seedance_reference_tags(
             raw_prompt,
@@ -267,6 +274,13 @@ class Seedance25Service(KlingService):
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
 
+        # Editing intent is local application metadata, not a KIE API field.
+        # Validate normal inputs first so stale valid settings can be normalized
+        # without allowing invalid settings to bypass the provider contract.
+        if video_editing:
+            normalized_duration = self.AUTO_DURATION
+            normalized_ratio = "adaptive"
+
         input_data: dict[str, Any] = {
             "prompt": normalized_prompt,
             "return_last_frame": bool(return_last_frame),
@@ -303,10 +317,11 @@ class Seedance25Service(KlingService):
             payload["callBackUrl"] = callback_url
 
         logger.info(
-            "Seedance 2.5 request: scenario=%s duration=%s ratio=%s resolution=%s "
+            "Seedance 2.5 request: scenario=%s video_editing=%s duration=%s ratio=%s resolution=%s "
             "refs(image=%s,video=%s,audio=%s) generated_audio=%s output=%s "
             "web_search=%s nsfw_checker=%s return_last_frame=%s callback=%s",
             scenario,
+            video_editing,
             normalized_duration,
             normalized_ratio,
             normalized_resolution,
@@ -325,6 +340,9 @@ class Seedance25Service(KlingService):
             result.setdefault("success", bool(result.get("task_id")))
             result.setdefault("scenario", scenario)
             result.setdefault("provider_model", self.MODEL_NAME)
+            result.setdefault("duration", normalized_duration)
+            result.setdefault("aspect_ratio", normalized_ratio)
+            result.setdefault("video_editing", video_editing)
         return result
 
 
