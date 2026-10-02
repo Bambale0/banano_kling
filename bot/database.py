@@ -11,6 +11,10 @@ from typing import Any, Iterable, List, Optional
 from urllib.parse import urlparse
 
 from bot import db as db_backend
+from bot.services.delivery_state import (
+    TASK_DELIVERY_STATUSES,
+    TERMINAL_TASK_DELIVERY_STATUSES,
+)
 
 logger = logging.getLogger(__name__)
 _LOGGED_REFERRAL_CYCLES: set[tuple[int, int, int]] = set()
@@ -5364,7 +5368,7 @@ async def mark_task_delivery_status(
 ) -> bool:
     """Persist Telegram delivery outcome separately from provider completion."""
     normalized_status = str(status or "").strip().lower()
-    if normalized_status not in {"result_ready", "delivered", "failed", "pending", "link_sent"}:
+    if normalized_status not in TASK_DELIVERY_STATUSES:
         raise ValueError(f"Unsupported delivery status: {status}")
 
     task = await get_task_by_id(task_id)
@@ -5413,7 +5417,7 @@ async def claim_task_delivery(task_id: str, *, lease_seconds: int = 300) -> bool
     old_json = task.request_data or "{}"
     request_data = _parse_json_dict(old_json)
     current_status = str(request_data.get("delivery_status") or "").strip().lower()
-    if current_status in {"delivered", "failed"}:
+    if current_status in TERMINAL_TASK_DELIVERY_STATUSES:
         return False
 
     now = datetime.now(UTC)

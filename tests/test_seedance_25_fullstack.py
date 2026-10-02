@@ -995,3 +995,128 @@ async def test_seedance_edit_auto_retry_does_not_loop_after_provider_retry(monke
 
     relaunch.assert_not_awaited()
     original_failure.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_seedance25_terminal_chat_error_marks_delivery_unavailable(monkeypatch):
+    row = {
+        "task_id": "seedance-chat-unavailable",
+        "telegram_id": 612441694,
+        "result_url": "https://cdn.example/result.mp4",
+        "result_urls": json.dumps(["https://cdn.example/result.mp4"]),
+    }
+    monkeypatch.setattr(
+        fullstack_module,
+        "_claim_seedance25_delivery",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        fullstack_module,
+        "_send_seedance25_results",
+        AsyncMock(side_effect=RuntimeError("Bad Request: chat not found")),
+    )
+    mark = AsyncMock()
+    monkeypatch.setattr(fullstack_module, "_mark_seedance25_delivery", mark)
+
+    handled = await fullstack_module._retry_seedance25_delivery(
+        {"bot": object()},
+        row,
+        {"duration": 12, "seedance25_scenario": "multimodal"},
+    )
+
+    assert handled is True
+    mark.assert_awaited_once_with(
+        "seedance-chat-unavailable",
+        "unavailable",
+        error="chat_not_found",
+    )
+
+
+@pytest.mark.asyncio
+async def test_seedance25_completed_unavailable_result_is_not_retried(monkeypatch):
+    row = {
+        "task_id": "seedance-chat-unavailable",
+        "model": "seedance_2_5",
+        "status": "completed",
+        "telegram_id": 612441694,
+        "result_url": "https://cdn.example/result.mp4",
+        "result_urls": json.dumps(["https://cdn.example/result.mp4"]),
+        "duration": 12,
+        "request_data": json.dumps(
+            {
+                "duration": 12,
+                "seedance25_scenario": "multimodal",
+                "delivery_status": "unavailable",
+            }
+        ),
+    }
+    retry = AsyncMock()
+    monkeypatch.setattr(fullstack_module, "_load_task_row", AsyncMock(return_value=row))
+    monkeypatch.setattr(fullstack_module, "_retry_seedance25_delivery", retry)
+
+    assert await fullstack_module._process_seedance25_payload(
+        {"bot": object()},
+        {"code": 200, "data": {"taskId": "seedance-chat-unavailable"}},
+    )
+    retry.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_public_seedance_delivery_stops_after_terminal_chat_error(monkeypatch):
+    class UnavailableBot:
+        async def send_video(self, *_args, **_kwargs):
+            raise RuntimeError("Bad Request: chat not found")
+
+    download = AsyncMock(return_value=None)
+    monkeypatch.setattr(fullstack_module, "_download_to_temp", download)
+
+    with pytest.raises(RuntimeError, match="chat not found"):
+        await public_release._public_send_results(
+            {"bot": UnavailableBot()},
+            612441694,
+            "seedance-chat-unavailable",
+            "https://cdn.example/result.mp4",
+            None,
+            {
+                "duration": 12,
+                "charged_cost": 72,
+                "seedance25_scenario": "multimodal",
+            },
+        )
+
+    download.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_seedance25_transient_delivery_error_remains_pending(monkeypatch):
+    row = {
+        "task_id": "seedance-transient-delivery",
+        "telegram_id": 612441694,
+        "result_url": "https://cdn.example/result.mp4",
+        "result_urls": json.dumps(["https://cdn.example/result.mp4"]),
+    }
+    monkeypatch.setattr(
+        fullstack_module,
+        "_claim_seedance25_delivery",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        fullstack_module,
+        "_send_seedance25_results",
+        AsyncMock(side_effect=TimeoutError("request timeout")),
+    )
+    mark = AsyncMock()
+    monkeypatch.setattr(fullstack_module, "_mark_seedance25_delivery", mark)
+
+    handled = await fullstack_module._retry_seedance25_delivery(
+        {"bot": object()},
+        row,
+        {"duration": 12, "seedance25_scenario": "multimodal"},
+    )
+
+    assert handled is False
+    mark.assert_awaited_once_with(
+        "seedance-transient-delivery",
+        "pending",
+        error="request timeout",
+    )

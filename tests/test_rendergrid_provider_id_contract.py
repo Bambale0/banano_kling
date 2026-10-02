@@ -480,3 +480,123 @@ async def test_image_provider_poller_processes_batch_concurrently(monkeypatch) -
         poller.cancel()
         with pytest.raises(asyncio.CancelledError):
             await poller
+
+
+@pytest.mark.asyncio
+async def test_polled_result_chat_unavailable_is_terminal_without_warning(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    import bot.keyboards as keyboard_module
+    from bot import database
+    from bot import main as main_module
+
+    task = SimpleNamespace(
+        task_id="provider-unavailable",
+        id=991,
+        user_id=51,
+        telegram_id=123456,
+        model="banana_2",
+        type="image",
+        cost=1.5,
+        aspect_ratio="1:1",
+        request_data="{}",
+    )
+    monkeypatch.setattr(
+        main_module,
+        "_resolve_task_telegram_id",
+        AsyncMock(return_value=123456),
+    )
+    monkeypatch.setattr(
+        main_module,
+        "_persist_result_url_if_needed",
+        AsyncMock(return_value="https://assets.example/result.png"),
+    )
+    monkeypatch.setattr(main_module, "_extract_reference_image_urls", lambda _task: [])
+    monkeypatch.setattr(
+        main_module, "_download_remote_bytes", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(
+        main_module, "_send_original_file", AsyncMock(return_value=False)
+    )
+    monkeypatch.setattr(
+        main_module,
+        "_send_plain_result_link",
+        AsyncMock(side_effect=RuntimeError("Bad Request: chat not found")),
+    )
+    monkeypatch.setattr(
+        keyboard_module, "get_image_result_keyboard", lambda *_a, **_kw: None
+    )
+    complete = AsyncMock(return_value=True)
+    mark = AsyncMock(return_value=True)
+    monkeypatch.setattr(database, "complete_video_task", complete)
+    monkeypatch.setattr(database, "mark_task_delivery_status", mark)
+
+    bot = AsyncMock()
+    bot.send_photo.side_effect = RuntimeError("Bad Request: chat not found")
+    warnings = []
+    monkeypatch.setattr(
+        main_module.logger, "warning", lambda *args: warnings.append(args)
+    )
+
+    handled = await main_module._send_polled_nexus_image_result(
+        bot,
+        task,
+        "https://provider.example/result.png",
+        provider_task_id="provider-unavailable",
+    )
+
+    assert handled is True
+    complete.assert_awaited_once()
+    mark.assert_awaited_once_with(
+        "provider-unavailable",
+        "unavailable",
+        error="chat_not_found",
+    )
+    assert warnings == []
+
+
+@pytest.mark.asyncio
+async def test_failed_task_chat_unavailable_does_not_emit_exception(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from bot import main as main_module
+    from bot.services import task_watchdog
+
+    task = SimpleNamespace(
+        task_id="provider-failed-unavailable",
+        id=992,
+        user_id=52,
+        telegram_id=123456,
+        model="banana_2",
+        type="image",
+        cost=1.5,
+        request_data="{}",
+    )
+    monkeypatch.setattr(task_watchdog, "force_fail_task", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        main_module,
+        "_resolve_task_telegram_id",
+        AsyncMock(return_value=123456),
+    )
+    infos = []
+    exceptions = []
+    monkeypatch.setattr(main_module.logger, "info", lambda *args: infos.append(args))
+    monkeypatch.setattr(
+        main_module.logger, "exception", lambda *args: exceptions.append(args)
+    )
+
+    bot = AsyncMock()
+    bot.send_message.side_effect = RuntimeError("Bad Request: chat not found")
+
+    delivered = await main_module._fail_polled_nexus_image_task(
+        bot,
+        task,
+        provider_task_id="provider-failed-unavailable",
+        reason="provider failed",
+    )
+
+    assert delivered is False
+    assert any("chat_not_found" in str(item) for item in infos)
+    assert exceptions == []

@@ -396,7 +396,10 @@ They do not change generation pricing:
 
 A generated result is saved before Telegram delivery. `request_data.delivery_status`
 tracks delivery separately: `delivering` holds a lease, `pending` needs retry,
-`link_sent` records only a fallback link, and `delivered` means media was sent.
+`link_sent` records only a fallback link, `delivered` means media was sent, and
+`unavailable` is terminal when Telegram reports `chat not found`, a blocked bot,
+or a deactivated user. The stored result remains available in Mini App and no
+automatic Telegram retry is scheduled for `unavailable`.
 `delivery_link_sent` suppresses duplicate fallback links while file retries continue.
 Completion and its result_ready marker are committed atomically. Legacy completed
 tasks without markers are not automatically resent. Reconciliation
