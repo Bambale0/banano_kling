@@ -46,3 +46,21 @@ def test_access_guard_allows_seedance_admin_fsm_states():
     assert '"SeedanceAdminTestStates:references"' in source
     assert '"SeedanceAdminTestStates:frames"' in source
 
+
+def test_edit_mode_allows_supporting_media_after_source_video():
+    source = (ROOT / "bot/handlers/admin_seedance_test_lab.py").read_text(encoding="utf-8")
+    assert "has_edit_source" in source
+    assert 'kind != "video"' in source
+    assert 'reference_images=images if mode in {"reference", "edit"} else None' in source
+    assert 'reference_audios=audios if mode in {"reference", "edit"} else None' in source
+    assert 'edit_only_video=mode == "edit"' not in source
+
+
+def test_paid_submit_and_result_delivery_are_serialized():
+    source = (ROOT / "bot/handlers/admin_seedance_test_lab.py").read_text(encoding="utf-8")
+    assert "_SUBMIT_LOCKS" in source
+    assert "async with _submit_lock(callback.from_user.id)" in source
+    assert "seedance_admin_last_payload_hash" in source
+    assert 'F.data == "admin_seedance_new_request"' in source
+    assert "_DELIVERY_LOCKS" in source
+    assert "async with _delivery_lock(request_id)" in source

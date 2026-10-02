@@ -34,6 +34,8 @@ logger = logging.getLogger(__name__)
 
 _BACKGROUND_TASKS: set[asyncio.Task[Any]] = set()
 _DELIVERED_REQUEST_IDS: set[str] = set()
+_SUBMIT_LOCKS: dict[int, asyncio.Lock] = {}
+_DELIVERY_LOCKS: dict[str, asyncio.Lock] = {}
 
 _MODEL_LABELS = {
     "seedance-2.5": "Seedance 2.5",
@@ -86,6 +88,7 @@ def _defaults() -> dict[str, Any]:
         "seedance_admin_last_request_id": "",
         "seedance_admin_last_model": "",
         "seedance_admin_last_status": "",
+        "seedance_admin_last_payload_hash": "",
         "seedance_admin_pending_key": "",
         "seedance_admin_pending_payload_hash": "",
     }
@@ -258,6 +261,7 @@ def _dashboard_keyboard(data: dict[str, Any]) -> InlineKeyboardMarkup:
     builder.button(text="🚀 Запустить", callback_data="admin_seedance_generate")
     if data.get("seedance_admin_last_request_id"):
         builder.button(text="🔄 Проверить задачу", callback_data="admin_seedance_check")
+        builder.button(text="🆕 Новый запуск", callback_data="admin_seedance_new_request")
     builder.button(text="🌐 Обновить доступность", callback_data="admin_seedance_refresh")
     builder.button(text="ℹ️ API-контракт", callback_data="admin_seedance_info")
     builder.button(text="⬅️ В тесты", callback_data="admin_test_lab")
@@ -335,9 +339,18 @@ def _task_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🔄 Проверить", callback_data="admin_seedance_check")],
+            [InlineKeyboardButton(text="🆕 Новый запуск", callback_data="admin_seedance_new_request")],
             [InlineKeyboardButton(text="⬅️ Seedance test", callback_data="admin_seedance_lab")],
         ]
     )
+
+
+def _submit_lock(admin_id: int) -> asyncio.Lock:
+    return _SUBMIT_LOCKS.setdefault(int(admin_id), asyncio.Lock())
+
+
+def _delivery_lock(request_id: str) -> asyncio.Lock:
+    return _DELIVERY_LOCKS.setdefault(str(request_id), asyncio.Lock())
 
 
 def _track_background(coro: Coroutine[Any, Any, Any]) -> None:
@@ -394,15 +407,11 @@ async def _save_media_reference(
     message: types.Message,
     *,
     model: str,
-    edit_only_video: bool = False,
 ) -> tuple[dict[str, Any] | None, str | None]:
     extracted = _extract_media(message)
     if extracted is None:
         return None, "Отправьте JPEG/PNG, MP4/MOV или WAV/MP3."
     kind, media, mime, ext = extracted
-    if edit_only_video and kind != "video":
-        return None, "В Seedance 2.5 edit нужен исходный MP4/MOV."
-
     file_size = int(getattr(media, "file_size", 0) or 0)
     max_bytes = _max_file_bytes(model, kind)
     if file_size and file_size > max_bytes:
@@ -473,33 +482,33 @@ async def _send_result(
     request_id: str,
     model: str,
 ) -> None:
-    if request_id in _DELIVERED_REQUEST_IDS:
-        return
-    path = await neironych_seedance_admin_service.download_to_temp(request_id)
-    try:
-        caption = (
-            "✅ <b>Seedance admin test готов</b>\n"
-            f"Модель: <code>{html.escape(model)}</code>\n"
-            f"Request ID: <code>{html.escape(request_id)}</code>"
-        )
+    async with _delivery_lock(request_id):
+        if request_id in _DELIVERED_REQUEST_IDS:
+            return
+        path = await neironych_seedance_admin_service.download_to_temp(request_id)
         try:
-            await bot.send_video(
-                chat_id=chat_id,
-                video=FSInputFile(path),
-                caption=caption,
-                parse_mode="HTML",
+            caption = (
+                "✅ <b>Seedance admin test готов</b>\n"
+                f"Модель: <code>{html.escape(model)}</code>\n"
+                f"Request ID: <code>{html.escape(request_id)}</code>"
             )
-        except TelegramAPIError:
-            await bot.send_document(
-                chat_id=chat_id,
-                document=FSInputFile(path),
-                caption=caption,
-                parse_mode="HTML",
-            )
-        _DELIVERED_REQUEST_IDS.add(request_id)
-    finally:
-        Path(path).unlink(missing_ok=True)
-
+            try:
+                await bot.send_video(
+                    chat_id=chat_id,
+                    video=FSInputFile(path),
+                    caption=caption,
+                    parse_mode="HTML",
+                )
+            except TelegramAPIError:
+                await bot.send_document(
+                    chat_id=chat_id,
+                    document=FSInputFile(path),
+                    caption=caption,
+                    parse_mode="HTML",
+                )
+            _DELIVERED_REQUEST_IDS.add(request_id)
+        finally:
+            Path(path).unlink(missing_ok=True)
 
 def _error_text(record: dict[str, Any]) -> str:
     error = record.get("error")
@@ -705,6 +714,14 @@ async def receive_reference(message: types.Message, state: FSMContext) -> None:
         )
         return
     kind = extracted[0]
+    has_edit_source = any(item.get("kind") == "video" for item in refs)
+    if mode == "edit" and not has_edit_source and kind != "video":
+        await message.answer(
+            "Сначала отправьте исходный MP4/MOV — он будет @Video 1 и edit-source.",
+            reply_markup=_refs_keyboard(len(refs)),
+        )
+        return
+
     slot_error = _validate_reference_slot(model=model, refs=refs, new_kind=kind)
     if slot_error:
         await message.answer(slot_error, reply_markup=_refs_keyboard(len(refs)))
@@ -713,7 +730,6 @@ async def receive_reference(message: types.Message, state: FSMContext) -> None:
     item, error = await _save_media_reference(
         message,
         model=model,
-        edit_only_video=mode == "edit",
     )
     if error or item is None:
         await message.answer(
@@ -986,9 +1002,9 @@ def _payload_from_state(data: dict[str, Any]) -> dict[str, Any]:
         duration=int(data["seedance_admin_duration"]),
         resolution=str(data["seedance_admin_resolution"]),
         aspect_ratio=str(data["seedance_admin_ratio"]),
-        reference_images=images if mode == "reference" else None,
+        reference_images=images if mode in {"reference", "edit"} else None,
         reference_videos=videos if mode in {"reference", "edit"} else None,
-        reference_audios=audios if mode == "reference" else None,
+        reference_audios=audios if mode in {"reference", "edit"} else None,
         start_image=str(data.get("seedance_admin_start_image") or "") if mode == "frames" else "",
         end_image=str(data.get("seedance_admin_end_image") or "") if mode == "frames" else "",
     )
@@ -1000,96 +1016,130 @@ async def generate_seedance(callback: types.CallbackQuery, state: FSMContext) ->
         return
     if callback.message is None:
         return
-    data = await _normalize_state(state)
-    if not neironych_seedance_admin_service.enabled:
-        await callback.answer("NEIRONYCH_API_KEY не настроен на сервере", show_alert=True)
-        return
+    async with _submit_lock(callback.from_user.id):
+        data = await _normalize_state(state)
+        if not neironych_seedance_admin_service.enabled:
+            await callback.answer("NEIRONYCH_API_KEY не настроен на сервере", show_alert=True)
+            return
 
-    enabled = await _refresh_enabled_models(state)
-    data = await _normalize_state(state)
-    model = str(data["seedance_admin_model"])
-    if enabled is not None and model not in enabled:
-        await callback.answer(
-            f"{model} сейчас отсутствует в GET /v1/models",
-            show_alert=True,
-        )
-        return
+        enabled = await _refresh_enabled_models(state)
+        data = await _normalize_state(state)
+        model = str(data["seedance_admin_model"])
+        if enabled is not None and model not in enabled:
+            await callback.answer(
+                f"{model} сейчас отсутствует в GET /v1/models",
+                show_alert=True,
+            )
+            return
 
-    try:
-        payload = _payload_from_state(data)
-    except (ValueError, TypeError) as exc:
-        await callback.answer(str(exc)[:180], show_alert=True)
-        return
+        try:
+            payload = _payload_from_state(data)
+        except (ValueError, TypeError) as exc:
+            await callback.answer(str(exc)[:180], show_alert=True)
+            return
 
-    payload_hash = hashlib.sha256(
-        json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
-    ).hexdigest()
-    pending_key = str(data.get("seedance_admin_pending_key") or "")
-    if (
-        not pending_key
-        or str(data.get("seedance_admin_pending_payload_hash") or "") != payload_hash
-    ):
-        pending_key = str(uuid.uuid4())
+        payload_hash = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+        if (
+            data.get("seedance_admin_last_request_id")
+            and str(data.get("seedance_admin_last_payload_hash") or "") == payload_hash
+        ):
+            await callback.answer(
+                "Эта конфигурация уже запущена. Нажмите «Новый запуск» для повторной платной задачи.",
+                show_alert=True,
+            )
+            return
+
+        pending_key = str(data.get("seedance_admin_pending_key") or "")
+        if (
+            not pending_key
+            or str(data.get("seedance_admin_pending_payload_hash") or "") != payload_hash
+        ):
+            pending_key = str(uuid.uuid4())
+            await state.update_data(
+                seedance_admin_pending_key=pending_key,
+                seedance_admin_pending_payload_hash=payload_hash,
+            )
+
+        await callback.answer("Отправляю в Нейроныч API…")
+        try:
+            result = await neironych_seedance_admin_service.submit(
+                payload,
+                idempotency_key=pending_key,
+            )
+        except (
+            NeironychAPIError,
+            RuntimeError,
+            ValueError,
+            aiohttp.ClientError,
+            asyncio.TimeoutError,
+        ) as exc:
+            logger.exception("Seedance admin test submit failed")
+            await callback.message.edit_text(
+                "❌ <b>Не удалось создать Seedance-задачу.</b>\n\n"
+                f"{html.escape(str(exc)[:800])}\n\n"
+                "Idempotency-Key сохранён: повтор этой же конфигурации "
+                "не создаст новую платную операцию.",
+                reply_markup=_dashboard_keyboard(data),
+                parse_mode="HTML",
+            )
+            return
+        except Exception:
+            logger.exception("Unexpected Seedance admin test submit failure")
+            await callback.message.edit_text(
+                "❌ Не удалось отправить задачу в Нейроныч API.",
+                reply_markup=_dashboard_keyboard(data),
+            )
+            return
+
+        request_id = str(result["request_id"])
         await state.update_data(
-            seedance_admin_pending_key=pending_key,
-            seedance_admin_pending_payload_hash=payload_hash,
+            seedance_admin_last_request_id=request_id,
+            seedance_admin_last_model=model,
+            seedance_admin_last_status="pending",
+            seedance_admin_last_payload_hash=payload_hash,
+            seedance_admin_pending_key="",
+            seedance_admin_pending_payload_hash="",
         )
-
-    await callback.answer("Отправляю в Нейроныч API…")
-    try:
-        result = await neironych_seedance_admin_service.submit(
-            payload,
-            idempotency_key=pending_key,
-        )
-    except (
-        NeironychAPIError,
-        RuntimeError,
-        ValueError,
-        aiohttp.ClientError,
-        asyncio.TimeoutError,
-    ) as exc:
-        logger.exception("Seedance admin test submit failed")
         await callback.message.edit_text(
-            "❌ <b>Не удалось создать Seedance-задачу.</b>\n\n"
-            f"{html.escape(str(exc)[:800])}\n\n"
-            "Idempotency-Key сохранён: повтор этой же конфигурации "
-            "не создаст новую платную операцию.",
-            reply_markup=_dashboard_keyboard(data),
+            "⏳ <b>Seedance admin test запущен</b>\n\n"
+            f"Модель: <code>{html.escape(model)}</code>\n"
+            f"Request ID: <code>{html.escape(request_id)}</code>\n\n"
+            "Результат придёт сюда автоматически. Статус можно проверить вручную.",
+            reply_markup=_task_keyboard(),
             parse_mode="HTML",
         )
-        return
-    except Exception:
-        logger.exception("Unexpected Seedance admin test submit failure")
-        await callback.message.edit_text(
-            "❌ Не удалось отправить задачу в Нейроныч API.",
-            reply_markup=_dashboard_keyboard(data),
+        _track_background(
+            _poll_and_deliver(
+                callback.bot,
+                callback.from_user.id,
+                request_id,
+                model,
+            )
         )
-        return
 
-    request_id = str(result["request_id"])
+
+@router.callback_query(F.data == "admin_seedance_new_request")
+async def new_seedance_request(callback: types.CallbackQuery, state: FSMContext) -> None:
+    if not await _require_admin(callback):
+        return
     await state.update_data(
-        seedance_admin_last_request_id=request_id,
-        seedance_admin_last_model=model,
-        seedance_admin_last_status="pending",
+        seedance_admin_last_request_id="",
+        seedance_admin_last_model="",
+        seedance_admin_last_status="",
+        seedance_admin_last_payload_hash="",
         seedance_admin_pending_key="",
         seedance_admin_pending_payload_hash="",
     )
-    await callback.message.edit_text(
-        "⏳ <b>Seedance admin test запущен</b>\n\n"
-        f"Модель: <code>{html.escape(model)}</code>\n"
-        f"Request ID: <code>{html.escape(request_id)}</code>\n\n"
-        "Результат придёт сюда автоматически. Статус можно проверить вручную.",
-        reply_markup=_task_keyboard(),
-        parse_mode="HTML",
-    )
-    _track_background(
-        _poll_and_deliver(
-            callback.bot,
-            callback.from_user.id,
-            request_id,
-            model,
+    if callback.message is not None:
+        data = await _normalize_state(state)
+        await callback.message.edit_text(
+            _dashboard_text(data),
+            reply_markup=_dashboard_keyboard(data),
+            parse_mode="HTML",
         )
-    )
+    await callback.answer("Готово к новому запуску")
 
 
 @router.callback_query(F.data == "admin_seedance_check")
