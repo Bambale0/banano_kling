@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
-from collections.abc import Mapping
+import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -11,20 +14,39 @@ from bot.config import config
 from bot.database import (
     add_credits,
     check_can_afford,
+    complete_trend_run_claim,
     deduct_credits,
     get_or_create_user,
     get_prompt_by_id,
+    list_trend_reference_assets,
+    reserve_trend_run_claim,
     touch_saved_references,
     use_prompt,
 )
-from bot.services.media_input_utils import missing_local_upload_sources
+from bot.seedance_trend_recipe import (
+    REFERENCE_CONTRACT,
+    SeedanceTrendRecipeError,
+    assemble_seedance_trend_inputs,
+)
+from bot.seedance_trend_recipe import (
+    SUPPORTED_MODELS as PRIVATE_REFERENCE_MODELS,
+)
+from bot.services.media_input_utils import (
+    is_local_upload_source,
+    missing_local_upload_sources,
+)
 from bot.services.preset_manager import preset_manager
 from bot.trend_user_fields import (
     TrendUserFieldsError,
     clean_submitted_user_values,
     render_trend_prompt,
 )
-from bot.video_reference_policy import apply_video_reference_cost
+from bot.video_reference_policy import (
+    apply_video_reference_cost,
+    get_max_audio_references,
+    get_max_video_image_references,
+    get_max_video_references,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +62,7 @@ class TrendRunRequest:
     trend_id: int
     reference_urls: tuple[str, ...]
     user_values: dict[str, str]
+    client_request_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -51,6 +74,14 @@ class TrustedTrendRun:
     ratio: str
     reference_urls: tuple[str, ...]
     settings: dict[str, Any]
+    template_image_urls: tuple[str, ...] = ()
+    template_video_urls: tuple[str, ...] = ()
+    template_audio_urls: tuple[str, ...] = ()
+    reference_contract: str = ""
+
+    @property
+    def provider_image_urls(self) -> tuple[str, ...]:
+        return (*self.reference_urls, *self.template_image_urls)
 
 
 def _fallback_trend_settings(trend: Mapping[str, Any]) -> dict[str, Any]:
@@ -152,10 +183,15 @@ def parse_trend_run_request(body: Any) -> TrendRunRequest:
     except TrendUserFieldsError as exc:
         raise TrendRunValidationError(str(exc)) from exc
 
+    client_request_id = str(body.get("client_request_id") or "").strip() or None
+    if client_request_id and not re.fullmatch(r"[A-Za-z0-9_-]{8,120}", client_request_id):
+        raise TrendRunValidationError("Некорректный идентификатор запуска тренда")
+
     return TrendRunRequest(
         trend_id=int(raw_trend_id),
         reference_urls=_clean_reference_urls(body.get("reference_urls")),
         user_values=user_values,
+        client_request_id=client_request_id,
     )
 
 
@@ -163,6 +199,8 @@ def trusted_trend_run(
     trend: Mapping[str, Any] | None,
     reference_urls: tuple[str, ...],
     user_values: Mapping[str, str] | None = None,
+    *,
+    template_assets: Sequence[Mapping[str, Any]] = (),
 ) -> TrustedTrendRun:
     if not trend:
         raise TrendRunValidationError("Тренд не найден")
@@ -206,6 +244,46 @@ def trusted_trend_run(
             "Администратору нужно пересохранить тренд"
         )
 
+    reference_contract = str(settings.get("reference_contract") or "").strip()
+    template_images: tuple[str, ...] = ()
+    template_videos: tuple[str, ...] = ()
+    template_audios: tuple[str, ...] = ()
+    if reference_contract:
+        if reference_contract != REFERENCE_CONTRACT:
+            raise TrendRunValidationError("Неизвестный контракт референсов тренда")
+        if kind != "video" or model not in PRIVATE_REFERENCE_MODELS:
+            raise TrendRunValidationError(
+                "Приватные референсы поддерживаются только в Seedance 2.0/2.5 трендах"
+            )
+        if not template_assets:
+            raise TrendRunValidationError(
+                "Закреплённые референсы тренда недоступны. Обратитесь к администратору"
+            )
+        try:
+            provider_images, provider_videos, provider_audios = assemble_seedance_trend_inputs(
+                reference_urls,
+                template_assets,
+            )
+        except SeedanceTrendRecipeError as exc:
+            raise TrendRunValidationError(str(exc)) from exc
+        template_images = tuple(provider_images[1:])
+        template_videos = tuple(provider_videos)
+        template_audios = tuple(provider_audios)
+        for key, actual in (
+            ("fixed_image_reference_count", len(template_images)),
+            ("fixed_video_reference_count", len(template_videos)),
+            ("fixed_audio_reference_count", len(template_audios)),
+        ):
+            try:
+                configured = int(settings.get(key) or 0)
+            except (TypeError, ValueError) as exc:
+                raise TrendRunValidationError("Повреждены настройки референсов тренда") from exc
+            if configured != actual:
+                raise TrendRunValidationError(
+                    "Состав закреплённых референсов тренда изменился. "
+                    "Администратору нужно пересохранить тренд"
+                )
+
     return TrustedTrendRun(
         trend_id=int(trend["id"]),
         kind=kind,
@@ -214,6 +292,10 @@ def trusted_trend_run(
         ratio=ratio,
         reference_urls=reference_urls,
         settings=settings,
+        template_image_urls=template_images,
+        template_video_urls=template_videos,
+        template_audio_urls=template_audios,
+        reference_contract=reference_contract,
     )
 
 
@@ -253,6 +335,106 @@ def _string_list(settings: Mapping[str, Any], key: str) -> list[str]:
     if not isinstance(raw, list):
         return []
     return [str(item).strip() for item in raw if str(item).strip()]
+
+
+def estimate_trend_repeat_cost(
+    trend: Mapping[str, Any] | TrustedTrendRun,
+) -> float | None:
+    """Return the current retail cost for repeating a saved trend.
+
+    Pricing is resolved from the same live pricing services used by the launch
+    path. The client never computes or stores its own trend price.
+    """
+
+    from bot import miniapp as miniapp_module
+
+    if isinstance(trend, TrustedTrendRun) or hasattr(trend, "settings"):
+        settings = dict(getattr(trend, "settings", {}) or {})
+        model = str(getattr(trend, "model", "") or "").strip()
+        kind = str(
+            getattr(trend, "kind", "")
+            or settings.get("kind")
+            or ("video" if model == "seedance_2_5" else "")
+        ).strip().lower()
+    else:
+        stored_settings = trend.get("generation_settings")
+        settings = (
+            dict(stored_settings)
+            if isinstance(stored_settings, Mapping) and stored_settings
+            else _fallback_trend_settings(trend)
+        )
+        kind = str(settings.get("kind") or "").strip().lower()
+        model = str(settings.get("model") or trend.get("model") or "").strip()
+
+    if not model or kind not in {"image", "video"}:
+        return None
+
+    try:
+        if kind == "image":
+            quality = str(settings.get("quality") or "basic")
+            return float(miniapp_module._resolve_image_unit_cost(model, quality))
+
+        duration = _int_setting(settings, "duration", 5)
+        pricing_duration = (
+            _int_setting(settings, "source_video_duration_seconds", 5)
+            if bool(settings.get("seedance25_video_editing", False))
+            else duration
+        )
+        template_video_urls = tuple(
+            str(value or "").strip()
+            for value in getattr(trend, "template_video_urls", ()) or ()
+            if str(value or "").strip()
+        )
+        try:
+            fixed_video_count = int(settings.get("fixed_video_reference_count") or 0)
+        except (TypeError, ValueError):
+            fixed_video_count = 0
+        pricing_video_refs = template_video_urls or (("fixed-video-reference",) if fixed_video_count > 0 else ())
+        if model == "seedance_2_5":
+            resolution = str(
+                settings.get("seedance25_resolution") or "720p"
+            ).strip().lower()
+            base_cost = preset_manager.get_video_cost_with_quality(
+                model,
+                pricing_duration,
+                resolution,
+            )
+            return float(
+                apply_video_reference_cost(model, base_cost, pricing_video_refs)
+            )
+
+        scenario = str(settings.get("scenario") or "imgtxt")
+        effective_model = miniapp_module._resolve_gemini_omni_model(
+            model,
+            scenario,
+        )
+        pricing_quality = miniapp_module._video_pricing_quality(
+            effective_model,
+            str(settings.get("veo_resolution") or "720p"),
+            str(settings.get("omni_resolution") or "720p"),
+        )
+        base_cost = preset_manager.get_video_cost_with_quality(
+            effective_model,
+            duration,
+            pricing_quality,
+        )
+        return float(apply_video_reference_cost(effective_model, base_cost, pricing_video_refs))
+    except Exception:
+        trend_id = getattr(trend, "trend_id", None)
+        if trend_id is None and isinstance(trend, Mapping):
+            trend_id = trend.get("id")
+        logger.exception(
+            "Unable to estimate trend repeat cost: trend_id=%s model=%s",
+            trend_id,
+            model,
+        )
+        return None
+
+
+def with_trend_repeat_cost(trend: Mapping[str, Any]) -> dict[str, Any]:
+    enriched = dict(trend)
+    enriched["repeat_cost"] = estimate_trend_repeat_cost(trend)
+    return enriched
 
 
 async def _record_trend_use(
@@ -346,7 +528,9 @@ async def _run_image_trend(
     _validate_uploaded_references(references, miniapp_module)
     await touch_saved_references(telegram_id, references, kind="image")
 
-    cost = miniapp_module._resolve_image_unit_cost(trend.model, quality)
+    cost = estimate_trend_repeat_cost(trend)
+    if cost is None:
+        raise TrendRunValidationError("Не удалось определить стоимость фото-тренда")
     debited, debit_error = await _debit_for_generation(telegram_id, user, cost)
     if debit_error is not None:
         return debit_error
@@ -438,16 +622,23 @@ async def _run_video_trend(
 ) -> web.Response:
     from bot import miniapp as miniapp_module
 
+    private_reference_run = trend.reference_contract == REFERENCE_CONTRACT
     scenario = str(trend.settings.get("scenario") or "imgtxt")
-    if scenario != "imgtxt":
-        raise TrendRunValidationError(
-            "Видео-тренд должен быть сохранён в режиме «Фото + текст»"
-        )
+    if private_reference_run:
+        if trend.model != "seedance_2":
+            raise TrendRunValidationError("Неверный runtime приватного Seedance-тренда")
+        runtime_generation_type = "video"
+    else:
+        if scenario != "imgtxt":
+            raise TrendRunValidationError(
+                "Видео-тренд должен быть сохранён в режиме «Фото + текст»"
+            )
+        runtime_generation_type = scenario
 
     model_meta = miniapp_module._find_video_model_meta(trend.model)
     if not model_meta:
         raise TrendRunValidationError("Модель видео-тренда больше недоступна")
-    if scenario not in model_meta.get("supports", []):
+    if not private_reference_run and scenario not in model_meta.get("supports", []):
         raise TrendRunValidationError("Модель тренда больше не поддерживает фото")
     if trend.ratio not in model_meta.get("ratios", []):
         raise TrendRunValidationError("Формат видео-тренда больше не поддерживается")
@@ -458,18 +649,37 @@ async def _run_video_trend(
             "Длительность видео-тренда больше не поддерживается"
         )
 
+    provider_images = list(trend.provider_image_urls)
     max_extra_references = int(model_meta.get("max_image_references", 0) or 0)
-    max_references = max(1, max_extra_references + 1)
-    if len(trend.reference_urls) > max_references:
+    max_references = (
+        get_max_video_image_references(trend.model)
+        if private_reference_run
+        else max(1, max_extra_references + 1)
+    )
+    if max_references and len(provider_images) > max_references:
         raise TrendRunValidationError(
-            f"Слишком много референсов. Максимум: {max_references}"
+            f"В тренде слишком много фото-референсов. Максимум: {max_references}"
+        )
+    max_videos = get_max_video_references(trend.model)
+    if len(trend.template_video_urls) > max_videos:
+        raise TrendRunValidationError(
+            f"В тренде слишком много видео-референсов. Максимум: {max_videos}"
+        )
+    max_audio = get_max_audio_references(trend.model)
+    if len(trend.template_audio_urls) > max_audio:
+        raise TrendRunValidationError(
+            f"В тренде слишком много аудио-референсов. Максимум: {max_audio}"
         )
 
-    image_url = trend.reference_urls[0]
-    image_references = list(trend.reference_urls[1:])
-    all_references = [image_url, *image_references]
+    image_url = provider_images[0]
+    image_references = provider_images[1:]
+    all_references = [
+        *provider_images,
+        *trend.template_video_urls,
+        *trend.template_audio_urls,
+    ]
     _validate_uploaded_references(all_references, miniapp_module)
-    await touch_saved_references(telegram_id, all_references, kind="image")
+    await touch_saved_references(telegram_id, list(trend.reference_urls), kind="image")
 
     effective_model = miniapp_module._resolve_gemini_omni_model(
         trend.model,
@@ -477,17 +687,9 @@ async def _run_video_trend(
     )
     veo_resolution = str(trend.settings.get("veo_resolution") or "720p")
     omni_resolution = str(trend.settings.get("omni_resolution") or "720p")
-    pricing_quality = miniapp_module._video_pricing_quality(
-        effective_model,
-        veo_resolution,
-        omni_resolution,
-    )
-    cost = preset_manager.get_video_cost_with_quality(
-        effective_model,
-        duration,
-        pricing_quality,
-    )
-    cost = apply_video_reference_cost(effective_model, cost, [])
+    cost = estimate_trend_repeat_cost(trend)
+    if cost is None:
+        raise TrendRunValidationError("Не удалось определить стоимость видео-тренда")
 
     debited, debit_error = await _debit_for_generation(telegram_id, user, cost)
     if debit_error is not None:
@@ -502,10 +704,11 @@ async def _run_video_trend(
             prompt=trend.prompt,
             duration=duration,
             aspect_ratio=trend.ratio,
-            generation_type=scenario,
+            generation_type=runtime_generation_type,
             image_url=image_url,
             image_references=image_references,
-            video_references=[],
+            video_references=list(trend.template_video_urls),
+            audio_references=list(trend.template_audio_urls),
             grok_mode=str(trend.settings.get("grok_mode") or "normal"),
             grok_resolution=str(
                 trend.settings.get("grok_resolution") or "480p"
@@ -554,6 +757,13 @@ async def _run_video_trend(
                 "omni_character_audio_ids",
             )[:1],
             action_type="trend",
+            prompt_source_id=trend.trend_id,
+            reference_contract=trend.reference_contract or None,
+            fixed_asset_counts={
+                "image": len(trend.template_image_urls),
+                "video": len(trend.template_video_urls),
+                "audio": len(trend.template_audio_urls),
+            },
         )
         if launch_result["status"] == "failed":
             if debited:
@@ -600,9 +810,68 @@ async def _run_video_trend(
         raise
 
 
+def _trend_run_request_hash(parsed: TrendRunRequest) -> str:
+    payload = {
+        "trend_id": parsed.trend_id,
+        "reference_urls": list(parsed.reference_urls),
+        "user_values": dict(sorted(parsed.user_values.items())),
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _trend_response_payload(response: web.StreamResponse) -> dict[str, Any]:
+    body = getattr(response, "body", None)
+    if not body:
+        return {"ok": False, "error": "Пустой ответ запуска тренда"}
+    try:
+        parsed = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+        return {"ok": False, "error": "Некорректный ответ запуска тренда"}
+    return (
+        parsed
+        if isinstance(parsed, dict)
+        else {"ok": False, "error": "Некорректный ответ запуска тренда"}
+    )
+
+
+async def _safe_complete_trend_run_claim(
+    *,
+    claim_context: tuple[int, int, str],
+    status: str,
+    http_status: int,
+    response_payload: dict[str, Any],
+    task_id: str | None = None,
+) -> None:
+    try:
+        await complete_trend_run_claim(
+            user_id=claim_context[0],
+            trend_id=claim_context[1],
+            client_request_id=claim_context[2],
+            status=status,
+            http_status=http_status,
+            response_payload=response_payload,
+            task_id=task_id,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to finalize trend run claim: user_id=%s trend_id=%s request_id=%s",
+            claim_context[0],
+            claim_context[1],
+            claim_context[2],
+        )
+
+
 async def miniapp_run_trend(request: web.Request) -> web.Response:
     """Run a curated trend using only settings stored by an administrator."""
 
+    claim_context: tuple[int, int, str] | None = None
+    claim_reserved = False
     try:
         body = await request.json()
         parsed = parse_trend_run_request(body)
@@ -614,32 +883,131 @@ async def miniapp_run_trend(request: web.Request) -> web.Response:
             str(body.get("init_data") or ""),
             body.get("start_param_fallback"),
         )
+        user = context["user"]
         prompt = await get_prompt_by_id(
             parsed.trend_id,
             approved_public_only=True,
         )
-        trend = trusted_trend_run(prompt, parsed.reference_urls, parsed.user_values)
+        if not prompt:
+            raise TrendRunValidationError("Тренд не найден")
+
+        if parsed.client_request_id:
+            claim_context = (int(user.id), parsed.trend_id, parsed.client_request_id)
+            claim = await reserve_trend_run_claim(
+                user_id=claim_context[0],
+                trend_id=claim_context[1],
+                client_request_id=claim_context[2],
+                request_hash=_trend_run_request_hash(parsed),
+            )
+            if not claim.get("claimed"):
+                if claim.get("conflict"):
+                    return web.json_response(
+                        {
+                            "ok": False,
+                            "error": "Этот идентификатор уже использован для другого запуска",
+                            "retry_same_request": False,
+                        },
+                        status=409,
+                    )
+                previous = claim.get("response")
+                if isinstance(previous, Mapping):
+                    return web.json_response(
+                        dict(previous),
+                        status=int(claim.get("http_status") or 200),
+                    )
+                return web.json_response(
+                    {
+                        "ok": False,
+                        "error": "Этот запуск уже обрабатывается. Не нажимайте кнопку повторно.",
+                        "retry_same_request": True,
+                    },
+                    status=409,
+                )
+            claim_reserved = True
+
+        raw_settings = prompt.get("generation_settings")
+        settings = raw_settings if isinstance(raw_settings, Mapping) else {}
+        template_assets: Sequence[Mapping[str, Any]] = ()
+        if str(settings.get("reference_contract") or "").strip():
+            template_assets = await list_trend_reference_assets(parsed.trend_id)
+        if template_assets:
+            trend = trusted_trend_run(
+                prompt,
+                parsed.reference_urls,
+                parsed.user_values,
+                template_assets=template_assets,
+            )
+        else:
+            trend = trusted_trend_run(prompt, parsed.reference_urls, parsed.user_values)
+
+        if trend.reference_contract == REFERENCE_CONTRACT:
+            for identity_url in trend.reference_urls:
+                owner_telegram_id = miniapp_module._reference_upload_owner_telegram_id(
+                    identity_url
+                )
+                if (
+                    owner_telegram_id != int(telegram_id)
+                    or not is_local_upload_source(identity_url)
+                ):
+                    raise TrendRunValidationError(
+                        "Для повтора загрузите своё фото через форму тренда"
+                    )
 
         if trend.kind == "video":
-            return await _run_video_trend(
+            response = await _run_video_trend(
                 telegram_id=telegram_id,
-                user=context["user"],
+                user=user,
                 trend=trend,
             )
-        return await _run_image_trend(
-            request,
-            telegram_id=telegram_id,
-            user=context["user"],
-            trend=trend,
-        )
+        else:
+            response = await _run_image_trend(
+                request,
+                telegram_id=telegram_id,
+                user=user,
+                trend=trend,
+            )
+
+        response_payload = _trend_response_payload(response)
+        if int(response.status) >= 400:
+            response_payload["retry_same_request"] = False
+            response = web.json_response(response_payload, status=int(response.status))
+
+        if claim_reserved and claim_context:
+            await _safe_complete_trend_run_claim(
+                claim_context=claim_context,
+                status="completed" if int(response.status) < 400 else "failed",
+                http_status=int(response.status),
+                response_payload=response_payload,
+                task_id=str(response_payload.get("task_id") or "") or None,
+            )
+        return response
     except TrendRunValidationError as error:
-        return web.json_response({"ok": False, "error": str(error)}, status=400)
+        response = web.json_response(
+            {"ok": False, "error": str(error), "retry_same_request": False},
+            status=400,
+        )
+        if claim_reserved and claim_context:
+            await _safe_complete_trend_run_claim(
+                claim_context=claim_context,
+                status="failed",
+                http_status=400,
+                response_payload=_trend_response_payload(response),
+            )
+        return response
     except Exception:
         logger.exception("Mini App trend generation failed")
-        return web.json_response(
-            {"ok": False, "error": "Не удалось запустить тренд. Попробуйте ещё раз."},
+        response = web.json_response(
+            {
+                "ok": False,
+                "error": "Не удалось запустить тренд. Попробуйте ещё раз.",
+                "retry_same_request": True,
+            },
             status=500,
         )
+        # Keep a reserved claim in processing state. The provider may already
+        # have accepted the task before the local exception, so marking it
+        # failed and allowing a new request id could create a duplicate charge.
+        return response
 
 
 def setup_trend_routes(app: web.Application, miniapp_root: str) -> None:

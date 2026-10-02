@@ -9,6 +9,13 @@ from typing import Any, Dict, Optional
 import aiohttp
 
 from bot.config import config
+from bot.services.gemini_photo_instructions import gemini_photo_system_prompt
+from bot.services.kie_gemini31_service import (
+    KieGemini31Service,
+    media_analysis_provider,
+    trace_analysis_provider,
+    trace_media_analysis,
+)
 from bot.services.openrouter_qwen38_service import openrouter_qwen38_service
 from bot.services.photo_analysis_media import image_source_to_analysis_input
 
@@ -546,6 +553,7 @@ class PhotoPromptService:
         parsed = _parse_json_object(raw_output)
         return _build_result(parsed, provider="claude-haiku-4-5")
 
+    @trace_media_analysis
     async def analyze_photo(
         self,
         *,
@@ -555,6 +563,7 @@ class PhotoPromptService:
         user_note: str = "",
         audio_bytes: bytes | None = None,
         audio_format: str = "",
+        telegram_user_id: int | None = None,
     ) -> Dict[str, Any]:
         image_url = (image_url or "").strip()
         if image_url:
@@ -620,6 +629,20 @@ class PhotoPromptService:
         )
 
         if has_image and not has_audio:
+            provider = await media_analysis_provider()
+            if provider == "kie_gemini31":
+                raw = await KieGemini31Service(
+                    api_key=self.api_key, base_url=self.base_url
+                ).analyze_media(
+                    media_url=image_url,
+                    media_kind="image",
+                    user_instruction=user_instruction,
+                    system_prompt=await gemini_photo_system_prompt("photo"),
+                    content_validator=_parse_json_object,
+                )
+                return _build_result(_parse_json_object(raw), provider="")
+
+            trace_analysis_provider("qwen38")
             return await self._analyze_with_qwen38(
                 image_url=image_url,
                 user_instruction=user_instruction,

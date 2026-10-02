@@ -16,6 +16,13 @@ from typing import Any, Dict, Optional
 import aiohttp
 
 from bot.config import config
+from bot.services.gemini_photo_instructions import gemini_photo_system_prompt
+from bot.services.kie_gemini31_service import (
+    KieGemini31Service,
+    media_analysis_provider,
+    trace_analysis_provider,
+    trace_media_analysis,
+)
 from bot.services.openrouter_qwen38_service import openrouter_qwen38_service
 
 logger = logging.getLogger(__name__)
@@ -434,6 +441,7 @@ class PromptAnalyzerV2Service:
             raise RuntimeError("Claude Haiku вернул пустой ответ")
         return _build_result(_parse_json_object(raw_output), provider="claude-haiku-4-5")
 
+    @trace_media_analysis
     async def analyze_prompt(
         self,
         *,
@@ -441,6 +449,7 @@ class PromptAnalyzerV2Service:
         image_url: str = "",
         audio_bytes: bytes | None = None,
         audio_format: str = "",
+        telegram_user_id: int | None = None,
     ) -> Dict[str, Any]:
         text = (text or "").strip()
         image_url = (image_url or "").strip()
@@ -471,10 +480,27 @@ class PromptAnalyzerV2Service:
             + "\n\nReturn only prompt_ru and prompt_en according to the JSON schema."
         )
         if not has_audio:
-            return await self._analyze_with_qwen38(
-                image_url=image_url,
-                user_instruction=user_instruction,
-            )
+            provider = await media_analysis_provider()
+            if provider == "qwen38":
+                trace_analysis_provider("qwen38")
+                return await self._analyze_with_qwen38(
+                    image_url=image_url,
+                    user_instruction=user_instruction,
+                )
+
+            if image_url:
+                raw = await KieGemini31Service(
+                    api_key=self.api_key, base_url=self.base_url
+                ).analyze_media(
+                    media_url=image_url,
+                    media_kind="image",
+                    user_instruction=user_instruction,
+                    system_prompt=await gemini_photo_system_prompt("v2"),
+                    content_validator=_parse_json_object,
+                )
+                return _build_result(
+                    _parse_json_object(raw), provider=KieGemini31Service.MODEL
+                )
 
         if not self.api_key:
             raise RuntimeError("KIE_AI_API_KEY is not configured for voice input")

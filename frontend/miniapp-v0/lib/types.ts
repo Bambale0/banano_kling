@@ -207,6 +207,7 @@ export interface TrendGenerationSettings {
   preview_type?: 'image' | 'video'
   reference_count?: number
   reference_labels?: string[]
+  automatic_hidden_references?: boolean
   user_fields?: TrendUserField[]
   quality?: string
   count?: number
@@ -244,6 +245,7 @@ export interface PromptItem {
   tags: string[]
   uses_count: number
   likes: number
+  repeat_cost?: number | null
   preview_url?: string | null
   preview_poster_url?: string | null
   model?: string | null

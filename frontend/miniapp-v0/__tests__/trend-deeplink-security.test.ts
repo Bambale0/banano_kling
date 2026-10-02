@@ -1,3 +1,4 @@
+import { parseMiniAppStartParam } from '../lib/start-params'
 import type { PromptItem } from '../lib/types'
 import { isVideoTrendItem } from '../lib/trend-settings'
 
@@ -35,5 +36,17 @@ describe('shared trend deeplink privacy', () => {
     } as PromptItem
 
     expect(isVideoTrendItem(adminTrend, [])).toBe(true)
+  })
+})
+
+
+describe('trend referral navigation', () => {
+  it('opens the same template for legacy and personalized links', () => {
+    expect(parseMiniAppStartParam('prompt_42')).toEqual({
+      kind: 'prompt', promptId: 42, referralCodeForAttribution: '',
+    })
+    expect(parseMiniAppStartParam('prompt_42_ref_PARTNER')).toEqual({
+      kind: 'prompt', promptId: 42, referralCodeForAttribution: 'PARTNER',
+    })
   })
 })

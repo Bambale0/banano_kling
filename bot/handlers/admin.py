@@ -1,9 +1,9 @@
 import asyncio
 import csv
+import html as html_utils
 import io
 import json
 import logging
-import html as html_utils
 from collections import deque
 from datetime import datetime
 from pathlib import Path
@@ -25,7 +25,6 @@ from bot.database import (
     deduct_credits,
     export_users_for_admin,
     get_admin_finance_report,
-    get_admin_referral_burst_autobans,
     get_admin_partner_details,
     get_admin_partner_payment_report,
     get_admin_partner_stats,
@@ -33,20 +32,21 @@ from bot.database import (
     get_admin_prompt_details,
     get_admin_prompt_stats,
     get_admin_prompts,
+    get_admin_referral_burst_autobans,
     get_admin_stats,
     get_bot_setting,
     get_existing_user_stats,
     get_partner_withdrawal_request,
     get_pending_partner_withdrawals,
     get_promo_code_by_code,
-    get_promo_code_details,
     get_promo_code_by_id,
+    get_promo_code_details,
     get_user_stats,
     is_channel_subscription_required,
     normalize_promo_code,
-    set_maintenance_mode,
     reject_prompt,
     set_channel_subscription_required,
+    set_maintenance_mode,
     set_promo_code_active,
     set_user_banned,
 )
@@ -55,16 +55,20 @@ from bot.keyboards import (
     get_back_keyboard,
     get_main_menu_button_keyboard,
 )
-from bot.services.preset_manager import preset_manager
-from bot.services.subscription_service import (
-    REQUIRED_CHANNEL_USERNAME,
-    clear_required_subscription_cache,
-)
 from bot.services.admin_ai_service import (
     admin_ai_service,
     normalize_plan,
     summarize_plan_actions,
     validate_plan,
+)
+from bot.services.partner_approval_service import (
+    count_pending_partner_applications,
+    get_pending_partner_applications,
+)
+from bot.services.preset_manager import preset_manager
+from bot.services.subscription_service import (
+    REQUIRED_CHANNEL_USERNAME,
+    clear_required_subscription_cache,
 )
 from bot.states import AdminStates
 
@@ -90,15 +94,19 @@ async def _safe_admin_edit(
     *,
     reply_markup=None,
     parse_mode: str | None = "HTML",
+    disable_web_page_preview: bool | None = None,
 ) -> None:
+    message_kwargs = {
+        "reply_markup": reply_markup,
+        "parse_mode": parse_mode,
+    }
+    if disable_web_page_preview is not None:
+        message_kwargs["disable_web_page_preview"] = disable_web_page_preview
+
     message = callback.message
     if message is not None:
         try:
-            await message.edit_text(
-                text,
-                reply_markup=reply_markup,
-                parse_mode=parse_mode,
-            )
+            await message.edit_text(text, **message_kwargs)
             return
         except TelegramAPIError as exc:
             logger.warning(
@@ -107,11 +115,7 @@ async def _safe_admin_edit(
                 exc,
             )
             try:
-                await message.answer(
-                    text,
-                    reply_markup=reply_markup,
-                    parse_mode=parse_mode,
-                )
+                await message.answer(text, **message_kwargs)
                 return
             except TelegramAPIError as send_exc:
                 logger.warning(
@@ -123,8 +127,7 @@ async def _safe_admin_edit(
     await callback.bot.send_message(
         chat_id=callback.from_user.id,
         text=text,
-        reply_markup=reply_markup,
-        parse_mode=parse_mode,
+        **message_kwargs,
     )
 
 ADMIN_PROMPT_STATUS_TITLES = {
@@ -691,6 +694,12 @@ def _admin_partners_keyboard(top_partners: list[dict]) -> types.InlineKeyboardMa
     rows: list[list[types.InlineKeyboardButton]] = [
         [
             types.InlineKeyboardButton(
+                text="✅ Заявки на активацию",
+                callback_data="admin_partner_applications",
+            )
+        ],
+        [
+            types.InlineKeyboardButton(
                 text="💸 Заявки на вывод",
                 callback_data="admin_partner_withdrawals",
             )
@@ -781,7 +790,9 @@ def _admin_partner_burst_autobans_keyboard(items: list[dict]) -> types.InlineKey
             ]
         )
 
-    rows.append([types.InlineKeyboardButton(text="🔙 К партнёрам", callback_data="admin_partners")])
+    rows.append(
+        [types.InlineKeyboardButton(text="🔙 К партнёрам", callback_data="admin_partners")]
+    )
     return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -833,6 +844,131 @@ def _admin_withdrawal_detail_keyboard(withdrawal_id: int) -> types.InlineKeyboar
             ],
         ]
     )
+
+
+def _partner_application_account_url(application: dict[str, Any]) -> str:
+    username = str(application.get("username") or "").strip().lstrip("@")
+    if username:
+        return f"https://t.me/{username}"
+    return f"tg://user?id={int(application['telegram_id'])}"
+
+
+def _format_partner_application_display(application: dict[str, Any]) -> str:
+    username = str(application.get("username") or "").strip().lstrip("@")
+    full_name = " ".join(
+        value
+        for value in (
+            str(application.get("first_name") or "").strip(),
+            str(application.get("last_name") or "").strip(),
+        )
+        if value
+    )
+    if full_name and username:
+        return f"{full_name} (@{username})"
+    if full_name:
+        return full_name
+    if username:
+        return f"@{username}"
+    return "—"
+
+
+ADMIN_PARTNER_APPLICATIONS_PAGE_SIZE = 20
+
+
+def _format_admin_partner_applications_text(
+    applications: list[dict],
+    *,
+    total_count: int,
+    page: int,
+    page_size: int = ADMIN_PARTNER_APPLICATIONS_PAGE_SIZE,
+) -> str:
+    start_number = page * page_size + 1
+    end_number = min(page * page_size + len(applications), total_count)
+    lines = [
+        "✅ <b>Заявки на активацию партнёрских ссылок</b>",
+        "",
+        f"Ожидают решения всего: <code>{total_count}</code>",
+        "",
+    ]
+
+    if not applications:
+        lines.append("Сейчас нет заявок в ожидании.")
+        return "\n".join(lines)
+
+    lines.append(
+        f"<b>Очередь:</b> показаны <code>{start_number}-{end_number}</code>"
+    )
+    for index, application in enumerate(applications, start=1):
+        display = html_utils.escape(_format_partner_application_display(application))
+        account_url = html_utils.escape(
+            _partner_application_account_url(application),
+            quote=True,
+        )
+        source = html_utils.escape(str(application.get("source") or "—"))
+        queue_number = page * page_size + index
+        lines.append(
+            f"{queue_number}. <a href=\"{account_url}\">{display}</a>\n"
+            f"   ID: <code>{application.get('telegram_id') or '—'}</code> "
+            f"• заявка <code>#{application.get('id') or '—'}</code>\n"
+            f"   Подана: <code>{application.get('requested_at') or '—'}</code> "
+            f"• источник: <code>{source}</code>"
+        )
+
+    return "\n".join(lines)
+
+
+def _admin_partner_applications_keyboard(
+    applications: list[dict],
+    *,
+    total_count: int,
+    page: int,
+    page_size: int = ADMIN_PARTNER_APPLICATIONS_PAGE_SIZE,
+) -> types.InlineKeyboardMarkup:
+    rows: list[list[types.InlineKeyboardButton]] = []
+    for application in applications[:page_size]:
+        application_id = int(application["id"])
+        telegram_id = application.get("telegram_id") or "—"
+        rows.append(
+            [
+                types.InlineKeyboardButton(
+                    text=f"✅ #{application_id} • ID {telegram_id}",
+                    callback_data=f"partner_app_approve_{application_id}",
+                ),
+                types.InlineKeyboardButton(
+                    text="❌",
+                    callback_data=f"partner_app_reject_{application_id}",
+                ),
+            ]
+        )
+
+    page_buttons: list[types.InlineKeyboardButton] = []
+    if page > 0:
+        page_buttons.append(
+            types.InlineKeyboardButton(
+                text="⬅️ Назад",
+                callback_data=f"admin_partner_applications:{page - 1}",
+            )
+        )
+    if (page + 1) * page_size < total_count:
+        page_buttons.append(
+            types.InlineKeyboardButton(
+                text="Вперёд ➡️",
+                callback_data=f"admin_partner_applications:{page + 1}",
+            )
+        )
+    if page_buttons:
+        rows.append(page_buttons)
+
+    rows.append(
+        [
+            types.InlineKeyboardButton(
+                text="🔄 Обновить",
+                callback_data=f"admin_partner_applications:{page}",
+            )
+        ]
+    )
+    rows.append([types.InlineKeyboardButton(text="🔙 К партнёрам", callback_data="admin_partners")])
+    return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _chunk_buttons(
@@ -2275,6 +2411,97 @@ def _build_admin_partner_xls(report: dict) -> tuple[bytes, str]:
     return "".join(parts).encode("utf-8"), filename
 
 
+@router.message(Command("gemini_photo_prompt"))
+async def cmd_gemini_photo_prompt(message: types.Message) -> None:
+    """Inspect or edit Gemini-only photo instructions with an audited setting."""
+    if not message.from_user or not is_admin(message.from_user.id):
+        await message.answer("⛔ Только для администратора.")
+        return
+    from bot.services.gemini_photo_instructions import (
+        get_photo_instructions,
+        reset_photo_instructions,
+        save_photo_instructions,
+    )
+
+    usage = (
+        "/gemini_photo_prompt — скачать текущие инструкции\n"
+        "/gemini_photo_prompt set ТЕКСТ — заменить инструкции\n"
+        "Или ответьте командой /gemini_photo_prompt set на сообщение с инструкциями.\n"
+        "/gemini_photo_prompt reset — вернуть стандартные инструкции."
+    )
+    parts = str(message.text or "").split(maxsplit=2)
+    action = parts[1].lower() if len(parts) > 1 else ""
+    if not action:
+        current = await get_photo_instructions()
+        await message.answer_document(
+            document=BufferedInputFile(
+                current.encode("utf-8"), filename="gemini-photo-instructions.txt"
+            ),
+            caption="Инструкции Gemini для анализа фото. Формат JSON задаётся отдельно.",
+        )
+        await message.answer(usage)
+        return
+    if action == "reset" and len(parts) == 2:
+        await reset_photo_instructions(admin_id=message.from_user.id)
+    elif action == "set":
+        reply = message.reply_to_message
+        content = parts[2] if len(parts) == 3 else (
+            str(reply.text or reply.caption or "") if reply else ""
+        )
+        try:
+            await save_photo_instructions(content, admin_id=message.from_user.id)
+        except ValueError as exc:
+            await message.answer(str(exc) + "\n\n" + usage)
+            return
+    else:
+        await message.answer(usage)
+        return
+    logger.info(
+        "Gemini photo instructions updated: admin_id=%s action=%s",
+        message.from_user.id,
+        action,
+    )
+    await message.answer("Инструкции Gemini сохранены. Применятся к следующему анализу фото.")
+
+
+@router.message(Command("analysis_provider"))
+async def cmd_analysis_provider(message: types.Message) -> None:
+    """Inspect or change the shared photo/video analyzer without a release."""
+    if not message.from_user or not is_admin(message.from_user.id):
+        await message.answer("⛔ Только для администратора.")
+        return
+    from bot.database import set_bot_setting
+    from bot.services.kie_gemini31_service import (
+        MEDIA_ANALYSIS_PROVIDERS,
+        media_analysis_provider,
+    )
+
+    parts = str(message.text or "").split()
+    if len(parts) > 1:
+        provider = parts[1].lower()
+        if len(parts) != 2 or provider not in MEDIA_ANALYSIS_PROVIDERS:
+            await message.answer(
+                "Используйте /analysis_provider kie_gemini31 или /analysis_provider qwen38"
+            )
+            return
+        await set_bot_setting(
+            "media_analysis_provider",
+            provider,
+            updated_by_telegram_id=message.from_user.id,
+        )
+        logger.info(
+            "Media analysis provider updated: admin_id=%s provider=%s",
+            message.from_user.id,
+            provider,
+        )
+    current = await media_analysis_provider()
+    await message.answer(
+        f"Анализ фото и видео: {current}\n"
+        "/analysis_provider kie_gemini31 — Gemini 3.1 Pro через KIE\n"
+        "/analysis_provider qwen38 — Qwen через OpenRouter"
+    )
+
+
 @router.message(Command("admin"))
 async def cmd_admin(message: types.Message):
     """Открывает админ-панель"""
@@ -3551,6 +3778,45 @@ async def admin_partner_withdrawals(callback: types.CallbackQuery, state: FSMCon
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("admin_partner_applications"))
+async def admin_partner_applications(callback: types.CallbackQuery, state: FSMContext):
+    """Показывает очередь заявок на активацию партнёрских ссылок."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    await state.clear()
+    page = 0
+    if callback.data and ":" in callback.data:
+        try:
+            page = max(0, int(callback.data.rsplit(":", 1)[1]))
+        except (TypeError, ValueError):
+            page = 0
+    total_count = await count_pending_partner_applications()
+    max_page = max(0, (total_count - 1) // ADMIN_PARTNER_APPLICATIONS_PAGE_SIZE)
+    page = min(page, max_page)
+    applications = await get_pending_partner_applications(
+        limit=ADMIN_PARTNER_APPLICATIONS_PAGE_SIZE,
+        offset=page * ADMIN_PARTNER_APPLICATIONS_PAGE_SIZE,
+    )
+    await _safe_admin_edit(
+        callback,
+        _format_admin_partner_applications_text(
+            applications,
+            total_count=total_count,
+            page=page,
+        ),
+        reply_markup=_admin_partner_applications_keyboard(
+            applications,
+            total_count=total_count,
+            page=page,
+        ),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
+    await callback.answer()
+
+
 @router.callback_query(F.data == "admin_partner_burst_autobans")
 async def admin_partner_burst_autobans(callback: types.CallbackQuery, state: FSMContext):
     """Показывает отдельный экран со срабатываниями burst_autoban."""
@@ -4124,7 +4390,9 @@ async def _create_admin_broadcast_campaign(
     broadcast_media_type: str | None,
     broadcast_media_file_id: str | None,
 ) -> tuple[int, int]:
-    from bot.internal_admin_notification_schema import ensure_internal_admin_notification_schema
+    from bot.internal_admin_notification_schema import (
+        ensure_internal_admin_notification_schema,
+    )
     from bot.notification_service import ensure_notification_campaign_worker
 
     await ensure_internal_admin_notification_schema()
@@ -4244,7 +4512,11 @@ async def _run_admin_broadcast(
 ) -> None:
     """Выполняет рассылку с throttling и корректной обработкой ошибок."""
 
-    from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError, TelegramBadRequest
+    from aiogram.exceptions import (
+        TelegramBadRequest,
+        TelegramForbiddenError,
+        TelegramRetryAfter,
+    )
 
     async with db_backend.connect() as db:
         db.row_factory = db_backend.Row

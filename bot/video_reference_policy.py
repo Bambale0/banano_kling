@@ -38,6 +38,13 @@ def get_max_video_image_references(model: str | None) -> int:
     return max_image_references(model)
 
 
+def get_max_audio_references(model: str | None) -> int:
+    capability = get_video_capability(model)
+    if capability is None:
+        return 0
+    return int(capability.max_reference_audio or 0)
+
+
 def get_video_reference_capabilities(model: str | None) -> dict[str, object]:
     normalized = normalize_video_model_key(model)
     capability = get_video_capability(normalized)

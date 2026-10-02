@@ -166,6 +166,37 @@ RenderGrid results нельзя использовать как долговре
 
 Публичная лента считает временными как минимум `tempfile.aiquickdraw.com` и `cdn.rendergrid.io`. Если result не удалось локализовать, такой URL не должен считаться долговременным источником для повторов.
 
+### `RENDERGRID_RESULT_TTL_HOURS`
+
+Отдельный TTL для внешнего RenderGrid result URL. Значение по умолчанию:
+
+```dotenv
+RENDERGRID_RESULT_TTL_HOURS=24
+```
+
+После TTL `cdn.rendergrid.io` не отдаётся напрямую через feed/profile/history/task-detail/Mini App media: если durable-копии нет, generation возвращается как `media_unavailable`. Локальный `/uploads/feed/...` остаётся каноническим и TTL RenderGrid на него не распространяется.
+
+### Legacy RenderGrid reconciliation
+
+Production deploy после health-check запускает ограниченный reconciliation `scripts.backfill_rendergrid_image_results.py`. Он:
+
+- выбирает только completed image rows, всё ещё указывающие на `cdn.rendergrid.io`;
+- закрывает DB connection до сетевого скачивания;
+- проверяет локальный durable-файл;
+- делает compare-and-swap update по исходному `result_url`;
+- пишет telemetry `scanned/localized/updated/skipped_race/failed/next_before_id/exhausted`;
+- хранит cursor в persistent `/app/data/rendergrid-image-backfill-checkpoint.json`, поэтому следующий deploy продолжает проход, а не начинает с тех же failed rows.
+
+Deploy-параметры ограниченного прохода:
+
+```dotenv
+RENDERGRID_DEPLOY_BACKFILL_LIMIT=50
+RENDERGRID_DEPLOY_BACKFILL_CONCURRENCY=4
+RENDERGRID_DEPLOY_BACKFILL_MAX_BATCHES=1
+```
+
+Ошибки legacy reconciliation не откатывают здоровый deploy: runtime resolver всё равно не публикует просроченный внешний RenderGrid URL.
+
 ## 6. Database
 
 ### `DATABASE_URL`
@@ -348,3 +379,32 @@ PY
 ```
 
 Никогда не отправлять полный вывод `.env` в чат или issue.
+
+### Seedance 2.5 reliability
+
+These settings control result transport and one-time edit-fallback coordination.
+They do not change generation pricing:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `SEEDANCE25_RESULT_DOWNLOAD_ATTEMPTS` | `2` | Download attempts per delivery cycle, minimum 1 |
+| `SEEDANCE25_RESULT_DOWNLOAD_TIMEOUT_SECONDS` | `120` | Timeout per download, minimum 30 seconds |
+| `SEEDANCE25_RESULT_DOWNLOAD_RETRY_DELAY_SECONDS` | `1` | Linear retry delay in seconds, minimum 0 |
+| `SEEDANCE25_DELIVERY_TIMEOUT_SECONDS` | `360` | Total delivery-attempt deadline, minimum 30 seconds; lease lasts 60 seconds longer |
+| `SEEDANCE25_DELIVERY_RETRY_DAYS` | `7` | Recovery window after completion, range 1–30 days |
+| `SEEDANCE25_EDIT_RETRY_CLAIM_TTL_SECONDS` | `300` | One-time edit fallback claim TTL, minimum 30 seconds; prevents duplicate provider launches |
+
+A generated result is saved before Telegram delivery. `request_data.delivery_status`
+tracks delivery separately: `delivering` holds a lease, `pending` needs retry,
+`link_sent` records only a fallback link, `delivered` means media was sent, and
+`unavailable` is terminal when Telegram reports `chat not found`, a blocked bot,
+or a deactivated user. The stored result remains available in Mini App and no
+automatic Telegram retry is scheduled for `unavailable`.
+`delivery_link_sent` suppresses duplicate fallback links while file retries continue.
+Completion and its result_ready marker are committed atomically. Legacy completed
+tasks without markers are not automatically resent. Reconciliation
+uses `completed_at` (or legacy `created_at`) for the retry window, so repeated
+attempts cannot extend it indefinitely. After this window, the stored result remains
+available but automatic file delivery stops; inspect provider URL availability and
+Telegram errors before operator recovery. No automatic refund is issued for a
+completed generation whose Telegram file delivery fails.

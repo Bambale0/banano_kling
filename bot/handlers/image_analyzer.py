@@ -546,6 +546,7 @@ async def analyze_voice_prompt(message: Message, state: FSMContext):
         )
 
         result = await photo_prompt_service.analyze_photo(
+            telegram_user_id=message.from_user.id,
             image_url="",
             preserve=(
                 "смысл голосового запроса, стиль, настроение, действие, камеру, "
@@ -671,6 +672,7 @@ async def analyze_photo(message: Message, state: FSMContext):
         charge = await reserve_photo_prompt_charge(message.from_user.id)
 
         result = await photo_prompt_service.analyze_photo(
+            telegram_user_id=message.from_user.id,
             image_url=image_url,
             preserve="внешность/объект, композицию, свет, одежду, фон, стиль и цветовую палитру",
             goal="создать максимально похожее изображение по этому референсу",
@@ -795,6 +797,7 @@ async def analyze_video_prompt(message: Message, state: FSMContext):
         charge = await reserve_video_prompt_charge(message.from_user.id)
 
         result = await video_prompt_service.analyze_video(
+            telegram_user_id=message.from_user.id,
             video_url=video_url,
             user_note=(message.caption or "").strip(),
             duration_seconds=duration,

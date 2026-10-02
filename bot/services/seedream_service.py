@@ -38,6 +38,7 @@ class SeedreamService(KlingService):
     }
     SUPPORTED_QUALITIES: ClassVar[set[str]] = {"basic", "high"}
     MAX_PROMPT_CHARS = 6000
+    SEEDREAM_5_PRO_MAX_PROMPT_CHARS = 5000
     QUALITY_ALIASES: ClassVar[dict[str, str]] = {
         "2K": "basic",
         "4K": "high",
@@ -55,15 +56,21 @@ class SeedreamService(KlingService):
             return "basic"
         return quality
 
-    def _normalize_prompt(self, prompt: str) -> str:
+    def _normalize_prompt(self, prompt: str, *, model: str) -> str:
         normalized = str(prompt or "")
-        if len(normalized) > self.MAX_PROMPT_CHARS:
+        max_chars = (
+            self.SEEDREAM_5_PRO_MAX_PROMPT_CHARS
+            if str(model or "").startswith("seedream/5-pro-")
+            else self.MAX_PROMPT_CHARS
+        )
+        if len(normalized) > max_chars:
             logger.info(
-                "Seedream prompt truncated: len=%d -> %d chars",
+                "Seedream prompt truncated: model=%s len=%d -> %d chars",
+                model,
                 len(normalized),
-                self.MAX_PROMPT_CHARS,
+                max_chars,
             )
-            normalized = normalized[: self.MAX_PROMPT_CHARS]
+            normalized = normalized[:max_chars]
         return normalized
 
     async def _prepare_effective_image_urls(
@@ -142,7 +149,7 @@ class SeedreamService(KlingService):
         if not prompt or not prompt.strip():
             logger.error("Seedream prompt is required")
             return None
-        prompt = self._normalize_prompt(prompt)
+        prompt = self._normalize_prompt(prompt, model=model)
         if aspect_ratio not in self.SUPPORTED_ASPECT_RATIOS:
             logger.warning(
                 "Unsupported Seedream aspect ratio %s, fallback to 1:1", aspect_ratio
@@ -187,7 +194,7 @@ class SeedreamService(KlingService):
         if not prompt or not prompt.strip():
             logger.error("Seedream prompt is required")
             return None
-        prompt = self._normalize_prompt(prompt)
+        prompt = self._normalize_prompt(prompt, model=model)
         if not image_urls:
             logger.error("Seedream requires at least one image_url")
             return None

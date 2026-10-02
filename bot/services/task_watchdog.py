@@ -13,6 +13,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from bot import db as db_backend
+from bot.config import config
 from bot.database import DATABASE_PATH, cleanup_stale_local_generation_tasks
 
 logger = logging.getLogger(__name__)
@@ -164,33 +165,116 @@ async def check_task_with_provider(
     return None
 
 
-async def force_fail_task(task_id: int, user_id: int, cost: float) -> bool:
-    """Переводит задачу в failed и возвращает credits пользователю."""
+async def _is_admin_user(db: db_backend.Connection, user_id: int) -> bool:
+    cursor = await db.execute(
+        "SELECT telegram_id FROM users WHERE id = ? LIMIT 1",
+        (user_id,),
+    )
+    row = await cursor.fetchone()
+    if not row:
+        return False
+    raw_telegram_id = row["telegram_id"] if hasattr(row, "keys") else row[0]
+    try:
+        return config.is_admin(int(raw_telegram_id))
+    except (TypeError, ValueError):
+        return False
+
+
+async def force_fail_task(
+    task_id: int,
+    user_id: int,
+    cost: float,
+    *,
+    expected_provider_task_id: str | None = None,
+) -> bool:
+    """Переводит задачу в failed и возвращает только реально списанные credits."""
     async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
+        provider_guard = " AND task_id = ?" if expected_provider_task_id is not None else ""
+        parameters = (task_id, expected_provider_task_id) if provider_guard else (task_id,)
         cursor = await db.execute(
             """
             UPDATE generation_tasks
             SET status = 'failed',
-                completed_at = CURRENT_TIMESTAMP
+                completed_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
             WHERE id = ? AND status IN ('pending', 'processing')
-            """,
-            (task_id,),
+            """ + provider_guard + " RETURNING request_data",
+            parameters,
         )
-        if cursor.rowcount == 0:
+        existing = await cursor.fetchone()
+        if not existing:
             return False
 
-        # Возвращаем credits
-        if cost and cost > 0:
-            await db.execute(
+        # UPDATE acquires the row lock before RETURNING the current marker.
+        # A webhook refund committed while we waited is visible here.
+        raw_request = existing["request_data"] if hasattr(existing, "keys") else existing[0]
+        try:
+            request_data = json.loads(raw_request) if isinstance(raw_request, str) else raw_request
+        except (TypeError, json.JSONDecodeError):
+            request_data = {}
+        if not isinstance(request_data, dict):
+            request_data = {}
+
+        # Webhook refunds and the watchdog share this row-level transaction.
+        # Explicit billing markers take precedence over a legacy/non-zero cost:
+        # admin/test tasks may retain a nominal quote but were never charged.
+        already_refunded = bool(request_data.get("refund_claimed"))
+        refund_disabled = (
+            request_data.get("admin_free") is True
+            or request_data.get("charged") is False
+            or request_data.get("refund_on_failure") is False
+        )
+        admin_user = False
+        if cost and cost > 0 and not already_refunded and not refund_disabled:
+            admin_user = await _is_admin_user(db, user_id)
+            refund_disabled = admin_user
+        should_refund = bool(
+            cost
+            and cost > 0
+            and not already_refunded
+            and not refund_disabled
+        )
+        if should_refund:
+            credit_cursor = await db.execute(
                 "UPDATE users SET credits = credits + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (cost, user_id),
             )
+            if int(credit_cursor.rowcount or 0) != 1:
+                raise RuntimeError(f"Refund user missing for task {task_id}")
+            request_data["refund_claimed"] = True
+            request_data["refund_state"] = "refunded"
+            await db.execute(
+                "UPDATE generation_tasks SET request_data = ? WHERE id = ?",
+                (json.dumps(request_data, ensure_ascii=False), task_id),
+            )
 
         await db.commit()
+        logger.info(
+            "Task failure committed: task_id=%s provider_task_id=%s "
+            "refunded_credits=%s refund_disabled=%s admin_user=%s",
+            task_id,
+            expected_provider_task_id,
+            cost if should_refund else 0,
+            refund_disabled,
+            admin_user,
+        )
         return True
 
 
-async def run_watchdog_cycle(on_completed=None) -> int:
+async def _notify_failed_recovery(on_failed, task: dict[str, Any], task_id: int) -> None:
+    if on_failed is None:
+        return
+    try:
+        await on_failed(task)
+    except Exception:
+        logger.exception(
+            "Watchdog: failed-task notification callback failed for task %s",
+            task_id,
+        )
+
+
+async def run_watchdog_cycle(on_completed=None, on_failed=None) -> int:
     """Один цикл watchdog: восстанавливает orphan и зависшие provider-задачи.
 
     Returns: количество переведённых в failed задач.
@@ -262,6 +346,7 @@ async def run_watchdog_cycle(on_completed=None) -> int:
                     tid, uid, model, cost,
                 )
                 recovered += 1
+                await _notify_failed_recovery(on_failed, task, tid)
             continue
 
         # Задачи старше MAX_STUCK_MINUTES — принудительно в failed.
@@ -274,6 +359,7 @@ async def run_watchdog_cycle(on_completed=None) -> int:
                     tid, uid, model, cost, MAX_STUCK_MINUTES, provider_status or "unknown",
                 )
                 recovered += 1
+                await _notify_failed_recovery(on_failed, task, tid)
             continue
 
     if recovered:
@@ -284,7 +370,7 @@ async def run_watchdog_cycle(on_completed=None) -> int:
     return recovered
 
 
-async def watchdog_loop(on_completed=None):
+async def watchdog_loop(on_completed=None, on_failed=None):
     """Бесконечный цикл watchdog, запускается при старте бота."""
     # Задержка при старте — даём БД инициализироваться
     await asyncio.sleep(15)
@@ -294,7 +380,10 @@ async def watchdog_loop(on_completed=None):
     )
     while True:
         try:
-            await run_watchdog_cycle(on_completed=on_completed)
+            await run_watchdog_cycle(
+                on_completed=on_completed,
+                on_failed=on_failed,
+            )
         except Exception:
             logger.exception("Watchdog cycle error")
         await asyncio.sleep(WATCHDOG_INTERVAL_SECONDS)

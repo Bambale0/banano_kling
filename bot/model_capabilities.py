@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,7 +102,7 @@ VIDEO_MODEL_CAPABILITIES: Mapping[str, VideoModelCapability] = {
         supports_start_image=True, supports_end_image=True,
         supports_reference_images=True, max_reference_images=9,
         supports_reference_videos=True, max_reference_videos=3,
-        supports_audio_input=True,
+        supports_audio_input=True, max_reference_audio=3,
     ),
     "seedance_2_5": VideoModelCapability(
         key="seedance_2_5", label="Seedance 2.5", provider="seedance",

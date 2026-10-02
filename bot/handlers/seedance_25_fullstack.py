@@ -13,10 +13,12 @@ Kie webhook flows. It patches only the Seedance 2.5 seams:
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import logging
 import os
 import tempfile
+import time
 from fractions import Fraction
 from pathlib import Path
 from typing import Any, Iterable
@@ -33,6 +35,12 @@ from PIL import Image
 from bot import db as db_backend
 from bot.config import config
 from bot.services.kie_market_service import kie_market_service
+from bot.services.kie_webhook_verification import serialize_kie_callback
+from bot.services.delivery_state import (
+    TERMINAL_TASK_DELIVERY_STATUSES,
+    is_terminal_telegram_delivery_error,
+    terminal_telegram_delivery_reason,
+)
 from bot.services.media_input_utils import resolve_local_upload_path
 from bot.services.preset_manager import preset_manager
 from bot.services.seedance_25_service import (
@@ -67,6 +75,22 @@ MAX_MEDIA_DURATION = 30.0
 MAX_TOTAL_VIDEO_DURATION = 30.0
 MIN_FPS = 24.0
 MAX_FPS = 60.0
+
+SEEDANCE25_RESULT_DOWNLOAD_ATTEMPTS = max(
+    1, int(os.getenv("SEEDANCE25_RESULT_DOWNLOAD_ATTEMPTS", "2"))
+)
+SEEDANCE25_RESULT_DOWNLOAD_TIMEOUT_SECONDS = max(
+    30, int(os.getenv("SEEDANCE25_RESULT_DOWNLOAD_TIMEOUT_SECONDS", "120"))
+)
+SEEDANCE25_RESULT_DOWNLOAD_RETRY_DELAY_SECONDS = max(
+    0.0, float(os.getenv("SEEDANCE25_RESULT_DOWNLOAD_RETRY_DELAY_SECONDS", "1"))
+)
+SEEDANCE25_DELIVERY_TIMEOUT_SECONDS = max(30, int(os.getenv("SEEDANCE25_DELIVERY_TIMEOUT_SECONDS", "360")))
+SEEDANCE25_DELIVERY_RETRY_DAYS = max(1, min(30, int(os.getenv("SEEDANCE25_DELIVERY_RETRY_DAYS", "7"))))
+SEEDANCE25_EDIT_RETRY_CLAIM_TTL_SECONDS = max(
+    30, int(os.getenv("SEEDANCE25_EDIT_RETRY_CLAIM_TTL_SECONDS", "300"))
+)
+
 
 _RECONCILE_TASK_KEY = "seedance25_reconcile_task"
 
@@ -342,6 +366,13 @@ async def _miniapp_seedance25_generate(request: web.Request, body: dict[str, Any
         )
 
     user = ctx["user"]
+    video_editing = body.get("seedance25_video_editing", False)
+    if not isinstance(video_editing, bool):
+        return web.json_response({"ok": False, "error": "Некорректный режим редактирования видео"}, status=400)
+    if video_editing and not config.is_admin(telegram_id):
+        # Public installation rewrites _is_admin into a feature-access check.
+        # Editing privileges must still use the real administrator check.
+        return web.json_response({"ok": False, "error": "Редактирование видео пока доступно только администратору"}, status=400)
     prompt = str(body.get("prompt") or "").strip()
     scenario = str(body.get("seedance25_scenario") or "text").strip().lower()
     if scenario not in {"text", "first_frame", "first_last", "multimodal"}:
@@ -396,6 +427,15 @@ async def _miniapp_seedance25_generate(request: web.Request, body: dict[str, Any
             return web.json_response({"ok": False, "error": "Добавьте хотя бы один мультимодальный референс"}, status=400)
 
     try:
+        if video_editing:
+            # Editing entitlement is checked above and by the public wrapper.
+            if scenario != "multimodal" or len(video_urls) != 1:
+                raise ValueError("Для редактирования выберите режим по референсам и одно исходное видео 4–30 секунд")
+            source_duration = await _validate_local_source(video_urls[0], "video")
+            if source_duration is not None and not 4 <= source_duration <= 30:
+                raise ValueError("Для редактирования исходное видео должно быть 4–30 секунд")
+            duration = -1
+            ratio = "adaptive"
         await _validate_seedance_sources(
             first_frame_url=first_frame,
             last_frame_url=last_frame,
@@ -444,6 +484,7 @@ async def _miniapp_seedance25_generate(request: web.Request, body: dict[str, Any
         web_search=web_search,
         nsfw_checker=nsfw_checker,
         callBackUrl=get_seedance25_callback_url(),
+        **({"video_editing": True} if video_editing else {}),
     )
     if not result or not result.get("task_id"):
         error = result.get("error") if isinstance(result, dict) else "provider response has no task_id"
@@ -460,13 +501,16 @@ async def _miniapp_seedance25_generate(request: web.Request, body: dict[str, Any
         duration=duration,
         aspect_ratio=ratio,
         prompt=prompt,
-        cost=quote,
+        cost=0.0,
         request_data={
             "source": "miniapp",
             "preview": "seedance_2_5_admin",
             "v_model": MODEL_KEY,
             "v_type": "text" if scenario == "text" else "imgtxt" if scenario in {"first_frame", "first_last"} else "video",
             "seedance25_scenario": scenario,
+            "seedance25_video_editing": video_editing,
+            "duration": duration,
+            "aspect_ratio": ratio,
             "first_frame_url": first_frame,
             "last_frame_url": last_frame,
             "reference_images": image_urls,
@@ -478,8 +522,13 @@ async def _miniapp_seedance25_generate(request: web.Request, body: dict[str, Any
             "output_format": output_format,
             "web_search": web_search,
             "nsfw_checker": nsfw_checker,
-            "admin_price_quote": quote,
+            "price_quote": float(quote),
+            "admin_price_quote": float(quote),
+            "charged": False,
+            "charged_cost": 0.0,
             "admin_free": True,
+            "refund_on_failure": False,
+            "refund_claimed": False,
             "provider_model": seedance_25_service.MODEL_NAME,
             "callback_url": get_seedance25_callback_url(),
         },
@@ -566,34 +615,91 @@ def _classify_results(urls: list[str], request_data: dict[str, Any]) -> tuple[st
 
 
 async def _download_to_temp(url: str, suffix: str, max_bytes: int = 50 * 1024 * 1024) -> str | None:
-    tmp_path: str | None = None
-    try:
-        async with aiohttp.ClientSession(headers={"User-Agent": "Mozilla/5.0", "Accept": "*/*"}) as session:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=180)) as resp:
-                if resp.status != 200:
-                    return None
-                if resp.content_length and resp.content_length > max_bytes:
-                    return None
-                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-                tmp_path = tmp.name
-                downloaded = 0
-                try:
-                    async for chunk in resp.content.iter_chunked(64 * 1024):
-                        downloaded += len(chunk)
-                        if downloaded > max_bytes:
-                            raise ValueError("result too large")
-                        tmp.write(chunk)
-                finally:
-                    tmp.close()
-        return tmp_path
-    except Exception:
-        logger.exception("Seedance 2.5 result download failed: %s", url)
-        if tmp_path and os.path.exists(tmp_path):
-            try:
+    retryable_statuses = {408, 425, 429, 500, 502, 503, 504}
+
+    for attempt in range(1, SEEDANCE25_RESULT_DOWNLOAD_ATTEMPTS + 1):
+        tmp_path: str | None = None
+        try:
+            async with aiohttp.ClientSession(
+                headers={"User-Agent": "Mozilla/5.0", "Accept": "*/*"}
+            ) as session:
+                async with session.get(
+                    url,
+                    timeout=aiohttp.ClientTimeout(
+                        total=SEEDANCE25_RESULT_DOWNLOAD_TIMEOUT_SECONDS
+                    ),
+                ) as resp:
+                    if resp.status != 200:
+                        if (
+                            resp.status in retryable_statuses
+                            and attempt < SEEDANCE25_RESULT_DOWNLOAD_ATTEMPTS
+                        ):
+                            logger.warning(
+                                "Seedance 2.5 result download HTTP %s; retrying attempt=%s/%s",
+                                resp.status,
+                                attempt + 1,
+                                SEEDANCE25_RESULT_DOWNLOAD_ATTEMPTS,
+                            )
+                            if SEEDANCE25_RESULT_DOWNLOAD_RETRY_DELAY_SECONDS:
+                                await asyncio.sleep(
+                                    SEEDANCE25_RESULT_DOWNLOAD_RETRY_DELAY_SECONDS
+                                    * attempt
+                                )
+                            continue
+                        return None
+                    if resp.content_length and resp.content_length > max_bytes:
+                        return None
+
+                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+                    tmp_path = tmp.name
+                    downloaded = 0
+                    try:
+                        async for chunk in resp.content.iter_chunked(64 * 1024):
+                            downloaded += len(chunk)
+                            if downloaded > max_bytes:
+                                raise ValueError("result too large")
+                            tmp.write(chunk)
+                    finally:
+                        tmp.close()
+            return tmp_path
+        except asyncio.CancelledError:
+            if tmp_path and os.path.exists(tmp_path):
                 os.unlink(tmp_path)
-            except OSError:
-                pass
-        return None
+            raise
+        except (asyncio.TimeoutError, aiohttp.ClientError, OSError):
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+            if attempt < SEEDANCE25_RESULT_DOWNLOAD_ATTEMPTS:
+                logger.warning(
+                    "Seedance 2.5 result download transient failure; retrying attempt=%s/%s",
+                    attempt + 1,
+                    SEEDANCE25_RESULT_DOWNLOAD_ATTEMPTS,
+                    exc_info=True,
+                )
+                if SEEDANCE25_RESULT_DOWNLOAD_RETRY_DELAY_SECONDS:
+                    await asyncio.sleep(
+                        SEEDANCE25_RESULT_DOWNLOAD_RETRY_DELAY_SECONDS * attempt
+                    )
+                continue
+            logger.exception(
+                "Seedance 2.5 result download failed after %s attempts: %s",
+                attempt,
+                url,
+            )
+            return None
+        except Exception:
+            logger.exception("Seedance 2.5 result download failed: %s", url)
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+            return None
+
+    return None
 
 
 async def _send_seedance25_results(
@@ -603,7 +709,7 @@ async def _send_seedance25_results(
     video_url: str,
     last_frame_url: str | None,
     request_data: dict[str, Any],
-) -> None:
+) -> bool:
     bot = app["bot"]
     output_format = str(request_data.get("output_format") or _extension_from_url(video_url) or "mp4").lower()
     resolution = str(request_data.get("resolution") or "720p")
@@ -619,6 +725,14 @@ async def _send_seedance25_results(
     if duration is not None:
         caption += f"\n• Длительность: <code>{'Auto' if int(duration) == -1 else str(duration) + 'с'}</code>"
     caption += "\n• Admin preview: <code>без списания</code>"
+    from bot import keyboards as keyboard_module
+
+    result_markup = keyboard_module.get_video_result_keyboard(
+        video_url,
+        task_id=task_id,
+        model=MODEL_KEY,
+        is_public_feed=False,
+    )
 
     delivered = False
     suffix = ".mov" if output_format == "mov" else ".mp4"
@@ -630,9 +744,12 @@ async def _send_seedance25_results(
                 caption=caption,
                 parse_mode="HTML",
                 supports_streaming=True,
+                reply_markup=result_markup,
             )
             delivered = True
-        except Exception:
+        except Exception as exc:
+            if is_terminal_telegram_delivery_error(exc):
+                raise
             logger.info("Seedance 2.5 URL video delivery failed; trying file upload")
 
     if not delivered:
@@ -646,6 +763,7 @@ async def _send_seedance25_results(
                         caption=caption,
                         parse_mode="HTML",
                         supports_streaming=True,
+                        reply_markup=result_markup,
                     )
                 else:
                     await bot.send_document(
@@ -653,23 +771,32 @@ async def _send_seedance25_results(
                         document=FSInputFile(tmp_path, filename=f"seedance25-{task_id}.mov"),
                         caption=caption,
                         parse_mode="HTML",
+                        reply_markup=result_markup,
                     )
                 delivered = True
+            except Exception as exc:
+                if is_terminal_telegram_delivery_error(exc):
+                    raise
+                logger.exception("Seedance 2.5 file delivery failed for task %s", task_id)
             finally:
                 try:
                     os.unlink(tmp_path)
                 except OSError:
                     pass
 
-    if not delivered:
+    if not delivered and not request_data.get("delivery_link_sent"):
         try:
             await bot.send_message(
                 telegram_id,
                 caption + f"\n\n🔗 Оригинал:\n{video_url}",
                 parse_mode="HTML",
                 disable_web_page_preview=False,
+                reply_markup=result_markup,
             )
-        except Exception:
+            await _mark_seedance25_delivery(task_id, "link_sent")
+        except Exception as exc:
+            if is_terminal_telegram_delivery_error(exc):
+                raise
             logger.exception("Seedance 2.5 result notification failed")
 
     if last_frame_url:
@@ -693,10 +820,388 @@ async def _send_seedance25_results(
                                 caption=frame_caption,
                                 parse_mode="HTML",
                             )
-                            return
+                            return delivered
                 await bot.send_message(telegram_id, frame_caption + f"\n{last_frame_url}", parse_mode="HTML")
-            except Exception:
-                logger.exception("Seedance 2.5 last-frame delivery failed")
+            except Exception as exc:
+                if is_terminal_telegram_delivery_error(exc):
+                    logger.info(
+                        "Telegram delivery unavailable: event=seedance25_last_frame reason=%s task_id=%s telegram_id=%s",
+                        terminal_telegram_delivery_reason(exc),
+                        task_id,
+                        telegram_id,
+                    )
+                else:
+                    logger.exception("Seedance 2.5 last-frame delivery failed")
+
+    return delivered
+
+
+def _is_seedance25_copyright_failure(code: int | str | None, fail_msg: str | None) -> bool:
+    text = str(fail_msg or "").strip().lower()
+    if not text:
+        return False
+    markers = (
+        "copyright",
+        "intellectual property",
+        "copyright restrictions",
+        "copyright restriction",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _is_seedance25_editing_parameter_failure(fail_msg: str | None) -> bool:
+    text = str(fail_msg or "").strip().lower()
+    return (
+        "video editing" in text
+        and "duration" in text
+        and "must be -1" in text
+    )
+
+
+def _seedance25_task_aliases(request_data: dict[str, Any], *task_ids: str) -> list[str]:
+    raw_aliases = request_data.get("task_id_aliases") or []
+    if isinstance(raw_aliases, str):
+        raw_aliases = [raw_aliases]
+    aliases: list[str] = []
+    for value in [*raw_aliases, *task_ids]:
+        normalized = str(value or "").strip()
+        if normalized and normalized not in aliases:
+            aliases.append(normalized)
+    return aliases
+
+
+def _seedance25_request_urls(request_data: dict[str, Any], key: str) -> list[str]:
+    raw = request_data.get(key) or []
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, (list, tuple, set)):
+        return []
+    return _clean_urls(raw)
+
+
+async def _release_seedance25_edit_retry_claim(
+    task_id: str,
+    claimed_json: str,
+    claimed_data: dict[str, Any],
+    *,
+    error: str,
+    orphan_task_id: str | None = None,
+) -> None:
+    failed_data = dict(claimed_data)
+    failed_data["seedance25_edit_auto_retry_state"] = "create_failed"
+    failed_data["seedance25_edit_auto_retry_error"] = str(error or "provider retry failed")[:300]
+    if orphan_task_id:
+        failed_data["seedance25_edit_auto_retry_orphan_task_id"] = orphan_task_id
+    failed_json = json.dumps(failed_data, ensure_ascii=False, separators=(",", ":"))
+    async with db_backend.connect() as db:
+        await db.execute(
+            """
+            UPDATE generation_tasks
+            SET request_data = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE task_id = ? AND status = 'pending' AND request_data = ?
+            """,
+            (failed_json, task_id, claimed_json),
+        )
+        await db.commit()
+
+
+async def _auto_retry_seedance25_video_editing(
+    task_id: str,
+    fail_msg: str | None,
+) -> bool:
+    """Retry one provider-reclassified edit before failure/refund processing.
+
+    Returns ``True`` when the failure is already handled by a queued or active
+    retry. ``False`` lets the normal failure and refund path continue.
+    """
+    if not _is_seedance25_editing_parameter_failure(fail_msg):
+        return False
+
+    row = await _load_task_row(task_id)
+    if not row:
+        return False
+    row_data = dict(row)
+    if str(row_data.get("status") or "").lower() != "pending":
+        return False
+    if str(row_data.get("model") or "").strip() != MODEL_KEY:
+        return False
+    if str(row_data.get("type") or "").strip().lower() != "video":
+        return False
+
+    old_json = str(row_data.get("request_data") or "{}")
+    try:
+        request_data = json.loads(old_json)
+    except (TypeError, json.JSONDecodeError):
+        return False
+    if not isinstance(request_data, dict):
+        return False
+    # Public editing remains disabled because its output duration follows the
+    # source video while retail pricing is quoted from the selected duration.
+    # Do not silently change a paid user's contract or create an unpriced task.
+    if request_data.get("admin_free") is not True:
+        return False
+
+    retry_state = str(request_data.get("seedance25_edit_auto_retry_state") or "").lower()
+    if retry_state == "creating":
+        try:
+            claim_age = time.time() - float(
+                request_data.get("seedance25_edit_auto_retry_claimed_at") or 0
+            )
+        except (TypeError, ValueError):
+            claim_age = SEEDANCE25_EDIT_RETRY_CLAIM_TTL_SECONDS + 1
+        if 0 <= claim_age <= SEEDANCE25_EDIT_RETRY_CLAIM_TTL_SECONDS:
+            logger.info(
+                "Seedance 2.5 edit fallback already in progress: task_id=%s",
+                task_id,
+            )
+            return True
+        logger.error(
+            "Seedance 2.5 edit fallback claim expired: task_id=%s age=%.1fs",
+            task_id,
+            claim_age,
+        )
+        return False
+
+    editing_flag = request_data.get("seedance25_video_editing")
+    if editing_flag is not None and editing_flag is not False:
+        return False
+    try:
+        retry_attempt = int(request_data.get("seedance25_edit_auto_retry_attempt") or 0)
+    except (TypeError, ValueError):
+        retry_attempt = 1
+    if retry_attempt >= 1:
+        return False
+    scenario = str(
+        request_data.get("seedance25_scenario")
+        or request_data.get("scenario")
+        or ""
+    ).lower()
+    if scenario != "multimodal":
+        return False
+
+    video_urls = _seedance25_request_urls(request_data, "v_reference_videos")
+    if not video_urls:
+        video_urls = _seedance25_request_urls(request_data, "reference_videos")
+    if len(video_urls) != 1:
+        return False
+    try:
+        source_duration = await _validate_local_source(video_urls[0], "video")
+    except ValueError as exc:
+        logger.warning(
+            "Seedance 2.5 edit fallback rejected invalid source: task_id=%s reason=%s",
+            task_id,
+            exc,
+        )
+        return False
+    if source_duration is not None and not 4 <= source_duration <= 30:
+        logger.warning(
+            "Seedance 2.5 edit fallback rejected source duration: "
+            "task_id=%s duration=%.3f",
+            task_id,
+            source_duration,
+        )
+        return False
+    image_urls = _seedance25_request_urls(request_data, "reference_images")
+    audio_urls = _seedance25_request_urls(request_data, "reference_audios")
+    prompt = str(row_data.get("prompt") or request_data.get("prompt") or "").strip()
+    if not prompt:
+        return False
+
+    claimed_data = dict(request_data)
+    claimed_data.update(
+        seedance25_edit_auto_retry_attempt=1,
+        seedance25_edit_auto_retry_state="creating",
+        seedance25_edit_auto_retry_claimed_at=time.time(),
+        seedance25_edit_auto_retry_from_task_id=task_id,
+        seedance25_edit_auto_retry_trigger="provider_video_editing_parameters",
+    )
+    if source_duration is not None:
+        claimed_data["seedance25_edit_source_duration"] = round(source_duration, 3)
+    claimed_json = json.dumps(claimed_data, ensure_ascii=False, separators=(",", ":"))
+    async with db_backend.connect() as db:
+        cursor = await db.execute(
+            """
+            UPDATE generation_tasks
+            SET request_data = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE task_id = ? AND status = 'pending' AND request_data = ?
+            """,
+            (claimed_json, task_id, old_json),
+        )
+        await db.commit()
+    if int(getattr(cursor, "rowcount", 0) or 0) != 1:
+        refreshed = await _load_task_row(task_id)
+        if refreshed:
+            try:
+                current_data = json.loads(refreshed["request_data"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                current_data = {}
+            if str(current_data.get("seedance25_edit_auto_retry_state") or "").lower() == "creating":
+                return True
+        from bot.database import get_task_by_id
+
+        current = await get_task_by_id(task_id)
+        return bool(
+            current
+            and current.task_id != task_id
+            and current.status in {"pending", "processing"}
+        )
+
+    try:
+        result = await seedance_25_service.generate_video(
+            prompt=prompt,
+            duration=-1,
+            aspect_ratio="adaptive",
+            resolution=str(request_data.get("resolution") or "720p"),
+            first_frame_url=(
+                str(request_data.get("first_frame_url") or "").strip() or None
+            ),
+            last_frame_url=(
+                str(request_data.get("last_frame_url") or "").strip() or None
+            ),
+            reference_image_urls=image_urls or None,
+            reference_video_urls=video_urls,
+            reference_audio_urls=audio_urls or None,
+            video_editing=True,
+            return_last_frame=bool(request_data.get("return_last_frame")),
+            generate_audio=bool(request_data.get("generate_audio", True)),
+            output_format=str(request_data.get("output_format") or "mp4"),
+            web_search=bool(request_data.get("web_search")),
+            nsfw_checker=bool(request_data.get("nsfw_checker")),
+            callBackUrl=(
+                str(request_data.get("callback_url") or "").strip()
+                or get_seedance25_callback_url()
+            ),
+        )
+    except Exception as exc:
+        logger.exception(
+            "Seedance 2.5 edit fallback provider launch crashed: task_id=%s",
+            task_id,
+        )
+        await _release_seedance25_edit_retry_claim(
+            task_id,
+            claimed_json,
+            claimed_data,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        return False
+
+    new_task_id = str((result or {}).get("task_id") or "").strip() if isinstance(result, dict) else ""
+    if not new_task_id or new_task_id == task_id:
+        error = (result or {}).get("error") if isinstance(result, dict) else "provider response has no task_id"
+        await _release_seedance25_edit_retry_claim(
+            task_id,
+            claimed_json,
+            claimed_data,
+            error=str(error or "provider response has no new task_id"),
+        )
+        return False
+
+    retry_data = dict(claimed_data)
+    retry_data.update(
+        seedance25_video_editing=True,
+        seedance25_edit_auto_retry_state="queued",
+        seedance25_edit_auto_retry_provider_task_id=new_task_id,
+        requested_duration_before_auto_retry=(
+            request_data.get("duration")
+            if request_data.get("duration") is not None
+            else row_data.get("duration")
+        ),
+        requested_aspect_ratio_before_auto_retry=(
+            request_data.get("aspect_ratio")
+            or row_data.get("aspect_ratio")
+        ),
+        duration=-1,
+        aspect_ratio="adaptive",
+        v_duration=-1,
+        v_ratio="adaptive",
+        provider_task_id=new_task_id,
+        last_auto_retry_from_task_id=task_id,
+    )
+    retry_data["task_id_aliases"] = _seedance25_task_aliases(
+        request_data,
+        task_id,
+        new_task_id,
+    )
+    retry_json = json.dumps(retry_data, ensure_ascii=False, separators=(",", ":"))
+
+    async with db_backend.connect() as db:
+        cursor = await db.execute(
+            """
+            UPDATE generation_tasks
+            SET task_id = ?,
+                duration = -1,
+                aspect_ratio = 'adaptive',
+                request_data = ?,
+                status = 'pending',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE task_id = ? AND status = 'pending' AND request_data = ?
+            """,
+            (new_task_id, retry_json, task_id, claimed_json),
+        )
+        await db.commit()
+    if int(getattr(cursor, "rowcount", 0) or 0) != 1:
+        logger.critical(
+            "Seedance 2.5 edit fallback could not attach provider task: "
+            "old_task_id=%s new_task_id=%s",
+            task_id,
+            new_task_id,
+        )
+        await _release_seedance25_edit_retry_claim(
+            task_id,
+            claimed_json,
+            claimed_data,
+            error="database compare-and-swap failed after provider task creation",
+            orphan_task_id=new_task_id,
+        )
+        return False
+
+    logger.warning(
+        "Seedance 2.5 auto-retried provider-classified edit: "
+        "old_task_id=%s new_task_id=%s duration=-1 ratio=adaptive",
+        task_id,
+        new_task_id,
+    )
+    return True
+
+
+def _seedance25_failure_text(
+    task_id: str,
+    *,
+    code: int | str | None,
+    fail_msg: str,
+    request_data: dict[str, Any],
+) -> str:
+    if _is_seedance25_copyright_failure(code, fail_msg):
+        reason = (
+            "KIE/ByteDance отклонил один из исходных материалов из-за "
+            "ограничений авторских прав. Попробуйте другой референс или исходник."
+        )
+    else:
+        reason = str(fail_msg or "ошибка провайдера").strip()[:600]
+
+    error_text = str(fail_msg or "").lower()
+    editing_hint = ""
+    if all(part in error_text for part in ("video editing", "duration", "must be -1")):
+        editing_hint = (
+            "\n\nПровайдер определил задачу как редактирование видео. "
+            "Выберите режим «Редактировать видео» и одно исходное видео 4–30 секунд; "
+            "длительность и формат кадра сохраняются из исходника. "
+            "Этот режим пока доступен администратору."
+        )
+
+    if request_data.get("admin_free"):
+        billing = "Списаний не было."
+    elif request_data.get("refund_claimed"):
+        billing = "🍌 Списание возвращено автоматически."
+    else:
+        billing = "🍌 Если списание прошло, возврат будет выполнен автоматически."
+
+    return (
+        "❌ <b>Seedance 2.5 не завершилась</b>\n"
+        f"ID: <code>{html.escape(task_id)}</code>\n"
+        f"Причина: {html.escape(reason)}{editing_hint}\n\n"
+        f"{billing}"
+    )
 
 
 async def _load_task_row(task_id: str):
@@ -717,20 +1222,135 @@ async def _load_task_row(task_id: str):
 
 async def _store_task_result(task_id: str, video_url: str | None, urls: list[str], *, success: bool) -> None:
     async with db_backend.connect() as db:
-        await db.execute(
+        db.row_factory = db_backend.Row
+        cursor = await db.execute(
             """
             UPDATE generation_tasks
-            SET result_url = ?, result_urls = ?, status = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE task_id = ?
+            SET result_url = ?,
+                result_urls = ?,
+                status = ?,
+                completed_at = CASE WHEN ? = 'completed' THEN CURRENT_TIMESTAMP ELSE completed_at END,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE task_id = ? AND status IN ('pending', 'processing')
+            RETURNING request_data
             """,
             (
                 video_url,
                 json.dumps(urls, ensure_ascii=False),
                 "completed" if success else "failed",
+                "completed" if success else "failed",
                 task_id,
             ),
         )
+        claimed = await cursor.fetchone()
+        if claimed and success:
+            # The result and recovery marker commit together while the row is
+            # locked. Legacy completed rows without markers are not replayed.
+            try:
+                metadata = json.loads(claimed["request_data"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                metadata = {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            metadata["delivery_status"] = "result_ready"
+            await db.execute(
+                "UPDATE generation_tasks SET request_data = ? WHERE task_id = ?",
+                (json.dumps(metadata, ensure_ascii=False), task_id),
+            )
         await db.commit()
+
+
+async def _mark_seedance25_delivery(
+    task_id: str,
+    status: str,
+    *,
+    error: str | None = None,
+) -> None:
+    from bot.database import mark_task_delivery_status
+
+    await mark_task_delivery_status(task_id, status, error=error)
+
+
+def _stored_result_urls(row) -> list[str]:
+    raw = dict(row).get("result_urls")
+    if isinstance(raw, list):
+        urls = [str(item).strip() for item in raw if str(item).strip()]
+    else:
+        try:
+            parsed = json.loads(raw or "[]")
+        except (TypeError, json.JSONDecodeError):
+            parsed = []
+        urls = [str(item).strip() for item in parsed if str(item).strip()] if isinstance(parsed, list) else []
+    result_url = str(row["result_url"] or "").strip()
+    if result_url and result_url not in urls:
+        urls.insert(0, result_url)
+    return urls
+
+
+async def _claim_seedance25_delivery(task_id: str) -> bool:
+    from bot.database import claim_task_delivery
+
+    return await claim_task_delivery(task_id, lease_seconds=SEEDANCE25_DELIVERY_TIMEOUT_SECONDS + 60)
+
+
+async def _retry_seedance25_delivery(
+    app: web.Application,
+    row,
+    request_data: dict[str, Any],
+) -> bool:
+    task_id = str(row["task_id"] or "").strip()
+    if not await _claim_seedance25_delivery(task_id):
+        return False
+
+    telegram_id = int(row["telegram_id"])
+    urls = _stored_result_urls(row)
+    video_url, last_frame_url = _classify_results(urls, request_data)
+    if not video_url:
+        await _mark_seedance25_delivery(
+            task_id,
+            "pending",
+            error="completed Seedance 2.5 task has no stored video URL",
+        )
+        return False
+
+    try:
+        delivered = await asyncio.wait_for(_send_seedance25_results(
+            app,
+            telegram_id,
+            task_id,
+            video_url,
+            last_frame_url if request_data.get("return_last_frame") else None,
+            request_data,
+        ), timeout=SEEDANCE25_DELIVERY_TIMEOUT_SECONDS)
+    except Exception as exc:
+        reason = terminal_telegram_delivery_reason(exc)
+        if reason:
+            logger.info(
+                "Telegram delivery unavailable: event=seedance25_result reason=%s task_id=%s telegram_id=%s",
+                reason,
+                task_id,
+                telegram_id,
+            )
+            await _mark_seedance25_delivery(
+                task_id,
+                "unavailable",
+                error=reason,
+            )
+            return True
+        logger.exception("Seedance 2.5 delivery attempt crashed for task %s", task_id)
+        await _mark_seedance25_delivery(task_id, "pending", error=str(exc))
+        return False
+
+    if delivered:
+        await _mark_seedance25_delivery(task_id, "delivered")
+        return True
+
+    await _mark_seedance25_delivery(
+        task_id,
+        "pending",
+        error="Telegram/CDN delivery failed; reconciliation scheduled",
+    )
+    return False
 
 
 async def _process_seedance25_payload(app: web.Application, payload: dict[str, Any]) -> bool:
@@ -742,8 +1362,6 @@ async def _process_seedance25_payload(app: web.Application, payload: dict[str, A
     row = await _load_task_row(task_id)
     if not row or str(row["model"] or "") != MODEL_KEY:
         return False
-    if str(row["status"] or "").lower() in {"completed", "failed"}:
-        return True
 
     try:
         request_data = json.loads(row["request_data"] or "{}")
@@ -751,24 +1369,64 @@ async def _process_seedance25_payload(app: web.Application, payload: dict[str, A
         request_data = {}
     request_data.setdefault("duration", row["duration"])
 
+    row_status = str(row["status"] or "").lower()
+    if row_status == "failed":
+        return True
+    if row_status == "completed":
+        delivery_status = str(request_data.get("delivery_status") or "").lower()
+        if not delivery_status or delivery_status in TERMINAL_TASK_DELIVERY_STATUSES:
+            return True
+        await _retry_seedance25_delivery(app, row, request_data)
+        return True
+
     state = str((data or {}).get("state") or payload.get("state") or "").lower()
-    code = int(payload.get("code") or 200)
+    try:
+        code = int(payload.get("code") or (data or {}).get("failCode") or 200)
+    except (TypeError, ValueError):
+        code = 200
+    fail_code = (data or {}).get("failCode") or code
     fail_msg = str((data or {}).get("failMsg") or payload.get("msg") or "")
     telegram_id = int(row["telegram_id"])
 
-    if state in {"fail", "failed", "error"} or code in {501, 500, 422, 402, 429, 455, 505}:
+    failure_codes = {"400", "501", "500", "422", "402", "429", "455", "505"}
+    if (
+        state in {"fail", "failed", "error"}
+        or str(code) in failure_codes
+        or str(fail_code) in failure_codes
+    ):
+        if not payload.get("_seedance25_edit_retry_checked"):
+            try:
+                if await _auto_retry_seedance25_video_editing(task_id, fail_msg):
+                    return True
+            except Exception:
+                logger.exception(
+                    "Seedance 2.5 edit fallback preflight failed: task_id=%s",
+                    task_id,
+                )
+                return False
         await _store_task_result(task_id, None, [], success=False)
         try:
             await app["bot"].send_message(
                 telegram_id,
-                "❌ <b>Seedance 2.5 не завершилась</b>\n"
-                f"ID: <code>{task_id}</code>\n"
-                f"Причина: <code>{fail_msg[:600] or 'provider error'}</code>\n\n"
-                "Admin preview — списаний не было.",
+                _seedance25_failure_text(
+                    task_id,
+                    code=fail_code,
+                    fail_msg=fail_msg,
+                    request_data=request_data,
+                ),
                 parse_mode="HTML",
             )
-        except Exception:
-            logger.exception("Seedance 2.5 failure notification failed")
+        except Exception as exc:
+            reason = terminal_telegram_delivery_reason(exc)
+            if reason:
+                logger.info(
+                    "Telegram delivery unavailable: event=seedance25_failure reason=%s task_id=%s telegram_id=%s",
+                    reason,
+                    task_id,
+                    telegram_id,
+                )
+            else:
+                logger.exception("Seedance 2.5 failure notification failed")
         return True
 
     if state not in {"success", "completed", "succeeded", "finished"}:
@@ -777,36 +1435,41 @@ async def _process_seedance25_payload(app: web.Application, payload: dict[str, A
     urls = _extract_result_urls(payload)
     if not urls:
         return False
-    video_url, last_frame_url = _classify_results(urls, request_data)
+    video_url, _last_frame_url = _classify_results(urls, request_data)
     if not video_url:
         return False
 
     await _store_task_result(task_id, video_url, urls, success=True)
-    await _send_seedance25_results(
-        app,
-        telegram_id,
-        task_id,
-        video_url,
-        last_frame_url if request_data.get("return_last_frame") else None,
-        request_data,
-    )
+    refreshed = await _load_task_row(task_id)
+    if not refreshed:
+        return False
+    try:
+        refreshed_request = json.loads(refreshed["request_data"] or "{}")
+    except (TypeError, json.JSONDecodeError):
+        refreshed_request = dict(request_data)
+    refreshed_request.setdefault("duration", refreshed["duration"])
+    await _retry_seedance25_delivery(app, refreshed, refreshed_request)
     return True
 
 
+@serialize_kie_callback
 async def seedance25_webhook(request: web.Request) -> web.Response:
     try:
         payload = await request.json()
     except Exception:
         return web.Response(status=200)
 
-    if not kie_market_service.verify_webhook_signature(payload, request.headers):
-        logger.warning("Rejected Seedance 2.5 webhook with invalid signature")
-        return web.Response(status=401)
+    from bot.services.kie_webhook_verification import canonical_kie_callback
+
+    payload, verification_status = await canonical_kie_callback(payload)
+    if payload is None:
+        return web.Response(status=verification_status)
 
     try:
         await _process_seedance25_payload(request.app, payload)
     except Exception:
         logger.exception("Seedance 2.5 dedicated webhook failed")
+        return web.Response(status=503)
     return web.Response(status=200)
 
 
@@ -814,15 +1477,41 @@ async def _seedance25_reconcile_loop(app: web.Application) -> None:
     await asyncio.sleep(15)
     while True:
         try:
+            if db_backend.is_postgres():
+                recent_completed_expr = (
+                    f"COALESCE(completed_at, created_at) >= CURRENT_TIMESTAMP - INTERVAL '{SEEDANCE25_DELIVERY_RETRY_DAYS} days'"
+                )
+                delivery_state_expr = (
+                    "CASE WHEN json_valid(request_data) "
+                    "THEN request_data::jsonb ->> 'delivery_status' ELSE NULL END"
+                )
+            else:
+                recent_completed_expr = (
+                    f"COALESCE(completed_at, created_at) >= datetime(CURRENT_TIMESTAMP, '-{SEEDANCE25_DELIVERY_RETRY_DAYS} days')"
+                )
+                delivery_state_expr = (
+                    "CASE WHEN json_valid(request_data) "
+                    "THEN json_extract(request_data, '$.delivery_status') ELSE NULL END"
+                )
             async with db_backend.connect() as db:
                 db.row_factory = db_backend.Row
                 cursor = await db.execute(
-                    """
-                    SELECT task_id
+                    f"""
+                    SELECT task_id, status, request_data
                     FROM generation_tasks
-                    WHERE model = ? AND status = 'pending'
-                    ORDER BY created_at ASC
-                    LIMIT 25
+                    WHERE model = ?
+                      AND (
+                            status = 'pending'
+                            OR (
+                                status = 'completed'
+                                AND result_url IS NOT NULL
+                                AND {recent_completed_expr}
+                                AND {delivery_state_expr}
+                                    IN ('result_ready', 'pending', 'delivering', 'link_sent')
+                            )
+                      )
+                    ORDER BY COALESCE(updated_at, created_at) ASC, id ASC
+                    LIMIT 50
                     """,
                     (MODEL_KEY,),
                 )
@@ -831,6 +1520,25 @@ async def _seedance25_reconcile_loop(app: web.Application) -> None:
                 task_id = str(row["task_id"] or "")
                 if not task_id:
                     continue
+                status = str(row["status"] or "").lower()
+                if status == "completed":
+                    try:
+                        request_data = json.loads(row["request_data"] or "{}")
+                    except (TypeError, json.JSONDecodeError):
+                        request_data = {}
+                    if str(request_data.get("delivery_status") or "").lower() not in {
+                        "result_ready",
+                        "pending",
+                        "delivering",
+                        "link_sent",
+                    }:
+                        continue
+                    await _process_seedance25_payload(
+                        app,
+                        {"code": 200, "data": {"taskId": task_id}},
+                    )
+                    continue
+
                 task_data = await kie_market_service.get_task_status(task_id)
                 if not task_data:
                     continue

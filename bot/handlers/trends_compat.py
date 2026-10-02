@@ -313,7 +313,15 @@ def _install_miniapp_trends(miniapp_module: Any) -> None:
                 body.get("start_param_fallback"),
             )
             trends = await database.get_prompts_by_tag(TREND_TAG, limit)
-            return miniapp_module.web.json_response({"ok": True, "prompts": trends})
+            from bot import trend_api
+
+            priced_trends = [
+                trend_api.with_trend_repeat_cost(trend)
+                for trend in trends
+            ]
+            return miniapp_module.web.json_response(
+                {"ok": True, "prompts": priced_trends}
+            )
         except Exception as error:
             return miniapp_module._miniapp_error_response(
                 error,
@@ -337,7 +345,14 @@ def _install_miniapp_trends(miniapp_module: Any) -> None:
                     {"ok": False, "error": "Тренд не найден"},
                     status=404,
                 )
-            return miniapp_module.web.json_response({"ok": True, "prompt": prompt})
+            from bot import trend_api
+
+            return miniapp_module.web.json_response(
+                {
+                    "ok": True,
+                    "prompt": trend_api.with_trend_repeat_cost(prompt),
+                }
+            )
         except Exception as error:
             return miniapp_module._miniapp_error_response(
                 error,
@@ -410,7 +425,16 @@ def _install_miniapp_trends(miniapp_module: Any) -> None:
             )
             if prompt:
                 prompt = await database.approve_prompt(prompt["id"])
-            return miniapp_module.web.json_response({"ok": True, "prompt": prompt})
+            from bot import trend_api
+
+            priced_prompt = (
+                trend_api.with_trend_repeat_cost(prompt)
+                if prompt
+                else None
+            )
+            return miniapp_module.web.json_response(
+                {"ok": True, "prompt": priced_prompt}
+            )
         except Exception as error:
             return miniapp_module._miniapp_error_response(
                 error,

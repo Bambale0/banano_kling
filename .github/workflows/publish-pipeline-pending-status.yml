@@ -59,4 +59,4 @@ jobs:
           }
 
           publish_pending ci.yml tanya/ci 'Tanya CI is running'
-          publish_pending deploy-production.yml tanya/deploy 'Tanya production deployment is waiting for CI'
+          publish_pending deploy-production-reliable.yml tanya/deploy 'Tanya production deployment is waiting for CI'

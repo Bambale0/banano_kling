@@ -19,16 +19,14 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from PIL import Image
+from PIL import Image, ImageOps
 
 from bot import db as db_backend
 from bot.config import config
-from bot.quality_pricing import QUALITY_COSTS, SEEDREAM_5_PRO_QUALITY_COSTS
 from bot.database import (
-    add_credits,
-    add_generation_history,
-    add_generation_task,
     _merge_task_id_aliases,
+    add_credits,
+    add_generation_task,
     check_can_afford,
     complete_video_task,
     credit_feed_prompt_repeat,
@@ -71,8 +69,9 @@ from bot.keyboards import (
     get_video_type_label,
 )
 from bot.miniapp_links import feed_bot_link, feed_link
-from bot.services.gemini_service import gemini_service
+from bot.quality_pricing import QUALITY_COSTS, SEEDREAM_5_PRO_QUALITY_COSTS
 from bot.services.gemini_omni_service import gemini_omni_service
+from bot.services.gemini_service import gemini_service
 from bot.services.gpt_image_service import gpt_image_service
 from bot.services.grok_service import grok_service
 from bot.services.media_input_utils import (
@@ -83,8 +82,8 @@ from bot.services.media_input_utils import (
 from bot.services.nano_banana_2_service import nano_banana_2_service
 from bot.services.nano_banana_pro_service import nano_banana_pro_service
 from bot.services.preset_manager import preset_manager
-from bot.services.seedream_service import seedream_service
 from bot.services.reference_storage_service import save_reference_file
+from bot.services.seedream_service import seedream_service
 from bot.services.veo_service import veo_service
 from bot.services.wan27_service import wan27_service
 from bot.states import GenerationStates
@@ -1630,6 +1629,21 @@ _GROK_V15_VIDEO_RATIOS = {
     "2:3",
 }
 _GROK_VIDEO_MODELS = {"grok_imagine", "grok_imagine_v15"}
+
+
+async def _normalize_grok_video_state(state: FSMContext) -> dict:
+    """Repair legacy text-mode sessions without clearing their media/settings."""
+    data = await state.get_data()
+    model = data.get("v_model")
+    previous_type = data.get("v_type")
+    if model in _GROK_VIDEO_MODELS and previous_type != "imgtxt":
+        data = await state.update_data(v_type="imgtxt")
+        logger.info(
+            "Grok video input mode normalized: model=%s previous_type=%s type=imgtxt",
+            model,
+            previous_type,
+        )
+    return data
 
 
 def _grok_video_ratio_from_image_task(task, model: str = "grok_imagine") -> str:
@@ -3408,7 +3422,7 @@ async def _show_video_creation_screen(
     Показывает единый экран создания видео с параметрами и промптом.
     Используется после загрузки референсов или при пропуске.
     """
-    data = await state.get_data()
+    data = await _normalize_grok_video_state(state)
 
     # Получаем текущие параметры
     current_v_type = data.get("v_type", "text")
@@ -4491,6 +4505,17 @@ async def _update_reference_upload_message(bot: Bot, chat_id: int, message_id: i
     )
 
 
+def _saved_reference_preview_bytes(local_path: str) -> bytes:
+    """Build a Telegram-sized preview without modifying the reusable original."""
+    with Image.open(local_path) as image:
+        preview = ImageOps.exif_transpose(image).convert("RGB")
+        preview.thumbnail((2048, 2048), Image.Resampling.LANCZOS)
+        buffer = io.BytesIO()
+        preview.save(buffer, format="JPEG", quality=85, optimize=True)
+        preview.close()
+    return buffer.getvalue()
+
+
 async def _send_saved_reference_preview(
     target_message: types.Message,
     state: FSMContext,
@@ -4511,7 +4536,7 @@ async def _send_saved_reference_preview(
     caption = (
         f"📚 <b>Сохранённый реф</b>\n"
         f"• {safe_index + 1} из {len(refs)}\n"
-        f"• Файл: <code>{filename[:64]}</code>\n"
+        f"• Файл: <code>{html.escape(filename[:64])}</code>\n"
         f"• Сохранён: <code>{created_at}</code>\n"
         f"• Статус: <code>{'уже добавлен в текущую сессию' if already_selected else 'готов к использованию'}</code>"
     )
@@ -4540,14 +4565,25 @@ async def _send_saved_reference_preview(
             )
             return None
 
-        with open(local_path, "rb") as f:
-            image_bytes = f.read()
-        return await target_message.answer_photo(
-            photo=types.BufferedInputFile(image_bytes, filename=filename),
-            caption=caption,
-            parse_mode="HTML",
-            reply_markup=reply_markup,
-        )
+        try:
+            image_bytes = await asyncio.to_thread(_saved_reference_preview_bytes, local_path)
+            return await target_message.answer_photo(
+                photo=types.BufferedInputFile(image_bytes, filename="reference-preview.jpg"),
+                caption=caption,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+            )
+        except (OSError, ValueError, Image.DecompressionBombError, TelegramBadRequest) as exc:
+            logger.warning(
+                "Saved reference preview unavailable: reference_id=%s reason=%s",
+                ref.id,
+                type(exc).__name__,
+            )
+            return await target_message.answer(
+                caption,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+            )
 
 
 @router.callback_query(F.data == "savedref_noop")
@@ -4768,6 +4804,13 @@ async def handle_video_media_skip(callback: types.CallbackQuery, state: FSMConte
         )
         return
     if current_v_type == "video":
+        existing_video_refs = _clean_unique_urls(data.get("v_reference_videos", []))
+        if current_model == "seedance_2" and existing_video_refs:
+            await callback.answer(
+                "Видео-референс уже загружен. Нажмите «К настройкам», чтобы использовать его.",
+                show_alert=True,
+            )
+            return
         await state.update_data(v_reference_videos=[])
     await state.update_data(video_flow_step="configure")
     await _show_video_creation_screen(callback, state)
@@ -6552,7 +6595,7 @@ async def process_photo_for_video_prompt_state(
     Обрабатывает фото для imgtxt видео в состоянии waiting_for_video_prompt.
     Первое фото - v_image_url (старт кадр), остальные - reference_images (до 8 рефов, total 9).
     """
-    data = await state.get_data()
+    data = await _normalize_grok_video_state(state)
     v_type = data.get("v_type")
     current_model = data.get("v_model", "v3_std")
     is_gemini_omni_video = current_model == "gemini_omni_video"
@@ -6865,7 +6908,12 @@ async def handle_video_prompt_text(message: types.Message, state: FSMContext):
     data = await state.get_data()
     generation_type = data.get("generation_type", "")
     v_type = data.get("v_type", "")
-    is_gemini_omni_video = data.get("v_model") == "gemini_omni_video"
+    current_model = data.get("v_model")
+    is_gemini_omni_video = current_model == "gemini_omni_video"
+    has_seedance_photo_reference = (
+        current_model == "seedance_2"
+        and bool(_clean_unique_urls(data.get("reference_images", [])))
+    )
     if (
         generation_type == "video"
         and v_type in ("imgtxt", "avatar", "video", "character")
@@ -6875,8 +6923,12 @@ async def handle_video_prompt_text(message: types.Message, state: FSMContext):
             v_type == "imgtxt"
             and not data.get("v_image_url")
             and not is_gemini_omni_video
+            and not has_seedance_photo_reference
         ):
-            await message.answer("Сначала отправьте стартовое фото.")
+            if current_model == "seedance_2":
+                await message.answer("Сначала отправьте хотя бы одно фото-референс.")
+            else:
+                await message.answer("Сначала отправьте стартовое фото.")
             return
         if v_type == "avatar":
             if not data.get("v_image_url"):
@@ -7279,9 +7331,25 @@ async def run_no_preset_video_from_message(
     message: types.Message, state: FSMContext, prompt: str
 ):
     """Запускает видео генерацию без пресета (новый UX с v_type, v_model и т.д.)"""
-    data = await state.get_data()
+    data = await _normalize_grok_video_state(state)
     v_type = data.get("v_type", "text")
     v_model = data.get("v_model", "v3_std")
+    if v_model in _GROK_VIDEO_MODELS and not str(data.get("v_image_url") or "").strip():
+        # Validate before user lookup/debit: a missing frame is not a paid attempt.
+        await state.update_data(user_prompt=prompt)
+        await state.set_state(GenerationStates.waiting_for_video_prompt)
+        logger.info(
+            "Video input rejected: user_id=%s model=%s reason=missing_start_image phase=precharge",
+            message.from_user.id,
+            v_model,
+        )
+        await message.answer(
+            "Сначала отправьте стартовое фото.\n"
+            "Параметры и описание сохранены. После загрузки фото повторите текстовый запрос.",
+            reply_markup=get_main_menu_button_keyboard(),
+        )
+        return
+
     max_video_refs = get_max_video_references(v_model)
     raw_video_urls = _clean_unique_urls(data.get("v_reference_videos", []))
 
@@ -7540,16 +7608,6 @@ async def run_no_preset_video_from_message(
             )
 
         elif v_model == "grok_imagine":
-            if not image_url:
-                await message.answer(
-                    "❌ Grok Imagine требует стартовое изображение (фото+текст режим)."
-                )
-                if not is_admin:
-                    await add_credits(message.from_user.id, cost)
-                await processing_msg.delete()
-                await state.clear()
-                return
-
             result = await grok_service.generate_image_to_video(
                 image_urls=[image_url] + image_refs[:6],
                 prompt=prompt,
@@ -7562,16 +7620,6 @@ async def run_no_preset_video_from_message(
                 ),
             )
         elif v_model == "grok_imagine_v15":
-            if not image_url:
-                await message.answer(
-                    "❌ Grok Imagine 1.5 требует стартовое изображение."
-                )
-                if not is_admin:
-                    await add_credits(message.from_user.id, cost)
-                await processing_msg.delete()
-                await state.clear()
-                return
-
             result = await grok_service.generate_image_to_video_v15(
                 image_urls=[image_url],
                 prompt=prompt,

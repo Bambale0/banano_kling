@@ -77,18 +77,20 @@ If a reference cannot be represented as a public HTTP(S) URL, RenderGrid is trea
 
 ## Result compatibility
 
-RenderGrid is asynchronous internally, but the adapter polls the creation and downloads the first output image. It returns the same shape already handled by the bot:
+RenderGrid is handled asynchronously. The adapter submits a creation and returns the accepted provider task without waiting for the image:
 
 ```python
 {
-    "image_bytes": b"...",
-    "mime_type": "image/png",
+    "task_id": "creation-id",
+    "provider_task_id": "creation-id",
     "provider": "rendergrid",
     "provider_model": "nano-banana-2",
-    "creation_id": "...",
-    "result_url": "https://...",
-    "retryable": False,
+    "creation_id": "creation-id",
 }
 ```
 
-Therefore no handler, keyboard or UI changes are required.
+The normal provider poller later resolves a completed creation to its provider `result_url`. Before Telegram delivery / DB completion, RenderGrid image results are mirrored to durable local storage and the local URL becomes canonical in `generation_tasks.result_url`.
+
+Do not reintroduce synchronous waiting into the RenderGrid adapter to solve expired historical media. Historical `cdn.rendergrid.io` rows are repaired by `scripts/backfill_rendergrid_image_results.py`; unresolved external URLs use the provider-specific 24-hour availability policy and become `media_unavailable` after expiry.
+
+Handlers, keyboards and UI continue to consume the existing generation-task contract; history/task-detail/feed/profile resolve media through the shared availability policy.

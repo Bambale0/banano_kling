@@ -73,6 +73,7 @@ from bot.database import (
     reject_prompt,
     remove_from_feed,
     remove_from_library,
+    resolve_public_generation_result_urls,
     save_user_channel_url,
     set_feed_blurred,
     share_to_feed,
@@ -156,6 +157,7 @@ from bot.utils.user_facing_errors import make_user_friendly_generation_error
 from bot.utils.validators import detect_explicit_prompt_policy_violation
 from bot.video_reference_policy import (
     apply_video_reference_cost,
+    get_max_audio_references,
     get_max_video_image_references,
     get_max_video_references,
     normalize_reference_urls,
@@ -1322,22 +1324,13 @@ async def _get_repeat_source_card(
     return await get_profile_generation_card(
         gen_id,
         viewer_user_id=viewer_user_id,
+        include_unavailable=True,
     )
 
 
 def _public_result_urls(payload: dict[str, Any]) -> list[str]:
-    urls = payload.get("result_urls") or []
-    if isinstance(urls, str):
-        try:
-            urls = json.loads(urls)
-        except (TypeError, json.JSONDecodeError):
-            urls = []
-    normalized = [str(item) for item in urls if str(item).strip()]
-    result_url = payload.get("result_url")
-    if result_url and result_url not in normalized:
-        normalized.insert(0, result_url)
-    missing = set(missing_local_upload_sources(normalized))
-    return [url for url in normalized if url not in missing]
+    """Use the canonical generation media resolver shared with feed/profile."""
+    return resolve_public_generation_result_urls(payload)
 
 
 def _payload_bool(value: Any, default: bool = False) -> bool:
@@ -1513,7 +1506,8 @@ async def _fetch_recent_tasks(telegram_id: int, limit: int = 8) -> list[dict[str
             SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                    result_url, result_urls, is_public_feed, is_prompt_library,
                source_feed_gen_id, feed_prompt_visible, feed_references_visible,
-               feed_blurred, is_profile_visible, is_adult_content, created_at
+               feed_blurred, is_profile_visible, is_adult_content,
+               completed_at, updated_at, created_at
             FROM generation_tasks
             WHERE telegram_id = ?
             ORDER BY created_at DESC
@@ -1544,6 +1538,7 @@ async def _fetch_recent_tasks(telegram_id: int, limit: int = 8) -> list[dict[str
                 "status": row["status"] or "pending",
                 "result_url": result_urls[0] if result_urls else None,
                 "result_urls": result_urls,
+                "media_unavailable": bool((row["status"] or "") == "completed" and not result_urls),
                 "created_at": row["created_at"],
                 "prompt_preview": "" if _task_prompt_hidden(row) else _task_preview(row["prompt"]),
                 "prompt_hidden": _task_prompt_hidden(row),
@@ -1573,7 +1568,7 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
             SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                    result_url, result_urls, is_public_feed, is_prompt_library,
                    source_feed_gen_id, feed_prompt_visible, feed_references_visible,
-                   feed_blurred, is_profile_visible, is_adult_content, created_at, request_data
+                   feed_blurred, is_profile_visible, is_adult_content, completed_at, updated_at, created_at, request_data
             FROM generation_tasks
             WHERE telegram_id = ? AND task_id = ?
             LIMIT 1
@@ -1587,7 +1582,7 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
                 SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                        result_url, result_urls, is_public_feed, is_prompt_library,
                        source_feed_gen_id, feed_prompt_visible, feed_references_visible,
-                       feed_blurred, is_profile_visible, is_adult_content, created_at, request_data
+                       feed_blurred, is_profile_visible, is_adult_content, completed_at, updated_at, created_at, request_data
                 FROM generation_tasks
                 WHERE telegram_id = ? AND id = ?
                 LIMIT 1
@@ -1601,7 +1596,7 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
                 SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                        result_url, result_urls, is_public_feed, is_prompt_library,
                        source_feed_gen_id, feed_prompt_visible, feed_references_visible,
-                       feed_blurred, is_profile_visible, is_adult_content, created_at, request_data
+                       feed_blurred, is_profile_visible, is_adult_content, completed_at, updated_at, created_at, request_data
                 FROM generation_tasks
                 WHERE telegram_id = ?
                   AND EXISTS (
@@ -1650,6 +1645,7 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
         "status": row["status"] or "pending",
         "result_url": result_urls[0] if result_urls else None,
         "result_urls": result_urls,
+        "media_unavailable": bool((row["status"] or "") == "completed" and not result_urls),
         "is_public_feed": bool(row["is_public_feed"]),
         "is_prompt_library": bool(row["is_prompt_library"]),
         "feed_prompt_visible": bool(row["feed_prompt_visible"]) if "feed_prompt_visible" in row.keys() else False,
@@ -1701,6 +1697,7 @@ async def _launch_video_generation_task(
     image_references: list[str],
     video_references: list[str],
     audio_url: str | None = None,
+    audio_references: list[str] | None = None,
     grok_mode: str = "normal",
     grok_resolution: str = "480p",
     veo_generation_type: str = "TEXT_2_VIDEO",
@@ -1723,6 +1720,9 @@ async def _launch_video_generation_task(
     source_feed_gen_id: int | None = None,
     parent_generation_id: int | None = None,
     action_type: str | None = None,
+    prompt_source_id: int | None = None,
+    reference_contract: str | None = None,
+    fixed_asset_counts: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     from bot.services.gemini_omni_service import gemini_omni_service
     from bot.services.grok_service import grok_service
@@ -1744,6 +1744,15 @@ async def _launch_video_generation_task(
             video_references,
             max_count=get_max_video_references(model),
         )
+    audio_references = normalize_reference_urls(
+        audio_references or [],
+        max_count=get_max_audio_references(model),
+    )
+    normalized_reference_contract = str(reference_contract or "").strip() or None
+    normalized_fixed_asset_counts = {
+        kind: max(0, int((fixed_asset_counts or {}).get(kind, 0) or 0))
+        for kind in ("image", "video", "audio")
+    }
 
     if model == "gemini_omni_video":
         omni_images = _collect_gemini_omni_images(image_url, image_references)
@@ -1841,6 +1850,7 @@ async def _launch_video_generation_task(
                 if (image_references or seedance_reference_videos)
                 else None,
                 reference_video_urls=seedance_reference_videos or None,
+                reference_audio_urls=audio_references or None,
                 callBackUrl=(config.kie_notification_url if config.WEBHOOK_HOST else None),
             )
         else:
@@ -1857,6 +1867,7 @@ async def _launch_video_generation_task(
                 generate_audio=True,
                 reference_image_urls=seedance_reference_images or None,
                 reference_video_urls=seedance_reference_videos or None,
+                reference_audio_urls=audio_references or None,
                 callBackUrl=(config.kie_notification_url if config.WEBHOOK_HOST else None),
             )
     elif model.startswith("veo3"):
@@ -1941,7 +1952,14 @@ async def _launch_video_generation_task(
                 "v_image_url": image_url,
                 "reference_images": image_references,
                 "v_reference_videos": video_references,
+                "v_reference_audio": audio_references,
                 "audio_url": audio_url,
+                "prompt_source_id": prompt_source_id,
+                "trend_id": prompt_source_id if action_type == "trend" else None,
+
+                "reference_contract": normalized_reference_contract,
+
+                "fixed_asset_counts": normalized_fixed_asset_counts,
                 "grok_mode": grok_mode,
                 "grok_resolution": (
                     grok_resolution if model == "grok_imagine_v15" else ""
@@ -2008,7 +2026,15 @@ async def _launch_video_generation_task(
                 "asset_id": asset_id,
                 "v_image_url": image_url,
                 "reference_images": image_references,
+                "v_reference_videos": video_references,
+                "v_reference_audio": audio_references,
                 "audio_url": audio_url,
+                "prompt_source_id": prompt_source_id,
+                "trend_id": prompt_source_id if action_type == "trend" else None,
+
+                "reference_contract": normalized_reference_contract,
+
+                "fixed_asset_counts": normalized_fixed_asset_counts,
                 "omni_base_voice": omni_base_voice,
                 "omni_voice_name": omni_voice_name,
                 "omni_voice_description": omni_voice_description,
@@ -2051,7 +2077,14 @@ async def _launch_video_generation_task(
             "v_image_url": image_url,
             "reference_images": image_references,
             "v_reference_videos": video_references,
+            "v_reference_audio": audio_references,
             "audio_url": audio_url,
+            "prompt_source_id": prompt_source_id,
+            "trend_id": prompt_source_id if action_type == "trend" else None,
+
+            "reference_contract": normalized_reference_contract,
+
+            "fixed_asset_counts": normalized_fixed_asset_counts,
             "grok_mode": grok_mode,
             "grok_resolution": (
                 grok_resolution if model == "grok_imagine_v15" else ""
@@ -2615,6 +2648,81 @@ async def miniapp_asset(request: web.Request) -> web.Response:
     response.headers["Expires"] = "0"
     return response
 
+def _miniapp_client_log_url(value: Any, limit: int) -> str:
+    # Launch URLs may carry signed Telegram init data in either component.
+    # Keep the asset/page location, never its query or fragment.
+    location = str(value or "").split("?", 1)[0].split("#", 1)[0]
+    return _miniapp_client_log_text(location, limit)
+
+
+def _miniapp_client_log_text(value: Any, limit: int) -> str:
+    def safe_url(match: re.Match) -> str:
+        try:
+            parsed = urlparse(match.group())
+            return parsed._replace(
+                netloc=parsed.netloc.rsplit("@", 1)[-1], query="", fragment=""
+            ).geturl()
+        except ValueError:
+            return "[invalid-url]"
+
+    text = str(value or "")
+    text = re.sub(r"https?://[^\s<>\"')]+", safe_url, text, flags=re.IGNORECASE)
+    text = re.sub(
+        r"((?:https?://|/)[^\s<>\"'?#]*)[?#][^\s<>\"')]*",
+        r"\1",
+        text,
+    )
+    # Telegram embeds bot credentials in the URL path rather than a query.
+    text = re.sub(r"\bbot\d+:[A-Za-z0-9_-]+", "bot[redacted]", text)
+    # Cover common header, JSON and key=value representations from error text.
+    text = re.sub(
+        r'''(["']?\b(?:init_data|tgWebAppData|hash|token|signature|authorization|'''
+        r'''api[_-]?key|bot[_-]?token|access[_-]?token)\b["']?\s*[:=]\s*)'''
+        r'''(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|'''
+        r'''(?:Bearer|Basic)\s+[^\s,;&}\]]+|[^\s,;&}\]]+)''',
+        r"\1[redacted]",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return text[:limit]
+
+
+_MINIAPP_CLIENT_DEBUG_EVENTS = frozenset(
+    {
+        "upload-area-pointer-down",
+        "upload-file-selected",
+        "upload-input-change-empty",
+        "upload-input-click",
+        "upload-json-fallback-start",
+        "upload-json-preferred-start",
+        "upload-start",
+    }
+)
+_MINIAPP_CLIENT_RESPONSE_EVENTS = frozenset(
+    {"upload-response", "upload-json-fallback-response"}
+)
+
+
+def _miniapp_client_log_level(compact: dict[str, Any]) -> str:
+    """Classify sanitized telemetry without treating normal uploads as incidents."""
+
+    event = str(compact.get("event") or "").strip().lower()
+    status = _miniapp_client_log_number(compact.get("status")) or 0
+    if event in _MINIAPP_CLIENT_DEBUG_EVENTS:
+        return "debug"
+    if event in _MINIAPP_CLIENT_RESPONSE_EVENTS and 200 <= status < 400:
+        return "info"
+    return "warning"
+
+
+def _miniapp_client_log_number(value: Any, default: int | None = 0) -> int | None:
+    try:
+        return int(value) if value is not None else default
+    except (TypeError, ValueError, OverflowError):
+        # Never put untrusted conversion errors (which include the value) in logs.
+        return default
+
+
 async def miniapp_client_log(request: web.Request) -> web.Response:
     try:
         try:
@@ -2625,27 +2733,28 @@ async def miniapp_client_log(request: web.Request) -> web.Response:
         if not isinstance(payload, dict):
             payload = {"payload": str(payload)[:2000]}
         compact = {
-            "event": str(payload.get("event") or "")[:80],
-            "href": str(payload.get("href") or "")[:500],
-            "search": str(payload.get("search") or "")[:500],
-            "hash_len": int(payload.get("hash_len") or len(str(payload.get("hash") or ""))),
+            "event": _miniapp_client_log_text(payload.get("event"), 80),
+            "href": _miniapp_client_log_url(payload.get("href"), 500),
+            "hash_len": _miniapp_client_log_number(payload.get("hash_len") or len(str(payload.get("hash") or ""))),
             "has_tg": bool(payload.get("has_tg")),
             "has_webapp": bool(payload.get("has_webapp")),
-            "init_data_len": int(payload.get("init_data_len") or 0),
-            "message": str(payload.get("message") or "")[:500],
-            "source": str(payload.get("source") or "")[:200],
-            "file_kind": str(payload.get("file_kind") or "")[:80],
-            "file_name": str(payload.get("file_name") or "")[:200],
-            "file_type": str(payload.get("file_type") or "")[:120],
-            "file_size": int(payload.get("file_size") or 0),
-            "duration_ms": int(payload.get("duration_ms") or 0),
-            "status": int(payload.get("status") or 0),
-            "lineno": payload.get("lineno"),
-            "colno": payload.get("colno"),
-            "user_agent": request.headers.get("User-Agent", "")[:300],
-            "ip": request.headers.get("X-Forwarded-For", request.remote or "")[:80],
+            "init_data_len": _miniapp_client_log_number(payload.get("init_data_len")),
+            "message": _miniapp_client_log_text(payload.get("message"), 500),
+            "source": _miniapp_client_log_url(payload.get("source"), 200),
+            "file_kind": _miniapp_client_log_text(payload.get("file_kind"), 80),
+            "file_name": _miniapp_client_log_text(payload.get("file_name"), 200),
+            "file_type": _miniapp_client_log_text(payload.get("file_type"), 120),
+            "file_size": _miniapp_client_log_number(payload.get("file_size")),
+            "duration_ms": _miniapp_client_log_number(payload.get("duration_ms")),
+            "status": _miniapp_client_log_number(payload.get("status")),
+            "lineno": _miniapp_client_log_number(payload.get("lineno"), None),
+            "colno": _miniapp_client_log_number(payload.get("colno"), None),
+            "user_agent": _miniapp_client_log_text(request.headers.get("User-Agent"), 300),
+            "ip": _miniapp_client_log_text(request.headers.get("X-Forwarded-For", request.remote or ""), 80),
         }
-        logger.warning("Mini App client log: %s", compact)
+        getattr(logger, _miniapp_client_log_level(compact))(
+            "Mini App client log: %s", compact
+        )
     except Exception:
         logger.exception("Mini App client log failed")
     return web.json_response({"ok": True})
@@ -3160,6 +3269,7 @@ async def miniapp_photo_to_prompt(request: web.Request) -> web.Response:
 
         try:
             result = await photo_prompt_service.analyze_photo(
+                telegram_user_id=telegram_id,
                 image_url=image_url,
                 preserve=preserve,
                 goal=goal,
@@ -3291,7 +3401,11 @@ async def miniapp_prompt_link(request: web.Request) -> web.Response:
         if not (prompt["status"] == "approved" and prompt["is_public"]) and prompt["author_id"] != user.id:
             return web.json_response({"ok": False, "error": "Промпт недоступен"}, status=403)
         me = await request.app["bot"].get_me()
-        link = build_prompt_link(me.username, prompt_id) if me.username else config.mini_app_url
+        link = (
+            build_prompt_link(me.username, prompt_id, user.referral_code)
+            if me.username
+            else config.mini_app_url
+        )
         return web.json_response({"ok": True, "prompt": prompt, "link": link})
     except Exception as e:
         return _miniapp_error_response(e, log_message="Mini App prompt link failed")
@@ -3909,11 +4023,13 @@ async def _get_feed_remix_source_card(
         return await get_profile_generation_card(
             gen_id,
             viewer_user_id=viewer_user_id,
+            include_unavailable=True,
         )
 
     source = await get_feed_generation_card(
         gen_id,
         viewer_user_id=viewer_user_id,
+        include_unavailable=True,
     )
     if source:
         return source
@@ -3921,6 +4037,7 @@ async def _get_feed_remix_source_card(
     return await get_profile_generation_card(
         gen_id,
         viewer_user_id=viewer_user_id,
+        include_unavailable=True,
     )
 
 
@@ -4992,7 +5109,8 @@ async def miniapp_media(request: web.Request) -> web.StreamResponse:
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
         cursor = await db.execute(
-            "SELECT result_url, result_urls FROM generation_tasks WHERE task_id = ? LIMIT 1",
+            """SELECT result_url, result_urls, completed_at, updated_at, created_at
+               FROM generation_tasks WHERE task_id = ? LIMIT 1""",
             (task_id,),
         )
         row = await cursor.fetchone()

@@ -14,10 +14,13 @@ import {
 import { useApp } from '@/lib/app-context'
 import { uploadFile } from '@/lib/api'
 import {
+  createTrendRunRequestId,
   runPinterestRepeatTrend,
-  runTrend,
+  runTrend as runTrendApi,
+  TrendRunRequestError,
 } from '@/lib/trend-api'
 import { mediaAspectRatio, normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
+import { formatTrendRepeatCost } from '@/lib/trend-price'
 import type { PromptItem, TrendUserField, UploadedFile } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
@@ -66,6 +69,20 @@ function isTrendUserFieldValueValid(field: TrendUserField, value: string): boole
   return normalized.length <= maxLength
 }
 
+function trendRunFingerprint(
+  trendId: number,
+  referenceUrls: string[],
+  userValues: Record<string, string>,
+): string {
+  return JSON.stringify({
+    trendId,
+    referenceUrls,
+    userValues: Object.fromEntries(
+      Object.entries(userValues).sort(([left], [right]) => left.localeCompare(right)),
+    ),
+  })
+}
+
 export function TrendRunnerDialog({
   trend,
   open,
@@ -80,6 +97,7 @@ export function TrendRunnerDialog({
   } = useApp()
   const inputRefs = useRef<Array<HTMLInputElement | null>>([])
   const previewRefs = useRef<string[]>([])
+  const trendRunRequestRef = useRef<{ fingerprint: string; id: string } | null>(null)
   const [phase, setPhase] = useState<RunnerPhase>('idle')
   const [error, setError] = useState<string | null>(null)
   const [previewUrls, setPreviewUrls] = useState<Array<string | null>>([])
@@ -93,6 +111,7 @@ export function TrendRunnerDialog({
   const [trendPreviewFailed, setTrendPreviewFailed] = useState(false)
 
   const pinterestRepeat = isPinterestRepeatItem(trend)
+  const repeatCost = formatTrendRepeatCost(trend?.repeat_cost)
   const busy = phase === 'uploading' || phase === 'generating'
   const maxPinterestAngles = pinterestModel === 'seedream_5_pro' ? 3 : MAX_PINTEREST_ANGLES
   const isVideoTrend = trend?.generation_settings?.kind === 'video'
@@ -143,6 +162,7 @@ export function TrendRunnerDialog({
   }, [])
 
   const resetRunner = useCallback(() => {
+    trendRunRequestRef.current = null
     setPhase('idle')
     setError(null)
     setHeightCm('')
@@ -348,14 +368,33 @@ export function TrendRunnerDialog({
     if (!trend || busy || !readyToGenerate) return
     setError(null)
     setPhase('generating')
+    const referenceUrls = pinterestRepeat
+      ? [
+          uploadedReferences[0]?.url || '',
+          uploadedReferences[1]?.url || '',
+          ...identityAngles.map((reference) => reference.url),
+        ].filter(Boolean)
+      : completedReferences.map((reference) => reference.url)
+
+    let clientRequestId: string | undefined
+    if (!pinterestRepeat) {
+      const fingerprint = trendRunFingerprint(trend.id, referenceUrls, userValues)
+      if (trendRunRequestRef.current?.fingerprint !== fingerprint) {
+        trendRunRequestRef.current = {
+          fingerprint,
+          id: createTrendRunRequestId(),
+        }
+      }
+      clientRequestId = trendRunRequestRef.current.id
+    }
+
+    const runTrend = (
+      trendId: number,
+      refs: string[],
+      values: Record<string, string>,
+    ) => runTrendApi(trendId, refs, values, clientRequestId)
+
     try {
-      const referenceUrls = pinterestRepeat
-        ? [
-            uploadedReferences[0]?.url || '',
-            uploadedReferences[1]?.url || '',
-            ...identityAngles.map((reference) => reference.url),
-          ].filter(Boolean)
-        : completedReferences.map((reference) => reference.url)
       const result = pinterestRepeat
         ? await runPinterestRepeatTrend(trend.id, referenceUrls, {
             heightCm: parseOptionalNumber(heightCm) as number,
@@ -363,12 +402,19 @@ export function TrendRunnerDialog({
             model: pinterestModel,
           })
         : await runTrend(trend.id, referenceUrls, userValues)
+      trendRunRequestRef.current = null
       addTask(result.task)
       setCredits(result.credits)
       if (result.detail) setTaskDetail(result.detail)
       selectTask(result.task)
       onOpenChange(false)
     } catch (cause) {
+      if (
+        !pinterestRepeat &&
+        (!(cause instanceof TrendRunRequestError) || !cause.retrySameRequest)
+      ) {
+        trendRunRequestRef.current = null
+      }
       setPhase('error')
       setError(cause instanceof Error ? cause.message : 'Не удалось запустить тренд')
     }
@@ -445,6 +491,12 @@ export function TrendRunnerDialog({
         <DialogTitle className="pr-8 font-serif text-lg">
           {pinterestRepeat ? 'Повтори фото с Pinterest' : trend?.title || 'Повторить тренд'}
         </DialogTitle>
+
+        {trend?.generation_settings?.automatic_hidden_references ? (
+          <div className="rounded-xl border border-gold/25 bg-gold/5 p-3 text-sm leading-relaxed text-muted-foreground">
+            Загрузите только своё лицо. Одежда, украшения, предметы и остальные закреплённые референсы применятся автоматически и не показываются в приложении.
+          </div>
+        ) : null}
 
         {trend?.preview_url ? (
           isVideoTrend ? (
@@ -810,9 +862,9 @@ export function TrendRunnerDialog({
             ? 'Генерирую…'
             : pinterestRepeat
               ? 'Создать →'
-              : exactSlots
-                ? `Сгенерировать · ${completedReferences.length}/${exactReferenceCount}`
-                : `Сгенерировать · ${completedReferences.length} фото`}
+              : repeatCost
+                ? 'Сгенерировать · ' + repeatCost + '🍌'
+                : 'Сгенерировать'}
         </Button>
 
         {pinterestRepeat && !readyToGenerate ? (

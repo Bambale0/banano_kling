@@ -185,6 +185,7 @@ async def analyze_voice_prompt_v2(message: Message, state: FSMContext) -> None:
         )
         charge = await reserve_photo_prompt_charge(message.from_user.id)
         result = await prompt_analyzer_v2_service.analyze_prompt(
+            telegram_user_id=message.from_user.id,
             audio_bytes=audio_bytes,
             audio_format=audio_format,
         )
@@ -305,6 +306,7 @@ async def analyze_photo_prompt_v2(message: Message, state: FSMContext) -> None:
         charge = await reserve_photo_prompt_charge(message.from_user.id)
         caption = (message.caption or "").strip()
         result = await prompt_analyzer_v2_service.analyze_prompt(
+            telegram_user_id=message.from_user.id,
             text=caption,
             image_url=image_url,
             audio_bytes=audio_bytes,
