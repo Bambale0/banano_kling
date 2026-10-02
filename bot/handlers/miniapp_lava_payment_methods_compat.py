@@ -46,56 +46,52 @@ def _decorate_text_payment_options(
     markup: InlineKeyboardMarkup,
     package_id: str,
 ) -> InlineKeyboardMarkup:
-    """Expose Tribute as the CIS/foreign fallback in the flat Telegram payment keyboard."""
+    """Keep Robokassa first, KASSA reserve next, then Tribute before Lava."""
 
     tribute_url = TRIBUTE_PACKAGE_LINKS.get(str(package_id))
     if not tribute_url:
         return markup
 
-    reserve_label = "СНГ И ЗАРУБЕЖНЫЕ"
-    star_labels = {"⭐ Stars", "⭐ Telegram Stars"}
+    reserve_label = "🌍 Зарубежная / СНГ"
     rows: list[list[InlineKeyboardButton]] = []
-    stars_rows: list[list[InlineKeyboardButton]] = []
 
     for row in markup.inline_keyboard:
         if any(button.text == reserve_label for button in row):
             continue
-        if len(row) == 1 and row[0].text in star_labels:
-            stars_rows.append(list(row))
-            continue
         rows.append(list(row))
 
     reserve_row = [InlineKeyboardButton(text=reserve_label, url=tribute_url)]
-    sbp_index = next(
-        (
-            index
-            for index, row in enumerate(rows)
-            if any(button.text == "⚡ СБП" for button in row)
-        ),
-        -1,
-    )
-    if sbp_index >= 0:
-        rows.insert(sbp_index + 1, reserve_row)
+    kassa_callbacks = {
+        f"freekassa_card_{package_id}",
+        f"freekassa_sbp_{package_id}",
+        f"buy_freekassa_{package_id}",
+    }
+    kassa_indexes = [
+        index
+        for index, row in enumerate(rows)
+        if any(button.callback_data in kassa_callbacks for button in row)
+    ]
+    if kassa_indexes:
+        rows.insert(max(kassa_indexes) + 1, reserve_row)
     else:
-        rows.insert(0, reserve_row)
-
-    back_index = next(
-        (
+        robokassa_indexes = [
             index
             for index, row in enumerate(rows)
-            if any(button.callback_data == "menu_topup" for button in row)
-        ),
-        len(rows),
-    )
-    for star_row in stars_rows:
-        rows.insert(back_index, star_row)
-        back_index += 1
+            if any(
+                str(button.callback_data or "").startswith("buy_robokassa_")
+                for button in row
+            )
+        ]
+        if robokassa_indexes:
+            rows.insert(max(robokassa_indexes) + 1, reserve_row)
+        else:
+            rows.insert(0, reserve_row)
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _install_freekassa_reserve_button() -> None:
-    """Expose KASSA and Reserve 2 in the actual text-bot payment keyboard."""
+    """Expose KASSA as primary and keep Tribute/Lava reserve options."""
 
     from bot.handlers import lava_checkout as lava_checkout_module
 
@@ -214,7 +210,7 @@ async def _create_freekassa_miniapp_checkout(
 
 
 def install_miniapp_lava_payment_methods() -> None:
-    """Handle explicit Lava actions and keep FreeKassa as a real reserve."""
+    """Handle KASSA as primary while keeping explicit Lava reserve actions."""
 
     import bot.miniapp as miniapp_module
 

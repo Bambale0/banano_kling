@@ -16,12 +16,22 @@ from typing import Any, Dict, Optional
 import aiohttp
 
 from bot.config import config
+from bot.services.gemini_photo_instructions import gemini_photo_system_prompt
+from bot.services.kie_gemini31_service import (
+    KieGemini31Service,
+    media_analysis_provider,
+    trace_analysis_provider,
+    trace_media_analysis,
+)
+from bot.services.openrouter_qwen38_service import openrouter_qwen38_service
 
 logger = logging.getLogger(__name__)
 
-GPT55_MAX_ATTEMPTS = 3
+GPT55_MODEL = "gpt-5-5"
+GPT55_MAX_ATTEMPTS = 1
 GPT55_RETRYABLE_BODY_CODES = {429}
 CLAUDE_MAX_ATTEMPTS = 2
+GEMINI_FALLBACK_ENDPOINT = "/gemini-2.5-flash/v1/chat/completions"
 
 SYSTEM_PROMPT = """
 You are a senior prompt engineer for AI image generation.
@@ -181,8 +191,41 @@ class PromptAnalyzerV2Service:
         model: Optional[str] = None,
     ) -> None:
         self.api_key = api_key or config.KIE_AI_API_KEY
-        self.model = model or config.PHOTO_PROMPT_MODEL
+        self.model = model or GPT55_MODEL
         self.base_url = config.KIE_BASE_URL
+
+    async def _analyze_with_qwen38(
+        self,
+        *,
+        image_url: str,
+        user_instruction: str,
+    ) -> Dict[str, Any]:
+        if not openrouter_qwen38_service.enabled:
+            raise RuntimeError("OPENROUTER_API_KEY is not configured")
+
+        if image_url:
+            vision_model = str(config.QWEN38_VISION_MODEL or "").strip()
+            raw_output = await openrouter_qwen38_service.analyze_image(
+                image_url=image_url,
+                system_prompt=SYSTEM_PROMPT,
+                user_instruction=user_instruction,
+                model=vision_model,
+            )
+        else:
+            raw_output = await openrouter_qwen38_service.analyze_text(
+                system_prompt=SYSTEM_PROMPT,
+                user_instruction=user_instruction,
+            )
+
+        provider = (
+            str(config.QWEN38_VISION_MODEL or "").strip()
+            if image_url
+            else openrouter_qwen38_service.model
+        )
+        return _build_result(
+            _parse_json_object(raw_output),
+            provider=provider,
+        )
 
     async def _analyze_with_gpt55(
         self,
@@ -272,6 +315,78 @@ class PromptAnalyzerV2Service:
             provider="gpt-5.5",
         )
 
+    async def _analyze_with_gemini_fallback(
+        self,
+        *,
+        image_url: str,
+        user_instruction: str,
+        headers: dict[str, str],
+    ) -> dict[str, Any]:
+        content: list[dict[str, Any]] = [
+            {
+                "type": "text",
+                "text": SYSTEM_PROMPT + "\n\n" + user_instruction,
+            }
+        ]
+        if image_url:
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": image_url},
+                }
+            )
+
+        payload = {
+            "stream": False,
+            "messages": [{"role": "user", "content": content}],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "photo_prompt_pair",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "prompt_ru": {"type": "string"},
+                            "prompt_en": {"type": "string"},
+                        },
+                        "required": ["prompt_ru", "prompt_en"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+        }
+        timeout = aiohttp.ClientTimeout(total=90)
+        async with (
+            aiohttp.ClientSession(timeout=timeout) as session,
+            session.post(
+                f"{self.base_url}{GEMINI_FALLBACK_ENDPOINT}",
+                json=payload,
+                headers=headers,
+            ) as response,
+        ):
+            text = await response.text()
+            if response.status >= 400:
+                raise RuntimeError(
+                    f"Gemini fallback недоступен. Код: {response.status}"
+                )
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError("Gemini fallback вернул некорректный JSON") from exc
+
+        choices = data.get("choices") or []
+        if not choices:
+            raise RuntimeError("Gemini fallback вернул пустой ответ")
+        message = (choices[0] or {}).get("message") or {}
+        raw_output = message.get("content")
+        if not isinstance(raw_output, str) or not raw_output.strip():
+            raise RuntimeError("Gemini fallback вернул пустой текст")
+        return _build_result(
+            _parse_json_object(raw_output),
+            provider="gemini-2.5-flash-fallback",
+        )
+
     async def _analyze_with_claude(
         self,
         *,
@@ -326,6 +441,7 @@ class PromptAnalyzerV2Service:
             raise RuntimeError("Claude Haiku вернул пустой ответ")
         return _build_result(_parse_json_object(raw_output), provider="claude-haiku-4-5")
 
+    @trace_media_analysis
     async def analyze_prompt(
         self,
         *,
@@ -333,10 +449,8 @@ class PromptAnalyzerV2Service:
         image_url: str = "",
         audio_bytes: bytes | None = None,
         audio_format: str = "",
+        telegram_user_id: int | None = None,
     ) -> Dict[str, Any]:
-        if not self.api_key:
-            raise RuntimeError("KIE_AI_API_KEY is not configured")
-
         text = (text or "").strip()
         image_url = (image_url or "").strip()
         has_audio = bool(audio_bytes)
@@ -365,12 +479,36 @@ class PromptAnalyzerV2Service:
             + "\n\n".join(input_notes)
             + "\n\nReturn only prompt_ru and prompt_en according to the JSON schema."
         )
+        if not has_audio:
+            provider = await media_analysis_provider()
+            if provider == "qwen38":
+                trace_analysis_provider("qwen38")
+                return await self._analyze_with_qwen38(
+                    image_url=image_url,
+                    user_instruction=user_instruction,
+                )
+
+            if image_url:
+                raw = await KieGemini31Service(
+                    api_key=self.api_key, base_url=self.base_url
+                ).analyze_media(
+                    media_url=image_url,
+                    media_kind="image",
+                    user_instruction=user_instruction,
+                    system_prompt=await gemini_photo_system_prompt("v2"),
+                    content_validator=_parse_json_object,
+                )
+                return _build_result(
+                    _parse_json_object(raw), provider=KieGemini31Service.MODEL
+                )
+
+        if not self.api_key:
+            raise RuntimeError("KIE_AI_API_KEY is not configured for voice input")
+
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-
-        gpt_error: Optional[Exception] = None
         try:
             return await self._analyze_with_gpt55(
                 image_url=image_url,
@@ -380,30 +518,7 @@ class PromptAnalyzerV2Service:
                 audio_format=audio_format,
             )
         except Exception as exc:
-            gpt_error = exc
-            if has_audio:
-                raise RuntimeError(f"Не удалось разобрать голосовой запрос: {exc}") from exc
-
-        try:
-            result = await self._analyze_with_claude(
-                image_url=image_url,
-                user_instruction=user_instruction,
-                headers=headers,
-            )
-            logger.info(
-                "GPT-5.5 prompt analyzer failed (%s); Claude Haiku fallback succeeded",
-                gpt_error,
-            )
-            return result
-        except Exception as fallback_exc:
-            logger.error(
-                "Prompt analyzer fallback failed after GPT-5.5 failure (%s): %s",
-                gpt_error,
-                fallback_exc,
-            )
-            raise RuntimeError(
-                f"Не удалось составить промпт через fallback: {fallback_exc}"
-            ) from fallback_exc
+            raise RuntimeError(f"Не удалось разобрать голосовой запрос: {exc}") from exc
 
 
 prompt_analyzer_v2_service = PromptAnalyzerV2Service()

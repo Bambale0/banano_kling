@@ -5,11 +5,16 @@ import os
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
+from math import isfinite
 from typing import Any, Iterable, List, Optional
 from urllib.parse import urlparse
 
 from bot import db as db_backend
+from bot.services.delivery_state import (
+    TASK_DELIVERY_STATUSES,
+    TERMINAL_TASK_DELIVERY_STATUSES,
+)
 
 logger = logging.getLogger(__name__)
 _LOGGED_REFERRAL_CYCLES: set[tuple[int, int, int]] = set()
@@ -44,7 +49,13 @@ FEED_PUBLIC_CLEANUP_INTERVAL_SECONDS = 999999999
 FEED_EPHEMERAL_RESULT_TTL_HOURS = int(os.getenv("FEED_EPHEMERAL_RESULT_TTL_HOURS", "72"))
 FEED_EPHEMERAL_RESULT_HOSTS = {
     host.strip().lower().lstrip(".")
-    for host in os.getenv("FEED_EPHEMERAL_RESULT_HOSTS", "tempfile.aiquickdraw.com").split(",")
+    for host in os.getenv("FEED_EPHEMERAL_RESULT_HOSTS", "tempfile.aiquickdraw.com,cdn.rendergrid.io").split(",")
+    if host.strip()
+}
+RENDERGRID_RESULT_TTL_HOURS = int(os.getenv("RENDERGRID_RESULT_TTL_HOURS", "24"))
+RENDERGRID_RESULT_HOSTS = {
+    host.strip().lower().lstrip(".")
+    for host in os.getenv("RENDERGRID_RESULT_HOSTS", "cdn.rendergrid.io").split(",")
     if host.strip()
 }
 FEED_PUBLIC_TYPES = {"image", "video"}
@@ -503,6 +514,52 @@ async def _ensure_prompt_feed_schema(db: db_backend.Connection) -> None:
     except db_backend.OperationalError:
         pass
     await db.execute("""
+        CREATE TABLE IF NOT EXISTS trend_reference_assets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            prompt_id INTEGER NOT NULL,
+            media_type TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            source_position INTEGER NOT NULL,
+            role TEXT NOT NULL DEFAULT 'fixed_hidden',
+            file_url TEXT NOT NULL,
+            file_hash TEXT NOT NULL,
+            mime_type TEXT,
+            size_bytes INTEGER NOT NULL DEFAULT 0,
+            label TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP,
+            FOREIGN KEY (prompt_id) REFERENCES user_prompts (id) ON DELETE CASCADE,
+            UNIQUE(prompt_id, media_type, position),
+            UNIQUE(prompt_id, media_type, file_hash)
+        )
+    """)
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_trend_reference_assets_prompt_type_position "
+        "ON trend_reference_assets(prompt_id, media_type, position)"
+    )
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS trend_run_claims (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            trend_id INTEGER NOT NULL,
+            client_request_id TEXT NOT NULL,
+            request_hash TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'processing',
+            task_id TEXT,
+            http_status INTEGER,
+            response_json TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+            FOREIGN KEY (trend_id) REFERENCES user_prompts (id) ON DELETE CASCADE,
+            UNIQUE(user_id, trend_id, client_request_id)
+        )
+    """)
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_trend_run_claims_status_updated "
+        "ON trend_run_claims(status, updated_at)"
+    )
+    await db.execute("""
         CREATE TABLE IF NOT EXISTS prompt_likes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
@@ -578,6 +635,9 @@ async def _ensure_prompt_feed_schema(db: db_backend.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_generation_tasks_user_created ON generation_tasks(user_id, created_at DESC)"
     )
     await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_generation_tasks_telegram_created ON generation_tasks(telegram_id, created_at DESC)"
+    )
+    await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_generation_tasks_feed ON generation_tasks(is_public_feed, status, created_at DESC)"
     )
     await db.execute(
@@ -605,7 +665,24 @@ async def _ensure_prompt_feed_schema(db: db_backend.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_user_prompts_source_generation ON user_prompts(source_generation_id)"
     )
     await db.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_user_prompts_seedance_trend_source_unique
+        ON user_prompts(source_generation_id)
+        WHERE source_generation_id IS NOT NULL
+          AND status != 'deactivated'
+          AND tags LIKE '%"seedance-private-references"%'
+        """
+    )
+    await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_prompt_repeat_events_author ON prompt_repeat_events(author_id, created_at DESC)"
+    )
+    await db.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_prompt_repeat_events_repeat_task_id
+        ON prompt_repeat_events(repeat_task_id)
+        WHERE repeat_task_id IS NOT NULL
+          AND TRIM(repeat_task_id) <> ''
+        """
     )
 
 
@@ -2810,6 +2887,7 @@ async def get_admin_partner_details(
 
         return {
             "telegram_id": user.telegram_id,
+            "created_at": user.created_at.strftime("%d.%m.%Y %H:%M"),
             "credits": Credits(user.credits),
             "referral_code": user.referral_code or "",
             "is_partner": bool(user.partner_agreed_at),
@@ -3941,6 +4019,7 @@ async def _prune_saved_references_for_user_id(
     user_id: int,
     kind: str,
     keep_latest: int = SAVED_REFERENCES_MAX_PER_KIND,
+    keep_reference_id: int | None = None,
 ) -> tuple[int, list[str]]:
     safe_keep_latest = max(1, int(keep_latest or SAVED_REFERENCES_MAX_PER_KIND))
     db.row_factory = db_backend.Row
@@ -3949,10 +4028,11 @@ async def _prune_saved_references_for_user_id(
         SELECT id, file_url
         FROM saved_references
         WHERE user_id = ? AND kind = ?
-        ORDER BY COALESCE(last_used_at, created_at) DESC, id DESC
+        ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END,
+                 COALESCE(last_used_at, created_at) DESC, id DESC
         LIMIT -1 OFFSET ?
         """,
-        (user_id, kind, safe_keep_latest),
+        (user_id, kind, keep_reference_id, safe_keep_latest),
     )
     stale_rows = await cursor.fetchall()
     if not stale_rows:
@@ -4117,11 +4197,16 @@ async def cleanup_saved_references(
 async def cleanup_orphaned_reference_files(max_age_seconds: int = 24 * 3600) -> dict[str, int]:
     base_dir = os.path.join("static", "uploads", "refs")
     if not os.path.exists(base_dir):
-        return {"removed_count": 0, "removed_bytes": 0}
+        return {
+            "removed_count": 0,
+            "removed_bytes": 0,
+            "protected_generation_paths": 0,
+        }
 
     from bot.services.media_input_utils import resolve_local_upload_path
 
     referenced_paths: set[str] = set()
+    generation_snapshot_urls: set[str] = set()
     async with db_backend.connect(DATABASE_PATH) as db:
         cursor = await db.execute(
             "SELECT file_url FROM saved_references WHERE file_url IS NOT NULL AND TRIM(file_url) != ''"
@@ -4138,16 +4223,100 @@ async def cleanup_orphaned_reference_files(max_age_seconds: int = 24 * 3600) -> 
         )
         rows.extend(await prompt_cursor.fetchall())
 
+        if db_backend.is_postgres():
+            snapshot_query = """
+                SELECT DISTINCT ref_url
+                FROM (
+                    SELECT ref #>> '{}' AS ref_url
+                    FROM generation_tasks gt
+                    CROSS JOIN LATERAL jsonb_path_query(
+                        CASE
+                            WHEN json_valid(gt.request_data) THEN gt.request_data::jsonb
+                            ELSE '{}'::jsonb
+                        END,
+                        '$.source_reference_images[*]'
+                    ) AS ref
+                    WHERE gt.status = 'completed'
+                      AND gt.type IN ('image', 'video')
+
+                    UNION
+
+                    SELECT ref #>> '{}' AS ref_url
+                    FROM generation_tasks gt
+                    CROSS JOIN LATERAL jsonb_path_query(
+                        CASE
+                            WHEN json_valid(gt.request_data) THEN gt.request_data::jsonb
+                            ELSE '{}'::jsonb
+                        END,
+                        '$.reference_images[*]'
+                    ) AS ref
+                    WHERE gt.status = 'completed'
+                      AND gt.type IN ('image', 'video')
+                ) refs
+                WHERE ref_url LIKE '%uploads/refs/%'
+            """
+        else:
+            snapshot_query = """
+                SELECT DISTINCT CAST(ref.value AS TEXT) AS ref_url
+                FROM generation_tasks gt,
+                     json_each(
+                         CASE
+                             WHEN json_valid(gt.request_data) THEN gt.request_data
+                             ELSE '{}'
+                         END,
+                         '$.source_reference_images'
+                     ) AS ref
+                WHERE gt.status = 'completed'
+                  AND gt.type IN ('image', 'video')
+                  AND CAST(ref.value AS TEXT) LIKE '%uploads/refs/%'
+
+                UNION
+
+                SELECT DISTINCT CAST(ref.value AS TEXT) AS ref_url
+                FROM generation_tasks gt,
+                     json_each(
+                         CASE
+                             WHEN json_valid(gt.request_data) THEN gt.request_data
+                             ELSE '{}'
+                         END,
+                         '$.reference_images'
+                     ) AS ref
+                WHERE gt.status = 'completed'
+                  AND gt.type IN ('image', 'video')
+                  AND CAST(ref.value AS TEXT) LIKE '%uploads/refs/%'
+            """
+        snapshot_cursor = await db.execute(snapshot_query)
+        snapshot_rows = await snapshot_cursor.fetchall()
+
+    def protect_url(source: str) -> bool:
+        local_path = resolve_local_upload_path(str(source or ""))
+        if not local_path:
+            return False
+        abs_path = os.path.abspath(local_path)
+        referenced_paths.add(abs_path)
+        base_path, _ext = os.path.splitext(abs_path)
+        for sibling_ext in (".png", ".jpg", ".jpeg", ".webp"):
+            sibling_path = base_path + sibling_ext
+            if os.path.exists(sibling_path):
+                referenced_paths.add(os.path.abspath(sibling_path))
+        return True
+
     for row in rows:
-        local_path = resolve_local_upload_path(str(row[0] or ""))
-        if local_path:
-            abs_path = os.path.abspath(local_path)
-            referenced_paths.add(abs_path)
-            base_path, _ext = os.path.splitext(abs_path)
-            for sibling_ext in (".png", ".jpg", ".jpeg", ".webp"):
-                sibling_path = base_path + sibling_ext
-                if os.path.exists(sibling_path):
-                    referenced_paths.add(os.path.abspath(sibling_path))
+        protect_url(str(row[0] or ""))
+
+    for row in snapshot_rows:
+        source = str(row[0] or "").strip()
+        if source:
+            generation_snapshot_urls.add(source)
+
+    protected_generation_paths = sum(
+        1 for source in generation_snapshot_urls if protect_url(source)
+    )
+    if protected_generation_paths:
+        logger.info(
+            "Orphan reference cleanup protected %s generation snapshot refs",
+            protected_generation_paths,
+        )
 
     now = time.time()
     removed_count = 0
@@ -4177,11 +4346,15 @@ async def cleanup_orphaned_reference_files(max_age_seconds: int = 24 * 3600) -> 
             except OSError:
                 pass
 
-    return {"removed_count": removed_count, "removed_bytes": removed_bytes}
+    return {
+        "removed_count": removed_count,
+        "removed_bytes": removed_bytes,
+        "protected_generation_paths": protected_generation_paths,
+    }
 
 
 async def cleanup_stale_local_generation_tasks(
-    max_age_seconds: int = 60 * 60,
+    max_age_seconds: int = 15 * 60,
 ) -> dict[str, float | int]:
     """Fail old local image tasks that never received a provider task id."""
     from bot.config import config
@@ -4319,6 +4492,10 @@ async def save_user_reference(
     user = await get_or_create_user(telegram_id)
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
+        if db_backend.is_postgres():
+            # Serialize this user's uploads through commit so separate READ
+            # COMMITTED snapshots cannot each retain more than the limit.
+            await db.execute("SELECT id FROM users WHERE id = ? FOR UPDATE", (user.id,))
         await db.execute(
             """
             INSERT INTO saved_references (user_id, kind, file_url, file_hash, original_filename, content_type, source)
@@ -4333,14 +4510,8 @@ async def save_user_reference(
             """,
             (user.id, kind, file_url, file_hash, original_filename, content_type, source),
         )
-        await db.commit()
-        await _prune_saved_references_for_user_id(
-            db,
-            user_id=user.id,
-            kind=kind,
-            keep_latest=SAVED_REFERENCES_MAX_PER_KIND,
-        )
-        await db.commit()
+        # Read our upsert before releasing the transaction. Another upload can
+        # otherwise prune this row between commit and the read below.
         cursor = await db.execute(
             """
             SELECT *
@@ -4351,8 +4522,17 @@ async def save_user_reference(
             (user.id, kind, file_hash),
         )
         row = await cursor.fetchone()
+        reference = _saved_reference_from_row(row)
+        await _prune_saved_references_for_user_id(
+            db,
+            user_id=user.id,
+            kind=kind,
+            keep_latest=SAVED_REFERENCES_MAX_PER_KIND,
+            keep_reference_id=reference.id,
+        )
+        await db.commit()
     await _invalidate_saved_reference_cache(telegram_id)
-    return _saved_reference_from_row(row)
+    return reference
 
 
 async def touch_saved_references(telegram_id: int, file_urls: list[str], kind: Optional[str] = None) -> None:
@@ -5134,25 +5314,31 @@ async def _credit_feed_repeat_on_webhook_completion(task_lookup_id: str) -> None
         async with db_backend.connect(DATABASE_PATH) as db:
             db.row_factory = db_backend.Row
             cursor = await db.execute(
-                """SELECT task_id, user_id, cost, source_feed_gen_id
-                   FROM generation_tasks
-                   WHERE task_id = ?
-                      OR EXISTS (
-                          SELECT 1
-                          FROM json_each(
-                              CASE
-                                  WHEN json_valid(generation_tasks.request_data)
-                                  THEN generation_tasks.request_data
-                                  ELSE '{}'
-                              END,
-                              '$.task_id_aliases'
-                          )
-                          WHERE CAST(value AS TEXT) = ?
-                      )
-                   LIMIT 1""",
-                (task_lookup_id, task_lookup_id),
+                "SELECT task_id, user_id, cost, source_feed_gen_id FROM generation_tasks WHERE task_id = ?",
+                (task_lookup_id,),
             )
             row = await cursor.fetchone()
+            if row is None:
+                cursor = await db.execute(
+                    """SELECT task_id, user_id, cost, source_feed_gen_id
+                       FROM generation_tasks
+                       WHERE task_id = ?
+                          OR EXISTS (
+                              SELECT 1
+                              FROM json_each(
+                                  CASE
+                                      WHEN json_valid(generation_tasks.request_data)
+                                      THEN generation_tasks.request_data
+                                      ELSE '{}'
+                                  END,
+                                  '$.task_id_aliases'
+                              )
+                              WHERE CAST(value AS TEXT) = ?
+                          )
+                       LIMIT 1""",
+                    (task_lookup_id, task_lookup_id),
+                )
+                row = await cursor.fetchone()
         if not row or row["source_feed_gen_id"] is None:
             return
         credited = await credit_feed_prompt_repeat(
@@ -5174,29 +5360,134 @@ async def _credit_feed_repeat_on_webhook_completion(task_lookup_id: str) -> None
         )
 
 
+async def mark_task_delivery_status(
+    task_id: str,
+    status: str,
+    *,
+    error: str | None = None,
+) -> bool:
+    """Persist Telegram delivery outcome separately from provider completion."""
+    normalized_status = str(status or "").strip().lower()
+    if normalized_status not in TASK_DELIVERY_STATUSES:
+        raise ValueError(f"Unsupported delivery status: {status}")
+
+    task = await get_task_by_id(task_id)
+    if not task:
+        return False
+
+    request_data = _parse_json_dict(task.request_data)
+    # A link notification is intermediate work, not release of the media lease.
+    if normalized_status != "link_sent" or request_data.get("delivery_status") != "delivering":
+        request_data["delivery_status"] = normalized_status
+    if normalized_status == "link_sent":
+        request_data["delivery_link_sent"] = True
+    if normalized_status == "result_ready":
+        request_data.setdefault("result_ready_at", datetime.now(UTC).isoformat())
+    else:
+        request_data["delivery_attempts"] = int(request_data.get("delivery_attempts") or 0) + 1
+    request_data["delivery_updated_at"] = datetime.now(UTC).isoformat()
+    if error:
+        request_data["delivery_error"] = str(error)[:500]
+    else:
+        request_data.pop("delivery_error", None)
+
+    async with db_backend.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            UPDATE generation_tasks
+            SET request_data = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (json.dumps(request_data, ensure_ascii=False), int(task.id)),
+        )
+        await db.commit()
+        return int(getattr(cursor, "rowcount", 0) or 0) > 0
+
+
+async def claim_task_delivery(task_id: str, *, lease_seconds: int = 300) -> bool:
+    """Atomically claim one Telegram delivery attempt.
+
+    A short lease prevents webhook/reconcile races from sending the same result
+    twice. After a crash the lease expires and reconciliation may claim again.
+    """
+    task = await get_task_by_id(task_id)
+    if not task:
+        return False
+
+    old_json = task.request_data or "{}"
+    request_data = _parse_json_dict(old_json)
+    current_status = str(request_data.get("delivery_status") or "").strip().lower()
+    if current_status in TERMINAL_TASK_DELIVERY_STATUSES:
+        return False
+
+    now = datetime.now(UTC)
+    if current_status == "delivering":
+        claimed_at_raw = str(
+            request_data.get("delivery_claimed_at")
+            or request_data.get("delivery_updated_at")
+            or ""
+        ).strip()
+        if claimed_at_raw:
+            try:
+                claimed_at = datetime.fromisoformat(claimed_at_raw.replace("Z", "+00:00"))
+                if claimed_at.tzinfo is None:
+                    claimed_at = claimed_at.replace(tzinfo=UTC)
+                if now - claimed_at < timedelta(seconds=max(30, int(lease_seconds))):
+                    return False
+            except (TypeError, ValueError):
+                pass
+
+    request_data["delivery_status"] = "delivering"
+    request_data["delivery_attempts"] = int(request_data.get("delivery_attempts") or 0) + 1
+    request_data["delivery_claimed_at"] = now.isoformat()
+    request_data["delivery_updated_at"] = now.isoformat()
+    request_data.pop("delivery_error", None)
+    new_json = json.dumps(request_data, ensure_ascii=False)
+
+    async with db_backend.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            UPDATE generation_tasks
+            SET request_data = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND COALESCE(request_data, '{}') = ?
+            """,
+            (new_json, int(task.id), old_json),
+        )
+        await db.commit()
+        return int(getattr(cursor, "rowcount", 0) or 0) == 1
+
+
 async def complete_video_task(task_id: str, result_url: str) -> bool:
     """Отмечает задачу как выполненную"""
     lookup_value = str(task_id or "").strip()
     async with db_backend.connect(DATABASE_PATH) as db:
         final_status = "completed" if result_url else "failed"
+        # Canonical provider IDs are indexed. Only legacy aliases need JSON lookup.
         cursor = await db.execute(
-            """UPDATE generation_tasks 
+            """UPDATE generation_tasks
                SET status = ?, result_url = ?, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-               WHERE task_id = ?
-                  OR EXISTS (
-                      SELECT 1
-                      FROM json_each(
-                          CASE
-                              WHEN json_valid(generation_tasks.request_data)
-                              THEN generation_tasks.request_data
-                              ELSE '{}'
-                          END,
-                          '$.task_id_aliases'
-                      )
-                      WHERE CAST(value AS TEXT) = ?
-                  )""",
-            (final_status, result_url, lookup_value, lookup_value),
+               WHERE task_id = ?""",
+            (final_status, result_url, lookup_value),
         )
+        if int(getattr(cursor, "rowcount", 0) or 0) <= 0:
+            cursor = await db.execute(
+                """UPDATE generation_tasks
+                   SET status = ?, result_url = ?, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                   WHERE task_id = ?
+                      OR EXISTS (
+                          SELECT 1
+                          FROM json_each(
+                              CASE
+                                  WHEN json_valid(generation_tasks.request_data)
+                                  THEN generation_tasks.request_data
+                                  ELSE '{}'
+                              END,
+                              '$.task_id_aliases'
+                          )
+                          WHERE CAST(value AS TEXT) = ?
+                      )""",
+                (final_status, result_url, lookup_value, lookup_value),
+            )
         await db.commit()
         updated = int(getattr(cursor, "rowcount", 0) or 0)
         if updated <= 0:
@@ -5217,6 +5508,178 @@ async def complete_video_task(task_id: str, result_url: str) -> bool:
         return True
 
 
+def _normalize_trend_reference_assets(
+    assets: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    seen_positions: set[tuple[str, int]] = set()
+    seen_hashes: set[tuple[str, str]] = set()
+    for raw_asset in list(assets or []):
+        if not isinstance(raw_asset, dict):
+            raise TypeError("Trend reference asset must be an object")
+        media_type = str(raw_asset.get("media_type") or "").strip().lower()
+        if media_type not in {"image", "video", "audio"}:
+            raise ValueError(f"Unsupported trend reference media type: {media_type}")
+        try:
+            position = int(raw_asset.get("position"))
+            source_position = int(raw_asset.get("source_position") or position)
+            size_bytes = int(raw_asset.get("size_bytes") or 0)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Trend reference asset has invalid numeric metadata") from exc
+        if position < 1 or source_position < 1 or size_bytes < 1:
+            raise ValueError("Trend reference asset metadata is incomplete")
+        file_url = str(raw_asset.get("file_url") or "").strip()
+        file_hash = str(raw_asset.get("file_hash") or "").strip().lower()
+        if not file_url or len(file_hash) != 64:
+            raise ValueError("Trend reference asset file metadata is incomplete")
+        position_key = (media_type, position)
+        hash_key = (media_type, file_hash)
+        if position_key in seen_positions:
+            raise ValueError(f"Duplicate trend reference position: {media_type} {position}")
+        if hash_key in seen_hashes:
+            raise ValueError(f"Duplicate trend reference file: {media_type}")
+        seen_positions.add(position_key)
+        seen_hashes.add(hash_key)
+        normalized.append(
+            {
+                "media_type": media_type,
+                "position": position,
+                "source_position": source_position,
+                "role": "fixed_hidden",
+                "file_url": file_url,
+                "file_hash": file_hash,
+                "mime_type": str(raw_asset.get("mime_type") or "").strip()[:120] or None,
+                "size_bytes": size_bytes,
+                "label": str(raw_asset.get("label") or "").strip()[:80],
+            }
+        )
+    normalized.sort(key=lambda item: ({"image": 0, "video": 1, "audio": 2}[item["media_type"]], item["position"]))
+    return normalized
+
+
+async def list_trend_reference_assets(prompt_id: int) -> list[dict[str, Any]]:
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
+        cursor = await db.execute(
+            """
+            SELECT id, prompt_id, media_type, position, source_position, role,
+                   file_url, file_hash, mime_type, size_bytes, label, created_at, updated_at
+            FROM trend_reference_assets
+            WHERE prompt_id = ?
+            ORDER BY CASE media_type
+                         WHEN 'image' THEN 0
+                         WHEN 'video' THEN 1
+                         ELSE 2
+                     END, position ASC, id ASC
+            """,
+            (int(prompt_id),),
+        )
+        rows = await cursor.fetchall()
+    return [dict(row) for row in rows]
+
+
+async def reserve_trend_run_claim(
+    *,
+    user_id: int,
+    trend_id: int,
+    client_request_id: str,
+    request_hash: str,
+) -> dict[str, Any]:
+    """Atomically reserve one trend launch or return its previous response."""
+
+    normalized_key = str(client_request_id or "").strip()
+    normalized_hash = str(request_hash or "").strip().lower()
+    if not normalized_key or not normalized_hash:
+        raise ValueError("Trend run claim requires request id and hash")
+
+    async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
+        db.row_factory = db_backend.Row
+        cursor = await db.execute(
+            """
+            INSERT OR IGNORE INTO trend_run_claims (
+                user_id, trend_id, client_request_id, request_hash, status, updated_at
+            )
+            VALUES (?, ?, ?, ?, 'processing', CURRENT_TIMESTAMP)
+            """,
+            (int(user_id), int(trend_id), normalized_key, normalized_hash),
+        )
+        inserted = int(getattr(cursor, "rowcount", 0) or 0) == 1
+        if inserted:
+            await db.commit()
+            return {"claimed": True, "status": "processing"}
+
+        cursor = await db.execute(
+            """
+            SELECT id, request_hash, status, task_id, http_status, response_json,
+                   created_at, updated_at
+            FROM trend_run_claims
+            WHERE user_id = ? AND trend_id = ? AND client_request_id = ?
+            LIMIT 1
+            """,
+            (int(user_id), int(trend_id), normalized_key),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            raise RuntimeError("Trend idempotency claim disappeared")
+        if str(row["request_hash"] or "").strip().lower() != normalized_hash:
+            return {"claimed": False, "conflict": True, "status": str(row["status"] or "")}
+
+        status = str(row["status"] or "processing").strip().lower()
+        response_payload = _parse_json_dict(row["response_json"])
+        if status in {"completed", "failed"} and response_payload:
+            return {
+                "claimed": False,
+                "status": status,
+                "task_id": row["task_id"],
+                "http_status": int(row["http_status"] or (200 if status == "completed" else 500)),
+                "response": response_payload,
+            }
+
+        # Unknown in-flight state is never reclaimed automatically. A process may
+        # have reached the provider before losing its response, so retrying the
+        # same claim could create a second paid task. Reconciliation must resolve
+        # the original claim explicitly.
+        return {"claimed": False, "status": status or "processing"}
+
+
+async def complete_trend_run_claim(
+    *,
+    user_id: int,
+    trend_id: int,
+    client_request_id: str,
+    status: str,
+    http_status: int,
+    response_payload: dict[str, Any],
+    task_id: str | None = None,
+) -> bool:
+    normalized_status = str(status or "").strip().lower()
+    if normalized_status not in {"completed", "failed"}:
+        raise ValueError("Trend run claim status must be completed or failed")
+    async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
+        cursor = await db.execute(
+            """
+            UPDATE trend_run_claims
+            SET status = ?, task_id = ?, http_status = ?, response_json = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ? AND trend_id = ? AND client_request_id = ?
+              AND status = 'processing'
+            """,
+            (
+                normalized_status,
+                str(task_id or "").strip() or None,
+                int(http_status),
+                json.dumps(response_payload, ensure_ascii=False),
+                int(user_id),
+                int(trend_id),
+                str(client_request_id or "").strip(),
+            ),
+        )
+        updated = int(getattr(cursor, "rowcount", 0) or 0) == 1
+        if updated:
+            await db.commit()
+        return updated
+
+
 async def create_prompt(
     *,
     author_id: int,
@@ -5229,6 +5692,8 @@ async def create_prompt(
     tags: Optional[list[str]] = None,
     generation_settings: dict[str, Any] | None = None,
     is_public: bool = True,
+    source_generation_id: int | None = None,
+    trend_reference_assets: list[dict[str, Any]] | None = None,
 ) -> Optional[dict[str, Any]]:
     prompt_text = str(prompt_text or "").strip()
     if not prompt_text:
@@ -5239,15 +5704,16 @@ async def create_prompt(
     if final_category not in PROMPT_CATEGORIES:
         final_category = "other"
 
+    normalized_assets = _normalize_trend_reference_assets(trend_reference_assets)
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
         cursor = await db.execute(
             """
             INSERT INTO user_prompts (
                 author_id, title, description, category, prompt_text, preview_url,
-                model, tags, generation_settings, is_public, status
+                model, tags, generation_settings, is_public, status, source_generation_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
             """,
             (
                 author_id,
@@ -5260,10 +5726,37 @@ async def create_prompt(
                 json.dumps(inferred_tags, ensure_ascii=False),
                 json.dumps(generation_settings or {}, ensure_ascii=False),
                 1 if is_public else 0,
+                int(source_generation_id) if source_generation_id else None,
             ),
         )
+        prompt_id = int(cursor.lastrowid)
+        if normalized_assets:
+            await db.executemany(
+                """
+                INSERT INTO trend_reference_assets (
+                    prompt_id, media_type, position, source_position, role, file_url,
+                    file_hash, mime_type, size_bytes, label
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        prompt_id,
+                        asset["media_type"],
+                        asset["position"],
+                        asset["source_position"],
+                        asset["role"],
+                        asset["file_url"],
+                        asset["file_hash"],
+                        asset["mime_type"],
+                        asset["size_bytes"],
+                        asset["label"],
+                    )
+                    for asset in normalized_assets
+                ],
+            )
         await db.commit()
-        return await get_prompt_by_id(cursor.lastrowid)
+        return await get_prompt_by_id(prompt_id)
 
 
 async def get_prompt_by_id(prompt_id: int, *, approved_public_only: bool = False) -> Optional[dict[str, Any]]:
@@ -5274,6 +5767,30 @@ async def get_prompt_by_id(prompt_id: int, *, approved_public_only: bool = False
         if approved_public_only:
             sql += " AND status = 'approved' AND is_public = 1"
         cursor = await db.execute(sql, params)
+        row = await cursor.fetchone()
+    return _prompt_to_dict(_row_to_user_prompt(row))
+
+
+async def get_active_seedance_trend_by_source_generation(
+    source_generation_id: int,
+    *,
+    author_id: int,
+) -> dict[str, Any] | None:
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
+        cursor = await db.execute(
+            """
+            SELECT *
+            FROM user_prompts
+            WHERE source_generation_id = ?
+              AND author_id = ?
+              AND status != 'deactivated'
+              AND tags LIKE '%"seedance-private-references"%'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (int(source_generation_id), int(author_id)),
+        )
         row = await cursor.fetchone()
     return _prompt_to_dict(_row_to_user_prompt(row))
 
@@ -5531,23 +6048,51 @@ async def _credit_prompt_repeat_reward_in_db(
 ) -> bool:
     if not author_id or not repeater_id or author_id == repeater_id:
         return False
-    reward = round(float(amount_rub or 0), 2)
-    if reward <= 0:
+    try:
+        spent = float(credits_spent or 0)
+    except (TypeError, ValueError):
+        return False
+    if not isfinite(spent) or spent <= 0:
+        return False
+    try:
+        reward = round(float(amount_rub or 0), 2)
+    except (TypeError, ValueError):
+        return False
+    if not isfinite(reward) or reward <= 0:
         return False
 
-    # Idempotency: одна задача-повтор не должна начисляться дважды
-    # (например, синхронное начисление при запуске + webhook о завершении).
-    if repeat_task_id:
-        cursor = await db.execute(
-            "SELECT 1 FROM prompt_repeat_events WHERE repeat_task_id = ? LIMIT 1",
-            (str(repeat_task_id),),
-        )
-        if await cursor.fetchone():
-            return False
+    cursor = await db.execute(
+        "SELECT telegram_id FROM users WHERE id = ? LIMIT 1",
+        (repeater_id,),
+    )
+    repeater = await cursor.fetchone()
+    if not repeater:
+        return False
+    raw_telegram_id = (
+        repeater["telegram_id"] if hasattr(repeater, "keys") else repeater[0]
+    )
+    try:
+        repeater_telegram_id = int(raw_telegram_id)
+    except (TypeError, ValueError):
+        return False
+    from bot.config import config
 
-    await db.execute(
+    if config.is_admin(repeater_telegram_id):
+        logger.info(
+            "Prompt repeat reward skipped for admin repeater: "
+            "repeater_id=%s repeat_task_id=%s",
+            repeater_id,
+            repeat_task_id,
+        )
+        return False
+
+    normalized_repeat_task_id = str(repeat_task_id or "").strip() or None
+    # Schema-backed idempotency: launch and webhook completion may race in
+    # different processes. The unique partial index is the source of truth;
+    # INSERT OR IGNORE maps to ON CONFLICT DO NOTHING on PostgreSQL.
+    insert_cursor = await db.execute(
         """
-        INSERT INTO prompt_repeat_events (
+        INSERT OR IGNORE INTO prompt_repeat_events (
             author_id, repeater_id, source_type, source_id,
             repeat_task_id, credits_spent, amount_rub
         )
@@ -5558,12 +6103,19 @@ async def _credit_prompt_repeat_reward_in_db(
             repeater_id,
             source_type[:32],
             int(source_id),
-            (repeat_task_id or None),
-            float(credits_spent or 0),
+            normalized_repeat_task_id,
+            spent,
             reward,
         ),
     )
-    await db.execute(
+    if int(getattr(insert_cursor, "rowcount", 0) or 0) != 1:
+        logger.info(
+            "Prompt repeat reward already claimed: repeat_task_id=%s",
+            normalized_repeat_task_id,
+        )
+        return False
+
+    update_cursor = await db.execute(
         """
         UPDATE users
         SET partner_balance_rub = COALESCE(partner_balance_rub, 0) + ?,
@@ -5574,6 +6126,10 @@ async def _credit_prompt_repeat_reward_in_db(
         """,
         (reward, reward, reward, author_id),
     )
+    if int(getattr(update_cursor, "rowcount", 0) or 0) != 1:
+        raise RuntimeError(
+            f"Prompt repeat author balance update failed: author_id={author_id}"
+        )
     return True
 
 
@@ -5936,14 +6492,26 @@ def _is_ephemeral_feed_result_url(url: str) -> bool:
     return any(host == ephemeral or host.endswith(f".{ephemeral}") for ephemeral in FEED_EPHEMERAL_RESULT_HOSTS)
 
 
+def _feed_result_ttl_hours(url: str) -> int | None:
+    host = _feed_result_host(url)
+    if not host:
+        return None
+    if any(host == item or host.endswith(f".{item}") for item in RENDERGRID_RESULT_HOSTS):
+        return RENDERGRID_RESULT_TTL_HOURS
+    if any(host == item or host.endswith(f".{item}") for item in FEED_EPHEMERAL_RESULT_HOSTS):
+        return FEED_EPHEMERAL_RESULT_TTL_HOURS
+    return None
+
+
 def _is_feed_result_expired(row: db_backend.Row, url: str) -> bool:
-    if FEED_EPHEMERAL_RESULT_TTL_HOURS <= 0 or not _is_ephemeral_feed_result_url(url):
+    ttl_hours = _feed_result_ttl_hours(url)
+    if ttl_hours is None or ttl_hours <= 0:
         return False
     timestamp = _feed_row_timestamp(row)
     if not timestamp:
         return False
     now = datetime.now(timestamp.tzinfo) if timestamp.tzinfo else datetime.utcnow()
-    return now - timestamp > timedelta(hours=FEED_EPHEMERAL_RESULT_TTL_HOURS)
+    return now - timestamp > timedelta(hours=ttl_hours)
 
 
 def _is_feed_result_url_available(row: db_backend.Row, url: str) -> bool:
@@ -5975,6 +6543,11 @@ def _feed_result_urls(row: db_backend.Row) -> list[str]:
     return available
 
 
+def resolve_public_generation_result_urls(row: db_backend.Row | dict[str, Any]) -> list[str]:
+    """Resolve generation media through the same durability/TTL policy on every public surface."""
+    return _feed_result_urls(row)
+
+
 def _public_reference_urls(row: db_backend.Row, urls: Any) -> list[str]:
     available: list[str] = []
     for url in _parse_json_list(urls) if isinstance(urls, str) else list(urls or []):
@@ -5997,6 +6570,45 @@ def _feed_reference_images(row: db_backend.Row, request_data: dict[str, Any]) ->
 
 def _feed_reference_videos(row: db_backend.Row, request_data: dict[str, Any]) -> list[str]:
     return _public_reference_urls(row, request_data.get("v_reference_videos", []))
+
+
+def _feed_repeat_scenario(
+    model: str,
+    request_data: dict[str, Any],
+    *,
+    has_image_references: bool,
+    has_video_references: bool,
+) -> str | None:
+    """Return the public repeat form mode without exposing private references.
+
+    Seedance 2.5 stores every multimodal generation as generic ``v_type=video``.
+    That is correct for provider routing, but wrong for the repeat UI when the
+    source recipe only contains image references: a hidden image-only recipe
+    would otherwise open the "Видео + текст" picker.  The public card may
+    expose the media *kind* needed by the form while still keeping the actual
+    reference URLs private.
+    """
+
+    generic = str(
+        request_data.get("v_type") or request_data.get("generation_type") or ""
+    ).strip().lower()
+    if str(model or "").strip() != "seedance_2_5":
+        return generic or None
+
+    seedance_scenario = str(request_data.get("seedance25_scenario") or "").strip().lower()
+    if seedance_scenario == "text":
+        return "text"
+    if seedance_scenario in {"first_frame", "first_last"}:
+        return "imgtxt"
+    if seedance_scenario == "multimodal":
+        if has_video_references:
+            return "video"
+        if has_image_references:
+            return "imgtxt"
+        return "text"
+    return generic or (
+        "video" if has_video_references else "imgtxt" if has_image_references else "text"
+    )
 
 
 def _feed_activity_time_for_sort(row: db_backend.Row) -> datetime:
@@ -6073,10 +6685,24 @@ def _generation_row_to_card(
     prompt_hidden = generation_prompt_hidden(row)
     viewer_is_owner = bool(viewer_user_id and row["user_id"] == viewer_user_id)
     references_visible = generation_references_visible(row)
+    is_remix = bool(
+        _generation_attr(row, "source_feed_gen_id")
+        or str(_generation_attr(row, "action_type", "") or "").strip().lower() == "remix"
+    )
+    # A remix may contain reference URLs inherited from somebody else's
+    # publication. They remain visible to the owner of the child generation,
+    # but are never re-published transitively to third parties.
+    references_visible_for_viewer = bool(
+        references_visible and (viewer_is_owner or not is_remix)
+    )
     all_reference_images = _feed_reference_images(row, request_data)
     all_reference_videos = _feed_reference_videos(row, request_data)
-    public_reference_images = all_reference_images if references_visible else []
-    public_reference_videos = all_reference_videos if references_visible else []
+    public_reference_images = (
+        all_reference_images if references_visible_for_viewer else []
+    )
+    public_reference_videos = (
+        all_reference_videos if references_visible_for_viewer else []
+    )
     references_count = len(all_reference_images) + len(all_reference_videos)
     preview_url = feed_urls[0] if feed_urls else ""
     if preview_url and str(row["type"]) == "image":
@@ -6102,11 +6728,18 @@ def _generation_row_to_card(
         "comments_count": comments_count,
         "aspect_ratio": row["aspect_ratio"] or "",
         "duration": row["duration"] if "duration" in row.keys() else None,
-        "scenario": request_data.get("v_type") or request_data.get("generation_type"),
+        "scenario": _feed_repeat_scenario(
+            str(row["model"] or row["preset_id"] or ""),
+            request_data,
+            has_image_references=bool(all_reference_images),
+            has_video_references=bool(all_reference_videos),
+        ),
         "reference_images": public_reference_images,
         "reference_videos": public_reference_videos,
         "references_count": references_count,
-        "references_hidden": bool(references_count and not references_visible),
+        "references_hidden": bool(
+            references_count and not references_visible_for_viewer
+        ),
         "author": author,
         "author_referral_code": (
             row["author_referral_code"]
@@ -6125,12 +6758,12 @@ def _generation_row_to_card(
         "prompt_hidden": prompt_hidden,
         "prompt_actions_allowed": not prompt_hidden,
         "feed_prompt_visible": generation_feed_prompt_visible(row),
-        "feed_references_visible": references_visible,
+        "feed_references_visible": references_visible_for_viewer,
         "feed_blurred": generation_feed_blurred(row),
         "is_profile_visible": generation_profile_visible(row),
         "is_adult_content": generation_adult_content(row),
         "publication_scope": generation_publication_scope(row),
-        "feed_interactions_enabled": generation_profile_visible(row),
+        "feed_interactions_enabled": generation_publication_scope(row) == "feed",
     }
 
 

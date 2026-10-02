@@ -20,6 +20,7 @@ def _trend() -> dict:
         "category": "video",
         "tags": ["trend", "trend-video"],
         "preview_url": "/uploads/trend.mp4",
+        "source_generation_id": 991001,
         "prompt_text": "SECRET PROMPT",
         "model": "seedance_2",
         "generation_settings": {
@@ -29,6 +30,10 @@ def _trend() -> dict:
             "ratio": "9:16",
             "duration": 10,
             "quality": "4K",
+            "user_fields": [
+                {"key": "Возраст", "label": "Возраст", "type": "text"},
+                {"key": "Имя", "label": "Имя", "type": "number"},
+            ],
             "kling_negative_prompt": "SECRET NEGATIVE",
         },
     }
@@ -59,12 +64,20 @@ def test_public_trend_keeps_only_runner_metadata() -> None:
     assert payload is not None
     assert payload["prompt_text"] == ""
     assert payload["model"] is None
-    assert payload["generation_settings"] == {"kind": "video", "ratio": "9:16"}
+    assert payload["generation_settings"] == {
+        "kind": "video",
+        "ratio": "9:16",
+        "user_fields": [
+            {"key": "Возраст", "label": "Возраст", "type": "number", "required": True, "max_length": 160},
+            {"key": "Имя", "label": "Имя", "type": "text", "required": True, "max_length": 160},
+        ],
+    }
     assert payload["prompt_hidden"] is True
     assert payload["prompt_actions_allowed"] is False
     assert payload["title"] == "Закрытый тренд"
     assert payload["preview_url"] == "/uploads/trend.mp4"
     assert payload["tags"] == ["trend", "trend-video"]
+    assert "source_generation_id" not in payload
 
 
 def test_regular_prompt_stays_usable() -> None:
@@ -83,9 +96,9 @@ def test_prompt_api_payload_redacts_lists_and_details() -> None:
     listing = sanitize_prompt_api_payload({"ok": True, "prompts": [_trend()]})
 
     assert detail["prompt"]["prompt_text"] == ""
-    assert detail["prompt"]["generation_settings"] == {"kind": "video", "ratio": "9:16"}
+    assert detail["prompt"]["generation_settings"]["user_fields"][0]["key"] == "Возраст"
     assert listing["prompts"][0]["model"] is None
-    assert listing["prompts"][0]["generation_settings"] == {"kind": "video", "ratio": "9:16"}
+    assert listing["prompts"][0]["generation_settings"]["user_fields"][1]["key"] == "Имя"
 
 
 def test_admin_bypass_requires_valid_telegram_signature() -> None:

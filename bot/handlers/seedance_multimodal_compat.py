@@ -169,7 +169,8 @@ def _seedance_media_keyboard(data: dict[str, Any]) -> types.InlineKeyboardMarkup
             text=f"📹 Видео-референсы: {video_count}/{SEEDANCE_MAX_VIDEOS}",
             callback_data="ignore",
         )
-        builder.button(text="⏭ Без видео-рефов", callback_data="video_media_skip")
+        if video_count == 0:
+            builder.button(text="⏭ Без видео-рефов", callback_data="video_media_skip")
         builder.button(text="▶️ К настройкам", callback_data="video_media_continue")
     else:
         builder.button(text="▶️ К настройкам", callback_data="video_media_continue")

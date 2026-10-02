@@ -143,7 +143,7 @@ FREEPIK_BASE_URL = "https://api.freepik.com/v1"
 | **Модель Kie.ai** | `bytedance/seedance-2` |
 | **Сервис** | `SeedanceService.generate_video()` |
 | **Вход** | prompt, duration (5-15), aspect_ratio (16:9/9:16/1:1), resolution (480p/720p/1080p), first_frame_url, last_frame_url, reference_image_urls (до 9), reference_video_urls (до 3), reference_audio_urls (1), return_last_frame, generate_audio, web_search |
-| **Особенности** | first/last-frame НЕ совместимы с multimodal references |
+| **Особенности** | first/last-frame НЕ совместимы с multimodal references. Перед отправкой provider boundary нормализует Seedance reference tags в канонический вид `@Image1`, `@Video1`, `@Audio1`; legacy-варианты с другим регистром/пробелами исправляются. Если старый prompt нумеровал все media одним рядом (`@IMAGE 4` при 3 image + 1 video), alias переводится в `@Video1`. Запрос блокируется до KIE, если prompt ссылается на reference tag, для которого нет фактически переданного media. После загрузки Seedance video-reference UI больше не предлагает действие, которое молча очищает этот reference. |
 | **Цена** | 5🍌 (по умолчанию) |
 
 #### 2.1.10. Veo 3.1 (veo3, veo3_fast, veo3_lite)
@@ -257,12 +257,24 @@ FREEPIK_BASE_URL = "https://api.freepik.com/v1"
 
 ### 2.3. Текстовые / Чат-модели (Text/Chat)
 
-#### 2.3.1. GPT-5.5 + Responses API
+#### 2.3.1. Gemini 3.1 Pro — анализ фото и видео
+
+Основной маршрут `PhotoPromptService`, `VideoPromptService` и фото-входа `PromptAnalyzerV2Service` — `KieGemini31Service`: `POST /gemini-3.1-pro/v1/chat/completions`, Bearer `KIE_AI_API_KEY`. [Контракт KIE](https://docs.kie.ai/market/gemini/gemini-3-1-pro): фото и видео передаются одинаково через `image_url.url`, `stream=false`, `include_thoughts=false`, `reasoning_effort=high`. Видео передаётся целиком.
+
+Выбор хранится в `bot_settings.media_analysis_provider`: `kie_gemini31` по умолчанию, `qwen38` для переключения обратно. Администратор может посмотреть его командой `/analysis_provider` и изменить через `/analysis_provider kie_gemini31` или `/analysis_provider qwen38`. Изменение аудируется через `updated_by_telegram_id`; другие аккаунты не имеют доступа. Новая миграция не требуется.
+
+При ошибке Gemini сохраняется Qwen fallback; у видео остаётся последующая GPT-цепочка. Голосовые и чисто текстовые сценарии остаются на прежних маршрутах. Цена анализа и возврат при итоговой ошибке не меняются.
+
+Настройки транспорта: `KIE_MEDIA_ANALYSIS_TIMEOUT_SECONDS` (по умолчанию 180, ограничен 1–300 сек на попытку), `KIE_MEDIA_ANALYSIS_MAX_ATTEMPTS` (по умолчанию 2, ограничен 1–3). Повторяются сетевые ошибки, HTTP 429 и 5xx; HTTP 4xx, пустой/некорректный ответ не повторяются. Логи связывают модель, request_id, user_id, попытку, статус, конечный результат и переход на резервного провайдера; категории ошибок не содержат медиа, промпта, тела ответа или ключа.
+
+Для синхронного Mini App анализа `POST /mini-app/api/photo-to-prompt` production nginx использует отдельный exact location с `proxy_read_timeout 900s` на `tanyapi.chillcreative.ru`, `tanyapp.chillcreative.ru` и `tanyapp.xn--e1aikcel5c5a.online`. Это покрывает стандартную ограниченную цепочку Gemini + Qwen; остальные API остаются на прежнем таймауте. При повышении попыток/таймаутов провайдеров нужно согласовать общий бюджет с прокси. Деплой Mini App не управляет nginx; конфигурация хранится на сервере. Проверено на синтетических фото и видео 2026-09-29.
+
+#### GPT-5.5 + Responses API — голос и резервный маршрут
 
 | Параметр | Значение |
 |---|---|
 | **Эндпоинт** | `POST /codex/v1/responses` |
-| **Используется** | PhotoPromptService, VideoPromptService (анализ изображений/видео) |
+| **Используется** | Голосовой вход PhotoPromptService/PromptAnalyzerV2Service и резервный анализ VideoPromptService |
 | **Модель** | `gpt-5-5` (переменная `PHOTO_PROMPT_MODEL`) |
 | **Дополнительно** | Поддержка аудио-входа (max 10MB), видео-входа (max 30MB / 60s) |
 
@@ -517,6 +529,20 @@ NON_KLING_MODELS = {
 - **Полный URL:** `config.kie_notification_url`
 - **Обработчик:** `KIE_AI_WEBHOOK_PATH`
 
+#### Подтверждение результата KIE (2026-10-01)
+
+Маршруты `/webhook/kie_ai`, `/webhooks/kie` и `/webhook/kie_seedance25` используют callback как сигнал с task ID. Статус, ошибка и ссылки из входящего payload не являются основанием для изменения задачи: обработчик получает текущую запись через авторизованный provider API. Market использует `GET /api/v1/jobs/recordInfo`, Veo — `GET /api/v1/veo/record-info`, выбранный по сохранённой модели задачи.
+
+HMAC не является обязательным условием обработки: в используемой интеграции его работоспособность не подтверждена владельцем. [Документированный HMAC](https://docs.kie.ai/common-api/webhook-verification) подписывает ID и timestamp, а проверка provider record также подтверждает статус и URL результата. Существующий optional query-secret generic-маршрута сохраняется как дополнительный фильтр.
+
+- Неизвестные, завершённые и устаревшие ID после retry игнорируются; актуальность проверяется повторно после provider GET.
+- Состояния pending/generating не переводят задачу в failed. Ошибка получения записи, неизвестный формат или несовпавший task ID возвращают HTTP503 без изменения задачи, чтобы событие можно было повторить.
+- Окончательный generic failure использует атомарный переход pending/processing→failed и возврат в одной транзакции, с проверкой текущего provider ID. Повторный callback не начисляет возврат второй раз. Новые выполненные возвраты сохраняют refund_claimed/refund_state.
+- Обработка callback одной задачи сериализуется в текущем единственном bot process: блокировка охватывает provider GET, запуск платного retry и доставку. Повтор после смены provider ID игнорируется. Перед переходом к нескольким bot workers потребуется межпроцессный processing claim; текущая блокировка такой гарантии не даёт.
+- Поток Seedance 2.5 сохраняет существующее транзакционное подтверждение возврата и периодическую сверку/доставку результата.
+
+Контракты: [Market recordInfo](https://docs.kie.ai/market/common/get-task-detail), [Veo record-info](https://docs.kie.ai/old-model/veo3-api/get-veo-3-video-details). Для Veo successFlag0 означает обработку,1 — успех,2/3 — отказ.
+
 ### 9.2. Другие вебхуки
 
 | Сервис | Путь | Свойство config |
@@ -626,3 +652,17 @@ TELEGRAM_STARS_ENABLED=1
 4. **pricing_final.py** — содержит только image-модели. Видео-цены рассчитываются динамически через `preset_manager`.
 5. **VeoService** и **GeminiOmniService** — единственные сервисы, которые **НЕ наследуют** `KlingService` и имеют собственные эндпоинты.
 6. **Кэш KieFileUploadService** — 48 часов. При перезапуске бота кэш сбрасывается.
+
+### Seedance 2.5 prompt length (2026-09-29)
+
+Seedance 2.5 (`bytedance/seedance-2-5`) accepts up to **30,000 Unicode characters** in the prompt, matching the [KIE input schema](https://docs.kie.ai/market/bytedance/seedance-2-5). The adapter, Telegram validation and public/admin Mini App forms enforce this technical maximum; longer prompts are rejected rather than truncated. Mini App is the entry point for prompts exceeding Telegram's single-message size. This does not change generation pricing or account quotas.
+
+### Seedance 2.5 video editing (2026-10-01)
+
+Telegram's **По референсам → Редактировать видео** and the Mini App multimodal form expose an explicit admin editing option. Provide exactly one source video of **4–30 seconds**, plus optional image/audio references, and describe the edit in the prompt. Output duration and aspect ratio follow the source video. Fixed duration/ratio controls are locked while editing is selected; switching it off restores ordinary reference-generation controls.
+
+The local `seedance25_video_editing` boolean is stored in generation `request_data` and preserved during repeat. It is never sent as a provider API field: the shared adapter sends the documented `duration=-1` and `aspect_ratio=adaptive`. The [KIE contract](https://docs.kie.ai/market/bytedance/seedance-2-5) has no explicit task-intent field; the provider still classifies the prompt. Having a video reference alone does not activate editing, so ordinary reference generation retains its chosen duration and ratio.
+
+Editing retains the existing **admin-only Auto entitlement** and free admin launch. Non-admin editing requests are rejected before charging or creating a provider task. Paid editing requires a separate deterministic pricing design based on trusted source duration; no price, multiplier, refund or automatic paid retry rule changes here. Admin price display remains the existing five-second Auto estimate, not the actual source duration.
+
+Local uploaded source duration is checked server-side; editing rejects sources below four seconds or above thirty. Ordinary video references keep the existing 2–30 second bounds. External URLs and `asset://` inputs have no locally probed metadata, so the provider validates their duration. Failed jobs are not automatically resubmitted; the editing-constraint error includes a localized hint to select the editing option.

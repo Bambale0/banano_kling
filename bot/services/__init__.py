@@ -29,7 +29,6 @@ from .nexus_image_provider import NexusImageProvider
 from .rendergrid_nano_banana_provider import RenderGridNanoBananaProvider
 from .seedream_service import SeedreamService, seedream_service
 from .veo_service import VeoService, veo_service
-from .photo_prompt_vk_compat import install_vk_photo_prompt_instructions
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -195,10 +194,9 @@ def _configure_nanobanana_routing() -> None:
 
 _configure_nanobanana_routing()
 
-# Keep Telegram photo analysis aligned with the prompt that produces the best
-# results in the VK bot. The patch preserves Telegram's structured JSON output,
-# voice mode and provider fallback chain.
-install_vk_photo_prompt_instructions()
+# Legacy VK/APIYI photo analysis remains available as an explicit compatibility
+# module only. Production photo/text prompt analysis is owned by Qwen 3.8 and
+# must not be monkey-patched back to the retired GPT/APIYI route at import time.
 
 __all__ = [
     "CryptoBotService",

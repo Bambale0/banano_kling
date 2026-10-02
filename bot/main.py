@@ -40,6 +40,11 @@ import aiohttp
 
 from bot import db as db_backend
 from bot.config import config
+from bot.services.kie_webhook_verification import serialize_kie_callback
+from bot.services.delivery_state import (
+    is_terminal_telegram_delivery_error as _is_terminal_telegram_delivery_error,
+    terminal_telegram_delivery_reason as _terminal_telegram_delivery_reason,
+)
 from bot.database import (
     cleanup_orphaned_reference_files,
     _merge_task_id_aliases,
@@ -67,6 +72,7 @@ from bot.handlers.payments import (
     reconcile_lava_pending_transactions,
 )
 from bot.handlers.freekassa_payments import setup_freekassa_routes
+from bot.handlers.robokassa_payments import setup_robokassa_routes
 from bot.browser_auth import setup_browser_auth_routes
 from bot.feed_reference_media import setup_feed_reference_media_routes
 from bot.miniapp import setup_miniapp_routes
@@ -90,8 +96,30 @@ from bot.services.yookassa_service import yookassa_service
 
 CLEANUP_INTERVAL_SECONDS = 24 * 3600
 UPLOAD_RETENTION_SECONDS = 24 * 3600
-LOG_RETENTION_SECONDS = 24 * 3600
+
+
+def _configured_log_retention_days() -> int:
+    """Keep at least a 72-hour incident window, including on invalid config."""
+    try:
+        days = int(os.environ.get("BANANO_LOG_RETENTION_DAYS", "7"))
+        if days >= 3:
+            return days
+    except ValueError:
+        pass
+    logging.getLogger(__name__).warning(
+        "BANANO_LOG_RETENTION_DAYS must be an integer >= 3; using 7 days"
+    )
+    return 7
+
+
+LOG_RETENTION_DAYS = _configured_log_retention_days()
+LOG_RETENTION_SECONDS = LOG_RETENTION_DAYS * 24 * 3600
 ACTIVE_LOG_FILENAMES = {"bot.log"}
+DURABLE_IMAGE_RESULT_HOSTS = {
+    host.strip().lower().lstrip(".")
+    for host in os.getenv("DURABLE_IMAGE_RESULT_HOSTS", "cdn.rendergrid.io").split(",")
+    if host.strip()
+}
 
 YOOKASSA_RECONCILE_INTERVAL_SECONDS = 5 * 60
 YOOKASSA_RECONCILE_BATCH_SIZE = 50
@@ -103,7 +131,7 @@ DB_BACKUP_TIMEOUT_SECONDS = 30 * 60
 _TELEGRAM_WEBHOOK_TASKS: set[asyncio.Task] = set()
 TELEGRAM_WEBHOOK_CONCURRENCY_LIMIT = 8
 _TELEGRAM_WEBHOOK_SEMAPHORE = asyncio.Semaphore(TELEGRAM_WEBHOOK_CONCURRENCY_LIMIT)
-_NEXUS_POLL_IN_FLIGHT: set[str] = set()
+_IMAGE_PROVIDER_POLL_IN_FLIGHT: set[str] = set()
 
 USER_BOT_COMMANDS = [
     BotCommand(command="start", description="Текстовый бот и главное меню"),
@@ -287,12 +315,14 @@ def _configure_logging() -> None:
     formatter = logging.Formatter(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
+    formatter.converter = time.gmtime
     file_handler = TimedRotatingFileHandler(
         "logs/bot.log",
         when="midnight",
         interval=1,
-        backupCount=1,
+        backupCount=LOG_RETENTION_DAYS,
         encoding="utf-8",
+        utc=True,
     )
     file_handler.setFormatter(formatter)
 
@@ -406,7 +436,7 @@ class AccessGuardMiddleware(BaseMiddleware):
 
     def _is_admin_management_event(self, event: types.TelegramObject) -> bool:
         callback_data = self._callback_data(event)
-        if callback_data.startswith("admin_"):
+        if callback_data.startswith(("admin_", "gpt25_")):
             return True
 
         text = self._message_text(event).strip()
@@ -414,6 +444,19 @@ class AccessGuardMiddleware(BaseMiddleware):
             return False
         command = text.split(maxsplit=1)[0].split("@", 1)[0].lower()
         return command in {"/admin", "/admin_ai"}
+
+    @staticmethod
+    async def _is_admin_test_state(data: dict[str, Any]) -> bool:
+        raw_state = str(data.get("raw_state") or "")
+        if not raw_state:
+            state_context = data.get("state")
+            get_state = getattr(state_context, "get_state", None)
+            if callable(get_state):
+                raw_state = str(await get_state() or "")
+        return raw_state in {
+            "AdminTestLabStates:gpt25_prompt",
+            "AdminTestLabStates:gpt25_references",
+        }
 
     async def __call__(
         self,
@@ -429,8 +472,9 @@ class AccessGuardMiddleware(BaseMiddleware):
         is_subscription_check_callback = (
             self._callback_data(event) == SUBSCRIPTION_CHECK_CALLBACK
         )
-        is_admin_management_event = (
-            is_admin_user and self._is_admin_management_event(event)
+        is_admin_management_event = is_admin_user and (
+            self._is_admin_management_event(event)
+            or await self._is_admin_test_state(data)
         )
 
         try:
@@ -853,6 +897,46 @@ async def _persist_result_url_if_needed(result_url: str | None, *, task_type: st
         return result_url
     if _is_local_static_result_url(candidate):
         return candidate
+
+    result_host = (urlparse(candidate).hostname or "").strip().lower().lstrip(".")
+    force_durable_image = (
+        str(task_type or "").strip().lower() == "image"
+        and any(
+            result_host == host or result_host.endswith(f".{host}")
+            for host in DURABLE_IMAGE_RESULT_HOSTS
+        )
+    )
+    if force_durable_image:
+        try:
+            from bot.services.feed_persist import persist_feed_result_urls
+
+            persisted = await persist_feed_result_urls(
+                [candidate],
+                require_local=True,
+            )
+            if persisted:
+                durable_url = str(persisted[0] or "").strip()
+                if durable_url:
+                    logger.info(
+                        "Persisted ephemeral provider image durably: host=%s source=%s target=%s",
+                        result_host,
+                        candidate,
+                        durable_url,
+                    )
+                    return durable_url
+            logger.warning(
+                "Failed to persist ephemeral provider image durably: host=%s url=%s",
+                result_host,
+                candidate,
+            )
+        except Exception:
+            logger.exception(
+                "Durable provider image persistence failed: host=%s url=%s",
+                result_host,
+                candidate,
+            )
+        return candidate
+
     if not getattr(config, "PERSIST_PROVIDER_RESULTS", False):
         return candidate
 
@@ -947,7 +1031,14 @@ async def _send_original_file(bot_instance: Bot, telegram_id: int, result_url: s
         )
         return True
     except Exception as e:
-        logger.error(f"Failed to send original file to {telegram_id}: {e}")
+        if _is_terminal_telegram_delivery_error(e):
+            logger.info(
+                "Telegram delivery unavailable: event=original_file reason=%s telegram_id=%s",
+                _terminal_telegram_delivery_reason(e),
+                telegram_id,
+            )
+        else:
+            logger.error(f"Failed to send original file to {telegram_id}: {e}")
         return False
 
 async def _send_video_file_from_url(
@@ -1358,13 +1449,13 @@ async def _send_polled_nexus_image_result(
     provider_task_id: str | None = None,
     service_name: str = "Nano Banana",
 ) -> bool:
-    from bot.database import complete_video_task
+    from bot.database import complete_video_task, mark_task_delivery_status
     from bot.keyboards import get_image_result_keyboard
 
-    telegram_id = await _resolve_task_telegram_id(task, context="nexus_poller")
+    telegram_id = await _resolve_task_telegram_id(task, context="image_provider_poller")
     if not telegram_id:
         logger.error(
-            "Nexus poller: cannot resolve telegram_id for task %s",
+            "Image provider poller: cannot resolve telegram_id for task %s",
             getattr(task, "task_id", None),
         )
         return False
@@ -1377,7 +1468,7 @@ async def _send_polled_nexus_image_result(
     full_caption = (
         "✅ <b>Изображение готово</b>\n"
         f"• Модель: <code>{_html_fragment(model_label)}</code>\n"
-        f"• ID: <code>{_html_fragment(display_task_id)}</code>"
+        f"• ID задачи: <code>{_html_fragment(display_task_id)}</code>"
         f"{_provider_task_id_line(task, task_lookup_id)}"
     )
     if getattr(task, "cost", None):
@@ -1416,13 +1507,13 @@ async def _send_polled_nexus_image_result(
                 )
                 preview_sent = True
                 logger.info(
-                    "Nexus poller: %s image preview sent as file-photo to user %s",
+                    "Image provider poller: %s image preview sent as file-photo to user %s",
                     service_name,
                     telegram_id,
                 )
             except Exception as exc:
                 logger.info(
-                    "Nexus poller: preview file-photo send failed for task %s (%s)",
+                    "Image provider poller: preview file-photo send failed for task %s (%s)",
                     task_lookup_id,
                     exc,
                 )
@@ -1438,13 +1529,13 @@ async def _send_polled_nexus_image_result(
             )
             preview_sent = True
             logger.info(
-                "Nexus poller: %s image preview sent via URL to user %s",
+                "Image provider poller: %s image preview sent via URL to user %s",
                 service_name,
                 telegram_id,
             )
         except Exception as exc:
             logger.info(
-                "Nexus poller: image URL send failed for task %s (%s)",
+                "Image provider poller: image URL send failed for task %s (%s)",
                 task_lookup_id,
                 exc,
             )
@@ -1457,6 +1548,7 @@ async def _send_polled_nexus_image_result(
     )
     if preview_sent or original_sent:
         await complete_video_task(task_lookup_id, persisted_url)
+        await mark_task_delivery_status(task_lookup_id, "delivered")
         sent_media = True
         if _should_send_prompt_followup(task):
             try:
@@ -1468,11 +1560,13 @@ async def _send_polled_nexus_image_result(
                 )
             except Exception:
                 logger.exception(
-                    "Nexus poller: failed to send prompt follow-up for task %s",
+                    "Image provider poller: failed to send prompt follow-up for task %s",
                     task_lookup_id,
                 )
         return True
 
+    fallback_error = None
+    fallback_sent = False
     try:
         await _send_plain_result_link(
             bot_instance,
@@ -1484,19 +1578,51 @@ async def _send_polled_nexus_image_result(
             reply_markup=keyboard,
             notice="Telegram не смог отправить превью автоматически.",
         )
+        fallback_sent = True
         logger.info(
-            "Nexus poller: fallback text sent for task %s to user %s",
+            "Image provider poller: fallback text sent for task %s to user %s",
             task_lookup_id,
             telegram_id,
         )
-    except Exception:
-        logger.exception(
-            "Nexus poller: all Telegram delivery attempts failed for task %s",
-            task_lookup_id,
-        )
-    finally:
+    except Exception as exc:
+        fallback_error = exc
+        if _is_terminal_telegram_delivery_error(exc):
+            logger.info(
+                "Telegram delivery unavailable: event=image_result reason=%s task_id=%s telegram_id=%s",
+                _terminal_telegram_delivery_reason(exc),
+                task_lookup_id,
+                telegram_id,
+            )
+        else:
+            logger.exception(
+                "Image provider poller: all Telegram delivery attempts failed for task %s",
+                task_lookup_id,
+            )
+    if fallback_sent:
         await complete_video_task(task_lookup_id, persisted_url)
-    return True
+        await mark_task_delivery_status(task_lookup_id, "delivered")
+        return True
+
+    delivery_error = str(fallback_error or "Telegram delivery failed")
+    if _is_terminal_telegram_delivery_error(fallback_error):
+        await complete_video_task(task_lookup_id, persisted_url)
+        await mark_task_delivery_status(
+            task_lookup_id,
+            "unavailable",
+            error=_terminal_telegram_delivery_reason(fallback_error),
+        )
+        return True
+
+    await mark_task_delivery_status(
+        task_lookup_id,
+        "pending",
+        error=delivery_error,
+    )
+    logger.warning(
+        "Image provider poller: transient Telegram delivery failure kept recoverable for task %s",
+        task_lookup_id,
+    )
+    return False
 
 async def _fail_polled_nexus_image_task(
     bot_instance: Bot,
@@ -1506,22 +1632,35 @@ async def _fail_polled_nexus_image_task(
     service_name: str = "Nano Banana",
     reason: str | None = None,
 ) -> bool:
-    from bot.database import add_credits, complete_video_task
     from bot.keyboards import get_failed_image_retry_keyboard
+    from bot.services.task_watchdog import force_fail_task
 
     task_lookup_id = provider_task_id or getattr(task, "task_id", "")
-    telegram_id = await _resolve_task_telegram_id(task, context="nexus_poller")
-    if telegram_id and getattr(task, "cost", None):
-        try:
-            await add_credits(telegram_id, task.cost)
-        except Exception:
-            logger.exception(
-                "Nexus poller: failed to refund credits for task %s",
-                task_lookup_id,
-            )
+    database_task_id = getattr(task, "id", None)
+    internal_user_id = getattr(task, "user_id", None)
+    if database_task_id is None or internal_user_id is None:
+        logger.error(
+            "Image provider poller cannot atomically fail task %s: missing database identity",
+            task_lookup_id,
+        )
+        return False
 
-    await complete_video_task(task_lookup_id, None)
+    claimed_failure = await force_fail_task(
+        int(database_task_id),
+        int(internal_user_id),
+        float(getattr(task, "cost", None) or 0),
+    )
+    if not claimed_failure:
+        logger.info(
+            "Image provider poller failure already reconciled for task %s",
+            task_lookup_id,
+        )
+        return False
 
+    telegram_id = await _resolve_task_telegram_id(
+        task,
+        context="image_provider_poller",
+    )
     if not telegram_id:
         return False
 
@@ -1543,14 +1682,22 @@ async def _fail_polled_nexus_image_task(
             reply_markup=get_failed_image_retry_keyboard(_task_callback_id(task, task_lookup_id)),
         )
         return True
-    except Exception:
-        logger.exception(
-            "Nexus poller: failed to notify user about task failure %s",
-            task_lookup_id,
-        )
+    except Exception as exc:
+        if _is_terminal_telegram_delivery_error(exc):
+            logger.info(
+                "Telegram delivery unavailable: event=image_failure reason=%s task_id=%s telegram_id=%s",
+                _terminal_telegram_delivery_reason(exc),
+                task_lookup_id,
+                telegram_id,
+            )
+        else:
+            logger.exception(
+                "Image provider poller: failed to notify user about task failure %s",
+                task_lookup_id,
+            )
         return False
 
-async def _poll_single_nexus_image_task(bot_instance: Bot, task_row: dict[str, Any]) -> None:
+async def _poll_single_image_provider_task(bot_instance: Bot, task_row: dict[str, Any]) -> None:
     from bot.database import get_task_by_id
     from bot.handlers.generation import save_uploaded_file
     from bot.services.nano_banana_2_service import nano_banana_2_service
@@ -1560,10 +1707,10 @@ async def _poll_single_nexus_image_task(bot_instance: Bot, task_row: dict[str, A
     provider_task_id = str(
         request_data.get("provider_task_id") or task_row.get("task_id") or ""
     ).strip()
-    if not provider_task_id or provider_task_id in _NEXUS_POLL_IN_FLIGHT:
+    if not provider_task_id or provider_task_id in _IMAGE_PROVIDER_POLL_IN_FLIGHT:
         return
 
-    _NEXUS_POLL_IN_FLIGHT.add(provider_task_id)
+    _IMAGE_PROVIDER_POLL_IN_FLIGHT.add(provider_task_id)
     try:
         task = await get_task_by_id(provider_task_id)
         if not task or getattr(task, "status", "") == "completed":
@@ -1588,10 +1735,28 @@ async def _poll_single_nexus_image_task(bot_instance: Bot, task_row: dict[str, A
             return
 
         if status == "completed":
-            provider = getattr(service, "primary_provider", None)
-            if not provider or not hasattr(provider, "get_completed_result"):
+            provider_name = str(request_data.get("provider") or "").strip().lower()
+            provider_candidates = [
+                getattr(service, "primary_provider", None),
+                getattr(service, "fallback_provider", None),
+            ]
+            provider = next(
+                (
+                    candidate
+                    for candidate in provider_candidates
+                    if candidate is not None
+                    and hasattr(candidate, "get_completed_result")
+                    and (
+                        provider_name != "rendergrid"
+                        or candidate.__class__.__name__ == "RenderGridNanoBananaProvider"
+                    )
+                ),
+                None,
+            )
+            if not provider:
                 logger.error(
-                    "Nexus poller: provider for task %s cannot resolve completed result",
+                    "Image provider poller: provider=%s task=%s cannot resolve completed result",
+                    provider_name or "unknown",
                     provider_task_id,
                 )
                 return
@@ -1600,7 +1765,7 @@ async def _poll_single_nexus_image_task(bot_instance: Bot, task_row: dict[str, A
                 retried_task_id = await _retry_nexus_banana_image_failure(
                     task,
                     provider_task_id,
-                    reason="Nexus completed task without a usable image result",
+                    reason=f"{provider_name or 'provider'} completed task without a usable image result",
                 )
                 if retried_task_id:
                     return
@@ -1609,7 +1774,7 @@ async def _poll_single_nexus_image_task(bot_instance: Bot, task_row: dict[str, A
                     task,
                     provider_task_id=provider_task_id,
                     service_name=service_name,
-                    reason="Nexus completed task without a usable image result",
+                    reason=f"{provider_name or 'provider'} completed task without a usable image result",
                 )
                 return
             result_url = str(result.get("result_url") or "").strip()
@@ -1619,7 +1784,7 @@ async def _poll_single_nexus_image_task(bot_instance: Bot, task_row: dict[str, A
                 retried_task_id = await _retry_nexus_banana_image_failure(
                     task,
                     provider_task_id,
-                    reason="Nexus returned an empty image payload",
+                    reason=f"{provider_name or 'provider'} returned an empty image payload",
                 )
                 if retried_task_id:
                     return
@@ -1628,7 +1793,7 @@ async def _poll_single_nexus_image_task(bot_instance: Bot, task_row: dict[str, A
                     task,
                     provider_task_id=provider_task_id,
                     service_name=service_name,
-                    reason="Nexus returned an empty image payload",
+                    reason=f"{provider_name or 'provider'} returned an empty image payload",
                 )
                 return
             await _send_polled_nexus_image_result(
@@ -1656,30 +1821,40 @@ async def _poll_single_nexus_image_task(bot_instance: Bot, task_row: dict[str, A
                 reason=str(payload.get("error") or "unknown provider failure"),
             )
     finally:
-        _NEXUS_POLL_IN_FLIGHT.discard(provider_task_id)
+        _IMAGE_PROVIDER_POLL_IN_FLIGHT.discard(provider_task_id)
 
-async def _nexus_image_poller_loop(bot_instance: Bot) -> None:
+async def _image_provider_poller_loop(bot_instance: Bot) -> None:
     from bot.services.nexus_task_poller import (
         NEXUS_POLL_BATCH_SIZE,
+        NEXUS_POLL_CONCURRENCY,
         NEXUS_POLL_INTERVAL_SECONDS,
-        get_pending_nexus_image_tasks,
+        get_pending_provider_image_tasks,
     )
 
     await asyncio.sleep(5)
     logger.info(
-        "Nexus image poller started: interval=%ss batch_size=%s",
+        "Image provider poller started: interval=%ss batch_size=%s concurrency=%s",
         NEXUS_POLL_INTERVAL_SECONDS,
         NEXUS_POLL_BATCH_SIZE,
+        NEXUS_POLL_CONCURRENCY,
     )
     while True:
         try:
-            pending_tasks = await get_pending_nexus_image_tasks(
+            pending_tasks = await get_pending_provider_image_tasks(
                 limit=NEXUS_POLL_BATCH_SIZE,
             )
-            for task_row in pending_tasks:
-                await _poll_single_nexus_image_task(bot_instance, task_row)
+            if pending_tasks:
+                semaphore = asyncio.Semaphore(NEXUS_POLL_CONCURRENCY)
+
+                async def _poll_with_limit(task_row: dict[str, Any]) -> None:
+                    async with semaphore:
+                        await _poll_single_image_provider_task(bot_instance, task_row)
+
+                await asyncio.gather(
+                    *(_poll_with_limit(task_row) for task_row in pending_tasks)
+                )
         except Exception:
-            logger.exception("Nexus image poller cycle error")
+            logger.exception("Image provider poller cycle error")
         await asyncio.sleep(NEXUS_POLL_INTERVAL_SECONDS)
 
 def _build_failure_notification_text(
@@ -1698,7 +1873,7 @@ def _build_failure_notification_text(
     return (
         f"Не удалось завершить генерацию {media_kind}.\n"
         f"• Модель: <code>{_html_fragment(service_name or 'AI')}</code>\n"
-        f"• ID: <code>{_html_fragment(task_id)}</code>\n"
+        f"• ID задачи: <code>{_html_fragment(task_id)}</code>\n"
         f"• Причина: <code>{safe_reason}</code>"
         f"{refund_text}"
     )
@@ -1726,10 +1901,15 @@ def _is_retryable_kie_timeout_failure(task, fail_code, fail_msg) -> bool:
     }:
         return False
     normalized = str(fail_msg or "").lower()
-    retryable_markers = (
-        "timed out",
+    download_timeout_markers = (
         "timeout while downloading",
         "timeout downloading",
+    )
+    if any(marker in normalized for marker in download_timeout_markers):
+        return str(fail_code) in {"400", "500"}
+
+    retryable_markers = (
+        "timed out",
         "no results were returned",
     )
     return str(fail_code) == "500" and any(marker in normalized for marker in retryable_markers)
@@ -2448,16 +2628,11 @@ async def errors_handler(event: types.ErrorEvent):
     # Обработка ошибок Telegram API
     if isinstance(error, TelegramBadRequest):
         error_msg = str(error).lower()
-        if "chat not found" in error_msg:
-            logger.warning(
-                f"Chat not found error (user deleted chat or blocked bot): {error}"
+        if _is_terminal_telegram_delivery_error(error):
+            logger.info(
+                "Telegram delivery unavailable: event=dispatcher_error reason=%s",
+                _terminal_telegram_delivery_reason(error),
             )
-            return True
-        elif "bot was blocked" in error_msg:
-            logger.warning(f"Bot was blocked by user: {error}")
-            return True
-        elif "user is deactivated" in error_msg:
-            logger.warning(f"User is deactivated: {error}")
             return True
         elif "message is not modified" in error_msg:
             return True
@@ -2525,12 +2700,11 @@ async def handle_telegram_webhook(
                     await dp.feed_update(bot, update)
             except TelegramBadRequest as e:
                 error_msg = str(e).lower()
-                if (
-                    "chat not found" in error_msg
-                    or "bot was blocked" in error_msg
-                    or "user is deactivated" in error_msg
-                ):
-                    logger.warning(f"Chat error (safe to ignore): {e}")
+                if _is_terminal_telegram_delivery_error(e):
+                    logger.info(
+                        "Telegram delivery unavailable: event=webhook_update reason=%s",
+                        _terminal_telegram_delivery_reason(e),
+                    )
                     return
                 if "query is too old" in error_msg or "query id is invalid" in error_msg:
                     logger.info(f"Ignoring stale callback query in background task: {e}")
@@ -2550,12 +2724,11 @@ async def handle_telegram_webhook(
         # Ошибки Telegram API (chat not found, user blocked bot, etc.)
         # Возвращаем 200, чтобы Telegram не повторял запрос
         error_msg = str(e).lower()
-        if (
-            "chat not found" in error_msg
-            or "bot was blocked" in error_msg
-            or "user is deactivated" in error_msg
-        ):
-            logger.warning(f"Chat error (safe to ignore): {e}")
+        if _is_terminal_telegram_delivery_error(e):
+            logger.info(
+                "Telegram delivery unavailable: event=webhook_request reason=%s",
+                _terminal_telegram_delivery_reason(e),
+            )
             return web.Response(text="OK", status=200)
         logger.exception(f"Telegram API error: {e}")
         return web.Response(text="Bad Request", status=200)
@@ -2816,7 +2989,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                 caption = (
                                     f"✅ <b>{'Видео' if task.type == 'video' else 'Изображение'} готово</b>\n"
                                     f"• Модель: <code>{_html_fragment(model_display)}</code>\n"
-                                    f"• ID: <code>{_html_fragment(task_id)}</code>"
+                                    f"• ID задачи: <code>{_html_fragment(task_id)}</code>"
                                 )
                                 if task.duration:
                                     caption += f"\n• Длительность: <code>{_html_fragment(task.duration)}с</code>"
@@ -3850,6 +4023,7 @@ async def handle_wanx_webhook(request: web.Request) -> web.Response:
         logger.exception(f"WanX webhook error: {e}")
         return web.Response(status=500)
 
+@serialize_kie_callback
 async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
     """Обработчик уведомлений от Kie.ai (Nano Banana 2) API"""
     try:
@@ -3864,7 +4038,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 skip_secret_check = False
 
             if skip_secret_check:
-                logger.info("Kie.ai webhook secret check skipped for verified KIE Market relay")
+                logger.info("Kie.ai Market callback uses authenticated provider status verification")
             else:
                 secret = config.KIE_AI_WEBHOOK_SECRET
                 if secret:
@@ -3892,12 +4066,22 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             logger.warning(f"Kie.ai webhook received invalid JSON: {e}")
             return web.Response(status=200)
 
-        logger.info("Kie.ai webhook parsed data: %s", _preview_log_payload(data))
+        from bot.services.kie_webhook_verification import canonical_kie_callback
+
+        data, verification_status = await canonical_kie_callback(data)
+        if data is None:
+            return web.Response(status=verification_status)
+
+        logger.info(
+            "Kie.ai canonical task verified: task_id=%s state=%s",
+            data["data"].get("taskId"),
+            data["data"].get("state") or data["data"].get("status"),
+        )
 
         from bot.database import (
-            add_credits,
             complete_video_task,
             get_task_by_id,
+            mark_task_delivery_status,
         )
         from bot.keyboards import (
             get_gemini_omni_result_keyboard,
@@ -4065,6 +4249,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                     )
 
                     await complete_video_task(task_id, asset_id)
+                    await mark_task_delivery_status(task_id, "delivered")
                     logger.info(
                         "%s asset id %s sent to user %s",
                         service_name,
@@ -4083,7 +4268,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         text=(
                             "Не получилось завершить генерацию.\n"
                             f"• Модель: <code>{service_name}</code>\n"
-                            f"• ID: <code>{task_id}</code>\n\n"
+                            f"• ID задачи: <code>{task_id}</code>\n\n"
                             "Мы не получили готовый файл от сервиса.\n"
                             "Попробуйте повторить запуск немного позже."
                         ),
@@ -4136,7 +4321,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             full_caption = (
                 f"✅ <b>{'Видео' if is_video else 'Изображение'} готово</b>\n"
                 f"• Модель: <code>{_html_fragment(model_label)}</code>\n"
-                f"• ID: <code>{_html_fragment(display_task_id)}</code>"
+                f"• ID задачи: <code>{_html_fragment(display_task_id)}</code>"
                 f"{_provider_task_id_line(task, task_id)}"
             )
             if task.cost:
@@ -4305,13 +4490,24 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 if sent_media:
                     if is_video:
                         await complete_video_task(task_id, result_url)
-                    elif _should_send_prompt_followup(task):
+                    await mark_task_delivery_status(task_id, "delivered")
+                    if not is_video and _should_send_prompt_followup(task):
                         try:
                             await _send_used_prompt_message(bot_instance, telegram_id, task, result_url)
                         except Exception as prompt_e:
-                            logger.error(
-                                f"Failed to send prompt follow-up to {telegram_id}: {prompt_e}"
-                            )
+                            if _is_terminal_telegram_delivery_error(prompt_e):
+                                logger.info(
+                                    "Telegram delivery unavailable: event=prompt_followup reason=%s telegram_id=%s task_id=%s",
+                                    _terminal_telegram_delivery_reason(prompt_e),
+                                    telegram_id,
+                                    task_id,
+                                )
+                            else:
+                                logger.error(
+                                    "Failed to send prompt follow-up to %s: %s",
+                                    telegram_id,
+                                    prompt_e,
+                                )
                 else:
                     await _send_plain_result_link(
                         bot_instance,
@@ -4323,21 +4519,43 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         reply_markup=kb_link,
                     )
                     await complete_video_task(task_id, result_url)
+                    await mark_task_delivery_status(task_id, "delivered")
                     logger.info(
                         f"{service_name} fallback text sent to user {telegram_id}"
                     )
             except Exception as send_e:
-                logger.error(
-                    f"Failed to send {service_name} result to {telegram_id}: {send_e}"
-                )
-                try:
-                    await complete_video_task(task_id, result_url)
-                    logger.warning(
-                        f"{service_name} result stored but Telegram delivery failed for {telegram_id}"
+                if _is_terminal_telegram_delivery_error(send_e):
+                    logger.info(
+                        "Telegram delivery unavailable: event=generation_result reason=%s service=%s telegram_id=%s task_id=%s",
+                        _terminal_telegram_delivery_reason(send_e),
+                        service_name,
+                        telegram_id,
+                        task_id,
                     )
+                else:
+                    logger.error(
+                        f"Failed to send {service_name} result to {telegram_id}: {send_e}"
+                    )
+                try:
+                    if _is_terminal_telegram_delivery_error(send_e):
+                        await complete_video_task(task_id, result_url)
+                        await mark_task_delivery_status(
+                            task_id,
+                            "unavailable",
+                            error=_terminal_telegram_delivery_reason(send_e),
+                        )
+                    else:
+                        await mark_task_delivery_status(
+                            task_id,
+                            "pending",
+                            error=str(send_e),
+                        )
+                        logger.warning(
+                            f"{service_name} Telegram delivery will be retried by watchdog for {telegram_id}"
+                        )
                 except Exception as complete_e:
                     logger.error(
-                        f"Failed to store completed {service_name} task {task_id}: {complete_e}"
+                        f"Failed to persist delivery state for {service_name} task {task_id}: {complete_e}"
                     )
         else:
             # Enhanced failure logging and user notification
@@ -4362,12 +4580,11 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                     "не вернула картинку."
                 )
             logger.error(
-                "%s task %s FAILED: failCode=%s, failMsg=%s, data=%s",
+                "%s task %s FAILED: failCode=%s, failMsg=%s",
                 service_name,
                 task_id,
                 fail_code,
                 fail_msg,
-                _preview_log_payload(webhook_data),
             )
 
             if task and (
@@ -4431,10 +4648,13 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         retry_error,
                     )
 
-            if task and task.cost and task.cost > 0:
-                await add_credits(telegram_id, task.cost)
+            from bot.services.task_watchdog import force_fail_task
 
-            await complete_video_task(task_id, None)
+            if not task or not await force_fail_task(
+                task.id, task.user_id, task.cost or 0,
+                expected_provider_task_id=task_id,
+            ):
+                return web.Response(status=200)
 
             if telegram_id:
                 bot_instance = request.app["bot"]
@@ -4480,7 +4700,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
 
     except Exception as e:
         logger.exception(f"Kie.ai webhook error: {e}")
-        return web.Response(status=200)
+        return web.Response(status=503)
 
 async def handle_kie_market_webhook(request: web.Request) -> web.Response:
     """Webhook for KIE Market models such as nano-banana-2-lite."""
@@ -4496,23 +4716,15 @@ async def handle_kie_market_webhook(request: web.Request) -> web.Response:
             logger.warning("KIE Market webhook received invalid JSON: %s", exc)
             return web.Response(status=200)
 
-        from bot.services.kie_market_service import kie_market_service
-
-        if not kie_market_service.verify_webhook_signature(
-            payload=payload,
-            headers=request.headers,
-        ):
-            return web.json_response(
-                {"ok": False, "error": "bad signature"},
-                status=401,
-            )
-
+        # The shared handler fetches the authoritative provider record.
+        # Callback HMAC does not authenticate result/status fields and is not
+        # required for this wakeup-only endpoint.
         request["skip_kie_ai_secret_check"] = True
         request._read_bytes = raw_body
         return await handle_kie_ai_webhook(request)
     except Exception as exc:
         logger.exception("KIE Market webhook error: %s", exc)
-        return web.Response(status=200)
+        return web.Response(status=503)
 
 def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
     """Настройка aiohttp сервера для вебхуков"""
@@ -4539,6 +4751,7 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
     setup_browser_auth_routes(app)
     setup_feed_reference_media_routes(app)
     setup_miniapp_routes(app)
+    setup_robokassa_routes(app)
     setup_freekassa_routes(app)
 
     # Вебхук Telegram
@@ -4600,6 +4813,160 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
 
     return app
 
+
+_KIE_WATCHDOG_RECOVERY_MODELS = {
+    "flux_pro",
+    "gpt-image-2",
+    "gpt_image_2",
+    "nano-banana-2-lite",
+    "nano_banana_2_lite",
+    "banana_2_lite",
+    "seedream_5_pro",
+    "seedream_edit",
+    "seedance_2",
+    "seedance_2_5",
+    "wan_27",
+    "grok_imagine",
+    "grok_imagine_v15",
+    "motion_control_v26",
+    "v3_std",
+    "v3_pro",
+}
+
+
+async def _replay_completed_kie_task(task: Mapping[str, Any]) -> bool:
+    """Replay a lost KIE completion through the normal webhook delivery path."""
+    task_id = str(task.get("task_id") or "").strip()
+    model = str(task.get("model") or "").strip().lower()
+    if not task_id or model not in _KIE_WATCHDOG_RECOVERY_MODELS:
+        return False
+
+    from bot.database import get_task_by_id
+    from bot.services.kie_market_service import kie_market_service
+
+    provider_data = await kie_market_service.get_task_status(task_id)
+    if not isinstance(provider_data, dict):
+        return False
+    state = str(provider_data.get("state") or provider_data.get("status") or "").lower()
+    if state not in {"success", "completed", "succeeded", "finished"}:
+        return False
+
+    payload = {
+        "code": 200,
+        "msg": "watchdog reconciliation",
+        "data": provider_data,
+    }
+    webhook_path = str(config.KIE_AI_WEBHOOK_PATH or "/webhook/kie_ai").strip()
+    if not webhook_path.startswith("/"):
+        webhook_path = f"/{webhook_path}"
+    params = {}
+    if config.KIE_AI_WEBHOOK_SECRET:
+        params["secret"] = config.KIE_AI_WEBHOOK_SECRET
+
+    url = f"http://127.0.0.1:{config.WEBHOOK_PORT}{webhook_path}"
+    async with aiohttp.ClientSession(trust_env=False) as session:
+        async with session.post(
+            url,
+            params=params,
+            json=payload,
+            timeout=aiohttp.ClientTimeout(total=90),
+        ) as response:
+            await response.read()
+            if response.status >= 300:
+                logger.warning(
+                    "Watchdog KIE replay HTTP %s for task %s model=%s",
+                    response.status,
+                    task_id,
+                    model,
+                )
+                return False
+
+    refreshed = await get_task_by_id(task_id)
+    return bool(refreshed and refreshed.status == "completed")
+
+
+async def _notify_watchdog_failed_task(
+    bot_instance: Bot,
+    task_row: Mapping[str, Any],
+) -> bool:
+    """Notify a user after watchdog has atomically failed/refunded a task."""
+    from bot.database import get_task_by_id
+    from bot.keyboards import get_failed_image_retry_keyboard
+
+    provider_task_id = str(task_row.get("task_id") or "").strip()
+    if not provider_task_id:
+        return False
+
+    task = await get_task_by_id(provider_task_id)
+    if not task:
+        logger.warning(
+            "Watchdog failure notification skipped: task not found provider_task_id=%s",
+            provider_task_id,
+        )
+        return False
+
+    telegram_id = await _resolve_task_telegram_id(
+        task,
+        context="watchdog_failed_notification",
+    )
+    if not telegram_id:
+        logger.warning(
+            "Watchdog failure notification skipped: telegram_id unavailable task=%s",
+            provider_task_id,
+        )
+        return False
+
+    model_label = _get_task_model_label(
+        getattr(task, "model", None),
+        getattr(task, "type", None),
+    )
+    display_task_id = _public_task_id(task, provider_task_id)
+    refund_text = (
+        "\n\nБананы за эту попытку уже возвращены."
+        if getattr(task, "cost", None)
+        else "\n\nПопробуйте повторить попытку немного позже."
+    )
+
+    try:
+        await bot_instance.send_message(
+            chat_id=telegram_id,
+            text=_build_failure_notification_text(
+                service_name=model_label,
+                task_id=display_task_id,
+                reason="Сервис генерации завершил задачу с ошибкой.",
+                media_kind="результата",
+                refund_text=refund_text,
+            ),
+            parse_mode="HTML",
+            reply_markup=get_failed_image_retry_keyboard(
+                _task_callback_id(task, provider_task_id)
+            ),
+        )
+        logger.info(
+            "Watchdog failure notification sent: task=%s user=%s model=%s refunded=%s",
+            provider_task_id,
+            telegram_id,
+            getattr(task, "model", None),
+            bool(getattr(task, "cost", None)),
+        )
+        return True
+    except Exception as exc:
+        if _is_terminal_telegram_delivery_error(exc):
+            logger.info(
+                "Telegram delivery unavailable: event=watchdog_failure reason=%s task_id=%s telegram_id=%s",
+                _terminal_telegram_delivery_reason(exc),
+                provider_task_id,
+                telegram_id,
+            )
+        else:
+            logger.exception(
+                "Watchdog failure notification failed: task=%s user=%s",
+                provider_task_id,
+                telegram_id,
+            )
+        return False
+
+
 async def main():
     """Главная функция"""
     # Создаём директорию для логов если её нет
@@ -4617,14 +4984,6 @@ async def main():
     await init_db()
     logger.info("Database initialized successfully")
 
-    # Запускаем Task Watchdog для зависших задач генерации
-    try:
-        from bot.services.task_watchdog import watchdog_loop
-        asyncio.create_task(watchdog_loop())
-        logger.info("Task watchdog started")
-    except Exception:
-        logger.exception("Failed to start task watchdog")
-
     # Запускаем очистку rate limiter'а
     from bot.services.rate_limiter import start_cleanup_task
     start_cleanup_task()
@@ -4634,11 +4993,29 @@ async def main():
         token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
 
+    # Watchdog is a recovery path for provider tasks that escaped normal
+    # webhook/poller handling. A recovered failure must not refund silently.
     try:
-        asyncio.create_task(_nexus_image_poller_loop(bot))
-        logger.info("Nexus image poller started")
+        from bot.services.task_watchdog import watchdog_loop
+
+        async def notify_watchdog_failure(task_row: Mapping[str, Any]) -> bool:
+            return await _notify_watchdog_failed_task(bot, task_row)
+
+        asyncio.create_task(
+            watchdog_loop(
+                on_completed=_replay_completed_kie_task,
+                on_failed=notify_watchdog_failure,
+            )
+        )
+        logger.info("Task watchdog started")
     except Exception:
-        logger.exception("Failed to start Nexus image poller")
+        logger.exception("Failed to start task watchdog")
+
+    try:
+        asyncio.create_task(_image_provider_poller_loop(bot))
+        logger.info("Image provider poller started")
+    except Exception:
+        logger.exception("Failed to start image provider poller")
 
     # Настраиваем диспатчер
     dp = setup_dispatcher()

@@ -63,11 +63,11 @@ def _pool_min_size() -> int:
 
 
 def _pool_max_size() -> int:
-    return max(_pool_min_size(), _positive_int("PG_POOL_MAX_SIZE", 12))
+    return max(_pool_min_size(), _positive_int("PG_POOL_MAX_SIZE", 24))
 
 
 def _pool_timeout() -> float:
-    return _positive_float("PG_POOL_TIMEOUT_SECONDS", 5.0)
+    return _positive_float("PG_POOL_TIMEOUT_SECONDS", 10.0)
 
 
 def _connect_timeout() -> int:

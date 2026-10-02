@@ -107,3 +107,58 @@ async def test_analyzer_rejects_empty_input():
 
     with pytest.raises(ValueError, match="text, image_url or audio_bytes"):
         await service.analyze_prompt()
+
+
+@pytest.mark.asyncio
+async def test_photo_prompt_v2_uses_qwen38_for_image_analysis(monkeypatch):
+    from bot import database
+    await database.set_bot_setting("media_analysis_provider", "qwen38")
+    service = PromptAnalyzerV2Service(api_key="legacy-test-key")
+    qwen = AsyncMock()
+    qwen.enabled = True
+    qwen.model = "qwen/qwen3.8-max-0902"
+    monkeypatch.setattr(
+        "bot.services.prompt_analyzer_v2_service.config.QWEN38_VISION_MODEL",
+        "qwen/qwen3.8-27b",
+    )
+    qwen.analyze_image.return_value = (
+        '{"prompt_ru":"Русский Qwen промпт","prompt_en":"English Qwen prompt"}'
+    )
+    monkeypatch.setattr(
+        "bot.services.prompt_analyzer_v2_service.openrouter_qwen38_service",
+        qwen,
+    )
+    service._analyze_with_gpt55 = AsyncMock()
+
+    result = await service.analyze_prompt(
+        image_url="https://example.test/reference.jpg"
+    )
+
+    assert result["provider"] == "qwen/qwen3.8-27b"
+    qwen.analyze_image.assert_awaited_once()
+    kwargs = qwen.analyze_image.await_args.kwargs
+    assert kwargs["image_url"] == "https://example.test/reference.jpg"
+    assert kwargs["model"] == "qwen/qwen3.8-27b"
+    service._analyze_with_gpt55.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_photo_prompt_v2_uses_qwen38_for_text_analysis(monkeypatch):
+    from bot import database
+    await database.set_bot_setting("media_analysis_provider", "qwen38")
+    service = PromptAnalyzerV2Service(api_key="legacy-test-key")
+    qwen = AsyncMock()
+    qwen.enabled = True
+    qwen.model = "qwen/qwen3.8-max-0902"
+    qwen.analyze_text.return_value = (
+        '{"prompt_ru":"Русский текстовый промпт","prompt_en":"English text prompt"}'
+    )
+    monkeypatch.setattr(
+        "bot.services.prompt_analyzer_v2_service.openrouter_qwen38_service",
+        qwen,
+    )
+
+    result = await service.analyze_prompt(text="Неоновый город ночью")
+
+    assert result["provider"] == "qwen/qwen3.8-max-0902"
+    qwen.analyze_text.assert_awaited_once()

@@ -7,6 +7,9 @@ export type Seedance25Scenario = 'text' | 'first_frame' | 'first_last' | 'multim
 export type Seedance25Resolution = '480p' | '720p'
 export type Seedance25OutputFormat = 'mp4' | 'mov'
 
+// KIE technical contract; keep aligned with Seedance25Service.MAX_PROMPT_LENGTH.
+export const SEEDANCE25_MAX_PROMPT_LENGTH = 30_000
+
 const DIRECT_VIDEO_UPLOAD_BYTES = 45 * 1024 * 1024
 const VIDEO_CHUNK_BYTES = 7 * 1024 * 1024
 const MAX_VIDEO_BYTES = 200 * 1024 * 1024
@@ -16,6 +19,7 @@ export interface Seedance25GeneratePayload {
   prompt: string
   ratio: 'adaptive' | '16:9' | '9:16' | '1:1' | '4:3' | '3:4' | '21:9'
   duration: number
+  videoEditing?: boolean
   resolution: Seedance25Resolution
   outputFormat: Seedance25OutputFormat
   generateAudio: boolean
@@ -164,8 +168,9 @@ export async function generateSeedance25(
             : 'imgtxt',
       seedance25_scenario: payload.scenario,
       prompt: payload.prompt,
-      v_ratio: payload.ratio,
-      v_duration: payload.duration,
+      v_ratio: payload.videoEditing ? 'adaptive' : payload.ratio,
+      v_duration: payload.videoEditing ? -1 : payload.duration,
+      seedance25_video_editing: payload.videoEditing === true,
       seedance25_resolution: payload.resolution,
       seedance25_output_format: payload.outputFormat,
       seedance25_generate_audio: payload.generateAudio,

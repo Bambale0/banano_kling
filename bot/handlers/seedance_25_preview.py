@@ -103,6 +103,7 @@ def _defaults() -> dict:
         "reference_images": [],
         "v_reference_videos": [],
         "seedance25_scenario": "text",
+        "seedance25_video_editing": False,
         "seedance25_first_frame_url": None,
         "seedance25_last_frame_url": None,
         "seedance25_reference_audio_urls": [],
@@ -196,7 +197,7 @@ def _seedance_25_keyboard(data: dict):
 
 
 def _price_quote(data: dict) -> float:
-    duration = int(data.get("v_duration", 5))
+    duration = -1 if data.get("seedance25_video_editing") is True else int(data.get("v_duration", 5))
     # Auto has no deterministic output duration.  Show the configured default
     # 5-second quote while preserving -1 in the provider request.
     pricing_duration = 5 if duration == -1 else duration
@@ -251,7 +252,7 @@ async def _show_seedance_25_screen(target, state: FSMContext, *, edit: bool = Tr
         "движение камеры и lock объектива задавайте в промпте.\n\n"
         f"💰 Текущая цена из админ-прайса: <code>{quote}</code>🍌{auto_note}.\n"
         "Администратору списание не производится.\n\n"
-        "После настройки просто отправьте промпт (до 5000 символов)."
+        f"После настройки просто отправьте промпт (до {seedance_25_service.MAX_PROMPT_LENGTH} символов)."
     )
     markup = _seedance_25_keyboard(data)
 
@@ -375,7 +376,7 @@ async def _run_seedance_25_message(message: types.Message, state: FSMContext, pr
         await message.answer("❌ Для этого режима загрузите и последний кадр.")
         return
     if len(str(prompt or "")) > seedance_25_service.MAX_PROMPT_LENGTH:
-        await message.answer("❌ Промпт Seedance 2.5 — максимум 5000 символов.")
+        await message.answer(f"❌ Промпт Seedance 2.5 — максимум {seedance_25_service.MAX_PROMPT_LENGTH} символов.")
         return
 
     quote = _price_quote(data)
@@ -420,7 +421,7 @@ async def _run_seedance_25_message(message: types.Message, state: FSMContext, pr
             duration=duration,
             aspect_ratio=ratio,
             prompt=prompt,
-            cost=quote,
+            cost=0.0,
             request_data={
                 "source": "telegram",
                 "preview": "seedance_2_5_admin",
@@ -437,8 +438,13 @@ async def _run_seedance_25_message(message: types.Message, state: FSMContext, pr
                 "output_format": data.get("seedance25_output_format", "mp4"),
                 "web_search": bool(data.get("seedance25_web_search", False)),
                 "nsfw_checker": bool(data.get("seedance25_nsfw_checker", False)),
-                "admin_price_quote": quote,
+                "price_quote": float(quote),
+                "admin_price_quote": float(quote),
+                "charged": False,
+                "charged_cost": 0.0,
                 "admin_free": True,
+                "refund_on_failure": False,
+                "refund_claimed": False,
             },
         )
         await message.answer(
@@ -499,6 +505,7 @@ async def seedance25_scenario(callback: types.CallbackQuery, state: FSMContext):
         return
     updates = {
         "seedance25_scenario": scenario,
+        "seedance25_video_editing": False,
         "v_type": "text" if scenario == "text" else "imgtxt" if scenario in {"first_frame", "first_last"} else "video",
     }
     # Enforce the provider's mutually-exclusive scenarios in state as well as
@@ -533,7 +540,11 @@ async def seedance25_resolution(callback: types.CallbackQuery, state: FSMContext
 
 @router.callback_query(F.data.startswith("s25_ratio_"))
 async def seedance25_ratio(callback: types.CallbackQuery, state: FSMContext):
-    if await _assert_preview(callback, state) is None:
+    data = await _assert_preview(callback, state)
+    if data is None:
+        return
+    if data.get("seedance25_video_editing") is True:
+        await callback.answer("При редактировании формат берётся из исходного видео.", show_alert=True)
         return
     value = callback.data.replace("s25_ratio_", "", 1).replace("_", ":")
     if value == "adaptive" or value in seedance_25_service.ALLOWED_RATIOS:
@@ -547,6 +558,9 @@ async def seedance25_duration(callback: types.CallbackQuery, state: FSMContext):
     data = await _assert_preview(callback, state)
     if data is None:
         return
+    if data.get("seedance25_video_editing") is True:
+        await callback.answer("При редактировании длительность берётся из исходного видео.", show_alert=True)
+        return
     current = int(data.get("v_duration", 5))
     if callback.data == "s25_duration_auto":
         value = -1
@@ -556,6 +570,24 @@ async def seedance25_duration(callback: types.CallbackQuery, state: FSMContext):
         delta = 1 if callback.data.endswith("plus") else -1
         value = max(4, min(30, current + delta))
     await state.update_data(v_duration=value)
+    await _show_seedance_25_screen(callback, state)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "s25_toggle_editing")
+async def seedance25_toggle_editing(callback: types.CallbackQuery, state: FSMContext):
+    # The public installer relaxes _is_admin for model access; editing keeps
+    # the existing real-admin Auto entitlement.
+    if not config.is_admin(callback.from_user.id):
+        await callback.answer("Редактирование видео пока доступно только администратору.", show_alert=True)
+        return
+    data = await _assert_preview(callback, state)
+    if data is None:
+        return
+    if data.get("seedance25_scenario") != "multimodal":
+        await callback.answer("Выберите сценарий «По референсам».", show_alert=True)
+        return
+    await state.update_data(seedance25_video_editing=not (data.get("seedance25_video_editing") is True))
     await _show_seedance_25_screen(callback, state)
     await callback.answer()
 

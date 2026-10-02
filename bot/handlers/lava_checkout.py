@@ -28,6 +28,7 @@ from bot.payment_utils import (
 from bot.services.cryptobot_service import cryptobot_service
 from bot.services.lava_service import lava_service
 from bot.services.preset_manager import preset_manager
+from bot.services.robokassa_service import robokassa_service
 from bot.states import PaymentStates
 
 logger = logging.getLogger(__name__)
@@ -165,12 +166,12 @@ def _lava_checkout_params(mode: str) -> tuple[str | None, str, str]:
         return (
             LAVA_FOREIGN_CARD_PAYMENT_PROVIDER,
             LAVA_FOREIGN_CARD_PAYMENT_METHOD,
-            "Зарубежная карта",
+            "Резерв · зарубежная карта",
         )
     if mode == LAVA_CHECKOUT_FOREIGN_PAYPAL:
-        return LAVA_FOREIGN_PAYPAL_PAYMENT_PROVIDER, "", "PayPal"
+        return LAVA_FOREIGN_PAYPAL_PAYMENT_PROVIDER, "", "Резерв · PayPal"
     if mode == LAVA_CHECKOUT_FOREIGN:
-        return None, "", "Зарубежная оплата и СНГ"
+        return None, "", "Резерв · зарубежная оплата"
     return (
         LAVA_RUB_SBP_PAYMENT_PROVIDER,
         LAVA_RUB_SBP_PAYMENT_METHOD,
@@ -188,33 +189,24 @@ def _payment_options_keyboard(
     lava_foreign_price_usd: float | None,
     crypto: bool,
     freekassa: bool,
+    robokassa: bool = False,
 ) -> types.InlineKeyboardMarkup:
-    """Show every enabled payment method as an independent option."""
+    """Show Robokassa first, KASSA as reserve, and Lava lower in the list."""
 
     builder = InlineKeyboardBuilder()
-    if lava_card:
+    if robokassa:
         builder.button(
-            text="💳 Картой",
-            callback_data=f"buy_lava_card_{package_id}",
-        )
-    if lava_sbp:
-        builder.button(
-            text="⚡ СБП",
-            callback_data=f"buy_lava_sbp_{package_id}",
+            text="💳 СБП / карта · Robokassa",
+            callback_data=f"buy_robokassa_{package_id}",
         )
     if freekassa:
         builder.button(
-            text="🇷🇺 РФ — KASSA (резерв)",
-            callback_data=f"buy_freekassa_{package_id}",
-        )
-    if lava_foreign:
-        builder.button(
-            text="🌍 Зарубежная карта",
-            callback_data=f"buy_lava_foreign_card_{package_id}",
+            text="↩️ Резерв · KASSA · карта",
+            callback_data=f"freekassa_card_{package_id}",
         )
         builder.button(
-            text="🌍 PayPal",
-            callback_data=f"buy_lava_foreign_paypal_{package_id}",
+            text="↩️ Резерв · KASSA · СБП",
+            callback_data=f"freekassa_sbp_{package_id}",
         )
     if stars:
         builder.button(
@@ -225,6 +217,25 @@ def _payment_options_keyboard(
         builder.button(
             text="₿ Криптовалюта",
             callback_data=f"buy_crypto_{package_id}",
+        )
+    if lava_card:
+        builder.button(
+            text="💳 Карта · Lava",
+            callback_data=f"buy_lava_card_{package_id}",
+        )
+    if lava_sbp:
+        builder.button(
+            text="⚡ СБП · Lava",
+            callback_data=f"buy_lava_sbp_{package_id}",
+        )
+    if lava_foreign:
+        builder.button(
+            text="🌐 Резерв · зарубежная карта",
+            callback_data=f"buy_lava_foreign_card_{package_id}",
+        )
+        builder.button(
+            text="🌐 Резерв · PayPal",
+            callback_data=f"buy_lava_foreign_paypal_{package_id}",
         )
     builder.button(text="◀️ Назад", callback_data="menu_topup")
     builder.adjust(1)
@@ -284,11 +295,11 @@ def _checkout_title(mode: str) -> str:
     if mode == LAVA_CHECKOUT_CARD:
         return "💳 <b>Оплата картой</b>"
     if mode == LAVA_CHECKOUT_FOREIGN_CARD:
-        return "🌍 <b>Зарубежная карта</b>"
+        return "🌐 <b>Резерв · зарубежная карта</b>"
     if mode == LAVA_CHECKOUT_FOREIGN_PAYPAL:
-        return "🌍 <b>PayPal</b>"
+        return "🌐 <b>Резерв · PayPal</b>"
     if mode == LAVA_CHECKOUT_FOREIGN:
-        return "🌍 <b>Зарубежная оплата и СНГ</b>"
+        return "🌐 <b>Резерв · зарубежная оплата</b>"
     return "⚡ <b>Оплата по СБП</b>"
 
 
@@ -325,12 +336,14 @@ async def show_direct_payment_methods(
         lava_foreign_price_usd = float(package.get("price_usd") or 0) or None
     except (TypeError, ValueError):
         lava_foreign_price_usd = None
+    has_robokassa = bool(robokassa_service.enabled)
     has_freekassa = False
     has_stars = bool(config.TELEGRAM_STARS_ENABLED)
     has_crypto = bool(cryptobot_service.enabled)
 
     if not any(
         (
+            has_robokassa,
             has_lava_card,
             has_lava_sbp,
             has_lava_foreign,
@@ -379,6 +392,7 @@ async def show_direct_payment_methods(
             lava_foreign_price_usd=lava_foreign_price_usd,
             crypto=has_crypto,
             freekassa=has_freekassa,
+            robokassa=has_robokassa,
         ),
         parse_mode="HTML",
     )

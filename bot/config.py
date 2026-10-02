@@ -31,6 +31,19 @@ class Config:
     FREEKASSA_WEBHOOK_PATH: str = os.getenv(
         "FREEKASSA_WEBHOOK_PATH", "/freekassa/webhook"
     )
+
+    # Robokassa — primary RUB checkout
+    ROBOKASSA_MERCHANT_LOGIN: str = os.getenv("ROBOKASSA_MERCHANT_LOGIN", "")
+    ROBOKASSA_PASSWORD1: str = os.getenv("ROBOKASSA_PASSWORD1", "")
+    ROBOKASSA_PASSWORD2: str = os.getenv("ROBOKASSA_PASSWORD2", "")
+    ROBOKASSA_HASH_ALGORITHM: str = os.getenv("ROBOKASSA_HASH_ALGORITHM", "md5").lower()
+    ROBOKASSA_TEST_MODE: bool = os.getenv("ROBOKASSA_TEST_MODE", "0").lower() in (
+        "1", "true", "yes", "on"
+    )
+    ROBOKASSA_WEBHOOK_PATH: str = os.getenv(
+        "ROBOKASSA_WEBHOOK_PATH", "/robokassa/result"
+    )
+
     PAYMENT_PROVIDER: str = os.getenv("PAYMENT_PROVIDER", "lava").lower()
 
     # Telegram Stars
@@ -103,6 +116,44 @@ class Config:
 
     # Legacy API Keys (optional fallbacks)
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+
+    # OpenRouter Qwen 3.8 — primary video prompt analysis
+    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
+    OPENROUTER_BASE_URL: str = os.getenv(
+        "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
+    ).rstrip("/")
+    QWEN38_PROMPT_MODEL: str = os.getenv(
+        "QWEN38_PROMPT_MODEL", "qwen/qwen3.8-max-0902"
+    )
+    QWEN38_VISION_MODEL: str = os.getenv(
+        "QWEN38_VISION_MODEL", "qwen/qwen3.8-27b"
+    )
+    QWEN38_PROMPT_REASONING_EFFORT: str = os.getenv(
+        "QWEN38_PROMPT_REASONING_EFFORT", "medium"
+    )
+    QWEN38_PROMPT_MAX_TOKENS: int = int(
+        os.getenv("QWEN38_PROMPT_MAX_TOKENS", "8192")
+    )
+    QWEN38_PROMPT_TIMEOUT_SECONDS: int = int(
+        os.getenv("QWEN38_PROMPT_TIMEOUT_SECONDS", "180")
+    )
+    QWEN38_PROMPT_MAX_ATTEMPTS: int = int(
+        os.getenv("QWEN38_PROMPT_MAX_ATTEMPTS", "2")
+    )
+    KIE_MEDIA_ANALYSIS_FALLBACK_MODEL: str = os.getenv(
+        "KIE_MEDIA_ANALYSIS_FALLBACK_MODEL", "gemini-3-8-flash"
+    )
+    KIE_MEDIA_ANALYSIS_FALLBACK_ENDPOINT: str = os.getenv(
+        "KIE_MEDIA_ANALYSIS_FALLBACK_ENDPOINT",
+        "/gemini-3-8-flash-openai/v1/chat/completions",
+    )
+    KIE_MEDIA_ANALYSIS_FALLBACK_MAX_ATTEMPTS: int = int(
+        os.getenv("KIE_MEDIA_ANALYSIS_FALLBACK_MAX_ATTEMPTS", "2")
+    )
+
+    KIE_MEDIA_ANALYSIS_TIMEOUT_SECONDS: int = int(os.getenv("KIE_MEDIA_ANALYSIS_TIMEOUT_SECONDS", "180"))
+    KIE_MEDIA_ANALYSIS_MAX_ATTEMPTS: int = int(os.getenv("KIE_MEDIA_ANALYSIS_MAX_ATTEMPTS", "2"))
+
     PHOTO_PROMPT_MODEL: str = os.getenv("PHOTO_PROMPT_MODEL", "gpt-5-5")
 
     # APIYI Vision — analysis photo in prompt (like VK bot)
@@ -222,6 +273,13 @@ class Config:
         return f"{self.WEBHOOK_HOST.rstrip('/')}{path}"
 
     @property
+    def robokassa_notification_url(self) -> str:
+        path = self.ROBOKASSA_WEBHOOK_PATH or "/robokassa/result"
+        if not path.startswith("/"):
+            path = "/" + path
+        return f"{self.WEBHOOK_HOST.rstrip('/')}{path}"
+
+    @property
     def YOOKASSA_RETURN_URL(self) -> str:  # transitional API name
         return self.FREEKASSA_RETURN_URL
 
@@ -235,6 +293,7 @@ class Config:
             "cryptobot",
             "lava",
             "freekassa",
+            "robokassa",
             "tbank",
             "telegram_stars",
         }:
@@ -265,6 +324,14 @@ class Config:
             "business": self.LAVA_OFFER_ID_BUSINESS,
         }
         return mapping.get(package_id, "")
+
+    @property
+    def has_robokassa(self) -> bool:
+        return bool(
+            self.ROBOKASSA_MERCHANT_LOGIN
+            and self.ROBOKASSA_PASSWORD1
+            and self.ROBOKASSA_PASSWORD2
+        )
 
     @property
     def has_freekassa(self) -> bool:

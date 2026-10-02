@@ -57,6 +57,9 @@ install_publication_scope_compat()
 # production. Install the override before admin/common/generation import and
 # before any user-facing referral handler can run.
 disable_referral_antifraud()
+# Install the approval guard before any compatibility installer can import
+# bot.miniapp and capture the unguarded referral function.
+install_partner_referral_approval_guard()
 
 from . import admin as admin_module
 from . import common as common_module
@@ -70,9 +73,12 @@ from . import (
     payments as payments_module,
 )
 from . import repeat_result_compat as repeat_result_compat_module
+from .admin_test_lab import router as admin_test_lab_router
 from .admin_user_ban import router as admin_user_ban_router
 from .batch_generation import router as batch_generation_router
 from .freekassa_payments import router as freekassa_payments_router
+from .robokassa_payments import install_robokassa_payment_surfaces
+from .robokassa_payments import router as robokassa_payments_router
 from .image_analyzer import router as legacy_image_analyzer_router
 from .notification_campaigns import router as notification_campaigns_router
 from .partner_approval import admin_router as partner_approval_admin_router
@@ -92,6 +98,7 @@ from .seedance_25_telegram_compat import install_seedance_25_telegram_compat
 from .seedance_25_telegram_compat import router as seedance_25_telegram_compat_router
 from .seedance_25_upload_compat import install_seedance_25_upload_compat
 from .seedance_25_video_ref_pricing import install_seedance_25_video_ref_pricing
+from .video_generation_compat import router as video_generation_compat_router
 from .seedance_multimodal_compat import (
     install_seedance_multimodal_runtime_compat,
 )
@@ -114,6 +121,7 @@ admin_router = Router()
 admin_router.include_router(partner_approval_admin_router)
 admin_router.include_router(admin_user_ban_router)
 admin_router.include_router(banana_resolution_pricing_router)
+admin_router.include_router(admin_test_lab_router)
 admin_router.include_router(admin_module.router)
 
 # Keep payment safety fixes without changing the established user-facing flow.
@@ -175,6 +183,7 @@ generation_router.include_router(seedance_25_telegram_compat_router)
 generation_router.include_router(seedance_25_fullstack_router)
 generation_router.include_router(seedance_25_preview_router)
 generation_router.include_router(seedance_multimodal_compat_router)
+generation_router.include_router(video_generation_compat_router)
 generation_router.include_router(repeat_run_confirm_compat_router)
 generation_router.include_router(generation_module.router)
 
@@ -182,6 +191,7 @@ generation_router.include_router(generation_module.router)
 # while generation and photo analysis keep the original UX routing.
 payments_router = Router()
 payments_router.include_router(lava_checkout_router)
+payments_router.include_router(robokassa_payments_router)
 payments_router.include_router(freekassa_payments_router)
 payments_router.include_router(prodamus_payments_router)
 payments_router.include_router(legacy_payments_router)
@@ -195,7 +205,6 @@ install_text_trend_upload(trends_compat_module)
 install_trend_video_compat(trends_compat_module)
 install_feed_model_filter_compat(common_module)
 install_own_profile_feed_compat()
-install_partner_referral_approval_guard()
 install_miniapp_regression_safety()
 # Route safety must wrap add_post before trend/miniapp routes are registered.
 # The trend route itself must be inserted before Mini App's API catch-all.
@@ -203,6 +212,7 @@ install_trend_route_compat()
 # Mini App checkout keeps legacy `lava`, while explicit UI choices route Card
 # and SBP to the exact Lava PAY2ME payment method.
 install_miniapp_lava_payment_methods()
+install_robokassa_payment_surfaces()
 install_prodamus_payment_surfaces()
 common_router = Router()
 common_router.include_router(partner_approval_user_router)
@@ -218,6 +228,7 @@ common_router.include_router(legacy_common_router)
 
 __all__ = [
     "admin_router",
+    "admin_test_lab_router",
     "banana_resolution_pricing_router",
     "batch_generation_router",
     "common_router",
@@ -234,6 +245,7 @@ __all__ = [
     "publication_scope_compat_router",
     "repeat_result_compat_router",
     "repeat_run_confirm_compat_router",
+    "robokassa_payments_router",
     "seedance_25_fullstack_router",
     "seedance_25_preview_router",
     "seedance_25_telegram_compat_router",

@@ -195,3 +195,89 @@ def test_exact_video_repeat_restores_full_recipe_from_source_id_only() -> None:
     assert restored["seedance25_reference_audio_urls"] == [
         "https://example.test/private-audio.mp3"
     ]
+
+
+
+def test_seedance25_text_repeat_with_new_photo_becomes_multimodal() -> None:
+    source_task = {
+        "prompt": "source prompt",
+        "model": "seedance_2_5",
+        "duration": 8,
+        "aspect_ratio": "9:16",
+        "request_data": {
+            "v_type": "text",
+            "seedance25_scenario": "text",
+        },
+    }
+
+    restored = enrich_video_repeat_body(
+        {
+            "v_model": "seedance_2_5",
+            "v_type": "text",
+            "source_feed_gen_id": 101,
+            "reference_images": ["https://example.test/user-photo.jpg"],
+        },
+        source_task,
+    )
+
+    assert restored["seedance25_scenario"] == "multimodal"
+    assert restored["reference_images"] == ["https://example.test/user-photo.jpg"]
+
+
+def test_seedance25_first_frame_repeat_uses_new_photo_as_first_frame() -> None:
+    source_task = {
+        "prompt": "source prompt",
+        "model": "seedance_2_5",
+        "duration": 8,
+        "aspect_ratio": "9:16",
+        "request_data": {
+            "v_type": "imgtxt",
+            "seedance25_scenario": "first_frame",
+            "first_frame_url": "https://example.test/private-source.jpg",
+        },
+    }
+
+    restored = enrich_video_repeat_body(
+        {
+            "v_model": "seedance_2_5",
+            "v_type": "imgtxt",
+            "source_feed_gen_id": 102,
+            "reference_images": ["https://example.test/user-photo.jpg"],
+        },
+        source_task,
+    )
+
+    assert restored["seedance25_scenario"] == "first_frame"
+    assert restored["seedance25_first_frame_url"] == "https://example.test/user-photo.jpg"
+
+
+def test_seedance25_first_last_repeat_uses_two_new_photos_as_frames() -> None:
+    source_task = {
+        "prompt": "source prompt",
+        "model": "seedance_2_5",
+        "duration": 8,
+        "aspect_ratio": "9:16",
+        "request_data": {
+            "v_type": "imgtxt",
+            "seedance25_scenario": "first_last",
+            "first_frame_url": "https://example.test/private-first.jpg",
+            "last_frame_url": "https://example.test/private-last.jpg",
+        },
+    }
+
+    restored = enrich_video_repeat_body(
+        {
+            "v_model": "seedance_2_5",
+            "v_type": "imgtxt",
+            "source_feed_gen_id": 103,
+            "reference_images": [
+                "https://example.test/user-first.jpg",
+                "https://example.test/user-last.jpg",
+            ],
+        },
+        source_task,
+    )
+
+    assert restored["seedance25_scenario"] == "first_last"
+    assert restored["seedance25_first_frame_url"] == "https://example.test/user-first.jpg"
+    assert restored["seedance25_last_frame_url"] == "https://example.test/user-last.jpg"

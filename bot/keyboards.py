@@ -100,6 +100,10 @@ def get_main_menu_keyboard(user_credits: int = 0, telegram_id: int | None = None
         InlineKeyboardButton(text="🤝 Партнёрам", callback_data="menu_partner"),
         InlineKeyboardButton(text="⋯ Ещё", callback_data="ux_more"),
     )
+    if telegram_id is not None and config.is_admin(int(telegram_id)):
+        builder.row(
+            InlineKeyboardButton(text="🧪 Тест", callback_data="admin_test_lab")
+        )
 
     return builder.as_markup()
 
@@ -167,9 +171,10 @@ def get_more_menu_keyboard():
     builder = InlineKeyboardBuilder()
     builder.button(text="❓ Как пользоваться", callback_data="menu_help")
     builder.button(text="💬 Поддержка", callback_data="menu_support")
+    builder.button(text="📜 Публичная оферта", callback_data="more_public_offer")
     builder.button(text="💰 Пополнить", callback_data="menu_topup")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
-    builder.adjust(2, 1, 1)
+    builder.adjust(2, 1, 1, 1)
     return builder.as_markup()
 
 
@@ -741,11 +746,6 @@ def get_create_image_keyboard(
             InlineKeyboardButton(text=("◉ 2K" if q == "2K" else "○ 2K"), callback_data="img_quality_2k"),
             InlineKeyboardButton(text=("◉ 4K" if q == "4K" else "○ 4K"), callback_data="img_quality_4k"),
         )
-    count_buttons = []
-    for count in [1, 2, 4, 6]:
-        marker = "◉" if current_count == count else "○"
-        count_buttons.append(InlineKeyboardButton(text=f"{marker} {count}x", callback_data=f"img_count_{count}"))
-    builder.row(*count_buttons[:2]); builder.row(*count_buttons[2:])
     if current_service in {"seedream_edit", "seedream_5_pro"}:
         basic_marker = "◉" if img_quality == "basic" else "○"
         high_marker = "◉" if img_quality == "high" else "○"
@@ -951,7 +951,6 @@ def get_referral_keyboard(referral_link: str):
 
 def get_partner_program_keyboard(referral_link: str, is_partner: bool = False):
     builder = InlineKeyboardBuilder()
-    builder.button(text="📜 Публичная оферта", callback_data="partner_offer")
     if not is_partner:
         builder.button(text="✔ Прочитал и согласен с условиями", callback_data="partner_accept")
     if referral_link:
@@ -968,7 +967,6 @@ def get_partner_program_keyboard(referral_link: str, is_partner: bool = False):
 
 def get_partner_consent_keyboard():
     builder = InlineKeyboardBuilder()
-    builder.button(text="📜 Публичная оферта", callback_data="partner_offer")
     builder.button(text="✔ Прочитал и согласен с условиями", callback_data="partner_accept")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
     builder.adjust(1, 1, 1)

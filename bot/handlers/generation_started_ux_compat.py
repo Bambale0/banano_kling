@@ -21,6 +21,11 @@ from typing import Any
 
 from aiogram import BaseMiddleware
 
+from bot.services.delivery_state import (
+    is_terminal_telegram_delivery_error,
+    terminal_telegram_delivery_reason,
+)
+
 logger = logging.getLogger(__name__)
 
 _GENERATION_STARTED_MARKER = "Генерация запущена"
@@ -243,13 +248,22 @@ def _install_miniapp_started_notifier() -> None:
                 local_task_id,
                 provider_task_id,
             )
-        except Exception:
-            logger.exception(
-                "Mini App generation start notification failed: telegram_id=%s local_task_id=%s provider_task_id=%s",
-                telegram_id,
-                local_task_id,
-                provider_task_id,
-            )
+        except Exception as exc:
+            if is_terminal_telegram_delivery_error(exc):
+                logger.info(
+                    "Mini App Telegram notification unavailable: event=generation_started reason=%s telegram_id=%s local_task_id=%s provider_task_id=%s",
+                    terminal_telegram_delivery_reason(exc),
+                    telegram_id,
+                    local_task_id,
+                    provider_task_id,
+                )
+            else:
+                logger.exception(
+                    "Mini App generation start notification failed: telegram_id=%s local_task_id=%s provider_task_id=%s",
+                    telegram_id,
+                    local_task_id,
+                    provider_task_id,
+                )
 
     miniapp_module._notify_miniapp_image_task_queued = notify_generation_started
     miniapp_module._generation_started_ux_notifier_installed = True

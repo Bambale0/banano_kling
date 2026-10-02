@@ -324,5 +324,13 @@ async def test_miniapp_feed_remix_falls_back_to_profile_only_source(monkeypatch)
     )
 
     assert card == profile_card
-    public_lookup.assert_awaited_once_with(42, viewer_user_id=7)
-    profile_lookup.assert_awaited_once_with(42, viewer_user_id=7)
+    public_lookup.assert_awaited_once_with(
+        42,
+        viewer_user_id=7,
+        include_unavailable=True,
+    )
+    profile_lookup.assert_awaited_once_with(
+        42,
+        viewer_user_id=7,
+        include_unavailable=True,
+    )

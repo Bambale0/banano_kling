@@ -10,6 +10,7 @@ from bot.config import config
 from bot.pinterest_trend_api import _ensure_pinterest_tool, setup_pinterest_trend_routes
 from bot.pinterest_trend_catalog import ensure_pinterest_trend_catalog
 from bot.pinterest_trend_flow_contract import install_pinterest_trend_flow_contract
+from bot.seedance_trend_admin_api import setup_seedance_trend_admin_routes
 from bot.trend_api import setup_trend_routes
 from bot.trend_preview_admin import setup_trend_preview_admin_routes
 
@@ -67,6 +68,7 @@ def install_trend_route_compat() -> None:
         while _ensure_pinterest_tool in app.on_startup:
             app.on_startup.remove(_ensure_pinterest_tool)
         setup_trend_preview_admin_routes(app, root)
+        setup_seedance_trend_admin_routes(app, root)
         if ensure_pinterest_trend_catalog not in app.on_startup:
             app.on_startup.append(ensure_pinterest_trend_catalog)
         setup_trend_routes(app, root)

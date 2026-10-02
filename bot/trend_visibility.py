@@ -7,6 +7,8 @@ from collections.abc import Mapping
 from typing import Any
 from urllib.parse import parse_qsl
 
+from bot.trend_user_fields import TrendUserFieldsError, configured_user_fields
+
 
 def is_trend_prompt(prompt: Mapping[str, Any] | None) -> bool:
     if not prompt:
@@ -17,7 +19,7 @@ def is_trend_prompt(prompt: Mapping[str, Any] | None) -> bool:
     )
 
 
-def public_trend_settings(prompt: Mapping[str, Any]) -> dict[str, str]:
+def public_trend_settings(prompt: Mapping[str, Any]) -> dict[str, Any]:
     raw_settings = prompt.get("generation_settings")
     settings = raw_settings if isinstance(raw_settings, Mapping) else {}
     tags = {
@@ -39,7 +41,35 @@ def public_trend_settings(prompt: Mapping[str, Any]) -> dict[str, str]:
     if not ratio:
         ratio = "16:9" if kind == "video" else "1:1"
 
-    public_settings = {"kind": kind, "ratio": ratio}
+    public_settings: dict[str, Any] = {"kind": kind, "ratio": ratio}
+    try:
+        reference_count = int(settings.get("reference_count") or 0)
+    except (TypeError, ValueError):
+        reference_count = 0
+    if 1 <= reference_count <= 12:
+        public_settings["reference_count"] = reference_count
+        raw_labels = settings.get("reference_labels")
+        if isinstance(raw_labels, list):
+            labels = [
+                str(value or "").strip()[:80]
+                for value in raw_labels[:reference_count]
+                if str(value or "").strip()
+            ]
+            if labels:
+                public_settings["reference_labels"] = labels
+    if settings.get("automatic_hidden_references") is True:
+        public_settings["automatic_hidden_references"] = True
+
+    try:
+        user_fields = configured_user_fields(
+            settings,
+            prompt=str(prompt.get("prompt_text") or ""),
+        )
+    except TrendUserFieldsError:
+        user_fields = []
+    if user_fields:
+        public_settings["user_fields"] = user_fields
+
     preview_type = str(settings.get("preview_type") or "").strip().lower()
     if preview_type in {"image", "video"}:
         public_settings["preview_type"] = preview_type
@@ -58,9 +88,11 @@ def sanitize_prompt_for_public(
     if not is_trend_prompt(payload):
         return payload
 
+    public_settings = public_trend_settings(payload)
     payload["prompt_text"] = ""
     payload["model"] = None
-    payload["generation_settings"] = public_trend_settings(payload)
+    payload.pop("source_generation_id", None)
+    payload["generation_settings"] = public_settings
     payload["prompt_hidden"] = True
     payload["prompt_actions_allowed"] = False
     return payload

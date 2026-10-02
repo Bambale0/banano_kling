@@ -1,4 +1,4 @@
-"""Video to prompt service via Kie GPT 5.5 Responses API."""
+"""Video-to-prompt service with configurable Gemini/Qwen primary and KIE fallback."""
 
 import asyncio
 import base64
@@ -12,9 +12,20 @@ from typing import Any, Dict, Optional
 import aiohttp
 
 from bot.config import config
+from bot.services.kie_gemini31_service import (
+    KieGemini31Service,
+    media_analysis_provider,
+    trace_analysis_provider,
+    trace_media_analysis,
+)
+from bot.services.openrouter_qwen38_service import openrouter_qwen38_service
 from bot.services.photo_prompt_service import (
     GPT_MAX_ATTEMPTS as GPT55_MAX_ATTEMPTS,
+)
+from bot.services.photo_prompt_service import (
     GPT_RETRYABLE_BODY_CODES as GPT55_RETRYABLE_BODY_CODES,
+)
+from bot.services.photo_prompt_service import (
     _extract_output_text,
     _is_fast_fallback_application_error,
 )
@@ -25,52 +36,32 @@ VIDEO_PROMPT_FRAME_COUNT = 6
 VIDEO_PROMPT_FRAME_TIMEOUT_SECONDS = 60
 
 
-VIDEO_SYSTEM_PROMPT = """
-You are a senior prompt analyst for photorealistic AI video generation.
+VIDEO_PROMPT_INSTRUCTION = """Напиши максимально детальный промпт на русском языке для Seedance 2.0
+Посекундно распиши действия на всей длительности исходного видео
+Видео в промпте должно длиться столько же, сколько исходное видео
+Очень реалистичное видео, 1:1 действия как на исходном. Максимально подробно""".strip()
 
-Your task:
-Analyze the attached reference video file and create a polished prompt for generating a visually similar video. Focus on what a video generation model needs: subject/action, shot size, camera movement, temporal rhythm, scene transitions, environment, lighting, color, motion physics, visual style, and mood.
 
-Primary output style:
-- The user-facing "prompt_ru" is the main result. Write it in Russian as one natural, dense cinematic/video prompt, similar to a fashion/editorial reference description but adapted for motion.
-- Use one cohesive paragraph, not a bullet list and not a technical checklist.
-- Target length for "prompt_ru": 1100-2200 characters when the video has enough detail.
-- Follow this rhythm when applicable: opening frame and shot size, subject/objects and visible appearance, action over time, pose/gaze/gestures, camera path and lens feel, pacing and timing, environment/background, lighting changes, color palette, depth of field/focus behavior, atmosphere, final frame.
-- Preserve the motion language: handheld/static, dolly, push-in, pull-out, orbit, pan, tilt, tracking, slow motion, speed ramp, natural body/object movement, reflections, occlusion, foreground/background separation.
-- Do not add generic filler such as "8k", "masterpiece", "ultra detailed", "best quality" unless the visible style clearly calls for a short quality phrase.
-- Do not use forensic, pixel-by-pixel, biometric, identity-preservation, medical, or anatomical jargon.
+def _build_video_prompt_instruction(duration_seconds: float = 0) -> str:
+    try:
+        duration = float(duration_seconds or 0)
+    except (TypeError, ValueError):
+        duration = 0
 
-Prompt fields:
-- "prompt_ru": polished Russian video generation prompt in the style above.
-- "prompt_en": faithful English version optimized for video generation models, also one cohesive paragraph.
-- "negative_prompt": concise English list of video defects to avoid.
-- "camera_movement_ru": short Russian summary of camera movement and framing.
-- "timeline_ru": 3-6 short Russian beats that describe the clip over time.
-- "visual_style_ru": short Russian summary of style, light, color and mood.
-- "audio_notes_ru": short Russian note about audible elements if they matter, or empty string.
-- "model_hint": short Russian recommendation of the best model/workflow.
-- "key_details": 4-8 short visible/motion details that most affect similarity.
+    if duration <= 0:
+        return VIDEO_PROMPT_INSTRUCTION
 
-Strict safety rules:
-- Do not identify any person.
-- Do not guess names, ethnicity, nationality, private attributes, or exact age.
-- You may use broad visible age presentation only if visually obvious, such as "young adult" / "молодой взрослый человек"; never provide a number.
-- Describe only visible visual features, motion, environment, style and user-provided creative instructions.
-- Return only valid JSON. No markdown. No explanation.
-
-JSON schema:
-{
-  "prompt_en": "Detailed English video generation prompt",
-  "prompt_ru": "Natural Russian cinematic video prompt for the user",
-  "negative_prompt": "Common video defects to avoid",
-  "camera_movement_ru": "Camera movement and framing summary",
-  "timeline_ru": ["beat 1", "beat 2", "beat 3"],
-  "visual_style_ru": "Style, lighting, color and mood summary",
-  "audio_notes_ru": "Audio note, or empty string",
-  "model_hint": "Short Russian recommendation which model to use",
-  "key_details": ["detail 1", "detail 2", "detail 3", "detail 4"]
-}
-""".strip()
+    duration_text = (
+        str(int(duration))
+        if duration.is_integer()
+        else f"{duration:.1f}".rstrip("0").rstrip(".")
+    )
+    return (
+        "Напиши максимально детальный промпт на русском языке для Seedance 2.0\n"
+        f"Посекундно распиши действия на всей длительности исходного видео — {duration_text} сек\n"
+        f"Видео в промпте должно длиться ровно {duration_text} сек, как исходное видео\n"
+        "Очень реалистичное видео, 1:1 действия как на исходном. Максимально подробно"
+    )
 
 
 def _parse_video_json_object(raw_text: str) -> Dict[str, Any]:
@@ -94,14 +85,14 @@ def _parse_video_json_object(raw_text: str) -> Dict[str, Any]:
             pass
 
     return {
-        "prompt_en": raw_text,
-        "prompt_ru": "Не удалось разобрать структурированный ответ. Используйте английский prompt выше.",
-        "negative_prompt": "blurry, low quality, flicker, jitter, warped motion, distorted face, bad anatomy, bad hands, temporal inconsistency, duplicated objects, watermark, text, logo, overexposed, underexposed",
+        "prompt_en": "",
+        "prompt_ru": raw_text,
+        "negative_prompt": "",
         "camera_movement_ru": "",
         "timeline_ru": [],
         "visual_style_ru": "",
         "audio_notes_ru": "",
-        "model_hint": "Для похожего видео попробуйте Gemini Omni Video, Seedance 2.0 или Grok Imagine 1.5 в зависимости от нужного режима.",
+        "model_hint": "",
         "key_details": [],
     }
 
@@ -126,22 +117,9 @@ def _build_video_result(parsed: Dict[str, Any], *, provider: str = "") -> Dict[s
     if not prompt_ru and not prompt_en:
         raise RuntimeError("video prompt пустой")
     if not prompt_ru:
-        prompt_ru = "Используйте английский prompt ниже как основу для генерации похожего видео."
-    if not prompt_en:
-        prompt_en = prompt_ru
-
-    if not negative_prompt:
-        negative_prompt = (
-            "blurry, low quality, flicker, jitter, warped motion, distorted face, "
-            "bad anatomy, bad hands, temporal inconsistency, duplicated objects, "
-            "watermark, text, logo, overexposed, underexposed"
-        )
-
-    if not model_hint:
-        model_hint = (
-            "Gemini Omni Video — для работы с видео-референсом. Seedance 2.0 — "
-            "для похожего движения/камеры. Grok Imagine 1.5 — для коротких I2V-сцен."
-        )
+        prompt_ru = prompt_en
+    if not prompt_ru:
+        raise RuntimeError("video prompt пустой")
 
     return {
         "prompt_en": prompt_en,
@@ -188,6 +166,39 @@ def _build_gpt_frame_user_content(
             }
         )
     return content
+
+
+def _probe_video_duration_sync(video_bytes: bytes) -> float:
+    if not video_bytes:
+        return 0.0
+
+    with tempfile.TemporaryDirectory(prefix="video_prompt_probe_") as temp_dir:
+        input_path = Path(temp_dir) / "input_video"
+        input_path.write_bytes(video_bytes)
+        try:
+            result = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "default=noprint_wrappers=1:nokey=1",
+                    str(input_path),
+                ],
+                check=True,
+                capture_output=True,
+                timeout=15,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+            return 0.0
+
+    try:
+        duration = float(result.stdout.decode("utf-8", errors="replace").strip())
+    except (TypeError, ValueError):
+        return 0.0
+    return duration if duration > 0 else 0.0
 
 
 def _extract_frame_data_urls_sync(
@@ -275,12 +286,6 @@ class VideoPromptService:
             "model": self.model,
             "stream": False,
             "input": [
-                {
-                    "role": "system",
-                    "content": [
-                        {"type": "input_text", "text": VIDEO_SYSTEM_PROMPT}
-                    ],
-                },
                 {
                     "role": "user",
                     "content": _build_gpt_video_user_content(
@@ -391,28 +396,14 @@ class VideoPromptService:
         if not frame_data_urls:
             raise RuntimeError("video frame fallback has no frames")
 
-        frame_instruction = (
-            user_instruction
-            + "\n\nNative video-file input was unavailable, so the attached images "
-            "are representative frames sampled from the source video in chronological "
-            "order. Analyze them as a temporal sequence and infer camera movement, "
-            "motion rhythm and transitions from frame-to-frame differences. Be honest "
-            "about visible information and do not invent unavailable audio."
-        )
         payload = {
             "model": self.model,
             "stream": False,
             "input": [
                 {
-                    "role": "system",
-                    "content": [
-                        {"type": "input_text", "text": VIDEO_SYSTEM_PROMPT}
-                    ],
-                },
-                {
                     "role": "user",
                     "content": _build_gpt_frame_user_content(
-                        user_instruction=frame_instruction,
+                        user_instruction=user_instruction,
                         frame_data_urls=frame_data_urls,
                     ),
                 },
@@ -527,6 +518,7 @@ class VideoPromptService:
             raise RuntimeError("Видео слишком большое для frame fallback")
         return video_bytes
 
+    @trace_media_analysis
     async def analyze_video(
         self,
         *,
@@ -535,40 +527,81 @@ class VideoPromptService:
         duration_seconds: int | float = 0,
         filename: str = "reference_video.mp4",
         video_bytes: bytes | None = None,
+        telegram_user_id: int | None = None,
     ) -> Dict[str, Any]:
-        if not self.api_key:
-            raise RuntimeError("KIE_AI_API_KEY is not configured")
-
         video_url = (video_url or "").strip()
         if not video_url:
             raise ValueError("video_url is required")
 
-        extra_blocks: list[str] = []
-        if user_note:
-            extra_blocks.append(f"Additional text instruction from user:\n{user_note}")
-        if duration_seconds:
-            extra_blocks.append(
-                f"Telegram-reported clip duration: {duration_seconds} seconds."
+        effective_duration = float(duration_seconds or 0)
+        if video_bytes:
+            probed_duration = await asyncio.to_thread(
+                _probe_video_duration_sync,
+                video_bytes,
             )
-        extra_instruction = "\n\n".join(extra_blocks)
+            if probed_duration > 0:
+                effective_duration = probed_duration
 
-        user_instruction = (
-            "Analyze this attached reference video file and create a detailed prompt "
-            "for generating a visually similar video.\n\n"
-            "User goal:\nGenerate a similar video that preserves the visible subject, "
-            "action, camera movement, pacing, lighting, color, environment and mood.\n\n"
-            "Important details to preserve:\nTemporal motion, camera trajectory, framing, "
-            "shot rhythm, focus behavior, foreground/background relationships, lighting "
-            "changes, style, color palette and final-frame feel.\n\n"
-            f"{extra_instruction + chr(10) + chr(10) if extra_instruction else ''}"
-            "Return valid JSON only according to the required schema."
-        )
+        user_instruction = _build_video_prompt_instruction(effective_duration)
+        provider = await media_analysis_provider()
+        if provider == "kie_gemini31":
+            raw = await KieGemini31Service(
+                api_key=self.api_key, base_url=self.base_url
+            ).analyze_media(
+                media_url=video_url,
+                media_kind="video",
+                user_instruction=user_instruction,
+                content_validator=_parse_video_json_object,
+            )
+            return _build_video_result(
+                _parse_video_json_object(raw), provider=KieGemini31Service.MODEL
+            )
+
+        qwen_error: Exception | None = None
+
+        if openrouter_qwen38_service.enabled:
+            trace_analysis_provider("qwen38")
+            try:
+                raw_output = await openrouter_qwen38_service.analyze_video(
+                    video_url=video_url,
+                    user_instruction=user_instruction,
+                    system_prompt=None,
+                    json_response=False,
+                    reasoning_effort="minimal",
+                )
+                return _build_video_result(
+                    _parse_video_json_object(raw_output),
+                    provider=openrouter_qwen38_service.model,
+                )
+            except (
+                aiohttp.ClientError,
+                asyncio.TimeoutError,
+                RuntimeError,
+                ValueError,
+                TypeError,
+            ) as exc:
+                qwen_error = exc
+                trace_analysis_provider("gpt55", fallback_error=exc)
+                logger.warning(
+                    "Qwen 3.8 video analysis failed; falling back to KIE: %s",
+                    exc,
+                )
+
+        if not self.api_key:
+            if qwen_error is not None:
+                raise RuntimeError(
+                    f"Qwen 3.8 failed and KIE fallback is not configured: {qwen_error}"
+                ) from qwen_error
+            raise RuntimeError(
+                "OPENROUTER_API_KEY and KIE_AI_API_KEY are not configured"
+            )
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
 
+        trace_analysis_provider("gpt55")
         native_error: Exception | None = None
         try:
             return await self._analyze_with_gpt55(
@@ -580,6 +613,7 @@ class VideoPromptService:
             )
         except Exception as exc:
             native_error = exc
+            trace_analysis_provider("gpt55_frames", fallback_error=exc)
             logger.warning(
                 "Native GPT-5.5 video input failed, falling back to sampled frames: %s",
                 exc,

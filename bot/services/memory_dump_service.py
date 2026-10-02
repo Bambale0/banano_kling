@@ -11,9 +11,20 @@ from typing import Any
 
 
 def ensure_memory_tracing() -> None:
-    """Enable allocation tracing early enough for useful periodic reports."""
-    if not tracemalloc.is_tracing():
-        tracemalloc.start(25)
+    """Enable expensive allocation tracing only for explicit diagnostics."""
+    enabled = os.getenv("MEMORY_TRACING_ENABLED", "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if not enabled or tracemalloc.is_tracing():
+        return
+    try:
+        frames = int(os.getenv("MEMORY_TRACING_FRAMES", "1"))
+    except ValueError:
+        frames = 1
+    tracemalloc.start(max(1, min(frames, 25)))
 
 
 def _read_proc_status() -> dict[str, str]:
@@ -73,9 +84,13 @@ def build_memory_dump() -> tuple[bytes, str, str]:
     ensure_memory_tracing()
 
     collected = gc.collect()
+    tracing_enabled = tracemalloc.is_tracing()
     current_bytes, peak_bytes = tracemalloc.get_traced_memory()
-    snapshot = tracemalloc.take_snapshot()
-    top_allocations = snapshot.statistics("traceback")[:50]
+    top_allocations = (
+        tracemalloc.take_snapshot().statistics("traceback")[:50]
+        if tracing_enabled
+        else []
+    )
     object_type_counts = Counter(
         type(obj).__name__ for obj in gc.get_objects()
     ).most_common(100)
@@ -95,6 +110,10 @@ def build_memory_dump() -> tuple[bytes, str, str]:
                 "maxrss_kb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
             },
             "tracemalloc": {
+                "enabled": tracing_enabled,
+                "traceback_limit": tracemalloc.get_traceback_limit()
+                if tracing_enabled
+                else 0,
                 "current_bytes": current_bytes,
                 "peak_bytes": peak_bytes,
                 "top_allocations": [
@@ -120,6 +139,10 @@ def build_memory_dump() -> tuple[bytes, str, str]:
         f"UTC: {dump['generated_at']}\n"
         f"PID: {dump['process']['pid']}\n"
         f"RSS: {dump['memory']['proc_status'].get('VmRSS', 'n/a')}\n"
-        f"tracemalloc current: {current_bytes // 1024} KiB, peak: {peak_bytes // 1024} KiB"
+        + (
+            f"tracemalloc current: {current_bytes // 1024} KiB, peak: {peak_bytes // 1024} KiB"
+            if tracing_enabled
+            else "tracemalloc: disabled"
+        )
     )
     return data, filename, caption

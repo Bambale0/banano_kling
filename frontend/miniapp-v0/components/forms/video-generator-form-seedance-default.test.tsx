@@ -72,6 +72,8 @@ describe('Seedance 2.0 model defaults', () => {
       expect(screen.getByText('Фото-референсы')).toBeInTheDocument()
       expect(screen.getByTestId('upload-area')).toHaveAttribute('data-required', 'true')
       expect(screen.getByTestId('upload-area')).toHaveAttribute('data-library-label', 'Сохранённые фото-референсы')
+      expect(screen.queryByText(/за 1 секунду/)).not.toBeInTheDocument()
+      expect(screen.queryByText('image to video')).not.toBeInTheDocument()
     })
   })
 })

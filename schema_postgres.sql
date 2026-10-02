@@ -271,6 +271,7 @@ CREATE TABLE IF NOT EXISTS user_prompts (
     preview_url TEXT,
     model TEXT,
     tags TEXT DEFAULT '[]',
+    generation_settings TEXT DEFAULT '{}',
     likes INTEGER DEFAULT 0,
     uses_count INTEGER DEFAULT 0,
     is_public BOOLEAN DEFAULT TRUE,
@@ -289,6 +290,48 @@ CREATE TABLE IF NOT EXISTS user_prompts (
 CREATE INDEX IF NOT EXISTS idx_user_prompts_status ON user_prompts(status, is_public, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_user_prompts_author_status ON user_prompts(author_id, status);
 CREATE INDEX IF NOT EXISTS idx_user_prompts_source_generation ON user_prompts(source_generation_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_prompts_seedance_trend_source_unique
+    ON user_prompts(source_generation_id)
+    WHERE source_generation_id IS NOT NULL
+      AND status != 'deactivated'
+      AND tags LIKE '%"seedance-private-references"%';
+
+CREATE TABLE IF NOT EXISTS trend_reference_assets (
+    id BIGSERIAL PRIMARY KEY,
+    prompt_id BIGINT NOT NULL REFERENCES user_prompts(id) ON DELETE CASCADE,
+    media_type TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    source_position INTEGER NOT NULL,
+    role TEXT NOT NULL DEFAULT 'fixed_hidden',
+    file_url TEXT NOT NULL,
+    file_hash TEXT NOT NULL,
+    mime_type TEXT,
+    size_bytes BIGINT NOT NULL DEFAULT 0,
+    label TEXT DEFAULT '',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP,
+    UNIQUE(prompt_id, media_type, position),
+    UNIQUE(prompt_id, media_type, file_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_trend_reference_assets_prompt_type_position
+    ON trend_reference_assets(prompt_id, media_type, position);
+
+CREATE TABLE IF NOT EXISTS trend_run_claims (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    trend_id BIGINT NOT NULL REFERENCES user_prompts(id) ON DELETE CASCADE,
+    client_request_id TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'processing',
+    task_id TEXT,
+    http_status INTEGER,
+    response_json TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, trend_id, client_request_id)
+);
+CREATE INDEX IF NOT EXISTS idx_trend_run_claims_status_updated
+    ON trend_run_claims(status, updated_at);
 
 -- ============================================================
 -- PROMPT LIKES

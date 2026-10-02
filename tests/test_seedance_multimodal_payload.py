@@ -61,11 +61,35 @@ def test_seedance_combines_identity_image_and_motion_video() -> None:
         "https://cdn.test/dance.mp4"
     ]
     assert "first_frame_url" not in payload["input"]
-    assert payload["input"]["prompt"] == prompt
-    assert "@image1" in payload["input"]["prompt"]
-    assert "@image2" in payload["input"]["prompt"]
-    assert "@image3" in payload["input"]["prompt"]
-    assert "@video1" in payload["input"]["prompt"]
+    assert payload["input"]["prompt"] == (
+        "девушка @Image1 одета в @Image2, движения танца с @Video1. "
+        "Атмосфера и фон из @Image3"
+    )
+
+
+def test_seedance_repairs_combined_ordinal_video_alias() -> None:
+    service = CaptureSeedanceService()
+    prompt = (
+        "@IMAGE 1 = лицо первого человека. @IMAGE 2 = лицо второго. "
+        "@IMAGE 3 = лицо третьего. @IMAGE 4 = видеореференс движений."
+    )
+
+    asyncio.run(
+        service.generate_video(
+            prompt=prompt,
+            reference_image_urls=[
+                "https://cdn.test/person1.jpg",
+                "https://cdn.test/person2.jpg",
+                "https://cdn.test/person3.jpg",
+            ],
+            reference_video_urls=["https://cdn.test/motion.mp4"],
+        )
+    )
+
+    assert service.last_payload["input"]["prompt"] == (
+        "@Image1 = лицо первого человека. @Image2 = лицо второго. "
+        "@Image3 = лицо третьего. @Video1 = видеореференс движений."
+    )
 
 
 def test_seedance_passes_user_prompt_through_unchanged() -> None:
@@ -79,13 +103,19 @@ def test_seedance_passes_user_prompt_through_unchanged() -> None:
 
 def test_seedance_truncates_prompt_only_at_provider_limit() -> None:
     service = CaptureSeedanceService()
-    prompt = "x" * 25_000
+    prompt = "@image1 " + ("x" * 25_000)
 
-    asyncio.run(service.generate_video(prompt=prompt))
+    asyncio.run(
+        service.generate_video(
+            prompt=prompt,
+            reference_image_urls=["https://cdn.test/person.jpg"],
+        )
+    )
 
     provider_prompt = service.last_payload["input"]["prompt"]
-    assert provider_prompt == prompt[: service.MAX_PROMPT_LENGTH]
-    assert len(provider_prompt) == 20_000
+    assert service.MAX_PROMPT_LENGTH == 20_000
+    assert provider_prompt.startswith("@Image1 ")
+    assert len(provider_prompt) == service.MAX_PROMPT_LENGTH
 
 
 def test_seedance_normalizes_duplicate_first_frame_from_old_repeat_payload() -> None:
@@ -223,3 +253,85 @@ def test_seedance_without_video_reference_keeps_base_price() -> None:
         7,
         ["https://cdn.test/a.mp4"],
     ) == 7
+
+
+def test_seedance_blocks_prompt_when_video_tag_has_no_video_reference() -> None:
+    service = CaptureSeedanceService()
+
+    result = asyncio.run(
+        service.generate_video(
+            prompt="@Image1 repeats the motion from @Video1.",
+            reference_image_urls=["https://cdn.test/person.jpg"],
+            reference_video_urls=[],
+        )
+    )
+
+    assert result["error"] == "missing_seedance_references"
+    assert "@Video1" in result["message"]
+    assert service.last_payload is None
+
+
+def test_seedance_video_media_screen_does_not_offer_skip_after_upload() -> None:
+    markup = seedance_multimodal_compat._seedance_media_keyboard(
+        {
+            "v_type": "video",
+            "reference_images": [],
+            "v_reference_videos": ["https://cdn.test/motion.mp4"],
+        }
+    )
+    callbacks = [
+        button.callback_data
+        for row in markup.inline_keyboard
+        for button in row
+        if button.callback_data
+    ]
+
+    assert "video_media_skip" not in callbacks
+    assert "video_media_continue" in callbacks
+
+
+def test_seedance_video_media_screen_offers_skip_before_upload() -> None:
+    markup = seedance_multimodal_compat._seedance_media_keyboard(
+        {
+            "v_type": "video",
+            "reference_images": [],
+            "v_reference_videos": [],
+        }
+    )
+    callbacks = [
+        button.callback_data
+        for row in markup.inline_keyboard
+        for button in row
+        if button.callback_data
+    ]
+
+    assert "video_media_skip" in callbacks
+
+
+@pytest.mark.asyncio
+async def test_seedance_stale_skip_callback_does_not_clear_uploaded_video() -> None:
+    state = SimpleNamespace(
+        get_data=AsyncMock(
+            return_value={
+                "v_type": "video",
+                "v_model": "seedance_2",
+                "v_reference_videos": ["https://cdn.test/motion.mp4"],
+            }
+        ),
+        update_data=AsyncMock(),
+    )
+    callback = SimpleNamespace(
+        answer=AsyncMock(),
+        message=SimpleNamespace(),
+    )
+
+    await seedance_multimodal_compat.generation_module.handle_video_media_skip(
+        callback,
+        state,
+    )
+
+    state.update_data.assert_not_awaited()
+    callback.answer.assert_awaited_once_with(
+        "Видео-референс уже загружен. Нажмите «К настройкам», чтобы использовать его.",
+        show_alert=True,
+    )

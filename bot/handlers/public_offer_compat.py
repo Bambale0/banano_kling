@@ -1,15 +1,13 @@
-"""Exact local public-offer integration for Telegram payment and partner flows."""
+"""Exact local public-offer integration for Telegram More and partner flows."""
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
-from functools import wraps
 from pathlib import Path
 from typing import Any
 
 from aiogram import F, Router, types
-from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import FSInputFile, InlineKeyboardMarkup
 
 from bot.keyboards import get_back_keyboard, get_partner_consent_keyboard
 
@@ -17,8 +15,10 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 PUBLIC_OFFER_CALLBACK = "public_offer"
+MORE_PUBLIC_OFFER_CALLBACK = "more_public_offer"
 PUBLIC_OFFER_CALLBACKS = {
     PUBLIC_OFFER_CALLBACK,
+    MORE_PUBLIC_OFFER_CALLBACK,
     "partner_offer",
     "payment_public_offer",
 }
@@ -26,65 +26,9 @@ PUBLIC_OFFER_PDF_PATH = Path(__file__).resolve().parents[2] / "legal" / "public-
 PUBLIC_OFFER_TEXT_PATH = Path(__file__).resolve().parents[2] / "legal" / "public-offer.txt"
 
 
-def _with_public_offer(markup: InlineKeyboardMarkup | None) -> InlineKeyboardMarkup | None:
-    if markup is None:
-        return None
-
-    rows = [list(row) for row in markup.inline_keyboard]
-    if any(
-        button.callback_data in PUBLIC_OFFER_CALLBACKS
-        for row in rows
-        for button in row
-    ):
-        return markup
-
-    offer_row = [
-        InlineKeyboardButton(
-            text="📜 Оферта · оплата = согласие",
-            callback_data=PUBLIC_OFFER_CALLBACK,
-        )
-    ]
-    insert_at = len(rows)
-    if rows:
-        last_callbacks = {button.callback_data or "" for button in rows[-1]}
-        if any(
-            callback == "back_main"
-            or callback == "menu_topup"
-            or callback.startswith("back_")
-            for callback in last_callbacks
-        ):
-            insert_at = len(rows) - 1
-    rows.insert(insert_at, offer_row)
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def _wrap_keyboard(factory: Callable[..., Any]) -> Callable[..., Any]:
-    if getattr(factory, "_public_offer_wrapped", False):
-        return factory
-
-    @wraps(factory)
-    def wrapped(*args: Any, **kwargs: Any):
-        return _with_public_offer(factory(*args, **kwargs))
-
-    wrapped._public_offer_wrapped = True  # type: ignore[attr-defined]
-    return wrapped
-
-
 def install_public_offer_compat(payments_module: Any) -> None:
-    """Add the local offer to every shared Telegram payment keyboard."""
-    import bot.keyboards as keyboard_module
-
-    for name in (
-        "get_payment_packages_keyboard",
-        "get_payment_method_keyboard",
-        "get_payment_confirmation_keyboard",
-    ):
-        current = getattr(keyboard_module, name, None)
-        if not callable(current):
-            continue
-        wrapped = _wrap_keyboard(current)
-        setattr(keyboard_module, name, wrapped)
-        setattr(payments_module, name, wrapped)
+    """Offer lives in the dedicated More section; payment UI must not inject it."""
+    _ = payments_module
 
 
 async def _send_offer_text(
@@ -108,11 +52,12 @@ async def show_public_offer(callback: types.CallbackQuery):
         return
 
     is_partner_flow = callback.data == "partner_offer"
-    reply_markup = (
-        get_partner_consent_keyboard()
-        if is_partner_flow
-        else get_back_keyboard("menu_topup")
-    )
+    if is_partner_flow:
+        reply_markup = get_partner_consent_keyboard()
+    elif callback.data == MORE_PUBLIC_OFFER_CALLBACK:
+        reply_markup = get_back_keyboard("ux_more")
+    else:
+        reply_markup = get_back_keyboard("menu_topup")
 
     try:
         await callback.message.answer_document(

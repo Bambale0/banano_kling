@@ -1,53 +1,64 @@
 """Unit tests for bot/keyboards.py"""
 
-import json
-import logging
 import importlib
 import inspect
+import json
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, mock_open, patch
 
 import pytest
-import bot.keyboards as keyboards_module
 
-from bot.keyboards import (get_admin_keyboard, get_balance_keyboard,
-                           get_create_hub_keyboard, get_create_video_keyboard,
-                           get_help_keyboard, get_image_result_keyboard,
-                           get_image_model_label,
-                           get_image_model_selection_keyboard,
-                           get_main_menu_keyboard,
-                           get_payment_packages_keyboard,
-                           get_payment_provider_keyboard, get_support_keyboard,
-                           get_settings_keyboard_with_ai, get_topup_keyboard,
-                           get_video_media_step_keyboard,
-                           get_video_model_label,
-                           get_video_model_selection_keyboard,
-                           get_video_result_keyboard, get_ai_assistant_keyboard,
-                           get_video_prompt_result_keyboard, load_prices)
+import bot.handlers.common as common_module
+import bot.keyboards as keyboards_module
+import bot.services.grok_service as grok_module
+import bot.services.photo_prompt_service as photo_prompt_module
+import bot.services.video_prompt_service as video_prompt_module
+from bot.handlers.generation import (
+    _normalize_video_duration_value,
+    _repeat_image_keyboard,
+)
 from bot.handlers.image_analyzer import (
     _audio_prompt_format,
     _clear_photo_prompt_audio_if_current,
     _format_photo_prompt_result_text,
     _format_video_prompt_result_text,
 )
-from bot.handlers.generation import _normalize_video_duration_value, _repeat_image_keyboard
-import bot.handlers.common as common_module
-import bot.services.photo_prompt_service as photo_prompt_module
+from bot.keyboards import (
+    get_admin_keyboard,
+    get_ai_assistant_keyboard,
+    get_balance_keyboard,
+    get_create_hub_keyboard,
+    get_create_video_keyboard,
+    get_help_keyboard,
+    get_image_model_label,
+    get_image_model_selection_keyboard,
+    get_main_menu_keyboard,
+    get_payment_packages_keyboard,
+    get_payment_provider_keyboard,
+    get_settings_keyboard_with_ai,
+    get_support_keyboard,
+    get_topup_keyboard,
+    get_video_media_step_keyboard,
+    get_video_model_label,
+    get_video_model_selection_keyboard,
+    get_video_prompt_result_keyboard,
+    load_prices,
+)
 from bot.services.gemini_omni_service import GeminiOmniService
-import bot.services.grok_service as grok_module
 from bot.services.grok_service import GROK_V15_VIDEO_MODEL, GrokService
-import bot.services.video_prompt_service as video_prompt_module
 from bot.services.photo_prompt_service import (
-    PhotoPromptService,
     SYSTEM_PROMPT,
+    PhotoPromptService,
     _build_gpt_user_content,
     _is_fast_fallback_application_error,
 )
 from bot.services.subscription_service import SubscriptionCheckResult
 from bot.services.video_prompt_service import (
-    VIDEO_SYSTEM_PROMPT,
+    VIDEO_PROMPT_INSTRUCTION,
     VideoPromptService,
     _build_gpt_video_user_content,
+    _build_video_prompt_instruction,
 )
 from bot.video_reference_policy import get_max_video_image_references
 
@@ -898,11 +909,24 @@ def test_photo_prompt_system_prompt_prefers_editorial_russian_style():
     assert "Do not use forensic" in SYSTEM_PROMPT
 
 
-def test_video_prompt_system_prompt_prefers_cinematic_russian_style():
-    assert '"prompt_ru" is the main result' in VIDEO_SYSTEM_PROMPT
-    assert "photorealistic AI video generation" in VIDEO_SYSTEM_PROMPT
-    assert "camera movement" in VIDEO_SYSTEM_PROMPT
-    assert "Return only valid JSON" in VIDEO_SYSTEM_PROMPT
+def test_video_prompt_instruction_uses_source_video_duration():
+    assert "10 сек" not in VIDEO_PROMPT_INSTRUCTION
+
+    instruction = _build_video_prompt_instruction(17)
+    assert "17 сек" in instruction
+    assert "Посекундно" in instruction
+    assert "ровно 17 сек" in instruction
+    assert "1:1 действия как на исходном" in instruction
+
+
+def test_video_prompt_payloads_have_no_hidden_system_or_fallback_instruction():
+    native_source = inspect.getsource(VideoPromptService._analyze_with_gpt55)
+    frame_source = inspect.getsource(VideoPromptService._analyze_frames_with_gpt55)
+
+    assert '"role": "system"' not in native_source
+    assert '"role": "system"' not in frame_source
+    assert "frame_instruction" not in frame_source
+    assert "user_instruction=user_instruction" in frame_source
 
 
 def test_video_prompt_user_content_passes_video_as_input_file():
@@ -924,6 +948,8 @@ def test_video_prompt_user_content_passes_video_as_input_file():
 
 @pytest.mark.asyncio
 async def test_video_prompt_service_passes_video_file_to_gpt55():
+    from bot import database
+    await database.set_bot_setting("media_analysis_provider", "qwen38")
     service = VideoPromptService(api_key="test")
     captured = {}
 
@@ -951,8 +977,9 @@ async def test_video_prompt_service_passes_video_file_to_gpt55():
 
     assert captured["video_url"] == "https://example.com/reference.mp4"
     assert captured["filename"] == "reference.mp4"
-    assert "Additional text instruction from user" in captured["user_instruction"]
-    assert "7 seconds" in captured["user_instruction"]
+    assert captured["user_instruction"] == _build_video_prompt_instruction(7)
+    assert "ровно 7 сек" in captured["user_instruction"]
+    assert "Сделай более модный свет" not in captured["user_instruction"]
     assert result["camera_movement_ru"] == "Плавный трекинг"
 
 
@@ -967,14 +994,7 @@ async def test_video_prompt_gpt55_payload_uses_input_file(monkeypatch):
                         "type": "message",
                         "content": [
                             {
-                                "text": json.dumps(
-                                    {
-                                        "prompt_en": "Tracking shot",
-                                        "prompt_ru": "Плавный трекинговый кадр",
-                                        "negative_prompt": "flicker",
-                                        "model_hint": "Gemini Omni Video",
-                                    }
-                                )
+                                "text": "Посекундный подробный русский промпт для Seedance 2.0"
                             }
                         ],
                     }
@@ -1022,11 +1042,14 @@ async def test_video_prompt_gpt55_payload_uses_input_file(monkeypatch):
         filename="reference.mp4",
     )
 
-    assert result["prompt_ru"] == "Плавный трекинговый кадр"
+    assert result["prompt_ru"] == "Посекундный подробный русский промпт для Seedance 2.0"
+    assert len(payloads[-1]["input"]) == 1
+    assert payloads[-1]["input"][0]["role"] == "user"
     assert [
-        item["type"] for item in payloads[-1]["input"][1]["content"]
+        item["type"] for item in payloads[-1]["input"][0]["content"]
     ] == ["input_text", "input_file"]
-    assert payloads[-1]["input"][1]["content"][1]["file_url"] == (
+    assert payloads[-1]["input"][0]["content"][0]["text"] == "Analyze video"
+    assert payloads[-1]["input"][0]["content"][1]["file_url"] == (
         "https://example.com/reference.mp4"
     )
 
@@ -1048,9 +1071,12 @@ def test_video_prompt_result_text_is_telegram_safe_for_long_result():
 
     assert len(text) < 4096
     assert "Промпт по видео готов" in text
-    assert "Negative prompt" in text
-    assert "Рекомендация" not in text
-    assert "Gemini Omni Video" not in text
+    assert "Кинематографичное движение" in text
+    assert "Модель анализа:" not in text
+    assert "Prompt EN" not in text
+    assert "Negative prompt" not in text
+    assert "Камера:" not in text
+    assert "Стиль:" not in text
 
 
 def test_video_prompt_result_keyboard_restarts_video_prompt_flow():
@@ -1101,27 +1127,36 @@ def test_photo_prompt_gpt_user_content_allows_audio_without_image():
 
 
 @pytest.mark.asyncio
-async def test_photo_prompt_service_falls_back_to_claude(caplog):
-    service = PhotoPromptService(api_key="test")
-    service._analyze_with_gpt55 = AsyncMock(
-        side_effect=RuntimeError("GPT-5.5 upstream error: 500")
-    )
-    service._analyze_with_claude = AsyncMock(
-        return_value={
-            "prompt_en": "fallback prompt",
-            "prompt_ru": "резервный промпт",
+async def test_photo_prompt_service_uses_qwen38_for_image_only(monkeypatch):
+    from bot import database
+    await database.set_bot_setting("media_analysis_provider", "qwen38")
+    service = PhotoPromptService(api_key="legacy-test-key")
+    qwen = AsyncMock()
+    qwen.enabled = True
+    qwen.model = "qwen/qwen3.8-max-0902"
+    qwen.analyze_image.return_value = json.dumps(
+        {
+            "prompt_en": "Qwen image prompt",
+            "prompt_ru": "Промпт Qwen по изображению",
             "negative_prompt": "blur",
             "model_hint": "Nano Banana Pro",
-            "provider": "claude-haiku-4-5",
+            "key_details": ["soft light"],
         }
     )
+    monkeypatch.setattr(
+        "bot.services.photo_prompt_service.openrouter_qwen38_service",
+        qwen,
+    )
+    service._analyze_with_gpt55 = AsyncMock()
+    service._analyze_with_claude = AsyncMock()
 
-    with caplog.at_level(logging.WARNING, logger="bot.services.photo_prompt_service"):
-        result = await service.analyze_photo(image_url="https://example.com/image.jpg")
+    result = await service.analyze_photo(image_url="https://example.com/image.jpg")
 
-    assert result["prompt_en"] == "fallback prompt"
-    assert "GPT-5.5 failed" not in caplog.text
-    service._analyze_with_claude.assert_awaited_once()
+    assert result["prompt_en"] == "Qwen image prompt"
+    assert result["provider"] == ""
+    qwen.analyze_image.assert_awaited_once()
+    service._analyze_with_gpt55.assert_not_awaited()
+    service._analyze_with_claude.assert_not_awaited()
 
 
 @pytest.mark.asyncio

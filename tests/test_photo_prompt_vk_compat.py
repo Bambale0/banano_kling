@@ -3,6 +3,12 @@ import pytest
 from bot.services import photo_prompt_vk_compat
 
 
+def test_vk_photo_compat_is_not_auto_installed_in_production():
+    import bot.services.photo_prompt_service as module
+
+    assert not getattr(module, "_vk_photo_prompt_exact_installed", False)
+
+
 def test_apiyi_key_falls_back_to_existing_provider_keys(monkeypatch):
     monkeypatch.delenv("APIYI_API_KEY", raising=False)
     monkeypatch.setenv("NANO_BANANA_PRO_FALLBACK_API_KEY", "pro-key")

@@ -119,3 +119,74 @@ def test_shared_prompt_detail_is_sanitized_even_for_admin_contract() -> None:
     assert "payload = await sanitize_task_api_payload(payload)" in source
     assert 'task_detail_path = f"{miniapp_root}/api/task-detail"' in source
     assert 'bootstrap_path = f"{miniapp_root}/api/bootstrap"' in source
+
+
+@pytest.mark.asyncio
+async def test_legacy_privacy_covers_trends_outside_catalog_page(monkeypatch):
+    from bot import database
+    from bot import db as db_backend
+
+    monkeypatch.setattr(trend_task_privacy, "DATABASE_PATH", database.DATABASE_PATH)
+    user = await database.get_or_create_user(920002)
+    async with db_backend.connect(database.DATABASE_PATH) as connection:
+        await connection.executemany(
+            "INSERT INTO user_prompts (author_id, title, prompt_text, tags, status, is_public, uses_count) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [(user.id, f"Trend {i}", f"recipe-{i}", '["trend"]', "approved", 1, i)
+             for i in range(101)],
+        )
+        await connection.commit()
+    await database.add_generation_task(
+        user.id, user.telegram_id, "legacy-trend-task", "image", "test", prompt="recipe-0",
+    )
+    await database.add_generation_task(
+        user.id, user.telegram_id, "ordinary-task", "image", "test", prompt="ordinary user prompt",
+    )
+    result = await trend_task_privacy.sanitize_task_api_payload({"recent_tasks": [
+        {"task_id": "legacy-trend-task", "prompt_preview": "recipe-0"},
+        {"task_id": "ordinary-task", "prompt_preview": "ordinary user prompt"},
+    ]})
+    assert result["recent_tasks"][0]["prompt_hidden"] is True
+    assert result["recent_tasks"][0]["prompt_preview"] == ""
+    assert result["recent_tasks"][1]["prompt_preview"] == "ordinary user prompt"
+
+
+@pytest.mark.asyncio
+async def test_seedance_trend_task_redacts_every_typed_private_reference(monkeypatch) -> None:
+    async def fake_protected(_task_ids: list[str]) -> set[str]:
+        return {"seedance-private"}
+
+    monkeypatch.setattr(trend_task_privacy, "_protected_task_ids", fake_protected)
+    request_data = {
+        "v_image_url": "https://example.test/user.jpg",
+        "first_frame_url": "https://example.test/first.jpg",
+        "last_frame_url": "https://example.test/last.jpg",
+        "reference_images": ["https://example.test/dress.jpg"],
+        "reference_image_urls": ["https://example.test/dress2.jpg"],
+        "v_reference_videos": ["https://example.test/motion.mp4"],
+        "reference_video_urls": ["https://example.test/motion2.mp4"],
+        "v_reference_audio": ["https://example.test/voice.mp3"],
+        "reference_audios": ["https://example.test/voice2.mp3"],
+        "reference_audio_urls": ["https://example.test/voice3.mp3"],
+        "fixed_asset_ids": [1, 2, 3],
+        "fixed_asset_counts": {"image": 1, "video": 1, "audio": 1},
+        "reference_contract": "seedance_identity_first",
+        "prompt_source_id": 77,
+        "seedance_reference_snapshot": {"images": ["secret"]},
+        "provider_model": "bytedance/seedance-2-5",
+    }
+    payload = {
+        "task": {
+            "task_id": "seedance-private",
+            "prompt": "secret",
+            "request_data": request_data,
+        }
+    }
+
+    sanitized = await trend_task_privacy.sanitize_task_api_payload(payload)
+    clean = sanitized["task"]["request_data"]
+    for key in request_data:
+        if key in {"fixed_asset_counts", "provider_model"}:
+            continue
+        assert key not in clean
+    assert clean["fixed_asset_counts"] == {"image": 1, "video": 1, "audio": 1}
+    assert clean["provider_model"] == "bytedance/seedance-2-5"

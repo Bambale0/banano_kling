@@ -38,6 +38,23 @@ export interface PinterestRepeatOptions {
   model: 'banana_pro' | 'seedream_5_pro'
 }
 
+export class TrendRunRequestError extends Error {
+  readonly retrySameRequest: boolean
+
+  constructor(message: string, retrySameRequest: boolean) {
+    super(message)
+    this.name = 'TrendRunRequestError'
+    this.retrySameRequest = retrySameRequest
+  }
+}
+
+export function createTrendRunRequestId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `trend_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 14)}`
+}
+
 function providerReferenceUrl(value: string): string {
   try {
     const url = new URL(value)
@@ -74,6 +91,37 @@ async function parseJson<T>(response: Response, fallback: string): Promise<T> {
 
 async function parseResponse(response: Response): Promise<RunTrendResponse> {
   return parseJson<RunTrendResponse>(response, 'Не удалось запустить тренд')
+}
+
+async function parseTrendResponse(response: Response): Promise<RunTrendResponse> {
+  const text = await response.text()
+  let payload:
+    | RunTrendResponse
+    | { ok?: false; error?: string; retry_same_request?: boolean }
+  try {
+    payload = JSON.parse(text) as
+      | RunTrendResponse
+      | { ok?: false; error?: string; retry_same_request?: boolean }
+  } catch {
+    throw new TrendRunRequestError(
+      'Сервер вернул некорректный ответ. Обновите Mini App.',
+      response.status >= 500,
+    )
+  }
+
+  if (!response.ok || payload.ok !== true) {
+    const message =
+      'error' in payload && payload.error
+        ? payload.error
+        : 'Не удалось запустить тренд'
+    const retrySameRequest =
+      'retry_same_request' in payload &&
+      typeof payload.retry_same_request === 'boolean'
+        ? payload.retry_same_request
+        : response.status === 409
+    throw new TrendRunRequestError(message, retrySameRequest)
+  }
+  return payload
 }
 
 function authorizedPayload(): Record<string, unknown> {
@@ -170,21 +218,33 @@ export async function runPinterestRepeatTrend(
 export async function runTrend(
   trendId: number,
   referenceUrls: string[],
+  userValues: Record<string, string> = {},
+  clientRequestId: string = createTrendRunRequestId(),
 ): Promise<RunTrendResult> {
   const payload = authorizedPayload()
   payload.trend_id = trendId
   payload.reference_urls = referenceUrls.map(providerReferenceUrl)
+  payload.client_request_id = clientRequestId
+  if (Object.keys(userValues).length) payload.user_values = userValues
 
-  const response = await fetch(`${getApiBasePath()}/trends/run`, {
-    method: 'POST',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-    cache: 'no-store',
-    credentials: 'same-origin',
-  })
-  const data = await parseResponse(response)
+  let response: Response
+  try {
+    response = await fetch(`${getApiBasePath()}/trends/run`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+      cache: 'no-store',
+      credentials: 'same-origin',
+    })
+  } catch (cause) {
+    throw new TrendRunRequestError(
+      cause instanceof Error ? cause.message : 'Не удалось связаться с сервером',
+      true,
+    )
+  }
+  const data = await parseTrendResponse(response)
   return toRunResult(data, referenceUrls)
 }

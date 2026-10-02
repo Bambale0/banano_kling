@@ -10,7 +10,7 @@ from bot.handlers.seedance_25_new_priority import (
 )
 
 
-def test_seedance_model_is_first_and_bright_new_label():
+def test_seedance_model_is_first_with_clean_miniapp_label():
     models = [
         {"id": "kling", "label": "Kling"},
         {"id": MODEL_KEY, "label": "Seedance 2.5"},
@@ -21,6 +21,7 @@ def test_seedance_model_is_first_and_bright_new_label():
 
     assert [item["id"] for item in ordered] == [MODEL_KEY, "kling", "veo"]
     assert ordered[0]["label"] == MODEL_LABEL
+    assert MODEL_LABEL == "Seedance 2.5"
     assert ordered[0]["is_new"] is True
     assert ordered[0]["priority"] == 1000
 

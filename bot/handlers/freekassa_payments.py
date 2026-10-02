@@ -61,6 +61,7 @@ FREEKASSA_RECONCILE_INTERVAL_SECONDS = 5 * 60
 FREEKASSA_RECONCILE_BATCH_SIZE = 100
 FREEKASSA_BOT_RETURN_URL = "https://t.me/Neuromixx_bot"
 FREEKASSA_CHECKOUT_PATH = "/freekassa/checkout"
+_FREEKASSA_ROUTES_REGISTERED = web.AppKey("freekassa_routes_registered", bool)
 _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 
@@ -94,7 +95,14 @@ def _checkout_form(order_id: str, method_id: int, signature: str, error: str = "
 
 
 async def handle_freekassa_checkout(request: web.Request) -> web.Response:
-    values = request.query if request.method == "GET" else await request.post()
+    if request.method == "GET":
+        values = request.query
+    else:
+        try:
+            values = await request.post()
+        except ConnectionResetError:
+            logger.info("FreeKassa checkout client disconnected before request body completed")
+            return web.Response(status=499, text="Client closed request")
     order_id = str(values.get("o") or "").strip()
     signature = str(values.get("s") or "").strip()
     try:
@@ -214,7 +222,7 @@ def _provider_keyboard(
     builder = InlineKeyboardBuilder()
     if freekassa:
         builder.button(
-            text="🇷🇺 РФ — KASSA (резерв)",
+            text="↩️ Резерв · KASSA",
             callback_data=f"buy_freekassa_{package_id}",
         )
     if stars:
@@ -228,7 +236,7 @@ def _provider_keyboard(
         )
     if lava:
         builder.button(
-            text="🌐 Оплата через Lava", callback_data=f"buy_lava_{package_id}"
+            text="💳 Lava", callback_data=f"buy_lava_{package_id}"
         )
     builder.button(text="◀️ Назад", callback_data="menu_topup")
     builder.adjust(1)
@@ -295,7 +303,7 @@ async def _render_completed_payment(message, transaction, bonus_text: str = "") 
 async def choose_payment_method_freekassa(
     callback: types.CallbackQuery, state: FSMContext
 ):
-    """Show all enabled providers with FreeKassa replacing YooKassa."""
+    """Keep KASSA as a reserve surface and place Lava lower in the list."""
 
     package_id = callback.data.replace("choose_pay_", "", 1)
     package = preset_manager.get_package(package_id)
@@ -678,6 +686,9 @@ async def _cleanup_context(app: web.Application):
 
 
 def setup_freekassa_routes(app: web.Application) -> None:
+    if app.get(_FREEKASSA_ROUTES_REGISTERED, False):
+        return
+
     paths = {freekassa_service.webhook_path, "/webhook/freekassa"}
     for path in paths:
         app.router.add_post(path, handle_freekassa_webhook)
@@ -686,6 +697,7 @@ def setup_freekassa_routes(app: web.Application) -> None:
     app.router.add_get(FREEKASSA_CHECKOUT_PATH, handle_freekassa_checkout)
     app.router.add_post(FREEKASSA_CHECKOUT_PATH, handle_freekassa_checkout)
     app.cleanup_ctx.append(_cleanup_context)
+    app[_FREEKASSA_ROUTES_REGISTERED] = True
     logger.info(
         "FreeKassa routes registered: paths=%s enabled=%s api_enabled=%s verify_ip=%s",
         sorted(paths),

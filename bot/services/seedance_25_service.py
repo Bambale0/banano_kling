@@ -17,6 +17,10 @@ from urllib.parse import urlsplit, urlunsplit
 
 from bot.config import config
 from bot.services.kling_service import KlingService
+from bot.services.seedance_reference_binding import (
+    canonicalize_seedance_reference_tags,
+    missing_seedance_reference_tags,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +72,8 @@ class Seedance25Service(KlingService):
     MIN_DURATION = 4
     MAX_DURATION = 30
     AUTO_DURATION = -1
-    MAX_PROMPT_LENGTH = 5000
+    # KIE prompt schema: https://docs.kie.ai/market/bytedance/seedance-2-5
+    MAX_PROMPT_LENGTH = 30_000
 
     MAX_REFERENCE_IMAGES = 30
     MAX_REFERENCE_VIDEOS = 10
@@ -160,6 +165,7 @@ class Seedance25Service(KlingService):
         reference_image_urls: list[str] | None = None,
         reference_video_urls: list[str] | None = None,
         reference_audio_urls: list[str] | None = None,
+        video_editing: bool = False,
         return_last_frame: bool = False,
         generate_audio: bool = True,
         output_format: str = "mp4",
@@ -171,12 +177,10 @@ class Seedance25Service(KlingService):
         if not self.kie_key:
             return {"success": False, "error": "KIE_AI_API_KEY is not configured"}
 
-        normalized_prompt = str(prompt or "").strip()
-        if len(normalized_prompt) > self.MAX_PROMPT_LENGTH:
-            return {
-                "success": False,
-                "error": f"Seedance 2.5 prompt exceeds {self.MAX_PROMPT_LENGTH} characters",
-            }
+        if not isinstance(video_editing, bool):
+            return {"success": False, "error": "Seedance 2.5 video_editing must be a boolean"}
+
+        raw_prompt = str(prompt or "").strip()
 
         try:
             normalized_duration = self.normalize_duration(duration)
@@ -197,6 +201,43 @@ class Seedance25Service(KlingService):
             )
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
+
+        if video_editing and len(video_urls) != 1:
+            return {"success": False, "error": "Seedance 2.5 video editing requires exactly one video reference"}
+
+        normalized_prompt = canonicalize_seedance_reference_tags(
+            raw_prompt,
+            image_count=len(image_urls),
+            video_count=len(video_urls),
+            audio_count=len(audio_urls),
+        )
+        if normalized_prompt != raw_prompt:
+            logger.info(
+                "Seedance 2.5 reference aliases normalized: images=%s videos=%s audio=%s",
+                len(image_urls),
+                len(video_urls),
+                len(audio_urls),
+            )
+        missing_tags = missing_seedance_reference_tags(
+            normalized_prompt,
+            image_count=len(image_urls),
+            video_count=len(video_urls),
+            audio_count=len(audio_urls),
+        )
+        if missing_tags:
+            return {
+                "success": False,
+                "error": (
+                    "Prompt references missing Seedance media: "
+                    + ", ".join(missing_tags)
+                ),
+            }
+
+        if len(normalized_prompt) > self.MAX_PROMPT_LENGTH:
+            return {
+                "success": False,
+                "error": f"Seedance 2.5 prompt exceeds {self.MAX_PROMPT_LENGTH} characters",
+            }
 
         normalized_ratio = str(aspect_ratio or "adaptive").strip().lower()
         if normalized_ratio not in self.ALLOWED_RATIOS:
@@ -232,6 +273,13 @@ class Seedance25Service(KlingService):
             )
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
+
+        # Editing intent is local application metadata, not a KIE API field.
+        # Validate normal inputs first so stale valid settings can be normalized
+        # without allowing invalid settings to bypass the provider contract.
+        if video_editing:
+            normalized_duration = self.AUTO_DURATION
+            normalized_ratio = "adaptive"
 
         input_data: dict[str, Any] = {
             "prompt": normalized_prompt,
@@ -269,10 +317,11 @@ class Seedance25Service(KlingService):
             payload["callBackUrl"] = callback_url
 
         logger.info(
-            "Seedance 2.5 request: scenario=%s duration=%s ratio=%s resolution=%s "
+            "Seedance 2.5 request: scenario=%s video_editing=%s duration=%s ratio=%s resolution=%s "
             "refs(image=%s,video=%s,audio=%s) generated_audio=%s output=%s "
             "web_search=%s nsfw_checker=%s return_last_frame=%s callback=%s",
             scenario,
+            video_editing,
             normalized_duration,
             normalized_ratio,
             normalized_resolution,
@@ -291,6 +340,9 @@ class Seedance25Service(KlingService):
             result.setdefault("success", bool(result.get("task_id")))
             result.setdefault("scenario", scenario)
             result.setdefault("provider_model", self.MODEL_NAME)
+            result.setdefault("duration", normalized_duration)
+            result.setdefault("aspect_ratio", normalized_ratio)
+            result.setdefault("video_editing", video_editing)
         return result
 
 

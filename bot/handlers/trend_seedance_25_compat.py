@@ -14,7 +14,8 @@ from typing import Any
 from aiohttp import web
 
 from bot.config import config
-from bot.services.preset_manager import preset_manager
+from bot.seedance_trend_recipe import REFERENCE_CONTRACT
+from bot.services.seedance_reference_binding import missing_seedance_reference_tags
 
 from . import generation as generation_module
 from . import seedance_25_public_release as public_release
@@ -29,39 +30,78 @@ async def _run_seedance25_trend(
     trend: Any,
 ) -> web.Response:
     import bot.miniapp as miniapp_module
-    import bot.trend_api as trend_api
+    from bot import trend_api
 
-    references = [str(value or "").strip() for value in trend.reference_urls if str(value or "").strip()]
+    user_references = [
+        str(value or "").strip()
+        for value in trend.reference_urls
+        if str(value or "").strip()
+    ]
+    references = [
+        str(value or "").strip()
+        for value in getattr(trend, "provider_image_urls", trend.reference_urls)
+        if str(value or "").strip()
+    ]
+    video_references = [
+        str(value or "").strip()
+        for value in getattr(trend, "template_video_urls", ())
+        if str(value or "").strip()
+    ]
+    audio_references = [
+        str(value or "").strip()
+        for value in getattr(trend, "template_audio_urls", ())
+        if str(value or "").strip()
+    ]
     if not references:
         raise trend_api.TrendRunValidationError("Для видео-тренда загрузите фото")
 
-    trend_api._validate_uploaded_references(references, miniapp_module)
-    await trend_api.touch_saved_references(telegram_id, references, kind="image")
+    trend_api._validate_uploaded_references(
+        [*references, *video_references, *audio_references],
+        miniapp_module,
+    )
+    await trend_api.touch_saved_references(telegram_id, user_references, kind="image")
 
-    model_meta = miniapp_module._find_video_model_meta(MODEL_KEY)
-    if not model_meta:
-        raise trend_api.TrendRunValidationError("Seedance 2.5 сейчас недоступна")
+    # Seedance 2.5 is exposed through the dedicated compatibility bootstrap and
+    # is intentionally absent from the legacy VIDEO_MODELS registry. Using the
+    # generic lookup here makes every curated Seedance 2.5 trend unavailable.
+    model_meta = public_release._public_model_meta()
 
     supported_ratios = list(model_meta.get("ratios") or [])
-    ratio = str(trend.ratio or "adaptive")
+    ratio = "adaptive" if bool(trend.settings.get("seedance25_video_editing", False)) else str(trend.ratio or "adaptive")
     if supported_ratios and ratio not in supported_ratios:
         ratio = "adaptive" if "adaptive" in supported_ratios else str(supported_ratios[0])
 
     supported_durations = [int(value) for value in model_meta.get("durations", []) if int(value) > 0]
-    duration = trend_api._int_setting(trend.settings, "duration", 5)
-    if supported_durations and duration not in supported_durations:
+    video_editing = bool(trend.settings.get("seedance25_video_editing", False))
+    duration = -1 if video_editing else trend_api._int_setting(trend.settings, "duration", 5)
+    if not video_editing and supported_durations and duration not in supported_durations:
         duration = min(supported_durations, key=lambda value: abs(value - duration))
 
     resolution = str(trend.settings.get("seedance25_resolution") or "720p").lower()
     if resolution not in {"480p", "720p"}:
         resolution = "720p"
 
-    # Curated trends accept user photos. For Seedance 2.5 the first photo maps to
-    # first-frame I2V; any additional photos become multimodal references.
-    if len(references) == 1:
+    # Curated trends may bind uploaded photos explicitly in the prompt via
+    # Seedance tags such as @Image1. In that case even a single photo must stay
+    # in multimodal references; mapping it to first_frame leaves @Image1
+    # unbound and KIE rejects the task before creation.
+    reference_contract = str(getattr(trend, "reference_contract", "") or "")
+    private_reference_run = reference_contract == REFERENCE_CONTRACT
+    missing_without_images = missing_seedance_reference_tags(
+        str(trend.prompt or ""),
+        image_count=0,
+        video_count=0,
+        audio_count=0,
+    )
+    uses_image_binding = any(tag.startswith("@Image") for tag in missing_without_images)
+    if private_reference_run:
+        scenario = "multimodal"
+        first_frame = None
+        image_urls = references
+    elif len(references) == 1 and not uses_image_binding:
         scenario = "first_frame"
         first_frame = references[0]
-        image_urls: list[str] = []
+        image_urls = []
     else:
         scenario = "multimodal"
         first_frame = None
@@ -76,28 +116,31 @@ async def _run_seedance25_trend(
         "first_frame": first_frame,
         "last_frame": None,
         "image_urls": image_urls,
-        "video_urls": [],
-        "audio_urls": [],
-        "return_last_frame": False,
-        "generate_audio": True,
-        "output_format": "mp4",
-        "web_search": False,
-        "nsfw_checker": False,
+        "video_urls": video_references,
+        "audio_urls": audio_references,
+        "seedance25_video_editing": video_editing,
+        "return_last_frame": bool(trend.settings.get("return_last_frame", False)),
+        "generate_audio": bool(trend.settings.get("generate_audio", True)),
+        "output_format": str(trend.settings.get("output_format") or "mp4").lower(),
+        "web_search": bool(trend.settings.get("web_search", False)),
+        "nsfw_checker": bool(trend.settings.get("nsfw_checker", False)),
     }
 
     is_admin = config.is_admin(telegram_id)
     try:
-        await public_release._validate_public_payload(payload, is_admin=is_admin)
+        await public_release._validate_public_payload(
+            payload,
+            is_admin=is_admin,
+            trusted_trend=private_reference_run,
+        )
     except ValueError as exc:
         raise trend_api.TrendRunValidationError(str(exc)) from exc
 
-    cost = float(
-        preset_manager.get_video_cost_with_quality(
-            MODEL_KEY,
-            duration,
-            resolution,
+    cost = trend_api.estimate_trend_repeat_cost(trend)
+    if cost is None:
+        raise trend_api.TrendRunValidationError(
+            "Не удалось определить стоимость Seedance 2.5 тренда"
         )
-    )
     debited, debit_error = await trend_api._debit_for_generation(telegram_id, user, cost)
     if debit_error is not None:
         return debit_error
@@ -128,6 +171,13 @@ async def _run_seedance25_trend(
             {
                 "trend_id": int(trend.trend_id),
                 "action_type": "trend",
+                "prompt_source_id": int(trend.trend_id),
+                "reference_contract": reference_contract or None,
+                "fixed_asset_counts": {
+                    "image": len(getattr(trend, "template_image_urls", ())),
+                    "video": len(getattr(trend, "template_video_urls", ())),
+                    "audio": len(getattr(trend, "template_audio_urls", ())),
+                },
                 "prompt_hidden": True,
                 "prompt_actions_allowed": False,
             }
@@ -179,7 +229,7 @@ async def _run_seedance25_trend(
 
 
 def install_trend_seedance_25_compat() -> None:
-    import bot.trend_api as trend_api
+    from bot import trend_api
 
     if getattr(trend_api, "_seedance25_trend_compat_installed", False):
         return

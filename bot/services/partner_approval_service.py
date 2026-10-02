@@ -4,6 +4,7 @@ import asyncio
 import html
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Any
 
 from aiogram import Bot, types
@@ -18,12 +19,39 @@ PARTNER_APPLICATION_AVAILABLE = "available"
 PARTNER_APPLICATION_PENDING = "pending"
 PARTNER_APPLICATION_APPROVED = "approved"
 PARTNER_APPLICATION_REJECTED = "rejected"
+PARTNER_MANUAL_APPROVAL_CUTOFF = os.getenv(
+    "PARTNER_MANUAL_APPROVAL_CUTOFF",
+    "2026-08-08T13:44:22",
+).strip()
 
 _SCHEMA_READY = False
 _SCHEMA_LOCK: asyncio.Lock | None = None
 _REFERRAL_GUARD_INSTALLED = False
-_ORIGINAL_PROCESS_REFERRAL_CLICK = None
-_ORIGINAL_ATTACH_REFERRAL_IN_TRANSACTION = None
+
+
+def _as_utc_naive_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            logger.error("Invalid partner approval datetime: %r", value)
+            return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+def is_legacy_partner_registration(created_at: Any) -> bool:
+    """Return whether the account predates mandatory manual partner approval."""
+
+    created = _as_utc_naive_datetime(created_at)
+    cutoff = _as_utc_naive_datetime(PARTNER_MANUAL_APPROVAL_CUTOFF)
+    return bool(created and cutoff and created < cutoff)
 
 
 def _schema_lock() -> asyncio.Lock:
@@ -134,12 +162,12 @@ async def get_partner_application_state(telegram_id: int) -> dict[str, Any]:
     await ensure_partner_approval_schema()
     user = await get_or_create_user(int(telegram_id))
 
-    # Existing activated partners are grandfathered automatically. The existing
-    # partner_agreed_at field stays the financial system's activation flag.
-    if user.partner_agreed_at:
+    legacy_registration = is_legacy_partner_registration(user.created_at)
+    if user.partner_agreed_at or legacy_registration:
         return {
             "status": PARTNER_APPLICATION_APPROVED,
             "is_partner": True,
+            "is_legacy": legacy_registration and not bool(user.partner_agreed_at),
             "application_id": None,
             "can_apply": False,
         }
@@ -207,6 +235,52 @@ async def get_partner_application(application_id: int) -> dict[str, Any] | None:
         return _application_payload(await cursor.fetchone())
 
 
+async def count_pending_partner_applications() -> int:
+    """Return the total number of pending partner applications."""
+
+    await ensure_partner_approval_schema()
+    async with db_backend.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM partner_applications WHERE status = 'pending'"
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return 0
+        return int(row[0])
+
+
+async def get_pending_partner_applications(
+    limit: int = 20,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    """Return pending partner applications for the admin review queue."""
+
+    await ensure_partner_approval_schema()
+    safe_limit = max(1, min(int(limit or 20), 100))
+    safe_offset = max(0, int(offset or 0))
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
+        cursor = await db.execute(
+            """
+            SELECT pa.id, pa.user_id, pa.status, pa.source, pa.requested_at,
+                   pa.reviewed_at, pa.reviewed_by_telegram_id,
+                   u.telegram_id, u.username, u.first_name, u.last_name,
+                   u.referral_code
+            FROM partner_applications pa
+            JOIN users u ON u.id = pa.user_id
+            WHERE pa.status = 'pending'
+            ORDER BY pa.requested_at ASC, pa.id ASC
+            LIMIT ? OFFSET ?
+            """,
+            (safe_limit, safe_offset),
+        )
+        return [
+            payload
+            for row in await cursor.fetchall()
+            if (payload := _application_payload(row)) is not None
+        ]
+
+
 async def submit_partner_application(
     telegram_id: int,
     *,
@@ -216,12 +290,14 @@ async def submit_partner_application(
 
     await ensure_partner_approval_schema()
     user = await get_or_create_user(int(telegram_id))
-    if user.partner_agreed_at:
+    legacy_registration = is_legacy_partner_registration(user.created_at)
+    if user.partner_agreed_at or legacy_registration:
         return {
             "ok": True,
             "created": False,
             "status": PARTNER_APPLICATION_APPROVED,
             "is_partner": True,
+            "is_legacy": legacy_registration and not bool(user.partner_agreed_at),
             "application_id": None,
         }
 
@@ -494,7 +570,7 @@ async def _query_referrer_approval(connection: Any, code: str) -> bool:
     connection.row_factory = db_backend.Row
     cursor = await connection.execute(
         """
-        SELECT telegram_id, partner_agreed_at
+        SELECT telegram_id, partner_agreed_at, created_at
         FROM users
         WHERE referral_code = ?
         LIMIT 1
@@ -505,7 +581,11 @@ async def _query_referrer_approval(connection: Any, code: str) -> bool:
     if not row:
         return True  # let the canonical referral service report code_not_found
     telegram_id = int(row["telegram_id"])
-    return bool(row["partner_agreed_at"]) or config.is_admin(telegram_id)
+    return (
+        bool(row["partner_agreed_at"])
+        or config.is_admin(telegram_id)
+        or is_legacy_partner_registration(row["created_at"])
+    )
 
 
 async def _referrer_is_approved_by_code(
@@ -552,16 +632,14 @@ def install_partner_referral_approval_guard() -> None:
     """Require admin-approved partner status before a referral code can attach."""
 
     global _REFERRAL_GUARD_INSTALLED
-    global _ORIGINAL_PROCESS_REFERRAL_CLICK
-    global _ORIGINAL_ATTACH_REFERRAL_IN_TRANSACTION
-
-    if _REFERRAL_GUARD_INSTALLED:
-        return
 
     from bot.services import referral_service
 
-    _ORIGINAL_PROCESS_REFERRAL_CLICK = referral_service.process_referral_click
-    _ORIGINAL_ATTACH_REFERRAL_IN_TRANSACTION = referral_service.attach_referral_in_transaction
+    original_process_referral_click = referral_service.process_referral_click
+    original_attach_referral = referral_service.attach_referral_in_transaction
+    if getattr(original_process_referral_click, "_partner_approval_guard", False):
+        _REFERRAL_GUARD_INSTALLED = True
+        return
 
     async def guarded_process_referral_click(
         visitor_telegram_id: int,
@@ -579,7 +657,7 @@ def install_partner_referral_approval_guard() -> None:
                 source=source,
                 start_param=start_param,
             )
-        return await _ORIGINAL_PROCESS_REFERRAL_CLICK(
+        return await original_process_referral_click(
             visitor_telegram_id,
             referral_code,
             source=source,
@@ -606,7 +684,7 @@ def install_partner_referral_approval_guard() -> None:
                 start_param=start_param,
                 db=db,
             )
-        return await _ORIGINAL_ATTACH_REFERRAL_IN_TRANSACTION(
+        return await original_attach_referral(
             db,
             visitor_telegram_id,
             visitor_user_id,
@@ -615,6 +693,8 @@ def install_partner_referral_approval_guard() -> None:
             start_param=start_param,
         )
 
+    guarded_process_referral_click._partner_approval_guard = True
+    guarded_attach_referral_in_transaction._partner_approval_guard = True
     referral_service.process_referral_click = guarded_process_referral_click
     referral_service.attach_referral_in_transaction = guarded_attach_referral_in_transaction
     _REFERRAL_GUARD_INSTALLED = True

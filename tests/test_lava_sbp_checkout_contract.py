@@ -173,8 +173,8 @@ def test_miniapp_payment_ui_has_separate_card_and_sbp_actions() -> None:
     assert "handleTopup(pkg.id, 'lava_foreign_paypal')" in source
     assert "Картой" in source
     assert "СБП" in source
-    assert "Зарубежная оплата и СНГ" in source
-    assert "Зарубежная карта" in source
+    assert "Зарубежная / СНГ" in source
+    assert "Резерв · зарубежная" in source
     assert "PayPal" in source
     assert "Карта / СБП" not in source
     assert "'lava_card'" in types_source
@@ -184,32 +184,43 @@ def test_miniapp_payment_ui_has_separate_card_and_sbp_actions() -> None:
     assert "'lava_foreign_paypal'" in types_source
 
 
-def test_text_bot_sbp_uses_lava_checkout_not_freekassa() -> None:
+def test_text_bot_uses_robokassa_primary_kassa_reserve_and_lava_lower() -> None:
     source = _read("bot/handlers/lava_checkout.py")
 
+    assert 'callback_data=f"freekassa_card_{package_id}"' in source
+    assert 'callback_data=f"freekassa_sbp_{package_id}"' in source
+    assert 'callback_data=f"buy_lava_card_{package_id}"' in source
     assert 'callback_data=f"buy_lava_sbp_{package_id}"' in source
     assert 'callback_data=f"buy_lava_foreign_card_{package_id}"' in source
     assert 'callback_data=f"buy_lava_foreign_paypal_{package_id}"' in source
-    assert "Зарубежная оплата и СНГ" in source
-    assert "Зарубежная карта" in source
+    assert "💳 СБП / карта · Robokassa" in source
+    assert "↩️ Резерв · KASSA · карта" in source
+    assert "↩️ Резерв · KASSA · СБП" in source
+    assert "Карта · Lava" in source
+    assert "СБП · Lava" in source
+    assert source.index("💳 СБП / карта · Robokassa") < source.index(
+        "↩️ Резерв · KASSA · карта"
+    )
+    assert source.index("↩️ Резерв · KASSA · СБП") < source.index("Карта · Lava")
+    assert "Резерв · зарубежная оплата" in source
+    assert "Резерв · зарубежная карта" in source
     assert "PayPal" in source
     assert "_package_lava_foreign_offer_config(package)" in source
     assert 'expected_currency = "USD" if mode in LAVA_CHECKOUT_FOREIGN_MODES else "RUB"' in source
-    assert 'callback_data=f"freekassa_sbp_{package_id}"' not in source
-    assert "freekassa_service" not in source
-    assert "СБП теперь оформляется через KASSA" not in source
     assert "payment_provider=payment_provider" in source
     assert "payment_method=payment_method" in source
     assert "_allow_amount_fallback=False" in source
 
 
-def test_freekassa_is_reserve_without_replacing_primary_lava() -> None:
+def test_freekassa_legacy_provider_keyboard_marks_kassa_reserve_and_lava_last() -> None:
     source = _read("bot/handlers/freekassa_payments.py")
     callback_block = source.split(
         "async def initiate_freekassa_payment", 1
     )[1].split("@router.callback_query(F.data.startswith(\"check_freekassa_\"))", 1)[0]
 
-    assert 'text="🇷🇺 РФ — KASSA (резерв)"' in source
+    assert 'text="💳 Lava"' in source
+    assert 'text="↩️ Резерв · KASSA"' in source
+    assert source.index('text="↩️ Резерв · KASSA"') < source.index('text="💳 Lava"')
     assert 'callback_data=f"freekassa_card_{package_id}"' in source
     assert 'callback_data=f"freekassa_sbp_{package_id}"' in source
     assert 'provider="freekassa"' in callback_block

@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ImagePlus,
   Loader2,
@@ -14,11 +14,14 @@ import {
 import { useApp } from '@/lib/app-context'
 import { uploadFile } from '@/lib/api'
 import {
+  createTrendRunRequestId,
   runPinterestRepeatTrend,
-  runTrend,
+  runTrend as runTrendApi,
+  TrendRunRequestError,
 } from '@/lib/trend-api'
 import { mediaAspectRatio, normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
-import type { PromptItem, UploadedFile } from '@/lib/types'
+import { formatTrendRepeatCost } from '@/lib/trend-price'
+import type { PromptItem, TrendUserField, UploadedFile } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 
@@ -55,6 +58,31 @@ function parseOptionalNumber(value: string): number | null {
   return Number.isFinite(parsed) ? Math.trunc(parsed) : null
 }
 
+function isTrendUserFieldValueValid(field: TrendUserField, value: string): boolean {
+  const normalized = value.trim()
+  if (!normalized) return field.required === false
+  if (field.type === 'number') {
+    const parsed = Number(normalized.replace(',', '.'))
+    return Number.isFinite(parsed)
+  }
+  const maxLength = Math.max(1, Math.min(160, field.max_length || 80))
+  return normalized.length <= maxLength
+}
+
+function trendRunFingerprint(
+  trendId: number,
+  referenceUrls: string[],
+  userValues: Record<string, string>,
+): string {
+  return JSON.stringify({
+    trendId,
+    referenceUrls,
+    userValues: Object.fromEntries(
+      Object.entries(userValues).sort(([left], [right]) => left.localeCompare(right)),
+    ),
+  })
+}
+
 export function TrendRunnerDialog({
   trend,
   open,
@@ -69,6 +97,7 @@ export function TrendRunnerDialog({
   } = useApp()
   const inputRefs = useRef<Array<HTMLInputElement | null>>([])
   const previewRefs = useRef<string[]>([])
+  const trendRunRequestRef = useRef<{ fingerprint: string; id: string } | null>(null)
   const [phase, setPhase] = useState<RunnerPhase>('idle')
   const [error, setError] = useState<string | null>(null)
   const [previewUrls, setPreviewUrls] = useState<Array<string | null>>([])
@@ -78,12 +107,21 @@ export function TrendRunnerDialog({
   const [heightCm, setHeightCm] = useState('')
   const [weightKg, setWeightKg] = useState('')
   const [pinterestModel, setPinterestModel] = useState<PinterestModel>('banana_pro')
+  const [userValues, setUserValues] = useState<Record<string, string>>({})
   const [trendPreviewFailed, setTrendPreviewFailed] = useState(false)
 
   const pinterestRepeat = isPinterestRepeatItem(trend)
+  const repeatCost = formatTrendRepeatCost(trend?.repeat_cost)
   const busy = phase === 'uploading' || phase === 'generating'
   const maxPinterestAngles = pinterestModel === 'seedream_5_pro' ? 3 : MAX_PINTEREST_ANGLES
   const isVideoTrend = trend?.generation_settings?.kind === 'video'
+  const userFields = useMemo(
+    () => (trend?.generation_settings?.user_fields || []).slice(0, 6),
+    [trend?.generation_settings?.user_fields],
+  )
+  const userFieldsReady = userFields.every((field) =>
+    isTrendUserFieldValueValid(field, userValues[field.key] || ''),
+  )
   const configuredReferenceCount = Number(trend?.generation_settings?.reference_count || 0)
   const exactReferenceCount = pinterestRepeat
     ? 2
@@ -107,11 +145,12 @@ export function TrendRunnerDialog({
   const validHeight = parsedHeight !== null && parsedHeight >= 120 && parsedHeight <= 230
   const validWeight = parsedWeight !== null && parsedWeight >= 30 && parsedWeight <= 250
   const pinterestPrimaryReady = Boolean(uploadedReferences[0] && uploadedReferences[1])
+  const referencesReady = exactSlots
+    ? completedReferences.length === exactReferenceCount
+    : completedReferences.length > 0
   const readyToGenerate = pinterestRepeat
     ? pinterestPrimaryReady && validHeight && validWeight
-    : exactSlots
-      ? completedReferences.length === exactReferenceCount
-      : completedReferences.length > 0
+    : referencesReady && userFieldsReady
 
   const clearPreviews = useCallback(() => {
     for (const previewUrl of previewRefs.current) {
@@ -123,11 +162,13 @@ export function TrendRunnerDialog({
   }, [])
 
   const resetRunner = useCallback(() => {
+    trendRunRequestRef.current = null
     setPhase('idle')
     setError(null)
     setHeightCm('')
     setWeightKg('')
     setPinterestModel('banana_pro')
+    setUserValues(Object.fromEntries(userFields.map((field) => [field.key, ''])))
     setIdentityAngles([])
     setTrendPreviewFailed(false)
     clearPreviews()
@@ -136,7 +177,7 @@ export function TrendRunnerDialog({
     for (const input of inputRefs.current) {
       if (input) input.value = ''
     }
-  }, [clearPreviews, exactReferenceCount, exactSlots])
+  }, [clearPreviews, exactReferenceCount, exactSlots, userFields])
 
   useEffect(() => {
     if (!open) {
@@ -147,7 +188,8 @@ export function TrendRunnerDialog({
     setPreviewUrls(exactSlots ? Array(exactReferenceCount).fill(null) : [])
     setIdentityAngles([])
     setIdentityAnglePreviews([])
-  }, [exactReferenceCount, exactSlots, open, resetRunner, trend?.id])
+    setUserValues(Object.fromEntries(userFields.map((field) => [field.key, ''])))
+  }, [exactReferenceCount, exactSlots, open, resetRunner, trend?.id, userFields])
 
   useEffect(() => {
     setTrendPreviewFailed(false)
@@ -326,27 +368,53 @@ export function TrendRunnerDialog({
     if (!trend || busy || !readyToGenerate) return
     setError(null)
     setPhase('generating')
+    const referenceUrls = pinterestRepeat
+      ? [
+          uploadedReferences[0]?.url || '',
+          uploadedReferences[1]?.url || '',
+          ...identityAngles.map((reference) => reference.url),
+        ].filter(Boolean)
+      : completedReferences.map((reference) => reference.url)
+
+    let clientRequestId: string | undefined
+    if (!pinterestRepeat) {
+      const fingerprint = trendRunFingerprint(trend.id, referenceUrls, userValues)
+      if (trendRunRequestRef.current?.fingerprint !== fingerprint) {
+        trendRunRequestRef.current = {
+          fingerprint,
+          id: createTrendRunRequestId(),
+        }
+      }
+      clientRequestId = trendRunRequestRef.current.id
+    }
+
+    const runTrend = (
+      trendId: number,
+      refs: string[],
+      values: Record<string, string>,
+    ) => runTrendApi(trendId, refs, values, clientRequestId)
+
     try {
-      const referenceUrls = pinterestRepeat
-        ? [
-            uploadedReferences[0]?.url || '',
-            uploadedReferences[1]?.url || '',
-            ...identityAngles.map((reference) => reference.url),
-          ].filter(Boolean)
-        : completedReferences.map((reference) => reference.url)
       const result = pinterestRepeat
         ? await runPinterestRepeatTrend(trend.id, referenceUrls, {
             heightCm: parseOptionalNumber(heightCm) as number,
             weightKg: parseOptionalNumber(weightKg) as number,
             model: pinterestModel,
           })
-        : await runTrend(trend.id, referenceUrls)
+        : await runTrend(trend.id, referenceUrls, userValues)
+      trendRunRequestRef.current = null
       addTask(result.task)
       setCredits(result.credits)
       if (result.detail) setTaskDetail(result.detail)
       selectTask(result.task)
       onOpenChange(false)
     } catch (cause) {
+      if (
+        !pinterestRepeat &&
+        (!(cause instanceof TrendRunRequestError) || !cause.retrySameRequest)
+      ) {
+        trendRunRequestRef.current = null
+      }
       setPhase('error')
       setError(cause instanceof Error ? cause.message : 'Не удалось запустить тренд')
     }
@@ -423,6 +491,12 @@ export function TrendRunnerDialog({
         <DialogTitle className="pr-8 font-serif text-lg">
           {pinterestRepeat ? 'Повтори фото с Pinterest' : trend?.title || 'Повторить тренд'}
         </DialogTitle>
+
+        {trend?.generation_settings?.automatic_hidden_references ? (
+          <div className="rounded-xl border border-gold/25 bg-gold/5 p-3 text-sm leading-relaxed text-muted-foreground">
+            Загрузите только своё лицо. Одежда, украшения, предметы и остальные закреплённые референсы применятся автоматически и не показываются в приложении.
+          </div>
+        ) : null}
 
         {trend?.preview_url ? (
           isVideoTrend ? (
@@ -713,6 +787,60 @@ export function TrendRunnerDialog({
           </>
         )}
 
+        {!pinterestRepeat && userFields.length ? (
+          <div className="space-y-3 rounded-2xl border border-border/60 bg-secondary/20 p-3">
+            <div>
+              <p className="text-sm font-semibold text-foreground">Персонализируйте шаблон</p>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Эти значения изменят только нужные детали. Скрытый prompt останется скрытым.
+              </p>
+            </div>
+            {userFields.map((field) => {
+              const value = userValues[field.key] || ''
+              const valid = isTrendUserFieldValueValid(field, value)
+              return (
+                <label key={field.key} className="block space-y-1.5">
+                  <span className="text-xs font-medium text-foreground">
+                    {field.label}{field.required === false ? '' : ' *'}
+                  </span>
+                  <div className="relative">
+                    <input
+                      type={field.type === 'date' ? 'date' : 'text'}
+                      inputMode={field.type === 'number' ? 'numeric' : 'text'}
+                      value={value}
+                      maxLength={field.type === 'date' ? undefined : Math.max(1, Math.min(160, field.max_length || 160))}
+                      placeholder={field.placeholder || ''}
+                      disabled={busy}
+                      aria-invalid={Boolean(value) && !valid}
+                      onChange={(event) => {
+                        let nextValue = event.target.value
+                        if (field.type === 'number') {
+                          nextValue = nextValue.replace(/[^0-9.,-]/g, '').slice(0, 160)
+                        }
+                        setUserValues((current) => ({ ...current, [field.key]: nextValue }))
+                        setError(null)
+                      }}
+                      className="h-11 w-full rounded-xl border border-border/70 bg-background/55 px-3 pr-12 text-sm text-foreground outline-none transition focus:border-gold/60"
+                    />
+                    {field.suffix ? (
+                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                        {field.suffix}
+                      </span>
+                    ) : null}
+                  </div>
+                  {value && !valid ? (
+                    <p className="text-[10px] text-destructive">
+                      {field.type === 'number'
+                        ? 'Введите число'
+                        : `Максимум ${Math.max(1, Math.min(160, field.max_length || 160))} символов`}
+                    </p>
+                  ) : null}
+                </label>
+              )
+            })}
+          </div>
+        ) : null}
+
         {error ? (
           <p className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
             {error}
@@ -734,9 +862,9 @@ export function TrendRunnerDialog({
             ? 'Генерирую…'
             : pinterestRepeat
               ? 'Создать →'
-              : exactSlots
-                ? `Сгенерировать · ${completedReferences.length}/${exactReferenceCount}`
-                : `Сгенерировать · ${completedReferences.length} фото`}
+              : repeatCost
+                ? 'Сгенерировать · ' + repeatCost + '🍌'
+                : 'Сгенерировать'}
         </Button>
 
         {pinterestRepeat && !readyToGenerate ? (

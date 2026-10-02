@@ -92,7 +92,8 @@ export interface PaymentPackage {
   lava_foreign_product_id?: string
   lava_foreign_offer_id?: string
   lava_foreign_currency?: string
-  prodamus_enabled?: boolean
+  robokassa_enabled?: boolean
+  freekassa_enabled?: boolean
   bonus_credits?: number
   popular?: boolean
   description?: string
@@ -107,7 +108,9 @@ export type PaymentProvider =
   | 'lava_foreign'
   | 'lava_foreign_card'
   | 'lava_foreign_paypal'
-  | 'prodamus'
+  | 'robokassa'
+  | 'freekassa_card'
+  | 'freekassa_sbp'
 
 export interface CreatePaymentResponse {
   ok: true
@@ -184,6 +187,18 @@ export interface BootstrapResponse {
   saved_references?: SavedReference[]
 }
 
+export interface TrendUserField {
+  key: string
+  label: string
+  type: 'text' | 'number' | 'date'
+  required?: boolean
+  placeholder?: string
+  min?: number
+  max?: number
+  max_length?: number
+  suffix?: string
+}
+
 export interface TrendGenerationSettings {
   kind: 'image' | 'video'
   user_input: 'photo'
@@ -192,6 +207,8 @@ export interface TrendGenerationSettings {
   preview_type?: 'image' | 'video'
   reference_count?: number
   reference_labels?: string[]
+  automatic_hidden_references?: boolean
+  user_fields?: TrendUserField[]
   quality?: string
   count?: number
   nsfw_checker?: boolean
@@ -228,6 +245,7 @@ export interface PromptItem {
   tags: string[]
   uses_count: number
   likes: number
+  repeat_cost?: number | null
   preview_url?: string | null
   preview_poster_url?: string | null
   model?: string | null

@@ -1,5 +1,6 @@
 import asyncio
 import importlib
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -138,6 +139,50 @@ async def test_legacy_activated_partner_is_grandfathered_without_application(tmp
     assert submitted["status"] == approval.PARTNER_APPLICATION_APPROVED
     assert submitted["created"] is False
     assert submitted["application_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_registration_before_manual_approval_cutoff_is_grandfathered(
+    tmp_path, monkeypatch
+):
+    database, referral_service, approval = _reload_partner_modules(
+        monkeypatch,
+        tmp_path / "partner-registration-cutoff.db",
+    )
+    await database.init_db()
+    referrer = await database.get_or_create_user(810012)
+    visitor = await database.get_or_create_user(810013)
+
+    cutoff = datetime.fromisoformat(approval.PARTNER_MANUAL_APPROVAL_CUTOFF)
+    async with database.db_backend.connect(database.DATABASE_PATH) as db:
+        await db.execute(
+            "UPDATE users SET created_at = ? WHERE telegram_id = ?",
+            ((cutoff - timedelta(seconds=1)).isoformat(sep=" "), referrer.telegram_id),
+        )
+        await db.commit()
+
+    approval.install_partner_referral_approval_guard()
+    attached = await referral_service.process_referral_click(
+        visitor.telegram_id,
+        referrer.referral_code,
+        source="test",
+        start_param=f"ref_{referrer.referral_code}",
+    )
+
+    assert attached.attached is True
+    state = await approval.get_partner_application_state(referrer.telegram_id)
+    assert state["is_partner"] is True
+    assert state["is_legacy"] is True
+
+
+def test_approval_guard_is_installed_before_miniapp_can_capture_referral_handler():
+    handlers_source = (
+        Path(__file__).resolve().parents[1] / "bot" / "handlers" / "__init__.py"
+    ).read_text(encoding="utf-8")
+
+    assert handlers_source.index("install_partner_referral_approval_guard()") < handlers_source.index(
+        "install_own_profile_feed_compat()"
+    )
 
 
 @pytest.mark.asyncio
