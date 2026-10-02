@@ -6,8 +6,7 @@
 """
 
 import logging
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
 from typing import Any, Optional
 
 from bot import db as db_backend

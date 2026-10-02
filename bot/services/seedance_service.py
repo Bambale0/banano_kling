@@ -8,7 +8,6 @@ from bot.services.kie_file_upload_service import kie_file_upload_service
 from bot.services.kling_service import KlingService
 from bot.services.media_input_utils import (
     image_sources_to_provider_safe_png_urls,
-    is_local_upload_source,
 )
 
 logger = logging.getLogger(__name__)
