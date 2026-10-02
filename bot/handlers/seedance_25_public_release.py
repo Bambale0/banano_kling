@@ -247,13 +247,18 @@ def _scenario_payload(data: dict[str, Any], prompt: str) -> dict[str, Any]:
     }
 
 
-async def _validate_public_payload(payload: dict[str, Any], *, is_admin: bool) -> None:
+async def _validate_public_payload(
+    payload: dict[str, Any],
+    *,
+    is_admin: bool,
+    trusted_trend: bool = False,
+) -> None:
     scenario = payload["scenario"]
     editing = payload.get("seedance25_video_editing", False)
     if not isinstance(editing, bool):
         raise ValueError("Некорректный режим редактирования видео")  # noqa: TRY004 - user-input validation maps to HTTP 400
     if editing:
-        if not is_admin:
+        if not is_admin and not trusted_trend:
             raise ValueError("Редактирование видео пока доступно только администратору: длительность определяется исходником")
         if scenario != "multimodal" or len(payload["video_urls"]) != 1:
             raise ValueError("Для редактирования выберите режим по референсам и одно исходное видео 4–30 секунд")
@@ -272,7 +277,7 @@ async def _validate_public_payload(payload: dict[str, Any], *, is_admin: bool) -
         payload["image_urls"] or payload["video_urls"] or payload["audio_urls"]
     ):
         raise ValueError("Добавьте хотя бы один мультимодальный референс")
-    if payload["duration"] == -1 and not is_admin:
+    if payload["duration"] == -1 and not is_admin and not trusted_trend:
         raise ValueError("Auto-длительность пока доступна только администратору; выберите 4–30 секунд")
     await fullstack._validate_seedance_sources(
         first_frame_url=payload["first_frame"],

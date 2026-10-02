@@ -4,7 +4,11 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { TrendRunnerDialog } from '@/components/trend-runner-dialog'
 import { useApp } from '@/lib/app-context'
 import { uploadFile } from '@/lib/api'
-import { runTrend } from '@/lib/trend-api'
+import {
+  createTrendRunRequestId,
+  runTrend,
+  TrendRunRequestError,
+} from '@/lib/trend-api'
 import type { PromptItem } from '@/lib/types'
 
 jest.mock('@/components/ui/dialog', () => ({
@@ -21,14 +25,29 @@ jest.mock('@/lib/api', () => ({
   uploadFile: jest.fn(),
 }))
 
-jest.mock('@/lib/trend-api', () => ({
-  runTrend: jest.fn(),
-  runPinterestRepeatTrend: jest.fn(),
-}))
+jest.mock('@/lib/trend-api', () => {
+  class MockTrendRunRequestError extends Error {
+    retrySameRequest: boolean
+
+    constructor(message: string, retrySameRequest: boolean) {
+      super(message)
+      this.retrySameRequest = retrySameRequest
+    }
+  }
+  return {
+    createTrendRunRequestId: jest.fn(() => 'trend-request-stable'),
+    runTrend: jest.fn(),
+    runPinterestRepeatTrend: jest.fn(),
+    TrendRunRequestError: MockTrendRunRequestError,
+  }
+})
 
 const mockedUseApp = useApp as jest.MockedFunction<typeof useApp>
 const mockedUploadFile = uploadFile as jest.MockedFunction<typeof uploadFile>
 const mockedRunTrend = runTrend as jest.MockedFunction<typeof runTrend>
+const mockedCreateTrendRunRequestId = createTrendRunRequestId as jest.MockedFunction<
+  typeof createTrendRunRequestId
+>
 
 const trend: PromptItem = {
   id: 42,
@@ -52,6 +71,8 @@ const trend: PromptItem = {
     scenario: 'imgtxt',
     duration: 5,
     reference_count: 1,
+    reference_labels: ['ВАШЕ ЛИЦО'],
+    automatic_hidden_references: true,
     user_fields: [
       {
         key: 'Возраст',
@@ -117,6 +138,7 @@ describe('TrendRunnerDialog user fields', () => {
     expect(ageInput).toHaveValue('')
     expect(screen.getByText('Возраст *')).toBeInTheDocument()
     expect(screen.getByText(/Скрытый prompt останется скрытым/)).toBeInTheDocument()
+    expect(screen.getByText(/Одежда, украшения, предметы.*применятся автоматически/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Сгенерировать · 20🍌/ })).toBeInTheDocument()
 
     const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement
@@ -135,8 +157,57 @@ describe('TrendRunnerDialog user fields', () => {
         42,
         ['https://example.test/portrait.jpg'],
         { Возраст: '31' },
+        expect.any(String),
       ),
     )
     expect(screen.queryByText(/Birthday scene|Happy birthday/)).not.toBeInTheDocument()
+  })
+
+  it('reuses one client request id after a transient launch error', async () => {
+    mockedRunTrend
+      .mockRejectedValueOnce(new TrendRunRequestError('Временная ошибка', true))
+      .mockResolvedValueOnce({
+        task: {
+          task_id: 'trend-task-retry',
+          type: 'video',
+          model: 'seedance_2',
+          model_label: 'Seedance 2.0',
+          aspect_ratio: '9:16',
+          status: 'pending',
+          created_at: new Date(0).toISOString(),
+          prompt_preview: '',
+          cost: 4,
+          duration: 5,
+          prompt_hidden: true,
+          prompt_actions_allowed: false,
+        },
+        credits: 96,
+      })
+
+    const { container } = render(
+      <TrendRunnerDialog trend={trend} open onOpenChange={jest.fn()} />,
+    )
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(fileInput, {
+      target: { files: [new File(['image'], 'portrait.jpg', { type: 'image/jpeg' })] },
+    })
+    await waitFor(() => expect(mockedUploadFile).toHaveBeenCalledTimes(1))
+    fireEvent.change(screen.getByRole('textbox', { name: /Возраст/ }), {
+      target: { value: '31' },
+    })
+
+    const generateButton = screen.getByRole('button', { name: /Сгенерировать/ })
+    await waitFor(() => expect(generateButton).toBeEnabled())
+    fireEvent.click(generateButton)
+    expect(await screen.findByText('Временная ошибка')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /Сгенерировать/ }))
+    await waitFor(() => expect(mockedRunTrend).toHaveBeenCalledTimes(2))
+
+    const firstId = mockedRunTrend.mock.calls[0][3]
+    const secondId = mockedRunTrend.mock.calls[1][3]
+    expect(firstId).toBe('trend-request-stable')
+    expect(secondId).toBe(firstId)
+    expect(mockedCreateTrendRunRequestId).toHaveBeenCalledTimes(1)
   })
 })

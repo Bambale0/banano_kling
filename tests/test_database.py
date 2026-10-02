@@ -1685,3 +1685,222 @@ async def test_concurrent_prompt_repeat_reward_credits_once_on_sqlite(
             ("sqlite-repeat-race",),
         )
         assert (await cursor.fetchone())[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_seedance_trend_assets_are_persisted_typed_and_ordered(monkeypatch):
+    from bot.handlers import trend_success_compat
+
+    monkeypatch.setattr(trend_success_compat, "DATABASE_PATH", database.DATABASE_PATH)
+    monkeypatch.setattr(trend_success_compat, "_SCHEMA_READY", False)
+    await trend_success_compat.ensure_trend_generation_run_schema()
+    user = await database.get_or_create_user(1000991)
+    prompt = await database.create_prompt(
+        author_id=user.id,
+        prompt_text="Use @Image1 with @Image2 and @Video1",
+        title="Private Seedance refs",
+        category="video",
+        model="seedance_2_5",
+        tags=["trend", "trend-video", "seedance-private-references"],
+        generation_settings={
+            "kind": "video",
+            "user_input": "photo",
+            "model": "seedance_2_5",
+            "ratio": "adaptive",
+            "duration": 12,
+            "reference_contract": "seedance_identity_first",
+        },
+        source_generation_id=991001,
+        trend_reference_assets=[
+            {
+                "media_type": "video",
+                "position": 1,
+                "source_position": 1,
+                "file_url": "https://example.test/trend-assets/motion.mp4",
+                "file_hash": "b" * 64,
+                "mime_type": "video/mp4",
+                "size_bytes": 1234,
+                "label": "@Video1",
+            },
+            {
+                "media_type": "image",
+                "position": 2,
+                "source_position": 3,
+                "file_url": "https://example.test/trend-assets/dress.png",
+                "file_hash": "a" * 64,
+                "mime_type": "image/png",
+                "size_bytes": 321,
+                "label": "@Image2",
+            },
+        ],
+    )
+
+    assert prompt is not None
+    assets = await database.list_trend_reference_assets(prompt["id"])
+    assert [(item["media_type"], item["position"]) for item in assets] == [
+        ("image", 2),
+        ("video", 1),
+    ]
+    assert assets[0]["source_position"] == 3
+    assert assets[0]["role"] == "fixed_hidden"
+    assert assets[1]["file_hash"] == "b" * 64
+
+
+@pytest.mark.asyncio
+async def test_seedance_trend_assets_reject_duplicate_typed_positions():
+    user = await database.get_or_create_user(1000992)
+    with pytest.raises(ValueError, match="Duplicate trend reference position"):
+        await database.create_prompt(
+            author_id=user.id,
+            prompt_text="Use @Image1 and @Image2",
+            title="Invalid assets",
+            trend_reference_assets=[
+                {
+                    "media_type": "image",
+                    "position": 2,
+                    "source_position": 2,
+                    "file_url": "https://example.test/a.png",
+                    "file_hash": "c" * 64,
+                    "mime_type": "image/png",
+                    "size_bytes": 100,
+                },
+                {
+                    "media_type": "image",
+                    "position": 2,
+                    "source_position": 3,
+                    "file_url": "https://example.test/b.png",
+                    "file_hash": "d" * 64,
+                    "mime_type": "image/png",
+                    "size_bytes": 100,
+                },
+            ],
+        )
+
+
+@pytest.mark.asyncio
+async def test_trend_run_claim_is_atomic_replayable_and_payload_bound(monkeypatch):
+    from bot.handlers import trend_success_compat
+
+    monkeypatch.setattr(trend_success_compat, "DATABASE_PATH", database.DATABASE_PATH)
+    monkeypatch.setattr(trend_success_compat, "_SCHEMA_READY", False)
+    await trend_success_compat.ensure_trend_generation_run_schema()
+    user = await database.get_or_create_user(1000993)
+    prompt = await database.create_prompt(
+        author_id=user.id,
+        prompt_text="@Image1 wears @Image2",
+        title="Idempotent trend",
+        category="video",
+        model="seedance_2",
+        tags=["trend", "trend-video"],
+        generation_settings={
+            "kind": "video",
+            "user_input": "photo",
+            "model": "seedance_2",
+            "ratio": "9:16",
+            "duration": 10,
+        },
+    )
+    assert prompt is not None
+
+    first = await database.reserve_trend_run_claim(
+        user_id=user.id,
+        trend_id=prompt["id"],
+        client_request_id="trend_claim_123456",
+        request_hash="a" * 64,
+    )
+    processing = await database.reserve_trend_run_claim(
+        user_id=user.id,
+        trend_id=prompt["id"],
+        client_request_id="trend_claim_123456",
+        request_hash="a" * 64,
+    )
+    conflict = await database.reserve_trend_run_claim(
+        user_id=user.id,
+        trend_id=prompt["id"],
+        client_request_id="trend_claim_123456",
+        request_hash="b" * 64,
+    )
+
+    assert first["claimed"] is True
+    assert processing == {"claimed": False, "status": "processing"}
+    assert conflict["claimed"] is False
+    assert conflict["conflict"] is True
+
+    completed = await database.complete_trend_run_claim(
+        user_id=user.id,
+        trend_id=prompt["id"],
+        client_request_id="trend_claim_123456",
+        status="completed",
+        http_status=200,
+        response_payload={"ok": True, "task_id": "provider-task-1"},
+        task_id="provider-task-1",
+    )
+    duplicate_completion = await database.complete_trend_run_claim(
+        user_id=user.id,
+        trend_id=prompt["id"],
+        client_request_id="trend_claim_123456",
+        status="completed",
+        http_status=200,
+        response_payload={"ok": True, "task_id": "provider-task-2"},
+        task_id="provider-task-2",
+    )
+    replay = await database.reserve_trend_run_claim(
+        user_id=user.id,
+        trend_id=prompt["id"],
+        client_request_id="trend_claim_123456",
+        request_hash="a" * 64,
+    )
+
+    assert completed is True
+    assert duplicate_completion is False
+    assert replay["claimed"] is False
+    assert replay["status"] == "completed"
+    assert replay["task_id"] == "provider-task-1"
+    assert replay["response"] == {"ok": True, "task_id": "provider-task-1"}
+
+
+@pytest.mark.asyncio
+async def test_only_one_active_private_seedance_trend_can_use_a_source_generation(monkeypatch):
+    from bot import db as db_backend
+    from bot.handlers import trend_success_compat
+
+    monkeypatch.setattr(trend_success_compat, "DATABASE_PATH", database.DATABASE_PATH)
+    monkeypatch.setattr(trend_success_compat, "_SCHEMA_READY", False)
+    await trend_success_compat.ensure_trend_generation_run_schema()
+    user = await database.get_or_create_user(1000994)
+    first = await database.create_prompt(
+        author_id=user.id,
+        prompt_text="@Image1 wears @Image2",
+        title="First private trend",
+        category="video",
+        model="seedance_2",
+        tags=["trend", "trend-video", "seedance-private-references"],
+        generation_settings={"kind": "video", "ratio": "9:16"},
+        source_generation_id=123450,
+    )
+    assert first is not None
+
+    with pytest.raises(db_backend.IntegrityError):
+        await database.create_prompt(
+            author_id=user.id,
+            prompt_text="@Image1 wears @Image2",
+            title="Duplicate private trend",
+            category="video",
+            model="seedance_2",
+            tags=["trend", "trend-video", "seedance-private-references"],
+            generation_settings={"kind": "video", "ratio": "9:16"},
+            source_generation_id=123450,
+        )
+
+    await database.deactivate_prompt(first["id"])
+    replacement = await database.create_prompt(
+        author_id=user.id,
+        prompt_text="@Image1 wears @Image2",
+        title="Replacement private trend",
+        category="video",
+        model="seedance_2",
+        tags=["trend", "trend-video", "seedance-private-references"],
+        generation_settings={"kind": "video", "ratio": "9:16"},
+        source_generation_id=123450,
+    )
+    assert replacement is not None

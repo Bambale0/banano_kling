@@ -510,6 +510,52 @@ async def _ensure_prompt_feed_schema(db: db_backend.Connection) -> None:
     except db_backend.OperationalError:
         pass
     await db.execute("""
+        CREATE TABLE IF NOT EXISTS trend_reference_assets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            prompt_id INTEGER NOT NULL,
+            media_type TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            source_position INTEGER NOT NULL,
+            role TEXT NOT NULL DEFAULT 'fixed_hidden',
+            file_url TEXT NOT NULL,
+            file_hash TEXT NOT NULL,
+            mime_type TEXT,
+            size_bytes INTEGER NOT NULL DEFAULT 0,
+            label TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP,
+            FOREIGN KEY (prompt_id) REFERENCES user_prompts (id) ON DELETE CASCADE,
+            UNIQUE(prompt_id, media_type, position),
+            UNIQUE(prompt_id, media_type, file_hash)
+        )
+    """)
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_trend_reference_assets_prompt_type_position "
+        "ON trend_reference_assets(prompt_id, media_type, position)"
+    )
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS trend_run_claims (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            trend_id INTEGER NOT NULL,
+            client_request_id TEXT NOT NULL,
+            request_hash TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'processing',
+            task_id TEXT,
+            http_status INTEGER,
+            response_json TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+            FOREIGN KEY (trend_id) REFERENCES user_prompts (id) ON DELETE CASCADE,
+            UNIQUE(user_id, trend_id, client_request_id)
+        )
+    """)
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_trend_run_claims_status_updated "
+        "ON trend_run_claims(status, updated_at)"
+    )
+    await db.execute("""
         CREATE TABLE IF NOT EXISTS prompt_likes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
@@ -613,6 +659,15 @@ async def _ensure_prompt_feed_schema(db: db_backend.Connection) -> None:
     )
     await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_user_prompts_source_generation ON user_prompts(source_generation_id)"
+    )
+    await db.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_user_prompts_seedance_trend_source_unique
+        ON user_prompts(source_generation_id)
+        WHERE source_generation_id IS NOT NULL
+          AND status != 'deactivated'
+          AND tags LIKE '%"seedance-private-references"%'
+        """
     )
     await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_prompt_repeat_events_author ON prompt_repeat_events(author_id, created_at DESC)"
@@ -5449,6 +5504,178 @@ async def complete_video_task(task_id: str, result_url: str) -> bool:
         return True
 
 
+def _normalize_trend_reference_assets(
+    assets: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    seen_positions: set[tuple[str, int]] = set()
+    seen_hashes: set[tuple[str, str]] = set()
+    for raw_asset in list(assets or []):
+        if not isinstance(raw_asset, dict):
+            raise TypeError("Trend reference asset must be an object")
+        media_type = str(raw_asset.get("media_type") or "").strip().lower()
+        if media_type not in {"image", "video", "audio"}:
+            raise ValueError(f"Unsupported trend reference media type: {media_type}")
+        try:
+            position = int(raw_asset.get("position"))
+            source_position = int(raw_asset.get("source_position") or position)
+            size_bytes = int(raw_asset.get("size_bytes") or 0)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Trend reference asset has invalid numeric metadata") from exc
+        if position < 1 or source_position < 1 or size_bytes < 1:
+            raise ValueError("Trend reference asset metadata is incomplete")
+        file_url = str(raw_asset.get("file_url") or "").strip()
+        file_hash = str(raw_asset.get("file_hash") or "").strip().lower()
+        if not file_url or len(file_hash) != 64:
+            raise ValueError("Trend reference asset file metadata is incomplete")
+        position_key = (media_type, position)
+        hash_key = (media_type, file_hash)
+        if position_key in seen_positions:
+            raise ValueError(f"Duplicate trend reference position: {media_type} {position}")
+        if hash_key in seen_hashes:
+            raise ValueError(f"Duplicate trend reference file: {media_type}")
+        seen_positions.add(position_key)
+        seen_hashes.add(hash_key)
+        normalized.append(
+            {
+                "media_type": media_type,
+                "position": position,
+                "source_position": source_position,
+                "role": "fixed_hidden",
+                "file_url": file_url,
+                "file_hash": file_hash,
+                "mime_type": str(raw_asset.get("mime_type") or "").strip()[:120] or None,
+                "size_bytes": size_bytes,
+                "label": str(raw_asset.get("label") or "").strip()[:80],
+            }
+        )
+    normalized.sort(key=lambda item: ({"image": 0, "video": 1, "audio": 2}[item["media_type"]], item["position"]))
+    return normalized
+
+
+async def list_trend_reference_assets(prompt_id: int) -> list[dict[str, Any]]:
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
+        cursor = await db.execute(
+            """
+            SELECT id, prompt_id, media_type, position, source_position, role,
+                   file_url, file_hash, mime_type, size_bytes, label, created_at, updated_at
+            FROM trend_reference_assets
+            WHERE prompt_id = ?
+            ORDER BY CASE media_type
+                         WHEN 'image' THEN 0
+                         WHEN 'video' THEN 1
+                         ELSE 2
+                     END, position ASC, id ASC
+            """,
+            (int(prompt_id),),
+        )
+        rows = await cursor.fetchall()
+    return [dict(row) for row in rows]
+
+
+async def reserve_trend_run_claim(
+    *,
+    user_id: int,
+    trend_id: int,
+    client_request_id: str,
+    request_hash: str,
+) -> dict[str, Any]:
+    """Atomically reserve one trend launch or return its previous response."""
+
+    normalized_key = str(client_request_id or "").strip()
+    normalized_hash = str(request_hash or "").strip().lower()
+    if not normalized_key or not normalized_hash:
+        raise ValueError("Trend run claim requires request id and hash")
+
+    async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
+        db.row_factory = db_backend.Row
+        cursor = await db.execute(
+            """
+            INSERT OR IGNORE INTO trend_run_claims (
+                user_id, trend_id, client_request_id, request_hash, status, updated_at
+            )
+            VALUES (?, ?, ?, ?, 'processing', CURRENT_TIMESTAMP)
+            """,
+            (int(user_id), int(trend_id), normalized_key, normalized_hash),
+        )
+        inserted = int(getattr(cursor, "rowcount", 0) or 0) == 1
+        if inserted:
+            await db.commit()
+            return {"claimed": True, "status": "processing"}
+
+        cursor = await db.execute(
+            """
+            SELECT id, request_hash, status, task_id, http_status, response_json,
+                   created_at, updated_at
+            FROM trend_run_claims
+            WHERE user_id = ? AND trend_id = ? AND client_request_id = ?
+            LIMIT 1
+            """,
+            (int(user_id), int(trend_id), normalized_key),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            raise RuntimeError("Trend idempotency claim disappeared")
+        if str(row["request_hash"] or "").strip().lower() != normalized_hash:
+            return {"claimed": False, "conflict": True, "status": str(row["status"] or "")}
+
+        status = str(row["status"] or "processing").strip().lower()
+        response_payload = _parse_json_dict(row["response_json"])
+        if status in {"completed", "failed"} and response_payload:
+            return {
+                "claimed": False,
+                "status": status,
+                "task_id": row["task_id"],
+                "http_status": int(row["http_status"] or (200 if status == "completed" else 500)),
+                "response": response_payload,
+            }
+
+        # Unknown in-flight state is never reclaimed automatically. A process may
+        # have reached the provider before losing its response, so retrying the
+        # same claim could create a second paid task. Reconciliation must resolve
+        # the original claim explicitly.
+        return {"claimed": False, "status": status or "processing"}
+
+
+async def complete_trend_run_claim(
+    *,
+    user_id: int,
+    trend_id: int,
+    client_request_id: str,
+    status: str,
+    http_status: int,
+    response_payload: dict[str, Any],
+    task_id: str | None = None,
+) -> bool:
+    normalized_status = str(status or "").strip().lower()
+    if normalized_status not in {"completed", "failed"}:
+        raise ValueError("Trend run claim status must be completed or failed")
+    async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
+        cursor = await db.execute(
+            """
+            UPDATE trend_run_claims
+            SET status = ?, task_id = ?, http_status = ?, response_json = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ? AND trend_id = ? AND client_request_id = ?
+              AND status = 'processing'
+            """,
+            (
+                normalized_status,
+                str(task_id or "").strip() or None,
+                int(http_status),
+                json.dumps(response_payload, ensure_ascii=False),
+                int(user_id),
+                int(trend_id),
+                str(client_request_id or "").strip(),
+            ),
+        )
+        updated = int(getattr(cursor, "rowcount", 0) or 0) == 1
+        if updated:
+            await db.commit()
+        return updated
+
+
 async def create_prompt(
     *,
     author_id: int,
@@ -5461,6 +5688,8 @@ async def create_prompt(
     tags: Optional[list[str]] = None,
     generation_settings: dict[str, Any] | None = None,
     is_public: bool = True,
+    source_generation_id: int | None = None,
+    trend_reference_assets: list[dict[str, Any]] | None = None,
 ) -> Optional[dict[str, Any]]:
     prompt_text = str(prompt_text or "").strip()
     if not prompt_text:
@@ -5471,15 +5700,16 @@ async def create_prompt(
     if final_category not in PROMPT_CATEGORIES:
         final_category = "other"
 
+    normalized_assets = _normalize_trend_reference_assets(trend_reference_assets)
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
         cursor = await db.execute(
             """
             INSERT INTO user_prompts (
                 author_id, title, description, category, prompt_text, preview_url,
-                model, tags, generation_settings, is_public, status
+                model, tags, generation_settings, is_public, status, source_generation_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
             """,
             (
                 author_id,
@@ -5492,10 +5722,37 @@ async def create_prompt(
                 json.dumps(inferred_tags, ensure_ascii=False),
                 json.dumps(generation_settings or {}, ensure_ascii=False),
                 1 if is_public else 0,
+                int(source_generation_id) if source_generation_id else None,
             ),
         )
+        prompt_id = int(cursor.lastrowid)
+        if normalized_assets:
+            await db.executemany(
+                """
+                INSERT INTO trend_reference_assets (
+                    prompt_id, media_type, position, source_position, role, file_url,
+                    file_hash, mime_type, size_bytes, label
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        prompt_id,
+                        asset["media_type"],
+                        asset["position"],
+                        asset["source_position"],
+                        asset["role"],
+                        asset["file_url"],
+                        asset["file_hash"],
+                        asset["mime_type"],
+                        asset["size_bytes"],
+                        asset["label"],
+                    )
+                    for asset in normalized_assets
+                ],
+            )
         await db.commit()
-        return await get_prompt_by_id(cursor.lastrowid)
+        return await get_prompt_by_id(prompt_id)
 
 
 async def get_prompt_by_id(prompt_id: int, *, approved_public_only: bool = False) -> Optional[dict[str, Any]]:
@@ -5506,6 +5763,30 @@ async def get_prompt_by_id(prompt_id: int, *, approved_public_only: bool = False
         if approved_public_only:
             sql += " AND status = 'approved' AND is_public = 1"
         cursor = await db.execute(sql, params)
+        row = await cursor.fetchone()
+    return _prompt_to_dict(_row_to_user_prompt(row))
+
+
+async def get_active_seedance_trend_by_source_generation(
+    source_generation_id: int,
+    *,
+    author_id: int,
+) -> dict[str, Any] | None:
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
+        cursor = await db.execute(
+            """
+            SELECT *
+            FROM user_prompts
+            WHERE source_generation_id = ?
+              AND author_id = ?
+              AND status != 'deactivated'
+              AND tags LIKE '%"seedance-private-references"%'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (int(source_generation_id), int(author_id)),
+        )
         row = await cursor.fetchone()
     return _prompt_to_dict(_row_to_user_prompt(row))
 
