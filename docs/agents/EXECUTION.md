@@ -1,5 +1,17 @@
 # Execution ledger
 
+## 2026-10-02 — Telegram backup part retention leak
+
+- Baseline after rebase: `origin/tanyapi` `cb76a3b2656bb4444f29ec4f74208b29cbca12e8`; branch `fix/backup-telegram-parts-retention`.
+- Production evidence: root filesystem is 81% used with 167 GiB free; project backups occupy ~58 GiB and `backups/telegram-parts` alone occupies ~53 GiB. `static/uploads` is a separate 293 GiB lifecycle concern and is not touched by this fix.
+- Root cause: every backup uses a timestamped `archive_name`, but `backup_db.sh` deletes only `${archive_name}.part-*` before splitting. A new timestamp can never match chunks from earlier backups, so every Telegram transport chunk is retained permanently.
+- Intended result: the dedicated part directory contains no stale/current `*.part-*` after a completed send; unrelated files are preserved. The backup archive/dumps and Telegram delivery behavior remain unchanged.
+- TDD: an integration test copies the real script into a temporary project, stubs SQLite and Telegram transport, creates a stale chunk, forces archive splitting, and asserts the directory is clean. RED retained six part files. A second RED pass showed stale chunks also survived a later direct/small-archive send. GREEN removes stale chunks before either send path and current split chunks after all admins are processed, while preserving unrelated files.
+- Scope: `scripts/backup_db.sh`, one integration regression and this ledger. No DB schema, generation, payment, provider, Mini App, pricing or user-data mutation.
+- Safety: cleanup is limited to direct files matching `*.part-*` inside the dedicated `telegram-parts` directory while the existing backup flock serializes invocations. Non-part files are retained.
+- Verification: shell syntax, Ruff format/check, diff whitespace and focused integration test passed; full safe suite after rebase `1256 passed, 13 skipped`. Five-axis review found no scope, symlink, concurrency or unrelated-file deletion blocker.
+- Rollout: changed-line Ruff, rebase onto current `tanyapi`, separate PR, exact-SHA CI/deploy verification. Existing production chunks will be cleaned only after the code is deployed and no backup invocation is active.
+
 ## 2026-10-02 — Seedance private-trend implicit reference bindings
 
 - Baseline: `origin/tanyapi` / production merge `82ccc5651e092a152e2e042b4b8e6d789896aa2e`; branch `fix/seedance-trend-implicit-bindings`.
