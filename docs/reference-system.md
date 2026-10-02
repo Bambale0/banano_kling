@@ -250,13 +250,174 @@ Repeat для trend/Pinterest:
 - share hides prompt;
 - repeat cannot recover hidden prompt.
 
-## 12. Source of truth
+## 12. Seedance 2.0/2.5: приватные референсы тренда
 
-При конфликте документа и реализации приоритет:
+Этот pipeline относится только к каталогу curated trends (`user_prompts`,
+`/mini-app/api/trends/run`, `action_type=trend`). Он не является Pinterest-flow,
+публикацией в feed или обычным repeat готовой генерации.
+
+### 12.1. Контракт
+
+Администратор может создать тренд из собственной завершённой генерации
+`seedance_2` или `seedance_2_5`:
+
+```text
+исходная @Image1  = лицо автора, заменить при повторе
+исходная @Image2+ = одежда, украшения, предметы, сцена и другие fixed assets
+исходные @VideoN  = fixed video references
+исходные @AudioN  = fixed audio references
+```
+
+При повторе:
+
+```text
+@Image1 = одно новое фото текущего пользователя
+@Image2..N = скрытые fixed image assets тренда
+@Video1..N = скрытые fixed video assets тренда
+@Audio1..N = скрытые fixed audio assets тренда
+```
+
+Нумерация image, video и audio независима. Backend никогда не сортирует refs по
+URL, имени или времени. Порядок задаётся `media_type + position`.
+
+### 12.2. Публикация из generation task
+
+Admin-only endpoints:
+
+```text
+POST /mini-app/api/admin/trends/seedance/source
+POST /mini-app/api/admin/trends/seedance/publish
+```
+
+Источник обязан быть:
+
+- собственной завершённой video task;
+- моделью `seedance_2` или `seedance_2_5`;
+- не повтором из feed и не уже запущенным trend;
+- содержать лицо автора и минимум один retained asset.
+
+Администратор явно выбирает один identity image и retained image/video/audio
+indices. Автоматическое распознавание лица не используется. Compiler сначала
+проверяет исходные bindings, затем перенумеровывает retained refs и блокирует
+публикацию, если prompt ссылается на исключённое или отсутствующее media.
+
+Для одной исходной generation одновременно допускается только один активный
+private-reference trend. После деактивации можно создать replacement.
+
+### 12.3. Durable storage
+
+Retained refs копируются до публикации в content-addressed storage:
+
+```text
+static/uploads/trend-assets/<image|video|audio>/<sha-prefix>/<sha>.<ext>
+```
+
+Источник должен быть существующим локальным NEUROMIX upload. Произвольные
+внешние URL не скачиваются. Перед записью проверяются размер и фактическая
+media-signature; MIME/extension сами по себе не считаются доказательством типа.
+
+Metadata хранится в `trend_reference_assets`:
+
+```text
+prompt_id, media_type, position, source_position, role,
+file_url, file_hash, mime_type, size_bytes, label
+```
+
+Лицо автора в эту таблицу не копируется.
+
+### 12.4. Public privacy boundary
+
+Public trend payload может раскрывать только форму запуска:
+
+```json
+{
+  "reference_count": 1,
+  "reference_labels": ["ВАШЕ ЛИЦО"],
+  "automatic_hidden_references": true
+}
+```
+
+Public APIs, task detail, history и browser state не получают fixed asset URLs,
+storage keys, role map или private prompt. `trend_task_privacy.py` удаляет все
+Seedance image/video/audio reference fields из protected trend tasks.
+
+Frontend отправляет только:
+
+```text
+trend_id
+одно user identity upload
+user_values
+client_request_id
+```
+
+Hidden refs загружает из БД и добавляет только backend.
+
+### 12.5. Runtime
+
+Seedance 2.0 private-reference trend всегда запускается через multimodal
+reference arrays, без `first_frame_url`:
+
+```text
+reference_image_urls = [user_identity, fixed_images...]
+reference_video_urls = fixed_videos
+reference_audio_urls = fixed_audio
+```
+
+Seedance 2.5 private-reference trend всегда использует `scenario=multimodal` и
+`first_frame=null`. Эвристика `одно фото -> first_frame` к этому контракту не
+применяется.
+
+Для явного Seedance 2.5 video editing recipe:
+
+```text
+ровно один fixed @Video1
+duration = -1
+ratio = adaptive
+source video duration = 4..30 секунд
+```
+
+Стоимость editing запуска рассчитывается по измеренной длительности исходного
+видео, а не по `-1`. Наличие fixed video reference учитывается существующим
+Seedance video-reference multiplier.
+
+### 12.6. Idempotency
+
+Mini App создаёт стабильный `client_request_id` на один набор:
+
+```text
+trend + user refs + user fields
+```
+
+Повтор после сетевой ошибки использует тот же ID. Backend резервирует
+`(user_id, trend_id, client_request_id)` в `trend_run_claims`, связывает ID с
+request hash и возвращает сохранённый ответ при повторном запросе.
+
+In-flight claim не reclaim-ится автоматически: неизвестный процесс мог уже
+дойти до provider. Это сознательный fail-closed выбор против двойной платной
+задачи. Такой claim должен разрешаться reconciliation/admin-диагностикой.
+
+Все validation, asset availability, ownership, binding и capability checks
+выполняются до debit. Identity upload для private-reference trend должен
+принадлежать текущему Telegram user.
+
+## 13. Source of truth
+
+При конфликте документа и реализации приоритет зависит от flow.
+
+Seedance private-reference trends:
+
+1. `bot/seedance_trend_recipe.py`;
+2. `bot/seedance_trend_admin_api.py` and `bot/trend_api.py`;
+3. `bot/handlers/trend_seedance_25_compat.py` and Seedance provider adapters;
+4. `bot/trend_task_privacy.py`;
+5. Seedance trend/compiler/privacy/database tests;
+6. this document.
+
+Pinterest identity transfer:
 
 1. `bot/pinterest_trend_flow_contract.py`;
 2. `bot/pinterest_trend_api.py`;
 3. `bot/trend_task_privacy.py`;
 4. provider adapter code in `bot/services/*`;
-5. `tests/test_pinterest_manual_flow_contract.py` and trend privacy tests;
+5. Pinterest contract and privacy tests;
 6. this document.

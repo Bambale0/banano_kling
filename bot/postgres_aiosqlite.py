@@ -11,7 +11,6 @@ from typing import Any
 import aiosqlite
 import psycopg
 
-
 _HELPERS_READY = False
 _HELPERS_LOCK: asyncio.Lock | None = None
 _LASTROWID_TABLES = {
@@ -32,6 +31,8 @@ _LASTROWID_TABLES = {
     "referrals",
     "saved_references",
     "transactions",
+    "trend_reference_assets",
+    "trend_run_claims",
     "user_prompts",
     "user_settings",
     "users",
@@ -512,6 +513,72 @@ async def _ensure_postgres_helpers(conn: psycopg.AsyncConnection) -> None:
             )
             await cur.execute(
                 'ALTER TABLE "generation_tasks" ADD COLUMN IF NOT EXISTS "is_adult_content" BOOLEAN DEFAULT FALSE'
+            )
+            await cur.execute(
+                'ALTER TABLE "user_prompts" ADD COLUMN IF NOT EXISTS "source_generation_id" BIGINT'
+            )
+            await cur.execute(
+                "ALTER TABLE \"user_prompts\" ADD COLUMN IF NOT EXISTS \"generation_settings\" TEXT DEFAULT '{}'"
+            )
+            await cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS trend_reference_assets (
+                    id BIGSERIAL PRIMARY KEY,
+                    prompt_id BIGINT NOT NULL REFERENCES user_prompts(id) ON DELETE CASCADE,
+                    media_type TEXT NOT NULL,
+                    position INTEGER NOT NULL,
+                    source_position INTEGER NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'fixed_hidden',
+                    file_url TEXT NOT NULL,
+                    file_hash TEXT NOT NULL,
+                    mime_type TEXT,
+                    size_bytes BIGINT NOT NULL DEFAULT 0,
+                    label TEXT DEFAULT '',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP,
+                    UNIQUE(prompt_id, media_type, position),
+                    UNIQUE(prompt_id, media_type, file_hash)
+                )
+                """
+            )
+            await cur.execute(
+                'CREATE INDEX IF NOT EXISTS "idx_trend_reference_assets_prompt_type_position" '
+                'ON "trend_reference_assets"("prompt_id", "media_type", "position")'
+            )
+            await cur.execute(
+                'CREATE INDEX IF NOT EXISTS "idx_user_prompts_source_generation" '
+                'ON "user_prompts"("source_generation_id")'
+            )
+            await cur.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_user_prompts_seedance_trend_source_unique
+                ON user_prompts(source_generation_id)
+                WHERE source_generation_id IS NOT NULL
+                  AND status != 'deactivated'
+                  AND tags LIKE '%"seedance-private-references"%'
+                """
+            )
+            await cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS trend_run_claims (
+                    id BIGSERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    trend_id BIGINT NOT NULL REFERENCES user_prompts(id) ON DELETE CASCADE,
+                    client_request_id TEXT NOT NULL,
+                    request_hash TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'processing',
+                    task_id TEXT,
+                    http_status INTEGER,
+                    response_json TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, trend_id, client_request_id)
+                )
+                """
+            )
+            await cur.execute(
+                'CREATE INDEX IF NOT EXISTS "idx_trend_run_claims_status_updated" '
+                'ON "trend_run_claims"("status", "updated_at")'
             )
             await cur.execute(
                 'CREATE INDEX IF NOT EXISTS "idx_generation_tasks_feed_safe" '

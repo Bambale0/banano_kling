@@ -8,8 +8,9 @@ single uploaded identity becomes ``@Image1`` and durable template assets fill
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any
 
 from bot.services.seedance_reference_binding import (
     canonicalize_seedance_reference_tags,
@@ -20,6 +21,7 @@ SUPPORTED_MODELS = frozenset({"seedance_2", "seedance_2_5"})
 REFERENCE_CONTRACT = "seedance_identity_first"
 REFERENCE_PLAN_VERSION = 1
 PROMPT_MARKER = "SEEDANCE_TREND_IDENTITY_CONTRACT_V1"
+_PROMPT_LIMITS = {"seedance_2": 20_000, "seedance_2_5": 30_000}
 
 _TAG_RE = re.compile(
     r"@\s*(?P<kind>image|img|video|audio)\s*[_-]?\s*(?P<index>\d+)(?!\w)",
@@ -98,7 +100,9 @@ def extract_seedance_reference_snapshot(
 
     normalized_model = str(model or "").strip()
     if normalized_model not in SUPPORTED_MODELS:
-        raise SeedanceTrendRecipeError("Only Seedance 2.0/2.5 tasks can become this trend type")
+        raise SeedanceTrendRecipeError(
+            "Only Seedance 2.0/2.5 tasks can become this trend type"
+        )
 
     data = request_data if isinstance(request_data, Mapping) else {}
     images: list[str] = []
@@ -160,7 +164,7 @@ def _normalize_indices(
         if value in normalized:
             raise SeedanceTrendRecipeError(f"Duplicate {label} reference index {value}")
         normalized.append(value)
-    return tuple(normalized)
+    return tuple(sorted(normalized))
 
 
 def _canonical_tag(kind: str, index: int) -> str:
@@ -186,7 +190,11 @@ def _remap_prompt(
         kind = "image" if kind == "img" else kind
         old_index = int(match.group("index"))
         new_index = mappings.get(kind, {}).get(old_index)
-        return _canonical_tag(kind, new_index) if new_index is not None else _canonical_tag(kind, old_index)
+        return (
+            _canonical_tag(kind, new_index)
+            if new_index is not None
+            else _canonical_tag(kind, old_index)
+        )
 
     return _TAG_RE.sub(replace, canonical)
 
@@ -229,7 +237,9 @@ def compile_seedance_trend_recipe(
     except (TypeError, ValueError) as exc:
         raise SeedanceTrendRecipeError("Invalid identity image index") from exc
     if identity_position < 1 or identity_position > len(images):
-        raise SeedanceTrendRecipeError("Identity image index is outside the source images")
+        raise SeedanceTrendRecipeError(
+            "Identity image index is outside the source images"
+        )
 
     fixed_images = _normalize_indices(
         fixed_image_indices,
@@ -247,7 +257,9 @@ def compile_seedance_trend_recipe(
         label="audio",
     )
     if identity_position in fixed_images:
-        raise SeedanceTrendRecipeError("The creator identity cannot also be a fixed asset")
+        raise SeedanceTrendRecipeError(
+            "The creator identity cannot also be a fixed asset"
+        )
     if not fixed_images and not fixed_videos and not fixed_audios:
         raise SeedanceTrendRecipeError("Keep at least one hidden template reference")
 
@@ -291,14 +303,40 @@ def compile_seedance_trend_recipe(
             )
         )
 
+    source_counts = {"image": len(images), "video": len(videos), "audio": len(audios)}
+    mappings = {
+        "image": image_mapping,
+        "video": video_mapping,
+        "audio": audio_mapping,
+    }
+    canonical_source_prompt = canonicalize_seedance_reference_tags(
+        str(prompt or "").strip(),
+        image_count=source_counts["image"],
+        video_count=source_counts["video"],
+        audio_count=source_counts["audio"],
+    )
+    excluded_mentions: list[str] = []
+    for match in _TAG_RE.finditer(canonical_source_prompt):
+        kind = match.group("kind").lower()
+        kind = "image" if kind == "img" else kind
+        source_index = int(match.group("index"))
+        if (
+            1 <= source_index <= source_counts[kind]
+            and source_index not in mappings[kind]
+        ):
+            tag = _canonical_tag(kind, source_index)
+            if tag not in excluded_mentions:
+                excluded_mentions.append(tag)
+    if excluded_mentions:
+        raise SeedanceTrendRecipeError(
+            "Prompt references media excluded from the trend: "
+            + ", ".join(excluded_mentions)
+        )
+
     remapped_prompt = _remap_prompt(
-        prompt,
-        source_counts={"image": len(images), "video": len(videos), "audio": len(audios)},
-        mappings={
-            "image": image_mapping,
-            "video": video_mapping,
-            "audio": audio_mapping,
-        },
+        canonical_source_prompt,
+        source_counts=source_counts,
+        mappings=mappings,
     )
     target_counts = {
         "image": 1 + len(fixed_images),
@@ -324,19 +362,55 @@ def compile_seedance_trend_recipe(
             "Prompt must reference every retained media slot: " + ", ".join(unmentioned)
         )
 
-    guard = (
-        f"\n\n{PROMPT_MARKER}\n"
-        "REFERENCE IDENTITY RULES:\n"
-        "- @Image1 is the only identity/person source and is uploaded by the current user.\n"
-        "- @Image2 and later image references are private fixed template assets. "
-        "Use only the clothing, accessories, objects, style, scene, or other non-identity "
-        "details explicitly requested from them.\n"
-        "- Never copy, preserve, blend, or infer a person's face or identity from fixed "
-        "template images, videos, or audio. The final person must remain recognizable "
-        "as @Image1.\n"
-        "- Keep every @Image, @Video, and @Audio binding exactly as numbered above."
+    guard_lines = [
+        f"{PROMPT_MARKER}",
+        "REFERENCE IDENTITY RULES:",
+        "- @Image1 is the only identity/person source and is uploaded by the current user.",
+    ]
+    if fixed_images:
+        image_slots = ", ".join(
+            f"@Image{index}" for index in range(2, 2 + len(fixed_images))
+        )
+        guard_lines.append(
+            f"- {image_slots} are private fixed template images. Use only the clothing, "
+            "accessories, objects, style, scene, or other non-identity details explicitly "
+            "requested from them."
+        )
+    if fixed_videos:
+        video_slots = ", ".join(
+            f"@Video{index}" for index in range(1, 1 + len(fixed_videos))
+        )
+        guard_lines.append(
+            f"- {video_slots} are private fixed template videos. Use only their requested "
+            "motion, timing, scene, or non-identity details."
+        )
+    if fixed_audios:
+        audio_slots = ", ".join(
+            f"@Audio{index}" for index in range(1, 1 + len(fixed_audios))
+        )
+        guard_lines.append(
+            f"- {audio_slots} are private fixed template audio references. Use only their "
+            "requested sound or timing details."
+        )
+    guard_lines.extend(
+        [
+            (
+                "- Never copy, preserve, blend, or infer a person's face or identity from fixed "
+                "template images, videos, or audio. The final person must remain recognizable "
+                "as @Image1."
+            ),
+            "- Keep every numbered media binding exactly as assigned above.",
+        ]
     )
-    compiled_prompt = remapped_prompt if PROMPT_MARKER in remapped_prompt else remapped_prompt + guard
+    guard = "\n\n" + "\n".join(guard_lines)
+    compiled_prompt = (
+        remapped_prompt if PROMPT_MARKER in remapped_prompt else remapped_prompt + guard
+    )
+    prompt_limit = _PROMPT_LIMITS[normalized_model]
+    if len(compiled_prompt) > prompt_limit:
+        raise SeedanceTrendRecipeError(
+            f"Compiled {normalized_model} trend prompt exceeds {prompt_limit} characters"
+        )
     return CompiledSeedanceTrendRecipe(
         model=normalized_model,
         prompt=compiled_prompt,
@@ -353,17 +427,23 @@ def assemble_seedance_trend_inputs(
 
     user_images = list(_clean_urls(user_reference_urls))
     if len(user_images) != 1:
-        raise SeedanceTrendRecipeError("This trend requires exactly one user identity image")
+        raise SeedanceTrendRecipeError(
+            "This trend requires exactly one user identity image"
+        )
 
     grouped: dict[str, list[tuple[int, str]]] = {"image": [], "video": [], "audio": []}
     for raw_asset in stored_assets:
         media_type = str(raw_asset.get("media_type") or "").strip().lower()
         if media_type not in grouped:
-            raise SeedanceTrendRecipeError(f"Unsupported trend asset type: {media_type}")
+            raise SeedanceTrendRecipeError(
+                f"Unsupported trend asset type: {media_type}"
+            )
         try:
             position = int(raw_asset.get("position"))
         except (TypeError, ValueError) as exc:
-            raise SeedanceTrendRecipeError("Trend asset has an invalid position") from exc
+            raise SeedanceTrendRecipeError(
+                "Trend asset has an invalid position"
+            ) from exc
         file_url = str(raw_asset.get("file_url") or "").strip()
         if position < 1 or not file_url:
             raise SeedanceTrendRecipeError("Trend asset is incomplete")

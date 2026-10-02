@@ -157,6 +157,7 @@ from bot.utils.user_facing_errors import make_user_friendly_generation_error
 from bot.utils.validators import detect_explicit_prompt_policy_violation
 from bot.video_reference_policy import (
     apply_video_reference_cost,
+    get_max_audio_references,
     get_max_video_image_references,
     get_max_video_references,
     normalize_reference_urls,
@@ -1696,6 +1697,7 @@ async def _launch_video_generation_task(
     image_references: list[str],
     video_references: list[str],
     audio_url: str | None = None,
+    audio_references: list[str] | None = None,
     grok_mode: str = "normal",
     grok_resolution: str = "480p",
     veo_generation_type: str = "TEXT_2_VIDEO",
@@ -1718,6 +1720,9 @@ async def _launch_video_generation_task(
     source_feed_gen_id: int | None = None,
     parent_generation_id: int | None = None,
     action_type: str | None = None,
+    prompt_source_id: int | None = None,
+    reference_contract: str | None = None,
+    fixed_asset_counts: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     from bot.services.gemini_omni_service import gemini_omni_service
     from bot.services.grok_service import grok_service
@@ -1739,6 +1744,15 @@ async def _launch_video_generation_task(
             video_references,
             max_count=get_max_video_references(model),
         )
+    audio_references = normalize_reference_urls(
+        audio_references or [],
+        max_count=get_max_audio_references(model),
+    )
+    normalized_reference_contract = str(reference_contract or "").strip() or None
+    normalized_fixed_asset_counts = {
+        kind: max(0, int((fixed_asset_counts or {}).get(kind, 0) or 0))
+        for kind in ("image", "video", "audio")
+    }
 
     if model == "gemini_omni_video":
         omni_images = _collect_gemini_omni_images(image_url, image_references)
@@ -1836,6 +1850,7 @@ async def _launch_video_generation_task(
                 if (image_references or seedance_reference_videos)
                 else None,
                 reference_video_urls=seedance_reference_videos or None,
+                reference_audio_urls=audio_references or None,
                 callBackUrl=(config.kie_notification_url if config.WEBHOOK_HOST else None),
             )
         else:
@@ -1852,6 +1867,7 @@ async def _launch_video_generation_task(
                 generate_audio=True,
                 reference_image_urls=seedance_reference_images or None,
                 reference_video_urls=seedance_reference_videos or None,
+                reference_audio_urls=audio_references or None,
                 callBackUrl=(config.kie_notification_url if config.WEBHOOK_HOST else None),
             )
     elif model.startswith("veo3"):
@@ -1936,7 +1952,14 @@ async def _launch_video_generation_task(
                 "v_image_url": image_url,
                 "reference_images": image_references,
                 "v_reference_videos": video_references,
+                "v_reference_audio": audio_references,
                 "audio_url": audio_url,
+                "prompt_source_id": prompt_source_id,
+                "trend_id": prompt_source_id if action_type == "trend" else None,
+
+                "reference_contract": normalized_reference_contract,
+
+                "fixed_asset_counts": normalized_fixed_asset_counts,
                 "grok_mode": grok_mode,
                 "grok_resolution": (
                     grok_resolution if model == "grok_imagine_v15" else ""
@@ -2003,7 +2026,15 @@ async def _launch_video_generation_task(
                 "asset_id": asset_id,
                 "v_image_url": image_url,
                 "reference_images": image_references,
+                "v_reference_videos": video_references,
+                "v_reference_audio": audio_references,
                 "audio_url": audio_url,
+                "prompt_source_id": prompt_source_id,
+                "trend_id": prompt_source_id if action_type == "trend" else None,
+
+                "reference_contract": normalized_reference_contract,
+
+                "fixed_asset_counts": normalized_fixed_asset_counts,
                 "omni_base_voice": omni_base_voice,
                 "omni_voice_name": omni_voice_name,
                 "omni_voice_description": omni_voice_description,
@@ -2046,7 +2077,14 @@ async def _launch_video_generation_task(
             "v_image_url": image_url,
             "reference_images": image_references,
             "v_reference_videos": video_references,
+            "v_reference_audio": audio_references,
             "audio_url": audio_url,
+            "prompt_source_id": prompt_source_id,
+            "trend_id": prompt_source_id if action_type == "trend" else None,
+
+            "reference_contract": normalized_reference_contract,
+
+            "fixed_asset_counts": normalized_fixed_asset_counts,
             "grok_mode": grok_mode,
             "grok_resolution": (
                 grok_resolution if model == "grok_imagine_v15" else ""

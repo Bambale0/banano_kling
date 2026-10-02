@@ -18,9 +18,27 @@ _PRIVATE_REQUEST_FIELDS = {
     "effective_prompt",
     "source_url",
     "pinterest_url",
+    "v_image_url",
+    "first_frame_url",
+    "last_frame_url",
     "reference_images",
     "source_reference_images",
+    "reference_image_urls",
+    "provider_reference_images",
+    "v_reference_videos",
+    "reference_video_urls",
+    "video_references",
+    "provider_reference_videos",
+    "v_reference_audio",
+    "reference_audios",
+    "reference_audio_urls",
+    "audio_references",
     "reference_roles",
+    "provider_reference_roles",
+    "fixed_asset_ids",
+    "reference_contract",
+    "prompt_source_id",
+    "seedance_reference_snapshot",
 }
 
 
@@ -117,7 +135,7 @@ async def sanitize_task_api_payload(payload: Any) -> Any:
     task_ids = [str(task.get("task_id") or "").strip() for task in tasks]
     try:
         protected = await _protected_task_ids(task_ids)
-    except Exception:  # noqa: BLE001 - privacy must fail closed without breaking Mini App
+    except Exception:
         logger.exception("Unable to resolve protected trend task prompts")
         protected = {task_id for task_id in task_ids if task_id}
 

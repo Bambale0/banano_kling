@@ -20,6 +20,7 @@ def _trend() -> dict:
         "category": "video",
         "tags": ["trend", "trend-video"],
         "preview_url": "/uploads/trend.mp4",
+        "source_generation_id": 991001,
         "prompt_text": "SECRET PROMPT",
         "model": "seedance_2",
         "generation_settings": {
@@ -76,6 +77,7 @@ def test_public_trend_keeps_only_runner_metadata() -> None:
     assert payload["title"] == "Закрытый тренд"
     assert payload["preview_url"] == "/uploads/trend.mp4"
     assert payload["tags"] == ["trend", "trend-video"]
+    assert "source_generation_id" not in payload
 
 
 def test_regular_prompt_stays_usable() -> None:
