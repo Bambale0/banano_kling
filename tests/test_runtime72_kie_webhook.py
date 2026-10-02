@@ -56,6 +56,16 @@ def setup_webhook(monkeypatch):
     monkeypatch.setattr(database, "get_task_by_id", lookup)
     monkeypatch.setattr(database, "add_credits", refund)
     monkeypatch.setattr(database, "complete_video_task", complete)
+    monkeypatch.setattr(
+        database,
+        "claim_task_delivery",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        database,
+        "store_task_result_ready",
+        AsyncMock(return_value=True),
+    )
     monkeypatch.setattr(seedance, "_process_seedance25_payload", process)
     monkeypatch.setattr(main, "_resolve_task_telegram_id", AsyncMock(return_value=101))
     monkeypatch.setattr(main.config, "KIE_AI_WEBHOOK_SECRET", "")

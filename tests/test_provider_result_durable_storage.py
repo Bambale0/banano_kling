@@ -195,3 +195,55 @@ def test_rendergrid_backfill_checkpoint_persists_cursor_and_resets_after_full_pa
     payload = checkpoint.read_text(encoding="utf-8")
     assert '"next_before_id": null' in payload
     assert '"last_pass_exhausted": true' in payload
+
+
+def test_kie_ephemeral_video_result_is_durable_even_when_global_persist_is_off(monkeypatch):
+    from bot import database
+
+    external_url = "https://tempfile.aiquickdraw.com/video/result.mp4"
+    durable_url = f"{config.static_base_url.rstrip('/')}/uploads/feed/result.mp4"
+    persist_mock = AsyncMock(return_value=[durable_url])
+
+    monkeypatch.setattr(main_module.config, "PERSIST_PROVIDER_RESULTS", False)
+    monkeypatch.setattr(
+        database,
+        "FEED_EPHEMERAL_RESULT_HOSTS",
+        {"tempfile.aiquickdraw.com"},
+    )
+    monkeypatch.setattr(feed_persist, "persist_feed_result_urls", persist_mock)
+
+    result = asyncio.run(
+        main_module._persist_result_url_if_needed(external_url, task_type="video")
+    )
+
+    assert result == durable_url
+    persist_mock.assert_awaited_once_with([external_url], require_local=True)
+
+
+def test_kie_ephemeral_result_retries_localization_before_using_provider_url(monkeypatch):
+    from bot import database
+
+    external_url = "https://tempfile.aiquickdraw.com/video/retry.mp4"
+    durable_url = f"{config.static_base_url.rstrip('/')}/uploads/feed/retry.mp4"
+    persist_mock = AsyncMock(side_effect=[[], [durable_url]])
+
+    monkeypatch.setattr(main_module.config, "PERSIST_PROVIDER_RESULTS", False)
+    monkeypatch.setattr(
+        database,
+        "FEED_EPHEMERAL_RESULT_HOSTS",
+        {"tempfile.aiquickdraw.com"},
+    )
+    monkeypatch.setattr(main_module, "EPHEMERAL_RESULT_PERSIST_ATTEMPTS", 2)
+    monkeypatch.setattr(
+        main_module,
+        "EPHEMERAL_RESULT_PERSIST_RETRY_DELAY_SECONDS",
+        0,
+    )
+    monkeypatch.setattr(feed_persist, "persist_feed_result_urls", persist_mock)
+
+    result = asyncio.run(
+        main_module._persist_result_url_if_needed(external_url, task_type="video")
+    )
+
+    assert result == durable_url
+    assert persist_mock.await_count == 2
