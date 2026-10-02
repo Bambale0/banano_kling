@@ -1,5 +1,19 @@
 # Execution ledger
 
+## 2026-10-02 — Seedance private-trend implicit reference bindings
+
+- Baseline: `origin/tanyapi` / production merge `82ccc5651e092a152e2e042b4b8e6d789896aa2e`; branch `fix/seedance-trend-implicit-bindings`.
+- Production audit: checkout, container and Mini App are on the exact merge SHA; CI/deploy statuses are green; schema/indexes are present; no private-reference trends have been published yet.
+- Real-data read-only compatibility check: among 250 recent completed Seedance tasks, 90 contained an identity image plus at least one additional image/video/audio reference. The compiler accepted 27 and blocked 63: 54 prompts had no explicit `@ImageN/@VideoN/@AudioN` bindings and 9 omitted the identity slot.
+- Exact user-visible failure: the admin selects the creator identity and hidden outfit/object/video refs, but publication returns `Prompt must reference every retained media slot` or cannot produce a usable recipe even though the compiler's own identity guard already defines those roles.
+- Root cause: `compile_seedance_trend_recipe()` validates that every retained slot is mentioned **before** appending `SEEDANCE_TREND_IDENTITY_CONTRACT_V1`, while that appended guard is the canonical source of automatically generated bindings for admin-selected assets.
+- Invariant: explicit prompt references to excluded/missing media must still fail closed. Selected retained assets may be absent from the original prompt; the compiler must add exact bindings in its guard, keep `@Image1` as the sole identity source, and preserve independent image/video/audio numbering.
+- Scope: compiler + focused tests + reference documentation only. No schema, prices, provider routing, billing, auth, UI controls or external API fields change.
+- TDD loop: implicit prompt regression failed with `Prompt must reference every retained media slot: @Image1, @Image2, @Video1`; after moving completeness validation to the final compiled prompt, it passes. A second regression covers an explicit fixed asset with an omitted identity binding. Review then found that a blank source prompt could become guard-only; a new regression failed because no exception was raised, then passed after adding an explicit non-empty source-prompt invariant. Existing excluded-media and over-limit cases remain fail-closed.
+- Verification: compiler/admin/runtime/privacy/storage matrix `105 passed`; final compiler suite `14 passed`; focused Mini App publisher/runner/idempotency `3 suites / 8 tests`; final full safe backend suite `1255 passed, 13 skipped`; Ruff format/check, compileall, changed-line gate and diff whitespace passed. Candidate compiler replay against the same production sample accepts `90/90` eligible tasks with the default first image as identity, never persists that identity, and includes every selected image/video/audio slot. All `10/10` eligible tasks from the latest 24 hours have locally available fixed assets for durable persistence. Five-axis review found no remaining correctness/security/architecture/performance blocker; empty prompts, excluded media and prompt limits remain fail-closed before provider launch.
+- Production health audit: exact merge SHA across branch/checkout/container/Mini App; healthy container with zero restarts/OOM; schema/indexes present; no stale idempotency claims or orphan assets. One unrelated Telegram `chat not found` notification error occurred after a correct failure/refund commit. Disk usage is 81% with 167 GiB free.
+- Rollout: focused tests, changed-line Ruff, full safe regression, PR to `tanyapi`, exact-SHA CI/autodeploy and post-deploy read-only smoke. No paid KIE generation.
+
 ## 2026-10-01 — Seedance 2.0 photo-reference prompt regression
 
 - Baseline: `origin/tanyapi` `1840ba0dd4f39ceadfd58023f10b0654c1fbcbb8`; branch `fix/seedance20-photo-ref-prompt`.

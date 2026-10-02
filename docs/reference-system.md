@@ -297,9 +297,13 @@ POST /mini-app/api/admin/trends/seedance/publish
 - содержать лицо автора и минимум один retained asset.
 
 Администратор явно выбирает один identity image и retained image/video/audio
-indices. Автоматическое распознавание лица не используется. Compiler сначала
-проверяет исходные bindings, затем перенумеровывает retained refs и блокирует
-публикацию, если prompt ссылается на исключённое или отсутствующее media.
+indices. Автоматическое распознавание лица не используется. Compiler проверяет
+и перенумеровывает все явные bindings из исходного prompt. Если исходный prompt
+не содержит часть или все `@ImageN`/`@VideoN`/`@AudioN`, финальный private guard
+автоматически добавляет точные bindings для каждого выбранного retained asset и
+`@Image1`. Пустой исходный prompt не может стать guard-only трендом. Публикация
+по-прежнему блокируется, если исходный prompt явно ссылается на исключённое или
+отсутствующее media.
 
 Для одной исходной generation одновременно допускается только один активный
 private-reference trend. После деактивации можно создать replacement.

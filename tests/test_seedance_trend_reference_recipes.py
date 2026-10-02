@@ -8,6 +8,7 @@ from bot.seedance_trend_recipe import (
     compile_seedance_trend_recipe,
     extract_seedance_reference_snapshot,
 )
+from bot.services.seedance_reference_binding import missing_seedance_reference_tags
 
 FACE = "https://example.test/face.png"
 DRESS = "https://example.test/dress.png"
@@ -80,6 +81,74 @@ def test_compiler_replaces_author_identity_with_user_image_one() -> None:
     assert "SEEDANCE_TREND_IDENTITY_CONTRACT_V1" in recipe.prompt
 
 
+def test_compiler_rejects_empty_source_prompt() -> None:
+    with pytest.raises(SeedanceTrendRecipeError, match="prompt is empty"):
+        compile_seedance_trend_recipe(
+            prompt="   ",
+            model="seedance_2",
+            source_images=[FACE, DRESS],
+            source_videos=[],
+            source_audios=[],
+            identity_image_index=1,
+            fixed_image_indices=[2],
+            fixed_video_indices=[],
+            fixed_audio_indices=[],
+        )
+
+
+def test_compiler_injects_bindings_for_implicit_reference_prompt() -> None:
+    recipe = compile_seedance_trend_recipe(
+        prompt=(
+            "Dress the person in the supplied outfit, follow the supplied motion, "
+            "and use the supplied soundtrack while keeping the same face."
+        ),
+        model="seedance_2_5",
+        source_images=[FACE, DRESS],
+        source_videos=[MOTION],
+        source_audios=[AUDIO],
+        identity_image_index=1,
+        fixed_image_indices=[2],
+        fixed_video_indices=[1],
+        fixed_audio_indices=[1],
+    )
+
+    assert recipe.prompt.startswith(
+        "Dress the person in the supplied outfit, follow the supplied motion"
+    )
+    assert "@Image1 is the only identity/person source" in recipe.prompt
+    assert "@Image2" in recipe.prompt
+    assert "@Video1" in recipe.prompt
+    assert "@Audio1" in recipe.prompt
+    assert (
+        missing_seedance_reference_tags(
+            recipe.prompt,
+            image_count=2,
+            video_count=1,
+            audio_count=1,
+        )
+        == []
+    )
+    assert FACE not in [asset.source_url for asset in recipe.assets]
+
+
+def test_compiler_injects_identity_when_prompt_only_names_fixed_asset() -> None:
+    recipe = compile_seedance_trend_recipe(
+        prompt="Keep the exact outfit from @Image2.",
+        model="seedance_2",
+        source_images=[FACE, DRESS],
+        source_videos=[],
+        source_audios=[],
+        identity_image_index=1,
+        fixed_image_indices=[2],
+        fixed_video_indices=[],
+        fixed_audio_indices=[],
+    )
+
+    assert recipe.prompt.startswith("Keep the exact outfit from @Image2.")
+    assert "@Image1 is the only identity/person source" in recipe.prompt
+    assert "@Image2" in recipe.prompt
+
+
 def test_compiler_remaps_identity_when_author_face_was_not_first() -> None:
     recipe = compile_seedance_trend_recipe(
         prompt="Use outfit @Image1 on person @Image2 with jewelry @Image3.",
@@ -114,7 +183,6 @@ def test_compiler_keeps_source_order_even_if_client_indices_are_reversed() -> No
 
     assert [asset.source_url for asset in recipe.image_assets] == [DRESS, EARRINGS]
     assert [asset.position for asset in recipe.image_assets] == [2, 3]
-
 
 
 def test_compiler_rejects_prompt_reference_to_excluded_media() -> None:
@@ -165,7 +233,6 @@ def test_compiler_rejects_prompt_that_guard_pushes_over_model_limit() -> None:
         )
 
 
-
 def test_compiler_video_only_recipe_does_not_invent_image_two_binding() -> None:
     recipe = compile_seedance_trend_recipe(
         prompt="Person @Image1 follows motion from @Video1.",
@@ -181,7 +248,6 @@ def test_compiler_video_only_recipe_does_not_invent_image_two_binding() -> None:
 
     assert "@Image2" not in recipe.prompt
     assert "@Video1" in recipe.prompt
-
 
 
 def test_assemble_inputs_keeps_user_identity_first_and_assets_typed() -> None:
