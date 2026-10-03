@@ -527,6 +527,8 @@ async def test_polled_result_chat_unavailable_is_terminal_without_warning(monkey
     monkeypatch.setattr(
         keyboard_module, "get_image_result_keyboard", lambda *_a, **_kw: None
     )
+    monkeypatch.setattr(database, "store_task_result_ready", AsyncMock(return_value=True))
+    monkeypatch.setattr(database, "claim_task_delivery", AsyncMock(return_value=True))
     complete = AsyncMock(return_value=True)
     mark = AsyncMock(return_value=True)
     monkeypatch.setattr(database, "complete_video_task", complete)

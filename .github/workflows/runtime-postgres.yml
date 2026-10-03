@@ -11,6 +11,7 @@ on:
       - 'tests/conftest.py'
       - 'tests/test_runtime72_saved_references.py'
       - 'tests/test_runtime72_postgres_refunds.py'
+      - 'tests/test_result_durability_postgres.py'
       - 'tests/runtime72_postgres_fixture.py'
       - 'bot/services/task_watchdog.py'
       - 'tests/test_partner_approval_postgres.py'
@@ -25,6 +26,7 @@ on:
       - 'tests/conftest.py'
       - 'tests/test_runtime72_saved_references.py'
       - 'tests/test_runtime72_postgres_refunds.py'
+      - 'tests/test_result_durability_postgres.py'
       - 'tests/runtime72_postgres_fixture.py'
       - 'bot/services/task_watchdog.py'
       - 'tests/test_partner_approval_postgres.py'
@@ -75,4 +77,4 @@ jobs:
           pip install --quiet -r requirements.txt
           python -m pip check
       - name: Run PostgreSQL regressions
-        run: pytest tests/test_runtime72_saved_references.py tests/test_runtime72_postgres_refunds.py -vv --tb=short
+        run: pytest tests/test_runtime72_saved_references.py tests/test_runtime72_postgres_refunds.py tests/test_result_durability_postgres.py -vv --tb=short

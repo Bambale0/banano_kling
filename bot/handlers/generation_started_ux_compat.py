@@ -228,7 +228,7 @@ def _install_miniapp_started_notifier() -> None:
 
         from bot.database import (
             can_attempt_telegram_delivery,
-            mark_task_delivery_status,
+            mark_telegram_chat_unavailable,
         )
 
         if not await can_attempt_telegram_delivery(telegram_id):
@@ -265,11 +265,9 @@ def _install_miniapp_started_notifier() -> None:
         except Exception as exc:
             if is_terminal_telegram_delivery_error(exc):
                 reason = terminal_telegram_delivery_reason(exc)
-                await mark_task_delivery_status(
-                    local_task_id or provider_task_id,
-                    "unavailable",
-                    error=reason,
-                )
+                # A failed progress notification says nothing about the result:
+                # only update chat capability, leaving task delivery claimable.
+                await mark_telegram_chat_unavailable(telegram_id)
                 logger.info(
                     "Mini App Telegram notification unavailable: event=generation_started reason=%s telegram_id=%s local_task_id=%s provider_task_id=%s",
                     reason,

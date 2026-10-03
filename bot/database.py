@@ -5471,44 +5471,59 @@ async def mark_task_delivery_status(
 
 
 async def store_task_result_ready(task_id: str, result_url: str) -> bool:
-    """Store the canonical provider result before Telegram delivery.
+    """Commit provider completion independently of Telegram delivery.
 
-    The delivery lease is preserved when a webhook/watchdog attempt already
-    holds it. This gives reconciliation a durable result URL without falsely
-    marking the generation completed or the media delivered.
+    The result, completed status and recovery marker commit atomically. A live
+    lease is preserved, and CAS retries never overwrite newer delivery metadata.
+    False means the caller must request a retry rather than acknowledge success.
     """
     canonical_url = str(result_url or "").strip()
     if not canonical_url:
         return False
 
+    for _attempt in range(3):
+        task = await get_task_by_id(task_id)
+        if not task:
+            return False
+
+        old_json = task.request_data or "{}"
+        request_data = _parse_json_dict(old_json)
+        current_status = str(request_data.get("delivery_status") or "").strip().lower()
+        if task.status == "failed":
+            # Never resurrect an already failed/refunded generation.
+            return False
+        if task.status == "completed" and current_status in {"delivered", "failed"}:
+            return bool(task.result_url)
+        if task.status == "completed" and current_status == "unavailable":
+            return bool(task.result_url)
+
+        now = datetime.now(UTC)
+        if current_status not in {"delivering", "pending", "link_sent", "result_ready", "delivered", "failed"}:
+            # Older start-notification code could set unavailable before success.
+            request_data["delivery_status"] = "result_ready"
+        request_data.setdefault("result_ready_at", now.isoformat())
+        request_data["delivery_updated_at"] = now.isoformat()
+        new_json = json.dumps(request_data, ensure_ascii=False)
+
+        async with db_backend.connect(DATABASE_PATH) as db:
+            cursor = await db.execute(
+                """
+                UPDATE generation_tasks
+                SET result_url = ?, request_data = ?, status = 'completed',
+                    completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND COALESCE(request_data, '{}') = ?
+                  AND status IN ('pending', 'processing', 'completed')
+                """,
+                (canonical_url, new_json, int(task.id), old_json),
+            )
+            await db.commit()
+            if int(getattr(cursor, "rowcount", 0) or 0) == 1:
+                return True
+
+    # Another callback may have completed while the final CAS was waiting.
     task = await get_task_by_id(task_id)
-    if not task:
-        return False
-
-    old_json = task.request_data or "{}"
-    request_data = _parse_json_dict(old_json)
-    current_status = str(request_data.get("delivery_status") or "").strip().lower()
-    if current_status in {"delivered", "failed"}:
-        return False
-
-    now = datetime.now(UTC)
-    if current_status not in {"delivering", "pending", "link_sent", "result_ready"}:
-        request_data["delivery_status"] = "result_ready"
-    request_data.setdefault("result_ready_at", now.isoformat())
-    request_data["delivery_updated_at"] = now.isoformat()
-    new_json = json.dumps(request_data, ensure_ascii=False)
-
-    async with db_backend.connect(DATABASE_PATH) as db:
-        cursor = await db.execute(
-            """
-            UPDATE generation_tasks
-            SET result_url = ?, request_data = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ? AND COALESCE(request_data, '{}') = ?
-            """,
-            (canonical_url, new_json, int(task.id), old_json),
-        )
-        await db.commit()
-        return int(getattr(cursor, "rowcount", 0) or 0) == 1
+    return bool(task and task.status == "completed" and task.result_url)
 
 
 async def claim_task_delivery(task_id: str, *, lease_seconds: int = 300) -> bool:

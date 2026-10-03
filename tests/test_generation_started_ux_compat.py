@@ -242,7 +242,7 @@ async def test_miniapp_start_chat_unavailable_is_info_not_warning(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_first_chat_not_found_stops_result_delivery_for_same_task(
+async def test_start_notification_failure_updates_chat_without_finalizing_result(
     isolated_database,
 ):
     from bot import database
@@ -277,6 +277,7 @@ async def test_first_chat_not_found_stops_result_delivery_for_same_task(
     assert await database.can_attempt_telegram_delivery(user.telegram_id) is False
     task = await database.get_task_by_id("img-chat-not-found")
     metadata = json.loads(task.request_data or "{}")
-    assert metadata["delivery_status"] == "unavailable"
-    assert metadata["delivery_error"] == "chat_not_found"
-    assert await database.claim_task_delivery(task.task_id) is False
+    assert "delivery_status" not in metadata
+    assert task.result_url is None
+    await database.mark_telegram_chat_available(user.telegram_id)
+    assert await database.claim_task_delivery(task.task_id) is True

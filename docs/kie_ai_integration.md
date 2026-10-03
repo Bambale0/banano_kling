@@ -666,3 +666,23 @@ The local `seedance25_video_editing` boolean is stored in generation `request_da
 Editing retains the existing **admin-only Auto entitlement** and free admin launch. Non-admin editing requests are rejected before charging or creating a provider task. Paid editing requires a separate deterministic pricing design based on trusted source duration; no price, multiplier, refund or automatic paid retry rule changes here. Admin price display remains the existing five-second Auto estimate, not the actual source duration.
 
 Local uploaded source duration is checked server-side; editing rejects sources below four seconds or above thirty. Ordinary video references keep the existing 2–30 second bounds. External URLs and `asset://` inputs have no locally probed metadata, so the provider validates their duration. Failed jobs are not automatically resubmitted; the editing-constraint error includes a localized hint to select the editing option.
+
+
+### Durable result and Telegram delivery (2026-10-03)
+
+Provider completion and Telegram delivery are separate states. The successful
+result URL, generation `completed` state, completion timestamp and delivery
+recovery marker are saved atomically before chat capability or delivery-lease
+checks. Mini App can display the completed result even if Telegram is unavailable.
+A generation-start notification failure changes the user chat capability, not the
+terminal delivery state of an unfinished generation; `/start` can safely restore
+capability while the provider is still running.
+
+If durable storage fails, a successful provider callback receives a retryable
+response rather than a success acknowledgement. Duplicate delivery remains guarded
+by the existing lease and terminal delivery markers. Reconciliation of an explicitly
+retryable saved result uses that result without asking the provider to generate it
+again or treating a later provider-status failure as a refundable generation failure.
+Legacy completed tasks without a retry marker and terminal unavailable deliveries
+are not automatically replayed. No prices, provider selection, schema, credentials
+or historic refund balances change.

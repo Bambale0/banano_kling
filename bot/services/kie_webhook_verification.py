@@ -10,6 +10,7 @@ from typing import Any
 from weakref import WeakValueDictionary
 
 from bot import database
+from bot.services.delivery_state import has_retryable_result, stored_result_payload
 from bot.services.kie_market_service import kie_market_service
 from bot.services.veo_service import veo_service
 
@@ -78,6 +79,8 @@ async def canonical_kie_callback(
     except Exception:
         logger.exception("KIE callback local lookup failed: task_id=%s", task_id)
         return None, 503
+    if task and task.task_id == task_id and has_retryable_result(task):
+        return stored_result_payload(task), 200
     if (
         not task
         or task.task_id != task_id
@@ -139,6 +142,8 @@ async def canonical_kie_callback(
     except Exception:
         logger.exception("KIE callback local recheck failed: task_id=%s", task_id)
         return None, 503
+    if current and current.task_id == task_id and has_retryable_result(current):
+        return stored_result_payload(current), 200
     if (
         not current
         or current.task_id != task_id
