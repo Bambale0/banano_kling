@@ -7,7 +7,6 @@ from typing import Any, Dict, List, Optional
 import aiohttp
 
 from bot.config import config
-from bot.utils.user_facing_errors import sanitize_provider_log_payload
 from bot.services.kie_file_upload_service import kie_file_upload_service
 from bot.services.kie_market_service import kie_market_service
 from bot.services.media_input_utils import (
@@ -15,6 +14,7 @@ from bot.services.media_input_utils import (
     image_sources_to_supported_image_urls,
 )
 from bot.services.nexus_image_provider import NexusImageProvider
+from bot.utils.user_facing_errors import sanitize_provider_log_payload
 
 logger = logging.getLogger(__name__)
 

@@ -120,7 +120,7 @@ class KieFileUploadService:
                         source,
                         fallback_to_source=fallback_to_source,
                     )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - transport boundary returns explicit fallback/failure
             logger.warning("KIE file upload failed: exception_type=%s", type(exc).__name__)
             return self._fallback_value(source, fallback_to_source=fallback_to_source)
 

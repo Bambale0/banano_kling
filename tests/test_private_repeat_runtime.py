@@ -7,7 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from bot import database, db as db_backend
+from bot import database
+from bot import db as db_backend
 from bot.handlers import generation
 from bot.utils.user_facing_errors import make_user_friendly_generation_error
 

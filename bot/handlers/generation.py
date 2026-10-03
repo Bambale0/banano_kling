@@ -1,7 +1,7 @@
 import asyncio
 import base64
-import html
 import hashlib
+import html
 import io
 import json
 import logging
@@ -33,10 +33,10 @@ from bot.database import (
     credit_feed_prompt_repeat,
     deduct_credits,
     delete_saved_reference,
+    generation_reference_selection,
+    generation_repeat_reference_selection,
     get_feed_generation_card,
     get_generation_task_payload,
-    generation_repeat_reference_selection,
-    generation_reference_selection,
     get_or_create_user,
     get_task_by_id,
     get_user_credits,
@@ -1047,7 +1047,10 @@ async def validate_private_repeat_reference_access(
     if not source_feed_gen_id:
         return False
     try:
-        from bot.database import _feed_reference_image_candidates, _is_feed_result_url_available
+        from bot.database import (
+            _feed_reference_image_candidates,
+            _is_feed_result_url_available,
+        )
 
         root = await get_generation_task_payload(source_feed_gen_id)
         if not root or (
@@ -1065,7 +1068,7 @@ async def validate_private_repeat_reference_access(
             and _is_feed_result_url_available(root, ref)
             for ref in private_reference_images
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - permission boundary fails closed
         # Exceptions may embed URLs. Keep operational context without raw details.
         logger.warning("Private repeat permission validation failed: source_id=%s", source_feed_gen_id)
         return False
@@ -2829,7 +2832,7 @@ async def run_repeat_image_generation(callback: types.CallbackQuery, state: FSMC
             await callback.answer("Повтор запускаю")
         except TelegramBadRequest:
             pass  # stale callback — ignore
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - generation boundary refunds without leaking provider details
         logger.warning("Repeat image generation failed: exception_type=%s", type(exc).__name__)
         if unit_cost > 0 and not is_admin:
             await add_credits(callback.from_user.id, unit_cost)
@@ -3089,7 +3092,7 @@ async def quick_repeat_image_confirm(callback: types.CallbackQuery, state: FSMCo
             await callback.answer("Повтор запускаю")
         except TelegramBadRequest:
             pass
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - generation boundary refunds without leaking provider details
         logger.warning("Quick repeat image generation failed: exception_type=%s", type(exc).__name__)
         if unit_cost > 0 and not is_admin:
             await add_credits(callback.from_user.id, unit_cost)

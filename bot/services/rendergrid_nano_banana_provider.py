@@ -11,12 +11,12 @@ from uuid import uuid4
 import aiohttp
 
 from bot.services.media_input_utils import image_sources_to_provider_safe_png_urls
-from bot.utils.user_facing_errors import sanitize_provider_log_payload
 from bot.services.rendergrid_service import (
     MIN_CREATION_POLL_INTERVAL_SECONDS,
     RenderGridClient,
     RenderGridError,
 )
+from bot.utils.user_facing_errors import sanitize_provider_log_payload
 
 logger = logging.getLogger(__name__)
 

@@ -2161,21 +2161,31 @@ async def _retry_transient_seedance_real_person_failure(
     )
     return new_task_id
 
+async def _image_retry_private_references_allowed(task, request_data: dict) -> bool:
+    from bot.handlers.generation import (
+        _image_repeat_private_context,
+        validate_private_repeat_reference_access,
+    )
+
+    source_id = getattr(task, "source_feed_gen_id", None)
+    private_references = request_data.get("private_repeat_reference_images") or []
+    if source_id and not private_references:
+        # Old children have no explicit private-input marker. Reconstruct their
+        # provenance from the original root, never treat absence as consent.
+        private_references, source_id = await _image_repeat_private_context(task, task.user_id)
+    return await validate_private_repeat_reference_access(
+        source_feed_gen_id=source_id, private_reference_images=private_references,
+    )
+
+
 async def _retry_transient_wan_timeout_failure(task, failed_task_id: str) -> str | None:
     if not task or getattr(task, "type", None) != "image":
         return None
 
     request_data = _extract_task_request_data(task)
-    private_references = request_data.get("private_repeat_reference_images") or []
-    if private_references:
-        from bot.handlers.generation import validate_private_repeat_reference_access
-
-        if not await validate_private_repeat_reference_access(
-            source_feed_gen_id=getattr(task, "source_feed_gen_id", None),
-            private_reference_images=private_references,
-        ):
-            logger.warning("Image auto-retry blocked: private reference permission unavailable task_id=%s", failed_task_id)
-            return None
+    if not await _image_retry_private_references_allowed(task, request_data):
+        logger.warning("Image auto-retry blocked: private reference permission unavailable task_id=%s", failed_task_id)
+        return None
     retry_attempt = int(request_data.get("auto_retry_attempt") or 0)
     if retry_attempt >= 1:
         return None
@@ -2237,16 +2247,9 @@ async def _retry_transient_kie_image_failure(task, failed_task_id: str) -> str |
         return None
 
     request_data = _extract_task_request_data(task)
-    private_references = request_data.get("private_repeat_reference_images") or []
-    if private_references:
-        from bot.handlers.generation import validate_private_repeat_reference_access
-
-        if not await validate_private_repeat_reference_access(
-            source_feed_gen_id=getattr(task, "source_feed_gen_id", None),
-            private_reference_images=private_references,
-        ):
-            logger.warning("Image auto-retry blocked: private reference permission unavailable task_id=%s", failed_task_id)
-            return None
+    if not await _image_retry_private_references_allowed(task, request_data):
+        logger.warning("Image auto-retry blocked: private reference permission unavailable task_id=%s", failed_task_id)
+        return None
     runtime_img_service = (
         request_data.get("img_service") or getattr(task, "model", None) or ""
     ).strip()
@@ -2368,16 +2371,9 @@ async def _retry_nexus_banana_image_failure(
         return None
 
     request_data = _extract_task_request_data(task)
-    private_references = request_data.get("private_repeat_reference_images") or []
-    if private_references:
-        from bot.handlers.generation import validate_private_repeat_reference_access
-
-        if not await validate_private_repeat_reference_access(
-            source_feed_gen_id=getattr(task, "source_feed_gen_id", None),
-            private_reference_images=private_references,
-        ):
-            logger.warning("Image auto-retry blocked: private reference permission unavailable task_id=%s", failed_task_id)
-            return None
+    if not await _image_retry_private_references_allowed(task, request_data):
+        logger.warning("Image auto-retry blocked: private reference permission unavailable task_id=%s", failed_task_id)
+        return None
     runtime_img_service = (
         request_data.get("img_service") or getattr(task, "model", None) or ""
     ).strip()
