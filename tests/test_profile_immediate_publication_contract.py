@@ -38,15 +38,16 @@ def test_pending_publication_is_not_injected_into_another_users_profile() -> Non
     assert "mergePendingPublication(result.feed, 'profile')" not in foreign_profile_block
 
 
-def test_private_profile_repeat_restores_owner_references_only() -> None:
+def test_private_profile_repeat_merges_only_owner_selected_references() -> None:
     source = MINIAPP_PATH.read_text(encoding="utf-8")
 
     assert "def _can_restore_private_profile_references" in source
-    assert 'source_card.get("is_mine")' in source
+    assert "def _merge_remix_image_references" in source
+    assert "def _selected_published_image_references" in source
     assert 'source_card.get("publication_scope") == "profile"' in source
     assert 'source_card.get("references_hidden")' in source
-    assert "if not references and _can_restore_private_profile_references(source):" in source
-    assert "references = _source_image_references_from_task_payload(source_task)" in source
+    assert "retained = _selected_published_image_references(task_payload)" in source
+    assert "published_source_references = set(" in source
 
 
 def test_result_caption_does_not_reveal_feed_repeat_prompt() -> None:

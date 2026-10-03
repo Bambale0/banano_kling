@@ -1259,6 +1259,52 @@ def _source_image_references_from_task_payload(task_payload: dict[str, Any]) -> 
     return references
 
 
+def _selected_published_image_references(
+    task_payload: dict[str, Any],
+) -> list[str]:
+    """Return only source images the author explicitly retained for publication."""
+    raw_selection = task_payload.get("feed_reference_selection")
+    if isinstance(raw_selection, str):
+        selection = _parse_request_data(raw_selection)
+    elif isinstance(raw_selection, dict):
+        selection = raw_selection
+    else:
+        return []
+
+    selected_images = selection.get("images")
+    if not isinstance(selected_images, list):
+        return []
+
+    source_images = set(_source_image_references_from_task_payload(task_payload))
+    retained: list[str] = []
+    for item in selected_images:
+        url = str(item or "").strip()
+        if url and url in source_images and url not in retained:
+            retained.append(url)
+    return retained
+
+
+def _merge_remix_image_references(
+    source_card: dict[str, Any],
+    task_payload: dict[str, Any],
+    submitted_references: list[str],
+) -> tuple[list[str], int]:
+    """Keep explicitly published supporting refs while replacing identity refs."""
+    references = list(dict.fromkeys(submitted_references))
+    retained = _selected_published_image_references(task_payload)
+    for url in retained:
+        if url not in references:
+            references.append(url)
+
+    if (
+        not references
+        and source_card.get("is_mine")
+        and _can_restore_private_profile_references(source_card)
+    ):
+        references = _source_image_references_from_task_payload(task_payload)
+    return references, len(retained)
+
+
 def _reference_upload_owner_telegram_id(url: str) -> int | None:
     try:
         path = urlparse(str(url or "").strip()).path
@@ -1284,10 +1330,16 @@ def _filter_foreign_feed_source_references(
         return references
 
     source_references = set(_source_image_references_from_task_payload(task_payload))
+    published_source_references = set(
+        _selected_published_image_references(task_payload)
+    )
     filtered: list[str] = []
     for item in references:
         url = str(item or "").strip()
         if not url or url in filtered:
+            continue
+        if url in published_source_references:
+            filtered.append(url)
             continue
         owner_telegram_id = _reference_upload_owner_telegram_id(url)
         if url in source_references:
@@ -4117,14 +4169,29 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
 
         img_service = str(body.get("img_service") or body.get("model") or source.get("model") or "banana_pro")
         img_ratio = str(body.get("img_ratio") or source.get("aspect_ratio") or "1:1")
-        references = [str(item) for item in list(body.get("reference_images", []) or []) if str(item).strip()]
-        if not references and _can_restore_private_profile_references(source):
-            references = _source_image_references_from_task_payload(source_task)
+        submitted_references = [
+            str(item)
+            for item in list(body.get("reference_images", []) or [])
+            if str(item).strip()
+        ]
+        references, retained_reference_count = _merge_remix_image_references(
+            source,
+            source_task,
+            submitted_references,
+        )
         references = _filter_foreign_feed_source_references(
             source,
             source_task,
             references,
             viewer_telegram_id=telegram_id,
+        )
+        logger.info(
+            "Mini App image remix references: source_id=%s user_id=%s submitted=%s retained=%s total=%s",
+            source.get("id"),
+            telegram_id,
+            len(submitted_references),
+            retained_reference_count,
+            len(references),
         )
         img_quality = str(body.get("img_quality", "2K"))
         img_nsfw_checker = bool(body.get("img_nsfw_checker", False))
