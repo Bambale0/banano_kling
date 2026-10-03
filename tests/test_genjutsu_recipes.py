@@ -1,8 +1,8 @@
 from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock
 
 import aiosqlite
 import pytest
-from unittest.mock import AsyncMock
 
 from bot.genjutsu.recipes import RecipeStore
 from bot.genjutsu.repository import Repository
