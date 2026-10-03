@@ -1,45 +1,45 @@
-import logging
 import asyncio
 import html
-import time
+import logging
 import mimetypes
 import re
+import time
 import uuid
 from datetime import datetime
 from math import floor
 from urllib.parse import urlparse
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
-
-from bot import db as db_backend
 import aiohttp
 from aiogram import Bot, F, Router, types
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
+from bot import db as db_backend
+from bot.config import config
 from bot.database import (
     DATABASE_PATH,
     PARTNER_INVITER_BONUS,
     REFERRAL_ANTIFRAUD_BLOCK_CODES,
     REFERRAL_ANTIFRAUD_BLOCK_REFERRER_IDS,
+    _merge_task_id_aliases,
     accept_partner_agreement,
     approve_partner_withdrawal,
     cancel_partner_withdrawal,
     create_partner_withdrawal,
     exchange_partner_balance_to_credits,
-    get_partner_available_withdrawal,
-    get_or_create_user,
     get_approved_prompts,
     get_feed_generation_card,
     get_feed_generations,
+    get_or_create_user,
+    get_partner_available_withdrawal,
     get_partner_overview,
-    get_popular_prompts,
-    get_prompt_by_id,
-    get_referral_stats,
     get_partner_withdrawal_request,
+    get_popular_prompts,
     get_profile_generation_card,
+    get_prompt_by_id,
     get_task_by_id,
     get_top_prompts,
     get_user_by_referral_code,
@@ -50,27 +50,17 @@ from bot.database import (
     is_channel_subscription_required,
     like_feed_generation,
     like_prompt,
+    mark_telegram_chat_available,
     remove_from_feed,
-    set_feed_blurred,
-    _merge_task_id_aliases,
     save_user_settings,
+    set_feed_blurred,
     update_user_profile,
     use_prompt,
 )
-from bot.config import config
-from bot.miniapp_links import (
-    feed_bot_link as build_feed_bot_link,
-    feed_link as build_feed_link,
-    feed_start_param as build_feed_start_param,
-    referral_bot_link as build_referral_bot_link,
-    referral_link as build_referral_link,
-    remix_link as build_remix_link,
-    remix_start_param as build_remix_start_param,
-)
 from bot.keyboards import (
     _mini_app_url_with_start_param,
-    get_ai_assistant_keyboard,
     get_admin_keyboard,
+    get_ai_assistant_keyboard,
     get_animate_hub_keyboard,
     get_back_keyboard,
     get_balance_keyboard,
@@ -81,7 +71,27 @@ from bot.keyboards import (
     get_partner_consent_keyboard,
     get_partner_program_keyboard,
     get_required_subscription_keyboard,
-    get_referral_keyboard,
+)
+from bot.miniapp_links import (
+    feed_bot_link as build_feed_bot_link,
+)
+from bot.miniapp_links import (
+    feed_link as build_feed_link,
+)
+from bot.miniapp_links import (
+    feed_start_param as build_feed_start_param,
+)
+from bot.miniapp_links import (
+    referral_bot_link as build_referral_bot_link,
+)
+from bot.miniapp_links import (
+    referral_link as build_referral_link,
+)
+from bot.miniapp_links import (
+    remix_link as build_remix_link,
+)
+from bot.miniapp_links import (
+    remix_start_param as build_remix_start_param,
 )
 from bot.services.preset_manager import preset_manager
 from bot.services.subscription_service import (
@@ -1705,7 +1715,6 @@ async def _answer_admin_ai_assistant_message(
 
     admin_word = "админ" in text or "admin" in text
 
-    from bot.handlers import admin as admin_handlers
     from bot.database import (
         get_admin_finance_report,
         get_admin_partner_details,
@@ -1719,6 +1728,7 @@ async def _answer_admin_ai_assistant_message(
         get_promo_code_by_code,
         get_promo_code_details,
     )
+    from bot.handlers import admin as admin_handlers
 
     async def answer(
         text_value: str,
@@ -3786,6 +3796,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
 
     # Создаём или получаем пользователя (referred_by=NULL для новых)
     user = await get_or_create_user(message.from_user.id)
+    await mark_telegram_chat_available(message.from_user.id)
     await _sync_telegram_profile(message.from_user)
 
     # Пытаемся привязать реферала через единый сервис (если есть код и пользователь новый/без привязки)

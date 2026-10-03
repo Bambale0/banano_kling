@@ -226,6 +226,20 @@ def _install_miniapp_started_notifier() -> None:
         if status not in {"queued", "done"} or not provider_task_id:
             return
 
+        from bot.database import (
+            can_attempt_telegram_delivery,
+            mark_task_delivery_status,
+        )
+
+        if not await can_attempt_telegram_delivery(telegram_id):
+            logger.info(
+                "Mini App Telegram notification skipped: event=generation_started reason=chat_not_started telegram_id=%s local_task_id=%s provider_task_id=%s",
+                telegram_id,
+                local_task_id,
+                provider_task_id,
+            )
+            return
+
         model_label = miniapp_module.get_image_model_label(img_service)
         text = build_generation_started_text(
             model_label=str(model_label),
@@ -250,9 +264,15 @@ def _install_miniapp_started_notifier() -> None:
             )
         except Exception as exc:
             if is_terminal_telegram_delivery_error(exc):
+                reason = terminal_telegram_delivery_reason(exc)
+                await mark_task_delivery_status(
+                    local_task_id or provider_task_id,
+                    "unavailable",
+                    error=reason,
+                )
                 logger.info(
                     "Mini App Telegram notification unavailable: event=generation_started reason=%s telegram_id=%s local_task_id=%s provider_task_id=%s",
-                    terminal_telegram_delivery_reason(exc),
+                    reason,
                     telegram_id,
                     local_task_id,
                     provider_task_id,

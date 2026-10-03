@@ -808,7 +808,18 @@ async def _send_seedance25_results(
                 caption=frame_caption,
                 parse_mode="HTML",
             )
-        except Exception:
+        except Exception as photo_exc:
+            if is_terminal_telegram_delivery_error(photo_exc):
+                from bot.database import mark_telegram_chat_unavailable
+
+                await mark_telegram_chat_unavailable(telegram_id)
+                logger.info(
+                    "Telegram delivery unavailable: event=seedance25_last_frame reason=%s task_id=%s telegram_id=%s",
+                    terminal_telegram_delivery_reason(photo_exc),
+                    task_id,
+                    telegram_id,
+                )
+                return delivered
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(last_frame_url, timeout=aiohttp.ClientTimeout(total=60)) as resp:
@@ -824,6 +835,9 @@ async def _send_seedance25_results(
                 await bot.send_message(telegram_id, frame_caption + f"\n{last_frame_url}", parse_mode="HTML")
             except Exception as exc:
                 if is_terminal_telegram_delivery_error(exc):
+                    from bot.database import mark_telegram_chat_unavailable
+
+                    await mark_telegram_chat_unavailable(telegram_id)
                     logger.info(
                         "Telegram delivery unavailable: event=seedance25_last_frame reason=%s task_id=%s telegram_id=%s",
                         terminal_telegram_delivery_reason(exc),
@@ -1252,7 +1266,9 @@ async def _store_task_result(task_id: str, video_url: str | None, urls: list[str
                 metadata = {}
             if not isinstance(metadata, dict):
                 metadata = {}
-            metadata["delivery_status"] = "result_ready"
+            delivery_status = str(metadata.get("delivery_status") or "").lower()
+            if delivery_status not in TERMINAL_TASK_DELIVERY_STATUSES:
+                metadata["delivery_status"] = "result_ready"
             await db.execute(
                 "UPDATE generation_tasks SET request_data = ? WHERE task_id = ?",
                 (json.dumps(metadata, ensure_ascii=False), task_id),
@@ -1299,10 +1315,19 @@ async def _retry_seedance25_delivery(
     request_data: dict[str, Any],
 ) -> bool:
     task_id = str(row["task_id"] or "").strip()
+    telegram_id = int(row["telegram_id"])
+    from bot.database import can_attempt_telegram_delivery
+
+    if not await can_attempt_telegram_delivery(telegram_id):
+        await _mark_seedance25_delivery(
+            task_id,
+            "unavailable",
+            error="chat_not_started",
+        )
+        return True
     if not await _claim_seedance25_delivery(task_id):
         return False
 
-    telegram_id = int(row["telegram_id"])
     urls = _stored_result_urls(row)
     video_url, last_frame_url = _classify_results(urls, request_data)
     if not video_url:
@@ -1405,6 +1430,20 @@ async def _process_seedance25_payload(app: web.Application, payload: dict[str, A
                 )
                 return False
         await _store_task_result(task_id, None, [], success=False)
+        from bot.database import can_attempt_telegram_delivery
+
+        if not await can_attempt_telegram_delivery(telegram_id):
+            await _mark_seedance25_delivery(
+                task_id,
+                "unavailable",
+                error="chat_not_started",
+            )
+            logger.info(
+                "Telegram delivery skipped: event=seedance25_failure reason=chat_not_started task_id=%s telegram_id=%s",
+                task_id,
+                telegram_id,
+            )
+            return True
         try:
             await app["bot"].send_message(
                 telegram_id,
@@ -1425,6 +1464,11 @@ async def _process_seedance25_payload(app: web.Application, payload: dict[str, A
                     task_id,
                     telegram_id,
                 )
+                await _mark_seedance25_delivery(
+                    task_id,
+                    "unavailable",
+                    error=reason,
+                )
             else:
                 logger.exception("Seedance 2.5 failure notification failed")
         return True
@@ -1440,6 +1484,20 @@ async def _process_seedance25_payload(app: web.Application, payload: dict[str, A
         return False
 
     await _store_task_result(task_id, video_url, urls, success=True)
+    from bot.database import can_attempt_telegram_delivery
+
+    if not await can_attempt_telegram_delivery(telegram_id):
+        await _mark_seedance25_delivery(
+            task_id,
+            "unavailable",
+            error="chat_not_started",
+        )
+        logger.info(
+            "Seedance 2.5 result retained without Telegram delivery: task=%s telegram_id=%s",
+            task_id,
+            telegram_id,
+        )
+        return True
     refreshed = await _load_task_row(task_id)
     if not refreshed:
         return False

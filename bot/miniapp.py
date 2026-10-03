@@ -34,6 +34,7 @@ from bot.database import (
     add_feed_comment,
     add_generation_task,
     approve_prompt,
+    can_attempt_telegram_delivery,
     check_can_afford,
     complete_video_task,
     count_active_prompts_by_author,
@@ -72,6 +73,7 @@ from bot.database import (
     like_feed_generation,
     like_prompt,
     list_saved_references,
+    mark_task_delivery_status,
     reject_prompt,
     remove_from_feed,
     remove_from_library,
@@ -1099,7 +1101,11 @@ async def _get_user_context(app: web.Application, init_data: str, start_param_fa
     # Извлекаем реферальный код из start_param до создания пользователя
     # и передаём в get_or_create_user (как в /start), чтобы привязка была атомарной
     referral_code = referral_code_from_start_param(resolved_start_param) or None
-    user = await get_or_create_user(telegram_id, referral_code=referral_code)
+    user = await get_or_create_user(
+        telegram_id,
+        referral_code=referral_code,
+        initial_telegram_chat_state="unavailable",
+    )
 
     try:
         profile_updates = {
@@ -1468,6 +1474,13 @@ async def _deliver_miniapp_direct_image_result(
     """
     if launch_result.get("status") != "done" or not launch_result.get("saved_url"):
         return
+    if not await can_attempt_telegram_delivery(telegram_id):
+        logger.info(
+            "Mini App Telegram delivery skipped: event=direct_image reason=chat_not_started telegram_id=%s task_id=%s",
+            telegram_id,
+            launch_result.get("task_id"),
+        )
+        return
 
     saved_url = str(launch_result.get("saved_url") or "")
     task_id = str(launch_result.get("task_id") or "")
@@ -1504,13 +1517,29 @@ async def _deliver_miniapp_direct_image_result(
             task_id,
             saved_url,
         )
-    except Exception:
-        logger.exception(
-            "Mini App direct image Telegram delivery failed: telegram_id=%s task_id=%s saved_url=%s",
-            telegram_id,
-            task_id,
-            saved_url,
-        )
+    except Exception as exc:
+        from bot.services.delivery_state import terminal_telegram_delivery_reason
+
+        terminal_reason = terminal_telegram_delivery_reason(exc)
+        if terminal_reason:
+            await mark_task_delivery_status(
+                task_id,
+                "unavailable",
+                error=terminal_reason,
+            )
+            logger.info(
+                "Mini App Telegram delivery unavailable: event=direct_image reason=%s telegram_id=%s task_id=%s",
+                terminal_reason,
+                telegram_id,
+                task_id,
+            )
+        else:
+            logger.exception(
+                "Mini App direct image Telegram delivery failed: telegram_id=%s task_id=%s saved_url=%s",
+                telegram_id,
+                task_id,
+                saved_url,
+            )
 
 
 async def _notify_miniapp_image_task_queued(
@@ -1524,6 +1553,13 @@ async def _notify_miniapp_image_task_queued(
 ) -> None:
     """Notify Telegram chat when a Mini App image task enters provider queue."""
     if launch_result.get("status") != "queued" or not launch_result.get("task_id"):
+        return
+    if not await can_attempt_telegram_delivery(telegram_id):
+        logger.info(
+            "Mini App Telegram delivery skipped: event=generation_started reason=chat_not_started telegram_id=%s task_id=%s",
+            telegram_id,
+            launch_result.get("local_task_id") or launch_result.get("task_id"),
+        )
         return
 
     task_id = str(launch_result.get("task_id") or "")

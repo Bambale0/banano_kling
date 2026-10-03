@@ -489,6 +489,9 @@ async def _ensure_postgres_helpers(conn: psycopg.AsyncConnection) -> None:
         if _HELPERS_READY:
             return
         async with conn.cursor() as cur:
+            await cur.execute(
+                'ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "telegram_chat_state" TEXT'
+            )
             for table, column in (
                 ("users", "credits"),
                 ("users", "referral_earned"),

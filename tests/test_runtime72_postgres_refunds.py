@@ -136,6 +136,20 @@ async def test_preexisting_refund_marker_prevents_watchdog_double_credit():
 
 
 @pytest.mark.asyncio
+async def test_postgres_persists_miniapp_chat_capability():
+    from bot import database
+
+    user = await database.get_or_create_user(
+        741863,
+        initial_telegram_chat_state="unavailable",
+    )
+    assert await database.can_attempt_telegram_delivery(user.telegram_id) is False
+
+    assert await database.mark_telegram_chat_available(user.telegram_id) is True
+    assert await database.can_attempt_telegram_delivery(user.telegram_id) is True
+
+
+@pytest.mark.asyncio
 async def test_watchdog_does_not_refund_admin_legacy_row(monkeypatch):
     from bot.config import config
 

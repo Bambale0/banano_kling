@@ -149,6 +149,53 @@ async def test_claim_task_delivery_sets_atomic_lease(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_miniapp_only_user_tasks_skip_telegram_until_bot_start(isolated_database):
+    user = await database.get_or_create_user(
+        990001,
+        initial_telegram_chat_state="unavailable",
+    )
+
+    assert await database.can_attempt_telegram_delivery(user.telegram_id) is False
+
+    await database.add_generation_task(
+        user.id,
+        user.telegram_id,
+        "miniapp-chatless-task",
+        "image",
+        "miniapp_image",
+        request_data={"source": "miniapp"},
+    )
+    task = await database.get_task_by_id("miniapp-chatless-task")
+    task_data = json.loads(task.request_data or "{}")
+    assert "delivery_status" not in task_data
+    assert await database.can_attempt_telegram_delivery(user.telegram_id) is False
+
+    await database.add_generation_task(
+        user.id,
+        user.telegram_id,
+        "miniapp-chatless-seedance-task",
+        "video",
+        "miniapp_video",
+        model="seedance_2_5",
+        request_data={"source": "miniapp", "v_reference_videos": ["ref.mp4"]},
+    )
+    assert await database.can_attempt_telegram_delivery(user.telegram_id) is False
+
+    await database.mark_telegram_chat_available(user.telegram_id)
+    assert await database.can_attempt_telegram_delivery(user.telegram_id) is True
+
+    await database.add_generation_task(
+        user.id,
+        user.telegram_id,
+        "miniapp-after-start-task",
+        "image",
+        "miniapp_image",
+        request_data={"source": "miniapp"},
+    )
+    assert await database.claim_task_delivery("miniapp-after-start-task") is True
+
+
+@pytest.mark.asyncio
 async def test_claim_task_delivery_respects_active_lease(monkeypatch):
     from datetime import UTC, datetime
 
