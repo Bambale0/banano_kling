@@ -216,7 +216,9 @@ export interface TrendGenerationSettings {
   preview_type?: 'image' | 'video'
   reference_count?: number
   reference_labels?: string[]
+  reference_slots?: TrendReferenceSlot[]
   automatic_hidden_references?: boolean
+  required_video_duration_seconds?: number
   user_fields?: TrendUserField[]
   quality?: string
   count?: number
@@ -243,6 +245,12 @@ export interface TrendGenerationSettings {
   omni_example_dialogue?: string
   omni_character_name?: string
   omni_character_audio_ids?: string[]
+}
+
+export interface TrendReferenceSlot {
+  media_type: 'image' | 'video' | 'audio'
+  position: number
+  label: string
 }
 
 export interface PromptItem {

@@ -86,7 +86,7 @@ describe('SeedanceTrendPublisher', () => {
     })
   })
 
-  it('excludes creator identity and submits fixed typed references', async () => {
+  it('excludes creator identity and lets the user replace a video reference', async () => {
     render(<SeedanceTrendPublisher task={task} />)
 
     fireEvent.click(screen.getByRole('button', { name: /Сделать Seedance-трендом/i }))
@@ -94,6 +94,8 @@ describe('SeedanceTrendPublisher', () => {
     expect(await screen.findByText('Исходный @Image1')).toBeInTheDocument()
     expect(screen.getByText('Исходный @Image2')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /@Video1 · скрыто закреплён/i })).toBeInTheDocument()
+    const replaceButtons = screen.getAllByRole('button', { name: /разрешить замену/i })
+    fireEvent.click(replaceButtons[replaceButtons.length - 1])
 
     const publishButton = screen.getByRole('button', { name: /^Опубликовать тренд$/i })
     await waitFor(() => expect(publishButton).toBeEnabled())
@@ -104,8 +106,11 @@ describe('SeedanceTrendPublisher', () => {
       taskId: task.task_id,
       identityImageIndex: 1,
       fixedImageIndices: [2],
-      fixedVideoIndices: [1],
+      fixedVideoIndices: [],
       fixedAudioIndices: [],
+      replaceableImageIndices: [],
+      replaceableVideoIndices: [1],
+      replaceableAudioIndices: [],
     }))
     expect(JSON.stringify(mockedPublish.mock.calls[0][0])).not.toContain('creator.jpg')
     expect(JSON.stringify(mockedPublish.mock.calls[0][0])).not.toContain('dress.jpg')

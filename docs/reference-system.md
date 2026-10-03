@@ -263,18 +263,18 @@ Repeat для trend/Pinterest:
 
 ```text
 исходная @Image1  = лицо автора, заменить при повторе
-исходная @Image2+ = одежда, украшения, предметы, сцена и другие fixed assets
-исходные @VideoN  = fixed video references
-исходные @AudioN  = fixed audio references
+исходная @Image2+ = одежда/предметы: fixed, replaceable или excluded
+исходные @VideoN  = fixed, replaceable или excluded video references
+исходные @AudioN  = fixed, replaceable или excluded audio references
 ```
 
 При повторе:
 
 ```text
-@Image1 = одно новое фото текущего пользователя
-@Image2..N = скрытые fixed image assets тренда
-@Video1..N = скрытые fixed video assets тренда
-@Audio1..N = скрытые fixed audio assets тренда
+@Image1 = новое фото лица текущего пользователя
+@Image2..N = fixed или явно заменяемые пользователем image slots
+@Video1..N = fixed или явно заменяемые пользователем video slots
+@Audio1..N = fixed или явно заменяемые пользователем audio slots
 ```
 
 Нумерация image, video и audio независима. Backend никогда не сортирует refs по
@@ -296,8 +296,10 @@ POST /mini-app/api/admin/trends/seedance/publish
 - не повтором из feed и не уже запущенным trend;
 - содержать лицо автора и минимум один retained asset.
 
-Администратор явно выбирает один identity image и retained image/video/audio
-indices. Автоматическое распознавание лица не используется. Compiler проверяет
+Администратор явно выбирает один identity image, а каждому другому
+image/video/audio задаёт действие: скрыто закрепить, заменить файлом следующего
+пользователя или исключить. Автоматическое распознавание лица не используется.
+Compiler проверяет
 и перенумеровывает все явные bindings из исходного prompt. Если исходный prompt
 не содержит часть или все `@ImageN`/`@VideoN`/`@AudioN`, финальный private guard
 автоматически добавляет точные bindings для каждого выбранного retained asset и
@@ -327,7 +329,7 @@ prompt_id, media_type, position, source_position, role,
 file_url, file_hash, mime_type, size_bytes, label
 ```
 
-Лицо автора в эту таблицу не копируется.
+Лицо автора и исходники всех заменяемых slots в эту таблицу не копируются.
 
 ### 12.4. Public privacy boundary
 
@@ -335,8 +337,12 @@ Public trend payload может раскрывать только форму з�
 
 ```json
 {
-  "reference_count": 1,
-  "reference_labels": ["ВАШЕ ЛИЦО"],
+  "reference_count": 2,
+  "reference_labels": ["ВАШЕ ЛИЦО", "ВАШЕ ВИДЕО · @Video1"],
+  "reference_slots": [
+    {"media_type": "image", "position": 1, "label": "ВАШЕ ЛИЦО"},
+    {"media_type": "video", "position": 1, "label": "ВАШЕ ВИДЕО · @Video1"}
+  ],
   "automatic_hidden_references": true
 }
 ```
@@ -349,7 +355,7 @@ Frontend отправляет только:
 
 ```text
 trend_id
-одно user identity upload
+typed user uploads: media_type + position + URL
 user_values
 client_request_id
 ```
@@ -362,9 +368,9 @@ Seedance 2.0 private-reference trend всегда запускается чер�
 reference arrays, без `first_frame_url`:
 
 ```text
-reference_image_urls = [user_identity, fixed_images...]
-reference_video_urls = fixed_videos
-reference_audio_urls = fixed_audio
+reference_image_urls = exact ordered mix of user and fixed image slots
+reference_video_urls = exact ordered mix of user and fixed video slots
+reference_audio_urls = exact ordered mix of user and fixed audio slots
 ```
 
 Seedance 2.5 private-reference trend всегда использует `scenario=multimodal` и
@@ -374,15 +380,18 @@ Seedance 2.5 private-reference trend всегда использует `scenario
 Для явного Seedance 2.5 video editing recipe:
 
 ```text
-ровно один fixed @Video1
+ровно один fixed или user-replaceable @Video1
 duration = -1
 ratio = adaptive
 source video duration = 4..30 секунд
 ```
 
-Стоимость editing запуска рассчитывается по измеренной длительности исходного
-видео, а не по `-1`. Наличие fixed video reference учитывается существующим
+Стоимость editing запуска рассчитывается по измеренной длительности фактически
+загруженного исходного видео, а не по `-1`. Наличие video reference учитывается существующим
 Seedance video-reference multiplier.
+Чтобы цена каталога и фактическое списание не расходились, replaceable editing
+video должно иметь ту же округлённую вверх длительность, что и исходный ролик;
+иначе запуск блокируется до debit.
 
 ### 12.6. Idempotency
 
@@ -401,8 +410,8 @@ In-flight claim не reclaim-ится автоматически: неизвес
 задачи. Такой claim должен разрешаться reconciliation/admin-диагностикой.
 
 Все validation, asset availability, ownership, binding и capability checks
-выполняются до debit. Identity upload для private-reference trend должен
-принадлежать текущему Telegram user.
+выполняются до debit. Каждый user upload для private-reference trend должен
+принадлежать текущему Telegram user и совпадать с типом сохранённого slot.
 
 ## 13. Source of truth
 

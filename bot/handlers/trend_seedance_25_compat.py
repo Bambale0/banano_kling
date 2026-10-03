@@ -8,6 +8,8 @@ legacy trend models untouched and special-case only the dedicated Seedance model
 
 from __future__ import annotations
 
+import math
+from dataclasses import replace
 from functools import wraps
 from typing import Any
 
@@ -44,12 +46,20 @@ async def _run_seedance25_trend(
     ]
     video_references = [
         str(value or "").strip()
-        for value in getattr(trend, "template_video_urls", ())
+        for value in getattr(
+            trend,
+            "provider_video_urls",
+            getattr(trend, "template_video_urls", ()),
+        )
         if str(value or "").strip()
     ]
     audio_references = [
         str(value or "").strip()
-        for value in getattr(trend, "template_audio_urls", ())
+        for value in getattr(
+            trend,
+            "provider_audio_urls",
+            getattr(trend, "template_audio_urls", ()),
+        )
         if str(value or "").strip()
     ]
     if not references:
@@ -59,7 +69,23 @@ async def _run_seedance25_trend(
         [*references, *video_references, *audio_references],
         miniapp_module,
     )
-    await trend_api.touch_saved_references(telegram_id, user_references, kind="image")
+    user_inputs = list(getattr(trend, "user_reference_inputs", ()) or ())
+    if user_inputs:
+        for media_type in ("image", "video", "audio"):
+            urls = [
+                str(item.get("url") or "").strip()
+                for item in user_inputs
+                if item.get("media_type") == media_type
+                and str(item.get("url") or "").strip()
+            ]
+            if urls:
+                await trend_api.touch_saved_references(
+                    telegram_id, urls, kind=media_type
+                )
+    else:
+        await trend_api.touch_saved_references(
+            telegram_id, user_references, kind="image"
+        )
 
     # Seedance 2.5 is exposed through the dedicated compatibility bootstrap and
     # is intentionally absent from the legacy VIDEO_MODELS registry. Using the
@@ -136,7 +162,39 @@ async def _run_seedance25_trend(
     except ValueError as exc:
         raise trend_api.TrendRunValidationError(str(exc)) from exc
 
-    cost = trend_api.estimate_trend_repeat_cost(trend)
+    pricing_trend = trend
+    if video_editing and any(
+        item.get("media_type") == "video" for item in user_inputs
+    ):
+        from . import seedance_25_fullstack as fullstack
+
+        measured_duration = await fullstack._validate_local_source(
+            video_references[0], "video"
+        )
+        if measured_duration is None or not 4 <= measured_duration <= 30:
+            raise trend_api.TrendRunValidationError(
+                "Для редактирования исходное видео должно быть 4–30 секунд"
+            )
+        required_duration = trend_api._int_setting(
+            trend.settings,
+            "required_video_duration_seconds",
+            trend_api._int_setting(
+                trend.settings, "source_video_duration_seconds", 5
+            ),
+        )
+        measured_seconds = math.ceil(measured_duration)
+        if measured_seconds != required_duration:
+            raise trend_api.TrendRunValidationError(
+                f"Для этого тренда загрузите видео длительностью {required_duration} сек."
+            )
+        pricing_trend = replace(
+            trend,
+            settings={
+                **trend.settings,
+                "source_video_duration_seconds": measured_seconds,
+            },
+        )
+    cost = trend_api.estimate_trend_repeat_cost(pricing_trend)
     if cost is None:
         raise trend_api.TrendRunValidationError(
             "Не удалось определить стоимость Seedance 2.5 тренда"

@@ -5,6 +5,7 @@ import pytest
 from bot.seedance_trend_recipe import (
     SeedanceTrendRecipeError,
     assemble_seedance_trend_inputs,
+    assemble_seedance_trend_slot_inputs,
     compile_seedance_trend_recipe,
     extract_seedance_reference_snapshot,
 )
@@ -16,6 +17,8 @@ EARRINGS = "https://example.test/earrings.png"
 MOTION = "https://example.test/motion.mp4"
 AUDIO = "https://example.test/audio.mp3"
 USER_FACE = "https://example.test/user-face.png"
+USER_DRESS = "https://example.test/user-dress.png"
+USER_MOTION = "https://example.test/user-motion.mp4"
 
 
 def test_extracts_seedance20_snapshot_in_provider_image_order() -> None:
@@ -79,6 +82,133 @@ def test_compiler_replaces_author_identity_with_user_image_one() -> None:
     assert "@Image3" in recipe.prompt
     assert "@Video1" in recipe.prompt
     assert "SEEDANCE_TREND_IDENTITY_CONTRACT_V1" in recipe.prompt
+
+
+def test_compiler_builds_replaceable_image_and_video_slots_without_persisting_sources() -> (
+    None
+):
+    recipe = compile_seedance_trend_recipe(
+        prompt="Person @Image1 wears @Image2 with @Image3 and follows @Video1.",
+        model="seedance_2_5",
+        source_images=[FACE, DRESS, EARRINGS],
+        source_videos=[MOTION],
+        source_audios=[],
+        identity_image_index=1,
+        fixed_image_indices=[3],
+        fixed_video_indices=[],
+        fixed_audio_indices=[],
+        replaceable_image_indices=[2],
+        replaceable_video_indices=[1],
+    )
+
+    assert [
+        (slot.media_type, slot.position, slot.source_position)
+        for slot in recipe.user_slots
+    ] == [
+        ("image", 1, 1),
+        ("image", 2, 2),
+        ("video", 1, 1),
+    ]
+    assert [asset.source_url for asset in recipe.assets] == [EARRINGS]
+    assert DRESS not in [asset.source_url for asset in recipe.assets]
+    assert MOTION not in [asset.source_url for asset in recipe.assets]
+
+
+def test_assemble_typed_slots_restores_exact_provider_positions() -> None:
+    images, videos, audios = assemble_seedance_trend_slot_inputs(
+        [
+            {"media_type": "video", "position": 1, "url": USER_MOTION},
+            {"media_type": "image", "position": 2, "url": USER_DRESS},
+            {"media_type": "image", "position": 1, "url": USER_FACE},
+        ],
+        [
+            {"media_type": "image", "position": 1, "label": "ВАШЕ ЛИЦО"},
+            {"media_type": "image", "position": 2, "label": "ВАША ОДЕЖДА"},
+            {"media_type": "video", "position": 1, "label": "ВАШЕ ВИДЕО"},
+        ],
+        [{"media_type": "image", "position": 3, "file_url": EARRINGS}],
+    )
+
+    assert images == [USER_FACE, USER_DRESS, EARRINGS]
+    assert videos == [USER_MOTION]
+    assert audios == []
+
+
+def test_assemble_typed_slots_rejects_missing_or_extra_slot() -> None:
+    slots = [{"media_type": "image", "position": 1, "label": "ВАШЕ ЛИЦО"}]
+    with pytest.raises(SeedanceTrendRecipeError, match="exactly match"):
+        assemble_seedance_trend_slot_inputs([], slots, [])
+    with pytest.raises(SeedanceTrendRecipeError, match="exactly match"):
+        assemble_seedance_trend_slot_inputs(
+            [
+                {"media_type": "image", "position": 1, "url": USER_FACE},
+                {"media_type": "video", "position": 1, "url": USER_MOTION},
+            ],
+            slots,
+            [],
+        )
+
+
+def test_assemble_typed_slots_rejects_one_url_reused_for_multiple_slots() -> None:
+    with pytest.raises(SeedanceTrendRecipeError, match="duplicated"):
+        assemble_seedance_trend_slot_inputs(
+            [
+                {"media_type": "image", "position": 1, "url": USER_FACE},
+                {"media_type": "video", "position": 1, "url": USER_FACE},
+            ],
+            [
+                {"media_type": "image", "position": 1, "label": "ЛИЦО"},
+                {"media_type": "video", "position": 1, "label": "ВИДЕО"},
+            ],
+            [],
+        )
+
+
+def test_compiler_rejects_more_than_twelve_user_slots() -> None:
+    images = [f"https://example.test/image-{index}.jpg" for index in range(1, 14)]
+    with pytest.raises(SeedanceTrendRecipeError, match="at most 12"):
+        compile_seedance_trend_recipe(
+            prompt="Use @Image1.",
+            model="seedance_2_5",
+            source_images=images,
+            source_videos=[],
+            source_audios=[],
+            identity_image_index=1,
+            fixed_image_indices=[],
+            fixed_video_indices=[],
+            fixed_audio_indices=[],
+            replaceable_image_indices=list(range(2, 14)),
+        )
+
+
+def test_compiler_replaces_stale_generated_guard_for_new_slot_roles() -> None:
+    first = compile_seedance_trend_recipe(
+        prompt="Person @Image1 wears @Image2.",
+        model="seedance_2",
+        source_images=[FACE, DRESS],
+        source_videos=[],
+        source_audios=[],
+        identity_image_index=1,
+        fixed_image_indices=[2],
+        fixed_video_indices=[],
+        fixed_audio_indices=[],
+    )
+    second = compile_seedance_trend_recipe(
+        prompt=first.prompt,
+        model="seedance_2",
+        source_images=[FACE, DRESS],
+        source_videos=[],
+        source_audios=[],
+        identity_image_index=1,
+        fixed_image_indices=[],
+        fixed_video_indices=[],
+        fixed_audio_indices=[],
+        replaceable_image_indices=[2],
+    )
+
+    assert second.prompt.count("SEEDANCE_TREND_IDENTITY_CONTRACT_V1") == 1
+    assert "@Image2 are private fixed template" not in second.prompt
+    assert "@Image2 are uploaded by the current user" in second.prompt
 
 
 def test_compiler_rejects_empty_source_prompt() -> None:

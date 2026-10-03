@@ -42,13 +42,72 @@ def test_trend_run_request_ignores_client_generation_settings():
             "generation_settings": {"model": "attacker-model"},
         }
     )
-
     assert request.trend_id == 42
     assert request.reference_urls == ("https://example.test/ref.jpg",)
     assert not hasattr(request, "model")
     assert not hasattr(request, "prompt")
     assert not hasattr(request, "ratio")
 
+
+def test_trend_run_request_preserves_typed_reference_slots() -> None:
+    request = parse_trend_run_request(
+        {
+            "trend_id": 42,
+            "reference_urls": [
+                "https://example.test/face.jpg",
+                "https://example.test/motion.mp4",
+            ],
+            "reference_inputs": [
+                {
+                    "media_type": "image",
+                    "position": 1,
+                    "url": "https://example.test/face.jpg",
+                },
+                {
+                    "media_type": "video",
+                    "position": 1,
+                    "url": "https://example.test/motion.mp4",
+                },
+            ],
+        }
+    )
+    assert request.reference_inputs == (
+        {
+            "media_type": "image",
+            "position": 1,
+            "url": "https://example.test/face.jpg",
+        },
+        {
+            "media_type": "video",
+            "position": 1,
+            "url": "https://example.test/motion.mp4",
+        },
+    )
+
+
+def test_trend_run_request_rejects_one_url_reused_across_typed_slots() -> None:
+    with pytest.raises(TrendRunValidationError, match="повторяющийся"):
+        parse_trend_run_request(
+            {
+                "trend_id": 42,
+                "reference_urls": [
+                    "https://example.test/shared-upload",
+                    "https://example.test/shared-upload",
+                ],
+                "reference_inputs": [
+                    {
+                        "media_type": "image",
+                        "position": 1,
+                        "url": "https://example.test/shared-upload",
+                    },
+                    {
+                        "media_type": "video",
+                        "position": 1,
+                        "url": "https://example.test/shared-upload",
+                    },
+                ],
+            }
+        )
 
 def test_trusted_trend_run_uses_only_saved_admin_settings():
     run = trusted_trend_run(
@@ -290,6 +349,36 @@ def test_repeat_cost_uses_saved_video_duration_and_quality(monkeypatch):
     assert seen == {"model": "seedance_2_5", "duration": 12, "quality": "720p"}
 
 
+def test_catalog_cost_includes_replaceable_video_reference_multiplier(monkeypatch):
+    from bot import trend_api as trend_api_module
+    from bot.services.preset_manager import preset_manager
+
+    monkeypatch.setattr(
+        preset_manager,
+        "get_video_cost_with_quality",
+        lambda _model, _duration, _quality: 10.0,
+    )
+    monkeypatch.setattr(
+        trend_api_module,
+        "apply_video_reference_cost",
+        lambda _model, base, refs: base * (2 if refs else 1),
+    )
+    trend = _private_seedance_trend()
+    trend["model"] = "seedance_2_5"
+    trend["generation_settings"] = {
+        **trend["generation_settings"],
+        "model": "seedance_2_5",
+        "seedance25_resolution": "720p",
+        "fixed_video_reference_count": 0,
+        "reference_slots": [
+            {"media_type": "image", "position": 1, "label": "ЛИЦО"},
+            {"media_type": "video", "position": 1, "label": "ВИДЕО"},
+        ],
+    }
+
+    assert estimate_trend_repeat_cost(trend) == 20.0
+
+
 def _private_seedance_trend(**overrides):
     trend = {
         "id": 77,
@@ -343,6 +432,49 @@ def test_trusted_private_seedance_trend_assembles_hidden_assets_server_side():
     )
     assert run.template_video_urls == ("https://example.test/motion.mp4",)
     assert run.reference_contract == "seedance_identity_first"
+
+
+def test_trusted_private_seedance_v2_replaces_image_and_video_slots() -> None:
+    trend = _private_seedance_trend()
+    trend["generation_settings"] = {
+        **trend["generation_settings"],
+        "reference_plan_version": 2,
+        "reference_count": 3,
+        "reference_slots": [
+            {"media_type": "image", "position": 1, "label": "ВАШЕ ЛИЦО"},
+            {"media_type": "image", "position": 2, "label": "ВАША ОДЕЖДА"},
+            {"media_type": "video", "position": 1, "label": "ВАШЕ ВИДЕО"},
+        ],
+        "fixed_image_reference_count": 1,
+        "fixed_video_reference_count": 0,
+    }
+    reference_inputs = (
+        {"media_type": "image", "position": 1, "url": "https://example.test/user-face.png"},
+        {"media_type": "image", "position": 2, "url": "https://example.test/user-dress.png"},
+        {"media_type": "video", "position": 1, "url": "https://example.test/user-motion.mp4"},
+    )
+
+    run = trusted_trend_run(
+        trend,
+        tuple(item["url"] for item in reference_inputs),
+        template_assets=[
+            {
+                "media_type": "image",
+                "position": 3,
+                "file_url": "https://example.test/hidden-accessory.png",
+            }
+        ],
+        reference_inputs=reference_inputs,
+    )
+
+    assert run.provider_image_urls == (
+        "https://example.test/user-face.png",
+        "https://example.test/user-dress.png",
+        "https://example.test/hidden-accessory.png",
+    )
+    assert run.provider_video_urls == ("https://example.test/user-motion.mp4",)
+    assert run.template_image_urls == ("https://example.test/hidden-accessory.png",)
+    assert run.template_video_urls == ()
 
 
 def test_trusted_private_seedance_trend_fails_closed_without_assets():

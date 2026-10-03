@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from bot import seedance_trend_admin_api as api
+from bot.seedance_trend_recipe import compile_seedance_trend_recipe
 
 
 @pytest.mark.asyncio
@@ -96,6 +97,42 @@ async def test_editing_trend_settings_use_measured_hidden_video_duration(monkeyp
         "https://assets.example.test/uploads/trend-assets/source.mp4",
         "video",
     )
+
+
+@pytest.mark.asyncio
+async def test_generation_settings_publish_safe_replaceable_video_slot_plan() -> None:
+    recipe = compile_seedance_trend_recipe(
+        prompt="Person @Image1 wears @Image2 and follows @Video1.",
+        model="seedance_2_5",
+        source_images=["https://source.test/face.jpg", "https://source.test/dress.jpg"],
+        source_videos=["https://source.test/motion.mp4"],
+        source_audios=[],
+        identity_image_index=1,
+        fixed_image_indices=[2],
+        fixed_video_indices=[],
+        fixed_audio_indices=[],
+        replaceable_video_indices=[1],
+    )
+    settings = await api._generation_settings(
+        {"model": "seedance_2_5", "duration": 5, "aspect_ratio": "9:16"},
+        {"resolution": "720p"},
+        recipe,
+        [{"media_type": "image", "file_url": "/uploads/trend-assets/dress.jpg"}],
+    )
+
+    assert settings["reference_plan_version"] == 2
+    assert settings["reference_slots"] == [
+        {"media_type": "image", "position": 1, "label": "ВАШЕ ЛИЦО"},
+        {
+            "media_type": "video",
+            "position": 1,
+            "label": "ВАШЕ ВИДЕО · @Video1",
+        },
+    ]
+    assert settings["fixed_image_reference_count"] == 1
+    assert settings["fixed_video_reference_count"] == 0
+    assert settings["automatic_hidden_references"] is True
+    assert "source.test" not in json.dumps(settings)
 
 
 @pytest.mark.asyncio

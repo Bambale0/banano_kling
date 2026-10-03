@@ -19,9 +19,10 @@ from bot.services.seedance_reference_binding import (
 
 SUPPORTED_MODELS = frozenset({"seedance_2", "seedance_2_5"})
 REFERENCE_CONTRACT = "seedance_identity_first"
-REFERENCE_PLAN_VERSION = 1
+REFERENCE_PLAN_VERSION = 2
 PROMPT_MARKER = "SEEDANCE_TREND_IDENTITY_CONTRACT_V1"
 _PROMPT_LIMITS = {"seedance_2": 20_000, "seedance_2_5": 30_000}
+MAX_USER_REFERENCE_SLOTS = 12
 
 _TAG_RE = re.compile(
     r"@\s*(?P<kind>image|img|video|audio)\s*[_-]?\s*(?P<index>\d+)(?!\w)",
@@ -51,11 +52,20 @@ class SeedanceTrendAsset:
 
 
 @dataclass(frozen=True)
+class SeedanceUserReferenceSlot:
+    media_type: str
+    position: int
+    source_position: int
+    label: str
+
+
+@dataclass(frozen=True)
 class CompiledSeedanceTrendRecipe:
     model: str
     prompt: str
     assets: tuple[SeedanceTrendAsset, ...]
     identity_source_position: int
+    user_slots: tuple[SeedanceUserReferenceSlot, ...] = ()
 
     @property
     def image_assets(self) -> tuple[SeedanceTrendAsset, ...]:
@@ -219,6 +229,9 @@ def compile_seedance_trend_recipe(
     fixed_image_indices: Sequence[int],
     fixed_video_indices: Sequence[int],
     fixed_audio_indices: Sequence[int],
+    replaceable_image_indices: Sequence[int] = (),
+    replaceable_video_indices: Sequence[int] = (),
+    replaceable_audio_indices: Sequence[int] = (),
 ) -> CompiledSeedanceTrendRecipe:
     """Compile a creator task into a private identity-substitution recipe."""
 
@@ -256,52 +269,133 @@ def compile_seedance_trend_recipe(
         upper=len(audios),
         label="audio",
     )
+    replaceable_images = _normalize_indices(
+        replaceable_image_indices,
+        upper=len(images),
+        label="replaceable image",
+    )
+    replaceable_videos = _normalize_indices(
+        replaceable_video_indices,
+        upper=len(videos),
+        label="replaceable video",
+    )
+    replaceable_audios = _normalize_indices(
+        replaceable_audio_indices,
+        upper=len(audios),
+        label="replaceable audio",
+    )
     if identity_position in fixed_images:
         raise SeedanceTrendRecipeError(
             "The creator identity cannot also be a fixed asset"
         )
-    if not fixed_images and not fixed_videos and not fixed_audios:
-        raise SeedanceTrendRecipeError("Keep at least one hidden template reference")
+    if identity_position in replaceable_images:
+        raise SeedanceTrendRecipeError(
+            "The creator identity is already the primary replaceable image"
+        )
+    for kind, fixed, replaceable in (
+        ("image", fixed_images, replaceable_images),
+        ("video", fixed_videos, replaceable_videos),
+        ("audio", fixed_audios, replaceable_audios),
+    ):
+        overlap = sorted(set(fixed) & set(replaceable))
+        if overlap:
+            raise SeedanceTrendRecipeError(
+                f"A {kind} reference cannot be both fixed and replaceable: {overlap}"
+            )
+    if not any(
+        (
+            fixed_images,
+            fixed_videos,
+            fixed_audios,
+            replaceable_images,
+            replaceable_videos,
+            replaceable_audios,
+        )
+    ):
+        raise SeedanceTrendRecipeError(
+            "Keep or replace at least one template reference"
+        )
 
     image_mapping: dict[int, int] = {identity_position: 1}
     assets: list[SeedanceTrendAsset] = []
-    for target_position, source_position in enumerate(fixed_images, start=2):
-        image_mapping[source_position] = target_position
-        assets.append(
-            SeedanceTrendAsset(
-                media_type="image",
-                position=target_position,
-                source_position=source_position,
-                source_url=images[source_position - 1],
-                label=f"@Image{target_position}",
-            )
+    user_slots: list[SeedanceUserReferenceSlot] = [
+        SeedanceUserReferenceSlot(
+            media_type="image",
+            position=1,
+            source_position=identity_position,
+            label="ВАШЕ ЛИЦО",
         )
+    ]
+    included_images = sorted((*fixed_images, *replaceable_images))
+    for target_position, source_position in enumerate(included_images, start=2):
+        image_mapping[source_position] = target_position
+        if source_position in replaceable_images:
+            user_slots.append(
+                SeedanceUserReferenceSlot(
+                    media_type="image",
+                    position=target_position,
+                    source_position=source_position,
+                    label=f"ВАШЕ ФОТО · @Image{target_position}",
+                )
+            )
+        else:
+            assets.append(
+                SeedanceTrendAsset(
+                    media_type="image",
+                    position=target_position,
+                    source_position=source_position,
+                    source_url=images[source_position - 1],
+                    label=f"@Image{target_position}",
+                )
+            )
 
     video_mapping: dict[int, int] = {}
-    for target_position, source_position in enumerate(fixed_videos, start=1):
+    included_videos = sorted((*fixed_videos, *replaceable_videos))
+    for target_position, source_position in enumerate(included_videos, start=1):
         video_mapping[source_position] = target_position
-        assets.append(
-            SeedanceTrendAsset(
-                media_type="video",
-                position=target_position,
-                source_position=source_position,
-                source_url=videos[source_position - 1],
-                label=f"@Video{target_position}",
+        if source_position in replaceable_videos:
+            user_slots.append(
+                SeedanceUserReferenceSlot(
+                    media_type="video",
+                    position=target_position,
+                    source_position=source_position,
+                    label=f"ВАШЕ ВИДЕО · @Video{target_position}",
+                )
             )
-        )
+        else:
+            assets.append(
+                SeedanceTrendAsset(
+                    media_type="video",
+                    position=target_position,
+                    source_position=source_position,
+                    source_url=videos[source_position - 1],
+                    label=f"@Video{target_position}",
+                )
+            )
 
     audio_mapping: dict[int, int] = {}
-    for target_position, source_position in enumerate(fixed_audios, start=1):
+    included_audios = sorted((*fixed_audios, *replaceable_audios))
+    for target_position, source_position in enumerate(included_audios, start=1):
         audio_mapping[source_position] = target_position
-        assets.append(
-            SeedanceTrendAsset(
-                media_type="audio",
-                position=target_position,
-                source_position=source_position,
-                source_url=audios[source_position - 1],
-                label=f"@Audio{target_position}",
+        if source_position in replaceable_audios:
+            user_slots.append(
+                SeedanceUserReferenceSlot(
+                    media_type="audio",
+                    position=target_position,
+                    source_position=source_position,
+                    label=f"ВАШЕ АУДИО · @Audio{target_position}",
+                )
             )
-        )
+        else:
+            assets.append(
+                SeedanceTrendAsset(
+                    media_type="audio",
+                    position=target_position,
+                    source_position=source_position,
+                    source_url=audios[source_position - 1],
+                    label=f"@Audio{target_position}",
+                )
+            )
 
     source_counts = {"image": len(images), "video": len(videos), "audio": len(audios)}
     mappings = {
@@ -310,8 +404,15 @@ def compile_seedance_trend_recipe(
         "audio": audio_mapping,
     }
     source_prompt = str(prompt or "").strip()
+    marker_offset = source_prompt.find(f"\n\n{PROMPT_MARKER}")
+    if marker_offset >= 0:
+        source_prompt = source_prompt[:marker_offset].rstrip()
     if not source_prompt:
         raise SeedanceTrendRecipeError("The source task prompt is empty")
+    if len(user_slots) > MAX_USER_REFERENCE_SLOTS:
+        raise SeedanceTrendRecipeError(
+            f"A trend can have at most {MAX_USER_REFERENCE_SLOTS} replaceable references"
+        )
 
     canonical_source_prompt = canonicalize_seedance_reference_tags(
         source_prompt,
@@ -343,9 +444,9 @@ def compile_seedance_trend_recipe(
         mappings=mappings,
     )
     target_counts = {
-        "image": 1 + len(fixed_images),
-        "video": len(fixed_videos),
-        "audio": len(fixed_audios),
+        "image": 1 + len(included_images),
+        "video": len(included_videos),
+        "audio": len(included_audios),
     }
     missing = missing_seedance_reference_tags(
         remapped_prompt,
@@ -358,7 +459,11 @@ def compile_seedance_trend_recipe(
             "Prompt references media excluded from the trend: " + ", ".join(missing)
         )
 
-    required = {"@Image1", *(asset.label for asset in assets)}
+    required = {
+        "@Image1",
+        *(asset.label for asset in assets),
+        *(_canonical_tag(slot.media_type, slot.position) for slot in user_slots),
+    }
 
     guard_lines = [
         f"{PROMPT_MARKER}",
@@ -367,7 +472,7 @@ def compile_seedance_trend_recipe(
     ]
     if fixed_images:
         image_slots = ", ".join(
-            f"@Image{index}" for index in range(2, 2 + len(fixed_images))
+            asset.label for asset in assets if asset.media_type == "image"
         )
         guard_lines.append(
             f"- {image_slots} are private fixed template images. Use only the clothing, "
@@ -376,7 +481,7 @@ def compile_seedance_trend_recipe(
         )
     if fixed_videos:
         video_slots = ", ".join(
-            f"@Video{index}" for index in range(1, 1 + len(fixed_videos))
+            asset.label for asset in assets if asset.media_type == "video"
         )
         guard_lines.append(
             f"- {video_slots} are private fixed template videos. Use only their requested "
@@ -384,11 +489,24 @@ def compile_seedance_trend_recipe(
         )
     if fixed_audios:
         audio_slots = ", ".join(
-            f"@Audio{index}" for index in range(1, 1 + len(fixed_audios))
+            asset.label for asset in assets if asset.media_type == "audio"
         )
         guard_lines.append(
             f"- {audio_slots} are private fixed template audio references. Use only their "
             "requested sound or timing details."
+        )
+    replaceable_non_identity = [
+        slot
+        for slot in user_slots
+        if not (slot.media_type == "image" and slot.position == 1)
+    ]
+    if replaceable_non_identity:
+        slot_labels = ", ".join(
+            _canonical_tag(slot.media_type, slot.position)
+            for slot in replaceable_non_identity
+        )
+        guard_lines.append(
+            f"- {slot_labels} are uploaded by the current user and replace the corresponding template references."
         )
     guard_lines.extend(
         [
@@ -421,7 +539,90 @@ def compile_seedance_trend_recipe(
         prompt=compiled_prompt,
         assets=tuple(assets),
         identity_source_position=identity_position,
+        user_slots=tuple(user_slots),
     )
+
+
+def assemble_seedance_trend_slot_inputs(
+    submitted_inputs: Sequence[Mapping[str, Any]],
+    configured_slots: Sequence[Mapping[str, Any]],
+    stored_assets: Sequence[Mapping[str, Any]],
+) -> tuple[list[str], list[str], list[str]]:
+    """Assemble typed v2 inputs in exact provider positions."""
+
+    allowed_types = {"image", "video", "audio"}
+
+    def keyed(
+        values: Sequence[Mapping[str, Any]], *, url_key: str
+    ) -> dict[tuple[str, int], str]:
+        result: dict[tuple[str, int], str] = {}
+        seen_urls: set[str] = set()
+        for value in values:
+            media_type = str(value.get("media_type") or "").strip().lower()
+            try:
+                position = int(value.get("position"))
+            except (TypeError, ValueError) as exc:
+                raise SeedanceTrendRecipeError(
+                    "Trend reference slot has an invalid position"
+                ) from exc
+            url = str(value.get(url_key) or "").strip()
+            key = (media_type, position)
+            if (
+                media_type not in allowed_types
+                or position < 1
+                or not url
+                or key in result
+                or url in seen_urls
+            ):
+                raise SeedanceTrendRecipeError(
+                    "Trend reference slot is incomplete or duplicated"
+                )
+            result[key] = url
+            seen_urls.add(url)
+        return result
+
+    expected: set[tuple[str, int]] = set()
+    for slot in configured_slots:
+        media_type = str(slot.get("media_type") or "").strip().lower()
+        try:
+            position = int(slot.get("position"))
+        except (TypeError, ValueError) as exc:
+            raise SeedanceTrendRecipeError(
+                "Configured trend slot has an invalid position"
+            ) from exc
+        key = (media_type, position)
+        if media_type not in allowed_types or position < 1 or key in expected:
+            raise SeedanceTrendRecipeError("Configured trend slots are invalid")
+        expected.add(key)
+
+    submitted = keyed(submitted_inputs, url_key="url")
+    if set(submitted) != expected:
+        raise SeedanceTrendRecipeError(
+            "Submitted references must exactly match the configured trend slots"
+        )
+    fixed = keyed(stored_assets, url_key="file_url")
+    if set(fixed) & expected:
+        raise SeedanceTrendRecipeError(
+            "A trend slot cannot be both fixed and replaceable"
+        )
+    if set(fixed.values()) & set(submitted.values()):
+        raise SeedanceTrendRecipeError("Trend reference URLs must be unique")
+
+    combined = {**fixed, **submitted}
+    output: dict[str, list[str]] = {"image": [], "video": [], "audio": []}
+    for media_type in ("image", "video", "audio"):
+        pairs = sorted(
+            (position, url)
+            for (kind, position), url in combined.items()
+            if kind == media_type
+        )
+        positions = [position for position, _url in pairs]
+        if positions != list(range(1, len(pairs) + 1)):
+            raise SeedanceTrendRecipeError(
+                f"Trend {media_type} reference positions are not contiguous: {positions}"
+            )
+        output[media_type] = [url for _position, url in pairs]
+    return output["image"], output["video"], output["audio"]
 
 
 def assemble_seedance_trend_inputs(

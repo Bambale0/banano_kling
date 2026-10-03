@@ -210,4 +210,61 @@ describe('TrendRunnerDialog user fields', () => {
     expect(secondId).toBe(firstId)
     expect(mockedCreateTrendRunRequestId).toHaveBeenCalledTimes(1)
   })
+
+  it('uploads and submits a replaceable Seedance video in its typed slot', async () => {
+    const typedTrend: PromptItem = {
+      ...trend,
+      generation_settings: {
+        ...trend.generation_settings!,
+        reference_count: 2,
+        reference_labels: ['ВАШЕ ЛИЦО', 'ВАШЕ ВИДЕО · @Video1'],
+        reference_slots: [
+          { media_type: 'image', position: 1, label: 'ВАШЕ ЛИЦО' },
+          { media_type: 'video', position: 1, label: 'ВАШЕ ВИДЕО · @Video1' },
+        ],
+        user_fields: [],
+      },
+    }
+    mockedUploadFile
+      .mockResolvedValueOnce({
+        id: 'face', name: 'face.jpg', url: 'https://example.test/face.jpg', type: 'image', size: 10,
+      })
+      .mockResolvedValueOnce({
+        id: 'motion', name: 'motion.mp4', url: 'https://example.test/motion.mp4', type: 'video', size: 20,
+      })
+
+    const { container } = render(
+      <TrendRunnerDialog trend={typedTrend} open onOpenChange={jest.fn()} />,
+    )
+    const inputs = Array.from(container.querySelectorAll('input[type="file"]'))
+    fireEvent.change(inputs[0], {
+      target: { files: [new File(['image'], 'face.jpg', { type: 'image/jpeg' })] },
+    })
+    await waitFor(() => expect(mockedUploadFile).toHaveBeenCalledWith('image_reference', expect.any(File)))
+    await waitFor(() => expect(inputs[1]).not.toBeDisabled())
+    fireEvent.change(inputs[1], {
+      target: { files: [new File(['video'], 'motion.webm', { type: 'video/webm' })] },
+    })
+    expect(await screen.findByText(/не подходит для слота ВАШЕ ВИДЕО/i)).toBeInTheDocument()
+    expect(mockedUploadFile).toHaveBeenCalledTimes(1)
+    fireEvent.change(inputs[1], {
+      target: { files: [new File(['video'], 'motion.mp4', { type: 'video/mp4' })] },
+    })
+    await waitFor(() => expect(mockedUploadFile).toHaveBeenCalledWith('video_reference', expect.any(File)))
+
+    const generateButton = screen.getByRole('button', { name: /Сгенерировать/ })
+    await waitFor(() => expect(generateButton).toBeEnabled())
+    fireEvent.click(generateButton)
+
+    await waitFor(() => expect(mockedRunTrend).toHaveBeenCalledWith(
+      42,
+      ['https://example.test/face.jpg', 'https://example.test/motion.mp4'],
+      {},
+      expect.any(String),
+      [
+        { media_type: 'image', position: 1, url: 'https://example.test/face.jpg' },
+        { media_type: 'video', position: 1, url: 'https://example.test/motion.mp4' },
+      ],
+    ))
+  })
 })
