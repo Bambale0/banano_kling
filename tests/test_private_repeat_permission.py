@@ -287,3 +287,35 @@ async def test_legacy_retry_without_marker_requires_live_root_permission(monkeyp
     assert not await main._image_retry_private_references_allowed(task, json.loads(task.request_data))
     root["feed_repeat_reference_selection"] = {"images": [ref]}
     assert await main._image_retry_private_references_allowed(task, json.loads(task.request_data))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["get_error", "get_exception", "post_exception"])
+async def test_shared_kie_adapter_never_logs_private_urls(monkeypatch, caplog, operation):
+    import importlib
+    module = importlib.import_module("bot.services.kling_service")
+    secret = "https://example.test/secret-shared-adapter.png"
+    class Response:
+        status = 400
+        async def __aenter__(self):
+            if operation.endswith("exception"):
+                raise RuntimeError("failed to fetch " + secret)
+            return self
+        async def __aexit__(self, *_args):
+            return False
+        async def text(self):
+            return json.dumps({"error": "failed to fetch " + secret, "input": {"image_urls": [secret]}})
+    class Session:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *_args):
+            return False
+        def get(self, *_args, **_kwargs):
+            return Response()
+        def post(self, *_args, **_kwargs):
+            return Response()
+    monkeypatch.setattr(module.aiohttp, "ClientSession", lambda **_kwargs: Session())
+    service = module.KlingService(kie_key="synthetic-test-only")
+    result = await service._kie_post("/synthetic", {"input": {"image_urls": [secret]}}) if operation == "post_exception" else await service._kie_get("/synthetic")
+    assert secret not in caplog.text
+    assert secret not in json.dumps(result)

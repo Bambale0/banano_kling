@@ -22,6 +22,8 @@ from typing import Any, Dict, List, Optional
 
 import aiohttp
 
+from bot.utils.user_facing_errors import sanitize_provider_log_payload
+
 logger = logging.getLogger(__name__)
 
 _KLING_ELEMENT_ALIAS_RE = re.compile(r"@(?P<name>element_[A-Za-z0-9_-]+)\b")
@@ -111,9 +113,9 @@ class KlingService:
                     ),
                 ) as response:
                     return self._parse_kie_create_response(await response.text())
-        except Exception as exc:
-            logger.exception("Kie.ai request error: %s", exc)
-            return self._build_error("network_error", f"Network error: {exc}")
+        except Exception as exc:  # noqa: BLE001 - provider boundary returns sanitized failure
+            logger.error("Kie.ai request error: %s", sanitize_provider_log_payload(exc))
+            return self._build_error("network_error", f"Network error: {sanitize_provider_log_payload(exc)}")
 
     async def _kie_get(
         self, endpoint: str, params: Optional[Dict[str, Any]] = None
@@ -133,11 +135,11 @@ class KlingService:
                     text = await response.text()
                     data = json.loads(text)
                     if response.status >= 400:
-                        logger.error("Kie.ai GET error %s: %s", response.status, data)
+                        logger.error("Kie.ai GET error %s: %s", response.status, sanitize_provider_log_payload(data))
                         return None
                     return data if isinstance(data, dict) else None
-        except Exception as exc:
-            logger.exception("Kie.ai GET error: %s", exc)
+        except Exception as exc:  # noqa: BLE001 - provider boundary returns sanitized failure
+            logger.error("Kie.ai GET error: %s", sanitize_provider_log_payload(exc))
             return None
 
     def _parse_kie_create_response(self, text: str) -> Dict[str, Any]:
