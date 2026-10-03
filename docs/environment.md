@@ -416,6 +416,12 @@ tracks delivery separately: `delivering` holds a lease, `pending` needs retry,
 `unavailable` is terminal when Telegram reports `chat not found`, a blocked bot,
 or a deactivated user. The stored result remains available in Mini App and no
 automatic Telegram retry is scheduled for `unavailable`.
+The nullable `users.telegram_chat_state` capability preserves existing users as
+`unknown`, records newly created Mini App-only users as `unavailable`, and changes
+to `available` after `/start`. Provider callbacks always persist and complete the
+result first. If the chat is known unavailable, they then record terminal delivery
+metadata (`chat_not_started`) without calling Telegram. A later `/start` enables
+delivery for new tasks; it does not resend older results.
 `delivery_link_sent` suppresses duplicate fallback links while file retries continue.
 Completion and its result_ready marker are committed atomically. Legacy completed
 tasks without markers are not automatically resent. Reconciliation

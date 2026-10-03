@@ -1033,6 +1033,131 @@ async def test_seedance25_terminal_chat_error_marks_delivery_unavailable(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_seedance25_recovery_skips_known_chatless_user(monkeypatch):
+    from bot import database
+
+    monkeypatch.setattr(
+        database,
+        "can_attempt_telegram_delivery",
+        AsyncMock(return_value=False),
+    )
+    claim = AsyncMock()
+    mark = AsyncMock()
+    monkeypatch.setattr(fullstack_module, "_claim_seedance25_delivery", claim)
+    monkeypatch.setattr(fullstack_module, "_mark_seedance25_delivery", mark)
+
+    handled = await fullstack_module._retry_seedance25_delivery(
+        {"bot": SimpleNamespace(send_video=AsyncMock())},
+        {
+            "task_id": "seedance-chatless-recovery",
+            "telegram_id": 612441697,
+            "result_url": "https://cdn.example/result.mp4",
+            "result_urls": json.dumps(["https://cdn.example/result.mp4"]),
+        },
+        {"duration": 12},
+    )
+
+    assert handled is True
+    claim.assert_not_awaited()
+    mark.assert_awaited_once_with(
+        "seedance-chatless-recovery",
+        "unavailable",
+        error="chat_not_started",
+    )
+
+
+@pytest.mark.asyncio
+async def test_seedance25_chatless_success_retains_result_without_telegram():
+    from bot import database
+
+    user = await database.get_or_create_user(
+        612441695,
+        initial_telegram_chat_state="unavailable",
+    )
+    await database.add_generation_task(
+        user.id,
+        user.telegram_id,
+        "seedance-chatless-success",
+        "video",
+        "no_preset_video",
+        model="seedance_2_5",
+        request_data={"source": "miniapp", "duration": 12},
+    )
+    bot = SimpleNamespace(send_message=AsyncMock(), send_video=AsyncMock())
+    process = fullstack_module._process_seedance25_payload_original
+
+    handled = await process(
+        {"bot": bot},
+        {
+            "code": 200,
+            "data": {
+                "taskId": "seedance-chatless-success",
+                "state": "success",
+                "resultJson": json.dumps(
+                    {"resultUrls": ["https://cdn.example/result.mp4"]}
+                ),
+            },
+        },
+    )
+
+    task = await database.get_task_by_id("seedance-chatless-success")
+    metadata = json.loads(task.request_data or "{}")
+    assert handled is True
+    assert task.status == "completed"
+    assert task.result_url == "https://cdn.example/result.mp4"
+    assert metadata["delivery_status"] == "unavailable"
+    assert metadata["delivery_error"] == "chat_not_started"
+    bot.send_message.assert_not_awaited()
+    bot.send_video.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_seedance25_chatless_failure_does_not_call_telegram(monkeypatch):
+    from bot import database
+
+    user = await database.get_or_create_user(
+        612441696,
+        initial_telegram_chat_state="unavailable",
+    )
+    await database.add_generation_task(
+        user.id,
+        user.telegram_id,
+        "seedance-chatless-failure",
+        "video",
+        "no_preset_video",
+        model="seedance_2_5",
+        request_data={"source": "miniapp", "duration": 12},
+    )
+    monkeypatch.setattr(
+        fullstack_module,
+        "_auto_retry_seedance25_video_editing",
+        AsyncMock(return_value=False),
+    )
+    bot = SimpleNamespace(send_message=AsyncMock())
+    process = fullstack_module._process_seedance25_payload_original
+
+    handled = await process(
+        {"bot": bot},
+        {
+            "code": 501,
+            "data": {
+                "taskId": "seedance-chatless-failure",
+                "state": "fail",
+                "failCode": 501,
+                "failMsg": "provider rejected input",
+            },
+        },
+    )
+
+    task = await database.get_task_by_id("seedance-chatless-failure")
+    metadata = json.loads(task.request_data or "{}")
+    assert handled is True
+    assert task.status == "failed"
+    assert metadata["delivery_status"] == "unavailable"
+    bot.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_seedance25_completed_unavailable_result_is_not_retried(monkeypatch):
     row = {
         "task_id": "seedance-chat-unavailable",
@@ -1085,6 +1210,58 @@ async def test_public_seedance_delivery_stops_after_terminal_chat_error(monkeypa
         )
 
     download.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_seedance25_terminal_last_frame_stops_fallback_and_marks_chat(monkeypatch):
+    from bot import database
+
+    bot = SimpleNamespace(
+        send_video=AsyncMock(return_value=None),
+        send_photo=AsyncMock(side_effect=RuntimeError("Bad Request: chat not found")),
+        send_message=AsyncMock(),
+    )
+    mark_chat = AsyncMock(return_value=True)
+    monkeypatch.setattr(database, "mark_telegram_chat_unavailable", mark_chat)
+
+    delivered = await public_release._public_send_results(
+        {"bot": bot},
+        612441698,
+        "seedance-terminal-last-frame",
+        "https://cdn.example/result.mp4",
+        "https://cdn.example/last-frame.png",
+        {"duration": 12, "return_last_frame": True},
+    )
+
+    assert delivered is True
+    mark_chat.assert_awaited_once_with(612441698)
+    bot.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_fullstack_seedance25_terminal_last_frame_marks_chat(monkeypatch):
+    from bot import database
+
+    bot = SimpleNamespace(
+        send_video=AsyncMock(return_value=None),
+        send_photo=AsyncMock(side_effect=RuntimeError("Bad Request: chat not found")),
+        send_message=AsyncMock(),
+    )
+    mark_chat = AsyncMock(return_value=True)
+    monkeypatch.setattr(database, "mark_telegram_chat_unavailable", mark_chat)
+
+    delivered = await fullstack_module._send_seedance25_results(
+        {"bot": bot},
+        612441699,
+        "seedance-fullstack-terminal-last-frame",
+        "https://cdn.example/result.mp4",
+        "https://cdn.example/last-frame.png",
+        {"duration": 12, "return_last_frame": True},
+    )
+
+    assert delivered is True
+    mark_chat.assert_awaited_once_with(612441699)
+    bot.send_message.assert_not_awaited()
 
 
 @pytest.mark.asyncio

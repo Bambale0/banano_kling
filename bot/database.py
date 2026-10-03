@@ -798,6 +798,7 @@ async def init_db():
             "ALTER TABLE users ADD COLUMN first_name TEXT",
             "ALTER TABLE users ADD COLUMN last_name TEXT",
             "ALTER TABLE users ADD COLUMN channel_url TEXT",
+            "ALTER TABLE users ADD COLUMN telegram_chat_state TEXT",
         ):
             try:
                 await db.execute(statement)
@@ -1235,6 +1236,8 @@ async def init_db():
 async def get_or_create_user(
     telegram_id: int,
     referral_code: str | None = None,
+    *,
+    initial_telegram_chat_state: str | None = None,
 ) -> User:
     """Получает или создаёт пользователя (thread-safe).
     
@@ -1244,6 +1247,12 @@ async def get_or_create_user(
     также пытается привязать (через process_referral).
     """
     code = (referral_code or "").strip().upper()
+    normalized_chat_state = str(initial_telegram_chat_state or "").strip().lower()
+    if normalized_chat_state not in {"", "available", "unavailable"}:
+        raise ValueError(
+            f"Unsupported initial Telegram chat state: {initial_telegram_chat_state}"
+        )
+    initial_chat_state = normalized_chat_state or None
     referrer_id: int | None = None
 
     # Ищем реферрера заранее, чтобы не делать лишних запросов в транзакции
@@ -1390,8 +1399,15 @@ async def get_or_create_user(
             # (из bot/services/referral_service.py) после получения user_id.
             # Это закрывает антифрод-дыру: раньше проверки обходились при INSERT.
             await db.execute(
-                "INSERT INTO users (telegram_id, credits, referral_code, referred_by) VALUES (?, ?, ?, NULL)",
-                (telegram_id, PARTNER_NEW_USER_BONUS, new_referral_code),
+                """INSERT INTO users
+                   (telegram_id, credits, referral_code, referred_by, telegram_chat_state)
+                   VALUES (?, ?, ?, NULL, ?)""",
+                (
+                    telegram_id,
+                    PARTNER_NEW_USER_BONUS,
+                    new_referral_code,
+                    initial_chat_state,
+                ),
             )
             await db.commit()
             logger.info(
@@ -1472,6 +1488,45 @@ async def get_or_create_user(
                 else None
             ),
         )
+
+
+async def can_attempt_telegram_delivery(telegram_id: int) -> bool:
+    """Preserve legacy delivery unless Mini App established there is no bot chat."""
+    async with db_backend.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT telegram_chat_state FROM users WHERE telegram_id = ?",
+            (telegram_id,),
+        )
+        row = await cursor.fetchone()
+    if not row:
+        return True
+    state = row["telegram_chat_state"] if hasattr(row, "keys") else row[0]
+    return str(state or "").strip().lower() != "unavailable"
+
+
+async def _mark_telegram_chat_state(telegram_id: int, state: str) -> bool:
+    normalized = str(state or "").strip().lower()
+    if normalized not in {"available", "unavailable"}:
+        raise ValueError(f"Unsupported Telegram chat state: {state}")
+    async with db_backend.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """UPDATE users
+               SET telegram_chat_state = ?, updated_at = CURRENT_TIMESTAMP
+               WHERE telegram_id = ?""",
+            (normalized, telegram_id),
+        )
+        await db.commit()
+    return int(getattr(cursor, "rowcount", 0) or 0) > 0
+
+
+async def mark_telegram_chat_available(telegram_id: int) -> bool:
+    """Record proof that Telegram delivered an update from this private chat."""
+    return await _mark_telegram_chat_state(telegram_id, "available")
+
+
+async def mark_telegram_chat_unavailable(telegram_id: int) -> bool:
+    """Record terminal proof that the bot cannot reach this private chat."""
+    return await _mark_telegram_chat_state(telegram_id, "unavailable")
 
 
 async def get_master_partner_user() -> User:
@@ -5403,6 +5458,14 @@ async def mark_task_delivery_status(
             """,
             (json.dumps(request_data, ensure_ascii=False), int(task.id)),
         )
+        if normalized_status == "unavailable" and task.telegram_id:
+            await db.execute(
+                """UPDATE users
+                   SET telegram_chat_state = 'unavailable',
+                       updated_at = CURRENT_TIMESTAMP
+                   WHERE telegram_id = ?""",
+                (int(task.telegram_id),),
+            )
         await db.commit()
         return int(getattr(cursor, "rowcount", 0) or 0) > 0
 

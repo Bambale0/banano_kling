@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib
+import json
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -150,6 +152,61 @@ async def test_failed_miniapp_launch_does_not_claim_generation_started() -> None
 
 
 @pytest.mark.asyncio
+async def test_miniapp_only_user_does_not_attempt_generation_started_message(
+    monkeypatch,
+) -> None:
+    bot = _FakeBot()
+    can_attempt = AsyncMock(return_value=False)
+    monkeypatch.setattr(
+        "bot.database.can_attempt_telegram_delivery",
+        can_attempt,
+    )
+
+    await miniapp_module._notify_miniapp_image_task_queued(
+        {"bot": bot},
+        123,
+        {
+            "status": "queued",
+            "task_id": "provider-trace-id",
+            "local_task_id": "img-trace-id",
+        },
+        img_service="banana_pro",
+        img_ratio="9:16",
+        unit_cost=2.5,
+    )
+
+    can_attempt.assert_awaited_once_with(123)
+    assert bot.messages == []
+
+
+@pytest.mark.asyncio
+async def test_miniapp_only_user_does_not_attempt_direct_image_delivery(
+    monkeypatch,
+) -> None:
+    bot = type("Bot", (), {})()
+    bot.send_document = AsyncMock()
+    can_attempt = AsyncMock(return_value=False)
+    monkeypatch.setattr(miniapp_module, "can_attempt_telegram_delivery", can_attempt)
+
+    await miniapp_module._deliver_miniapp_direct_image_result(
+        {"bot": bot},
+        123,
+        {
+            "status": "done",
+            "task_id": "img-direct",
+            "saved_url": "https://example.test/generated.png",
+        },
+        img_service="banana_pro",
+        img_ratio="9:16",
+        unit_cost=2.5,
+        prompt_hidden=False,
+    )
+
+    can_attempt.assert_awaited_once_with(123)
+    bot.send_document.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_miniapp_start_chat_unavailable_is_info_not_warning(monkeypatch):
     class UnavailableBot:
         async def send_message(self, **_kwargs):
@@ -182,3 +239,44 @@ async def test_miniapp_start_chat_unavailable_is_info_not_warning(monkeypatch):
     assert "chat_not_found" in str(infos[0])
     assert warnings == []
     assert exceptions == []
+
+
+@pytest.mark.asyncio
+async def test_first_chat_not_found_stops_result_delivery_for_same_task(
+    isolated_database,
+):
+    from bot import database
+
+    class UnavailableBot:
+        async def send_message(self, **_kwargs):
+            raise RuntimeError("Bad Request: chat not found")
+
+    user = await database.get_or_create_user(990002)
+    await database.add_generation_task(
+        user.id,
+        user.telegram_id,
+        "img-chat-not-found",
+        "image",
+        "miniapp_image",
+        request_data={"source": "miniapp"},
+    )
+
+    await miniapp_module._notify_miniapp_image_task_queued(
+        {"bot": UnavailableBot()},
+        user.telegram_id,
+        {
+            "status": "queued",
+            "task_id": "provider-chat-not-found",
+            "local_task_id": "img-chat-not-found",
+        },
+        img_service="banana_pro",
+        img_ratio="9:16",
+        unit_cost=2.5,
+    )
+
+    assert await database.can_attempt_telegram_delivery(user.telegram_id) is False
+    task = await database.get_task_by_id("img-chat-not-found")
+    metadata = json.loads(task.request_data or "{}")
+    assert metadata["delivery_status"] == "unavailable"
+    assert metadata["delivery_error"] == "chat_not_found"
+    assert await database.claim_task_delivery(task.task_id) is False

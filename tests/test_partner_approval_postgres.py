@@ -127,6 +127,13 @@ async def test_partner_approval_state_machine_on_postgres():
     assert db_backend.is_postgres() is True
     await _bootstrap_production_like_partner_schema()
     await approval.ensure_partner_approval_schema()
+    async with db_backend.connect() as db:
+        cursor = await db.execute(
+            """SELECT column_name
+               FROM information_schema.columns
+               WHERE table_name = 'users' AND column_name = 'telegram_chat_state'"""
+        )
+        assert await cursor.fetchone() is not None
 
     referrer = await database.get_or_create_user(98100001)
     visitor = await database.get_or_create_user(98100002)

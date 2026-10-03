@@ -838,7 +838,18 @@ async def _public_send_results(
                 caption=f"🖼 <b>Последний кадр Seedance 2.5</b>\nID: <code>{task_id}</code>",
                 parse_mode="HTML",
             )
-        except Exception:
+        except Exception as photo_exc:
+            if is_terminal_telegram_delivery_error(photo_exc):
+                from bot.database import mark_telegram_chat_unavailable
+
+                await mark_telegram_chat_unavailable(telegram_id)
+                logger.info(
+                    "Telegram delivery unavailable: event=seedance25_last_frame reason=%s task_id=%s telegram_id=%s",
+                    terminal_telegram_delivery_reason(photo_exc),
+                    task_id,
+                    telegram_id,
+                )
+                return delivered
             try:
                 await bot.send_message(
                     telegram_id,
@@ -847,6 +858,9 @@ async def _public_send_results(
                 )
             except Exception as exc:
                 if is_terminal_telegram_delivery_error(exc):
+                    from bot.database import mark_telegram_chat_unavailable
+
+                    await mark_telegram_chat_unavailable(telegram_id)
                     logger.info(
                         "Telegram delivery unavailable: event=seedance25_last_frame reason=%s task_id=%s telegram_id=%s",
                         terminal_telegram_delivery_reason(exc),

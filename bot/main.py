@@ -142,6 +142,31 @@ EPHEMERAL_RESULT_PERSIST_RETRY_DELAY_SECONDS = max(
     0.0, float(os.getenv("EPHEMERAL_RESULT_PERSIST_RETRY_DELAY_SECONDS", "1"))
 )
 
+
+async def _finish_result_with_unavailable_telegram(
+    task_id: str,
+    result_url: str,
+    error: Exception | str,
+    *,
+    event: str,
+    telegram_id: int,
+) -> bool:
+    reason = _terminal_telegram_delivery_reason(error)
+    if not reason:
+        return False
+    from bot.database import complete_video_task, mark_task_delivery_status
+
+    await complete_video_task(task_id, result_url)
+    await mark_task_delivery_status(task_id, "unavailable", error=reason)
+    logger.info(
+        "Telegram delivery unavailable: event=%s reason=%s task_id=%s telegram_id=%s",
+        event,
+        reason,
+        task_id,
+        telegram_id,
+    )
+    return True
+
 USER_BOT_COMMANDS = [
     BotCommand(command="start", description="Текстовый бот и главное меню"),
     BotCommand(command="feed", description="Лента работ"),
@@ -1074,6 +1099,7 @@ async def _send_original_file(bot_instance: Bot, telegram_id: int, result_url: s
                 _terminal_telegram_delivery_reason(e),
                 telegram_id,
             )
+            raise
         else:
             logger.error(f"Failed to send original file to {telegram_id}: {e}")
         return False
@@ -1148,6 +1174,8 @@ async def _send_video_file_from_url(
         )
         return True
     except Exception as e:
+        if _is_terminal_telegram_delivery_error(e):
+            raise
         logger.error(
             "Failed to download and send video file to %s: %s",
             telegram_id,
@@ -1486,7 +1514,11 @@ async def _send_polled_nexus_image_result(
     provider_task_id: str | None = None,
     service_name: str = "Nano Banana",
 ) -> bool:
-    from bot.database import complete_video_task, mark_task_delivery_status
+    from bot.database import (
+        can_attempt_telegram_delivery,
+        complete_video_task,
+        mark_task_delivery_status,
+    )
     from bot.keyboards import get_image_result_keyboard
 
     telegram_id = await _resolve_task_telegram_id(task, context="image_provider_poller")
@@ -1501,6 +1533,19 @@ async def _send_polled_nexus_image_result(
     reference_preview_urls = _extract_reference_image_urls(task)
     model_label = _get_task_model_label(getattr(task, "model", None), getattr(task, "type", None))
     task_lookup_id = provider_task_id or getattr(task, "task_id", "")
+    if not await can_attempt_telegram_delivery(telegram_id):
+        await complete_video_task(task_lookup_id, persisted_url)
+        await mark_task_delivery_status(
+            task_lookup_id,
+            "unavailable",
+            error="chat_not_started",
+        )
+        logger.info(
+            "Image provider result retained without Telegram delivery: task=%s telegram_id=%s",
+            task_lookup_id,
+            telegram_id,
+        )
+        return True
     display_task_id = _public_task_id(task, task_lookup_id)
     full_caption = (
         "✅ <b>Изображение готово</b>\n"
@@ -1549,6 +1594,14 @@ async def _send_polled_nexus_image_result(
                     telegram_id,
                 )
             except Exception as exc:
+                if await _finish_result_with_unavailable_telegram(
+                    task_lookup_id,
+                    persisted_url,
+                    exc,
+                    event="image_result_preview",
+                    telegram_id=telegram_id,
+                ):
+                    return True
                 logger.info(
                     "Image provider poller: preview file-photo send failed for task %s (%s)",
                     task_lookup_id,
@@ -1571,18 +1624,37 @@ async def _send_polled_nexus_image_result(
                 telegram_id,
             )
         except Exception as exc:
+            if await _finish_result_with_unavailable_telegram(
+                task_lookup_id,
+                persisted_url,
+                exc,
+                event="image_result_url",
+                telegram_id=telegram_id,
+            ):
+                return True
             logger.info(
                 "Image provider poller: image URL send failed for task %s (%s)",
                 task_lookup_id,
                 exc,
             )
 
-    original_sent = await _send_original_file(
-        bot_instance,
-        telegram_id,
-        persisted_url,
-        image_bytes,
-    )
+    try:
+        original_sent = await _send_original_file(
+            bot_instance,
+            telegram_id,
+            persisted_url,
+            image_bytes,
+        )
+    except Exception as exc:
+        if await _finish_result_with_unavailable_telegram(
+            task_lookup_id,
+            persisted_url,
+            exc,
+            event="image_result_original",
+            telegram_id=telegram_id,
+        ):
+            return True
+        raise
     if preview_sent or original_sent:
         await complete_video_task(task_lookup_id, persisted_url)
         await mark_task_delivery_status(task_lookup_id, "delivered")
@@ -1669,6 +1741,7 @@ async def _fail_polled_nexus_image_task(
     service_name: str = "Nano Banana",
     reason: str | None = None,
 ) -> bool:
+    from bot.database import can_attempt_telegram_delivery
     from bot.keyboards import get_failed_image_retry_keyboard
     from bot.services.task_watchdog import force_fail_task
 
@@ -1700,6 +1773,13 @@ async def _fail_polled_nexus_image_task(
     )
     if not telegram_id:
         return False
+    if not await can_attempt_telegram_delivery(telegram_id):
+        logger.info(
+            "Telegram delivery skipped: event=image_failure reason=chat_not_started task_id=%s telegram_id=%s",
+            task_lookup_id,
+            telegram_id,
+        )
+        return True
 
     try:
         await bot_instance.send_message(
@@ -1721,11 +1801,19 @@ async def _fail_polled_nexus_image_task(
         return True
     except Exception as exc:
         if _is_terminal_telegram_delivery_error(exc):
+            from bot.database import mark_task_delivery_status
+
+            terminal_reason = _terminal_telegram_delivery_reason(exc)
             logger.info(
                 "Telegram delivery unavailable: event=image_failure reason=%s task_id=%s telegram_id=%s",
-                _terminal_telegram_delivery_reason(exc),
+                terminal_reason,
                 task_lookup_id,
                 telegram_id,
+            )
+            await mark_task_delivery_status(
+                task_lookup_id,
+                "unavailable",
+                error=terminal_reason,
             )
         else:
             logger.exception(
@@ -2862,6 +2950,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             video_url = data["data"].get("result_video_url")
             if task_id and video_url:
                 from bot.database import (
+                    can_attempt_telegram_delivery,
                     claim_task_delivery,
                     complete_video_task,
                     get_task_by_id,
@@ -2889,6 +2978,24 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                         task, context="kling_success_code200"
                     )
                     if telegram_id:
+                        if not await can_attempt_telegram_delivery(telegram_id):
+                            video_url = await _persist_result_url_if_needed(
+                                video_url,
+                                task_type=task.type if task else "video",
+                            )
+                            if await store_task_result_ready(task_id, video_url):
+                                await complete_video_task(task_id, video_url)
+                                await mark_task_delivery_status(
+                                    task_id,
+                                    "unavailable",
+                                    error="chat_not_started",
+                                )
+                            logger.info(
+                                "Kie.ai Kling result retained without Telegram delivery: task=%s user=%s",
+                                task_id,
+                                telegram_id,
+                            )
+                            return web.Response(status=200)
                         if not await claim_task_delivery(
                             task_id,
                             lease_seconds=KIE_DELIVERY_LEASE_SECONDS,
@@ -2954,6 +3061,14 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                 )
                                 delivered = True
                             except Exception as send_e:
+                                if await _finish_result_with_unavailable_telegram(
+                                    task_id,
+                                    video_url,
+                                    send_e,
+                                    event="kling_video_url",
+                                    telegram_id=telegram_id,
+                                ):
+                                    return web.Response(status=200)
                                 logger.error(
                                     f"Failed to send {model_display} video media to {telegram_id}: {send_e}"
                                 )
@@ -2978,6 +3093,14 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                     link_sent = True
                                     await mark_task_delivery_status(task_id, "link_sent")
                                 except Exception as link_e:
+                                    if await _finish_result_with_unavailable_telegram(
+                                        task_id,
+                                        video_url,
+                                        link_e,
+                                        event="kling_video_link",
+                                        telegram_id=telegram_id,
+                                    ):
+                                        return web.Response(status=200)
                                     logger.error(
                                         f"Failed to send {model_display} video link to {telegram_id}: {link_e}"
                                     )
@@ -2999,9 +3122,15 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                     link_sent or bool(delivery_metadata.get("delivery_link_sent")),
                                 )
                         except Exception as e:
-                            logger.error(
-                                f"Failed to notify {model_display} user {telegram_id}: {e}"
-                            )
+                            if await _finish_result_with_unavailable_telegram(
+                                task_id,
+                                video_url,
+                                e,
+                                event="kling_video_file",
+                                telegram_id=telegram_id,
+                            ):
+                                return web.Response(status=200)
+                            logger.error(f"Failed to notify {model_display} user {telegram_id}: {e}")
                 return web.Response(status=200)
 
         # Detect Kie.ai format (code:200/501, data.taskId, data.resultJson or failMsg)
@@ -3020,7 +3149,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
 
             if task_id:
                 from bot.database import (
-                    add_credits,
+                    can_attempt_telegram_delivery,
                     claim_task_delivery,
                     complete_video_task,
                     get_task_by_id,
@@ -3051,6 +3180,24 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                         bot_instance = request.app["bot"]
                         try:
                             if status in {"success", "completed"} and video_url:
+                                if not await can_attempt_telegram_delivery(telegram_id):
+                                    video_url = await _persist_result_url_if_needed(
+                                        video_url,
+                                        task_type=task.type if task else "video",
+                                    )
+                                    if await store_task_result_ready(task_id, video_url):
+                                        await complete_video_task(task_id, video_url)
+                                        await mark_task_delivery_status(
+                                            task_id,
+                                            "unavailable",
+                                            error="chat_not_started",
+                                        )
+                                    logger.info(
+                                        "Kie.ai legacy result retained without Telegram delivery: task=%s user=%s",
+                                        task_id,
+                                        telegram_id,
+                                    )
+                                    return web.Response(status=200)
                                 if not await claim_task_delivery(
                                     task_id,
                                     lease_seconds=KIE_DELIVERY_LEASE_SECONDS,
@@ -3162,6 +3309,14 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                         f"Kie.ai video downloaded and sent to {telegram_id}"
                                     )
                                 except Exception as dl_e:
+                                    if await _finish_result_with_unavailable_telegram(
+                                        task_id,
+                                        video_url,
+                                        dl_e,
+                                        event="kie_legacy_video_file",
+                                        telegram_id=telegram_id,
+                                    ):
+                                        return web.Response(status=200)
                                     logger.error(
                                         f"Kie.ai video download failed: {dl_e}"
                                     )
@@ -3180,6 +3335,14 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                             f"Kie.ai video sent via URL to {telegram_id}"
                                         )
                                     except Exception as url_e:
+                                        if await _finish_result_with_unavailable_telegram(
+                                            task_id,
+                                            video_url,
+                                            url_e,
+                                            event="kie_legacy_video_url",
+                                            telegram_id=telegram_id,
+                                        ):
+                                            return web.Response(status=200)
                                         logger.error(
                                             f"Kie.ai video URL send failed: {url_e}"
                                         )
@@ -3208,6 +3371,14 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                                     telegram_id,
                                                 )
                                             except Exception as link_e:
+                                                if await _finish_result_with_unavailable_telegram(
+                                                    task_id,
+                                                    video_url,
+                                                    link_e,
+                                                    event="kie_legacy_video_link",
+                                                    telegram_id=telegram_id,
+                                                ):
+                                                    return web.Response(status=200)
                                                 logger.error(
                                                     f"Kie.ai video link fallback failed: {link_e}"
                                                 )
@@ -3235,32 +3406,70 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                     )
                             else:
                                 # Fail case
+                                from bot.services.task_watchdog import force_fail_task
+
+                                if not await force_fail_task(
+                                    task.id,
+                                    task.user_id,
+                                    task.cost or 0,
+                                    expected_provider_task_id=task_id,
+                                ):
+                                    logger.info(
+                                        "Kie.ai legacy failure already reconciled: task=%s",
+                                        task_id,
+                                    )
+                                    return web.Response(status=200)
                                 policy_violation = "Prohibited Use policy" in fail_msg
                                 error_msg = (
                                     "Запрос не прошёл проверку политики безопасности из-за чувствительного контента."
                                     if policy_violation
                                     else fail_msg[:100]
                                 )
-                                await add_credits(telegram_id, task.cost or 0)
+                                if not await can_attempt_telegram_delivery(telegram_id):
+                                    logger.info(
+                                        "Telegram delivery skipped: event=generation_failure reason=chat_not_started task_id=%s telegram_id=%s",
+                                        task_id,
+                                        telegram_id,
+                                    )
+                                    return web.Response(status=200)
                                 refund_text = "\n\nБананы за эту попытку уже возвращены."
-                                await bot_instance.send_message(
-                                    chat_id=telegram_id,
-                                    text=_build_failure_notification_text(
-                                        service_name=model_display,
-                                        task_id=task_id,
-                                        reason=error_msg,
-                                        media_kind=(
-                                            "видео"
-                                            if task.type == "video"
-                                            else "результата"
+                                try:
+                                    await bot_instance.send_message(
+                                        chat_id=telegram_id,
+                                        text=_build_failure_notification_text(
+                                            service_name=model_display,
+                                            task_id=task_id,
+                                            reason=error_msg,
+                                            media_kind=(
+                                                "видео"
+                                                if task.type == "video"
+                                                else "результата"
+                                            ),
+                                            refund_text=refund_text,
                                         ),
-                                        refund_text=refund_text,
-                                    ),
-                                    parse_mode="HTML",
-                                )
-                                await complete_video_task(task_id, None)
+                                        parse_mode="HTML",
+                                    )
+                                except Exception as notify_error:
+                                    if _is_terminal_telegram_delivery_error(notify_error):
+                                        reason = _terminal_telegram_delivery_reason(
+                                            notify_error
+                                        )
+                                        await mark_task_delivery_status(
+                                            task_id,
+                                            "unavailable",
+                                            error=reason,
+                                        )
+                                        logger.info(
+                                            "Telegram delivery unavailable: event=generation_failure reason=%s task_id=%s telegram_id=%s",
+                                            reason,
+                                            task_id,
+                                            telegram_id,
+                                        )
+                                    else:
+                                        raise
                                 logger.info(
-                                    f"Kie.ai fail notified to {telegram_id}, credits returned"
+                                    "Kie.ai failure reconciled for %s with atomic refund marker",
+                                    telegram_id,
                                 )
                         except Exception as e:
                             logger.error(f"Failed to notify user {telegram_id}: {e}")
@@ -4187,6 +4396,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
 
         from bot.database import (
             add_credits,
+            can_attempt_telegram_delivery,
             claim_task_delivery,
             complete_video_task,
             get_task_by_id,
@@ -4339,6 +4549,15 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         )
                         return web.Response(status=200)
 
+                    if not await can_attempt_telegram_delivery(telegram_id):
+                        await complete_video_task(task_id, asset_id)
+                        await mark_task_delivery_status(
+                            task_id,
+                            "unavailable",
+                            error="chat_not_started",
+                        )
+                        return web.Response(status=200)
+
                     model_label = _get_task_model_label(task.model, task.type)
                     title = (
                         "Audio ID готов"
@@ -4371,7 +4590,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 logger.error(
                     f"No result URL found in {service_name} result: {webhook_data.get('resultJson', 'N/A')}"
                 )
-                if telegram_id:
+                if telegram_id and await can_attempt_telegram_delivery(telegram_id):
                     bot_instance = request.app["bot"]
                     await bot_instance.send_message(
                         chat_id=telegram_id,
@@ -4391,6 +4610,25 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 return web.Response(status=200)
             if not telegram_id:
                 logger.error(f"Cannot find telegram_id for user_id {task.user_id}")
+                return web.Response(status=200)
+
+            if not await can_attempt_telegram_delivery(telegram_id):
+                result_url = await _persist_result_url_if_needed(
+                    result_url,
+                    task_type=task.type if task else ("video" if is_video else "image"),
+                )
+                if await store_task_result_ready(task_id, result_url):
+                    await complete_video_task(task_id, result_url)
+                    await mark_task_delivery_status(
+                        task_id,
+                        "unavailable",
+                        error="chat_not_started",
+                    )
+                logger.info(
+                    "Kie.ai result retained without Telegram delivery: task=%s user=%s",
+                    task_id,
+                    telegram_id,
+                )
                 return web.Response(status=200)
 
             if not await claim_task_delivery(
@@ -4509,6 +4747,14 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         )
                         sent_media = True
                     except Exception as e:
+                        if await _finish_result_with_unavailable_telegram(
+                            task_id,
+                            result_url,
+                            e,
+                            event="generation_video_url",
+                            telegram_id=telegram_id,
+                        ):
+                            return web.Response(status=200)
                         logger.warning(
                             "Video URL send failed (%s), trying file upload",
                             e,
@@ -4552,6 +4798,14 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                             )
                             sent_media = True
                         except Exception as dl_e:
+                            if await _finish_result_with_unavailable_telegram(
+                                task_id,
+                                result_url,
+                                dl_e,
+                                event="generation_video_file",
+                                telegram_id=telegram_id,
+                            ):
+                                return web.Response(status=200)
                             logger.error(f"Video file upload failed: {dl_e}")
                         finally:
                             if tmp_file and os.path.exists(tmp_file):
@@ -4583,6 +4837,14 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                                 )
                                 preview_sent = True
                             except Exception as preview_file_e:
+                                if await _finish_result_with_unavailable_telegram(
+                                    task_id,
+                                    result_url,
+                                    preview_file_e,
+                                    event="generation_image_preview",
+                                    telegram_id=telegram_id,
+                                ):
+                                    return web.Response(status=200)
                                 logger.info(
                                     f"Preview file-photo send failed ({preview_file_e}), trying URL photo"
                                 )
@@ -4600,6 +4862,14 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                             )
                             preview_sent = True
                         except Exception as url_send_e:
+                            if await _finish_result_with_unavailable_telegram(
+                                task_id,
+                                result_url,
+                                url_send_e,
+                                event="generation_image_url",
+                                telegram_id=telegram_id,
+                            ):
+                                return web.Response(status=200)
                             logger.info(
                                 f"Image URL send failed ({url_send_e})"
                             )
@@ -4624,6 +4894,9 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                             await _send_used_prompt_message(bot_instance, telegram_id, task, result_url)
                         except Exception as prompt_e:
                             if _is_terminal_telegram_delivery_error(prompt_e):
+                                from bot.database import mark_telegram_chat_unavailable
+
+                                await mark_telegram_chat_unavailable(telegram_id)
                                 logger.info(
                                     "Telegram delivery unavailable: event=prompt_followup reason=%s telegram_id=%s task_id=%s",
                                     _terminal_telegram_delivery_reason(prompt_e),
@@ -4798,7 +5071,9 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             ):
                 return web.Response(status=200)
 
-            if telegram_id:
+            from bot.database import can_attempt_telegram_delivery
+
+            if telegram_id and await can_attempt_telegram_delivery(telegram_id):
                 bot_instance = request.app["bot"]
                 try:
                     refund_text = (
@@ -4832,7 +5107,27 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                     )
                     logger.info(f"Failure notification sent to {telegram_id}")
                 except Exception as notify_e:
-                    logger.error(f"Failed to notify user {telegram_id}: {notify_e}")
+                    terminal_reason = _terminal_telegram_delivery_reason(notify_e)
+                    if terminal_reason:
+                        await mark_task_delivery_status(
+                            task_id,
+                            "unavailable",
+                            error=terminal_reason,
+                        )
+                        logger.info(
+                            "Telegram delivery unavailable: event=generation_failure reason=%s task_id=%s telegram_id=%s",
+                            terminal_reason,
+                            task_id,
+                            telegram_id,
+                        )
+                    else:
+                        logger.error(f"Failed to notify user {telegram_id}: {notify_e}")
+            elif telegram_id:
+                logger.info(
+                    "Telegram delivery skipped: event=generation_failure reason=chat_not_started task_id=%s telegram_id=%s",
+                    task_id,
+                    telegram_id,
+                )
             else:
                 logger.warning(
                     f"No telegram_id for failed task {task_id} (user_id: {task.user_id if task else 'unknown'})"
@@ -5032,7 +5327,7 @@ async def _notify_watchdog_failed_task(
     task_row: Mapping[str, Any],
 ) -> bool:
     """Notify a user after watchdog has atomically failed/refunded a task."""
-    from bot.database import get_task_by_id
+    from bot.database import can_attempt_telegram_delivery, get_task_by_id
     from bot.keyboards import get_failed_image_retry_keyboard
 
     provider_task_id = str(task_row.get("task_id") or "").strip()
@@ -5057,6 +5352,13 @@ async def _notify_watchdog_failed_task(
             provider_task_id,
         )
         return False
+    if not await can_attempt_telegram_delivery(telegram_id):
+        logger.info(
+            "Watchdog failure notification skipped: reason=chat_not_started task=%s telegram_id=%s",
+            provider_task_id,
+            telegram_id,
+        )
+        return True
 
     model_label = _get_task_model_label(
         getattr(task, "model", None),
@@ -5094,6 +5396,9 @@ async def _notify_watchdog_failed_task(
         return True
     except Exception as exc:
         if _is_terminal_telegram_delivery_error(exc):
+            from bot.database import mark_telegram_chat_unavailable
+
+            await mark_telegram_chat_unavailable(telegram_id)
             logger.info(
                 "Telegram delivery unavailable: event=watchdog_failure reason=%s task_id=%s telegram_id=%s",
                 _terminal_telegram_delivery_reason(exc),
