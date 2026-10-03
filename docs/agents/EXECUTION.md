@@ -1070,3 +1070,14 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Integration test corrections preserve runtime behavior: feed removal can intentionally downgrade to profile; full withdrawal regression now calls the real remove_publication API. Reused PostgreSQL test user state required a fresh disposable database; no production fixture/data change.
 - Independent standards review: approved, zero unresolved findings. Spec runtime review: no remaining blocker; final regression sensitivity corrected and rechecked. Review caught and resolved unbound retry logging, generic callback duplicate delivery, and stale-failure retry/refund races before release.
 - Read-only rollout preflight 05:59 UTC: zero existing completed tasks with result URL and retryable delivery markers. Public frontend revision and backend image both af11c3a; public/local health pass. Recheck immediately before release and verify exact merged SHA after automatic deployment.
+
+
+## Private ordinary image-repeat permission (2026-10-03)
+- Baseline: dfdaa6f382516e158485d72dff20a871e3670cd9, fresh origin/tanyapi verified.
+- Goal: independent explicit owner permission for selected source images to participate server-side in repeats without publishing their URLs or previews. Legacy publication selections are not permission.
+- Reuse: publication owner checks, source availability, PR238 client redaction, server model limits and isolated synthetic tests.
+- Add nullable permission snapshot; no backfill; empty selection revokes. Retain publication and Seedance rules. Never authorize inherited refs on remix children.
+- Risks: descendant serialization, cached media, stale source selection, logging/provider recipe exposure, owner vs nonowner, prompt image ordering.
+- Plan: (1) DB/HTTP permission and tests; (2) server assembly plus privacy boundaries; (3) owner UI and tests; (4) focused/full gates and independent review.
+- Test seams: publication DB/API, remix launch provider payload, task-detail/bootstrap/history, public card/media, frontend publication journey. Synthetic data only. No paid generation, production mutation, merge or deploy.
+- Rollout: draft review only after verification and authorization. New nullable schema is additive; old code ignores it.

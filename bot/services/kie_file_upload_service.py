@@ -52,8 +52,7 @@ class KieFileUploadService:
         if not local_path:
             if is_local_upload_source(source):
                 logger.warning(
-                    "Local upload reference is missing on disk; dropping source before KIE upload: %s",
-                    source,
+                    "Local upload reference is missing on disk; dropping source before KIE upload",
                 )
                 return ""
             return source
@@ -74,8 +73,7 @@ class KieFileUploadService:
             if isinstance(stable_public_url, str) and stable_public_url.startswith(("http://", "https://")):
                 self._cache[cache_key] = (stable_public_url, time.time())
                 logger.info(
-                    "Using stable public URL for KIE reference instead of temp upload: %s",
-                    stable_public_url,
+                    "Using stable public URL for KIE reference instead of temp upload",
                 )
                 return stable_public_url
 
@@ -115,21 +113,19 @@ class KieFileUploadService:
                 data = await resp.json(content_type=None)
                 if resp.status >= 400:
                     logger.warning(
-                        "KIE file upload HTTP %s for %s: %s",
+                        "KIE file upload HTTP %s",
                         resp.status,
-                        local_path,
-                        data,
                     )
                     return self._fallback_value(
                         source,
                         fallback_to_source=fallback_to_source,
                     )
-        except Exception:
-            logger.exception("KIE file upload failed for %s", local_path)
+        except Exception as exc:
+            logger.warning("KIE file upload failed: exception_type=%s", type(exc).__name__)
             return self._fallback_value(source, fallback_to_source=fallback_to_source)
 
         if not isinstance(data, dict) or not data.get("success"):
-            logger.warning("KIE file upload rejected %s: %s", local_path, data)
+            logger.warning("KIE file upload rejected")
             return self._fallback_value(source, fallback_to_source=fallback_to_source)
 
         data_block = data.get("data") or {}
@@ -140,14 +136,12 @@ class KieFileUploadService:
         ).strip()
         if not file_url:
             logger.warning(
-                "KIE file upload returned no downloadable URL for %s: %s",
-                local_path,
-                data,
+                "KIE file upload returned no downloadable URL",
             )
             return self._fallback_value(source, fallback_to_source=fallback_to_source)
 
         self._cache[cache_key] = (file_url, time.time())
-        logger.info("KIE file upload ready for provider reference: %s", file_url)
+        logger.info("KIE file upload ready for provider reference")
         return file_url
 
     async def upload_local_image_sources(

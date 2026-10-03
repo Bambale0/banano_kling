@@ -48,6 +48,7 @@ from bot.database import (
     generation_publication_references,
     generation_publication_scope,
     generation_reference_selection,
+    generation_repeat_reference_selection,
     get_and_clear_miniapp_notifications,
     get_approved_prompts,
     get_author_prompts,
@@ -239,6 +240,23 @@ def _miniapp_expected_error_response(error: Exception) -> web.Response | None:
         )
 
     return None
+
+
+def _private_image_error_response(error: Exception, *, log_message: str) -> web.Response:
+    # Adapter failures may echo input URLs or the source recipe. Preserve an
+    # error class for diagnosis without returning/logging the provider text.
+    expected = _miniapp_expected_error_response(error)
+    status = expected.status if expected is not None else 500
+    if status == 401:
+        message = "Откройте Mini App заново из Telegram."
+    elif status == 403:
+        message = "Нет доступа к этому действию. Проверьте доступ в Mini App."
+    elif status in {400, 408, 499}:
+        message = "Запрос был прерван. Попробуйте ещё раз."
+    else:
+        message = "Не удалось выполнить запрос генерации. Попробуйте ещё раз."
+    logger.error("%s: error_type=%s status=%s", log_message, type(error).__name__, status)
+    return web.json_response({"ok": False, "error": message}, status=status)
 
 
 def _miniapp_error_response(
@@ -1309,6 +1327,48 @@ def _selected_published_image_references(
     return retained
 
 
+def _selected_private_repeat_references(task_payload: dict[str, Any]) -> list[str]:
+    """Server-only permission, independent from preview/publication visibility."""
+    if (task_payload.get("type") != "image"
+        or task_payload.get("status") != "completed"
+        or task_payload.get("source_feed_gen_id")
+        or str(task_payload.get("action_type") or "").lower() == "remix"
+        or not (task_payload.get("is_public_feed") or task_payload.get("is_profile_visible"))):
+        return []
+    from bot.database import _is_feed_result_url_available
+
+    sources = set(_source_image_references_from_task_payload(task_payload))
+    return [url for url in generation_repeat_reference_selection(task_payload)
+            if url in sources and _is_feed_result_url_available(task_payload, url)]
+
+
+def _merge_private_repeat_references(task_payload: dict[str, Any], references: list[str]) -> list[str]:
+    """Preserve source image slots rather than silently rebinding ImageN prompts."""
+    granted = generation_repeat_reference_selection(task_payload)
+    private = _selected_private_repeat_references(task_payload)
+    if not private:
+        if granted and not task_payload.get("source_feed_gen_id"):
+            raise ValueError("Референсы для повтора больше недоступны. Откройте публикацию заново.")
+        return references
+    if len(private) != len(granted):
+        raise ValueError("Референсы для повтора больше недоступны. Откройте публикацию заново.")
+    sources = _source_image_references_from_task_payload(task_payload)
+    retained = set(private) | (set(sources) & set(references))
+    submitted = iter(url for url in references if url not in retained)
+    last_retained = max(index for index, url in enumerate(sources) if url in retained)
+    merged: list[str] = []
+    for url in sources[:last_retained + 1]:
+        if url in retained:
+            merged.append(url)
+        else:
+            replacement = next(submitted, None)
+            if replacement is None:
+                raise ValueError("Добавьте фото для каждого заменяемого референса, чтобы сохранить порядок изображений.")
+            merged.append(replacement)
+    merged.extend(submitted)
+    return list(dict.fromkeys(merged))
+
+
 def _merge_remix_image_references(
     source_card: dict[str, Any],
     task_payload: dict[str, Any],
@@ -1696,7 +1756,7 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
             """
             SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                    result_url, result_urls, is_public_feed, is_prompt_library,
-                   source_feed_gen_id, feed_prompt_visible, feed_references_visible, feed_reference_selection,
+                   source_feed_gen_id, feed_prompt_visible, feed_references_visible, feed_reference_selection, feed_repeat_reference_selection,
                    feed_blurred, is_profile_visible, is_adult_content, completed_at, updated_at, created_at, request_data
             FROM generation_tasks
             WHERE telegram_id = ? AND task_id = ?
@@ -1710,7 +1770,7 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
                 """
                 SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                        result_url, result_urls, is_public_feed, is_prompt_library,
-                       source_feed_gen_id, feed_prompt_visible, feed_references_visible, feed_reference_selection,
+                       source_feed_gen_id, feed_prompt_visible, feed_references_visible, feed_reference_selection, feed_repeat_reference_selection,
                        feed_blurred, is_profile_visible, is_adult_content, completed_at, updated_at, created_at, request_data
                 FROM generation_tasks
                 WHERE telegram_id = ? AND id = ?
@@ -1724,7 +1784,7 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
                 """
                 SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                        result_url, result_urls, is_public_feed, is_prompt_library,
-                       source_feed_gen_id, feed_prompt_visible, feed_references_visible, feed_reference_selection,
+                       source_feed_gen_id, feed_prompt_visible, feed_references_visible, feed_reference_selection, feed_repeat_reference_selection,
                        feed_blurred, is_profile_visible, is_adult_content, completed_at, updated_at, created_at, request_data
                 FROM generation_tasks
                 WHERE telegram_id = ?
@@ -1804,6 +1864,10 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
         "feed_prompt_visible": bool(row["feed_prompt_visible"]) if "feed_prompt_visible" in row.keys() else False,
         "feed_references_visible": bool(row["feed_references_visible"]) if "feed_references_visible" in row.keys() else False,
         "feed_reference_selection": reference_selection,
+        "feed_repeat_reference_selection": {"images": [
+            index for index, url in zip(publication_references["image_indices"], publication_references["images"])
+            if url in generation_repeat_reference_selection(row)
+        ]},
         "publication_reference_images": publication_references["images"],
         "publication_reference_videos": publication_references["videos"],
         "publication_reference_image_indices": publication_references["image_indices"],
@@ -3895,6 +3959,7 @@ async def miniapp_generation_share(request: web.Request) -> web.Response:
         )
         reference_image_indices = _optional_reference_indices(body, "reference_image_indices")
         reference_video_indices = _optional_reference_indices(body, "reference_video_indices")
+        repeat_reference_image_indices = _optional_reference_indices(body, "repeat_reference_image_indices")
         blurred = None
         if "blurred" in body or "feed_blurred" in body:
             blurred = _payload_bool(
@@ -3916,6 +3981,7 @@ async def miniapp_generation_share(request: web.Request) -> web.Response:
             references_visible=references_visible,
             reference_image_indices=reference_image_indices,
             reference_video_indices=reference_video_indices,
+            repeat_reference_image_indices=repeat_reference_image_indices,
             blurred=blurred,
             publication_scope=publication_scope,
             adult_content=adult_content,
@@ -4225,6 +4291,10 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
         source_task = await get_generation_task_payload(source["id"])
         if not source_task:
             return web.json_response({"ok": False, "error": "Пост ленты не найден"}, status=404)
+        if source_task.get("source_feed_gen_id") or str(source_task.get("action_type") or "").lower() == "remix":
+            return web.json_response(
+                {"ok": False, "error": "Для нового повтора откройте исходную публикацию автора."}, status=403,
+            )
         source_prompt = str(source_task.get("prompt") or "").strip()
         if not source_prompt:
             return web.json_response({"ok": False, "error": "У исходной генерации нет prompt"}, status=400)
@@ -4248,6 +4318,11 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
             references,
             viewer_telegram_id=telegram_id,
         )
+        client_references = list(references)
+        try:
+            references = _merge_private_repeat_references(source_task, references)
+        except ValueError as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
         logger.info(
             "Mini App image remix references: source_id=%s user_id=%s submitted=%s retained=%s total=%s",
             source.get("id"),
@@ -4287,7 +4362,7 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
                 status=400,
             )
 
-        user_references = [url for url in references if url != source.get("result_url")]
+        user_references = [url for url in client_references if url != source.get("result_url")]
         if user_references:
             await touch_saved_references(telegram_id, user_references, kind="image")
 
@@ -4313,9 +4388,10 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
             img_nsfw_checker=img_nsfw_checker,
             nsfw_enabled=nsfw_enabled,
             callback_url=(config.kie_notification_url if config.WEBHOOK_HOST else None),
-            source_feed_gen_id=int(source.get("source_feed_gen_id") or source["id"]),
+            source_feed_gen_id=int(source_task.get("source_feed_gen_id") or source["id"]),
             parent_generation_id=int(source["id"]),
             action_type="remix",
+            private_repeat_reference_images=_selected_private_repeat_references(source_task),
         )
 
         if launch_result["status"] == "failed":
@@ -4369,7 +4445,7 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
             }
         )
     except Exception as e:
-        return _miniapp_error_response(e, log_message="Mini App feed remix failed")
+        return _private_image_error_response(e, log_message="Mini App feed remix failed")
 
 
 async def miniapp_generate_image(request: web.Request) -> web.Response:
@@ -4394,6 +4470,7 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
             else None
         )
         source_feed_task = None
+        client_references = list(references)
         if source_feed_gen_id:
             source_feed_task = await _get_repeat_source_card(
                 source_feed_gen_id,
@@ -4409,6 +4486,10 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
                 return web.json_response(
                     {"ok": False, "error": "Пост ленты не найден"},
                     status=404,
+                )
+            if source_feed_payload.get("source_feed_gen_id") or str(source_feed_payload.get("action_type") or "").lower() == "remix":
+                return web.json_response(
+                    {"ok": False, "error": "Для нового повтора откройте исходную публикацию автора."}, status=403,
                 )
             source_prompt = str(source_feed_payload.get("prompt") or "").strip()
             if not source_prompt:
@@ -4428,9 +4509,14 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
                     {"ok": False, "error": "Добавьте своё фото или референс для remix"},
                     status=400,
                 )
+            client_references = list(references)
+            try:
+                references = _merge_private_repeat_references(source_feed_payload, references)
+            except ValueError as exc:
+                return web.json_response({"ok": False, "error": str(exc)}, status=400)
             # P2-03: propagate original source_feed_gen_id for multi-hop remix lineage
             immediate_parent_id = source_feed_gen_id
-            source_feed_gen_id = int(source_feed_task.get("source_feed_gen_id") or source_feed_gen_id)
+            source_feed_gen_id = int(source_feed_payload.get("source_feed_gen_id") or source_feed_gen_id)
 
         img_service = str(
             body.get("img_service")
@@ -4501,8 +4587,8 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
                 status=400,
             )
 
-        if references:
-            await touch_saved_references(telegram_id, references, kind="image")
+        if client_references:
+            await touch_saved_references(telegram_id, client_references, kind="image")
 
         unit_cost = _resolve_image_unit_cost(img_service, img_quality)
         is_admin = config.is_admin(telegram_id)
@@ -4535,6 +4621,9 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
             source_feed_gen_id=source_feed_gen_id,
             parent_generation_id=(immediate_parent_id if source_feed_gen_id else None),
             action_type=("remix" if source_feed_gen_id else None),
+            private_repeat_reference_images=(
+                _selected_private_repeat_references(source_feed_payload) if source_feed_gen_id else []
+            ),
         )
 
         if launch_result["status"] == "failed":
@@ -4595,7 +4684,7 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
             }
         )
     except Exception as e:
-        return _miniapp_error_response(e, log_message="Mini App image generation failed")
+        return _private_image_error_response(e, log_message="Mini App image generation failed")
 
 
 async def miniapp_generate_video(request: web.Request) -> web.Response:

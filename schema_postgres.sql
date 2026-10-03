@@ -104,6 +104,7 @@ CREATE TABLE IF NOT EXISTS generation_tasks (
     shares_count INTEGER DEFAULT 0,
     feed_prompt_visible BOOLEAN DEFAULT FALSE,
     feed_references_visible BOOLEAN DEFAULT FALSE,
+    feed_repeat_reference_selection TEXT,
     feed_blurred BOOLEAN DEFAULT FALSE,
     feed_published_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

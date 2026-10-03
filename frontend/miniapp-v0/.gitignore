@@ -15,3 +15,7 @@ node_modules
 .next/
 out/
 .DS_Store
+
+# Local browser test outputs
+.e2e-server/
+test-results/

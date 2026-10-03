@@ -152,6 +152,10 @@ export interface Task {
     images: number[]
     videos: number[]
   } | null
+  /** Owner-only permission; omitted or null never authorizes private repeat use. */
+  feed_repeat_reference_selection?: {
+    images: number[]
+  } | null
   feed_blurred?: boolean
   is_adult_content?: boolean
 }

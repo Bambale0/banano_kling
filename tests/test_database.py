@@ -914,9 +914,10 @@ async def test_profile_remix_does_not_republish_inherited_references_to_other_us
     )
 
     assert owner_card is not None
-    assert owner_card["reference_images"] == [reference_url]
-    assert owner_card["references_hidden"] is False
-    assert owner_card["feed_references_visible"] is True
+    # Owning a child result does not grant access to its original owner's recipe.
+    assert owner_card["reference_images"] == []
+    assert owner_card["references_hidden"] is True
+    assert owner_card["feed_references_visible"] is False
 
     assert viewer_card is not None
     assert viewer_card["reference_images"] == []

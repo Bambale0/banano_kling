@@ -152,13 +152,14 @@ class GrokService(KlingService):
             return None
 
         safe_image_urls = image_sources_to_provider_safe_png_urls(image_urls)
-        uploaded_image_urls = [
-            url
-            for url in await kie_file_upload_service.upload_local_image_sources(safe_image_urls)
-            if isinstance(url, str) and url
-        ]
-        if not uploaded_image_urls:
-            logger.error("Grok i2i create_task aborted: no usable reference images")
+        uploaded_image_urls = await kie_file_upload_service.upload_local_image_sources(safe_image_urls)
+        if len(uploaded_image_urls) != len(image_urls) or any(
+            not isinstance(url, str) or not url.strip() for url in uploaded_image_urls
+        ):
+            logger.error(
+                "Grok i2i create_task aborted: incomplete reference transport requested=%s ready=%s",
+                len(image_urls), sum(bool(url) for url in uploaded_image_urls),
+            )
             return None
 
         image_refs = " ".join(f"@image{i + 1}" for i in range(len(uploaded_image_urls)))
@@ -181,9 +182,9 @@ class GrokService(KlingService):
             payload["callBackUrl"] = callBackUrl
 
         logger.info(
-            "Grok i2i payload prepared: refs=%s nsfw_checker=false prompt_prefix=%s",
+            "Grok i2i payload prepared: refs=%s nsfw_checker=false prompt_len=%s",
             len(uploaded_image_urls),
-            clean_prompt[:80],
+            len(clean_prompt),
         )
         return await self._kie_post("/api/v1/jobs/createTask", payload)
 

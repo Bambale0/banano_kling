@@ -93,7 +93,7 @@ from bot.services.subscription_service import (
 from bot.services.memory_dump_service import build_memory_dump, ensure_memory_tracing
 from bot.notification_service import ensure_notification_campaign_worker
 from bot.support_service import ensure_support_outbox_worker
-from bot.utils.user_facing_errors import make_user_friendly_generation_error
+from bot.utils.user_facing_errors import make_user_friendly_generation_error, sanitize_provider_log_payload
 from bot.services.yookassa_service import yookassa_service
 
 CLEANUP_INTERVAL_SECONDS = 24 * 3600
@@ -2166,6 +2166,16 @@ async def _retry_transient_wan_timeout_failure(task, failed_task_id: str) -> str
         return None
 
     request_data = _extract_task_request_data(task)
+    private_references = request_data.get("private_repeat_reference_images") or []
+    if private_references:
+        from bot.handlers.generation import validate_private_repeat_reference_access
+
+        if not await validate_private_repeat_reference_access(
+            source_feed_gen_id=getattr(task, "source_feed_gen_id", None),
+            private_reference_images=private_references,
+        ):
+            logger.warning("Image auto-retry blocked: private reference permission unavailable task_id=%s", failed_task_id)
+            return None
     retry_attempt = int(request_data.get("auto_retry_attempt") or 0)
     if retry_attempt >= 1:
         return None
@@ -2227,6 +2237,16 @@ async def _retry_transient_kie_image_failure(task, failed_task_id: str) -> str |
         return None
 
     request_data = _extract_task_request_data(task)
+    private_references = request_data.get("private_repeat_reference_images") or []
+    if private_references:
+        from bot.handlers.generation import validate_private_repeat_reference_access
+
+        if not await validate_private_repeat_reference_access(
+            source_feed_gen_id=getattr(task, "source_feed_gen_id", None),
+            private_reference_images=private_references,
+        ):
+            logger.warning("Image auto-retry blocked: private reference permission unavailable task_id=%s", failed_task_id)
+            return None
     runtime_img_service = (
         request_data.get("img_service") or getattr(task, "model", None) or ""
     ).strip()
@@ -2348,6 +2368,16 @@ async def _retry_nexus_banana_image_failure(
         return None
 
     request_data = _extract_task_request_data(task)
+    private_references = request_data.get("private_repeat_reference_images") or []
+    if private_references:
+        from bot.handlers.generation import validate_private_repeat_reference_access
+
+        if not await validate_private_repeat_reference_access(
+            source_feed_gen_id=getattr(task, "source_feed_gen_id", None),
+            private_reference_images=private_references,
+        ):
+            logger.warning("Image auto-retry blocked: private reference permission unavailable task_id=%s", failed_task_id)
+            return None
     runtime_img_service = (
         request_data.get("img_service") or getattr(task, "model", None) or ""
     ).strip()
@@ -3165,7 +3195,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             status = kie_data.get("state", "").lower()
             result_json_str = kie_data.get("resultJson", "{}")
             fail_code = kie_data.get("failCode")
-            fail_msg = kie_data.get("failMsg", "")
+            fail_msg = str(sanitize_provider_log_payload(kie_data.get("failMsg", "")))
             try:
                 result_json = json.loads(result_json_str)
                 video_url = result_json.get("resultUrls", [None])[0]
@@ -5025,6 +5055,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 or data.get("msg")
                 or "No details"
             )
+            fail_msg = str(sanitize_provider_log_payload(fail_msg))
             user_fail_msg = fail_msg
             fail_msg_lower = str(fail_msg).lower()
             if "generative ai prohibited use policy" in fail_msg_lower:
@@ -5056,10 +5087,10 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         )
                         return web.Response(status=200)
                 except Exception as retry_error:
-                    logger.exception(
+                    logger.error(
                         "Automatic retry failed for transient KIE image task %s: %s",
                         task_id,
-                        retry_error,
+                        sanitize_provider_log_payload(retry_error),
                     )
 
             if task and _is_retryable_wan_timeout_failure(task, fail_code, fail_msg):
@@ -5074,10 +5105,10 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         )
                         return web.Response(status=200)
                 except Exception as retry_error:
-                    logger.exception(
+                    logger.error(
                         "Automatic retry failed for transient WAN image task %s: %s",
                         task_id,
-                        retry_error,
+                        sanitize_provider_log_payload(retry_error),
                     )
 
             if task and _is_retryable_seedance_real_person_failure(task, fail_msg):
@@ -5096,10 +5127,10 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         )
                         return web.Response(status=200)
                 except Exception as retry_error:
-                    logger.exception(
+                    logger.error(
                         "Automatic retry failed for Seedance task %s: %s",
                         task_id,
-                        retry_error,
+                        sanitize_provider_log_payload(retry_error),
                     )
 
             from bot.services.task_watchdog import force_fail_task

@@ -5,7 +5,7 @@ import { useApp } from '@/lib/app-context'
 import { notifyFeedChanged } from '@/lib/feed-events'
 import { cn } from '@/lib/utils'
 import { 
-  X, Image, Video, Clock, CheckCircle2, XCircle, 
+  X, Image, Video, Clock, Check, CheckCircle2, XCircle,
   Banana, ExternalLink, Copy, RefreshCw, Headphones, UserRound, Images, BookOpen, Eye, EyeOff, ShieldAlert
 } from 'lucide-react' 
 import { motion, AnimatePresence } from 'framer-motion'
@@ -35,6 +35,7 @@ export function TaskDetailPanel() {
   const [publicationLink, setPublicationLink] = useState<string | null>(null)
   const [selectedReferenceImages, setSelectedReferenceImages] = useState<Set<number>>(new Set())
   const [selectedReferenceVideos, setSelectedReferenceVideos] = useState<Set<number>>(new Set())
+  const [selectedRepeatReferenceImages, setSelectedRepeatReferenceImages] = useState<Set<number>>(new Set())
 
   const publicationReferenceImages = taskDetail?.publication_reference_images
     ?? taskDetail?.request_data?.source_reference_images
@@ -79,6 +80,22 @@ export function TaskDetailPanel() {
     publicationReferenceVideos,
     publicationReferenceImageIndices,
     publicationReferenceVideoIndices,
+  ])
+
+  useEffect(() => {
+    // Public visibility and legacy display selections never imply repeat consent.
+    const savedImages = taskDetail?.feed_repeat_reference_selection?.images ?? []
+    setSelectedRepeatReferenceImages(new Set(
+      taskDetail?.type === 'image'
+        ? savedImages.filter((index) => publicationReferenceImageIndices.includes(index))
+        : [],
+    ))
+  }, [
+    taskDetail?.task_id,
+    taskDetail?.type,
+    taskDetail?.feed_repeat_reference_selection,
+    publicationReferenceImageIndices,
+    isTaskDetailOpen,
   ])
 
   const toggleReference = (
@@ -135,6 +152,9 @@ export function TaskDetailPanel() {
           referencesVisible: feedReferencesVisible,
           referenceImageIndices: [...selectedReferenceImages].sort((left, right) => left - right),
           referenceVideoIndices: [...selectedReferenceVideos].sort((left, right) => left - right),
+          ...(taskDetail.type === 'image' ? {
+            repeatReferenceImageIndices: [...selectedRepeatReferenceImages].sort((left, right) => left - right),
+          } : {}),
           blurred: feedBlurred,
           publicationScope,
           adultContent,
@@ -151,6 +171,11 @@ export function TaskDetailPanel() {
             images: [...selectedReferenceImages].sort((left, right) => left - right),
             videos: [...selectedReferenceVideos].sort((left, right) => left - right),
           },
+          ...(taskDetail.type === 'image' ? {
+            feed_repeat_reference_selection: {
+              images: [...selectedRepeatReferenceImages].sort((left, right) => left - right),
+            },
+          } : {}),
           feed_blurred: Boolean(published.feed_blurred),
         })
         notifyFeedChanged(published)
@@ -178,7 +203,11 @@ export function TaskDetailPanel() {
         is_profile_visible: false,
         publication_scope: 'private',
         is_adult_content: false,
+        ...(taskDetail.type === 'image' ? {
+          feed_repeat_reference_selection: { images: [] },
+        } : {}),
       })
+      setSelectedRepeatReferenceImages(new Set())
       setPublicationLink(null)
       setPublicationEditorOpen(false)
       notifyFeedChanged()
@@ -524,6 +553,7 @@ export function TaskDetailPanel() {
                       </span>
                     </button>
                   ) : null}
+                  <h3 className="mb-2 text-xs font-semibold text-foreground">Что показать в публикации</h3>
                   <div className="grid grid-cols-3 gap-2">
                         <button
                           type="button"
@@ -569,7 +599,7 @@ export function TaskDetailPanel() {
                   {feedReferencesVisible && referenceCount > 0 ? (
                     <div className="mt-3 rounded-lg border border-border/50 bg-background/30 p-2.5">
                       <div className="mb-2 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                        <span>Что показать в публикации</span>
+                        <span>Референсы в публикации</span>
                         <span>{selectedReferenceCount} из {referenceCount}</span>
                       </div>
                       <div className="flex gap-2 overflow-x-auto pb-1">
@@ -608,6 +638,75 @@ export function TaskDetailPanel() {
                           )
                         })}
                       </div>
+                    </div>
+                  ) : null}
+                  {taskDetail.type === 'image' ? (
+                    <div
+                      role="group"
+                      aria-labelledby="repeat-reference-permission-heading"
+                      className="mt-3 rounded-lg border border-border/50 bg-background/30 p-3"
+                    >
+                      <h3 id="repeat-reference-permission-heading" className="text-xs font-semibold text-foreground">
+                        Референсы для повторов
+                      </h3>
+                      <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                        Выберите фото, которые разрешаете использовать при чужих повторах.
+                        Для повтора они используются только на сервере: их превью и ссылки не передаются другим пользователям.
+                        Показ референсов в публикации настраивается отдельно выше.
+                      </p>
+                      {publicationReferenceImages.length > 0 ? (
+                        <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+                          {publicationReferenceImages.map((url, index) => {
+                            const sourceIndex = publicationReferenceImageIndices[index]
+                            const selected = selectedRepeatReferenceImages.has(sourceIndex)
+                            return (
+                              <button
+                                key={`repeat-image-${sourceIndex}`}
+                                type="button"
+                                role="checkbox"
+                                aria-label={`Фото-референс ${index + 1} для повторов`}
+                                aria-checked={selected}
+                                disabled={publishBusy}
+                                onClick={() => toggleReference(sourceIndex, setSelectedRepeatReferenceImages)}
+                                className={cn(
+                                  'relative h-20 w-20 shrink-0 overflow-hidden rounded-lg border-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan disabled:cursor-not-allowed disabled:opacity-50',
+                                  selected ? 'border-cyan' : 'border-border/50',
+                                )}
+                              >
+                                <img src={url} alt="" className="h-full w-full object-cover" />
+                                <span className={cn(
+                                  'absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full border bg-background/90',
+                                  selected ? 'border-cyan text-cyan' : 'border-border text-muted-foreground',
+                                )}>
+                                  {selected ? <Check className="h-4 w-4" /> : null}
+                                </span>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      ) : (
+                        <p className="mt-2 text-[11px] text-muted-foreground">Нет доступных фото-референсов.</p>
+                      )}
+                      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                        <span className="text-muted-foreground" aria-live="polite">
+                          {selectedRepeatReferenceImages.size > 0
+                            ? `Для повторов выбрано: ${selectedRepeatReferenceImages.size}`
+                            : 'Приватные референсы для повторов не разрешены'}
+                        </span>
+                        {selectedRepeatReferenceImages.size > 0 ? (
+                          <button
+                            type="button"
+                            disabled={publishBusy}
+                            onClick={() => setSelectedRepeatReferenceImages(new Set())}
+                            className="min-h-9 rounded-md px-2 text-cyan disabled:opacity-50"
+                          >
+                            Снять выбор
+                          </button>
+                        ) : null}
+                      </div>
+                      <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                        Чтобы отозвать разрешение для будущих повторов, снимите выбор и сохраните публикацию.
+                      </p>
                     </div>
                   ) : null}
                   <div className="mt-3 grid gap-2">

@@ -662,3 +662,6 @@ try {
   await browser?.close()
   server.kill('SIGTERM')
 }
+
+// Include owner reference-consent regression in the existing CI browser gate.
+await import('./private-repeat-permission.mjs')

@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Optional, Union
 import aiohttp
 from PIL import Image
 
+from bot.utils.user_facing_errors import sanitize_provider_log_payload
+
 logger = logging.getLogger(__name__)
 
 
@@ -217,6 +219,11 @@ Use the {ref_count} reference images to maintain character consistency and prese
             if result:
                 return result
 
+        # Native fallback only supports byte-backed inputs. Dropping URL refs
+        # would change the recipe and rebind positional ImageN instructions.
+        if image_input_url or reference_image_urls:
+            logger.warning("Native Gemini fallback skipped: URL reference transport is unavailable")
+            return None
         # 3. Fallback на нативный Gemini API
         if self.api_key and self.client:
             return await self._generate_via_native_gemini(
@@ -349,17 +356,18 @@ Use the {ref_count} reference images to maintain character consistency and prese
                             b64_data = content.split(",", 1)[1]
                             return base64.b64decode(b64_data)
 
-                    logger.warning(f"Nano Banana response: {data}")
+                    logger.warning("Nano Banana response: %s", sanitize_provider_log_payload(data))
                 else:
                     error_text = await response.text()
                     logger.error(
-                        f"Nano Banana API error: {response.status} - {error_text}"
+                        "Nano Banana API error: status=%s error=%s",
+                        response.status, sanitize_provider_log_payload(error_text),
                     )
 
             return None
 
         except Exception as e:
-            logger.exception(f"Nano Banana generation failed: {e}")
+            logger.warning("Nano Banana generation failed: exception_type=%s error=%s", type(e).__name__, sanitize_provider_log_payload(e))
             return None
 
     async def _generate_via_native_gemini(
@@ -429,7 +437,7 @@ Use the {ref_count} reference images to maintain character consistency and prese
         except ImportError as e:
             logger.error(f"Missing dependency: {e}")
         except Exception as e:
-            logger.exception(f"Native Gemini generation failed: {e}")
+            logger.warning("Native Gemini generation failed: exception_type=%s error=%s", type(e).__name__, sanitize_provider_log_payload(e))
 
         return None
 

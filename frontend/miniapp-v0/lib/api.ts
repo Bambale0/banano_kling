@@ -1137,6 +1137,7 @@ export async function publishGeneration(
     referencesVisible?: boolean
     referenceImageIndices?: number[]
     referenceVideoIndices?: number[]
+    repeatReferenceImageIndices?: number[]
     blurred?: boolean
     publicationScope?: 'profile' | 'feed'
     adultContent?: boolean
@@ -1153,6 +1154,7 @@ export async function publishGeneration(
     references_visible: Boolean(options.referencesVisible),
     reference_image_indices: options.referenceImageIndices,
     reference_video_indices: options.referenceVideoIndices,
+    repeat_reference_image_indices: options.repeatReferenceImageIndices,
     feed_blurred: Boolean(options.blurred),
     publication_scope: options.publicationScope || 'feed',
     adult_content: Boolean(options.adultContent),

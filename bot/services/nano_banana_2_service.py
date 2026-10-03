@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 import aiohttp
 
 from bot.config import config
+from bot.utils.user_facing_errors import sanitize_provider_log_payload
 from bot.services.kie_file_upload_service import kie_file_upload_service
 from bot.services.kie_market_service import kie_market_service
 from bot.services.media_input_utils import (
@@ -144,7 +145,7 @@ def _extract_inline_image(result: Dict[str, Any]) -> tuple[bytes, str] | None:
                     ),
                 )
             except Exception:
-                logger.exception(
+                logger.warning(
                     "Nano Banana 2 APIYI returned invalid base64 image data"
                 )
     return None
@@ -261,14 +262,14 @@ class ProviderClient:
                     "Nano Banana 2 POST failed on provider %s: %s - %s",
                     self.base_url,
                     response.status,
-                    body[:1000],
+                    sanitize_provider_log_payload(body[:1000]),
                 )
                 return None
         except Exception as exc:
             logger.warning(
                 "Nano Banana 2 POST error on provider %s: %s",
                 self.base_url,
-                exc,
+                sanitize_provider_log_payload(exc),
             )
             return None
 
@@ -297,7 +298,7 @@ class ProviderClient:
                         "Nano Banana 2 GET failed on provider %s: %s - %s",
                         self.base_url,
                         response.status,
-                        body[:1000],
+                        sanitize_provider_log_payload(body[:1000]),
                     )
                 else:
                     logger.debug(
@@ -309,7 +310,7 @@ class ProviderClient:
             logger.warning(
                 "Nano Banana 2 GET error on provider %s: %s",
                 self.base_url,
-                exc,
+                sanitize_provider_log_payload(exc),
             )
             return None
 
@@ -384,6 +385,10 @@ class NanoBanana2Service:
         else:
             normalized_image_input = []
 
+        if len(normalized_image_input) != len(image_input or []):
+            logger.warning("Nano Banana 2 aborted: incomplete reference transport requested=%s ready=%s",
+                           len(image_input or []), len(normalized_image_input))
+            return None
         if str(model or "").strip() in NANO_BANANA_2_LITE_MODEL_IDS:
             try:
                 logger.info(
@@ -399,7 +404,7 @@ class NanoBanana2Service:
                     callback_url=callback_url,
                 )
             except Exception as exc:
-                logger.error("Nano Banana 2 Lite create_task failed: %s", exc)
+                logger.error("Nano Banana 2 Lite create_task failed: %s", sanitize_provider_log_payload(exc))
                 return None
 
         normalized_resolution = _normalize_resolution(resolution)
@@ -428,19 +433,19 @@ class NanoBanana2Service:
 
         response = await self._post("/api/v1/jobs/createTask", payload)
         if not response or not isinstance(response, dict):
-            logger.error("Nano Banana 2 create_task failed, response=%s", response)
+            logger.error("Nano Banana 2 create_task failed, response=%s", sanitize_provider_log_payload(response))
             return None
         data = response.get("data")
         if not isinstance(data, dict):
             logger.error(
                 "Nano Banana 2 invalid data: %s (full response: %s)",
-                data,
-                response,
+                sanitize_provider_log_payload(data),
+                sanitize_provider_log_payload(response),
             )
             return None
         task_id = data.get("taskId")
         if not task_id:
-            logger.error("No taskId in Nano Banana 2 response: %s", response)
+            logger.error("No taskId in Nano Banana 2 response: %s", sanitize_provider_log_payload(response))
         return task_id
 
     async def get_task_status(self, task_id: str) -> Optional[Dict]:
@@ -456,7 +461,7 @@ class NanoBanana2Service:
             return None
         data = response.get("data")
         if not isinstance(data, dict):
-            logger.warning("Nano Banana 2 status invalid data: %s", data)
+            logger.warning("Nano Banana 2 status invalid data: %s", sanitize_provider_log_payload(data))
             return None
         return data
 
@@ -596,7 +601,7 @@ class NanoBanana2Service:
                 logger.error(
                     "Task %s failed: %s",
                     task_id,
-                    status.get("failMsg", "Unknown"),
+                    sanitize_provider_log_payload(status.get("failMsg", "Unknown")),
                 )
                 return None
             await asyncio.sleep(delay)
@@ -654,7 +659,7 @@ class NanoBanana2GeminiProvider:
                     }
                 }
             except Exception:
-                logger.exception(
+                logger.warning(
                     "Nano Banana 2 APIYI failed to parse data URI reference index=%s",
                     index,
                 )
@@ -701,7 +706,7 @@ class NanoBanana2GeminiProvider:
                     }
                 }
         except Exception:
-            logger.exception(
+            logger.warning(
                 "Nano Banana 2 APIYI failed to download reference index=%s",
                 index,
             )
@@ -732,21 +737,15 @@ class NanoBanana2GeminiProvider:
         for index, source in enumerate(requested_references, start=1):
             part = await self._reference_part(session, source, index)
             if part is None:
-                if index == 1:
-                    logger.error(
-                        "Nano Banana 2 APIYI primary reference unavailable; aborting primary request"
-                    )
-                    return {
-                        "error": "APIYI could not load the primary reference image",
-                        "provider": "apiyi",
-                        "provider_model": self.MODEL,
-                        "retryable": True,
-                    }
-                logger.warning(
-                    "Nano Banana 2 APIYI skipped unavailable extra reference index=%s",
-                    index,
+                logger.error(
+                    "Nano Banana 2 APIYI reference unavailable; aborting request index=%s", index
                 )
-                continue
+                return {
+                    "error": "APIYI could not load a required reference image",
+                    "provider": "apiyi",
+                    "provider_model": self.MODEL,
+                    "retryable": True,
+                }
             reference_parts.append(part)
 
         if requested_references and not reference_parts:
@@ -803,7 +802,7 @@ class NanoBanana2GeminiProvider:
                         "Nano Banana 2 APIYI POST failed: status=%s retryable=%s body=%s",
                         response.status,
                         retryable,
-                        body[:1000],
+                        sanitize_provider_log_payload(body[:1000]),
                     )
                     return {
                         "error": f"APIYI HTTP {response.status}",
@@ -866,7 +865,7 @@ class NanoBanana2GeminiProvider:
                     "retryable": not policy_failure,
                 }
         except Exception as exc:
-            logger.warning("Nano Banana 2 APIYI provider error: %s", exc)
+            logger.warning("Nano Banana 2 APIYI provider error: %s", sanitize_provider_log_payload(exc))
             return {
                 "error": f"APIYI transport error: {type(exc).__name__}",
                 "provider": "apiyi",

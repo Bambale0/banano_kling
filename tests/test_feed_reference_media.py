@@ -49,3 +49,23 @@ def test_thumbnail_is_small_webp(tmp_path: Path):
     with Image.open(target) as preview:
         assert max(preview.size) <= media.REFERENCE_THUMB_MAX_EDGE
         assert preview.format == "WEBP"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["thumbnail", "full"])
+async def test_reference_media_revalidates_visibility_and_disables_public_cache(monkeypatch, tmp_path, route):
+    from types import SimpleNamespace
+    source = tmp_path / "private.png"
+    Image.new("RGB", (32, 32), "white").save(source)
+    card = {"reference_images": ["https://example.test/ref.png"], "references_hidden": False, "feed_references_visible": True}
+    async def fake_card(_id):
+        return card
+    monkeypatch.setattr(media, "get_feed_generation_card", fake_card)
+    monkeypatch.setattr(media, "resolve_local_upload_path", lambda _url: str(source))
+    monkeypatch.setattr(media, "REFERENCE_THUMB_CACHE_DIR", tmp_path / "thumbs")
+    handler = media.feed_reference_image_thumbnail if route == "thumbnail" else media.feed_reference_image_full
+    response = await handler(SimpleNamespace(match_info={"gen_id": "42", "index": "0"}))
+    assert response.headers["Cache-Control"] == "private, no-store"
+    card["references_hidden"] = True
+    with pytest.raises(web.HTTPNotFound):
+        await handler(SimpleNamespace(match_info={"gen_id": "42", "index": "0"}))

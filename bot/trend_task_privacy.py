@@ -17,6 +17,7 @@ _PRIVATE_TASK_FIELDS = {
     "publication_reference_image_indices",
     "publication_reference_video_indices",
     "feed_reference_selection",
+    "feed_repeat_reference_selection",
 }
 _PRIVATE_REQUEST_FIELDS = {
     "prompt",
@@ -28,6 +29,7 @@ _PRIVATE_REQUEST_FIELDS = {
     "last_frame_url",
     "reference_images",
     "source_reference_images",
+    "private_repeat_reference_images",
     "reference_image_urls",
     "provider_reference_images",
     "v_reference_videos",
