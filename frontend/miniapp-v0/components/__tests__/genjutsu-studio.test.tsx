@@ -6,7 +6,7 @@ import catalog from '../../../../bot/genjutsu/catalog.json'
 
 jest.mock('@/lib/api', () => ({ getApiBasePath: () => '/mini-app/api', getInitData: () => 'signed-test', getStartParamFallback: () => '' }))
 jest.mock('@/lib/genjutsu-api', () => ({ ...jest.requireActual('@/lib/genjutsu-api'), genjutsuCall: jest.fn() }))
-jest.mock('../genjutsu-admin', () => ({ GenjutsuAdmin: () => null }))
+jest.mock('../genjutsu-admin', () => ({ GenjutsuAdmin: () => <div>GENJUTSU_ADMIN_PANEL</div> }))
 
 const call = genjutsuCall as jest.Mock
 const initial = {}
@@ -134,4 +134,23 @@ test('admin recipe publication requires and sends a completed verification run',
   fireEvent.click(screen.getByRole('button', { name: 'Создать приватный рецепт' }))
   expect(await screen.findByText(/Рецепт готов:/)).toBeInTheDocument()
   expect(call.mock.calls.some(([action]) => action === 'recipe_publish')).toBe(true)
+})
+
+
+test('admin entry opens Genjutsu management immediately for an admin', async () => {
+  const original = call.getMockImplementation()!
+  call.mockImplementation(async (action: string, body: Record<string, unknown>) => {
+    if (action === 'bootstrap') return { ...bootstrap, is_admin: true }
+    return original(action, body)
+  })
+  render(<GenjutsuStudio initial={{ admin: true }} onClose={jest.fn()} />)
+  expect(await screen.findByText('GENJUTSU_ADMIN_PANEL')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Управление' })).toBeInTheDocument()
+})
+
+test('admin entry never exposes management to a non-admin', async () => {
+  render(<GenjutsuStudio initial={{ admin: true }} onClose={jest.fn()} />)
+  expect(await screen.findByLabelText('Видео из библиотеки')).toBeInTheDocument()
+  expect(screen.queryByText('GENJUTSU_ADMIN_PANEL')).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Управление' })).not.toBeInTheDocument()
 })

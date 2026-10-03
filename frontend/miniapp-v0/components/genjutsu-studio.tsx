@@ -16,7 +16,7 @@ const label = 'block space-y-1 text-sm text-muted-foreground'
 const terminal = new Set(['completed', 'failed', 'canceled', 'partial'])
 
 export function GenjutsuStudio({ initial = {}, onClose }: {
-  initial?: { task_id?: string; run_id?: string; recipe_id?: string }; onClose: () => void
+  initial?: { task_id?: string; run_id?: string; recipe_id?: string; admin?: boolean }; onClose: () => void
 }) {
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null)
   const [plan, setPlan] = useState<Plan>(freshPlan)
@@ -33,7 +33,7 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
   const [saving, setSaving] = useState(false)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
-  const [tab, setTab] = useState<'editor' | 'history' | 'admin'>('editor')
+  const [tab, setTab] = useState<'editor' | 'history' | 'admin'>(initial.admin ? 'admin' : 'editor')
   const [versions, setVersions] = useState<{ revision: number; title: string }[]>([])
   const [trim, setTrim] = useState({ start: '0', end: '5' })
   const [ack, setAck] = useState(false)
@@ -59,6 +59,9 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
   }, [])
 
   const message = (cause: unknown) => cause instanceof Error ? cause.message : 'Операция не выполнена.'
+  useEffect(() => {
+    if (bootstrap && tab === 'admin' && !bootstrap.is_admin) setTab('editor')
+  }, [bootstrap, tab])
   async function action(name: string, work: () => Promise<void>) {
     if (busy) return
     setBusy(name); setError(''); setNotice('')

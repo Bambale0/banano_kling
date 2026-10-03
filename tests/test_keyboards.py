@@ -146,28 +146,19 @@ def test_get_admin_keyboard():
     # Other runtime modules may install the trends compatibility decorator
     # during test collection. Unwrap it so this test always exercises the base
     # keyboard contract and remains independent of collection order.
-    kb = inspect.unwrap(get_admin_keyboard)()
+    with patch.object(keyboards_module, "config", SimpleNamespace(mini_app_url="https://example.test/mini-app/")):
+        kb = inspect.unwrap(get_admin_keyboard)()
     assert kb.inline_keyboard
-    assert any(
-        "admin_reload" in btn.callback_data for row in kb.inline_keyboard for btn in row
-    )
-    assert any(
-        "admin_finance" in btn.callback_data for row in kb.inline_keyboard for btn in row
-    )
-    assert any(
-        "admin_prompts" in btn.callback_data for row in kb.inline_keyboard for btn in row
-    )
-    assert any(
-        "admin_ai" == btn.callback_data for row in kb.inline_keyboard for btn in row
-    )
-    assert any(
-        "admin_ai_help" == btn.callback_data for row in kb.inline_keyboard for btn in row
-    )
-    assert any(
-        "admin_required_subscription_toggle" == btn.callback_data
-        for row in kb.inline_keyboard
-        for btn in row
-    )
+    buttons = [btn for row in kb.inline_keyboard for btn in row]
+    assert any(btn.callback_data == "admin_reload" for btn in buttons)
+    genjutsu = next(btn for btn in buttons if btn.text == "🌀 Genjutsu — управление")
+    assert genjutsu.web_app is not None
+    assert "startapp=genjutsu_admin" in str(genjutsu.web_app.url)
+    assert any(btn.callback_data == "admin_finance" for btn in buttons)
+    assert any(btn.callback_data == "admin_prompts" for btn in buttons)
+    assert any(btn.callback_data == "admin_ai" for btn in buttons)
+    assert any(btn.callback_data == "admin_ai_help" for btn in buttons)
+    assert any(btn.callback_data == "admin_required_subscription_toggle" for btn in buttons)
     assert any(
         "video_to_prompt" == btn.callback_data
         for row in kb.inline_keyboard

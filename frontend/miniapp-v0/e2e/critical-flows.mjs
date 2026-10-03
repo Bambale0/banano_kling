@@ -258,7 +258,18 @@ try {
               config_version: 0, limits: { max_steps: 3, max_variants: 4, poll_seconds: 5 },
               prices: {}, projects: [], runs: [], assets: [],
             }
-          : { ok: true, items: [] }
+          : requestBody.action === 'settings'
+            ? {
+                ok: true,
+                settings: {
+                  admin_enabled: true, public_enabled: false, verified_operations: [],
+                  prices: { motion_transfer: { '720p': null }, object_swap: { '720p': null }, restyle: { '720p': null } },
+                  max_steps: 3, max_variants: 4, poll_seconds: 5,
+                },
+                version: 1,
+                coverage: [],
+              }
+            : { ok: true, items: [] }
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
       return
     }
@@ -693,6 +704,13 @@ try {
   await page.getByRole('button', { name: /Higgsfield Genjutsu/ }).click()
   await page.getByRole('region', { name: 'Студия Genjutsu' }).waitFor()
   await page.getByText('Интеграция ещё не настроена.', { exact: false }).waitFor()
+  await page.getByRole('button', { name: 'Закрыть студию' }).click()
+
+  // Admin launch opens Genjutsu directly on management in the real lazy UI.
+  bootstrapPayload.is_admin = true
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('genjutsu:open', { detail: { admin: true } })))
+  await page.getByRole('region', { name: 'Студия Genjutsu' }).waitFor()
+  await page.getByText(/Управление доступом и тарифами/).waitFor()
   await page.getByRole('button', { name: 'Закрыть студию' }).click()
 
   console.log('Mini App critical browser E2E passed')

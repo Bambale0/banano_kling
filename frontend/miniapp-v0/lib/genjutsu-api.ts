@@ -67,7 +67,7 @@ export function launchKey(quoteId: string): string {
   return saved
 }
 
-export function openGenjutsu(options: { task_id?: string; run_id?: string; recipe_id?: string } = {}) {
+export function openGenjutsu(options: { task_id?: string; run_id?: string; recipe_id?: string; admin?: boolean } = {}) {
   window.dispatchEvent(new CustomEvent('genjutsu:open', { detail: options }))
 }
 

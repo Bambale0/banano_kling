@@ -10,7 +10,7 @@ import { genjutsuCall, openGenjutsu } from '@/lib/genjutsu-api'
 const Studio = dynamic(() => import('./genjutsu-studio').then(module => module.GenjutsuStudio), {
   loading: () => <p role="status">Открываем Genjutsu…</p>,
 })
-type Options = { task_id?: string; run_id?: string; recipe_id?: string }
+type Options = { task_id?: string; run_id?: string; recipe_id?: string; admin?: boolean }
 
 export function GenjutsuButton({ taskId, compact = false }: { taskId?: string; compact?: boolean }) {
   const [visible, setVisible] = useState(false)
@@ -36,11 +36,12 @@ export function GenjutsuEntry() {
     window.addEventListener('genjutsu:open', show)
     const params = new URLSearchParams(window.location.search)
     const start = getStartParamFallback()
-    if (params.get('genjutsu') === '1' || start === 'genjutsu' || start.startsWith('genjutsu_recipe_')) {
+    if (params.get('genjutsu') === '1' || start === 'genjutsu' || start === 'genjutsu_admin' || start.startsWith('genjutsu_recipe_')) {
       const rid = params.get('genjutsu_run')
       const recipe = params.get('genjutsu_recipe') || (start.startsWith('genjutsu_recipe_') ? start.slice(16) : '')
       setOptions({ ...(rid && /^[a-f0-9]{32}$/.test(rid) ? { run_id: rid } : {}),
-        ...(recipe && /^[a-f0-9]{32}$/.test(recipe) ? { recipe_id: recipe } : {}) })
+        ...(recipe && /^[a-f0-9]{32}$/.test(recipe) ? { recipe_id: recipe } : {}),
+        ...(start === 'genjutsu_admin' ? { admin: true } : {}) })
     }
     return () => window.removeEventListener('genjutsu:open', show)
   }, [])
