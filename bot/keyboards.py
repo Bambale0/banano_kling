@@ -191,6 +191,11 @@ def get_admin_keyboard(subscription_required: bool | None = None):
         subscription_label = "🔐 Подписка на канал"
     else:
         subscription_label = "🔐 Подписка: ВКЛ" if subscription_required else "🔓 Подписка: ВЫКЛ"
+    if config.mini_app_url:
+        builder.button(
+            text="🌀 Genjutsu — управление",
+            web_app=WebAppInfo(url=_mini_app_url_with_start_param("genjutsu_admin")),
+        )
     builder.button(text="🔄 Перезагрузить пресеты", callback_data="admin_reload")
     builder.button(text="📊 Статистика", callback_data="admin_stats")
     builder.button(text="👥 Пользователи", callback_data="admin_users")
@@ -205,7 +210,10 @@ def get_admin_keyboard(subscription_required: bool | None = None):
     builder.button(text=f"🎞 Видео → prompt • {_video_prompt_price_label()}🍌", callback_data="video_to_prompt")
     builder.button(text="⚙️ Рассылка", callback_data="admin_broadcast")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
-    builder.adjust(2, 2, 2, 2, 2, 2, 2)
+    if config.mini_app_url:
+        builder.adjust(1, 2, 2, 2, 2, 2, 2, 2)
+    else:
+        builder.adjust(2, 2, 2, 2, 2, 2, 2)
     return builder.as_markup()
 
 
