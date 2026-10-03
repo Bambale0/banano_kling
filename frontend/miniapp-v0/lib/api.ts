@@ -1135,6 +1135,8 @@ export async function publishGeneration(
   options: {
     promptVisible?: boolean
     referencesVisible?: boolean
+    referenceImageIndices?: number[]
+    referenceVideoIndices?: number[]
     blurred?: boolean
     publicationScope?: 'profile' | 'feed'
     adultContent?: boolean
@@ -1149,6 +1151,8 @@ export async function publishGeneration(
     task_id: taskId,
     prompt_visible: Boolean(options.promptVisible),
     references_visible: Boolean(options.referencesVisible),
+    reference_image_indices: options.referenceImageIndices,
+    reference_video_indices: options.referenceVideoIndices,
     feed_blurred: Boolean(options.blurred),
     publication_scope: options.publicationScope || 'feed',
     adult_content: Boolean(options.adultContent),

@@ -623,6 +623,7 @@ async def _ensure_prompt_feed_schema(db: db_backend.Connection) -> None:
         ("shares_count", "ALTER TABLE generation_tasks ADD COLUMN shares_count INTEGER DEFAULT 0"),
         ("feed_prompt_visible", "ALTER TABLE generation_tasks ADD COLUMN feed_prompt_visible BOOLEAN DEFAULT 0"),
         ("feed_references_visible", "ALTER TABLE generation_tasks ADD COLUMN feed_references_visible BOOLEAN DEFAULT 0"),
+        ("feed_reference_selection", "ALTER TABLE generation_tasks ADD COLUMN feed_reference_selection TEXT"),
         ("feed_blurred", "ALTER TABLE generation_tasks ADD COLUMN feed_blurred BOOLEAN DEFAULT 0"),
         ("feed_published_at", "ALTER TABLE generation_tasks ADD COLUMN feed_published_at TIMESTAMP"),
     ]:
@@ -768,6 +769,7 @@ class GenerationTask:
     shares_count: int = 0
     feed_prompt_visible: bool = False
     feed_references_visible: bool = False
+    feed_reference_selection: Optional[str] = None
     feed_blurred: bool = False
     created_at: Optional[datetime] = None
 
@@ -5293,6 +5295,11 @@ async def get_task_by_id(task_id: str) -> Optional[GenerationTask]:
                 if "feed_references_visible" in row.keys()
                 else False
             ),
+            feed_reference_selection=(
+                row["feed_reference_selection"]
+                if "feed_reference_selection" in row.keys()
+                else None
+            ),
             feed_blurred=(
                 bool(row["feed_blurred"])
                 if "feed_blurred" in row.keys()
@@ -6424,6 +6431,51 @@ def generation_references_visible(
     return bool(_generation_attr(generation, "feed_references_visible", False))
 
 
+def generation_reference_selection(
+    generation: GenerationTask | dict[str, Any] | db_backend.Row | None,
+) -> dict[str, list[str]] | None:
+    raw = _generation_attr(generation, "feed_reference_selection")
+    if raw is None:
+        return None
+    empty_selection = {"images": [], "videos": []}
+    try:
+        payload = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return empty_selection
+    if not isinstance(payload, dict):
+        return empty_selection
+    selection: dict[str, list[str]] = {}
+    for media_type in ("images", "videos"):
+        values = payload.get(media_type)
+        if not isinstance(values, list) or any(
+            not isinstance(value, str) or not value.strip()
+            for value in values
+        ):
+            return empty_selection
+        selection[media_type] = [value.strip() for value in values]
+    return selection
+
+
+def _validated_reference_indices(
+    values: Optional[list[int]],
+    available_count: int,
+) -> list[int]:
+    if values is None:
+        return list(range(available_count))
+    normalized: list[int] = []
+    for value in values:
+        if (
+            not isinstance(value, int)
+            or isinstance(value, bool)
+            or value < 0
+            or value >= available_count
+        ):
+            raise ValueError("Некорректный выбор референсов для публикации")
+        if value not in normalized:
+            normalized.append(value)
+    return normalized
+
+
 def generation_feed_blurred(
     generation: GenerationTask | dict[str, Any] | db_backend.Row | None,
 ) -> bool:
@@ -6589,28 +6641,77 @@ def resolve_public_generation_result_urls(row: db_backend.Row | dict[str, Any]) 
     return _feed_result_urls(row)
 
 
-def _public_reference_urls(row: db_backend.Row, urls: Any) -> list[str]:
-    available: list[str] = []
+def _reference_url_candidates(urls: Any) -> list[str]:
+    candidates: list[str] = []
     for url in _parse_json_list(urls) if isinstance(urls, str) else list(urls or []):
         normalized = str(url or "").strip()
-        if (
-            normalized
-            and normalized not in available
-            and _is_feed_result_url_available(row, normalized)
-        ):
-            available.append(normalized)
-    return available
+        if normalized and normalized not in candidates:
+            candidates.append(normalized)
+    return candidates
+
+
+def _public_reference_urls(row: db_backend.Row, urls: Any) -> list[str]:
+    return [
+        url
+        for url in _reference_url_candidates(urls)
+        if _is_feed_result_url_available(row, url)
+    ]
+
+
+def _feed_reference_image_candidates(request_data: dict[str, Any]) -> list[str]:
+    source_refs = request_data.get("source_reference_images")
+    if isinstance(source_refs, list):
+        return _reference_url_candidates(source_refs)
+    return _reference_url_candidates(request_data.get("reference_images", []))
+
+
+def _feed_reference_video_candidates(request_data: dict[str, Any]) -> list[str]:
+    return _reference_url_candidates(request_data.get("v_reference_videos", []))
 
 
 def _feed_reference_images(row: db_backend.Row, request_data: dict[str, Any]) -> list[str]:
-    source_refs = request_data.get("source_reference_images")
-    if isinstance(source_refs, list):
-        return _public_reference_urls(row, source_refs)
-    return _public_reference_urls(row, request_data.get("reference_images", []))
+    return [
+        url
+        for url in _feed_reference_image_candidates(request_data)
+        if _is_feed_result_url_available(row, url)
+    ]
 
 
 def _feed_reference_videos(row: db_backend.Row, request_data: dict[str, Any]) -> list[str]:
-    return _public_reference_urls(row, request_data.get("v_reference_videos", []))
+    return [
+        url
+        for url in _feed_reference_video_candidates(request_data)
+        if _is_feed_result_url_available(row, url)
+    ]
+
+
+def generation_publication_references(
+    generation: db_backend.Row | dict[str, Any],
+) -> dict[str, list[Any]]:
+    raw_request_data = _generation_attr(generation, "request_data")
+    request_data = (
+        _parse_json_dict(raw_request_data)
+        if not isinstance(raw_request_data, dict)
+        else raw_request_data
+    )
+    image_candidates = _feed_reference_image_candidates(request_data)
+    video_candidates = _feed_reference_video_candidates(request_data)
+    image_indices = [
+        index
+        for index, url in enumerate(image_candidates)
+        if _is_feed_result_url_available(generation, url)
+    ]
+    video_indices = [
+        index
+        for index, url in enumerate(video_candidates)
+        if _is_feed_result_url_available(generation, url)
+    ]
+    return {
+        "images": [image_candidates[index] for index in image_indices],
+        "videos": [video_candidates[index] for index in video_indices],
+        "image_indices": image_indices,
+        "video_indices": video_indices,
+    }
 
 
 def _feed_repeat_scenario(
@@ -6733,18 +6834,33 @@ def _generation_row_to_card(
     # A remix may contain reference URLs inherited from somebody else's
     # publication. They remain visible to the owner of the child generation,
     # but are never re-published transitively to third parties.
-    references_visible_for_viewer = bool(
+    references_allowed_for_viewer = bool(
         references_visible and (viewer_is_owner or not is_remix)
     )
     all_reference_images = _feed_reference_images(row, request_data)
     all_reference_videos = _feed_reference_videos(row, request_data)
+    selection = generation_reference_selection(row)
+    selected_reference_images = (
+        [url for url in all_reference_images if url in selection["images"]]
+        if selection is not None
+        else all_reference_images
+    )
+    selected_reference_videos = (
+        [url for url in all_reference_videos if url in selection["videos"]]
+        if selection is not None
+        else all_reference_videos
+    )
+    references_visible_for_viewer = bool(
+        references_allowed_for_viewer
+        and (selected_reference_images or selected_reference_videos)
+    )
     public_reference_images = (
-        all_reference_images if references_visible_for_viewer else []
+        selected_reference_images if references_visible_for_viewer else []
     )
     public_reference_videos = (
-        all_reference_videos if references_visible_for_viewer else []
+        selected_reference_videos if references_visible_for_viewer else []
     )
-    references_count = len(all_reference_images) + len(all_reference_videos)
+    references_count = len(selected_reference_images) + len(selected_reference_videos)
     preview_url = feed_urls[0] if feed_urls else ""
     if preview_url and str(row["type"]) == "image":
         try:
@@ -7247,6 +7363,8 @@ async def share_to_feed(
     *,
     prompt_visible: bool = False,
     references_visible: bool = False,
+    reference_image_indices: Optional[list[int]] = None,
+    reference_video_indices: Optional[list[int]] = None,
     blurred: Optional[bool] = None,
     publication_scope: str = "feed",
     adult_content: bool = False,
@@ -7271,6 +7389,37 @@ async def share_to_feed(
             or not _feed_result_urls(row)
         ):
             return None
+
+        request_data = _parse_json_dict(row["request_data"])
+        image_candidates = _feed_reference_image_candidates(request_data)
+        video_candidates = _feed_reference_video_candidates(request_data)
+        image_indices = _validated_reference_indices(
+            reference_image_indices,
+            len(image_candidates),
+        )
+        video_indices = _validated_reference_indices(
+            reference_video_indices,
+            len(video_candidates),
+        )
+        selected_images = [
+            image_candidates[index]
+            for index in image_indices
+            if _is_feed_result_url_available(row, image_candidates[index])
+        ]
+        selected_videos = [
+            video_candidates[index]
+            for index in video_indices
+            if _is_feed_result_url_available(row, video_candidates[index])
+        ]
+        reference_selection = json.dumps(
+            {
+                "images": selected_images,
+                "videos": selected_videos,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        references_visible = bool(references_visible and (selected_images or selected_videos))
 
         result_urls = _generation_result_urls(row)
         if result_urls:
@@ -7303,6 +7452,7 @@ async def share_to_feed(
                 is_adult_content = ?,
                 feed_prompt_visible = ?,
                 feed_references_visible = ?,
+                feed_reference_selection = ?,
                 feed_blurred = ?,
                 feed_published_at = ?,
                 result_url = ?,
@@ -7316,6 +7466,7 @@ async def share_to_feed(
                 int(adult_content),
                 int(bool(prompt_visible)),
                 int(bool(references_visible)),
+                reference_selection,
                 int(next_blurred),
                 published_at,
                 result_url,

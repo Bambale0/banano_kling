@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.abc
 import importlib.machinery
+import json
 import logging
 import sys
 from datetime import datetime, timezone
@@ -72,6 +73,7 @@ async def _ensure_publication_scope_schema() -> None:
         migrations = (
             "ALTER TABLE generation_tasks ADD COLUMN is_profile_visible BOOLEAN DEFAULT FALSE",
             "ALTER TABLE generation_tasks ADD COLUMN profile_published_at TIMESTAMP",
+            "ALTER TABLE generation_tasks ADD COLUMN feed_reference_selection TEXT",
         )
         for statement in migrations:
             try:
@@ -258,6 +260,8 @@ async def share_to_feed_scoped(
     *,
     prompt_visible: bool = False,
     references_visible: bool = False,
+    reference_image_indices: list[int] | None = None,
+    reference_video_indices: list[int] | None = None,
     blurred: bool | None = None,
     publication_scope: str = "feed",
     adult_content: bool = False,
@@ -268,6 +272,8 @@ async def share_to_feed_scoped(
         user_id,
         prompt_visible=prompt_visible,
         references_visible=references_visible,
+        reference_image_indices=reference_image_indices,
+        reference_video_indices=reference_video_indices,
         blurred=blurred,
         publication_scope=publication_scope,
         adult_content=adult_content,
@@ -293,6 +299,8 @@ async def share_to_profile(
     *,
     prompt_visible: bool = False,
     references_visible: bool = False,
+    reference_image_indices: list[int] | None = None,
+    reference_video_indices: list[int] | None = None,
     blurred: bool | None = None,
 ) -> dict[str, Any] | None:
     await _ensure_publication_scope_schema()
@@ -309,6 +317,34 @@ async def share_to_profile(
         ):
             return None
 
+        request_data = database._parse_json_dict(row["request_data"])
+        image_candidates = database._feed_reference_image_candidates(request_data)
+        video_candidates = database._feed_reference_video_candidates(request_data)
+        image_indices = database._validated_reference_indices(
+            reference_image_indices,
+            len(image_candidates),
+        )
+        video_indices = database._validated_reference_indices(
+            reference_video_indices,
+            len(video_candidates),
+        )
+        selected_images = [
+            image_candidates[index]
+            for index in image_indices
+            if database._is_feed_result_url_available(row, image_candidates[index])
+        ]
+        selected_videos = [
+            video_candidates[index]
+            for index in video_indices
+            if database._is_feed_result_url_available(row, video_candidates[index])
+        ]
+        reference_selection = json.dumps(
+            {"images": selected_images, "videos": selected_videos},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        references_visible = bool(references_visible and (selected_images or selected_videos))
+
         result_urls = database._generation_result_urls(row)
         result_url = row["result_url"]
         result_urls_json = None
@@ -317,8 +353,6 @@ async def share_to_profile(
 
             persisted = await persist_feed_result_urls(result_urls)
             if persisted:
-                import json
-
                 result_url = persisted[0]
                 result_urls_json = json.dumps(persisted, ensure_ascii=False)
 
@@ -335,6 +369,7 @@ async def share_to_profile(
                 feed_published_at = NULL,
                 feed_prompt_visible = ?,
                 feed_references_visible = ?,
+                feed_reference_selection = ?,
                 feed_blurred = ?,
                 result_url = ?,
                 result_urls = COALESCE(?, result_urls),
@@ -345,6 +380,7 @@ async def share_to_profile(
                 published_at,
                 int(bool(prompt_visible)),
                 int(bool(references_visible)),
+                reference_selection,
                 int(next_blurred),
                 result_url,
                 result_urls_json,
@@ -786,6 +822,14 @@ async def _miniapp_generation_share_scoped(module, request):
             body.get("references_visible", body.get("feed_references_visible")),
             False,
         )
+        reference_image_indices = module._optional_reference_indices(
+            body,
+            "reference_image_indices",
+        )
+        reference_video_indices = module._optional_reference_indices(
+            body,
+            "reference_video_indices",
+        )
         blurred = None
         if "blurred" in body or "feed_blurred" in body:
             blurred = module._payload_bool(
@@ -816,6 +860,8 @@ async def _miniapp_generation_share_scoped(module, request):
                 user_id,
                 prompt_visible=prompt_visible,
                 references_visible=references_visible,
+                reference_image_indices=reference_image_indices,
+                reference_video_indices=reference_video_indices,
                 blurred=blurred,
             )
             if not card:
@@ -841,6 +887,8 @@ async def _miniapp_generation_share_scoped(module, request):
             user_id,
             prompt_visible=prompt_visible,
             references_visible=references_visible,
+            reference_image_indices=reference_image_indices,
+            reference_video_indices=reference_video_indices,
             blurred=blurred,
         )
         if not card:
@@ -853,6 +901,8 @@ async def _miniapp_generation_share_scoped(module, request):
         return module.web.json_response(
             {"ok": True, "feed_item": card, "publication_scope": "feed"}
         )
+    except ValueError as error:
+        return module.web.json_response({"ok": False, "error": str(error)}, status=400)
     except Exception as error:  # noqa: BLE001 - API boundary converts unexpected failures to JSON
         return module._miniapp_error_response(
             error,

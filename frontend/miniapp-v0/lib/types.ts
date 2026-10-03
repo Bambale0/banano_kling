@@ -148,13 +148,22 @@ export interface Task {
   is_prompt_library?: boolean
   feed_prompt_visible?: boolean
   feed_references_visible?: boolean
+  feed_reference_selection?: {
+    images: number[]
+    videos: number[]
+  } | null
   feed_blurred?: boolean
   is_adult_content?: boolean
 }
 
 export interface TaskDetail extends Task {
   prompt: string
+  publication_reference_images?: string[]
+  publication_reference_videos?: string[]
+  publication_reference_image_indices?: number[]
+  publication_reference_video_indices?: number[]
   request_data?: {
+    source_reference_images?: string[]
     reference_images?: string[]
     v_reference_videos?: string[]
     audio_reference?: string | null

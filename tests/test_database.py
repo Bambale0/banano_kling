@@ -716,6 +716,101 @@ async def test_share_to_feed_controls_prompt_and_reference_visibility(tmp_path, 
 
 
 @pytest.mark.asyncio
+async def test_share_to_feed_publishes_only_selected_typed_references(tmp_path, monkeypatch):
+    monkeypatch.setattr(database, "DATABASE_PATH", str(tmp_path / "feed_selected_refs.db"))
+
+    await database.init_db()
+    user = await database.get_or_create_user(332212)
+    await database.add_generation_task(
+        user.id,
+        user.telegram_id,
+        "feed-selected-refs",
+        "video",
+        "seedance_2_5",
+        model="seedance_2_5",
+        aspect_ratio="16:9",
+        prompt="private prompt",
+        cost=2,
+        request_data={
+            "reference_images": [
+                "https://example.com/face.png",
+                "https://example.com/outfit.png",
+            ],
+            "v_reference_videos": ["https://example.com/motion.mp4"],
+        },
+    )
+    await database.complete_video_task(
+        "feed-selected-refs",
+        "https://example.com/result.mp4",
+    )
+
+    card = await database.share_to_feed(
+        "feed-selected-refs",
+        user.id,
+        references_visible=True,
+        reference_image_indices=[1],
+        reference_video_indices=[0],
+    )
+
+    assert card is not None
+    assert card["reference_images"] == ["https://example.com/outfit.png"]
+    assert card["reference_videos"] == ["https://example.com/motion.mp4"]
+    assert card["references_count"] == 2
+    assert card["references_hidden"] is False
+
+    original_availability = database._is_feed_result_url_available
+    monkeypatch.setattr(
+        database,
+        "_is_feed_result_url_available",
+        lambda row, url: "face.png" not in url and original_availability(row, url),
+    )
+    shifted_card = await database.get_feed_generation_card(
+        "feed-selected-refs",
+        viewer_user_id=user.id,
+    )
+    assert shifted_card is not None
+    assert shifted_card["reference_images"] == ["https://example.com/outfit.png"]
+    assert shifted_card["reference_videos"] == ["https://example.com/motion.mp4"]
+
+    pre_save_drift_card = await database.share_to_feed(
+        "feed-selected-refs",
+        user.id,
+        references_visible=True,
+        reference_image_indices=[0],
+        reference_video_indices=[],
+    )
+    assert pre_save_drift_card is not None
+    assert pre_save_drift_card["reference_images"] == []
+    assert pre_save_drift_card["reference_videos"] == []
+    assert pre_save_drift_card["feed_references_visible"] is False
+
+    with pytest.raises(ValueError, match="Некорректный выбор референсов"):
+        await database.share_to_feed(
+            "feed-selected-refs",
+            user.id,
+            references_visible=True,
+            reference_image_indices=[2],
+            reference_video_indices=[0],
+        )
+
+    async with database.db_backend.connect(database.DATABASE_PATH) as db:
+        await db.execute(
+            "UPDATE generation_tasks SET feed_reference_selection = ?, feed_references_visible = 1 WHERE task_id = ?",
+            ('{"images":"corrupt","videos":[0]}', "feed-selected-refs"),
+        )
+        await db.commit()
+    corrupted_card = await database.get_feed_generation_card(
+        "feed-selected-refs",
+        viewer_user_id=user.id,
+    )
+    assert corrupted_card is not None
+    assert corrupted_card["reference_images"] == []
+    assert corrupted_card["reference_videos"] == []
+    assert corrupted_card["references_count"] == 0
+    assert corrupted_card["feed_references_visible"] is False
+
+
+@pytest.mark.asyncio
 async def test_profile_remix_does_not_republish_inherited_references_to_other_users(
     tmp_path,
     monkeypatch,
