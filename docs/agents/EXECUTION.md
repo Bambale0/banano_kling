@@ -1,5 +1,16 @@
 # Execution ledger
 
+## 2026-10-03 — Profile remix retains published outfit reference
+
+- Baseline: production/origin `tanyapi` `14588e1172a2b5b95290a179d1b3c840ebc87d6c`; branch `fix/profile-remix-retain-selected-references`.
+- Production evidence: repeat task `img_051f6e19c900` launched Banana Pro with exactly one submitted reference. Its source task had two image references and `feed_reference_selection` retained only the second (outfit) image, so the provider never received the outfit.
+- Root cause: `/mini-app/api/feed/remix` restored source references only when the user submitted no new files. Uploading a replacement face therefore replaced the entire reference array instead of replacing identity while preserving the explicitly published supporting reference.
+- Contract: prepend submitted images and append only image URLs explicitly retained in the source publication selection and present in the canonical source task. This applies to owner and template-user repeats. Never restore an excluded face or a selected URL absent from the source; foreign repeats may inherit only this explicit public subset. Legacy private restoration remains owner-only and only as the no-upload fallback.
+- TDD: endpoint regression reproduced `[new face]` instead of `[new face, retained outfit]`; after the minimal merge helper it passes. A replay against the real source snapshot resolves exactly the uploaded face followed by the selected outfit. Foreign-repeat coverage proves that an excluded source face is removed while the explicit published outfit remains.
+- Impact: no schema, provider, pricing, balance, prompt or frontend contract change. Adds count-only launch telemetry without reference URLs.
+- Verification: focused publication/privacy/remix matrix **45 passed**; full backend **1667 passed, 12 skipped, 4 established unrelated failures** (dispatcher attachment, two stale KIE webhook fixtures, Seedream 6000-vs-5000 expectation); compileall, Ruff on new/changed tests and diff whitespace passed. Self-review expanded the fix from owner-only to all template repeaters, but only for the explicit canonical public subset.
+- TODO: [x] production evidence; [x] red endpoint regression; [x] minimal fix; [x] focused/full verification and review; [ ] PR/CI/merge/deploy/exact-SHA smoke.
+
 ## 2026-10-03 — Replaceable typed Seedance trend references
 
 - Baseline: `origin/tanyapi` `96dfb63688339c14976816a3d7ab80cad017a91c` plus the changed-line Ruff correction from draft PR #234; task branch `feature/seedance-replaceable-reference-slots`.
