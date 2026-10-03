@@ -68,6 +68,7 @@ def validate_settings(raw: Mapping[str, Any]) -> dict[str, Any]:
         'media_timeout_seconds': (10, 300), 'input_url_ttl_seconds': (3600, 604800),
         'preview_url_ttl_seconds': (300, 86400), 'presets_ttl_seconds': (30, 3600),
         'unknown_review_seconds': (60, 86400), 'max_quote_credits': (1, 1000000),
+        'provider_retry_deadline_seconds': (300, 86400),
         'upload_video_bytes': (1024, 209715200), 'upload_image_bytes': (1024, 67108864),
         'upload_audio_bytes': (1024, 67108864), 'result_max_bytes': (1024, 536870912),
         'max_source_duration_ms': (30000, 3600000),

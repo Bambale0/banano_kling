@@ -520,5 +520,17 @@ CREATE INDEX IF NOT EXISTS genjutsu_runs_owner ON genjutsu_runs(owner, created_m
 CREATE INDEX IF NOT EXISTS genjutsu_steps_due ON genjutsu_steps(status, next_poll_ms, lease_until_ms);
 CREATE INDEX IF NOT EXISTS genjutsu_assets_owner ON genjutsu_assets(owner, created_ms);
 CREATE INDEX IF NOT EXISTS genjutsu_events_run ON genjutsu_events(run_id, created_ms);
+CREATE TABLE IF NOT EXISTS genjutsu_recipes (
+    id TEXT PRIMARY KEY, owner BIGINT NOT NULL, project_id TEXT NOT NULL,
+    revision INTEGER NOT NULL, verification_run_id TEXT NOT NULL,
+    title TEXT NOT NULL, plan TEXT NOT NULL, user_fields TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_ms BIGINT NOT NULL, updated_ms BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS genjutsu_recipe_projects (
+    project_id TEXT PRIMARY KEY REFERENCES genjutsu_projects(id),
+    recipe_id TEXT NOT NULL REFERENCES genjutsu_recipes(id)
+);
+CREATE INDEX IF NOT EXISTS genjutsu_recipes_owner ON genjutsu_recipes(owner, updated_ms);
 
 COMMIT;

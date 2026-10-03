@@ -12,6 +12,7 @@ import random
 import time
 
 from .contract import (
+    CATALOG,
     PipelineError,
     asset_ids,
     compile_plan,
@@ -32,6 +33,7 @@ class Pipeline:
         self.plan_resolver = plan_resolver
         self._presets: tuple[float, list[dict]] = (0, [])
         self._preset_lock = asyncio.Lock()
+        self._provider_circuit_until = 0.0
 
     @property
     def configured(self) -> bool:
@@ -71,6 +73,8 @@ class Pipeline:
         existing = await self.repository.existing_run(owner, key, quote_id)
         if existing:
             return existing
+        if time.monotonic() < self._provider_circuit_until:
+            raise PipelineError('provider_temporarily_unavailable', status=503)
         if not self.configured:
             raise PipelineError('integration_not_configured', status=503)
         if admin_free and not acknowledge_provider_cost:
@@ -132,8 +136,7 @@ class Pipeline:
         try:
             if step['status'] == 'ready':
                 if not self.configured:
-                    await self.repository.defer_step(sid, token, error_code='integration_not_configured',
-                                                     delay_seconds=current['poll_seconds'])
+                    await self._defer_or_fail(step, 'integration_not_configured')
                     return True
                 await self._submit(step)
             elif step['status'] == 'storing':
@@ -146,13 +149,21 @@ class Pipeline:
                             timeout=settings['request_timeout_seconds'],
                             cancel_url=step.get('provider_cancel_url'),
                         )
-                    except ProviderFailure:
+                        await self.repository.record_provider_observation(
+                            sid, token, None, 'provider_cancel_requested'
+                        )
+                    except ProviderFailure as exc:
                         # Failed or ineligible cancellation is not a refund.
-                        pass
+                        logger.warning('genjutsu_cancel_failed', extra={
+                            'run_id': step['run_id'], 'step_id': sid, 'error_code': exc.code,
+                        })
                 result = await self.provider.status(
                     step['provider_request_id'],
                     timeout=settings['request_timeout_seconds'],
                     status_url=step.get('provider_status_url'),
+                )
+                await self.repository.record_provider_observation(
+                    sid, token, result.get('correlation_id'), 'provider_status_observed'
                 )
                 state = result['status']
                 if state == 'completed':
@@ -164,20 +175,43 @@ class Pipeline:
                 else:
                     await self.repository.defer_step(sid, token, status=state, delay_seconds=self._delay(step))
         except ProviderFailure as exc:
-            await self._defer_safely(step, exc.code)
+            if exc.http_status in {401, 402, 403}:
+                self._provider_circuit_until = max(
+                    self._provider_circuit_until,
+                    time.monotonic() + max(60, current['poll_seconds'] * 6),
+                )
+            if step['status'] == 'ready' and not step.get('provider_request_id'):
+                if self._provider_failure_is_transient(exc):
+                    await self._defer_or_fail(step, exc.code)
+                else:
+                    await self._fail_safely(step, exc.code)
+            elif self._provider_failure_is_transient(exc):
+                await self._defer_or_fail(step, exc.code)
+            else:
+                # A non-2xx status lookup is not proof that an accepted
+                # generation failed. Keep the debit and quarantine the task;
+                # only a terminal provider status may trigger settlement.
+                try:
+                    await self.repository.park_step(step['id'], step['lease_token'], exc.code)
+                except PipelineError as park_exc:
+                    if park_exc.code != 'lease_lost':
+                        raise
         except PipelineError as exc:
             if exc.code != 'lease_lost':
                 if step['status'] == 'ready':
                     await self._fail_safely(step, exc.code)
+                elif exc.code in {'result_download_failed', 'media_timeout', 'storage_quota',
+                                   'upload_limit', 'asset_file_unavailable'}:
+                    await self._defer_or_fail(step, exc.code)
                 else:
-                    await self._defer_safely(step, exc.code)
+                    await self._fail_safely(step, exc.code)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - durable worker records a safe code and continues.
             # Keep exception text out of logs; external libraries sometimes
             # embed credential-bearing URLs. Durable events hold safe codes.
             logger.error('genjutsu_worker_error', extra={'step_id': sid, 'error_type': type(exc).__name__})
-            await self._defer_safely(step, 'worker_error')
+            await self._defer_or_fail(step, 'worker_error')
         return True
 
     @staticmethod
@@ -191,6 +225,11 @@ class Pipeline:
         if not source:
             raise PipelineError('source_unavailable')
         await self.media.ensure_asset(source)
+        if spec['operation'] == 'object_swap':
+            width, height = source.get('width'), source.get('height')
+            if (type(width) is not int or type(height) is not int
+                    or width * height < CATALOG['object_swap']['minimum_source_pixels']):
+                raise PipelineError('source_resolution_too_low')
         images = []
         for ref in spec['references']:
             asset = await self.repository.get_asset_internal(ref['asset_id'])
@@ -212,6 +251,11 @@ class Pipeline:
                 idempotency_key=attempt,
                 webhook=self.media.callback_url(sid, attempt, ttl=step['settings']['input_url_ttl_seconds']))
         except ProviderFailure as exc:
+            if exc.http_status in {401, 402, 403}:
+                self._provider_circuit_until = max(
+                    self._provider_circuit_until,
+                    time.monotonic() + max(60, step['settings']['poll_seconds'] * 6),
+                )
             if exc.uncertain:
                 await self.repository.defer_step(sid, token, status='submission_unknown', error_code=exc.code)
             else:
@@ -266,6 +310,37 @@ class Pipeline:
         except PipelineError as exc:
             if exc.code != 'lease_lost':
                 raise
+
+    @staticmethod
+    def _provider_failure_is_transient(exc: ProviderFailure) -> bool:
+        if exc.code == 'provider_transport_error':
+            return True
+        return exc.http_status in {401, 402, 403, 408, 409, 425, 429} or bool(
+            exc.http_status and exc.http_status >= 500
+        )
+
+    def _retry_expired(self, step) -> bool:
+        return self.repository.clock() - step['created_ms'] >= (
+            step['settings']['provider_retry_deadline_seconds'] * 1000
+        )
+
+    async def _defer_or_fail(self, step, code):
+        if not self._retry_expired(step):
+            await self._defer_safely(step, code)
+            return
+        # Before submit, failing is safe: no provider task exists. Once a task
+        # has been accepted or a result URL exists, never refund based only on
+        # our inability to poll/store it; quarantine for explicit recovery.
+        if step['status'] == 'ready' and not step.get('provider_request_id'):
+            await self._fail_safely(step, 'retry_deadline_exceeded:' + code)
+        else:
+            try:
+                await self.repository.park_step(
+                    step['id'], step['lease_token'], 'retry_deadline_exceeded:' + code
+                )
+            except PipelineError as exc:
+                if exc.code != 'lease_lost':
+                    raise
 
     async def worker(self, stop: asyncio.Event) -> None:
         while not stop.is_set():

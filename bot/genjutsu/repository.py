@@ -324,7 +324,8 @@ class Repository:
             where += ' AND project_id=?'
             args.append(project_id)
         async with self.connect() as db:
-            return await many(db, f'''SELECT id,project_id,state,created_ms,updated_ms FROM genjutsu_runs
+            fields = 'id,project_id,state,created_ms,updated_ms' + (',owner' if admin else '')
+            return await many(db, f'''SELECT {fields} FROM genjutsu_runs
                 WHERE {where} ORDER BY created_ms DESC LIMIT 100''', tuple(args))
 
     async def _refresh_run(self, db, run_id: str) -> None:
@@ -338,7 +339,7 @@ class Repository:
                 state = 'partial'
             else:
                 state = 'canceled' if run['cancel_requested'] else 'failed'
-        elif 'submission_unknown' in states:
+        elif any(s in {'submission_unknown', 'recovery_review'} for s in states):
             state = 'review'
         elif all(s in terminal | {'awaiting_confirmation', 'blocked'} for s in states):
             state = 'waiting'
@@ -369,13 +370,23 @@ class Repository:
                 await db.execute("UPDATE genjutsu_steps SET status='submission_unknown',lease_token=NULL,error_code='submit_outcome_unknown',updated_ms=? WHERE id=?", (now, row['id']))
                 await self._event(db, 'submission_unknown', run_id=row['run_id'], step_id=row['id'])
                 await self._refresh_run(db, row['run_id'])
+            review_due = await many(db, """SELECT id,run_id FROM genjutsu_steps
+                WHERE status='submission_unknown' AND updated_ms<=?
+                AND COALESCE(error_code,'')!='submission_review_required'""",
+                (now - settings['unknown_review_seconds'] * 1000,))
+            for row in review_due:
+                await db.execute("UPDATE genjutsu_steps SET error_code='submission_review_required',updated_ms=? WHERE id=?",
+                                 (now, row['id']))
+                await self._event(db, 'submission_review_required', run_id=row['run_id'], step_id=row['id'])
             step = await one(db, '''SELECT s.*,r.owner,r.settings,r.cancel_requested,r.admin_free
                 FROM genjutsu_steps s JOIN genjutsu_runs r ON r.id=s.run_id
                 WHERE s.status IN ('queued','in_progress','storing')
                 AND s.next_poll_ms<=? AND s.lease_until_ms<=?
                 ORDER BY CASE WHEN s.status='storing' THEN 0 ELSE 1 END,s.next_poll_ms LIMIT 1''', (now, now))
             if step is None:
-                count = await one(db, "SELECT COUNT(*) AS count FROM genjutsu_steps WHERE status IN ('submitting','submission_unknown','queued','in_progress') OR (status='ready' AND lease_until_ms>?)", (now,))
+                # Ambiguous submits are quarantined for explicit reconciliation;
+                # they must not consume confirmed provider concurrency forever.
+                count = await one(db, "SELECT COUNT(*) AS count FROM genjutsu_steps WHERE status IN ('submitting','queued','in_progress') OR (status='ready' AND lease_until_ms>?)", (now,))
                 if count['count'] >= settings['max_active_provider_tasks']:
                     return None
                 step = await one(db, '''SELECT s.*,r.owner,r.settings,r.cancel_requested,r.admin_free
@@ -392,6 +403,26 @@ class Repository:
             step['spec'] = json.loads(step['spec'])
             step['settings'] = json.loads(step['settings'])
             return step
+
+    async def record_provider_observation(self, step_id: str, token: str, correlation_id: str | None,
+                                          event: str) -> None:
+        async with self.transaction() as db:
+            step = await self._leased_step(db, step_id, token)
+            if correlation_id:
+                await db.execute('UPDATE genjutsu_steps SET provider_correlation_id=? WHERE id=?',
+                                 (correlation_id, step_id))
+            await self._event(db, event, run_id=step['run_id'], step_id=step_id,
+                              details={'provider_correlation_id': correlation_id})
+
+    async def verified_admin_run(self, owner: int, run_id: str, project_id: str,
+                                 revision: int, plan: dict) -> bool:
+        async with self.connect() as db:
+            row = await one(db, '''SELECT r.id,q.plan FROM genjutsu_runs r
+                JOIN genjutsu_quotes q ON q.id=r.quote_id
+                WHERE r.id=? AND r.owner=? AND r.project_id=? AND r.admin_free=1
+                AND r.state='completed' AND q.revision=?''',
+                (run_id, owner, project_id, revision))
+        return bool(row and fingerprint(json.loads(row['plan'])) == fingerprint(plan))
 
     async def _leased_step(self, db, step_id: str, token: str) -> dict:
         step = await one(db, '''SELECT s.*,r.owner,r.cancel_requested,r.admin_free,r.plan
@@ -472,6 +503,19 @@ class Repository:
             if error_code:
                 await self._event(db, 'step_deferred', run_id=step['run_id'], step_id=step_id,
                                   details={'error_code': error_code, 'status': next_status})
+            await self._refresh_run(db, step['run_id'])
+
+    async def park_step(self, step_id: str, token: str, error_code: str) -> None:
+        """Quarantine accepted/provider-complete work without refund or regeneration."""
+        async with self.transaction() as db:
+            step = await self._leased_step(db, step_id, token)
+            if step['status'] not in ('queued', 'in_progress', 'storing'):
+                raise PipelineError('invalid_transition')
+            await db.execute("""UPDATE genjutsu_steps SET status='recovery_review',error_code=?,
+                lease_token=NULL,lease_until_ms=0,updated_ms=? WHERE id=?""",
+                (error_code, self.clock(), step_id))
+            await self._event(db, 'recovery_review_required', run_id=step['run_id'], step_id=step_id,
+                              details={'error_code': error_code, 'previous_status': step['status']})
             await self._refresh_run(db, step['run_id'])
 
     async def finish_step(self, step_id: str, token: str, status: str, *,
@@ -643,11 +687,26 @@ class Repository:
 
     async def request_reconciliation(self, actor: int, run_id: str, step_id: str) -> None:
         async with self.transaction() as db:
-            step = await one(db, 'SELECT id,status FROM genjutsu_steps WHERE id=? AND run_id=?', (step_id,run_id))
+            step = await one(db, '''SELECT id,status,provider_request_id,remote_result_url
+                FROM genjutsu_steps WHERE id=? AND run_id=?''', (step_id,run_id))
             if not step:
                 raise PipelineError('step_unavailable', status=404)
-            await db.execute('UPDATE genjutsu_steps SET next_poll_ms=? WHERE id=?', (self.clock(),step_id))
-            await self._event(db, 'reconciliation_requested', run_id=run_id, step_id=step_id, actor=actor)
+            status = step['status']
+            if status == 'recovery_review':
+                if step['remote_result_url']:
+                    status = 'storing'
+                elif step['provider_request_id']:
+                    status = 'queued'
+                else:
+                    raise PipelineError('reconciliation_unavailable', status=409)
+                await db.execute('''UPDATE genjutsu_steps SET status=?,error_code=NULL,
+                    next_poll_ms=?,lease_token=NULL,lease_until_ms=0 WHERE id=?''',
+                    (status, self.clock(), step_id))
+                await self._refresh_run(db, run_id)
+            else:
+                await db.execute('UPDATE genjutsu_steps SET next_poll_ms=? WHERE id=?', (self.clock(),step_id))
+            await self._event(db, 'reconciliation_requested', run_id=run_id, step_id=step_id, actor=actor,
+                              details={'restored_status': status})
 
     async def project_versions(self, owner: int, project_id: str) -> list[dict]:
         await self.get_project(owner, project_id)

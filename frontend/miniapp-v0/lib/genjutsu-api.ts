@@ -13,10 +13,10 @@ export type Capability = { label: string; resolutions: string[]; min_images: num
 export type Allocation = { variant: number; ordinal: number; operation: Operation; billable_seconds: number; credits_per_second: number; reserved_credits: number; maximum_reserve: boolean }
 export type Quote = { id: string; expires_ms: number; total_credits: number; allocations: Allocation[]; plan_hash: string }
 export type RunStep = { id: string; variant: number; ordinal: number; status: string; spec: Partial<Step> & { operation: Operation; resolution: string }; reserved_credits: number; actual_credits: number | null; refunded_credits: number; error_code: string | null; delivery_status: string | null; delivery_error: string | null; source_asset?: Asset; output_asset?: Asset; provider_request_id?: string; provider_correlation_id?: string; attempt_id?: string }
-export type Run = { id: string; project_id?: string; state: string; cancel_requested: number; admin_free: number; private_recipe: number; created_ms: number; credits: number; plan?: Plan; steps: RunStep[] }
+export type Run = { id: string; owner?: number; project_id?: string; state: string; cancel_requested: number; admin_free: number; private_recipe: number; created_ms: number; credits: number; plan?: Plan; steps: RunStep[] }
 export type RecipeSlot = { step_index: number; reference_index: number; role: string; label: string }
 export type Recipe = { id: string; title: string; slots: RecipeSlot[]; user_fields: { key: string; label: string; type: 'text' | 'number' | 'date'; required?: boolean; max_length?: number }[]; steps: { operation: Operation; resolution: string }[]; variants: number; continuation: 'automatic' | 'manual'; current_cost: number | null }
-export type RunSummary = Pick<Run, 'id' | 'project_id' | 'state' | 'created_ms'>
+export type RunSummary = Pick<Run, 'id' | 'owner' | 'project_id' | 'state' | 'created_ms'>
 export type Prices = Record<Operation, Record<string, number | null>>
 export type Settings = { public_enabled: boolean; admin_enabled: boolean; verified_operations: Operation[]; prices: Prices; [key: string]: unknown }
 export type Bootstrap = { catalog: Record<Operation, Capability>; is_admin: boolean; configured: boolean; provider_ready: boolean; media_ready: boolean; enabled: boolean; limits: Record<string, unknown>; prices: Prices; config_version: number; credits: number; projects: Project[]; runs: RunSummary[]; assets: Asset[] }
@@ -77,7 +77,7 @@ export function freshPlan(): Plan { return { source_asset_id: '', steps: [freshS
 export const operationLabels: Record<Operation, string> = { motion_transfer: 'Перенос движения', object_swap: 'Замена в видео', restyle: 'Стилизация' }
 export const roleLabels: Record<string, string> = { character: 'Персонаж', wardrobe: 'Одежда', product: 'Товар', object: 'Предмет', location: 'Локация', style: 'Стиль' }
 export const statusLabels: Record<string, string> = {
-  ready: 'Готовится к отправке', submitting: 'Отправляется', submission_unknown: 'Проверяем отправку',
+  ready: 'Готовится к отправке', submitting: 'Отправляется', submission_unknown: 'Проверяем отправку', recovery_review: 'Нужна безопасная проверка',
   queued: 'В очереди', in_progress: 'Генерация', storing: 'Сохраняем оригинал', blocked: 'Ожидает предыдущий шаг',
   awaiting_confirmation: 'Нужно подтверждение', completed: 'Готово', failed: 'Ошибка', canceled: 'Отменено',
   running: 'Выполняется', waiting: 'Ожидает подтверждения', partial: 'Выполнено частично', review: 'Нужна проверка',

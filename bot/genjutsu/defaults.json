@@ -15,6 +15,7 @@
   "preview_url_ttl_seconds": 3600,
   "presets_ttl_seconds": 300,
   "unknown_review_seconds": 900,
+  "provider_retry_deadline_seconds": 3600,
   "max_quote_credits": 10000,
   "upload_video_bytes": 209715200,
   "upload_image_bytes": 67108864,

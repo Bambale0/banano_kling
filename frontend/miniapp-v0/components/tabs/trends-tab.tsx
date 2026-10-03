@@ -186,7 +186,20 @@ export function TrendsTab() {
     setError(null)
     try {
       const trends = await fetchPrompts({ source: 'tag', tag: TREND_TAG, limit: 80 })
-      setItems(trends.filter((trend) => hasTrendTag(trend) && !isPinterestRepeatTrend(trend)))
+      let visible = trends.filter((trend) => hasTrendTag(trend) && !isPinterestRepeatTrend(trend))
+      const recipeIds = Array.from(new Set(visible.map((trend) => trend.generation_settings?.genjutsu_recipe_id).filter((value): value is string => Boolean(value))))
+      if (recipeIds.length) {
+        try {
+          const { costs } = await genjutsuCall<{ costs: Record<string, number | null> }>('recipe_costs', { recipe_ids: recipeIds })
+          visible = visible.map((trend) => {
+            const recipeId = trend.generation_settings?.genjutsu_recipe_id
+            return recipeId && Object.prototype.hasOwnProperty.call(costs, recipeId)
+              ? { ...trend, repeat_cost: costs[recipeId] }
+              : trend
+          })
+        } catch { /* Trend catalog remains usable if Genjutsu pricing is temporarily unavailable. */ }
+      }
+      setItems(visible)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось загрузить тренды')
     } finally {

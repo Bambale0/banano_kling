@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 import aiosqlite
 import pytest
+from unittest.mock import AsyncMock
 
 from bot.genjutsu.recipes import RecipeStore
 from bot.genjutsu.repository import Repository
@@ -64,9 +65,10 @@ async def test_recipe_public_contract_hides_prompt_and_fixed_asset_ids(tmp_path)
         "variants": 1, "continuation": "automatic",
     }
     project = await repo.save_project(999, "Template", plan)
+    repo.verified_admin_run = AsyncMock(return_value=True)
     recipe = await recipes.publish(
         999, project["id"], project["revision"], "Public title",
-        [{"key": "Имя", "label": "Имя"}],
+        [{"key": "Имя", "label": "Имя"}], "verified-run",
     )
     encoded = repr(recipe)
     assert "Secret prompt" not in encoded
@@ -108,9 +110,10 @@ async def test_recipe_instance_replaces_only_user_slots_and_grants_fixed_assets(
         "variants": 1, "continuation": "automatic",
     }
     project = await repo.save_project(999, "Template", plan)
+    repo.verified_admin_run = AsyncMock(return_value=True)
     recipe = await recipes.publish(
         999, project["id"], project["revision"], "Public title",
-        [{"key": "Имя", "label": "Имя"}],
+        [{"key": "Имя", "label": "Имя"}], "verified-run",
     )
     instance = await recipes.instantiate(101, recipe["id"], [user_image["id"]], {"Имя": "Анна"})
     hidden = await repo.get_project(101, instance["id"])
@@ -123,3 +126,31 @@ async def test_recipe_instance_replaces_only_user_slots_and_grants_fixed_assets(
     assert grants == {source["id"], fixed["id"]}
     assert await recipes.is_private_project(instance["id"]) is True
     assert all(item["id"] != instance["id"] for item in await repo.list_projects(101))
+
+
+@pytest.mark.asyncio
+async def test_recipe_publish_requires_completed_matching_admin_run(tmp_path):
+    repo, recipes = await build(tmp_path)
+    source = await repo.add_asset(999, "video", "8" * 32 + ".mp4", {
+        "duration_ms": 5_000, "size_bytes": 100, "mime": "video/mp4",
+        "width": 1280, "height": 720,
+    })
+    ref = await repo.add_asset(999, "image", "9" * 32 + ".png", {
+        "size_bytes": 10, "mime": "image/png",
+    })
+    plan = {
+        "source_asset_id": source["id"],
+        "steps": [{
+            "operation": "object_swap", "resolution": "720p",
+            "prompt": "Swap", "preserve": "",
+            "references": [{"asset_id": ref["id"], "role": "character", "label": "Фото", "binding": "user"}],
+            "preset_id": None,
+        }],
+        "variants": 1, "continuation": "automatic",
+    }
+    project = await repo.save_project(999, "Template", plan)
+    repo.verified_admin_run = AsyncMock(return_value=False)
+    with pytest.raises(Exception, match="recipe_live_verification_required"):
+        await recipes.publish(
+            999, project["id"], project["revision"], "Public title", [], "not-verified",
+        )

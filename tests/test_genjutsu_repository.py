@@ -1,11 +1,14 @@
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import aiosqlite
 import pytest
 
 from bot.genjutsu.contract import compile_plan, quote_plan
+from bot.genjutsu.pipeline import Pipeline
+from bot.genjutsu.provider import ProviderFailure
 from bot.genjutsu.repository import SCHEMA, Repository
 
 
@@ -185,3 +188,59 @@ def test_native_postgres_schema_contains_all_genjutsu_tables():
             continue
         table = statement.split("CREATE TABLE IF NOT EXISTS ", 1)[1].split(None, 1)[0]
         assert f"CREATE TABLE IF NOT EXISTS {table}" in schema
+
+
+@pytest.mark.asyncio
+async def test_accepted_task_can_be_parked_without_refund_and_reconciled(tmp_path):
+    repo, _ = await build_repo(tmp_path)
+    quote = await make_quote(repo)
+    before = await repo.balance(101)
+    run = await repo.start(101, "recovery-review", quote["id"])
+    settings, _ = await repo.settings()
+    ready = await repo.claim_step(settings)
+    attempt = await repo.begin_submission(ready["id"], ready["lease_token"], 5_000)
+    await repo.accept_submission(
+        ready["id"], attempt, "req-recovery",
+        status_url="https://api.higgsfield.ai/requests/req-recovery/status",
+        cancel_url="https://api.higgsfield.ai/requests/req-recovery/cancel",
+        correlation_id="corr-recovery",
+    )
+    queued = await repo.claim_step(settings)
+    assert queued and queued["status"] == "queued"
+    await repo.park_step(queued["id"], queued["lease_token"], "retry_deadline_exceeded:provider_http_503")
+    view = await repo.get_run(101, run["id"])
+    assert view["state"] == "review"
+    assert view["steps"][0]["status"] == "recovery_review"
+    assert view["steps"][0]["refunded_credits"] == 0
+    assert await repo.balance(101) == before - quote["total_credits"]
+
+    await repo.request_reconciliation(999, run["id"], queued["id"])
+    resumed = await repo.get_run(101, run["id"])
+    assert resumed["state"] == "running"
+    assert resumed["steps"][0]["status"] == "queued"
+    assert resumed["steps"][0]["error_code"] is None
+
+
+@pytest.mark.asyncio
+async def test_nonterminal_provider_http_error_never_refunds_accepted_generation(tmp_path):
+    repo, _ = await build_repo(tmp_path)
+    quote = await make_quote(repo)
+    before = await repo.balance(101)
+    run = await repo.start(101, "accepted-http-error", quote["id"])
+    settings, _ = await repo.settings()
+    ready = await repo.claim_step(settings)
+    attempt = await repo.begin_submission(ready["id"], ready["lease_token"], 5_000)
+    await repo.accept_submission(ready["id"], attempt, "req-http-error")
+
+    class Provider:
+        configured = True
+        async def status(self, *args, **kwargs):
+            raise ProviderFailure("provider_http_422", http_status=422)
+
+    pipeline = Pipeline(repo, Provider(), SimpleNamespace(configured=True))
+    assert await pipeline.tick() is True
+    view = await repo.get_run(101, run["id"])
+    assert view["state"] == "review"
+    assert view["steps"][0]["status"] == "recovery_review"
+    assert view["steps"][0]["refunded_credits"] == 0
+    assert await repo.balance(101) == before - quote["total_credits"]

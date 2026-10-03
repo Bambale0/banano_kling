@@ -49,7 +49,7 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
   const pendingSave = useRef<Promise<Project> | null>(null)
   const alive = useRef(true)
   const video = assets.find(a => a.id === plan.source_asset_id)
-  const needsPolling = Boolean(run && (!terminal.has(run.state) || run.steps.some(s => ['pending', 'sending'].includes(s.delivery_status || ''))))
+  const needsPolling = Boolean(run && ((run.state !== 'review' && !terminal.has(run.state)) || run.steps.some(s => ['pending', 'sending'].includes(s.delivery_status || ''))))
   const limit = (key: string, fallback: number) => Number(bootstrap?.limits[key] ?? fallback)
 
   const refresh = useCallback(async () => {
@@ -226,12 +226,22 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
   async function publishRecipe() {
     if (!bootstrap?.is_admin) return
     const savedProject = await saveCurrent()
+    const latest = await refresh()
+    const verification = (
+      run?.state === 'completed' && run.admin_free && run.project_id === savedProject.id
+        ? run
+        : latest.runs.find(item => item.state === 'completed' && item.project_id === savedProject.id)
+    )
+    if (!verification) {
+      throw new Error('Сначала выполните успешный тестовый запуск этого проекта в Genjutsu, затем публикуйте рецепт.')
+    }
     const labels = recipeFieldLabels.split(',').map(value => value.replace(/[{}]/g, '').trim()).filter(Boolean).slice(0, 6)
     const value = await genjutsuCall<{ recipe: Recipe }>('recipe_publish', {
       project_id: savedProject.id,
       revision: savedProject.revision,
       title: savedProject.title,
       user_fields: labels.map(label => ({ key: label.slice(0, 48), label: label.slice(0, 64) })),
+      verification_run_id: verification.id,
     })
     setPublishedRecipe(value.recipe)
   }

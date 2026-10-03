@@ -79,6 +79,7 @@ project/version
   -> submitting
        -> queued/in_progress
        -> submission_unknown  (ambiguous POST; never blind-retry)
+       -> recovery_review     (accepted task needs operator recovery; no refund/regeneration)
   -> storing
   -> completed
   -> independent Telegram delivery
@@ -100,9 +101,10 @@ An admin can mark each image reference as:
 - **user** — the person repeating the Trend must provide that slot;
 - **fixed** — the original private reference stays server-side.
 
-The recipe snapshots the exact project revision. Public Trend payloads expose
-only the opaque `genjutsu_recipe_id`, input labels/roles, user-editable field
-schema and current estimated price. Hidden prompts, source video identifiers,
+The recipe snapshots the exact project revision and can be published only after
+a completed admin-free provider run of that same revision. Public Trend payloads
+expose only the opaque `genjutsu_recipe_id`, input labels/roles, user-editable
+field schema and current server price. Hidden prompts, source video identifiers,
 fixed reference identifiers and project IDs are not returned.
 
 Repeating a Trend instantiates an archived private project, applies validated
@@ -122,7 +124,11 @@ The admin panel exposes:
 - event history with local run/step/attempt/provider correlation IDs.
 
 Never resolve `submission_unknown` by issuing a second provider POST without
-first reconciling or explicitly adopting the known request ID.
+first reconciling or explicitly adopting the known request ID. An accepted task
+that cannot be polled or persisted past its recovery deadline enters
+`recovery_review`; this state intentionally keeps the user's debit and never
+creates another provider generation. Admin reconciliation resumes polling or
+result storage once the underlying issue is fixed.
 
 ## Verification
 

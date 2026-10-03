@@ -28,6 +28,7 @@ SCHEMA = [
         owner BIGINT NOT NULL,
         project_id TEXT NOT NULL,
         revision INTEGER NOT NULL,
+        verification_run_id TEXT NOT NULL,
         title TEXT NOT NULL,
         plan TEXT NOT NULL,
         user_fields TEXT NOT NULL,
@@ -75,8 +76,9 @@ class RecipeStore:
 
     async def migrate(self) -> None:
         async with self.repository.connect() as db:
+            execute_ddl = getattr(db, "execute_native_ddl", db.execute)
             for sql in SCHEMA:
-                await db.execute(sql)
+                await execute_ddl(sql)
             await db.commit()
 
     async def _row(self, recipe_id: str, *, active_only: bool = True) -> dict:
@@ -101,6 +103,7 @@ class RecipeStore:
         revision: int,
         title: str,
         user_fields: Any,
+        verification_run_id: str,
     ) -> dict:
         title = text(title, 120, "invalid_title").strip()
         if not title:
@@ -113,6 +116,10 @@ class RecipeStore:
         # Validate the exact immutable recipe now. Restyle preset existence is
         # checked again against the live catalog at quote/submit time.
         plan = compile_plan(project["plan"], owned, settings, presets=None)
+        if not isinstance(verification_run_id, str) or not await self.repository.verified_admin_run(
+            owner, verification_run_id, project_id, revision, plan
+        ):
+            raise PipelineError("recipe_live_verification_required", status=409)
         try:
             normalized_fields = normalize_user_fields_settings(
                 {"user_fields": user_fields or []},
@@ -124,9 +131,10 @@ class RecipeStore:
         async with self.repository.transaction() as db:
             await db.execute(
                 """INSERT INTO genjutsu_recipes(
-                    id,owner,project_id,revision,title,plan,user_fields,active,created_ms,updated_ms
-                ) VALUES(?,?,?,?,?,?,?,1,?,?)""",
-                (rid, owner, project_id, revision, title, encode(plan), encode(normalized_fields), now, now),
+                    id,owner,project_id,revision,verification_run_id,title,plan,user_fields,active,created_ms,updated_ms
+                ) VALUES(?,?,?,?,?,?,?,?,1,?,?)""",
+                (rid, owner, project_id, revision, verification_run_id, title,
+                 encode(plan), encode(normalized_fields), now, now),
             )
         return await self.public(rid)
 
@@ -268,13 +276,30 @@ class RecipeStore:
         if action == "recipe_get":
             api.fields(body, {"recipe_id"})
             return {"recipe": await self.public(api.ident(body, "recipe_id"))}
+        if action == "recipe_costs":
+            api.fields(body, {"recipe_ids"})
+            raw_ids = body.get("recipe_ids")
+            if not isinstance(raw_ids, list) or len(raw_ids) > 100:
+                raise PipelineError("invalid_recipe_ids")
+            costs: dict[str, int | None] = {}
+            for raw_id in raw_ids:
+                if not isinstance(raw_id, str) or raw_id in costs:
+                    continue
+                try:
+                    recipe = await self.public(raw_id)
+                except PipelineError as exc:
+                    if exc.code == "recipe_unavailable":
+                        continue
+                    raise
+                costs[raw_id] = recipe["current_cost"]
+            return {"costs": costs}
         if action == "recipe_list":
             api.fields(body, set())
             if not admin:
                 raise PipelineError("admin_required", status=403)
             return {"items": await self.list_admin(owner)}
         if action == "recipe_publish":
-            api.fields(body, {"project_id", "revision", "title", "user_fields"})
+            api.fields(body, {"project_id", "revision", "title", "user_fields", "verification_run_id"})
             if not admin:
                 raise PipelineError("admin_required", status=403)
             await api.require_creation(True)
@@ -285,6 +310,7 @@ class RecipeStore:
                     body.get("revision"),
                     body.get("title"),
                     body.get("user_fields"),
+                    api.ident(body, "verification_run_id"),
                 )
             }
         if action == "recipe_archive":

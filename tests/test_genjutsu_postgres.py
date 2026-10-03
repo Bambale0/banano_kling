@@ -1,12 +1,14 @@
 """Genjutsu schema and financial invariants through the real PostgreSQL adapter."""
 import asyncio
 import os
+from uuid import uuid4
 
 import psycopg
 import pytest
 
 from bot import db as db_backend
 from bot.genjutsu.contract import compile_plan, quote_plan
+from bot.genjutsu.recipes import RecipeStore
 from bot.genjutsu.repository import Repository
 from tests.runtime72_postgres_fixture import runtime_postgres_schema
 
@@ -29,8 +31,15 @@ async def test_postgres_migration_and_concurrent_refund_are_idempotent():
     repo = Repository(db_backend.connect)
     await repo.migrate()
     await repo.migrate()
+    recipes = RecipeStore(repo)
+    await recipes.migrate()
+    await recipes.migrate()
 
     async with await psycopg.AsyncConnection.connect(os.environ["DATABASE_URL"]) as connection:
+        columns = await connection.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name='genjutsu_recipes'"
+        )
+        assert "verification_run_id" in {row[0] async for row in columns}
         await connection.execute(
             "INSERT INTO users(telegram_id, credits) VALUES(%s, 100) "
             "ON CONFLICT(telegram_id) DO UPDATE SET credits=100",
@@ -44,10 +53,10 @@ async def test_postgres_migration_and_concurrent_refund_are_idempotent():
     settings["prices"]["motion_transfer"] = {"480p": 1, "720p": 1, "1080p": 1}
     await repo.update_settings(1, version, settings)
 
-    source = await repo.add_asset(owner, "video", "pg-source.mp4", {
+    source = await repo.add_asset(owner, "video", f"pg-source-{uuid4().hex}.mp4", {
         "duration_ms": 5_000, "size_bytes": 100, "mime": "video/mp4",
     })
-    reference = await repo.add_asset(owner, "image", "pg-reference.png", {
+    reference = await repo.add_asset(owner, "image", f"pg-reference-{uuid4().hex}.png", {
         "size_bytes": 10, "mime": "image/png",
     })
     draft = {
@@ -69,9 +78,10 @@ async def test_postgres_migration_and_concurrent_refund_are_idempotent():
         owner, project["id"], project["revision"], plan,
         quote_plan(plan, assets, settings), version, settings,
     )
+    request_key = "postgres-" + uuid4().hex
     left, right = await asyncio.gather(
-        repo.start(owner, "postgres-idempotency", quote["id"]),
-        repo.start(owner, "postgres-idempotency", quote["id"]),
+        repo.start(owner, request_key, quote["id"]),
+        repo.start(owner, request_key, quote["id"]),
     )
     assert left["id"] == right["id"]
     step = await repo.claim_step(settings)

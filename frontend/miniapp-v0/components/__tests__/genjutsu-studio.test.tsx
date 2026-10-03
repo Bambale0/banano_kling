@@ -105,3 +105,33 @@ test('private recipe mode collects declared fields, quotes server-side and never
   fireEvent.click(screen.getByRole('button', { name: 'Запустить тренд' }))
   expect(await screen.findByText('recipe-run')).toBeInTheDocument()
 })
+
+
+test('admin recipe publication requires and sends a completed verification run', async () => {
+  const adminBootstrap = {
+    ...bootstrap,
+    is_admin: true,
+    runs: [{ id: 'verified-run', project_id: 'project', state: 'completed', created_ms: Date.now() }],
+  }
+  const recipe = {
+    id: 'b'.repeat(32), title: 'Verified recipe', slots: [{ step_index: 0, reference_index: 0, role: 'character', label: 'Фото 1' }],
+    user_fields: [], steps: [{ operation: 'motion_transfer', resolution: '720p' }], variants: 1,
+    continuation: 'automatic', current_cost: 10,
+  }
+  const original = call.getMockImplementation()!
+  call.mockImplementation(async (action: string, body: Record<string, unknown>) => {
+    if (action === 'bootstrap') return adminBootstrap
+    if (action === 'recipe_publish') {
+      expect(body.verification_run_id).toBe('verified-run')
+      expect(body.project_id).toBe('project')
+      expect(body.revision).toBe(1)
+      return { recipe }
+    }
+    return original(action, body)
+  })
+  render(<GenjutsuStudio initial={initial} onClose={jest.fn()} />)
+  await inputs()
+  fireEvent.click(screen.getByRole('button', { name: 'Создать приватный рецепт' }))
+  expect(await screen.findByText(/Рецепт готов:/)).toBeInTheDocument()
+  expect(call.mock.calls.some(([action]) => action === 'recipe_publish')).toBe(true)
+})
