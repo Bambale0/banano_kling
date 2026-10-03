@@ -5253,6 +5253,9 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
     )
     setup_browser_auth_routes(app)
     setup_feed_reference_media_routes(app)
+    from bot.genjutsu.runtime import setup_genjutsu
+
+    setup_genjutsu(app)
     setup_miniapp_routes(app)
     setup_robokassa_routes(app)
     setup_freekassa_routes(app)

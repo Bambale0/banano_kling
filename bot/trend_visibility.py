@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import re
 from collections.abc import Mapping
 from typing import Any
 from urllib.parse import parse_qsl
@@ -59,6 +60,10 @@ def public_trend_settings(prompt: Mapping[str, Any]) -> dict[str, Any]:
                 public_settings["reference_labels"] = labels
     if settings.get("automatic_hidden_references") is True:
         public_settings["automatic_hidden_references"] = True
+
+    recipe_id = str(settings.get("genjutsu_recipe_id") or "").strip()
+    if re.fullmatch(r"[a-f0-9]{32}", recipe_id):
+        public_settings["genjutsu_recipe_id"] = recipe_id
     try:
         required_video_duration = int(
             settings.get("required_video_duration_seconds") or 0

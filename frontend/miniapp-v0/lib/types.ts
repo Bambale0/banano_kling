@@ -249,6 +249,7 @@ export interface TrendGenerationSettings {
   omni_example_dialogue?: string
   omni_character_name?: string
   omni_character_audio_ids?: string[]
+  genjutsu_recipe_id?: string
 }
 
 export interface TrendReferenceSlot {

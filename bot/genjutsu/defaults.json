@@ -1,0 +1,45 @@
+{
+  "public_enabled": false,
+  "admin_enabled": true,
+  "verified_operations": [],
+  "max_steps": 3,
+  "max_variants": 4,
+  "max_active_runs_per_user": 2,
+  "max_active_provider_tasks": 2,
+  "quote_ttl_seconds": 300,
+  "lease_seconds": 360,
+  "poll_seconds": 5,
+  "request_timeout_seconds": 45,
+  "media_timeout_seconds": 180,
+  "input_url_ttl_seconds": 86400,
+  "preview_url_ttl_seconds": 3600,
+  "presets_ttl_seconds": 300,
+  "unknown_review_seconds": 900,
+  "max_quote_credits": 10000,
+  "upload_video_bytes": 209715200,
+  "upload_image_bytes": 67108864,
+  "upload_audio_bytes": 67108864,
+  "result_max_bytes": 209715200,
+  "max_source_duration_ms": 600000,
+  "prices": {
+    "motion_transfer": {
+      "480p": null,
+      "720p": null,
+      "1080p": null
+    },
+    "object_swap": {
+      "480p": null,
+      "720p": null,
+      "1080p": null
+    },
+    "restyle": {
+      "480p": null,
+      "720p": null,
+      "1080p": null
+    }
+  },
+  "owner_storage_bytes": 2147483648,
+  "total_storage_bytes": 53687091200,
+  "max_parallel_uploads": 2,
+  "media_parallelism": 2
+}

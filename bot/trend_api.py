@@ -302,6 +302,10 @@ def trusted_trend_run(
         raise TrendRunValidationError("Неизвестный тип тренда")
     if str(settings.get("user_input") or "photo") != "photo":
         raise TrendRunValidationError("Этот тренд не поддерживает фото-референсы")
+    if str(settings.get("genjutsu_recipe_id") or "").strip():
+        raise TrendRunValidationError(
+            "Этот Genjutsu-тренд запускается через актуальную студию. Обновите Mini App."
+        )
 
     prompt = str(trend.get("prompt_text") or "").strip()
     try:

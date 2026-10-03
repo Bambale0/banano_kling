@@ -1,0 +1,46 @@
+{
+  "type": "object",
+  "title": "MotionTransferParams",
+  "required": [
+    "video_url",
+    "image_urls"
+  ],
+  "properties": {
+    "prompt": {
+      "type": "string",
+      "title": "Prompt",
+      "default": "",
+      "maxLength": 10000
+    },
+    "video_url": {
+      "type": "string",
+      "title": "Video Url",
+      "format": "uri",
+      "maxLength": 2083,
+      "minLength": 1
+    },
+    "image_urls": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uri",
+        "maxLength": 2083,
+        "minLength": 1
+      },
+      "title": "Image Urls",
+      "maxItems": 8,
+      "minItems": 1
+    },
+    "resolution": {
+      "enum": [
+        "720p",
+        "480p",
+        "1080p"
+      ],
+      "type": "string",
+      "title": "Resolution",
+      "default": "720p"
+    }
+  },
+  "additionalProperties": false
+}
