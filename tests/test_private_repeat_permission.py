@@ -271,3 +271,19 @@ def test_private_image_errors_preserve_expected_status_without_raw_details(error
 def test_user_error_redacts_encoded_media_url():
     from bot.utils.user_facing_errors import make_user_friendly_generation_error
     assert "private-marker.png" not in make_user_friendly_generation_error("failed: https%3A%2F%2Fexample.test%2Fprivate-marker.png")
+
+
+@pytest.mark.asyncio
+async def test_legacy_retry_without_marker_requires_live_root_permission(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from bot import main
+    from bot.handlers import generation
+    ref = "https://example.test/legacy-hidden.png"
+    root = {"type": "image", "status": "completed", "is_public_feed": True, "feed_references_visible": False, "request_data": {"source_reference_images": [ref]}}
+    monkeypatch.setattr(generation, "get_generation_task_payload", AsyncMock(return_value=root))
+    task = SimpleNamespace(type="image", user_id=7, source_feed_gen_id=42, request_data=json.dumps({"source_reference_images": [ref], "reference_images": [ref]}))
+    assert not await main._image_retry_private_references_allowed(task, json.loads(task.request_data))
+    root["feed_repeat_reference_selection"] = {"images": [ref]}
+    assert await main._image_retry_private_references_allowed(task, json.loads(task.request_data))
