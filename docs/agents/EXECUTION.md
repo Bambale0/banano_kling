@@ -1097,3 +1097,9 @@ Reference cleanup reports how many generation snapshot refs are protected.
 
 - Full safe suite at 0546425: **1536 passed, 16 skipped**, 80.68s. Independent closure review: no remaining blocking findings in reviewed scope; **91 focused security tests passed**.
 - Narrow CI safety change: auto-merge command now matches the event's exact PR head SHA; no new workflow permissions or removed checks. This does not replace the all-green gate. Since pull_request_target uses the base workflow, current-PR controlled release must pause only the pre-existing auto-merge workflow after recording its state, verify every exact-head CI check/review, guarded-merge, then restore its prior state. Parent authorized this sequencing and the one-PR protection exception after user confirmation.
+
+### PR239 CI lifecycle correction
+- Remote CI exposed a real publication-editor lifecycle defect: 5-second bootstrap/focus refresh rebuilt reference arrays and triggered initialization effects, closing the editor and overwriting unsaved consent. Standalone E2E had passed; the main gate correctly blocked Docker/release.
+- Added four deterministic failing React regressions and a real focus/timer refresh browser step, then fixed same-task draft-session hydration. Refresh preserves manual draft values, prunes unavailable/explicitly revoked private refs, never selects newly arriving refs, and resets on task switch/dismissal. No assertions/timeouts relaxed and no test retries introduced.
+- Final frontend verification: **25 suites / 86 tests**; focused permission **17 tests on three consecutive runs**; full lint, typecheck and production build passed. Browser grant/revoke/refresh/unpublish flows passed at 320/375/390/430px on **three consecutive runs**, plus complete critical E2E gate.
+- Existing backend and CI code are unchanged in this correction. Remote required checks will rerun for the new exact head before merge.

@@ -49,6 +49,7 @@ try {
     const page = await context.newPage()
     const errors = []
     const requests = []
+    let bootstrapVersion = 0
     const ownerTask = { ...task }
     page.on('pageerror', (error) => errors.push(error.message))
     page.on('dialog', (dialog) => dialog.accept())
@@ -68,7 +69,7 @@ try {
     await page.route('**/mini-app/api/**', async (route) => {
       const path = new URL(route.request().url()).pathname
       let response = { ok: true }
-      if (path.endsWith('/bootstrap')) response = { ...bootstrap, recent_tasks: [ownerTask] }
+      if (path.endsWith('/bootstrap')) response = { ...bootstrap, credits: bootstrap.credits + ++bootstrapVersion, recent_tasks: [ownerTask] }
       else if (path.endsWith('/task-detail')) response = { ok: true, task: ownerTask }
       else if (path.endsWith('/generations/share')) {
         const payload = JSON.parse(route.request().postData())
@@ -108,6 +109,17 @@ try {
     await selection.click()
     assert.equal(await selection.getAttribute('aria-checked'), 'true')
     const group = page.getByRole('group', { name: 'Референсы для повторов' })
+    // Exercise both real refresh paths while the author has an unsaved draft.
+    // A changed balance confirms React applied the fresh bootstrap snapshot.
+    for (const refresh of ['focus', 'timer']) {
+      const refreshed = page.waitForResponse((response) => response.url().endsWith('/bootstrap') && response.status() === 200)
+      if (refresh === 'focus') await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+      const freshBootstrap = await (await refreshed).json()
+      await page.getByText(String(freshBootstrap.credits), { exact: true }).waitFor({ state: 'attached' })
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+      assert.equal(await group.count(), 1, `${refresh} refresh must not close the publication editor at ${width}px`)
+      assert.equal(await selection.getAttribute('aria-checked'), 'true', `${refresh} refresh must preserve explicit consent at ${width}px`)
+    }
     await group.scrollIntoViewIfNeeded()
     const bounds = await group.boundingBox()
     assert.ok(bounds && bounds.x >= 0 && bounds.x + bounds.width <= width + 1, `Permission group overflows width ${width}`)
@@ -146,7 +158,7 @@ try {
     assert.equal(requests.length, 4)
     assert.deepEqual(requests[3].repeat_reference_image_indices, [])
     assert.deepEqual(errors, [], `Browser errors at width ${width}`)
-    console.log(`PASS ${width}px: off by default, explicit source-index grant, independent hidden display, saved consent restoration, empty-selection revoke, unpublish/re-publish clears consent, no overflow or page errors`)
+    console.log(`PASS ${width}px: off by default, focus/timer refresh preserves draft, explicit source-index grant, independent hidden display, saved consent restoration, empty-selection revoke, unpublish/re-publish clears consent, no overflow or page errors`)
     await context.close()
   }
 } finally {

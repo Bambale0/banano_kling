@@ -183,6 +183,8 @@ describe('TaskDetailPanel private image-repeat permission', () => {
     rerender(<TaskDetailPanel />)
     useTask(task)
     rerender(<TaskDetailPanel />)
+    expect(screen.queryByRole('group', { name: 'Референсы для повторов' })).toBeNull()
+    openPublicationEditor()
     expect(screen.getByRole('checkbox', { name: 'Фото-референс 1 для повторов' }).getAttribute('aria-checked')).toBe('false')
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'Фото-референс 2 для повторов' }))
@@ -312,5 +314,90 @@ describe('TaskDetailPanel private image-repeat permission', () => {
     await waitFor(() => expect((screen.getByRole('checkbox', { name: 'Фото-референс 2 для повторов' }) as HTMLButtonElement).disabled).toBe(false))
     expect(updateTask).not.toHaveBeenCalled()
     expect(screen.getByRole('checkbox', { name: 'Фото-референс 2 для повторов' }).getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('keeps the open draft across equivalent same-task polling snapshots', async () => {
+    const task = imageTask({
+      feed_reference_selection: { images: [1, 4], videos: [] },
+      feed_repeat_reference_selection: { images: [] },
+    })
+    useTask(task)
+    const { rerender } = render(<TaskDetailPanel />)
+    openPublicationEditor()
+    fireEvent.click(screen.getByRole('button', { name: 'Prompt' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Рефы (2)' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Исключить фото-референс 1' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Blur' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Только профиль' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Фото-референс 2 для повторов' }))
+
+    useTask(JSON.parse(JSON.stringify(task)) as TaskDetail)
+    rerender(<TaskDetailPanel />)
+    expect(screen.getByRole('group', { name: 'Референсы для повторов' })).toBeTruthy()
+    expect(screen.getByRole('checkbox', { name: 'Фото-референс 2 для повторов' }).getAttribute('aria-checked')).toBe('true')
+    savePublication()
+
+    await waitFor(() => expect(mockedPublish).toHaveBeenCalledTimes(1))
+    expect(mockedPublish).toHaveBeenCalledWith('image-task', expect.objectContaining({
+      promptVisible: true,
+      referencesVisible: true,
+      referenceImageIndices: [4],
+      repeatReferenceImageIndices: [4],
+      blurred: true,
+      publicationScope: 'profile',
+    }))
+  })
+
+  it('preserves explicit choices when more source details arrive and never preselects newly available refs', async () => {
+    useTask(imageTask({
+      publication_reference_images: ['https://example.test/face.jpg'],
+      publication_reference_image_indices: [1],
+    }))
+    const { rerender } = render(<TaskDetailPanel />)
+    openPublicationEditor()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Фото-референс 1 для повторов' }))
+
+    useTask(imageTask())
+    rerender(<TaskDetailPanel />)
+    expect(screen.getByRole('checkbox', { name: 'Фото-референс 1 для повторов' }).getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByRole('checkbox', { name: 'Фото-референс 2 для повторов' }).getAttribute('aria-checked')).toBe('false')
+    savePublication()
+
+    await waitFor(() => expect(mockedPublish).toHaveBeenCalledTimes(1))
+    expect(mockedPublish).toHaveBeenCalledWith('image-task', expect.objectContaining({ repeatReferenceImageIndices: [1] }))
+  })
+
+  it('drops unavailable selected refs from an open draft without closing it', async () => {
+    useTask(imageTask())
+    const { rerender } = render(<TaskDetailPanel />)
+    openPublicationEditor()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Фото-референс 1 для повторов' }))
+
+    useTask(imageTask({
+      publication_reference_images: ['https://example.test/outfit.jpg'],
+      publication_reference_image_indices: [4],
+    }))
+    rerender(<TaskDetailPanel />)
+    expect(screen.getByRole('checkbox', { name: 'Фото-референс 1 для повторов' }).getAttribute('aria-checked')).toBe('false')
+    savePublication()
+
+    await waitFor(() => expect(mockedPublish).toHaveBeenCalledTimes(1))
+    expect(mockedPublish).toHaveBeenCalledWith('image-task', expect.objectContaining({ repeatReferenceImageIndices: [] }))
+  })
+
+  it('honors server-side revocation without losing other explicit draft choices', async () => {
+    useTask(imageTask({ feed_repeat_reference_selection: { images: [1] } }))
+    const { rerender } = render(<TaskDetailPanel />)
+    openPublicationEditor()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Фото-референс 2 для повторов' }))
+
+    useTask(imageTask({ feed_repeat_reference_selection: { images: [] } }))
+    rerender(<TaskDetailPanel />)
+    expect(screen.getByRole('checkbox', { name: 'Фото-референс 1 для повторов' }).getAttribute('aria-checked')).toBe('false')
+    expect(screen.getByRole('checkbox', { name: 'Фото-референс 2 для повторов' }).getAttribute('aria-checked')).toBe('true')
+    savePublication()
+
+    await waitFor(() => expect(mockedPublish).toHaveBeenCalledTimes(1))
+    expect(mockedPublish).toHaveBeenCalledWith('image-task', expect.objectContaining({ repeatReferenceImageIndices: [4] }))
   })
 })
