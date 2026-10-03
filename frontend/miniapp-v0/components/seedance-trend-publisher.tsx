@@ -59,6 +59,9 @@ export function SeedanceTrendPublisher({ task }: SeedanceTrendPublisherProps) {
   const [fixedImages, setFixedImages] = useState<Set<number>>(new Set())
   const [fixedVideos, setFixedVideos] = useState<Set<number>>(new Set())
   const [fixedAudios, setFixedAudios] = useState<Set<number>>(new Set())
+  const [replaceableImages, setReplaceableImages] = useState<Set<number>>(new Set())
+  const [replaceableVideos, setReplaceableVideos] = useState<Set<number>>(new Set())
+  const [replaceableAudios, setReplaceableAudios] = useState<Set<number>>(new Set())
 
   useEffect(() => {
     if (!open) return
@@ -86,6 +89,9 @@ export function SeedanceTrendPublisher({ task }: SeedanceTrendPublisherProps) {
         )
         setFixedVideos(new Set(nextSource.references.videos.map((item) => item.index)))
         setFixedAudios(new Set(nextSource.references.audios.map((item) => item.index)))
+        setReplaceableImages(new Set())
+        setReplaceableVideos(new Set())
+        setReplaceableAudios(new Set())
       })
       .catch((cause) => {
         if (!cancelled) setError(cause instanceof Error ? cause.message : 'Не удалось открыть референсы')
@@ -99,15 +105,21 @@ export function SeedanceTrendPublisher({ task }: SeedanceTrendPublisherProps) {
   }, [open, task.model_label, task.task_id])
 
   const fixedCount = fixedImages.size + fixedVideos.size + fixedAudios.size
+  const replaceableCount = replaceableImages.size + replaceableVideos.size + replaceableAudios.size
   const canPublish = useMemo(
-    () => Boolean(source && identityIndex && fixedCount > 0 && title.trim() && !loading && !saving),
-    [fixedCount, identityIndex, loading, saving, source, title],
+    () => Boolean(source && identityIndex && fixedCount + replaceableCount > 0 && title.trim() && !loading && !saving),
+    [fixedCount, identityIndex, loading, replaceableCount, saving, source, title],
   )
 
   const chooseIdentity = (index: number) => {
     if (saving) return
     setIdentityIndex(index)
     setFixedImages((current) => {
+      const next = new Set(current)
+      next.delete(index)
+      return next
+    })
+    setReplaceableImages((current) => {
       const next = new Set(current)
       next.delete(index)
       return next
@@ -128,6 +140,9 @@ export function SeedanceTrendPublisher({ task }: SeedanceTrendPublisherProps) {
         fixedImageIndices: ordered(fixedImages),
         fixedVideoIndices: ordered(fixedVideos),
         fixedAudioIndices: ordered(fixedAudios),
+        replaceableImageIndices: ordered(replaceableImages),
+        replaceableVideoIndices: ordered(replaceableVideos),
+        replaceableAudioIndices: ordered(replaceableAudios),
       })
       toast.success('Seedance-тренд опубликован')
       setOpen(false)
@@ -143,6 +158,7 @@ export function SeedanceTrendPublisher({ task }: SeedanceTrendPublisherProps) {
   const renderImage = (item: SeedanceTrendReferenceItem) => {
     const identity = identityIndex === item.index
     const fixed = fixedImages.has(item.index)
+    const replaceable = replaceableImages.has(item.index)
     return (
       <div key={item.index} className="overflow-hidden rounded-xl border border-border/60 bg-secondary/35">
         <img src={item.preview_url} alt={`Исходный @Image${item.index}`} className="aspect-square w-full object-cover" />
@@ -165,7 +181,14 @@ export function SeedanceTrendPublisher({ task }: SeedanceTrendPublisherProps) {
           <button
             type="button"
             disabled={saving || identity}
-            onClick={() => setFixedImages((current) => toggled(current, item.index))}
+            onClick={() => {
+              setFixedImages((current) => toggled(current, item.index))
+              setReplaceableImages((current) => {
+                const next = new Set(current)
+                next.delete(item.index)
+                return next
+              })
+            }}
             className={cn(
               'flex w-full items-center gap-1.5 rounded-lg border px-2 py-1.5 text-left text-[10px] transition disabled:cursor-not-allowed disabled:opacity-45',
               fixed
@@ -175,6 +198,27 @@ export function SeedanceTrendPublisher({ task }: SeedanceTrendPublisherProps) {
           >
             {fixed ? <Check className="h-3.5 w-3.5" /> : <LockKeyhole className="h-3.5 w-3.5" />}
             {fixed ? 'Закреплён скрыто' : 'Не использовать'}
+          </button>
+          <button
+            type="button"
+            disabled={saving || identity}
+            onClick={() => {
+              setReplaceableImages((current) => toggled(current, item.index))
+              setFixedImages((current) => {
+                const next = new Set(current)
+                next.delete(item.index)
+                return next
+              })
+            }}
+            className={cn(
+              'flex w-full items-center gap-1.5 rounded-lg border px-2 py-1.5 text-left text-[10px] transition disabled:cursor-not-allowed disabled:opacity-45',
+              replaceable
+                ? 'border-cyan/50 bg-cyan/10 text-cyan'
+                : 'border-border/50 bg-background/45 text-muted-foreground',
+            )}
+          >
+            <UserRound className="h-3.5 w-3.5" />
+            {replaceable ? 'Заменит пользователь' : 'Разрешить замену'}
           </button>
         </div>
       </div>
@@ -186,8 +230,11 @@ export function SeedanceTrendPublisher({ task }: SeedanceTrendPublisherProps) {
     kind: 'video' | 'audio',
     values: Set<number>,
     setValues: React.Dispatch<React.SetStateAction<Set<number>>>,
+    replaceableValues: Set<number>,
+    setReplaceableValues: React.Dispatch<React.SetStateAction<Set<number>>>,
   ) => {
     const fixed = values.has(item.index)
+    const replaceable = replaceableValues.has(item.index)
     return (
       <div key={`${kind}-${item.index}`} className="rounded-xl border border-border/60 bg-secondary/35 p-2">
         {kind === 'video' ? (
@@ -198,7 +245,14 @@ export function SeedanceTrendPublisher({ task }: SeedanceTrendPublisherProps) {
         <button
           type="button"
           disabled={saving}
-          onClick={() => setValues((current) => toggled(current, item.index))}
+          onClick={() => {
+            setValues((current) => toggled(current, item.index))
+            setReplaceableValues((current) => {
+              const next = new Set(current)
+              next.delete(item.index)
+              return next
+            })
+          }}
           className={cn(
             'flex w-full items-center justify-center gap-1.5 rounded-lg border px-2 py-2 text-[11px] transition',
             fixed
@@ -208,6 +262,27 @@ export function SeedanceTrendPublisher({ task }: SeedanceTrendPublisherProps) {
         >
           {fixed ? <Check className="h-3.5 w-3.5" /> : <LockKeyhole className="h-3.5 w-3.5" />}
           @{kind === 'video' ? 'Video' : 'Audio'}{item.index} · {fixed ? 'скрыто закреплён' : 'исключён'}
+        </button>
+        <button
+          type="button"
+          disabled={saving}
+          onClick={() => {
+            setReplaceableValues((current) => toggled(current, item.index))
+            setValues((current) => {
+              const next = new Set(current)
+              next.delete(item.index)
+              return next
+            })
+          }}
+          className={cn(
+            'mt-1.5 flex w-full items-center justify-center gap-1.5 rounded-lg border px-2 py-2 text-[11px] transition',
+            replaceable
+              ? 'border-cyan/50 bg-cyan/10 text-cyan'
+              : 'border-border/50 bg-background/45 text-muted-foreground',
+          )}
+        >
+          <UserRound className="h-3.5 w-3.5" />
+          {replaceable ? 'пользователь заменит' : 'разрешить замену'}
         </button>
       </div>
     )
@@ -266,7 +341,7 @@ export function SeedanceTrendPublisher({ task }: SeedanceTrendPublisherProps) {
                 <div className="space-y-2">
                   <MediaHeader label="Видео-референсы" count={source.references.videos.length} />
                   <div className="grid gap-2 sm:grid-cols-2">
-                    {source.references.videos.map((item) => renderFixedMedia(item, 'video', fixedVideos, setFixedVideos))}
+                    {source.references.videos.map((item) => renderFixedMedia(item, 'video', fixedVideos, setFixedVideos, replaceableVideos, setReplaceableVideos))}
                   </div>
                 </div>
               ) : null}
@@ -275,7 +350,7 @@ export function SeedanceTrendPublisher({ task }: SeedanceTrendPublisherProps) {
                 <div className="space-y-2">
                   <MediaHeader label="Аудио-референсы" count={source.references.audios.length} />
                   <div className="grid gap-2">
-                    {source.references.audios.map((item) => renderFixedMedia(item, 'audio', fixedAudios, setFixedAudios))}
+                    {source.references.audios.map((item) => renderFixedMedia(item, 'audio', fixedAudios, setFixedAudios, replaceableAudios, setReplaceableAudios))}
                   </div>
                 </div>
               ) : null}

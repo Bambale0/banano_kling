@@ -22,6 +22,7 @@ from bot.seedance_trend_recipe import (
     REFERENCE_PLAN_VERSION,
     SUPPORTED_MODELS,
     SeedanceTrendRecipeError,
+    SeedanceUserReferenceSlot,
     compile_seedance_trend_recipe,
     extract_seedance_reference_snapshot,
 )
@@ -207,20 +208,41 @@ async def _generation_settings(
         else False
     )
     editing_source_duration: int | None = None
+    replaceable_editing_video = False
+    user_slots = tuple(
+        getattr(recipe, "user_slots", ())
+        or (
+            SeedanceUserReferenceSlot(
+                media_type="image",
+                position=1,
+                source_position=1,
+                label="ВАШЕ ЛИЦО",
+            ),
+        )
+    )
     if video_editing:
         fixed_videos = [
             asset
             for asset in persisted_assets
             if str(asset.get("media_type") or "").strip().lower() == "video"
         ]
-        if len(fixed_videos) != 1:
+        replaceable_videos = [slot for slot in user_slots if slot.media_type == "video"]
+        if len(fixed_videos) + len(replaceable_videos) != 1:
             raise ValueError(
-                "Seedance 2.5 video editing trend requires exactly one hidden video reference"
+                "Seedance 2.5 video editing trend requires exactly one fixed or replaceable video reference"
             )
+        replaceable_editing_video = bool(replaceable_videos)
+        source_video_url = (
+            str(fixed_videos[0].get("file_url") or "")
+            if fixed_videos
+            else extract_seedance_reference_snapshot(model, request_data).videos[
+                replaceable_videos[0].source_position - 1
+            ]
+        )
         from bot.handlers import seedance_25_fullstack as fullstack
 
         measured_duration = await fullstack._validate_local_source(
-            str(fixed_videos[0].get("file_url") or ""),
+            source_video_url,
             "video",
         )
         if measured_duration is None or not 4 <= measured_duration <= 30:
@@ -237,9 +259,17 @@ async def _generation_settings(
         "scenario": "multimodal",
         "ratio": ratio,
         "duration": duration,
-        "reference_count": 1,
-        "reference_labels": ["ВАШЕ ЛИЦО"],
-        "automatic_hidden_references": True,
+        "reference_count": len(user_slots),
+        "reference_labels": [slot.label for slot in user_slots],
+        "reference_slots": [
+            {
+                "media_type": slot.media_type,
+                "position": slot.position,
+                "label": slot.label,
+            }
+            for slot in user_slots
+        ],
+        "automatic_hidden_references": bool(persisted_assets),
         "reference_contract": REFERENCE_CONTRACT,
         "reference_plan_version": REFERENCE_PLAN_VERSION,
         "identity_image_index": 1,
@@ -250,6 +280,8 @@ async def _generation_settings(
     }
     if editing_source_duration is not None:
         settings["source_video_duration_seconds"] = editing_source_duration
+        if replaceable_editing_video:
+            settings["required_video_duration_seconds"] = editing_source_duration
     if model == "seedance_2_5":
         settings.update(
             {
@@ -320,6 +352,18 @@ async def miniapp_admin_publish_seedance_trend(request: web.Request) -> web.Resp
             fixed_audio_indices=_integer_list(
                 body.get("fixed_audio_indices"), field="fixed_audio_indices"
             ),
+            replaceable_image_indices=_integer_list(
+                body.get("replaceable_image_indices"),
+                field="replaceable_image_indices",
+            ),
+            replaceable_video_indices=_integer_list(
+                body.get("replaceable_video_indices"),
+                field="replaceable_video_indices",
+            ),
+            replaceable_audio_indices=_integer_list(
+                body.get("replaceable_audio_indices"),
+                field="replaceable_audio_indices",
+            ),
         )
         policy_error = detect_explicit_prompt_policy_violation(recipe.prompt)
         if policy_error:
@@ -375,7 +419,7 @@ async def miniapp_admin_publish_seedance_trend(request: web.Request) -> web.Resp
         if not approved:
             raise RuntimeError("Trend approval failed")
         logger.info(
-            "Seedance private-reference trend published: trend_id=%s source_task=%s model=%s admin=%s images=%s videos=%s audio=%s",
+            "Seedance private-reference trend published: trend_id=%s source_task=%s model=%s admin=%s fixed_images=%s fixed_videos=%s fixed_audio=%s user_slots=%s",
             approved["id"],
             task["task_id"],
             task["model"],
@@ -383,6 +427,7 @@ async def miniapp_admin_publish_seedance_trend(request: web.Request) -> web.Resp
             len(recipe.image_assets),
             len(recipe.video_assets),
             len(recipe.audio_assets),
+            len(recipe.user_slots),
         )
         return web.json_response(
             {"ok": True, "prompt": sanitize_prompt_for_public(approved)}

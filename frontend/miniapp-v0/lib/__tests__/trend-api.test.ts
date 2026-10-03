@@ -4,6 +4,45 @@ import path from 'node:path'
 import { runTrend, TrendRunRequestError } from '../trend-api'
 
 describe('runTrend', () => {
+  it('sends typed image and video slots without changing their positions', async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify({
+        ok: true,
+        status: 'queued',
+        task_id: 'typed-task',
+        task_type: 'video',
+        credits: 10,
+        cost: 5,
+        model: 'seedance_2_5',
+        model_label: 'Seedance 2.5',
+        aspect_ratio: 'adaptive',
+        duration: 5,
+        prompt_hidden: true,
+        prompt_actions_allowed: false,
+        trend_id: 42,
+      }),
+    })
+    global.fetch = fetchMock
+
+    await runTrend(
+      42,
+      ['https://example.test/face.jpg', 'https://example.test/motion.mp4'],
+      {},
+      'trend-request-typed',
+      [
+        { media_type: 'image', position: 1, url: 'https://example.test/face.jpg' },
+        { media_type: 'video', position: 1, url: 'https://example.test/motion.mp4' },
+      ],
+    )
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))
+    expect(body.reference_inputs).toEqual([
+      { media_type: 'image', position: 1, url: 'https://example.test/face.jpg' },
+      { media_type: 'video', position: 1, url: 'https://example.test/motion.mp4' },
+    ])
+  })
+
   beforeEach(() => {
     window.sessionStorage.clear()
     window.history.replaceState({}, '', '/mini-app/')

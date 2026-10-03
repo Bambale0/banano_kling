@@ -72,6 +72,9 @@ export async function publishSeedanceTrend(payload: {
   fixedImageIndices: number[]
   fixedVideoIndices: number[]
   fixedAudioIndices: number[]
+  replaceableImageIndices: number[]
+  replaceableVideoIndices: number[]
+  replaceableAudioIndices: number[]
 }): Promise<PromptItem> {
   const response = await postAdmin<{ ok: true; prompt: PromptItem }>(
     'admin/trends/seedance/publish',
@@ -83,6 +86,9 @@ export async function publishSeedanceTrend(payload: {
       fixed_image_indices: payload.fixedImageIndices,
       fixed_video_indices: payload.fixedVideoIndices,
       fixed_audio_indices: payload.fixedAudioIndices,
+      replaceable_image_indices: payload.replaceableImageIndices,
+      replaceable_video_indices: payload.replaceableVideoIndices,
+      replaceable_audio_indices: payload.replaceableAudioIndices,
     },
   )
   return response.prompt

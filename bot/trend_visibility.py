@@ -59,6 +59,44 @@ def public_trend_settings(prompt: Mapping[str, Any]) -> dict[str, Any]:
                 public_settings["reference_labels"] = labels
     if settings.get("automatic_hidden_references") is True:
         public_settings["automatic_hidden_references"] = True
+    try:
+        required_video_duration = int(
+            settings.get("required_video_duration_seconds") or 0
+        )
+    except (TypeError, ValueError):
+        required_video_duration = 0
+    if 4 <= required_video_duration <= 30:
+        public_settings["required_video_duration_seconds"] = required_video_duration
+    raw_slots = settings.get("reference_slots")
+    if isinstance(raw_slots, list) and 1 <= len(raw_slots) <= 12:
+        slots: list[dict[str, Any]] = []
+        seen: set[tuple[str, int]] = set()
+        for raw_slot in raw_slots:
+            if not isinstance(raw_slot, Mapping):
+                slots = []
+                break
+            media_type = str(raw_slot.get("media_type") or "").strip().lower()
+            label = str(raw_slot.get("label") or "").strip()[:80]
+            try:
+                position = int(raw_slot.get("position"))
+            except (TypeError, ValueError):
+                slots = []
+                break
+            key = (media_type, position)
+            if (
+                media_type not in {"image", "video", "audio"}
+                or position < 1
+                or not label
+                or key in seen
+            ):
+                slots = []
+                break
+            seen.add(key)
+            slots.append(
+                {"media_type": media_type, "position": position, "label": label}
+            )
+        if len(slots) == reference_count:
+            public_settings["reference_slots"] = slots
 
     try:
         user_fields = configured_user_fields(

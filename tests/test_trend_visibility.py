@@ -43,7 +43,9 @@ def _signed_init_data(telegram_id: int, bot_token: str) -> str:
     fields = {
         "auth_date": "1776200000",
         "query_id": "test-query",
-        "user": json.dumps({"id": telegram_id, "first_name": "Test"}, separators=(",", ":")),
+        "user": json.dumps(
+            {"id": telegram_id, "first_name": "Test"}, separators=(",", ":")
+        ),
     }
     data_check_string = "\n".join(f"{key}={fields[key]}" for key in sorted(fields))
     secret_key = hmac.new(
@@ -68,8 +70,20 @@ def test_public_trend_keeps_only_runner_metadata() -> None:
         "kind": "video",
         "ratio": "9:16",
         "user_fields": [
-            {"key": "Возраст", "label": "Возраст", "type": "number", "required": True, "max_length": 160},
-            {"key": "Имя", "label": "Имя", "type": "text", "required": True, "max_length": 160},
+            {
+                "key": "Возраст",
+                "label": "Возраст",
+                "type": "number",
+                "required": True,
+                "max_length": 160,
+            },
+            {
+                "key": "Имя",
+                "label": "Имя",
+                "type": "text",
+                "required": True,
+                "max_length": 160,
+            },
         ],
     }
     assert payload["prompt_hidden"] is True
@@ -91,6 +105,42 @@ def test_regular_prompt_stays_usable() -> None:
     assert sanitize_prompt_for_public(prompt) == prompt
 
 
+def test_public_trend_exposes_typed_slot_plan_without_private_assets() -> None:
+    trend = _trend()
+    trend["generation_settings"].update(
+        {
+            "reference_count": 2,
+            "reference_labels": ["ВАШЕ ЛИЦО", "ВАШЕ ВИДЕО · @Video1"],
+            "reference_slots": [
+                {"media_type": "image", "position": 1, "label": "ВАШЕ ЛИЦО"},
+                {
+                    "media_type": "video",
+                    "position": 1,
+                    "label": "ВАШЕ ВИДЕО · @Video1",
+                },
+            ],
+            "fixed_video_reference_count": 1,
+            "required_video_duration_seconds": 12,
+            "private_asset_url": "https://private.example/source.mp4",
+        }
+    )
+
+    payload = sanitize_prompt_for_public(trend)
+
+    assert payload is not None
+    assert payload["generation_settings"]["reference_slots"] == [
+        {"media_type": "image", "position": 1, "label": "ВАШЕ ЛИЦО"},
+        {
+            "media_type": "video",
+            "position": 1,
+            "label": "ВАШЕ ВИДЕО · @Video1",
+        },
+    ]
+    assert payload["generation_settings"]["required_video_duration_seconds"] == 12
+    assert "fixed_video_reference_count" not in payload["generation_settings"]
+    assert "private_asset_url" not in payload["generation_settings"]
+
+
 def test_prompt_api_payload_redacts_lists_and_details() -> None:
     detail = sanitize_prompt_api_payload({"ok": True, "prompt": _trend(), "link": "x"})
     listing = sanitize_prompt_api_payload({"ok": True, "prompts": [_trend()]})
@@ -98,7 +148,9 @@ def test_prompt_api_payload_redacts_lists_and_details() -> None:
     assert detail["prompt"]["prompt_text"] == ""
     assert detail["prompt"]["generation_settings"]["user_fields"][0]["key"] == "Возраст"
     assert listing["prompts"][0]["model"] is None
-    assert listing["prompts"][0]["generation_settings"]["user_fields"][1]["key"] == "Имя"
+    assert (
+        listing["prompts"][0]["generation_settings"]["user_fields"][1]["key"] == "Имя"
+    )
 
 
 def test_admin_bypass_requires_valid_telegram_signature() -> None:
@@ -106,7 +158,10 @@ def test_admin_bypass_requires_valid_telegram_signature() -> None:
     init_data = _signed_init_data(123456, token)
     assert verified_telegram_id_from_init_data(init_data, token) == 123456
     assert verified_telegram_id_from_init_data(init_data, "wrong-token") is None
-    assert verified_telegram_id_from_init_data("user=%7B%22id%22%3A123456%7D", token) is None
+    assert (
+        verified_telegram_id_from_init_data("user=%7B%22id%22%3A123456%7D", token)
+        is None
+    )
 
 
 def test_browser_auth_installs_prompt_privacy_middleware() -> None:

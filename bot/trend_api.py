@@ -27,6 +27,7 @@ from bot.seedance_trend_recipe import (
     REFERENCE_CONTRACT,
     SeedanceTrendRecipeError,
     assemble_seedance_trend_inputs,
+    assemble_seedance_trend_slot_inputs,
 )
 from bot.seedance_trend_recipe import (
     SUPPORTED_MODELS as PRIVATE_REFERENCE_MODELS,
@@ -62,6 +63,7 @@ class TrendRunRequest:
     trend_id: int
     reference_urls: tuple[str, ...]
     user_values: dict[str, str]
+    reference_inputs: tuple[dict[str, Any], ...] = ()
     client_request_id: str | None = None
 
 
@@ -77,11 +79,26 @@ class TrustedTrendRun:
     template_image_urls: tuple[str, ...] = ()
     template_video_urls: tuple[str, ...] = ()
     template_audio_urls: tuple[str, ...] = ()
+    user_reference_inputs: tuple[dict[str, Any], ...] = ()
+    assembled_image_urls: tuple[str, ...] = ()
+    assembled_video_urls: tuple[str, ...] = ()
+    assembled_audio_urls: tuple[str, ...] = ()
     reference_contract: str = ""
 
     @property
     def provider_image_urls(self) -> tuple[str, ...]:
-        return (*self.reference_urls, *self.template_image_urls)
+        return self.assembled_image_urls or (
+            *self.reference_urls,
+            *self.template_image_urls,
+        )
+
+    @property
+    def provider_video_urls(self) -> tuple[str, ...]:
+        return self.assembled_video_urls or self.template_video_urls
+
+    @property
+    def provider_audio_urls(self) -> tuple[str, ...]:
+        return self.assembled_audio_urls or self.template_audio_urls
 
 
 def _fallback_trend_settings(trend: Mapping[str, Any]) -> dict[str, Any]:
@@ -136,7 +153,7 @@ def _fallback_trend_settings(trend: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _clean_reference_urls(raw_urls: Any) -> tuple[str, ...]:
+def _clean_reference_urls(raw_urls: Any, *, allow_empty: bool = False) -> tuple[str, ...]:
     if not isinstance(raw_urls, list):
         raise TrendRunValidationError("Передайте список фото-референсов")
 
@@ -157,9 +174,51 @@ def _clean_reference_urls(raw_urls: Any) -> tuple[str, ...]:
                 f"Слишком много референсов. Максимум: {MAX_TREND_REFERENCES}"
             )
 
-    if not cleaned:
+    if not cleaned and not allow_empty:
         raise TrendRunValidationError("Загрузите хотя бы одно фото")
     return tuple(cleaned)
+
+
+def _clean_reference_inputs(raw_inputs: Any) -> tuple[dict[str, Any], ...]:
+    if raw_inputs is None:
+        return ()
+    if not isinstance(raw_inputs, list):
+        raise TrendRunValidationError("Передайте типизированные референсы списком")
+    cleaned: list[dict[str, Any]] = []
+    seen: set[tuple[str, int]] = set()
+    seen_urls: set[str] = set()
+    for raw in raw_inputs:
+        if not isinstance(raw, Mapping):
+            raise TrendRunValidationError("Некорректный слот референса")
+        media_type = str(raw.get("media_type") or "").strip().lower()
+        try:
+            position = int(raw.get("position"))
+        except (TypeError, ValueError) as exc:
+            raise TrendRunValidationError("Некорректная позиция референса") from exc
+        urls = _clean_reference_urls([raw.get("url")])
+        key = (media_type, position)
+        if (
+            media_type not in {"image", "video", "audio"}
+            or position < 1
+            or key in seen
+            or urls[0] in seen_urls
+        ):
+            raise TrendRunValidationError("Некорректный или повторяющийся слот референса")
+        seen.add(key)
+        seen_urls.add(urls[0])
+        cleaned.append(
+            {"media_type": media_type, "position": position, "url": urls[0]}
+        )
+        if len(cleaned) > MAX_TREND_REFERENCES:
+            raise TrendRunValidationError(
+                f"Слишком много референсов. Максимум: {MAX_TREND_REFERENCES}"
+            )
+    return tuple(cleaned)
+
+
+def _local_reference_media_type(url: str) -> str | None:
+    match = re.search(r"/uploads/refs/(image|video|audio)/\d+/", str(url or ""))
+    return match.group(1) if match else None
 
 
 def parse_trend_run_request(body: Any) -> TrendRunRequest:
@@ -187,10 +246,22 @@ def parse_trend_run_request(body: Any) -> TrendRunRequest:
     if client_request_id and not re.fullmatch(r"[A-Za-z0-9_-]{8,120}", client_request_id):
         raise TrendRunValidationError("Некорректный идентификатор запуска тренда")
 
+    reference_inputs = _clean_reference_inputs(body.get("reference_inputs"))
+    reference_urls = _clean_reference_urls(
+        body.get("reference_urls"),
+        allow_empty=bool(reference_inputs),
+    )
+    if reference_inputs:
+        typed_urls = tuple(str(item["url"]) for item in reference_inputs)
+        if reference_urls and reference_urls != typed_urls:
+            raise TrendRunValidationError("Состав референсов запуска не совпадает со слотами")
+        reference_urls = typed_urls
+
     return TrendRunRequest(
         trend_id=int(raw_trend_id),
-        reference_urls=_clean_reference_urls(body.get("reference_urls")),
+        reference_urls=reference_urls,
         user_values=user_values,
+        reference_inputs=reference_inputs,
         client_request_id=client_request_id,
     )
 
@@ -201,6 +272,7 @@ def trusted_trend_run(
     user_values: Mapping[str, str] | None = None,
     *,
     template_assets: Sequence[Mapping[str, Any]] = (),
+    reference_inputs: Sequence[Mapping[str, Any]] = (),
 ) -> TrustedTrendRun:
     if not trend:
         raise TrendRunValidationError("Тренд не найден")
@@ -248,6 +320,9 @@ def trusted_trend_run(
     template_images: tuple[str, ...] = ()
     template_videos: tuple[str, ...] = ()
     template_audios: tuple[str, ...] = ()
+    assembled_images: tuple[str, ...] = ()
+    assembled_videos: tuple[str, ...] = ()
+    assembled_audios: tuple[str, ...] = ()
     if reference_contract:
         if reference_contract != REFERENCE_CONTRACT:
             raise TrendRunValidationError("Неизвестный контракт референсов тренда")
@@ -255,20 +330,51 @@ def trusted_trend_run(
             raise TrendRunValidationError(
                 "Приватные референсы поддерживаются только в Seedance 2.0/2.5 трендах"
             )
-        if not template_assets:
+        try:
+            reference_plan_version = int(settings.get("reference_plan_version") or 1)
+        except (TypeError, ValueError) as exc:
+            raise TrendRunValidationError("Повреждена версия плана референсов") from exc
+        if not template_assets and reference_plan_version < 2:
             raise TrendRunValidationError(
                 "Закреплённые референсы тренда недоступны. Обратитесь к администратору"
             )
         try:
-            provider_images, provider_videos, provider_audios = assemble_seedance_trend_inputs(
-                reference_urls,
-                template_assets,
-            )
+            if reference_plan_version >= 2:
+                raw_slots = settings.get("reference_slots")
+                if not isinstance(raw_slots, list) or not raw_slots:
+                    raise SeedanceTrendRecipeError("Trend reference slot plan is missing")
+                provider_images, provider_videos, provider_audios = (
+                    assemble_seedance_trend_slot_inputs(
+                        reference_inputs,
+                        raw_slots,
+                        template_assets,
+                    )
+                )
+            else:
+                provider_images, provider_videos, provider_audios = assemble_seedance_trend_inputs(
+                    reference_urls,
+                    template_assets,
+                )
         except SeedanceTrendRecipeError as exc:
             raise TrendRunValidationError(str(exc)) from exc
-        template_images = tuple(provider_images[1:])
-        template_videos = tuple(provider_videos)
-        template_audios = tuple(provider_audios)
+        template_images = tuple(
+            str(asset.get("file_url") or "").strip()
+            for asset in template_assets
+            if str(asset.get("media_type") or "").strip().lower() == "image"
+        )
+        template_videos = tuple(
+            str(asset.get("file_url") or "").strip()
+            for asset in template_assets
+            if str(asset.get("media_type") or "").strip().lower() == "video"
+        )
+        template_audios = tuple(
+            str(asset.get("file_url") or "").strip()
+            for asset in template_assets
+            if str(asset.get("media_type") or "").strip().lower() == "audio"
+        )
+        assembled_images = tuple(provider_images)
+        assembled_videos = tuple(provider_videos)
+        assembled_audios = tuple(provider_audios)
         for key, actual in (
             ("fixed_image_reference_count", len(template_images)),
             ("fixed_video_reference_count", len(template_videos)),
@@ -295,6 +401,10 @@ def trusted_trend_run(
         template_image_urls=template_images,
         template_video_urls=template_videos,
         template_audio_urls=template_audios,
+        user_reference_inputs=tuple(dict(item) for item in reference_inputs),
+        assembled_image_urls=assembled_images,
+        assembled_video_urls=assembled_videos,
+        assembled_audio_urls=assembled_audios,
         reference_contract=reference_contract,
     )
 
@@ -380,16 +490,26 @@ def estimate_trend_repeat_cost(
             if bool(settings.get("seedance25_video_editing", False))
             else duration
         )
-        template_video_urls = tuple(
+        provider_video_urls = tuple(
             str(value or "").strip()
-            for value in getattr(trend, "template_video_urls", ()) or ()
+            for value in getattr(trend, "provider_video_urls", ()) or ()
             if str(value or "").strip()
         )
         try:
             fixed_video_count = int(settings.get("fixed_video_reference_count") or 0)
         except (TypeError, ValueError):
             fixed_video_count = 0
-        pricing_video_refs = template_video_urls or (("fixed-video-reference",) if fixed_video_count > 0 else ())
+        raw_slots = settings.get("reference_slots")
+        has_replaceable_video = isinstance(raw_slots, list) and any(
+            isinstance(slot, Mapping)
+            and str(slot.get("media_type") or "").strip().lower() == "video"
+            for slot in raw_slots
+        )
+        pricing_video_refs = provider_video_urls or (
+            ("video-reference",)
+            if fixed_video_count > 0 or has_replaceable_video
+            else ()
+        )
         if model == "seedance_2_5":
             resolution = str(
                 settings.get("seedance25_resolution") or "720p"
@@ -661,12 +781,12 @@ async def _run_video_trend(
             f"В тренде слишком много фото-референсов. Максимум: {max_references}"
         )
     max_videos = get_max_video_references(trend.model)
-    if len(trend.template_video_urls) > max_videos:
+    if len(trend.provider_video_urls) > max_videos:
         raise TrendRunValidationError(
             f"В тренде слишком много видео-референсов. Максимум: {max_videos}"
         )
     max_audio = get_max_audio_references(trend.model)
-    if len(trend.template_audio_urls) > max_audio:
+    if len(trend.provider_audio_urls) > max_audio:
         raise TrendRunValidationError(
             f"В тренде слишком много аудио-референсов. Максимум: {max_audio}"
         )
@@ -675,11 +795,21 @@ async def _run_video_trend(
     image_references = provider_images[1:]
     all_references = [
         *provider_images,
-        *trend.template_video_urls,
-        *trend.template_audio_urls,
+        *trend.provider_video_urls,
+        *trend.provider_audio_urls,
     ]
     _validate_uploaded_references(all_references, miniapp_module)
-    await touch_saved_references(telegram_id, list(trend.reference_urls), kind="image")
+    if trend.user_reference_inputs:
+        for media_type in ("image", "video", "audio"):
+            user_urls = [
+                str(item["url"])
+                for item in trend.user_reference_inputs
+                if item.get("media_type") == media_type
+            ]
+            if user_urls:
+                await touch_saved_references(telegram_id, user_urls, kind=media_type)
+    else:
+        await touch_saved_references(telegram_id, list(trend.reference_urls), kind="image")
 
     effective_model = miniapp_module._resolve_gemini_omni_model(
         trend.model,
@@ -707,8 +837,8 @@ async def _run_video_trend(
             generation_type=runtime_generation_type,
             image_url=image_url,
             image_references=image_references,
-            video_references=list(trend.template_video_urls),
-            audio_references=list(trend.template_audio_urls),
+            video_references=list(trend.provider_video_urls),
+            audio_references=list(trend.provider_audio_urls),
             grok_mode=str(trend.settings.get("grok_mode") or "normal"),
             grok_resolution=str(
                 trend.settings.get("grok_resolution") or "480p"
@@ -814,6 +944,7 @@ def _trend_run_request_hash(parsed: TrendRunRequest) -> str:
     payload = {
         "trend_id": parsed.trend_id,
         "reference_urls": list(parsed.reference_urls),
+        "reference_inputs": list(parsed.reference_inputs),
         "user_values": dict(sorted(parsed.user_values.items())),
     }
     encoded = json.dumps(
@@ -930,17 +1061,22 @@ async def miniapp_run_trend(request: web.Request) -> web.Response:
         template_assets: Sequence[Mapping[str, Any]] = ()
         if str(settings.get("reference_contract") or "").strip():
             template_assets = await list_trend_reference_assets(parsed.trend_id)
-        if template_assets:
+        if str(settings.get("reference_contract") or "").strip():
             trend = trusted_trend_run(
                 prompt,
                 parsed.reference_urls,
                 parsed.user_values,
                 template_assets=template_assets,
+                reference_inputs=parsed.reference_inputs,
             )
         else:
             trend = trusted_trend_run(prompt, parsed.reference_urls, parsed.user_values)
 
         if trend.reference_contract == REFERENCE_CONTRACT:
+            typed_by_url = {
+                str(item.get("url") or ""): str(item.get("media_type") or "")
+                for item in trend.user_reference_inputs
+            }
             for identity_url in trend.reference_urls:
                 owner_telegram_id = miniapp_module._reference_upload_owner_telegram_id(
                     identity_url
@@ -950,8 +1086,29 @@ async def miniapp_run_trend(request: web.Request) -> web.Response:
                     or not is_local_upload_source(identity_url)
                 ):
                     raise TrendRunValidationError(
-                        "Для повтора загрузите своё фото через форму тренда"
+                        "Для повтора загрузите своё фото или другие свои референсы через форму тренда"
                     )
+                expected_media_type = typed_by_url.get(identity_url)
+                if (
+                    expected_media_type
+                    and _local_reference_media_type(identity_url)
+                    != expected_media_type
+                ):
+                    raise TrendRunValidationError(
+                        "Тип загруженного файла не совпадает со слотом тренда"
+                    )
+            logger.info(
+                "Seedance trend references validated: trend_id=%s user_id=%s plan_version=%s user_slots=%s fixed_assets=%s",
+                trend.trend_id,
+                user.id,
+                trend.settings.get("reference_plan_version") or 1,
+                [
+                    f"{item.get('media_type')}:{item.get('position')}"
+                    for item in trend.user_reference_inputs
+                ]
+                or ["image:1"],
+                len(template_assets),
+            )
 
         if trend.kind == "video":
             response = await _run_video_trend(

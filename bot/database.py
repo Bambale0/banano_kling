@@ -769,7 +769,7 @@ class GenerationTask:
     shares_count: int = 0
     feed_prompt_visible: bool = False
     feed_references_visible: bool = False
-    feed_reference_selection: Optional[str] = None
+    feed_reference_selection: str | None = None
     feed_blurred: bool = False
     created_at: Optional[datetime] = None
 
@@ -5295,11 +5295,7 @@ async def get_task_by_id(task_id: str) -> Optional[GenerationTask]:
                 if "feed_references_visible" in row.keys()
                 else False
             ),
-            feed_reference_selection=(
-                row["feed_reference_selection"]
-                if "feed_reference_selection" in row.keys()
-                else None
-            ),
+            feed_reference_selection=_generation_attr(row, "feed_reference_selection"),
             feed_blurred=(
                 bool(row["feed_blurred"])
                 if "feed_blurred" in row.keys()
@@ -6457,7 +6453,7 @@ def generation_reference_selection(
 
 
 def _validated_reference_indices(
-    values: Optional[list[int]],
+    values: list[int] | None,
     available_count: int,
 ) -> list[int]:
     if values is None:
@@ -7363,8 +7359,8 @@ async def share_to_feed(
     *,
     prompt_visible: bool = False,
     references_visible: bool = False,
-    reference_image_indices: Optional[list[int]] = None,
-    reference_video_indices: Optional[list[int]] = None,
+    reference_image_indices: list[int] | None = None,
+    reference_video_indices: list[int] | None = None,
     blurred: Optional[bool] = None,
     publication_scope: str = "feed",
     adult_content: bool = False,

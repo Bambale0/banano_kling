@@ -38,6 +38,12 @@ export interface PinterestRepeatOptions {
   model: 'banana_pro' | 'seedream_5_pro'
 }
 
+export interface TrendReferenceInput {
+  media_type: 'image' | 'video' | 'audio'
+  position: number
+  url: string
+}
+
 export class TrendRunRequestError extends Error {
   readonly retrySameRequest: boolean
 
@@ -220,10 +226,17 @@ export async function runTrend(
   referenceUrls: string[],
   userValues: Record<string, string> = {},
   clientRequestId: string = createTrendRunRequestId(),
+  referenceInputs: TrendReferenceInput[] = [],
 ): Promise<RunTrendResult> {
   const payload = authorizedPayload()
   payload.trend_id = trendId
   payload.reference_urls = referenceUrls.map(providerReferenceUrl)
+  if (referenceInputs.length) {
+    payload.reference_inputs = referenceInputs.map((input) => ({
+      ...input,
+      url: providerReferenceUrl(input.url),
+    }))
+  }
   payload.client_request_id = clientRequestId
   if (Object.keys(userValues).length) payload.user_values = userValues
 

@@ -240,3 +240,70 @@ async def test_seedance25_private_trend_keeps_user_identity_first_and_hidden_med
     request_data = add_task.await_args.kwargs["request_data"]
     assert request_data["reference_contract"] == "seedance_identity_first"
     assert request_data["fixed_asset_counts"] == {"image": 1, "video": 1, "audio": 0}
+
+
+@pytest.mark.asyncio
+async def test_seedance25_editing_rejects_replacement_video_with_price_changing_duration(
+    monkeypatch,
+) -> None:
+    from bot import trend_api
+
+    trend = trend_api.TrustedTrendRun(
+        trend_id=1702,
+        kind="video",
+        prompt="Replace @Video1 person with @Image1.",
+        model="seedance_2_5",
+        ratio="adaptive",
+        reference_urls=(
+            "https://tanyapi.test/uploads/refs/image/123456/face.jpg",
+            "https://tanyapi.test/uploads/refs/video/123456/replacement.mp4",
+        ),
+        settings={
+            "duration": -1,
+            "seedance25_resolution": "720p",
+            "seedance25_video_editing": True,
+            "source_video_duration_seconds": 12,
+            "required_video_duration_seconds": 12,
+        },
+        user_reference_inputs=(
+            {
+                "media_type": "image",
+                "position": 1,
+                "url": "https://tanyapi.test/uploads/refs/image/123456/face.jpg",
+            },
+            {
+                "media_type": "video",
+                "position": 1,
+                "url": "https://tanyapi.test/uploads/refs/video/123456/replacement.mp4",
+            },
+        ),
+        assembled_image_urls=(
+            "https://tanyapi.test/uploads/refs/image/123456/face.jpg",
+        ),
+        assembled_video_urls=(
+            "https://tanyapi.test/uploads/refs/video/123456/replacement.mp4",
+        ),
+        reference_contract="seedance_identity_first",
+    )
+    monkeypatch.setattr(
+        compat.public_release,
+        "_public_model_meta",
+        lambda: {"ratios": ["adaptive"], "durations": list(range(4, 31))},
+    )
+    monkeypatch.setattr(trend_api, "_validate_uploaded_references", lambda *_args: None)
+    monkeypatch.setattr(trend_api, "touch_saved_references", AsyncMock())
+    monkeypatch.setattr(compat.public_release, "_validate_public_payload", AsyncMock())
+    from bot.handlers import seedance_25_fullstack as fullstack
+
+    monkeypatch.setattr(fullstack, "_validate_local_source", AsyncMock(return_value=12.4))
+    debit = AsyncMock()
+    monkeypatch.setattr(trend_api, "_debit_for_generation", debit)
+
+    with pytest.raises(trend_api.TrendRunValidationError, match="12 сек"):
+        await compat._run_seedance25_trend(
+            telegram_id=123456,
+            user=SimpleNamespace(id=101, credits=170),
+            trend=trend,
+        )
+
+    debit.assert_not_awaited()

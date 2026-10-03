@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  Film,
   ImagePlus,
   Loader2,
   Plus,
@@ -17,11 +18,12 @@ import {
   createTrendRunRequestId,
   runPinterestRepeatTrend,
   runTrend as runTrendApi,
+  type TrendReferenceInput,
   TrendRunRequestError,
 } from '@/lib/trend-api'
 import { mediaAspectRatio, normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
 import { formatTrendRepeatCost } from '@/lib/trend-price'
-import type { PromptItem, TrendUserField, UploadedFile } from '@/lib/types'
+import type { PromptItem, TrendReferenceSlot, TrendUserField, UploadedFile } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 
@@ -35,6 +37,8 @@ interface TrendRunnerDialogProps {
 }
 
 const IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'avif'])
+const VIDEO_EXTENSIONS = new Set(['mp4', 'mov'])
+const AUDIO_EXTENSIONS = new Set(['mp3', 'wav'])
 const MAX_REFERENCES = 12
 const MAX_PINTEREST_ANGLES = 5
 const DEFAULT_TWO_PHOTO_LABELS = ['РЕФЕРЕНС', 'ТЫ']
@@ -123,18 +127,27 @@ export function TrendRunnerDialog({
     isTrendUserFieldValueValid(field, userValues[field.key] || ''),
   )
   const configuredReferenceCount = Number(trend?.generation_settings?.reference_count || 0)
+  const referenceSlots = useMemo<TrendReferenceSlot[]>(() => {
+    const slots = trend?.generation_settings?.reference_slots
+    if (!Array.isArray(slots) || !slots.length) return []
+    return slots.slice(0, MAX_REFERENCES)
+  }, [trend?.generation_settings?.reference_slots])
+  const typedSlots = referenceSlots.length > 0
   const exactReferenceCount = pinterestRepeat
     ? 2
-    : Number.isFinite(configuredReferenceCount) && configuredReferenceCount > 0
-      ? Math.min(MAX_REFERENCES, Math.trunc(configuredReferenceCount))
-      : 0
+    : typedSlots
+      ? referenceSlots.length
+      : Number.isFinite(configuredReferenceCount) && configuredReferenceCount > 0
+        ? Math.min(MAX_REFERENCES, Math.trunc(configuredReferenceCount))
+        : 0
   const exactSlots = exactReferenceCount > 0
   const referenceLabels = exactSlots
     ? Array.from({ length: exactReferenceCount }, (_, index) =>
         pinterestRepeat
           ? DEFAULT_TWO_PHOTO_LABELS[index] || `ФОТО ${index + 1}`
-          : trend?.generation_settings?.reference_labels?.[index]?.trim() ||
-            (exactReferenceCount === 2 ? DEFAULT_TWO_PHOTO_LABELS[index] : `Фото ${index + 1}`),
+          : referenceSlots[index]?.label?.trim() ||
+            trend?.generation_settings?.reference_labels?.[index]?.trim() ||
+            `Референс ${index + 1}`,
       )
     : []
   const completedReferences = uploadedReferences.filter(
@@ -202,6 +215,15 @@ export function TrendRunnerDialog({
     return file.type.startsWith('image/') || IMAGE_EXTENSIONS.has(extension)
   }
 
+  const validateSlotFile = (slot: TrendReferenceSlot | undefined, file: File) => {
+    if (!slot || slot.media_type === 'image') return validateImage(file)
+    const extension = file.name.split('.').pop()?.toLowerCase() || ''
+    if (slot.media_type === 'video') {
+      return ['video/mp4', 'video/quicktime'].includes(file.type) || VIDEO_EXTENSIONS.has(extension)
+    }
+    return ['audio/mpeg', 'audio/wav'].includes(file.type) || AUDIO_EXTENSIONS.has(extension)
+  }
+
   const removePrimaryReference = (slotIndex: number) => {
     if (busy) return
     const preview = previewUrls[slotIndex]
@@ -223,9 +245,10 @@ export function TrendRunnerDialog({
 
   const uploadIntoSlot = async (slotIndex: number, file: File) => {
     if (!trend || busy) return
-    if (!validateImage(file)) {
+    const slot = referenceSlots[slotIndex]
+    if (!validateSlotFile(slot, file)) {
       setPhase('error')
-      setError(`Файл «${file.name}» не является изображением`)
+      setError(`Файл «${file.name}» не подходит для слота ${slot?.label || 'фото'}`)
       return
     }
 
@@ -243,7 +266,11 @@ export function TrendRunnerDialog({
     setPhase('uploading')
 
     try {
-      const uploaded = await uploadFile('image_reference', file)
+      const uploaded = slot?.media_type === 'video'
+        ? await uploadFile('video_reference', file)
+        : slot?.media_type === 'audio'
+          ? await uploadFile('audio_reference', file)
+          : await uploadFile('image_reference', file)
       addSavedReference(uploaded)
       setUploadedReferences((current) => {
         const next = [...current]
@@ -375,6 +402,13 @@ export function TrendRunnerDialog({
           ...identityAngles.map((reference) => reference.url),
         ].filter(Boolean)
       : completedReferences.map((reference) => reference.url)
+    const referenceInputs: TrendReferenceInput[] = typedSlots
+      ? referenceSlots.map((slot, index) => ({
+          media_type: slot.media_type,
+          position: slot.position,
+          url: uploadedReferences[index]?.url || '',
+        }))
+      : []
 
     let clientRequestId: string | undefined
     if (!pinterestRepeat) {
@@ -392,7 +426,9 @@ export function TrendRunnerDialog({
       trendId: number,
       refs: string[],
       values: Record<string, string>,
-    ) => runTrendApi(trendId, refs, values, clientRequestId)
+    ) => typedSlots
+      ? runTrendApi(trendId, refs, values, clientRequestId, referenceInputs)
+      : runTrendApi(trendId, refs, values, clientRequestId)
 
     try {
       const result = pinterestRepeat
@@ -423,6 +459,13 @@ export function TrendRunnerDialog({
   const renderExactSlot = (label: string, index: number) => {
     const previewUrl = previewUrls[index]
     const uploaded = uploadedReferences[index]
+    const slot = referenceSlots[index]
+    const mediaType = slot?.media_type || 'image'
+    const accept = mediaType === 'video'
+      ? 'video/mp4,video/quicktime'
+      : mediaType === 'audio'
+        ? 'audio/mpeg,audio/wav'
+        : 'image/jpeg,image/png,image/webp,image/heic,image/heif,image/avif'
     return (
       <div key={`${label}-${index}`} className="space-y-1.5">
         <div className="flex items-center gap-1.5 px-1">
@@ -440,7 +483,7 @@ export function TrendRunnerDialog({
             <input
               ref={(node) => { inputRefs.current[index] = node }}
               type="file"
-              accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/avif"
+              accept={accept}
               className="absolute inset-0 z-20 cursor-pointer opacity-0"
               disabled={busy}
               onChange={(event) => {
@@ -449,20 +492,24 @@ export function TrendRunnerDialog({
                 if (file) void uploadIntoSlot(index, file)
               }}
             />
-            {previewUrl ? (
+            {previewUrl && mediaType === 'video' ? (
+              <video src={previewUrl} aria-label={label} className="h-36 w-full bg-black object-contain" controls playsInline />
+            ) : previewUrl && mediaType === 'audio' ? (
+              <div className="flex h-36 items-center px-3"><audio src={previewUrl} aria-label={label} className="w-full" controls /></div>
+            ) : previewUrl ? (
               <img src={previewUrl} alt={label} className="h-36 w-full object-cover" />
             ) : (
               <div className="flex h-36 flex-col items-center justify-center gap-2 text-muted-foreground">
                 {phase === 'uploading' ? (
                   <Loader2 className="h-7 w-7 animate-spin text-gold" />
                 ) : (
-                  <ImagePlus className="h-7 w-7 text-gold" />
+                  mediaType === 'video' ? <Film className="h-7 w-7 text-gold" /> : <ImagePlus className="h-7 w-7 text-gold" />
                 )}
                 <span className="text-xs font-medium">Загрузить</span>
               </div>
             )}
             <div className="flex min-h-10 items-center justify-center px-2 py-2 text-center text-xs font-medium text-foreground">
-              {uploaded ? 'Готово ✓' : index === 0 ? 'Фото, которое повторяем' : 'Ваше фото'}
+              {uploaded ? 'Готово ✓' : mediaType === 'video' ? 'Ваше видео' : mediaType === 'audio' ? 'Ваше аудио' : index === 0 ? 'Ваше лицо' : 'Ваше фото'}
             </div>
           </label>
           {uploaded && !busy ? (
@@ -494,7 +541,18 @@ export function TrendRunnerDialog({
 
         {trend?.generation_settings?.automatic_hidden_references ? (
           <div className="rounded-xl border border-gold/25 bg-gold/5 p-3 text-sm leading-relaxed text-muted-foreground">
-            Загрузите только своё лицо. Одежда, украшения, предметы и остальные закреплённые референсы применятся автоматически и не показываются в приложении.
+            {typedSlots
+              ? 'Замените выбранные автором фото, видео или аудио своими файлами. Остальные закреплённые референсы применятся автоматически и не показываются в приложении.'
+              : 'Загрузите только своё лицо. Одежда, украшения, предметы и остальные закреплённые референсы применятся автоматически и не показываются в приложении.'}
+          </div>
+        ) : null}
+        {trend?.generation_settings?.required_video_duration_seconds ? (
+          <div className="rounded-xl border border-cyan/25 bg-cyan/5 p-3 text-sm text-muted-foreground">
+            Видео для замены должно быть длительностью{' '}
+            <strong className="text-foreground">
+              {trend.generation_settings.required_video_duration_seconds} сек.
+            </strong>{' '}
+            — так цена останется той же, что указана на кнопке.
           </div>
         ) : null}
 
@@ -716,7 +774,7 @@ export function TrendRunnerDialog({
             <div className="rounded-2xl border border-gold/25 bg-gold/10 p-4 text-center">
               <Sparkles className="mx-auto h-6 w-6 text-gold" />
               <p className="mt-2 text-sm font-semibold text-foreground">
-                {exactSlots ? 'Добавьте фото по порядку' : 'Загрузите свои фото'}
+                {typedSlots ? 'Заполните заменяемые слоты' : exactSlots ? 'Добавьте фото по порядку' : 'Загрузите свои фото'}
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
                 {exactSlots
