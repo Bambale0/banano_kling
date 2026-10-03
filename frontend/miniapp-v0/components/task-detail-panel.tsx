@@ -1,4 +1,5 @@
 'use client'
+import { GenjutsuButton } from './genjutsu-entry'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useApp } from '@/lib/app-context'
@@ -395,6 +396,9 @@ export function TaskDetailPanel() {
               )}
 
               {/* Info grid */}
+              {taskDetail.type === 'video' && taskDetail.status === 'completed' && (
+                <GenjutsuButton taskId={taskDetail.task_id} compact />
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <InfoItem 
                   label="Модель" 

@@ -8,6 +8,7 @@ import { ResultCard } from '../result-card'
 import type { Task, ScenarioType, UploadedFile } from '@/lib/types'
 import type { Seedance25GenerateResponse } from '@/lib/seedance25-api'
 import { generateVideo, uploadFile } from '@/lib/api'
+import { GenjutsuButton } from '../genjutsu-entry'
 
 export function VideoTab() {
   const {
@@ -181,6 +182,7 @@ export function VideoTab() {
         </p>
       </div>
 
+      <GenjutsuButton />
       {canUseSeedance25 ? (
         <div className="mx-auto mb-4 max-w-xl space-y-2">
           <div className="px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">

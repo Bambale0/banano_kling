@@ -1,0 +1,33 @@
+{
+  "motion_transfer": {
+    "label": "Motion Transfer",
+    "provider_path": "higgsfield/genjutsu/motion-transfer/v1.0",
+    "resolutions": ["480p", "720p", "1080p"],
+    "min_images": 1, "max_images": 8, "max_prompt_length": 10000,
+    "minimum_video_ms": 4000, "maximum_video_ms": 30000,
+    "roles": ["character", "wardrobe", "product", "object", "location", "style"],
+    "schema_source": "https://docs.higgsfield.ai/docs/models/genjutsu/motion-transfer.md",
+    "verified_at": "2026-10-03"
+  },
+  "object_swap": {
+    "label": "Object Swap",
+    "provider_path": "higgsfield/genjutsu/object-swap/v1.0",
+    "resolutions": ["480p", "720p", "1080p"],
+    "min_images": 1, "max_images": 8, "max_prompt_length": 10000,
+    "minimum_video_ms": 4000, "maximum_video_ms": 30000,
+    "minimum_source_pixels": 409600,
+    "roles": ["character", "wardrobe", "product", "object", "location"],
+    "schema_source": "https://docs.higgsfield.ai/docs/models/genjutsu/object-swap.md",
+    "verified_at": "2026-10-03"
+  },
+  "restyle": {
+    "label": "Restyle",
+    "provider_path": "higgsfield/genjutsu/restyle/v1.0",
+    "resolutions": ["480p", "720p", "1080p"],
+    "min_images": 0, "max_images": 5, "max_prompt_length": 10000,
+    "minimum_video_ms": 4000, "maximum_video_ms": 30000,
+    "roles": ["character"],
+    "schema_source": "https://docs.higgsfield.ai/docs/models/genjutsu/restyle.md",
+    "verified_at": "2026-10-03"
+  }
+}

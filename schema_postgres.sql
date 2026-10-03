@@ -442,4 +442,95 @@ CREATE TABLE IF NOT EXISTS miniapp_notifications (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- ============================================================
+-- HIGGSFIELD GENJUTSU
+-- ============================================================
+CREATE TABLE IF NOT EXISTS genjutsu_control (
+    id INTEGER PRIMARY KEY,
+    config_version INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS genjutsu_assets (
+    id TEXT PRIMARY KEY, owner BIGINT NOT NULL, kind TEXT NOT NULL,
+    storage_key TEXT NOT NULL UNIQUE, metadata TEXT NOT NULL,
+    size_bytes BIGINT NOT NULL DEFAULT 0, created_ms BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS genjutsu_uploads (
+    id TEXT PRIMARY KEY, owner BIGINT NOT NULL,
+    reserved_bytes BIGINT NOT NULL, expires_ms BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS genjutsu_projects (
+    id TEXT PRIMARY KEY, owner BIGINT NOT NULL, title TEXT NOT NULL,
+    revision INTEGER NOT NULL, plan TEXT NOT NULL,
+    archived INTEGER NOT NULL DEFAULT 0,
+    created_ms BIGINT NOT NULL, updated_ms BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS genjutsu_versions (
+    project_id TEXT NOT NULL REFERENCES genjutsu_projects(id),
+    revision INTEGER NOT NULL, plan TEXT NOT NULL, title TEXT NOT NULL,
+    created_ms BIGINT NOT NULL, PRIMARY KEY(project_id, revision)
+);
+CREATE TABLE IF NOT EXISTS genjutsu_quotes (
+    id TEXT PRIMARY KEY, owner BIGINT NOT NULL, project_id TEXT NOT NULL,
+    revision INTEGER NOT NULL, plan TEXT NOT NULL, quote TEXT NOT NULL,
+    config_version INTEGER NOT NULL, config_hash TEXT NOT NULL,
+    settings TEXT NOT NULL, expires_ms BIGINT NOT NULL, used_by TEXT,
+    private_recipe INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS genjutsu_runs (
+    id TEXT PRIMARY KEY, owner BIGINT NOT NULL, project_id TEXT NOT NULL,
+    quote_id TEXT NOT NULL UNIQUE, request_key TEXT NOT NULL,
+    plan TEXT NOT NULL, settings TEXT NOT NULL, state TEXT NOT NULL,
+    cancel_requested INTEGER NOT NULL DEFAULT 0,
+    admin_free INTEGER NOT NULL DEFAULT 0,
+    private_recipe INTEGER NOT NULL DEFAULT 0,
+    created_ms BIGINT NOT NULL, updated_ms BIGINT NOT NULL,
+    UNIQUE(owner, request_key)
+);
+CREATE TABLE IF NOT EXISTS genjutsu_steps (
+    id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES genjutsu_runs(id),
+    variant INTEGER NOT NULL, ordinal INTEGER NOT NULL, spec TEXT NOT NULL,
+    status TEXT NOT NULL, source_asset_id TEXT, output_asset_id TEXT,
+    provider_request_id TEXT UNIQUE, provider_status_url TEXT,
+    provider_cancel_url TEXT, provider_correlation_id TEXT, attempt_id TEXT,
+    reserved_credits INTEGER NOT NULL, actual_credits INTEGER,
+    refunded_credits INTEGER NOT NULL DEFAULT 0, rate INTEGER NOT NULL,
+    lease_token TEXT, lease_until_ms BIGINT NOT NULL DEFAULT 0,
+    next_poll_ms BIGINT NOT NULL, poll_count INTEGER NOT NULL DEFAULT 0,
+    error_code TEXT, remote_result_url TEXT,
+    created_ms BIGINT NOT NULL, updated_ms BIGINT NOT NULL,
+    UNIQUE(run_id, variant, ordinal)
+);
+CREATE TABLE IF NOT EXISTS genjutsu_finance (
+    id TEXT PRIMARY KEY, run_id TEXT NOT NULL, step_id TEXT,
+    owner BIGINT NOT NULL, kind TEXT NOT NULL, amount INTEGER NOT NULL,
+    created_ms BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS genjutsu_events (
+    id TEXT PRIMARY KEY, run_id TEXT, step_id TEXT, actor BIGINT,
+    event TEXT NOT NULL, details TEXT NOT NULL, created_ms BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS genjutsu_deliveries (
+    step_id TEXT PRIMARY KEY REFERENCES genjutsu_steps(id), status TEXT NOT NULL,
+    lease_token TEXT, lease_until_ms BIGINT NOT NULL DEFAULT 0,
+    next_ms BIGINT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+    message_id TEXT, error_code TEXT
+);
+CREATE INDEX IF NOT EXISTS genjutsu_projects_owner ON genjutsu_projects(owner, updated_ms);
+CREATE INDEX IF NOT EXISTS genjutsu_runs_owner ON genjutsu_runs(owner, created_ms);
+CREATE INDEX IF NOT EXISTS genjutsu_steps_due ON genjutsu_steps(status, next_poll_ms, lease_until_ms);
+CREATE INDEX IF NOT EXISTS genjutsu_assets_owner ON genjutsu_assets(owner, created_ms);
+CREATE INDEX IF NOT EXISTS genjutsu_events_run ON genjutsu_events(run_id, created_ms);
+CREATE TABLE IF NOT EXISTS genjutsu_recipes (
+    id TEXT PRIMARY KEY, owner BIGINT NOT NULL, project_id TEXT NOT NULL,
+    revision INTEGER NOT NULL, verification_run_id TEXT NOT NULL,
+    title TEXT NOT NULL, plan TEXT NOT NULL, user_fields TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_ms BIGINT NOT NULL, updated_ms BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS genjutsu_recipe_projects (
+    project_id TEXT PRIMARY KEY REFERENCES genjutsu_projects(id),
+    recipe_id TEXT NOT NULL REFERENCES genjutsu_recipes(id)
+);
+CREATE INDEX IF NOT EXISTS genjutsu_recipes_owner ON genjutsu_recipes(owner, updated_ms);
+
 COMMIT;

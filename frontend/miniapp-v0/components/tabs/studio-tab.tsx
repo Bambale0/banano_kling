@@ -4,6 +4,7 @@ import { BRAND_NAME } from '@/lib/brand'
 import { useApp } from '@/lib/app-context'
 import { QuickActionGrid } from '../quick-action-grid'
 import { TaskHistoryList } from '../task-history-list'
+import { GenjutsuButton } from '../genjutsu-entry'
 
 export function StudioTab() {
   const { setActiveTab, openBalance, openWorkspace } = useApp()
@@ -36,6 +37,7 @@ export function StudioTab() {
             Ваши работы
           </h2>
         </div>
+        <GenjutsuButton />
         <TaskHistoryList />
       </section>
     </div>

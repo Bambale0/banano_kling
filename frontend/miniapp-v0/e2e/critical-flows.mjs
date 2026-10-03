@@ -79,6 +79,12 @@ const bootstrapPayload = {
   saved_references: [],
 }
 
+const genjutsuCapability = {
+  label: 'Genjutsu', resolutions: ['480p', '720p', '1080p'], min_images: 1,
+  max_images: 8, max_prompt_length: 10000, minimum_video_ms: 4000,
+  maximum_video_ms: 30000, roles: ['character', 'wardrobe', 'product', 'object', 'location', 'style'],
+}
+
 const curatedTrend = {
   id: 11,
   title: 'Curated Video',
@@ -176,6 +182,10 @@ try {
   browser = await chromium.launch({ headless: true })
   const context = await browser.newContext({ viewport: { width: 430, height: 900 } })
   const page = await context.newPage()
+  page.on('pageerror', (error) => console.error('Browser page error:', error))
+  page.on('console', (message) => {
+    if (message.type() === 'error') console.error('Browser console error:', message.text())
+  })
 
   let seedanceGenerationPayload = null
   let copiedTrendPayload = null
@@ -231,6 +241,27 @@ try {
   await page.route('**/mini-app/api/**', async (route) => {
     const request = route.request()
     const path = new URL(request.url()).pathname
+
+    if (path.endsWith('/genjutsu')) {
+      const requestBody = JSON.parse(request.postData() || '{}')
+      const body = requestBody.action === 'availability'
+        ? { ok: true, visible: true }
+        : requestBody.action === 'bootstrap'
+          ? {
+              ok: true, catalog: {
+                motion_transfer: genjutsuCapability,
+                object_swap: genjutsuCapability,
+                restyle: genjutsuCapability,
+              },
+              configured: false, enabled: false, is_admin: bootstrapPayload.is_admin,
+              credits: bootstrapPayload.credits, provider_ready: false, media_ready: false,
+              config_version: 0, limits: { max_steps: 3, max_variants: 4, poll_seconds: 5 },
+              prices: {}, projects: [], runs: [], assets: [],
+            }
+          : { ok: true, items: [] }
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+      return
+    }
 
     if (path.endsWith('/prompts/link')) {
       copiedTrendPayload = JSON.parse(request.postData() || '{}')
@@ -656,6 +687,13 @@ try {
     assert.equal(seedanceGenerationPayload.v_ratio, editing ? 'adaptive' : '16:9')
     assert.deepEqual(seedanceGenerationPayload.v_reference_videos, ['https://cdn.example/source.mp4'])
   }
+
+  // Genjutsu is reachable from the shared product shell and loads its real lazy UI.
+  await page.getByRole('button', { name: 'Студия', exact: true }).click()
+  await page.getByRole('button', { name: /Higgsfield Genjutsu/ }).click()
+  await page.getByRole('region', { name: 'Студия Genjutsu' }).waitFor()
+  await page.getByText('Интеграция ещё не настроена.', { exact: false }).waitFor()
+  await page.getByRole('button', { name: 'Закрыть студию' }).click()
 
   console.log('Mini App critical browser E2E passed')
 } finally {

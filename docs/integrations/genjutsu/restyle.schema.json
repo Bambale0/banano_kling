@@ -1,0 +1,51 @@
+{
+  "type": "object",
+  "title": "Genjutsu Restyle",
+  "required": [
+    "video_url",
+    "preset_id"
+  ],
+  "properties": {
+    "prompt": {
+      "type": "string",
+      "title": "Prompt",
+      "default": "",
+      "maxLength": 10000
+    },
+    "preset_id": {
+      "type": "string",
+      "title": "Style preset",
+      "format": "uuid"
+    },
+    "video_url": {
+      "type": "string",
+      "title": "Source video",
+      "format": "uri",
+      "minLength": 1,
+      "description": "Source video, 4\u201330 seconds. Longer videos are trimmed to 30 seconds."
+    },
+    "image_urls": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uri",
+        "minLength": 1
+      },
+      "title": "Character images",
+      "default": [],
+      "maxItems": 5,
+      "description": "Optional character references. Leave empty to restyle the source frame."
+    },
+    "resolution": {
+      "enum": [
+        "480p",
+        "720p",
+        "1080p"
+      ],
+      "type": "string",
+      "title": "Resolution",
+      "default": "720p"
+    }
+  },
+  "additionalProperties": false
+}

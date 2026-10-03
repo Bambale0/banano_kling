@@ -271,6 +271,7 @@ REDIS_PREFIX=neuromix
 - `FREEPIK_API_KEY`;
 - `NOVITA_API_KEY`;
 - `REPLICATE_API_TOKEN`;
+- `HIGGSFIELD_API_KEY` (higgsfield.ai, формат `id:secret`);
 - Nano Banana fallback keys/base URLs.
 
 Правила:
@@ -279,6 +280,20 @@ REDIS_PREFIX=neuromix
 - после ротации проверить и direct request, и webhook completion;
 - не логировать request headers;
 - fallback provider должен быть явно проверен, а не считаться рабочим из-за заполненной переменной.
+
+### Higgsfield Genjutsu
+
+Runtime variables:
+
+- `HIGGSFIELD_API_KEY` — server credential `key_id:key_secret`;
+- `HIGGSFIELD_API_BASE_URL` — default `https://api.higgsfield.ai`;
+- `GENJUTSU_PUBLIC_BASE_URL` — public HTTPS backend origin for signed media and callback routes;
+- `GENJUTSU_MEDIA_SIGNING_KEY` — high-entropy HMAC secret;
+- `GENJUTSU_MEDIA_ROOT` — private durable storage, production default `/app/data/genjutsu_media`.
+
+Публичная доступность, цены, лимиты и проверенные операции хранятся в управляемой DB-
+конфигурации. На чистом запуске `public_enabled=false`, а все цены пусты: настроенные
+секреты сами по себе не открывают платные запуски. Полный runbook: `docs/integrations/genjutsu/README.md`.
 
 ## 10. Payments
 

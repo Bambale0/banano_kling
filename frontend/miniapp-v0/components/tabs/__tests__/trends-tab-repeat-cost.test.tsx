@@ -5,6 +5,7 @@ import { TrendsTab } from '@/components/tabs/trends-tab'
 import { useApp } from '@/lib/app-context'
 import { fetchPrompts } from '@/lib/api'
 import type { PromptItem } from '@/lib/types'
+import { genjutsuCall } from '@/lib/genjutsu-api'
 
 jest.mock('@/lib/app-context', () => ({
   useApp: jest.fn(),
@@ -22,12 +23,18 @@ jest.mock('@/lib/trend-admin-api', () => ({
   updateTrendPreview: jest.fn(),
 }))
 
+jest.mock('@/lib/genjutsu-api', () => ({
+  genjutsuCall: jest.fn(),
+  openGenjutsu: jest.fn(),
+}))
+
 jest.mock('@/components/trend-runner-dialog', () => ({
   TrendRunnerDialog: () => null,
 }))
 
 const mockedUseApp = useApp as jest.MockedFunction<typeof useApp>
 const mockedFetchPrompts = fetchPrompts as jest.MockedFunction<typeof fetchPrompts>
+const mockedGenjutsuCall = genjutsuCall as jest.MockedFunction<typeof genjutsuCall>
 
 const trend: PromptItem = {
   id: 1606,
@@ -86,4 +93,28 @@ describe('TrendsTab repeat pricing', () => {
       await screen.findByRole('button', { name: 'Повторить · 1.5🍌' }),
     ).toBeInTheDocument()
   })
+})
+
+
+it('loads the live Genjutsu recipe price for trend cards', async () => {
+  const recipeId = 'a'.repeat(32)
+  mockedFetchPrompts.mockResolvedValue([{
+    ...trend,
+    id: 1707,
+    title: 'Genjutsu trend',
+    category: 'video',
+    tags: ['trend', 'trend-video'],
+    model: 'genjutsu',
+    repeat_cost: null,
+    generation_settings: {
+      kind: 'video', user_input: 'photo', model: 'genjutsu', ratio: '16:9',
+      genjutsu_recipe_id: recipeId,
+    },
+  }])
+  mockedGenjutsuCall.mockResolvedValue({ costs: { [recipeId]: 27 } } as never)
+
+  render(<TrendsTab />)
+
+  expect(await screen.findByRole('button', { name: 'Повторить · 27🍌' })).toBeInTheDocument()
+  expect(mockedGenjutsuCall).toHaveBeenCalledWith('recipe_costs', { recipe_ids: [recipeId] })
 })

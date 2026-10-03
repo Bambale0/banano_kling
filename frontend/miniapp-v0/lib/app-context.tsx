@@ -6,6 +6,7 @@ import { mockAppState, mockImageModels, mockVideoModels } from './mock-data'
 import { bootstrapApp, fetchFeedItem, fetchPromptDetail, fetchTaskDetail, getInitData, getStartParamFallback, hasTelegramInitData, waitForTelegramInitData } from './api'
 import { parseMiniAppStartParam } from './start-params'
 import { isVideoTrendItem, resolveTrendSettings } from './trend-settings'
+import { openGenjutsu } from './genjutsu-api'
 
 interface AppContextType {
   state: AppState
@@ -419,6 +420,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
             (tag) => String(tag).toLowerCase() === 'trend',
           )
           const isVideoTrend = isVideoTrendItem(prompt, state.videoModels)
+          const genjutsuRecipeId = prompt.generation_settings?.genjutsu_recipe_id
+
+          if (genjutsuRecipeId) {
+            setActiveTabState(5)
+            openGenjutsu({ recipe_id: genjutsuRecipeId })
+            return
+          }
 
           if (isVideoTrend) {
             const settings = resolveTrendSettings(

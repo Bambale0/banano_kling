@@ -114,6 +114,18 @@ class Config:
         "NANO_BANANA_PRO_FALLBACK_BASE_URL", ""
     )
 
+    # Higgsfield Genjutsu. User admission and prices are database-managed and
+    # fail closed; these values only configure the provider and private media.
+    HIGGSFIELD_API_KEY: str = os.getenv("HIGGSFIELD_API_KEY", "")
+    HIGGSFIELD_API_BASE_URL: str = os.getenv(
+        "HIGGSFIELD_API_BASE_URL", "https://api.higgsfield.ai"
+    )
+    GENJUTSU_PUBLIC_BASE_URL: str = os.getenv("GENJUTSU_PUBLIC_BASE_URL", "")
+    GENJUTSU_MEDIA_SIGNING_KEY: str = os.getenv("GENJUTSU_MEDIA_SIGNING_KEY", "")
+    GENJUTSU_MEDIA_ROOT: str = os.getenv(
+        "GENJUTSU_MEDIA_ROOT", "data/genjutsu_media"
+    )
+
     # Legacy API Keys (optional fallbacks)
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 

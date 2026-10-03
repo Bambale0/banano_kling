@@ -10,6 +10,7 @@ import { deactivatePrompt, fetchPromptLink, fetchPrompts, submitPrompt, uploadFi
 import { updateTrendPreview } from '@/lib/trend-admin-api'
 import { mediaAspectRatio, normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
 import { formatTrendRepeatCost } from '@/lib/trend-price'
+import { genjutsuCall, openGenjutsu, type Recipe } from '@/lib/genjutsu-api'
 import { TrendRunnerDialog } from '@/components/trend-runner-dialog'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import {
@@ -122,6 +123,8 @@ export function TrendsTab() {
   const [userFields, setUserFields] = useState<TrendUserField[]>([])
   const [customFieldName, setCustomFieldName] = useState('')
   const [model, setModel] = useState('banana_pro')
+  const [genjutsuRecipes, setGenjutsuRecipes] = useState<Recipe[]>([])
+  const [genjutsuRecipeId, setGenjutsuRecipeId] = useState('')
   const [videoDuration, setVideoDuration] = useState(5)
   const [trendRatio, setTrendRatio] = useState('1:1')
   const [imageQuality, setImageQuality] = useState('2K')
@@ -146,6 +149,7 @@ export function TrendsTab() {
     : state.imageModels
   const selectedTrendImageModel = state.imageModels.find((item) => item.id === model)
   const selectedTrendVideoModel = state.videoModels.find((item) => item.id === model)
+  const selectedGenjutsuRecipe = genjutsuRecipes.find((item) => item.id === genjutsuRecipeId)
   const trendImageQualities = useMemo(
     () => (
       selectedTrendImageModel?.id === 'banana_pro' || selectedTrendImageModel?.id === 'banana_2'
@@ -182,7 +186,20 @@ export function TrendsTab() {
     setError(null)
     try {
       const trends = await fetchPrompts({ source: 'tag', tag: TREND_TAG, limit: 80 })
-      setItems(trends.filter((trend) => hasTrendTag(trend) && !isPinterestRepeatTrend(trend)))
+      let visible = trends.filter((trend) => hasTrendTag(trend) && !isPinterestRepeatTrend(trend))
+      const recipeIds = Array.from(new Set(visible.map((trend) => trend.generation_settings?.genjutsu_recipe_id).filter((value): value is string => Boolean(value))))
+      if (recipeIds.length) {
+        try {
+          const { costs } = await genjutsuCall<{ costs: Record<string, number | null> }>('recipe_costs', { recipe_ids: recipeIds })
+          visible = visible.map((trend) => {
+            const recipeId = trend.generation_settings?.genjutsu_recipe_id
+            return recipeId && Object.prototype.hasOwnProperty.call(costs, recipeId)
+              ? { ...trend, repeat_cost: costs[recipeId] }
+              : trend
+          })
+        } catch { /* Trend catalog remains usable if Genjutsu pricing is temporarily unavailable. */ }
+      }
+      setItems(visible)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось загрузить тренды')
     } finally {
@@ -195,8 +212,23 @@ export function TrendsTab() {
   }, [loadTrends])
 
   useEffect(() => {
+    if (!isAdmin) return
+    let active = true
+    void genjutsuCall<{ items: Recipe[] }>('recipe_list').then((value) => {
+      if (!active) return
+      const items = Array.isArray(value.items) ? value.items : []
+      setGenjutsuRecipes(items)
+      setGenjutsuRecipeId((current) => current || items[0]?.id || '')
+    }).catch(() => {
+      if (active) setGenjutsuRecipes([])
+    })
+    return () => { active = false }
+  }, [isAdmin])
+
+  useEffect(() => {
     const models = trendKind === 'video' ? state.videoModels : state.imageModels
-    if (!models.some((item) => item.id === model)) {
+    const genjutsuSelected = trendKind === 'video' && model === 'genjutsu'
+    if (!genjutsuSelected && !models.some((item) => item.id === model)) {
       setModel(models[0]?.id || (trendKind === 'video' ? 'v3_pro' : 'banana_pro'))
     }
   }, [model, state.imageModels, state.videoModels, trendKind])
@@ -267,6 +299,11 @@ export function TrendsTab() {
   }
 
   const applyTrend = (trend: PromptItem) => {
+    const recipeId = trend.generation_settings?.genjutsu_recipe_id
+    if (recipeId) {
+      openGenjutsu({ recipe_id: recipeId })
+      return
+    }
     setTrendToRun(trend)
   }
 
@@ -386,11 +423,16 @@ export function TrendsTab() {
 
   const handleCreate = async () => {
     if (!isAdmin || submitting) return
-    if (!title.trim() || !promptText.trim() || !previewUrl || !model) {
-      setError('Заполните название, preview, нейросеть и скрытый prompt')
+    const isGenjutsu = trendKind === 'video' && model === 'genjutsu'
+    if (!title.trim() || !previewUrl || !model || (!isGenjutsu && !promptText.trim())) {
+      setError(isGenjutsu ? 'Заполните название, preview и выберите рецепт Genjutsu' : 'Заполните название, preview, нейросеть и скрытый prompt')
       return
     }
-    if (userFields.some((field) => !field.key.trim())) {
+    if (isGenjutsu && !selectedGenjutsuRecipe) {
+      setError('Сначала создайте и выберите приватный рецепт Genjutsu')
+      return
+    }
+    if (!isGenjutsu && userFields.some((field) => !field.key.trim())) {
       setError('Укажите название поля шаблона')
       return
     }
@@ -413,7 +455,20 @@ export function TrendsTab() {
         return
       }
 
-      const generationSettings: TrendGenerationSettings = trendKind === 'video'
+      const generationSettings: TrendGenerationSettings = isGenjutsu && selectedGenjutsuRecipe
+        ? {
+            kind: 'video',
+            user_input: 'photo',
+            model: 'genjutsu',
+            ratio: '16:9',
+            preview_type: previewKind,
+            genjutsu_recipe_id: selectedGenjutsuRecipe.id,
+            reference_count: selectedGenjutsuRecipe.slots.length,
+            reference_labels: selectedGenjutsuRecipe.slots.map((slot) => slot.label),
+            automatic_hidden_references: true,
+            user_fields: selectedGenjutsuRecipe.user_fields,
+          }
+        : trendKind === 'video'
         ? {
             kind: 'video',
             user_input: 'photo',
@@ -464,7 +519,7 @@ export function TrendsTab() {
       const created = await submitPrompt({
         title: title.trim(),
         description: description.trim(),
-        promptText: promptText.trim(),
+        promptText: isGenjutsu && selectedGenjutsuRecipe ? `Genjutsu recipe ${selectedGenjutsuRecipe.id}` : promptText.trim(),
         previewUrl: finalPreviewUrl,
         model,
         tags: trendKind === 'video'
@@ -743,6 +798,7 @@ export function TrendsTab() {
               onChange={(event) => setModel(event.target.value)}
               className="h-11 w-full rounded-xl border border-border/50 bg-secondary/70 px-3 text-sm text-foreground outline-none focus:border-gold/50"
             >
+              {trendKind === 'video' && <option value="genjutsu">Higgsfield Genjutsu</option>}
               {availableModels.map((item) => (
                 <option key={item.id} value={item.id}>
                   {item.label.replace('🔥 НОВИНКА', '').trim()}
@@ -751,7 +807,18 @@ export function TrendsTab() {
             </select>
           </label>
 
-          {trendKind === 'video' ? (
+          {trendKind === 'video' && model === 'genjutsu' ? (
+            <div className="space-y-3 rounded-2xl border border-gold/30 bg-gold/5 p-3">
+              <label className="block space-y-2">
+                <span className="text-xs font-medium text-muted-foreground">Приватный рецепт Genjutsu</span>
+                <select value={genjutsuRecipeId} onChange={(event) => setGenjutsuRecipeId(event.target.value)} className="h-11 w-full rounded-xl border border-border/50 bg-secondary/70 px-3 text-sm">
+                  <option value="">Выберите рецепт</option>
+                  {genjutsuRecipes.map((recipe) => <option key={recipe.id} value={recipe.id}>{recipe.title} · {recipe.slots.length} фото{recipe.current_cost !== null ? ` · ${recipe.current_cost}🍌` : ''}</option>)}
+                </select>
+              </label>
+              {selectedGenjutsuRecipe ? <p className="text-xs text-muted-foreground">Шагов: {selectedGenjutsuRecipe.steps.length}. Поля и роли берутся из рецепта автоматически; скрытый prompt в карточку тренда не попадает.</p> : <p className="text-xs text-muted-foreground">Создайте рецепт в Higgsfield Genjutsu, затем выберите его здесь.</p>}
+            </div>
+          ) : trendKind === 'video' ? (
             <div className="grid grid-cols-2 gap-3">
               <label className="block space-y-2">
                 <span className="text-xs font-medium text-muted-foreground">Формат</span>
@@ -869,7 +936,7 @@ export function TrendsTab() {
             ) : null}
           </div>
 
-          <div className="space-y-3 rounded-2xl border border-border/50 bg-secondary/25 p-3">
+          {model !== 'genjutsu' && <div className="space-y-3 rounded-2xl border border-border/50 bg-secondary/25 p-3">
             <div>
               <p className="text-xs font-semibold text-foreground">Поля шаблона</p>
               <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
@@ -941,14 +1008,15 @@ export function TrendsTab() {
             ) : (
               <p className="text-[11px] text-muted-foreground">Если пользователь ничего менять не должен — оставьте блок пустым.</p>
             )}
-          </div>
+          </div>}
 
-          <Textarea
+          {model !== 'genjutsu' ? <Textarea
             value={promptText}
             onChange={(event) => setPromptText(event.target.value)}
             placeholder="Скрытый prompt, который подставится при повторе"
             className="min-h-[150px] resize-none bg-secondary/50"
-          />
+            maxLength={30000}
+          /> : <div className="rounded-xl border border-border/50 bg-secondary/25 p-3 text-xs text-muted-foreground">Скрытый prompt, пользовательские поля и fixed-референсы берутся из приватного Genjutsu-рецепта.</div>}
 
           <Button
             type="button"

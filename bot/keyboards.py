@@ -80,6 +80,13 @@ def get_main_menu_keyboard(user_credits: int = 0, telegram_id: int | None = None
         InlineKeyboardButton(text="🖼 Создать фото", callback_data="create_image_text_new"),
         InlineKeyboardButton(text="🎬 Создать видео", callback_data="create_video_new"),
     )
+    if config.mini_app_url:
+        builder.row(
+            InlineKeyboardButton(
+                text="✨ Higgsfield Genjutsu",
+                web_app=WebAppInfo(url=_mini_app_url_with_start_param("genjutsu")),
+            )
+        )
     builder.row(
         InlineKeyboardButton(text="🎯 Motion Control", callback_data="motion_control"),
         InlineKeyboardButton(text="✍️ Промпт по описанию", callback_data="photo_to_prompt"),

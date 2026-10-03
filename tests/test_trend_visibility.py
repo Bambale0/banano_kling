@@ -181,3 +181,26 @@ def test_prompt_privacy_middleware_does_not_consume_body_before_handler() -> Non
     handler_call = middleware.index("response = await handler(request)")
     json_read = middleware.index("body = await request.json()")
     assert handler_call < json_read
+
+
+def test_public_genjutsu_trend_exposes_only_recipe_handle() -> None:
+    trend = _trend()
+    trend["prompt_text"] = "PRIVATE GENJUTSU PROMPT"
+    trend["model"] = "genjutsu"
+    trend["generation_settings"].update(
+        {
+            "model": "genjutsu",
+            "genjutsu_recipe_id": "a" * 32,
+            "reference_count": 2,
+            "reference_labels": ["Ваше фото", "Товар"],
+            "automatic_hidden_references": True,
+        }
+    )
+    payload = sanitize_prompt_for_public(trend)
+    assert payload["prompt_text"] == ""
+    assert payload["model"] is None
+    assert payload["generation_settings"]["genjutsu_recipe_id"] == "a" * 32
+    assert payload["generation_settings"]["reference_count"] == 2
+    assert payload["generation_settings"]["reference_labels"] == ["Ваше фото", "Товар"]
+    assert "model" not in payload["generation_settings"]
+    assert "duration" not in payload["generation_settings"]

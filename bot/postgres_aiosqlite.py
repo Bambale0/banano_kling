@@ -825,6 +825,17 @@ class PostgresConnection:
             await self._conn.rollback()
             raise aiosqlite.OperationalError(str(exc)) from exc
 
+    async def execute_native_ddl(self, sql: str) -> PostgresCursor:
+        """Execute trusted application-owned DDL without SQLite translation."""
+        try:
+            async with self._conn.cursor() as cur:
+                await cur.execute(sql)
+                rowcount = cur.rowcount if cur.rowcount is not None else -1
+                return PostgresCursor(rowcount=rowcount)
+        except psycopg.Error as exc:
+            await self._conn.rollback()
+            raise aiosqlite.OperationalError(str(exc)) from exc
+
     async def executemany(self, sql: str, seq_of_parameters) -> PostgresCursor:
         translated = translate_sql(sql)
         if translated is None:

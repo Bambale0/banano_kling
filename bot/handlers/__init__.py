@@ -21,6 +21,7 @@ from .banana_resolution_pricing_compat import install_banana_resolution_pricing
 from .banana_resolution_pricing_compat import router as banana_resolution_pricing_router
 from .feed_model_filter_compat import install_feed_model_filter_compat
 from .feed_model_filter_compat import router as feed_model_filter_compat_router
+from .genjutsu import router as genjutsu_router
 from .miniapp_launch_revision_compat import install_miniapp_launch_revision_compat
 from .miniapp_lava_payment_methods_compat import install_miniapp_lava_payment_methods
 from .miniapp_regression_safety import install_miniapp_regression_safety
@@ -224,6 +225,7 @@ common_router.include_router(trend_video_compat_router)
 common_router.include_router(trend_text_upload_router)
 common_router.include_router(trends_compat_router)
 common_router.include_router(feed_model_filter_compat_router)
+common_router.include_router(genjutsu_router)
 common_router.include_router(notification_campaigns_router)
 common_router.include_router(repeat_result_compat_router)
 common_router.include_router(support_router)
@@ -240,6 +242,7 @@ __all__ = [
     "feed_model_filter_compat_router",
     "freekassa_payments_router",
     "generation_router",
+    "genjutsu_router",
     "image_analyzer_router",
     "lava_checkout_router",
     "notification_campaigns_router",

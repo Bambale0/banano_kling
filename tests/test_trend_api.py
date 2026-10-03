@@ -962,3 +962,20 @@ async def test_seedance20_private_trend_persists_reference_contract_metadata(mon
     assert request_data["v_image_url"] == "https://example.test/current-user.png"
     assert request_data["reference_images"] == ["https://example.test/dress.png"]
     assert request_data["v_reference_videos"] == ["https://example.test/motion.mp4"]
+
+
+def test_legacy_trend_runner_fails_closed_for_genjutsu_recipe():
+    trend = _trend(
+        tags=["trend", "trend-video"],
+        category="video",
+        model="genjutsu",
+        generation_settings={
+            "kind": "video",
+            "user_input": "photo",
+            "model": "genjutsu",
+            "ratio": "16:9",
+            "genjutsu_recipe_id": "a" * 32,
+        },
+    )
+    with pytest.raises(TrendRunValidationError, match="Genjutsu"):
+        trusted_trend_run(trend, ("https://example.test/ref.jpg",))
