@@ -39,15 +39,37 @@ def test_pending_publication_is_not_injected_into_another_users_profile() -> Non
 
 
 def test_private_profile_repeat_merges_only_owner_selected_references() -> None:
-    source = MINIAPP_PATH.read_text(encoding="utf-8")
+    from bot import miniapp
 
-    assert "def _can_restore_private_profile_references" in source
-    assert "def _merge_remix_image_references" in source
-    assert "def _selected_published_image_references" in source
-    assert 'source_card.get("publication_scope") == "profile"' in source
-    assert 'source_card.get("references_hidden")' in source
-    assert "retained = _selected_published_image_references(task_payload)" in source
-    assert "published_source_references = set(" in source
+    face = "https://example.test/private-face.png"
+    outfit = "https://example.test/selected-outfit.png"
+    new_face = "https://example.test/new-face.png"
+    source_task = {
+        "is_profile_visible": True,
+        "feed_references_visible": False,
+        "feed_reference_selection": {"images": [outfit], "videos": []},
+        "request_data": {"source_reference_images": [face, outfit]},
+    }
+    private_profile = {
+        "is_mine": True,
+        "publication_scope": "profile",
+        "references_hidden": True,
+        "feed_references_visible": False,
+        "reference_images": [],
+    }
+
+    references, retained = miniapp._merge_remix_image_references(
+        private_profile, source_task, [new_face]
+    )
+    assert references == [new_face, outfit]
+    assert retained == 1
+
+    foreign_profile = {**private_profile, "is_mine": False}
+    references, retained = miniapp._merge_remix_image_references(
+        foreign_profile, source_task, [new_face]
+    )
+    assert references == [new_face]
+    assert retained == 0
 
 
 def test_result_caption_does_not_reveal_feed_repeat_prompt() -> None:

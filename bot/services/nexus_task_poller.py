@@ -8,6 +8,7 @@ from typing import Any
 
 from bot import db as db_backend
 from bot.database import DATABASE_PATH
+from bot.services.delivery_state import retryable_result_sql
 
 logger = logging.getLogger(__name__)
 
@@ -28,16 +29,17 @@ async def get_pending_provider_image_tasks(
     offset = 0
     tasks: list[dict[str, Any]] = []
 
+    retryable_result = retryable_result_sql(postgres=db_backend.is_postgres())
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
 
         while len(tasks) < safe_limit:
             cursor = await db.execute(
-                """
+                f"""
                 SELECT id, user_id, telegram_id, task_id, type, model, prompt, cost,
                        aspect_ratio, request_data, status, created_at, updated_at
                 FROM generation_tasks
-                WHERE status IN ('pending', 'processing')
+                WHERE (status IN ('pending', 'processing') OR {retryable_result})
                   AND type = 'image'
                 ORDER BY COALESCE(updated_at, created_at) ASC, id ASC
                 LIMIT ? OFFSET ?

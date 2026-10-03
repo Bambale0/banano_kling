@@ -15,6 +15,7 @@ from typing import Any, Dict, Optional
 from bot import db as db_backend
 from bot.config import config
 from bot.database import DATABASE_PATH, cleanup_stale_local_generation_tasks
+from bot.services.delivery_state import retryable_result_sql
 
 logger = logging.getLogger(__name__)
 
@@ -39,18 +40,19 @@ async def get_stuck_tasks(minutes: int = STUCK_THRESHOLD_MINUTES) -> list[Dict[s
     else:
         age_expr = "(julianday(CURRENT_TIMESTAMP) - julianday(created_at)) * 1440.0"
 
+    retryable_result = retryable_result_sql(postgres=db_backend.is_postgres())
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
         cursor = await db.execute(
             f"""
             SELECT id, user_id, task_id, model,
-                   prompt, cost, request_data, created_at,
+                   prompt, cost, request_data, created_at, status, result_url,
                    {age_expr} AS watchdog_age_minutes
             FROM generation_tasks
-            WHERE status IN ('pending', 'processing')
+            WHERE (status IN ('pending', 'processing') OR {retryable_result})
               AND task_id NOT LIKE 'img_%'
               AND {age_expr} >= ?
-            ORDER BY created_at ASC
+            ORDER BY COALESCE(updated_at, created_at) ASC
             LIMIT 50
             """,
             (safe_minutes,),
@@ -316,8 +318,10 @@ async def run_watchdog_cycle(on_completed=None, on_failed=None) -> int:
         external_task_id = task.get("task_id") or ""
         service_name = model or request_data.get("img_service") or request_data.get("service_name") or ""
 
-        provider_status = None
-        if external_task_id and service_name:
+        # A durable provider success cannot become a failed/refunded generation
+        # because Telegram or the provider's later status lookup is unavailable.
+        provider_status = "completed" if task.get("result_url") else None
+        if provider_status is None and external_task_id and service_name:
             provider_status = await check_task_with_provider(external_task_id, service_name)
 
         if provider_status == "completed":

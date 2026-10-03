@@ -42,6 +42,8 @@ from bot import db as db_backend
 from bot.config import config
 from bot.services.kie_webhook_verification import serialize_kie_callback
 from bot.services.delivery_state import (
+    has_retryable_result,
+    stored_result_payload,
     is_terminal_telegram_delivery_error as _is_terminal_telegram_delivery_error,
     terminal_telegram_delivery_reason as _terminal_telegram_delivery_reason,
 )
@@ -141,6 +143,18 @@ EPHEMERAL_RESULT_PERSIST_ATTEMPTS = max(
 EPHEMERAL_RESULT_PERSIST_RETRY_DELAY_SECONDS = max(
     0.0, float(os.getenv("EPHEMERAL_RESULT_PERSIST_RETRY_DELAY_SECONDS", "1"))
 )
+
+
+async def _result_storage_failure_response(task_id: str) -> web.Response:
+    from bot.database import get_task_by_id
+
+    current = await get_task_by_id(task_id)
+    if current and (
+        current.status == "failed"
+        or (current.status == "completed" and current.result_url and not has_retryable_result(current))
+    ):
+        return web.Response(status=200)
+    return web.Response(status=503)
 
 
 async def _finish_result_with_unavailable_telegram(
@@ -1518,9 +1532,15 @@ async def _send_polled_nexus_image_result(
         can_attempt_telegram_delivery,
         complete_video_task,
         mark_task_delivery_status,
+        store_task_result_ready,
+        claim_task_delivery,
     )
     from bot.keyboards import get_image_result_keyboard
 
+    task_lookup_id = provider_task_id or getattr(task, "task_id", "")
+    persisted_url = await _persist_result_url_if_needed(result_url, task_type="image")
+    if not await store_task_result_ready(task_lookup_id, persisted_url):
+        return False
     telegram_id = await _resolve_task_telegram_id(task, context="image_provider_poller")
     if not telegram_id:
         logger.error(
@@ -1529,10 +1549,8 @@ async def _send_polled_nexus_image_result(
         )
         return False
 
-    persisted_url = await _persist_result_url_if_needed(result_url, task_type="image")
     reference_preview_urls = _extract_reference_image_urls(task)
     model_label = _get_task_model_label(getattr(task, "model", None), getattr(task, "type", None))
-    task_lookup_id = provider_task_id or getattr(task, "task_id", "")
     if not await can_attempt_telegram_delivery(telegram_id):
         await complete_video_task(task_lookup_id, persisted_url)
         await mark_task_delivery_status(
@@ -1546,6 +1564,8 @@ async def _send_polled_nexus_image_result(
             telegram_id,
         )
         return True
+    if not await claim_task_delivery(task_lookup_id, lease_seconds=KIE_DELIVERY_LEASE_SECONDS):
+        return False
     display_task_id = _public_task_id(task, task_lookup_id)
     full_caption = (
         "✅ <b>Изображение готово</b>\n"
@@ -1838,7 +1858,14 @@ async def _poll_single_image_provider_task(bot_instance: Bot, task_row: dict[str
     _IMAGE_PROVIDER_POLL_IN_FLIGHT.add(provider_task_id)
     try:
         task = await get_task_by_id(provider_task_id)
-        if not task or getattr(task, "status", "") == "completed":
+        if not task:
+            return
+        if has_retryable_result(task):
+            await _send_polled_nexus_image_result(
+                bot_instance, task, task.result_url, provider_task_id=provider_task_id,
+            )
+            return
+        if getattr(task, "status", "") == "completed":
             return
 
         provider_model = str(
@@ -2961,7 +2988,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
 
                 task = await get_task_by_id(task_id)
                 # P1-04: Idempotency — skip if already completed
-                if task and task.status == "completed":
+                if task and (task.status == "failed" or (task.status == "completed" and not has_retryable_result(task))):
                     logger.info(f"Webhook: task {task_id} already completed, skipping")
                     return web.Response(status=200)
                 model_display = task.model if task and task.model else "Kling"
@@ -2973,46 +3000,44 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                     f"{model_display} success webhook: task {task_id}, video {video_url[:50]}..."
                 )
                 if task:
+                    # Persist provider success even when Telegram delivery is unavailable
+                    # or another worker owns the delivery lease.
+                    video_url = await _persist_result_url_if_needed(
+                        video_url,
+                        task_type=task.type if task else "video",
+                    )
+                    if not await store_task_result_ready(task_id, video_url):
+                        logger.warning(
+                            "Kie.ai Kling result persistence failed; requesting retry: task=%s",
+                            task_id,
+                        )
+                        return await _result_storage_failure_response(task_id)
+
                     reference_preview_urls = _extract_reference_image_urls(task, data.get("data"))
                     telegram_id = await _resolve_task_telegram_id(
                         task, context="kling_success_code200"
                     )
                     if telegram_id:
                         if not await can_attempt_telegram_delivery(telegram_id):
-                            video_url = await _persist_result_url_if_needed(
-                                video_url,
-                                task_type=task.type if task else "video",
+                            await complete_video_task(task_id, video_url)
+                            await mark_task_delivery_status(
+                                task_id,
+                                "unavailable",
+                                error="chat_not_started",
                             )
-                            if await store_task_result_ready(task_id, video_url):
-                                await complete_video_task(task_id, video_url)
-                                await mark_task_delivery_status(
-                                    task_id,
-                                    "unavailable",
-                                    error="chat_not_started",
-                                )
                             logger.info(
                                 "Kie.ai Kling result retained without Telegram delivery: task=%s user=%s",
                                 task_id,
                                 telegram_id,
                             )
                             return web.Response(status=200)
+
                         if not await claim_task_delivery(
                             task_id,
                             lease_seconds=KIE_DELIVERY_LEASE_SECONDS,
                         ):
                             logger.info(
                                 "Kie.ai Kling delivery already claimed or finalized: task=%s user=%s",
-                                task_id,
-                                telegram_id,
-                            )
-                            return web.Response(status=200)
-                        video_url = await _persist_result_url_if_needed(
-                            video_url,
-                            task_type=task.type if task else "video",
-                        )
-                        if not await store_task_result_ready(task_id, video_url):
-                            logger.warning(
-                                "Kie.ai Kling result_ready persistence lost race: task=%s user=%s",
                                 task_id,
                                 telegram_id,
                             )
@@ -3159,7 +3184,12 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
 
                 task = await get_task_by_id(task_id)
                 # P1-04: Idempotency — skip if already completed
-                if task and task.status == "completed":
+                if task and (
+                    task.status == "failed"
+                    or (task.status == "completed" and (
+                        status not in {"success", "completed"} or not has_retryable_result(task)
+                    ))
+                ):
                     logger.info(f"Webhook: task {task_id} already completed, skipping")
                     return web.Response(status=200)
                 model_display = _get_task_model_label(
@@ -3172,6 +3202,20 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                     + f"fail: {fail_code}/{fail_msg[:50]}..."
                 )
                 if task:
+                    if status in {"success", "completed"} and video_url:
+                        # Persist provider success even when Telegram delivery is unavailable
+                        # or another worker owns the delivery lease.
+                        video_url = await _persist_result_url_if_needed(
+                            video_url,
+                            task_type=task.type if task else "video",
+                        )
+                        if not await store_task_result_ready(task_id, video_url):
+                            logger.warning(
+                                "Kie.ai legacy result persistence failed; requesting retry: task=%s",
+                                task_id,
+                            )
+                            return await _result_storage_failure_response(task_id)
+
                     reference_preview_urls = _extract_reference_image_urls(task, kie_data)
                     telegram_id = await _resolve_task_telegram_id(
                         task, context="kie_legacy"
@@ -3181,40 +3225,25 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                         try:
                             if status in {"success", "completed"} and video_url:
                                 if not await can_attempt_telegram_delivery(telegram_id):
-                                    video_url = await _persist_result_url_if_needed(
-                                        video_url,
-                                        task_type=task.type if task else "video",
+                                    await complete_video_task(task_id, video_url)
+                                    await mark_task_delivery_status(
+                                        task_id,
+                                        "unavailable",
+                                        error="chat_not_started",
                                     )
-                                    if await store_task_result_ready(task_id, video_url):
-                                        await complete_video_task(task_id, video_url)
-                                        await mark_task_delivery_status(
-                                            task_id,
-                                            "unavailable",
-                                            error="chat_not_started",
-                                        )
                                     logger.info(
                                         "Kie.ai legacy result retained without Telegram delivery: task=%s user=%s",
                                         task_id,
                                         telegram_id,
                                     )
                                     return web.Response(status=200)
+
                                 if not await claim_task_delivery(
                                     task_id,
                                     lease_seconds=KIE_DELIVERY_LEASE_SECONDS,
                                 ):
                                     logger.info(
                                         "Kie.ai legacy delivery already claimed or finalized: task=%s user=%s",
-                                        task_id,
-                                        telegram_id,
-                                    )
-                                    return web.Response(status=200)
-                                video_url = await _persist_result_url_if_needed(
-                                    video_url,
-                                    task_type=task.type if task else "video",
-                                )
-                                if not await store_task_result_ready(task_id, video_url):
-                                    logger.warning(
-                                        "Kie.ai legacy result_ready persistence lost race: task=%s user=%s",
                                         task_id,
                                         telegram_id,
                                     )
@@ -3528,7 +3557,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
 
             task = await get_task_by_id(task_id)
             # P1-04: Idempotency — skip if already completed
-            if task and task.status == "completed":
+            if task and task.status in {"completed", "failed"}:
                 logger.info(f"Webhook: task {task_id} already completed, skipping")
                 return web.Response(status=200)
 
@@ -3707,7 +3736,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
 
             task = await get_task_by_id(task_id)
             # P1-04: Idempotency — skip if already completed
-            if task and task.status == "completed":
+            if task and task.status in {"completed", "failed"}:
                 logger.info(f"Webhook: task {task_id} already completed, skipping")
                 return web.Response(status=200)
             if task and task.cost:
@@ -3767,7 +3796,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
 
                 task = await get_task_by_id(task_id)
                 # P1-04: Idempotency — skip if already completed
-                if task and task.status == "completed":
+                if task and task.status in {"completed", "failed"}:
                     logger.info(f"Webhook: task {task_id} already completed, skipping")
                     return web.Response(status=200)
                 if task:
@@ -3802,10 +3831,8 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
 
     except Exception as e:
         logger.exception(f"Kling webhook error: {e}")
-        # Return 200 even on unexpected errors to avoid webhook relayers
-        # repeatedly retrying the same payload. The error is logged above
-        # for investigation.
-        return web.Response(status=200)
+        # Never acknowledge a successful provider result before durable storage.
+        return web.Response(status=503)
 
 async def handle_seedream_webhook(request: web.Request) -> web.Response:
     """Обработчик уведомлений от Novita AI (Seedream) API
@@ -4467,7 +4494,13 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
         # Find task in DB early for both success and failure
         task = await get_task_by_id(task_id)
         # P1-04: Idempotency — skip if already completed
-        if task and task.status == "completed":
+        if task and (
+            task.status == "failed"
+            or (task.status == "completed" and (
+                normalized_status not in {"success", "completed", "succeeded", "finished"}
+                or not has_retryable_result(task)
+            ))
+        ):
             logger.info(f"Webhook: task {task_id} already completed, skipping")
             return web.Response(status=200)
         telegram_id = None
@@ -4542,6 +4575,8 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                             task_id,
                         )
                         return web.Response(status=200)
+                    if not await store_task_result_ready(task_id, asset_id):
+                        return await _result_storage_failure_response(task_id)
                     if not telegram_id:
                         logger.error(
                             "Cannot find telegram_id for user_id %s",
@@ -4558,6 +4593,9 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         )
                         return web.Response(status=200)
 
+                    if not await claim_task_delivery(task_id, lease_seconds=KIE_DELIVERY_LEASE_SECONDS):
+                        return web.Response(status=200)
+
                     model_label = _get_task_model_label(task.model, task.type)
                     title = (
                         "Audio ID готов"
@@ -4565,17 +4603,25 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         else "Character ID готов"
                     )
                     bot_instance = request.app["bot"]
-                    await bot_instance.send_message(
-                        chat_id=telegram_id,
-                        text=(
-                            f"✅ <b>{title}</b>\n"
-                            f"• Модель: <code>{html.escape(model_label)}</code>\n"
-                            f"• ID: <code>{html.escape(asset_id)}</code>\n\n"
-                            "Этот ID можно использовать в Gemini Omni Video."
-                        ),
-                        parse_mode="HTML",
-                        reply_markup=get_gemini_omni_result_keyboard(),
-                    )
+                    try:
+                        await bot_instance.send_message(
+                            chat_id=telegram_id,
+                            text=(
+                                f"✅ <b>{title}</b>\n"
+                                f"• Модель: <code>{html.escape(model_label)}</code>\n"
+                                f"• ID: <code>{html.escape(asset_id)}</code>\n\n"
+                                "Этот ID можно использовать в Gemini Omni Video."
+                            ),
+                            parse_mode="HTML",
+                            reply_markup=get_gemini_omni_result_keyboard(),
+                        )
+                    except Exception as exc:
+                        if not await _finish_result_with_unavailable_telegram(
+                            task_id, asset_id, exc, event="gemini_omni_asset",
+                            telegram_id=telegram_id,
+                        ):
+                            await mark_task_delivery_status(task_id, "pending", error=str(exc))
+                        return web.Response(status=200)
 
                     await complete_video_task(task_id, asset_id)
                     await mark_task_delivery_status(task_id, "delivered")
@@ -4608,22 +4654,31 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             if not task:
                 logger.info(f"Ignoring orphan webhook for {service_name} task {task_id}: task not found in database")
                 return web.Response(status=200)
+            # Persist provider success even when Telegram delivery is unavailable
+            # or another worker owns the delivery lease.
+            result_url = await _persist_result_url_if_needed(
+                result_url,
+                task_type=task.type if task else ("video" if is_video else "image"),
+            )
+            if not await store_task_result_ready(task_id, result_url):
+                logger.warning(
+                    "Kie.ai result persistence failed; requesting retry: task=%s user=%s",
+                    task_id,
+                    telegram_id,
+                )
+                return await _result_storage_failure_response(task_id)
+
             if not telegram_id:
                 logger.error(f"Cannot find telegram_id for user_id {task.user_id}")
                 return web.Response(status=200)
 
             if not await can_attempt_telegram_delivery(telegram_id):
-                result_url = await _persist_result_url_if_needed(
-                    result_url,
-                    task_type=task.type if task else ("video" if is_video else "image"),
+                await complete_video_task(task_id, result_url)
+                await mark_task_delivery_status(
+                    task_id,
+                    "unavailable",
+                    error="chat_not_started",
                 )
-                if await store_task_result_ready(task_id, result_url):
-                    await complete_video_task(task_id, result_url)
-                    await mark_task_delivery_status(
-                        task_id,
-                        "unavailable",
-                        error="chat_not_started",
-                    )
                 logger.info(
                     "Kie.ai result retained without Telegram delivery: task=%s user=%s",
                     task_id,
@@ -4637,22 +4692,6 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             ):
                 logger.info(
                     "Kie.ai delivery already claimed or finalized: task=%s user=%s",
-                    task_id,
-                    telegram_id,
-                )
-                return web.Response(status=200)
-
-            logger.info(
-                f"Found {service_name} task for user {task.user_id}, telegram_id: {telegram_id}, preset: {task.preset_id}"
-            )
-
-            result_url = await _persist_result_url_if_needed(
-                result_url,
-                task_type=task.type if task else ("video" if is_video else "image"),
-            )
-            if not await store_task_result_ready(task_id, result_url):
-                logger.warning(
-                    "Kie.ai result_ready persistence lost race: task=%s user=%s",
                     task_id,
                     telegram_id,
                 )
@@ -5275,24 +5314,25 @@ async def _replay_completed_kie_task(task: Mapping[str, Any]) -> bool:
     """Replay a lost KIE completion through the normal webhook delivery path."""
     task_id = str(task.get("task_id") or "").strip()
     model = str(task.get("model") or "").strip().lower()
-    if not task_id or model not in _KIE_WATCHDOG_RECOVERY_MODELS:
+    if not task_id:
         return False
 
     from bot.database import get_task_by_id
     from bot.services.kie_market_service import kie_market_service
 
-    provider_data = await kie_market_service.get_task_status(task_id)
-    if not isinstance(provider_data, dict):
-        return False
-    state = str(provider_data.get("state") or provider_data.get("status") or "").lower()
-    if state not in {"success", "completed", "succeeded", "finished"}:
-        return False
-
-    payload = {
-        "code": 200,
-        "msg": "watchdog reconciliation",
-        "data": provider_data,
-    }
+    current = await get_task_by_id(task_id)
+    if current and has_retryable_result(current):
+        payload = stored_result_payload(current)
+    else:
+        if model not in _KIE_WATCHDOG_RECOVERY_MODELS:
+            return False
+        provider_data = await kie_market_service.get_task_status(task_id)
+        if not isinstance(provider_data, dict):
+            return False
+        state = str(provider_data.get("state") or provider_data.get("status") or "").lower()
+        if state not in {"success", "completed", "succeeded", "finished"}:
+            return False
+        payload = {"code": 200, "msg": "watchdog reconciliation", "data": provider_data}
     webhook_path = str(config.KIE_AI_WEBHOOK_PATH or "/webhook/kie_ai").strip()
     if not webhook_path.startswith("/"):
         webhook_path = f"/{webhook_path}"

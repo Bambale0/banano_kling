@@ -1267,13 +1267,29 @@ def _source_image_references_from_task_payload(task_payload: dict[str, Any]) -> 
 
 def _selected_published_image_references(
     task_payload: dict[str, Any],
+    source_card: dict[str, Any],
 ) -> list[str]:
-    """Return only source images the author explicitly retained for publication."""
+    """Resolve selection only within the current viewer's publication boundary."""
+    viewer_is_owner = bool(source_card.get("is_mine"))
+    if not viewer_is_owner and (
+        not task_payload.get("feed_references_visible")
+        or not (
+            task_payload.get("is_public_feed")
+            or task_payload.get("is_profile_visible")
+        )
+        or not source_card.get("feed_references_visible")
+        or source_card.get("references_hidden")
+    ):
+        return []
+
     raw_selection = task_payload.get("feed_reference_selection")
     if isinstance(raw_selection, str):
         selection = _parse_request_data(raw_selection)
     elif isinstance(raw_selection, dict):
         selection = raw_selection
+    elif raw_selection is None and not viewer_is_owner:
+        # Legacy visible publications used an all-or-nothing selection.
+        selection = {"images": source_card.get("reference_images", [])}
     else:
         return []
 
@@ -1282,6 +1298,9 @@ def _selected_published_image_references(
         return []
 
     source_images = set(_source_image_references_from_task_payload(task_payload))
+    if not viewer_is_owner:
+        # The card already enforces remix/transitive and availability policy.
+        source_images.intersection_update(source_card.get("reference_images") or [])
     retained: list[str] = []
     for item in selected_images:
         url = str(item or "").strip()
@@ -1297,7 +1316,7 @@ def _merge_remix_image_references(
 ) -> tuple[list[str], int]:
     """Keep explicitly published supporting refs while replacing identity refs."""
     references = list(dict.fromkeys(submitted_references))
-    retained = _selected_published_image_references(task_payload)
+    retained = _selected_published_image_references(task_payload, source_card)
     for url in retained:
         if url not in references:
             references.append(url)
@@ -1336,8 +1355,16 @@ def _filter_foreign_feed_source_references(
         return references
 
     source_references = set(_source_image_references_from_task_payload(task_payload))
+    request_data = task_payload.get("request_data") or {}
+    provider_references = (
+        request_data.get("reference_images") if isinstance(request_data, dict) else None
+    )
+    if isinstance(provider_references, list):
+        # Provider contact sheets can contain the hidden originals even though
+        # the publication's canonical source list excludes those derivatives.
+        source_references.update(str(url or "").strip() for url in provider_references)
     published_source_references = set(
-        _selected_published_image_references(task_payload)
+        _selected_published_image_references(task_payload, source_card)
     )
     filtered: list[str] = []
     for item in references:
@@ -5347,7 +5374,12 @@ async def miniapp_task_detail(request: web.Request) -> web.Response:
                 {"ok": False, "error": "Задача не найдена"}, status=404
             )
 
-        return web.json_response({"ok": True, "task": detail})
+        # Enforce the same recipe boundary for direct Telegram-authenticated
+        # requests as browser-auth middleware, including legacy remix rows.
+        from .trend_task_privacy import sanitize_task_api_payload
+
+        payload = await sanitize_task_api_payload({"ok": True, "task": detail})
+        return web.json_response(payload)
     except Exception as e:
         return _miniapp_error_response(e, log_message="Mini App task detail failed")
 
