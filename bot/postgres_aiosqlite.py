@@ -506,6 +506,9 @@ async def _ensure_postgres_helpers(conn: psycopg.AsyncConnection) -> None:
                 'ALTER TABLE "generation_tasks" ADD COLUMN IF NOT EXISTS "feed_references_visible" BOOLEAN DEFAULT FALSE'
             )
             await cur.execute(
+                'ALTER TABLE "generation_tasks" ADD COLUMN IF NOT EXISTS "feed_reference_selection" TEXT'
+            )
+            await cur.execute(
                 'ALTER TABLE "generation_tasks" ADD COLUMN IF NOT EXISTS "feed_blurred" BOOLEAN DEFAULT FALSE'
             )
             await cur.execute(

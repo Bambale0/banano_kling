@@ -154,6 +154,15 @@ Feed/share must not include:
 - private reference URLs;
 - provider raw payload.
 
+Для обычной собственной generation автор может включить референсы выборочно.
+Mini App отправляет отдельные zero-based индексы для image и video refs;
+task detail сохраняет для доступных preview их позиции в исходном ordered list.
+Backend валидирует эти source indices по неизменённому списку, разрешает в стабильные
+URL и сохраняет selection в `generation_tasks.feed_reference_selection`.
+Публичная карточка получает только выбранные URL; истечение одного URL не
+сдвигает выбор на соседний reference. Исходный `request_data` и provider recipe при этом не изменяются.
+Старые строки без selection сохраняют прежнее поведение «все или ничего».
+
 ## 10. Logging policy
 
 Logs may include:

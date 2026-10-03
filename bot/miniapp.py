@@ -44,7 +44,9 @@ from bot.database import (
     deduct_credits,
     generation_adult_content,
     generation_profile_visible,
+    generation_publication_references,
     generation_publication_scope,
+    generation_reference_selection,
     get_and_clear_miniapp_notifications,
     get_approved_prompts,
     get_author_prompts,
@@ -1349,6 +1351,18 @@ def _payload_bool(value: Any, default: bool = False) -> bool:
     return default
 
 
+def _optional_reference_indices(payload: dict[str, Any], key: str) -> list[int] | None:
+    if key not in payload:
+        return None
+    values = payload[key]
+    if not isinstance(values, list) or any(
+        not isinstance(value, int) or isinstance(value, bool) or value < 0
+        for value in values
+    ):
+        raise ValueError("Некорректный выбор референсов для публикации")
+    return values
+
+
 async def _miniapp_payload(request: web.Request) -> dict[str, Any]:
     cached_payload = request.get("_miniapp_payload_cache")
     if isinstance(cached_payload, dict):
@@ -1567,7 +1581,7 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
             """
             SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                    result_url, result_urls, is_public_feed, is_prompt_library,
-                   source_feed_gen_id, feed_prompt_visible, feed_references_visible,
+                   source_feed_gen_id, feed_prompt_visible, feed_references_visible, feed_reference_selection,
                    feed_blurred, is_profile_visible, is_adult_content, completed_at, updated_at, created_at, request_data
             FROM generation_tasks
             WHERE telegram_id = ? AND task_id = ?
@@ -1581,7 +1595,7 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
                 """
                 SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                        result_url, result_urls, is_public_feed, is_prompt_library,
-                       source_feed_gen_id, feed_prompt_visible, feed_references_visible,
+                       source_feed_gen_id, feed_prompt_visible, feed_references_visible, feed_reference_selection,
                        feed_blurred, is_profile_visible, is_adult_content, completed_at, updated_at, created_at, request_data
                 FROM generation_tasks
                 WHERE telegram_id = ? AND id = ?
@@ -1595,7 +1609,7 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
                 """
                 SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                        result_url, result_urls, is_public_feed, is_prompt_library,
-                       source_feed_gen_id, feed_prompt_visible, feed_references_visible,
+                       source_feed_gen_id, feed_prompt_visible, feed_references_visible, feed_reference_selection,
                        feed_blurred, is_profile_visible, is_adult_content, completed_at, updated_at, created_at, request_data
                 FROM generation_tasks
                 WHERE telegram_id = ?
@@ -1624,6 +1638,30 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
     task_type = row["type"] or "image"
     model = row["model"] or ""
     request_data = _parse_request_data(row["request_data"])
+    publication_references = generation_publication_references(row)
+    stored_reference_selection = generation_reference_selection(row)
+    reference_selection = (
+        {
+            "images": [
+                source_index
+                for source_index, url in zip(
+                    publication_references["image_indices"],
+                    publication_references["images"],
+                )
+                if url in stored_reference_selection["images"]
+            ],
+            "videos": [
+                source_index
+                for source_index, url in zip(
+                    publication_references["video_indices"],
+                    publication_references["videos"],
+                )
+                if url in stored_reference_selection["videos"]
+            ],
+        }
+        if stored_reference_selection is not None
+        else None
+    )
     result_urls = _public_result_urls(dict(row))
     model_label = (
         get_image_model_label(model)
@@ -1650,6 +1688,11 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
         "is_prompt_library": bool(row["is_prompt_library"]),
         "feed_prompt_visible": bool(row["feed_prompt_visible"]) if "feed_prompt_visible" in row.keys() else False,
         "feed_references_visible": bool(row["feed_references_visible"]) if "feed_references_visible" in row.keys() else False,
+        "feed_reference_selection": reference_selection,
+        "publication_reference_images": publication_references["images"],
+        "publication_reference_videos": publication_references["videos"],
+        "publication_reference_image_indices": publication_references["image_indices"],
+        "publication_reference_video_indices": publication_references["video_indices"],
         "feed_blurred": bool(row["feed_blurred"]) if "feed_blurred" in row.keys() else False,
         "is_profile_visible": generation_profile_visible(row),
         "is_adult_content": generation_adult_content(row),
@@ -3735,6 +3778,8 @@ async def miniapp_generation_share(request: web.Request) -> web.Response:
             body.get("references_visible", body.get("feed_references_visible")),
             False,
         )
+        reference_image_indices = _optional_reference_indices(body, "reference_image_indices")
+        reference_video_indices = _optional_reference_indices(body, "reference_video_indices")
         blurred = None
         if "blurred" in body or "feed_blurred" in body:
             blurred = _payload_bool(
@@ -3754,6 +3799,8 @@ async def miniapp_generation_share(request: web.Request) -> web.Response:
             ctx["user"].id,
             prompt_visible=prompt_visible,
             references_visible=references_visible,
+            reference_image_indices=reference_image_indices,
+            reference_video_indices=reference_video_indices,
             blurred=blurred,
             publication_scope=publication_scope,
             adult_content=adult_content,
@@ -3785,6 +3832,8 @@ async def miniapp_generation_share(request: web.Request) -> web.Response:
         )
         card["publication_link"] = publication_link
         return web.json_response({"ok": True, "feed_item": card})
+    except ValueError as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=400)
     except Exception as e:
         return _miniapp_error_response(e, log_message="Mini App share generation failed")
 

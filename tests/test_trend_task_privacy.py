@@ -178,12 +178,25 @@ async def test_seedance_trend_task_redacts_every_typed_private_reference(monkeyp
         "task": {
             "task_id": "seedance-private",
             "prompt": "secret",
+            "publication_reference_images": ["https://example.test/user.jpg"],
+            "publication_reference_videos": ["https://example.test/motion.mp4"],
+            "publication_reference_image_indices": [0],
+            "publication_reference_video_indices": [0],
+            "feed_reference_selection": {"images": [0], "videos": [0]},
+            "feed_references_visible": True,
             "request_data": request_data,
         }
     }
 
     sanitized = await trend_task_privacy.sanitize_task_api_payload(payload)
-    clean = sanitized["task"]["request_data"]
+    task = sanitized["task"]
+    assert "publication_reference_images" not in task
+    assert "publication_reference_videos" not in task
+    assert "publication_reference_image_indices" not in task
+    assert "publication_reference_video_indices" not in task
+    assert "feed_reference_selection" not in task
+    assert task["feed_references_visible"] is False
+    clean = task["request_data"]
     for key in request_data:
         if key in {"fixed_asset_counts", "provider_model"}:
             continue

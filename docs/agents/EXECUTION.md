@@ -1,5 +1,17 @@
 # Execution ledger
 
+## 2026-10-03 — Selective reference publication (Seedance included)
+
+- Baseline: `2287c4827afb1345cae65da3e163a3234277d24b`; branch `fix/seedance-publication-reference-removal`.
+- User-visible result: publication editor shows each photo/video reference separately. The author can exclude their face while retaining outfit/image/video references; excluded media is not returned by public feed/profile cards.
+- Audit/root cause: publication had one `feed_references_visible` boolean, so UI/API/DB supported only all-or-none exposure. Seedance 2/2.5 uses typed image/video arrays, making this especially visible. Existing generation recipe, provider payload, prompt privacy and repeat routing remain unchanged.
+- Contract/data: optional `reference_image_indices` and `reference_video_indices` on `/mini-app/api/generations/share`; task detail pairs each available preview with its stable source-list position. Backend validates those source indices before availability filtering and resolves them to stable URL selections persisted as JSON in nullable `generation_tasks.feed_reference_selection`. This prevents drift both before and after save when an earlier ref expires. Legacy null rows publish all references when enabled. SQLite/PostgreSQL additive migration; no manual SQL, config/admin, billing or provider changes.
+- Privacy/security: task detail exposes only the owner's canonical publishable references; public serialization filters to saved selection. Invalid/out-of-range indices fail closed. Remix anti-transitive-reference protection remains in force.
+- TDD: backend RED was `TypeError` for missing typed selection; UI RED could not find the per-reference exclusion control. Both are GREEN. Public seams are database/feed serialization and the Mini App publication component/API options.
+- Verification: focused feed/privacy/API/profile matrix **105 passed**; all frontend **23 suites / 64 tests passed**; TypeScript, ESLint and production static build passed; changed Python compileall, changed-line Ruff and diff whitespace passed. Full safe backend: **1652 passed, 12 skipped, 4 unrelated failures**; isolated rerun confirms three deterministic pre-existing failures (two KIE webhook fixtures lack `request.json()`, Seedream test expects 6000 while runtime uses 5000) and the order-dependent dispatcher failure passes alone. System Python's initial database run lacked `aiogram`; project-venv rerun was green.
+- Review: two-axis review found and resolved protected-task top-level leakage, malformed persisted selection fail-open, pre/post-save index drift, and the installed publication-scope wrapper path. Final standards/spec reviews report no implementation blockers.
+- Remaining: PR/CI/merge and exact-SHA deploy/smoke. Production is unchanged.
+
 ## 2026-10-02 — Mini App Telegram availability and upload telemetry
 
 - Baseline: `origin/tanyapi` / production `7c5431061f2eae448087aa56219e56873fe8aeba`; branch `fix/miniapp-chat-telemetry`.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -28,6 +29,30 @@ def _load_publication_scope_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.mark.asyncio
+async def test_miniapp_share_rejects_malformed_reference_selection(monkeypatch):
+    from bot import miniapp
+
+    publication_scope = _load_publication_scope_module()
+
+    async def fake_payload(_request):
+        return {
+            "task_id": "seedance-task",
+            "reference_image_indices": [False],
+            "reference_video_indices": [],
+        }
+
+    monkeypatch.setattr(miniapp, "_miniapp_payload", fake_payload)
+
+    response = await publication_scope._miniapp_generation_share_scoped(
+        miniapp,
+        object(),
+    )
+
+    assert response.status == 400
+    assert "Некорректный выбор референсов" in json.loads(response.text)["error"]
 
 
 @pytest.mark.parametrize("scope", ["private", "profile", "feed"])
@@ -174,6 +199,12 @@ async def test_profile_only_publication_lifecycle(tmp_path, monkeypatch):
         aspect_ratio="1:1",
         prompt="Profile-only publication test",
         cost=2,
+        request_data={
+            "reference_images": [
+                "https://example.com/face.png",
+                "https://example.com/outfit.png",
+            ]
+        },
     )
     await database.complete_video_task(
         "scope-image-1",
@@ -183,12 +214,16 @@ async def test_profile_only_publication_lifecycle(tmp_path, monkeypatch):
     profile_card = await publication_scope.share_to_profile(
         "scope-image-1",
         user.id,
+        references_visible=True,
+        reference_image_indices=[1],
+        reference_video_indices=[],
     )
     assert profile_card is not None
     assert profile_card["publication_scope"] == "profile"
     assert profile_card["is_profile_visible"] is True
     assert profile_card["is_public_feed"] is False
     assert profile_card["feed_interactions_enabled"] is False
+    assert profile_card["reference_images"] == ["https://example.com/outfit.png"]
 
     blurred_profile_card = await publication_scope.share_to_profile(
         "scope-image-1",

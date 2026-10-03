@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useApp } from '@/lib/app-context'
 import { notifyFeedChanged } from '@/lib/feed-events'
 import { cn } from '@/lib/utils'
@@ -20,6 +20,8 @@ import { toast } from 'sonner'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { SeedanceTrendPublisher } from '@/components/seedance-trend-publisher'
 
+const EMPTY_REFERENCE_URLS: string[] = []
+
 export function TaskDetailPanel() {
   const { state, taskDetail, isTaskDetailOpen, closeTaskDetail, updateTask } = useApp()
   const [publishBusy, setPublishBusy] = useState(false)
@@ -31,10 +33,28 @@ export function TaskDetailPanel() {
   const [adultContent, setAdultContent] = useState(false)
   const [publicationEditorOpen, setPublicationEditorOpen] = useState(false)
   const [publicationLink, setPublicationLink] = useState<string | null>(null)
+  const [selectedReferenceImages, setSelectedReferenceImages] = useState<Set<number>>(new Set())
+  const [selectedReferenceVideos, setSelectedReferenceVideos] = useState<Set<number>>(new Set())
 
-  const referenceCount =
-    (taskDetail?.request_data?.reference_images?.length || 0) +
-    (taskDetail?.request_data?.v_reference_videos?.length || 0)
+  const publicationReferenceImages = taskDetail?.publication_reference_images
+    ?? taskDetail?.request_data?.source_reference_images
+    ?? taskDetail?.request_data?.reference_images
+    ?? EMPTY_REFERENCE_URLS
+  const publicationReferenceVideos = taskDetail?.publication_reference_videos
+    ?? taskDetail?.request_data?.v_reference_videos
+    ?? EMPTY_REFERENCE_URLS
+  const publicationReferenceImageIndices = useMemo(
+    () => taskDetail?.publication_reference_image_indices
+      ?? publicationReferenceImages.map((_, index) => index),
+    [taskDetail?.publication_reference_image_indices, publicationReferenceImages],
+  )
+  const publicationReferenceVideoIndices = useMemo(
+    () => taskDetail?.publication_reference_video_indices
+      ?? publicationReferenceVideos.map((_, index) => index),
+    [taskDetail?.publication_reference_video_indices, publicationReferenceVideos],
+  )
+  const referenceCount = publicationReferenceImages.length + publicationReferenceVideos.length
+  const selectedReferenceCount = selectedReferenceImages.size + selectedReferenceVideos.size
 
   useEffect(() => {
     setFeedPromptVisible(Boolean(taskDetail?.feed_prompt_visible))
@@ -44,6 +64,9 @@ export function TaskDetailPanel() {
     setAdultContent(Boolean(taskDetail?.is_adult_content))
     setPublicationEditorOpen(false)
     setPublicationLink(null)
+    const savedSelection = taskDetail?.feed_reference_selection
+    setSelectedReferenceImages(new Set(savedSelection?.images ?? publicationReferenceImageIndices))
+    setSelectedReferenceVideos(new Set(savedSelection?.videos ?? publicationReferenceVideoIndices))
   }, [
     taskDetail?.task_id,
     taskDetail?.feed_prompt_visible,
@@ -51,7 +74,24 @@ export function TaskDetailPanel() {
     taskDetail?.feed_blurred,
     taskDetail?.publication_scope,
     taskDetail?.is_adult_content,
+    taskDetail?.feed_reference_selection,
+    publicationReferenceImages,
+    publicationReferenceVideos,
+    publicationReferenceImageIndices,
+    publicationReferenceVideoIndices,
   ])
+
+  const toggleReference = (
+    index: number,
+    setSelected: React.Dispatch<React.SetStateAction<Set<number>>>,
+  ) => {
+    setSelected((current) => {
+      const next = new Set(current)
+      if (next.has(index)) next.delete(index)
+      else next.add(index)
+      return next
+    })
+  }
 
   const confirmPublication = (target: string) => {
     if (typeof window === 'undefined') return true
@@ -93,6 +133,8 @@ export function TaskDetailPanel() {
       const published = await publishGeneration(taskDetail.task_id, {
           promptVisible: feedPromptVisible,
           referencesVisible: feedReferencesVisible,
+          referenceImageIndices: [...selectedReferenceImages].sort((left, right) => left - right),
+          referenceVideoIndices: [...selectedReferenceVideos].sort((left, right) => left - right),
           blurred: feedBlurred,
           publicationScope,
           adultContent,
@@ -104,7 +146,11 @@ export function TaskDetailPanel() {
           is_adult_content: Boolean(published.is_adult_content),
           feed_interactions_enabled: published.feed_interactions_enabled,
           feed_prompt_visible: feedPromptVisible,
-          feed_references_visible: feedReferencesVisible,
+          feed_references_visible: Boolean(published.feed_references_visible),
+          feed_reference_selection: {
+            images: [...selectedReferenceImages].sort((left, right) => left - right),
+            videos: [...selectedReferenceVideos].sort((left, right) => left - right),
+          },
           feed_blurred: Boolean(published.feed_blurred),
         })
         notifyFeedChanged(published)
@@ -504,7 +550,7 @@ export function TaskDetailPanel() {
                           )}
                         >
                           {feedReferencesVisible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-                          Рефы {referenceCount ? `(${referenceCount})` : ''}
+                          Рефы {referenceCount ? `(${feedReferencesVisible ? selectedReferenceCount : referenceCount})` : ''}
                         </button>
                         <button
                           type="button"
@@ -520,6 +566,50 @@ export function TaskDetailPanel() {
                           Blur
                         </button>
                       </div>
+                  {feedReferencesVisible && referenceCount > 0 ? (
+                    <div className="mt-3 rounded-lg border border-border/50 bg-background/30 p-2.5">
+                      <div className="mb-2 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                        <span>Что показать в публикации</span>
+                        <span>{selectedReferenceCount} из {referenceCount}</span>
+                      </div>
+                      <div className="flex gap-2 overflow-x-auto pb-1">
+                        {publicationReferenceImages.map((url, index) => {
+                          const sourceIndex = publicationReferenceImageIndices[index]
+                          const selected = selectedReferenceImages.has(sourceIndex)
+                          return (
+                            <div key={`image-${index}`} className={cn('relative h-20 w-20 shrink-0 overflow-hidden rounded-lg border', selected ? 'border-cyan/50' : 'border-border/40 opacity-45')}>
+                              <img src={url} alt={`Фото-референс ${index + 1}`} className="h-full w-full object-cover" />
+                              <button
+                                type="button"
+                                aria-label={`${selected ? 'Исключить' : 'Вернуть'} фото-референс ${index + 1}`}
+                                onClick={() => toggleReference(sourceIndex, setSelectedReferenceImages)}
+                                className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-background/85 text-foreground"
+                              >
+                                {selected ? <X className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                              </button>
+                            </div>
+                          )
+                        })}
+                        {publicationReferenceVideos.map((url, index) => {
+                          const sourceIndex = publicationReferenceVideoIndices[index]
+                          const selected = selectedReferenceVideos.has(sourceIndex)
+                          return (
+                            <div key={`video-${index}`} className={cn('relative h-20 w-28 shrink-0 overflow-hidden rounded-lg border bg-secondary/60', selected ? 'border-cyan/50' : 'border-border/40 opacity-45')}>
+                              <video src={url} aria-label={`Видео-референс ${index + 1}`} muted playsInline className="h-full w-full object-cover" />
+                              <button
+                                type="button"
+                                aria-label={`${selected ? 'Исключить' : 'Вернуть'} видео-референс ${index + 1}`}
+                                onClick={() => toggleReference(sourceIndex, setSelectedReferenceVideos)}
+                                className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-background/85 text-foreground"
+                              >
+                                {selected ? <X className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                              </button>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="mt-3 grid gap-2">
                     <Button type="button" disabled={publishBusy} onClick={handlePublish}>
                       {publishBusy ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Images className="h-4 w-4" />}

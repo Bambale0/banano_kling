@@ -12,6 +12,11 @@ logger = logging.getLogger(__name__)
 _PRIVATE_TASK_FIELDS = {
     "source_url",
     "pinterest_url",
+    "publication_reference_images",
+    "publication_reference_videos",
+    "publication_reference_image_indices",
+    "publication_reference_video_indices",
+    "feed_reference_selection",
 }
 _PRIVATE_REQUEST_FIELDS = {
     "prompt",
@@ -152,6 +157,7 @@ async def sanitize_task_api_payload(payload: Any) -> Any:
         clean["prompt_hidden"] = True
         clean["prompt_actions_allowed"] = False
         clean["feed_prompt_visible"] = False
+        clean["feed_references_visible"] = False
         clean["request_data"] = _redact_private_request_data(clean.get("request_data"))
         for key in _PRIVATE_TASK_FIELDS:
             clean.pop(key, None)
