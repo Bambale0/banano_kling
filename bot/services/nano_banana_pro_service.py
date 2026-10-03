@@ -206,16 +206,12 @@ class ProviderClient:
                 if resp.status == 200:
                     return await resp.json()
                 else:
-                    error = await resp.text()
                     logger.warning(
-                        "Nano Banana Pro POST failed on provider %s: %s - %s",
-                        self.base_url,
-                        resp.status,
-                        error,
+                        "Nano Banana Pro POST failed: status=%s", resp.status,
                     )
                     return None
         except Exception as e:
-            logger.warning("Nano Banana Pro POST error on provider %s: %s", self.base_url, e)
+            logger.warning("Nano Banana Pro POST error: exception_type=%s", type(e).__name__)
             return None
 
     async def _get(self, endpoint: str, params: Dict = None) -> Optional[Dict]:
@@ -228,13 +224,10 @@ class ProviderClient:
                 if resp.status == 200:
                     return await resp.json()
                 else:
-                    error = await resp.text()
                     if resp.status != 404:
                         logger.warning(
-                            "Nano Banana Pro GET failed on provider %s: %s - %s",
-                            self.base_url,
+                            "Nano Banana Pro GET failed: status=%s",
                             resp.status,
-                            error,
                         )
                     else:
                         logger.debug(
@@ -243,7 +236,7 @@ class ProviderClient:
                         )
                     return None
         except Exception as e:
-            logger.warning("Nano Banana Pro GET error on provider %s: %s", self.base_url, e)
+            logger.warning("Nano Banana Pro GET error: exception_type=%s", type(e).__name__)
             return None
 
     async def close(self):
@@ -308,6 +301,10 @@ class NanoBananaProService:
         else:
             normalized_image_input = []
 
+        if len(normalized_image_input) != len(image_input or []):
+            logger.warning("Nano Banana Pro aborted: incomplete reference transport requested=%s ready=%s",
+                           len(image_input or []), len(normalized_image_input))
+            return None
         normalized_resolution = _normalize_resolution(resolution)
         payload = {
             "model": "nano-banana-pro",
@@ -339,15 +336,15 @@ class NanoBananaProService:
 
         resp = await self._post("/api/v1/jobs/createTask", payload)
         if not resp or not isinstance(resp, dict):
-            logger.error(f"Nano Banana Pro create_task failed, resp: {resp}")
+            logger.error("Nano Banana Pro create_task returned invalid response")
             return None
         data = resp.get("data")
         if not isinstance(data, dict):
-            logger.error(f"Nano Banana Pro invalid data: {data} (full resp: {resp})")
+            logger.error("Nano Banana Pro create_task returned invalid data")
             return None
         task_id = data.get("taskId")
         if not task_id:
-            logger.error(f"No taskId in response: {resp}")
+            logger.error("No taskId in Nano Banana Pro response")
         return task_id
 
     async def get_task_status(self, task_id: str) -> Optional[Dict]:
@@ -360,7 +357,7 @@ class NanoBananaProService:
             return None
         data = resp.get("data")
         if not isinstance(data, dict):
-            logger.warning(f"Nano Banana Pro status invalid data: {data}")
+            logger.warning("Nano Banana Pro status returned invalid data")
             return None
         return data
 
@@ -433,9 +430,7 @@ class NanoBananaProService:
             if task_state == "success":
                 return status
             elif task_state == "fail":
-                logger.error(
-                    f"Task {task_id} failed: {status.get('failMsg', 'Unknown')}"
-                )
+                logger.error("Nano Banana Pro task failed: task_id=%s", task_id)
                 return None
             await asyncio.sleep(delay)
         logger.warning(f"Task {task_id} timeout after {max_attempts} attempts")
@@ -495,6 +490,8 @@ ULTRA DETAIL & QUALITY BOOST:
                     try:
                         header, b64data = source.split(",", 1)
                         mime_type = header.replace("data:", "").split(";")[0]
+                        if not base64.b64decode(b64data, validate=True):
+                            raise ValueError("Empty reference image")
                         parts.append({
                             "inlineData": {
                                 "mimeType": mime_type,
@@ -508,7 +505,8 @@ ULTRA DETAIL & QUALITY BOOST:
                         async with session.get(source) as img_resp:
                             if img_resp.status == 200:
                                 img_data = await img_resp.read()
-                                import base64
+                                if not img_data:
+                                    raise ValueError("Empty reference image")
                                 b64data = base64.b64encode(img_data).decode("utf-8")
                                 mime_type = img_resp.content_type or "image/jpeg"
                                 parts.append({
@@ -519,15 +517,19 @@ ULTRA DETAIL & QUALITY BOOST:
                                 })
                             else:
                                 logger.warning(
-                                    "Nano Banana Pro Gemini provider: failed to fetch remote reference %s",
-                                    source,
+                                    "Nano Banana Pro Gemini provider: failed to fetch remote reference",
                                 )
                     except Exception:
                         logger.warning(
-                            "Nano Banana Pro Gemini provider: failed to fetch remote reference %s",
-                            source,
+                            "Nano Banana Pro Gemini provider: failed to fetch remote reference",
                         )
 
+        if len(parts) - 1 != len(image_input or []):
+            logger.warning(
+                "Nano Banana Pro Gemini aborted: incomplete reference transport requested=%s ready=%s",
+                len(image_input or []), len(parts) - 1,
+            )
+            return None
         normalized_resolution = _normalize_resolution(resolution)
         image_size = normalized_resolution  # "1K", "2K" или "4K"
 
@@ -570,15 +572,13 @@ ULTRA DETAIL & QUALITY BOOST:
                     )
                     return None
                 else:
-                    error = await resp.text()
                     logger.warning(
-                        "Nano Banana Pro Gemini provider POST failed: %s - %s",
+                        "Nano Banana Pro Gemini provider POST failed: status=%s",
                         resp.status,
-                        error,
                     )
                     return None
         except Exception as e:
-            logger.warning("Nano Banana Pro Gemini provider error: %s", e)
+            logger.warning("Nano Banana Pro Gemini provider error: exception_type=%s", type(e).__name__)
             return None
 
     async def close(self):

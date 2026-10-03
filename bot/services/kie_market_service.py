@@ -25,6 +25,7 @@ from typing import Any, Dict, Iterable, List, Optional
 import aiohttp
 
 from bot.config import config
+from bot.utils.user_facing_errors import sanitize_provider_log_payload
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +104,7 @@ class KieMarketService:
                 logger.debug("KIE Market POST %s → code=%s", url, data.get("code"))
                 return data
         except Exception as exc:
-            logger.exception("KIE Market POST failed: %s", url)
+            logger.warning("KIE Market POST failed: exception_type=%s error=%s", type(exc).__name__, sanitize_provider_log_payload(exc))
             raise KieMarketError(str(exc)) from exc
 
     async def _get_json(
@@ -111,7 +112,7 @@ class KieMarketService:
     ) -> dict:
         session = await self._get_session()
         headers = self._auth_headers()
-        logger.debug("KIE Market GET %s params=%s", url, params)
+        logger.debug("KIE Market GET %s params=%s", sanitize_provider_log_payload(url), sanitize_provider_log_payload(params))
         try:
             async with session.get(
                 url, headers=headers, params=params,
@@ -121,7 +122,7 @@ class KieMarketService:
                 logger.debug("KIE Market GET %s → code=%s", url, data.get("code"))
                 return data
         except Exception as exc:
-            logger.exception("KIE Market GET failed: %s", url)
+            logger.warning("KIE Market GET failed: exception_type=%s error=%s", type(exc).__name__, sanitize_provider_log_payload(exc))
             raise KieMarketError(str(exc)) from exc
 
     # ═════════════════════════════════════════════════════════════════
@@ -221,7 +222,7 @@ class KieMarketService:
         try:
             parsed = json.loads(result_json) if isinstance(result_json, str) else result_json
         except (json.JSONDecodeError, TypeError):
-            logger.warning("KIE Market: invalid resultJson: %s", result_json)
+            logger.warning("KIE Market: invalid resultJson: %s", sanitize_provider_log_payload(result_json))
             return []
         urls = parsed.get("resultUrls", []) if isinstance(parsed, dict) else []
         return urls if isinstance(urls, list) else []
@@ -250,7 +251,7 @@ class KieMarketService:
         cache_key = self._upload_cache_key(file_path)
         cached = self._upload_cache.get(cache_key)
         if cached and time.time() - cached[1] < 48 * 3600:
-            logger.debug("KIE Market upload cache hit: %s", file_path)
+            logger.debug("KIE Market upload cache hit: %s", sanitize_provider_log_payload(file_path))
             return cached[0]
 
         fname = file_name or os.path.basename(file_path)
@@ -273,7 +274,7 @@ class KieMarketService:
                 ) as resp:
                     data = await resp.json(content_type=None)
             except Exception as exc:
-                logger.exception("KIE Market stream upload failed: %s", file_path)
+                logger.warning("KIE Market stream upload failed: exception_type=%s error=%s", type(exc).__name__, sanitize_provider_log_payload(exc))
                 raise KieMarketError(str(exc)) from exc
 
         if not isinstance(data, dict) or not data.get("success"):
@@ -285,7 +286,7 @@ class KieMarketService:
             raise KieMarketError(f"Upload returned no URL: {data}", data)
 
         self._upload_cache[cache_key] = (url, time.time())
-        logger.info("KIE Market uploaded: %s → %s", file_path, url)
+        logger.info("KIE Market uploaded: %s → %s", sanitize_provider_log_payload(file_path), sanitize_provider_log_payload(url))
         return url
 
     async def upload_file_base64(
@@ -327,7 +328,7 @@ class KieMarketService:
             raise KieMarketError(f"Base64 upload returned no URL: {data}", data)
 
         self._upload_cache[cache_key] = (url, time.time())
-        logger.info("KIE Market base64 uploaded: %s → %s", file_path, url)
+        logger.info("KIE Market base64 uploaded: %s → %s", sanitize_provider_log_payload(file_path), sanitize_provider_log_payload(url))
         return url
 
     async def upload_file_url(self, public_url: str) -> str:
@@ -342,7 +343,7 @@ class KieMarketService:
                or data.get("data", {}).get("downloadUrl", "")).strip()
         if not url:
             raise KieMarketError(f"URL upload returned no URL: {data}", data)
-        logger.info("KIE Market URL uploaded: %s → %s", public_url, url)
+        logger.info("KIE Market URL uploaded: %s → %s", sanitize_provider_log_payload(public_url), sanitize_provider_log_payload(url))
         return url
 
     async def upload_local_refs(self, sources: Iterable[str] | None) -> list[str]:
@@ -380,7 +381,7 @@ class KieMarketService:
         url = data.get("data", "")
         if not url:
             raise KieMarketError(f"download-url returned no data: {data}", data)
-        logger.debug("KIE Market download-url: %s → %s", generated_url, url)
+        logger.debug("KIE Market download-url: %s → %s", sanitize_provider_log_payload(generated_url), sanitize_provider_log_payload(url))
         return url
 
     # ═════════════════════════════════════════════════════════════════
@@ -450,7 +451,7 @@ class KieMarketService:
             )
             return {"task_id": task_id}
         except KieMarketError as exc:
-            logger.error("KIE Market generate failed: %s", exc)
+            logger.error("KIE Market generate failed: %s", sanitize_provider_log_payload(exc))
             return None
 
 
@@ -470,14 +471,8 @@ def _get_header(headers: Any, name: str) -> str:
 
 
 def _safe_log_payload(payload: dict) -> dict:
-    """Return a copy safe for logging (redact large binary fields)."""
-    if not isinstance(payload, dict):
-        return payload
-    safe = dict(payload)
-    inp = safe.get("input")
-    if isinstance(inp, dict) and "image_urls" in inp:
-        safe["input"] = {**inp, "image_urls": f"[{len(inp['image_urls'])} urls]"}
-    return safe
+    """Keep provider diagnostics without exposing recipes, URLs or binary inputs."""
+    return sanitize_provider_log_payload(payload)
 
 
 # ── singleton ────────────────────────────────────────────────────────

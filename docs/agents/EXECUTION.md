@@ -1070,3 +1070,36 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Integration test corrections preserve runtime behavior: feed removal can intentionally downgrade to profile; full withdrawal regression now calls the real remove_publication API. Reused PostgreSQL test user state required a fresh disposable database; no production fixture/data change.
 - Independent standards review: approved, zero unresolved findings. Spec runtime review: no remaining blocker; final regression sensitivity corrected and rechecked. Review caught and resolved unbound retry logging, generic callback duplicate delivery, and stale-failure retry/refund races before release.
 - Read-only rollout preflight 05:59 UTC: zero existing completed tasks with result URL and retryable delivery markers. Public frontend revision and backend image both af11c3a; public/local health pass. Recheck immediately before release and verify exact merged SHA after automatic deployment.
+
+
+## Private ordinary image-repeat permission (2026-10-03)
+- Baseline: dfdaa6f382516e158485d72dff20a871e3670cd9, fresh origin/tanyapi verified.
+- Goal: independent explicit owner permission for selected source images to participate server-side in repeats without publishing their URLs or previews. Legacy publication selections are not permission.
+- Reuse: publication owner checks, source availability, PR238 client redaction, server model limits and isolated synthetic tests.
+- Add nullable permission snapshot; no backfill; empty selection revokes. Retain publication and Seedance rules. Never authorize inherited refs on remix children.
+- Risks: descendant serialization, cached media, stale source selection, logging/provider recipe exposure, owner vs nonowner, prompt image ordering.
+- Plan: (1) DB/HTTP permission and tests; (2) server assembly plus privacy boundaries; (3) owner UI and tests; (4) focused/full gates and independent review.
+- Test seams: publication DB/API, remix launch provider payload, task-detail/bootstrap/history, public card/media, frontend publication journey. Synthetic data only. No paid generation, production mutation, merge or deploy.
+- Rollout: draft review only after verification and authorization. New nullable schema is additive; old code ignores it.
+
+### Private repeat verification / review progress
+- Refreshed `/root/igor-skills`, `/root/claw-tools`, `/root/anthropic-skills` playbooks; used implement/TDD/code-review, frontend QA, security-review, webapp-testing guidance.
+- API/DB runtime implemented: explicit nullable grant with no backfill; installed compatibility publication wrapper supports both feed/profile; owner detail returns indices; old clients clear grant. Original source and exact URL availability validated before provider use, including automatic KIE/Nexus/Wan retries and legacy child provenance.
+- New descendants persist private input provenance; task/history/bootstrap/card/FSM and error boundaries redact inherited recipe. Mini App new repeats require original author publication rather than legacy child publications; owner Telegram child repeats preserve lineage and revalidate root permission.
+- ImageN slot-preserving merge, combined reference-limit checks, and all-or-nothing Grok/Banana/Gemini reference transports prevent silent partial recipes. Gemini native fallback cannot drop URL-backed inputs.
+- Independent review caught and closed production compatibility wrapper drop, child-owned Mini App bypass, Wan retry omission, profile-only Telegram hydration, stale UI consent after unpublish, remaining shared adapter URL logging, and partial provider transports.
+- Backend full safe suite at ea6459c: **1533 passed, 16 skipped**, 81.10s; skips are pre-existing environment/live/PostgreSQL gates. Latest private API/runtime focused recheck after shared KIE log guard: **91 passed**, 5.34s. New ignored backend regression files explicitly added to Git.
+- Frontend final: **25 suites / 82 tests**, full ESLint, TypeScript noEmit, production export, and aggregate browser critical flows passed. New browser coverage at widths 320/375/390/430: grant/restoration/revoke/unpublish→republish, no overflow/page errors; screenshot inspected. Mocked backend/provider; no real private assets or paid generation.
+- `pip check`, compileall, deployment shell syntax, and diff checks passed; changed-line Ruff at ea6459c: 0 relevant, 603 existing diagnostics ignored by repository gate. Final exact-head aggregate gates and independent closure review follow before publication/merge.
+- Release status: implementation isolated from production. User authorized draft PR publication and conditional merge after all exact-head checks/review. GitHub branch protection currently unavailable (protected=false; API403 plan restriction); parent owns explicit one-PR exception approval. Never change security settings or remove checks.
+- Additive schema: feed_repeat_reference_selection TEXT; PostgreSQL schema + existing SQLite/PostgreSQL startup migration and publication compatibility ensure path. No production DB mutation performed.
+- Cache restriction is prospective: cannot erase media already downloaded/cached. Full publication withdrawal clears grant; changing public preview visibility alone does not revoke separate private-use permission.
+
+- Full safe suite at 0546425: **1536 passed, 16 skipped**, 80.68s. Independent closure review: no remaining blocking findings in reviewed scope; **91 focused security tests passed**.
+- Narrow CI safety change: auto-merge command now matches the event's exact PR head SHA; no new workflow permissions or removed checks. This does not replace the all-green gate. Since pull_request_target uses the base workflow, current-PR controlled release must pause only the pre-existing auto-merge workflow after recording its state, verify every exact-head CI check/review, guarded-merge, then restore its prior state. Parent authorized this sequencing and the one-PR protection exception after user confirmation.
+
+### PR239 CI lifecycle correction
+- Remote CI exposed a real publication-editor lifecycle defect: 5-second bootstrap/focus refresh rebuilt reference arrays and triggered initialization effects, closing the editor and overwriting unsaved consent. Standalone E2E had passed; the main gate correctly blocked Docker/release.
+- Added four deterministic failing React regressions and a real focus/timer refresh browser step, then fixed same-task draft-session hydration. Refresh preserves manual draft values, prunes unavailable/explicitly revoked private refs, never selects newly arriving refs, and resets on task switch/dismissal. No assertions/timeouts relaxed and no test retries introduced.
+- Final frontend verification: **25 suites / 86 tests**; focused permission **17 tests on three consecutive runs**; full lint, typecheck and production build passed. Browser grant/revoke/refresh/unpublish flows passed at 320/375/390/430px on **three consecutive runs**, plus complete critical E2E gate.
+- Existing backend and CI code are unchanged in this correction. Remote required checks will rerun for the new exact head before merge.

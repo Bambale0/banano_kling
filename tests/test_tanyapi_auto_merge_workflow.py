@@ -35,3 +35,9 @@ def test_auto_merge_uses_native_required_check_gate_and_squash() -> None:
     assert "--squash" in source
     assert "draft == false" in source
     assert "cancel-in-progress: true" in source
+
+
+def test_auto_merge_rejects_a_head_changed_after_the_event() -> None:
+    source = _workflow()
+    assert "PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}" in source
+    assert '--match-head-commit "$PR_HEAD_SHA"' in source

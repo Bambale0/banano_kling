@@ -100,10 +100,9 @@ class SeedreamService(KlingService):
 
         if failed_sources:
             logger.error(
-                "Seedream aborted: failed to copy %d/%d references to KIE storage: %s",
+                "Seedream aborted: failed to copy %d/%d references to KIE storage",
                 len(failed_sources),
                 len(supported_urls),
-                failed_sources,
             )
             return None
 

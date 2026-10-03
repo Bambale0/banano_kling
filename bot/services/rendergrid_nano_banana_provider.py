@@ -16,6 +16,7 @@ from bot.services.rendergrid_service import (
     RenderGridClient,
     RenderGridError,
 )
+from bot.utils.user_facing_errors import sanitize_provider_log_payload
 
 logger = logging.getLogger(__name__)
 
@@ -406,7 +407,7 @@ class RenderGridNanoBananaProvider:
                     code,
                     self._normalize_resolution(resolution),
                     asyncio.get_running_loop().time() - started_at,
-                    exc,
+                    sanitize_provider_log_payload(exc),
                 )
                 return {
                     "error": str(exc),
@@ -424,7 +425,7 @@ class RenderGridNanoBananaProvider:
                 status,
                 code,
                 asyncio.get_running_loop().time() - started_at,
-                exc,
+                sanitize_provider_log_payload(exc),
             )
             return None
 
@@ -467,7 +468,7 @@ class RenderGridNanoBananaProvider:
                 "RenderGrid creation status lookup failed: creation_id=%s model=%s error=%s",
                 creation_id,
                 self.model_name,
-                exc,
+                sanitize_provider_log_payload(exc),
             )
             return {
                 "id": creation_id,

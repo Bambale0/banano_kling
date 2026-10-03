@@ -3,6 +3,8 @@ from aiogram.fsm.context import FSMContext
 
 from bot.database import get_or_create_user, get_task_by_id
 from bot.handlers.generation import (
+    _can_inherit_repeat_source_references,
+    _repeat_source_prompt_hidden,
     _restore_image_task_to_state,
     _show_repeat_image_screen,
 )
@@ -24,17 +26,11 @@ async def repeat_result_compat(callback: types.CallbackQuery, state: FSMContext)
     task = await get_task_by_id(task_id)
     user = await get_or_create_user(callback.from_user.id)
 
-    hide_prompt = bool(task and task.is_public_feed and task.user_id != user.id)
-    refs_hidden = bool(
-        task
-        and task.is_public_feed
-        and task.user_id != user.id
-        and not task.feed_references_visible
-    )
+    hide_prompt = _repeat_source_prompt_hidden(task, user.id)
     restored, error_message = await _restore_image_task_to_state(
         task,
         state,
-        include_references=not refs_hidden,
+        include_references=_can_inherit_repeat_source_references(task, user.id),
         repeat_source_task_id=task_id,
         hide_prompt=hide_prompt,
     )

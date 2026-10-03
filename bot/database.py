@@ -624,6 +624,7 @@ async def _ensure_prompt_feed_schema(db: db_backend.Connection) -> None:
         ("feed_prompt_visible", "ALTER TABLE generation_tasks ADD COLUMN feed_prompt_visible BOOLEAN DEFAULT 0"),
         ("feed_references_visible", "ALTER TABLE generation_tasks ADD COLUMN feed_references_visible BOOLEAN DEFAULT 0"),
         ("feed_reference_selection", "ALTER TABLE generation_tasks ADD COLUMN feed_reference_selection TEXT"),
+        ("feed_repeat_reference_selection", "ALTER TABLE generation_tasks ADD COLUMN feed_repeat_reference_selection TEXT"),
         ("feed_blurred", "ALTER TABLE generation_tasks ADD COLUMN feed_blurred BOOLEAN DEFAULT 0"),
         ("feed_published_at", "ALTER TABLE generation_tasks ADD COLUMN feed_published_at TIMESTAMP"),
     ]:
@@ -761,6 +762,7 @@ class GenerationTask:
     result_urls: Optional[List[str]] = None
     request_data: Optional[str] = None
     is_public_feed: bool = False
+    is_profile_visible: bool = False
     is_prompt_library: bool = False
     source_feed_gen_id: Optional[int] = None
     parent_generation_id: Optional[int] = None
@@ -770,6 +772,7 @@ class GenerationTask:
     feed_prompt_visible: bool = False
     feed_references_visible: bool = False
     feed_reference_selection: str | None = None
+    feed_repeat_reference_selection: str | None = None
     feed_blurred: bool = False
     created_at: Optional[datetime] = None
 
@@ -5320,6 +5323,7 @@ async def get_task_by_id(task_id: str) -> Optional[GenerationTask]:
             is_public_feed=(
                 bool(row["is_public_feed"]) if "is_public_feed" in row.keys() else False
             ),
+            is_profile_visible=bool(_generation_attr(row, "is_profile_visible", False)),
             is_prompt_library=(
                 bool(row["is_prompt_library"])
                 if "is_prompt_library" in row.keys()
@@ -5351,6 +5355,7 @@ async def get_task_by_id(task_id: str) -> Optional[GenerationTask]:
                 else False
             ),
             feed_reference_selection=_generation_attr(row, "feed_reference_selection"),
+            feed_repeat_reference_selection=_generation_attr(row, "feed_repeat_reference_selection"),
             feed_blurred=(
                 bool(row["feed_blurred"])
                 if "feed_blurred" in row.keys()
@@ -6530,6 +6535,31 @@ def generation_reference_selection(
     return selection
 
 
+def generation_repeat_reference_selection(generation: Any) -> list[str]:
+    """Explicit owner grants only; legacy publication selections are not grants."""
+    raw = _generation_attr(generation, "feed_repeat_reference_selection")
+    try:
+        payload = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(payload, dict) or not isinstance(payload.get("images"), list):
+        return []
+    values = payload["images"]
+    if any(not isinstance(url, str) or not url.strip() for url in values):
+        return []
+    return list(dict.fromkeys(url.strip() for url in values))
+
+
+def _repeat_reference_selection_for_publication(row: Any, indices: list[int] | None) -> str:
+    # Omission is deliberately fail-closed, including older clients re-publishing.
+    candidates = _feed_reference_image_candidates(_parse_json_dict(row["request_data"]))
+    selected = sorted(_validated_reference_indices(indices or [], len(candidates)))
+    if selected and row["type"] != "image":
+        raise ValueError("Скрытые референсы для повторов доступны только для изображений")
+    return json.dumps({"images": [candidates[index] for index in selected
+        if _is_feed_result_url_available(row, candidates[index])]}, ensure_ascii=False, separators=(",", ":"))
+
+
 def _validated_reference_indices(
     values: list[int] | None,
     available_count: int,
@@ -6695,7 +6725,7 @@ def _is_feed_result_url_available(row: db_backend.Row, url: str) -> bool:
         if is_local_upload_source(candidate):
             return bool(resolve_local_upload_path(candidate))
     except Exception:
-        logger.exception("Failed to validate local feed result url: %s", candidate)
+        logger.exception("Failed to validate local feed result availability")
         return False
 
     return not _is_feed_result_expired(row, candidate)
@@ -6906,10 +6936,10 @@ def _generation_row_to_card(
         or str(_generation_attr(row, "action_type", "") or "").strip().lower() == "remix"
     )
     # A remix may contain reference URLs inherited from somebody else's
-    # publication. They remain visible to the owner of the child generation,
-    # but are never re-published transitively to third parties.
+    # publication. They are never exposed through child cards, including to
+    # the child owner: owning a result is not ownership of the original inputs.
     references_allowed_for_viewer = bool(
-        references_visible and (viewer_is_owner or not is_remix)
+        references_visible and not is_remix
     )
     all_reference_images = _feed_reference_images(row, request_data)
     all_reference_videos = _feed_reference_videos(row, request_data)
@@ -7439,6 +7469,7 @@ async def share_to_feed(
     references_visible: bool = False,
     reference_image_indices: list[int] | None = None,
     reference_video_indices: list[int] | None = None,
+    repeat_reference_image_indices: list[int] | None = None,
     blurred: Optional[bool] = None,
     publication_scope: str = "feed",
     adult_content: bool = False,
@@ -7493,6 +7524,7 @@ async def share_to_feed(
             ensure_ascii=False,
             separators=(",", ":"),
         )
+        repeat_reference_selection = _repeat_reference_selection_for_publication(row, repeat_reference_image_indices)
         references_visible = bool(references_visible and (selected_images or selected_videos))
 
         result_urls = _generation_result_urls(row)
@@ -7527,6 +7559,7 @@ async def share_to_feed(
                 feed_prompt_visible = ?,
                 feed_references_visible = ?,
                 feed_reference_selection = ?,
+                feed_repeat_reference_selection = ?,
                 feed_blurred = ?,
                 feed_published_at = ?,
                 result_url = ?,
@@ -7541,6 +7574,7 @@ async def share_to_feed(
                 int(bool(prompt_visible)),
                 int(bool(references_visible)),
                 reference_selection,
+                repeat_reference_selection,
                 int(next_blurred),
                 published_at,
                 result_url,
@@ -7606,6 +7640,7 @@ async def remove_from_feed(
             UPDATE generation_tasks
             SET is_public_feed = 0,
                 is_profile_visible = 0,
+                feed_repeat_reference_selection = NULL,
                 is_adult_content = 0,
                 feed_published_at = NULL,
                 updated_at = CURRENT_TIMESTAMP

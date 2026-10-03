@@ -97,7 +97,7 @@ async def feed_reference_image_thumbnail(request: web.Request) -> web.StreamResp
                     ) from exc
 
     response = web.FileResponse(target)
-    response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    response.headers["Cache-Control"] = "private, no-store"
     response.headers["X-Content-Type-Options"] = "nosniff"
     return response
 
@@ -110,7 +110,7 @@ async def feed_reference_image_full(request: web.Request) -> web.StreamResponse:
     source = await _public_image_reference_path(gen_id, index)
 
     response = web.FileResponse(source)
-    response.headers["Cache-Control"] = "public, max-age=86400"
+    response.headers["Cache-Control"] = "private, no-store"
     response.headers["X-Content-Type-Options"] = "nosniff"
     return response
 
