@@ -127,3 +127,43 @@ async def test_connection_close_is_idempotent() -> None:
 
     assert raw.rollback_calls == 1
     assert pool.putconn_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_private_repeat_permission_is_added_by_raw_startup_helpers(monkeypatch):
+    """Generic adapter ALTERs are skipped; startup must execute this on raw PG."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    backend = postgres_pool.legacy
+    monkeypatch.setattr(backend, "_HELPERS_READY", False)
+    monkeypatch.setattr(backend, "_HELPERS_LOCK", None)
+    cursor = AsyncMock()
+    cursor.__aenter__.return_value = cursor
+    raw = MagicMock()
+    raw.cursor.return_value = cursor
+    raw.commit = AsyncMock()
+    migration = (
+        'ALTER TABLE "generation_tasks" ADD COLUMN IF NOT EXISTS '
+        '"feed_repeat_reference_selection" TEXT'
+    )
+    assert backend.translate_sql(migration) is None
+
+    await backend._ensure_postgres_helpers(raw)
+    statements = [call.args[0] for call in cursor.execute.await_args_list]
+    assert [sql for sql in statements if "feed_repeat_reference_selection" in sql] == [migration]
+    raw.commit.assert_awaited_once()
+
+    # Ordinary additional connections skip a completed startup.
+    await backend._ensure_postgres_helpers(raw)
+    assert cursor.execute.await_count == len(statements)
+    raw.commit.assert_awaited_once()
+
+    # A new process runs the idempotent DDL again, never an UPDATE/backfill.
+    monkeypatch.setattr(backend, "_HELPERS_READY", False)
+    await backend._ensure_postgres_helpers(raw)
+    migrations = [
+        call.args[0] for call in cursor.execute.await_args_list
+        if "feed_repeat_reference_selection" in call.args[0]
+    ]
+    assert migrations == [migration, migration]
+    assert raw.commit.await_count == 2

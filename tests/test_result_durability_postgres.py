@@ -117,3 +117,86 @@ async def test_pg_result_persistence_and_failure_race_are_mutually_exclusive():
         assert (task.status, task.result_url) == ("completed", url)
         assert credits == 100
         assert not await force_fail_task(tid, uid, 5)
+
+
+@pytest.mark.asyncio
+async def test_pg_startup_adds_private_repeat_grants_without_backfill(monkeypatch):
+    """Upgrade a legacy PG table at first adapter connection, preserving opt-in."""
+    from bot import postgres_aiosqlite, postgres_pool
+
+    # runtime_postgres_schema already guards the database name and local host
+    # before preparing its disposable tables. Close/reset startup state so this
+    # exercises the real first-connection path even after another test used it.
+    await postgres_pool.close_postgres_pool()
+    monkeypatch.setattr(postgres_aiosqlite, "_HELPERS_READY", False)
+    tid, _uid = await create_delivery_task()
+    legacy_selection = json.dumps({"images": ["https://example.test/legacy-visible.png"], "videos": []})
+    async with await psycopg.AsyncConnection.connect(os.environ["DATABASE_URL"]) as conn:
+        await conn.execute(
+            "ALTER TABLE generation_tasks DROP COLUMN IF EXISTS feed_repeat_reference_selection"
+        )
+        await conn.execute(
+            "ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS feed_reference_selection TEXT"
+        )
+        await conn.execute(
+            "ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS feed_references_visible BOOLEAN DEFAULT FALSE"
+        )
+        await conn.execute(
+            "UPDATE generation_tasks SET is_public_feed = TRUE, "
+            "feed_references_visible = TRUE, feed_reference_selection = %s WHERE id = %s",
+            (legacy_selection, tid),
+        )
+        cursor = await conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = 'generation_tasks' "
+            "AND column_name = 'feed_repeat_reference_selection'"
+        )
+        assert await cursor.fetchone() is None
+        await conn.commit()
+
+    # db_backend.connect() is the production pooled adapter entry point.
+    async with db_backend.connect() as db:
+        cursor = await db.execute(
+            "SELECT data_type, is_nullable, column_default FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = 'generation_tasks' "
+            "AND column_name = 'feed_repeat_reference_selection'"
+        )
+        column = await cursor.fetchone()
+        assert column is not None, "Adapter startup must add the private repeat permission column"
+        assert (column["data_type"], column["is_nullable"], column["column_default"]) == ("text", "YES", None)
+        cursor = await db.execute(
+            "SELECT feed_repeat_reference_selection, feed_reference_selection "
+            "FROM generation_tasks WHERE id = ?", (tid,),
+        )
+        row = await cursor.fetchone()
+        assert row["feed_repeat_reference_selection"] is None
+        assert row["feed_reference_selection"] == legacy_selection
+        explicit_grant = json.dumps({"images": ["https://example.test/explicit-private.png"]})
+        await db.execute(
+            "UPDATE generation_tasks SET feed_repeat_reference_selection = ? WHERE id = ?",
+            (explicit_grant, tid),
+        )
+        await db.execute(
+            "INSERT INTO generation_tasks(task_id, request_data) VALUES (?, ?)",
+            ("post-migration-no-grant", "{}"),
+        )
+        await db.commit()
+
+    # Fresh-process-equivalent helper startup must be idempotent and retain the
+    # explicit grant, without assigning a default grant to any other row.
+    await postgres_pool.close_postgres_pool()
+    monkeypatch.setattr(postgres_aiosqlite, "_HELPERS_READY", False)
+    async with db_backend.connect() as db:
+        cursor = await db.execute(
+            "SELECT feed_repeat_reference_selection FROM generation_tasks WHERE id = ?", (tid,),
+        )
+        assert (await cursor.fetchone())[0] == explicit_grant
+        cursor = await db.execute(
+            "SELECT feed_repeat_reference_selection FROM generation_tasks WHERE task_id = ?",
+            ("post-migration-no-grant",),
+        )
+        assert (await cursor.fetchone())[0] is None
+    payload = await database.get_generation_task_payload(tid)
+    assert database.generation_repeat_reference_selection(payload) == [
+        "https://example.test/explicit-private.png"
+    ]
