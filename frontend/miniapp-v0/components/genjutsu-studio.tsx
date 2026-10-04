@@ -2,6 +2,18 @@
 // Private expiring media bypasses external image optimization.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  ArrowLeftRight,
+  ChevronRight,
+  Clapperboard,
+  ImagePlus,
+  Layers3,
+  Plus,
+  Scissors,
+  Sparkles,
+  Video as VideoIcon,
+  WandSparkles,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   type Asset, type Bootstrap, type Operation, type Plan, type Preset, type Project,
@@ -10,9 +22,15 @@ import {
 } from '@/lib/genjutsu-api'
 import { GenjutsuAdmin } from './genjutsu-admin'
 
-const field = 'w-full rounded-xl border border-border bg-background px-3 py-2 text-sm'
-const section = 'rounded-2xl border border-border bg-card/60 p-4 space-y-3'
-const label = 'block space-y-1 text-sm text-muted-foreground'
+const field = 'w-full rounded-2xl border border-white/10 bg-white/[0.035] px-4 py-3 text-[15px] text-foreground outline-none transition focus:border-white/20 focus:bg-white/[0.055]'
+const section = 'rounded-[26px] border border-white/[0.08] bg-white/[0.025] p-4 space-y-3'
+const label = 'block space-y-2 text-[13px] font-medium text-muted-foreground'
+const uploadCard = 'flex min-h-[92px] w-full items-center gap-3 rounded-[22px] border border-dashed border-white/15 bg-white/[0.025] px-4 py-3 text-left transition active:scale-[0.995]'
+const operationCopy: Record<Operation, { title: string; description: string; example: string; icon: typeof Sparkles }> = {
+  motion_transfer: { title: 'Перенос движения', description: 'Сохраните движение и камеру, создайте новую сцену.', example: 'Новый образ', icon: Clapperboard },
+  object_swap: { title: 'Замена объектов', description: 'Замените героя, одежду, предмет или окружение.', example: 'Другой герой или предмет', icon: ArrowLeftRight },
+  restyle: { title: 'Стилизация', description: 'Измените визуальный стиль видео с готовым пресетом.', example: 'Новый стиль', icon: WandSparkles },
+}
 const terminal = new Set(['completed', 'failed', 'canceled', 'partial'])
 
 export function GenjutsuStudio({ initial = {}, onClose }: {
@@ -274,16 +292,21 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
 
   const blocked = Boolean(busy || saving)
   const shownPresets = presets.filter(p => (!favoritesOnly || favorites.includes(p.id)) && p.name.toLowerCase().includes(presetSearch.toLowerCase()))
+  const primaryStep = plan.steps[0]
+  const primaryCaps = bootstrap?.catalog[primaryStep?.operation]
 
-  return <section className="space-y-4" aria-label="Студия Genjutsu">
-    <header className="flex items-start justify-between gap-3">
-      <div><p className="text-xs uppercase tracking-widest text-gold">Higgsfield</p><h2 className="font-serif text-2xl">Genjutsu</h2><p className="text-sm text-muted-foreground">Движение, замены и стиль — в одной работе</p></div>
-      <Button variant="ghost" aria-label="Закрыть студию" disabled={blocked} onClick={() => void action('close', async () => { if (plan.source_asset_id && bootstrap?.enabled) await saveCurrent(); onClose() })}>Закрыть</Button>
+  return <section className="mx-auto w-full max-w-2xl space-y-5 pb-28" aria-label="Студия Genjutsu">
+    <header className="sticky top-0 z-20 -mx-2 flex items-center justify-between gap-3 border-b border-white/[0.06] bg-background/90 px-2 py-3 backdrop-blur-xl">
+      <div className="min-w-0">
+        <div className="flex items-center gap-2"><span className="inline-flex h-7 items-center rounded-full border border-white/10 bg-white/[0.035] px-2.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Higgsfield</span><span className="text-lg font-semibold tracking-tight">Genjutsu</span></div>
+        <p className="mt-1 truncate text-xs text-muted-foreground">Редактирование видео по референсам</p>
+      </div>
+      <Button className="rounded-full px-4" variant="ghost" aria-label="Закрыть студию" disabled={blocked} onClick={() => void action('close', async () => { if (plan.source_asset_id && bootstrap?.enabled) await saveCurrent(); onClose() })}>Закрыть</Button>
     </header>
-    <nav className="flex flex-wrap gap-2" aria-label="Разделы Genjutsu">
-      <Button variant={tab === 'editor' ? 'default' : 'outline'} onClick={() => setTab('editor')}>Создать</Button>
-      <Button variant={tab === 'history' ? 'default' : 'outline'} onClick={() => { setTab('history'); void refresh().catch(cause => setError(message(cause))) }}>Мои работы</Button>
-      {bootstrap?.is_admin && <Button variant={tab === 'admin' ? 'default' : 'outline'} onClick={() => setTab('admin')}>Управление</Button>}
+    <nav className="grid grid-cols-2 rounded-[22px] border border-white/[0.06] bg-white/[0.025] p-1" aria-label="Разделы Genjutsu">
+      <button type="button" className={`rounded-[18px] px-3 py-2.5 text-sm font-medium transition ${tab === 'editor' ? 'bg-white/10 text-foreground shadow-sm' : 'text-muted-foreground'}`} onClick={() => setTab('editor')}>Создать</button>
+      <button type="button" className={`rounded-[18px] px-3 py-2.5 text-sm font-medium transition ${tab === 'history' ? 'bg-white/10 text-foreground shadow-sm' : 'text-muted-foreground'}`} onClick={() => { setTab('history'); void refresh().catch(cause => setError(message(cause))) }}>Мои работы</button>
+      {bootstrap?.is_admin && <button type="button" className={`col-span-2 mt-1 rounded-[18px] px-3 py-2.5 text-sm font-medium transition ${tab === 'admin' ? 'bg-white/10 text-foreground shadow-sm' : 'text-muted-foreground'}`} onClick={() => setTab('admin')}>Управление</button>}
     </nav>
     {error && <div role="alert" className="rounded-xl border border-destructive/30 p-3 text-sm text-destructive">{error}</div>}
     <div aria-live="polite" className="text-xs text-muted-foreground">{busy ? 'Выполняется операция…' : saving ? 'Сохраняем черновик…' : notice}</div>
@@ -318,82 +341,104 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
           <Button disabled={blocked || !bootstrap.configured || (bootstrap.is_admin && !ack)} onClick={() => void action('start', start)}>Запустить тренд</Button>
         </div>}
       </div>}
-      {tab === 'editor' && !recipe && <>
-        <div className="flex flex-wrap gap-2"><Button disabled={blocked} variant="outline" onClick={() => void action('new', () => newWork())}>Новый проект</Button>
-          <label className="flex-1"><span className="sr-only">Открыть проект</span><select className={field} disabled={blocked} value={project?.id || ''} onChange={e => e.target.value && void action('open', () => openProject(e.target.value))}><option value="">Черновики и проекты</option>{bootstrap.projects.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}</select></label>
-        </div>
-        <fieldset className="space-y-4" disabled={!bootstrap.enabled || Boolean(busy)}>
-          <div className={section}>
+      {tab === 'editor' && !recipe && <div className="space-y-6">
+        <section className="space-y-3">
+          <div>
+            <h3 className="text-lg font-semibold tracking-tight">Что можно изменить</h3>
+            <p className="mt-1 text-sm text-muted-foreground">Выберите сценарий — остальные поля подстроятся автоматически.</p>
+          </div>
+          <div className="-mx-2 flex snap-x gap-3 overflow-x-auto px-2 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {(Object.keys(bootstrap.catalog) as Operation[]).map(op => {
+              const copy = operationCopy[op]
+              const Icon = copy.icon
+              const active = primaryStep.operation === op
+              return <button key={op} type="button" onClick={() => patchStep(0, { operation: op, preset_id: null })} className={`relative min-w-[178px] snap-start overflow-hidden rounded-[26px] border p-4 text-left transition active:scale-[0.99] ${active ? 'border-white/25 bg-white/[0.08]' : 'border-white/[0.08] bg-white/[0.025]'}`}>
+                <div className="absolute -right-5 -top-5 h-24 w-24 rounded-full bg-white/[0.04] blur-sm" />
+                <div className="relative flex h-28 flex-col justify-between">
+                  <span className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-white/[0.08]"><Icon className="h-5 w-5" /></span>
+                  <div><p className="text-sm font-semibold">{copy.example}</p><p className="mt-1 text-xs text-muted-foreground">{copy.title}</p></div>
+                </div>
+              </button>
+            })}
+          </div>
+        </section>
+
+        <section className="space-y-3">
+          <div className="grid grid-cols-3 rounded-[22px] border border-white/[0.06] bg-white/[0.025] p-1">
+            {(Object.keys(bootstrap.catalog) as Operation[]).map(op => <button key={op} type="button" className={`rounded-[18px] px-2 py-2.5 text-xs font-medium transition ${primaryStep.operation === op ? 'bg-white/10 text-foreground shadow-sm' : 'text-muted-foreground'}`} onClick={() => patchStep(0, { operation: op, preset_id: null })}>{op === 'motion_transfer' ? 'Движение' : op === 'object_swap' ? 'Замена' : 'Стиль'}</button>)}
+          </div>
+          <p className="px-1 text-sm text-muted-foreground">{operationCopy[primaryStep.operation].description}</p>
+          <label className="sr-only">Операция шага 1<select value={primaryStep.operation} onChange={e => patchStep(0, { operation: e.target.value as Operation, preset_id: null })}>{(Object.keys(bootstrap.catalog) as Operation[]).map(op => <option key={op} value={op}>{operationLabels[op]}</option>)}</select></label>
+        </section>
+
+        <details className="group rounded-[22px] border border-white/[0.06] bg-white/[0.02] px-4 py-3">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-medium"><span className="flex items-center gap-2"><Layers3 className="h-4 w-4 text-muted-foreground" />Проект и черновики</span><ChevronRight className="h-4 w-4 text-muted-foreground transition group-open:rotate-90" /></summary>
+          <div className="mt-4 space-y-3">
+            <div className="flex gap-2"><Button disabled={blocked} variant="outline" onClick={() => void action('new', () => newWork())}>Новый проект</Button>
+              <label className="min-w-0 flex-1"><span className="sr-only">Открыть проект</span><select className={field} disabled={blocked} value={project?.id || ''} onChange={e => e.target.value && void action('open', () => openProject(e.target.value))}><option value="">Черновики и проекты</option>{bootstrap.projects.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}</select></label></div>
             <label className={label}>Название работы<input className={field} value={title} maxLength={120} onChange={e => { setTitle(e.target.value); setQuote(null) }} /></label>
             {project && <p className="text-xs text-muted-foreground">Версия {project.revision} · изменения сохраняются автоматически</p>}
             {versions.length > 1 && <label className={label}>Восстановить версию<select className={field} value="" disabled={blocked} onChange={e => e.target.value && project && void action('restore', () => openProject(project.id, Number(e.target.value)))}><option value="">Выбрать сохранённую версию</option>{versions.map(v => <option key={v.revision} value={v.revision}>{v.revision}: {v.title}</option>)}</select></label>}
           </div>
-          <div className={section}>
-            <h3 className="font-medium">1. Исходное видео</h3>
-            <label className={label}>Загрузить видео<input type="file" accept="video/*" className={field} onChange={e => { const files = e.target.files; void action('upload', () => upload(files, 'video')); e.target.value = '' }} /></label>
+        </details>
+
+        <fieldset className="space-y-6" disabled={!bootstrap.enabled || Boolean(busy)}>
+          <section className="space-y-3">
+            <div className="flex items-end justify-between gap-3"><div><h3 className="font-semibold">Видео с нужным движением</h3><p className="mt-1 text-xs text-muted-foreground">{primaryCaps ? `${primaryCaps.minimum_video_ms / 1000}–${primaryCaps.maximum_video_ms / 1000} секунд` : 'Видео'}</p></div>{video && <span className="rounded-full bg-white/[0.06] px-2.5 py-1 text-xs text-muted-foreground">{((video.duration_ms || 0) / 1000).toFixed(1)} сек.</span>}</div>
+            <label className={uploadCard}>
+              <span className="inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-[18px] bg-white/[0.06]"><VideoIcon className="h-6 w-6" /></span>
+              <span className="min-w-0 flex-1"><span className="block font-medium">{video ? 'Заменить видео' : 'Добавить видео'}</span><span className="mt-1 block text-sm text-muted-foreground">MP4 или MOV</span></span>
+              <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/[0.07]"><Plus className="h-5 w-5" /></span>
+              <input type="file" accept="video/*" className="sr-only" onChange={e => { const files = e.target.files; void action('upload', () => upload(files, 'video')); e.target.value = '' }} />
+            </label>
             <label className={label}>Видео из библиотеки<select className={field} value={plan.source_asset_id} onChange={e => edit({ ...plan, source_asset_id: e.target.value })}><option value="">Выберите исходник</option>{assets.filter(a => a.kind === 'video').map(a => <option key={a.id} value={a.id}>Видео {a.id.slice(0, 6)} · {((a.duration_ms || 0) / 1000).toFixed(2)} с</option>)}</select></label>
-            {video && <><video key={video.url} src={video.url || undefined} controls playsInline preload="metadata" className="max-h-64 w-full rounded-xl bg-black" />
-              <p className="text-xs text-muted-foreground">Фактическая длительность: {((video.duration_ms || 0) / 1000).toFixed(3)} с. Выберите нужный фрагмент до расчёта цены.</p>
-              <div className="grid grid-cols-2 gap-2"><label className={label}>Начало, секунды<input className={field} type="number" step="0.001" min="0" value={trim.start} onChange={e => setTrim({ ...trim, start: e.target.value })} /></label><label className={label}>Конец, секунды<input className={field} type="number" step="0.001" value={trim.end} onChange={e => setTrim({ ...trim, end: e.target.value })} /></label></div>
-              <Button variant="outline" onClick={() => void action('trim', async () => {
-                const result = await genjutsuCall<{ asset: Asset }>('trim', { asset_id: video.id, start_ms: Math.round(Number(trim.start) * 1000), end_ms: Math.round(Number(trim.end) * 1000) })
-                setAssets(prev => [result.asset, ...prev]); edit({ ...plan, source_asset_id: result.asset.id })
-              })}>Подготовить фрагмент</Button>
-            </>}
-          </div>
-          {plan.steps.map((step, index) => {
+            {video && <div className="overflow-hidden rounded-[24px] border border-white/[0.08] bg-black"><video key={video.url} src={video.url || undefined} controls playsInline preload="metadata" className="max-h-[360px] w-full bg-black" /></div>}
+            {video && <details className="group rounded-[20px] border border-white/[0.06] bg-white/[0.02] px-4 py-3">
+              <summary className="flex cursor-pointer list-none items-center justify-between text-sm font-medium"><span className="flex items-center gap-2"><Scissors className="h-4 w-4 text-muted-foreground" />Выбрать фрагмент</span><ChevronRight className="h-4 w-4 text-muted-foreground transition group-open:rotate-90" /></summary>
+              <div className="mt-4 space-y-3"><p className="text-xs text-muted-foreground">Фактическая длительность: {((video.duration_ms || 0) / 1000).toFixed(3)} с.</p><div className="grid grid-cols-2 gap-2"><label className={label}>Начало, сек.<input className={field} type="number" step="0.001" min="0" value={trim.start} onChange={e => setTrim({ ...trim, start: e.target.value })} /></label><label className={label}>Конец, сек.<input className={field} type="number" step="0.001" value={trim.end} onChange={e => setTrim({ ...trim, end: e.target.value })} /></label></div>
+                <Button variant="outline" onClick={() => void action('trim', async () => { const result = await genjutsuCall<{ asset: Asset }>('trim', { asset_id: video.id, start_ms: Math.round(Number(trim.start) * 1000), end_ms: Math.round(Number(trim.end) * 1000) }); setAssets(prev => [result.asset, ...prev]); edit({ ...plan, source_asset_id: result.asset.id }) })}>Подготовить фрагмент</Button></div>
+            </details>}
+          </section>
+
+          {primaryCaps && <section className="space-y-3">
+            <div className="flex items-end justify-between gap-3"><div><h3 className="font-semibold">{primaryStep.operation === 'restyle' ? 'Фото персонажей' : 'Фото для новой сцены'}</h3><p className="mt-1 text-xs text-muted-foreground">{primaryStep.operation === 'restyle' ? 'Необязательно — можно стилизовать героев исходного видео' : 'Персонаж, одежда или предмет'}</p></div><span className="text-xs text-muted-foreground">{primaryStep.references.length}/{primaryCaps.max_images}</span></div>
+            <label className={uploadCard}>
+              <span className="inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-[18px] bg-white/[0.06]"><ImagePlus className="h-6 w-6" /></span>
+              <span className="min-w-0 flex-1"><span className="block font-medium">Добавить фото</span><span className="mt-1 block text-sm text-muted-foreground">До {primaryCaps.max_images} фотографий того, что хотите увидеть</span></span>
+              <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/[0.07]"><Plus className="h-5 w-5" /></span>
+              <input type="file" multiple accept="image/*" className="sr-only" onChange={e => { const files = e.target.files; void action('references', () => upload(files, 'image', 0)); e.target.value = '' }} />
+            </label>
+            <label className={label}>Добавить из моей библиотеки<select aria-label="Добавить референс к шагу 1" className={field} value="" onChange={e => { if (e.target.value) patchStep(0, { references: [...primaryStep.references, { asset_id: e.target.value, role: 'character', label: '', binding: 'user' as const }] }) }} disabled={primaryStep.references.length >= primaryCaps.max_images}><option value="">Выберите сохранённое фото</option>{assets.filter(a => a.kind === 'image' && !primaryStep.references.some(r => r.asset_id === a.id)).map(a => <option key={a.id} value={a.id}>Фото {a.id.slice(0, 8)}</option>)}</select></label>
+            {primaryStep.references.length > 0 && <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">{primaryStep.references.map((ref, refIndex) => { const asset = assets.find(a => a.id === ref.asset_id); return <div key={ref.asset_id} className="group relative aspect-square overflow-hidden rounded-[18px] border border-white/[0.08] bg-white/[0.03]">{asset?.url ? <img src={asset.url} alt={`Референс ${refIndex + 1}`} className="h-full w-full object-cover" /> : <span className="flex h-full items-center justify-center text-xs text-muted-foreground">Фото {refIndex + 1}</span>}<button type="button" aria-label={`Убрать референс ${refIndex + 1}`} className="absolute right-1.5 top-1.5 inline-flex h-7 w-7 items-center justify-center rounded-full bg-black/70 text-sm text-white" onClick={() => patchStep(0, { references: primaryStep.references.filter((_, i) => i !== refIndex) })}>×</button></div>})}</div>}
+            {primaryStep.references.length > 0 && <details className="group rounded-[20px] border border-white/[0.06] bg-white/[0.02] px-4 py-3"><summary className="flex cursor-pointer list-none items-center justify-between text-sm font-medium">Точно настроить референсы<ChevronRight className="h-4 w-4 text-muted-foreground transition group-open:rotate-90" /></summary><div className="mt-4 space-y-3">{primaryStep.references.map((ref, refIndex) => <div key={ref.asset_id} className="space-y-2 rounded-2xl border border-white/[0.06] p-3"><select aria-label={`Роль референса ${refIndex + 1} шага 1`} className={field} value={ref.role} onChange={e => patchStep(0, { references: primaryStep.references.map((r, i) => i === refIndex ? { ...r, role: e.target.value } : r) })}>{!primaryCaps.roles.includes(ref.role) && <option value={ref.role}>{roleLabels[ref.role]} — не поддерживается</option>}{primaryCaps.roles.map(role => <option key={role} value={role}>{roleLabels[role] || role}</option>)}</select>{bootstrap.is_admin && <label className={label}>В тренде<select className={field} value={ref.binding || 'user'} onChange={e => patchStep(0, { references: primaryStep.references.map((r, i) => i === refIndex ? { ...r, binding: e.target.value as 'user' | 'fixed' } : r) })}><option value="user">Пользователь заменяет</option><option value="fixed">Закреплённый референс</option></select></label>}<input aria-label={`Назначение референса ${refIndex + 1} шага 1`} className={field} maxLength={200} placeholder="Например: герой слева" value={ref.label} onChange={e => patchStep(0, { references: primaryStep.references.map((r, i) => i === refIndex ? { ...r, label: e.target.value } : r) })} /></div>)}</div></details>}
+            {(primaryStep.references.some(ref => !primaryCaps.roles.includes(ref.role)) || primaryStep.references.length > primaryCaps.max_images) && <p role="alert" className="text-sm text-destructive">Референсы сохранены, но не подходят выбранному режиму. Измените роли или количество.</p>}
+          </section>}
+
+          {primaryStep.operation === 'restyle' && <section className="space-y-3"><div><h3 className="font-semibold">Стиль</h3><p className="mt-1 text-xs text-muted-foreground">Выберите визуальный пресет</p></div><label className={label}>Поиск стиля<input className={field} value={presetSearch} onChange={e => setPresetSearch(e.target.value)} /></label><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={favoritesOnly} onChange={e => setFavoritesOnly(e.target.checked)} />Только избранные</label><div className="grid max-h-80 grid-cols-2 gap-2 overflow-auto sm:grid-cols-3">{shownPresets.map(p => <div key={p.id} className={`overflow-hidden rounded-[20px] border p-2 ${primaryStep.preset_id === p.id ? 'border-white/30 bg-white/[0.06]' : 'border-white/[0.08]'}`}><button type="button" aria-pressed={primaryStep.preset_id === p.id} className="w-full text-left text-xs" onClick={() => patchStep(0, { preset_id: p.id })}><img src={p.preview_url} alt="" loading="lazy" className="mb-2 aspect-video w-full rounded-[14px] object-cover" /><span className="font-medium">{p.name}</span></button><button type="button" className="mt-2 text-xs text-muted-foreground" onClick={() => favorite(p.id)}>{favorites.includes(p.id) ? '★ В избранном' : '☆ В избранное'}</button></div>)}</div>{!presets.length && <p className="text-sm text-muted-foreground">Каталог стилей пока недоступен.</p>}{primaryStep.preset_id && !presets.some(p => p.id === primaryStep.preset_id) && <p role="alert" className="text-sm text-destructive">Сохранённый стиль не найден. Выберите доступный стиль.</p>}</section>}
+
+          <section className="space-y-3">
+            <label className="block space-y-2"><span className="text-base font-semibold">Что изменить?</span><textarea className={`${field} min-h-[138px] resize-none`} rows={4} maxLength={primaryCaps?.max_prompt_length || 4000} value={primaryStep.prompt} onChange={e => patchStep(0, { prompt: e.target.value })} placeholder={primaryStep.operation === 'motion_transfer' ? 'Например, перенесите движения героя на персонажа с фото. Сохраните композицию и камеру.' : primaryStep.operation === 'object_swap' ? 'Например, замените одежду героя на образ с фото, сохранив лицо, позу и движение.' : 'Опишите желаемый стиль и то, что важно сохранить.'} /></label>
+          </section>
+
+          {primaryCaps && <section className="space-y-3">
+            <div className="flex items-center justify-between"><h3 className="font-semibold">Качество</h3><span className="text-xs text-muted-foreground">Длительность и формат — из видео</span></div>
+            <div className={`grid gap-1 rounded-[20px] border border-white/[0.06] bg-white/[0.025] p-1 ${primaryCaps.resolutions.length === 3 ? 'grid-cols-3' : primaryCaps.resolutions.length === 2 ? 'grid-cols-2' : 'grid-cols-1'}`}>{primaryCaps.resolutions.map(resolution => <button key={resolution} type="button" className={`rounded-[16px] px-3 py-3 text-sm font-medium transition ${primaryStep.resolution === resolution ? 'bg-white/10 text-foreground shadow-sm' : 'text-muted-foreground'}`} onClick={() => patchStep(0, { resolution })}>{resolution}</button>)}</div>
+            <label className="sr-only">Качество шага 1<select value={primaryStep.resolution} onChange={e => patchStep(0, { resolution: e.target.value })}>{primaryCaps.resolutions.map(v => <option key={v}>{v}</option>)}</select></label>
+          </section>}
+
+          <details className="group rounded-[22px] border border-white/[0.06] bg-white/[0.02] px-4 py-3"><summary className="flex cursor-pointer list-none items-center justify-between text-sm font-medium"><span className="flex items-center gap-2"><Sparkles className="h-4 w-4 text-muted-foreground" />Что сохранить и дополнительные настройки</span><ChevronRight className="h-4 w-4 text-muted-foreground transition group-open:rotate-90" /></summary><div className="mt-4 space-y-4"><label className={label}>Что сохранить<input className={field} maxLength={2000} value={primaryStep.preserve} onChange={e => patchStep(0, { preserve: e.target.value })} placeholder="Например: лицо, движение камеры и фон" /></label><label className={label}>Количество вариантов<input className={field} type="number" min={1} max={limit('max_variants', 1)} value={plan.variants} onChange={e => edit({ ...plan, variants: Number(e.target.value) })} /></label>{plan.steps.length > 1 && <label className={label}>Продолжение цепочки<select className={field} value={plan.continuation} onChange={e => edit({ ...plan, continuation: e.target.value as Plan['continuation'] })}><option value="automatic">Автоматически</option><option value="manual">Подтверждать следующий шаг</option></select></label>}<div className="flex flex-wrap gap-2"><Button variant="outline" disabled={blocked || !plan.source_asset_id} onClick={() => void action('save', async () => { await saveCurrent(); await refresh() })}>Сохранить проект</Button><Button variant="outline" disabled={plan.steps.length >= limit('max_steps', 1)} onClick={() => edit({ ...plan, steps: [...plan.steps, freshStep()] })}>Добавить шаг</Button></div>{bootstrap.is_admin && <div className="space-y-2 rounded-2xl border border-white/[0.06] p-3"><p className="text-sm font-medium">Рецепт для «Трендов»</p><p className="text-xs text-muted-foreground">Закреплённые refs остаются скрытыми от пользователя.</p><input className={field} value={recipeFieldLabels} onChange={e => setRecipeFieldLabels(e.target.value)} placeholder="Имя, Возраст, Надпись" /><Button type="button" variant="outline" disabled={blocked || !plan.source_asset_id} onClick={() => void action('publish-recipe', publishRecipe)}>Создать приватный рецепт</Button>{publishedRecipe && <p className="break-all text-xs">Рецепт готов: <strong>{publishedRecipe.id}</strong> · фото: {publishedRecipe.slots.length}{publishedRecipe.current_cost !== null ? ` · ${publishedRecipe.current_cost} 🍌` : ''}</p>}</div>}</div></details>
+
+          {plan.steps.slice(1).map((step, offset) => {
+            const index = offset + 1
             const caps = bootstrap.catalog[step.operation]
-            const incompatible = step.references.some(ref => !caps.roles.includes(ref.role)) || step.references.length > caps.max_images
-            return <div key={index} className={section}>
-              <div className="flex items-center justify-between"><h3 className="font-medium">Шаг {index + 1}</h3>{plan.steps.length > 1 && <Button size="sm" variant="ghost" onClick={() => edit({ ...plan, steps: plan.steps.filter((_, i) => i !== index) })}>Убрать шаг</Button>}</div>
-              <div className="grid gap-3 sm:grid-cols-2"><label className={label}>Операция шага {index + 1}<select className={field} value={step.operation} onChange={e => patchStep(index, { operation: e.target.value as Operation, preset_id: null })}>{(Object.keys(bootstrap.catalog) as Operation[]).map(op => <option key={op} value={op}>{operationLabels[op]}</option>)}</select></label>
-                <label className={label}>Качество шага {index + 1}<select className={field} value={step.resolution} onChange={e => patchStep(index, { resolution: e.target.value })}>{caps.resolutions.map(v => <option key={v}>{v}</option>)}</select></label></div>
-              <p className="text-xs text-muted-foreground">{index ? 'Источник — результат предыдущего шага.' : `Видео от ${caps.minimum_video_ms / 1000} до ${caps.maximum_video_ms / 1000} секунд.`} Референсы: {caps.min_images}–{caps.max_images}. У каждого шага своя стоимость.</p>
-              {step.operation === 'restyle' && <div className="space-y-2"><label className={label}>Поиск стиля<input className={field} value={presetSearch} onChange={e => setPresetSearch(e.target.value)} /></label>
-                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={favoritesOnly} onChange={e => setFavoritesOnly(e.target.checked)} />Только избранные стили</label>
-                <div className="grid max-h-64 grid-cols-2 gap-2 overflow-auto sm:grid-cols-3">{shownPresets.map(p => <div key={p.id} className={`rounded-xl border p-2 ${step.preset_id === p.id ? 'border-gold' : 'border-border'}`}><button type="button" aria-pressed={step.preset_id === p.id} className="w-full text-left text-xs" onClick={() => patchStep(index, { preset_id: p.id })}><img src={p.preview_url} alt="" loading="lazy" className="mb-1 aspect-video w-full rounded-lg object-cover" />{p.name}</button><button type="button" className="mt-1 text-xs text-gold" onClick={() => favorite(p.id)}>{favorites.includes(p.id) ? 'Убрать из избранного' : 'В избранное'}</button></div>)}</div>
-                {!presets.length && <p className="text-sm text-muted-foreground">Каталог стилей пока недоступен.</p>}
-                {step.preset_id && !presets.some(p => p.id === step.preset_id) && <p role="alert">Сохранённый стиль не найден. Выберите доступный стиль.</p>}
-                <p className="text-xs text-muted-foreground">Без фото стилизуются персонажи исходного видео. Фото здесь используются только как референсы персонажей, не как фон или пресет.</p>
-              </div>}
-              <label className={label}>Загрузить референсы к шагу {index + 1}<input type="file" multiple accept="image/*" className={field} onChange={e => { const files = e.target.files; void action('references', () => upload(files, 'image', index)); e.target.value = '' }} /></label>
-              <label className={label}>Добавить референс к шагу {index + 1}<select className={field} value="" onChange={e => { if (e.target.value) patchStep(index, { references: [...step.references, { asset_id: e.target.value, role: 'character', label: '', binding: 'user' as const }] }) }} disabled={step.references.length >= caps.max_images}><option value="">Из моей библиотеки</option>{assets.filter(a => a.kind === 'image' && !step.references.some(r => r.asset_id === a.id)).map(a => <option key={a.id} value={a.id}>Фото {a.id.slice(0, 8)}</option>)}</select></label>
-              {step.references.map((ref, refIndex) => {
-                const asset = assets.find(a => a.id === ref.asset_id)
-                return <div key={ref.asset_id} className="grid grid-cols-[48px_1fr] gap-2 rounded-xl border border-border p-2">
-                  {asset?.url ? <img src={asset.url} alt={`Референс ${refIndex + 1}`} className="h-12 w-12 rounded-lg object-cover" /> : <span className="text-xs">Фото {refIndex + 1}</span>}
-                  <div className="space-y-2"><select aria-label={`Роль референса ${refIndex + 1} шага ${index + 1}`} className={field} value={ref.role} onChange={e => patchStep(index, { references: step.references.map((r, i) => i === refIndex ? { ...r, role: e.target.value } : r) })}>{!caps.roles.includes(ref.role) && <option value={ref.role}>{roleLabels[ref.role]} — не поддерживается</option>}{caps.roles.map(r => <option key={r} value={r}>{roleLabels[r] || r}</option>)}</select>
-                    {bootstrap.is_admin && <label className={label}>В тренде<select className={field} value={ref.binding || 'user'} onChange={e => patchStep(index, { references: step.references.map((r, i) => i === refIndex ? { ...r, binding: e.target.value as 'user' | 'fixed' } : r) })}><option value="user">Пользователь заменяет</option><option value="fixed">Закреплённый референс</option></select></label>}
-                    <input aria-label={`Назначение референса ${refIndex + 1} шага ${index + 1}`} className={field} maxLength={200} placeholder="Например: герой слева; ещё одно фото того же героя" value={ref.label} onChange={e => patchStep(index, { references: step.references.map((r, i) => i === refIndex ? { ...r, label: e.target.value } : r) })} />
-                    <div className="flex gap-2"><Button size="sm" variant="outline" disabled={refIndex === 0} onClick={() => { const next = [...step.references]; [next[refIndex - 1], next[refIndex]] = [next[refIndex], next[refIndex - 1]]; patchStep(index, { references: next }) }}>Выше</Button><Button size="sm" variant="ghost" onClick={() => patchStep(index, { references: step.references.filter((_, i) => i !== refIndex) })}>Убрать</Button></div>
-                  </div>
-                </div>
-              })}
-              {incompatible && <p role="alert" className="text-sm text-destructive">Референсы сохранены, но не подходят новому режиму. Измените роли или количество перед запуском.</p>}
-              <label className={label}>Что изменить — шаг {index + 1}<textarea className={field} rows={3} maxLength={caps.max_prompt_length} value={step.prompt} onChange={e => patchStep(index, { prompt: e.target.value })} /></label>
-              <label className={label}>Что сохранить — шаг {index + 1}<textarea className={field} rows={2} maxLength={2000} value={step.preserve} onChange={e => patchStep(index, { preserve: e.target.value })} placeholder="Например: лицо, движение камеры и фон" /></label>
-            </div>
+            return <section key={index} className={section}><div className="flex items-center justify-between"><div><p className="text-xs text-muted-foreground">Дополнительный шаг {index + 1}</p><h3 className="font-medium">{operationLabels[step.operation]}</h3></div><Button size="sm" variant="ghost" onClick={() => edit({ ...plan, steps: plan.steps.filter((_, i) => i !== index) })}>Убрать</Button></div><div className="grid gap-3 sm:grid-cols-2"><label className={label}>Операция шага {index + 1}<select className={field} value={step.operation} onChange={e => patchStep(index, { operation: e.target.value as Operation, preset_id: null })}>{(Object.keys(bootstrap.catalog) as Operation[]).map(op => <option key={op} value={op}>{operationLabels[op]}</option>)}</select></label><label className={label}>Качество шага {index + 1}<select className={field} value={step.resolution} onChange={e => patchStep(index, { resolution: e.target.value })}>{caps.resolutions.map(v => <option key={v}>{v}</option>)}</select></label></div><label className={label}>Что изменить — шаг {index + 1}<textarea className={field} rows={3} value={step.prompt} onChange={e => patchStep(index, { prompt: e.target.value })} /></label></section>
           })}
-          <Button variant="outline" disabled={plan.steps.length >= limit('max_steps', 1)} onClick={() => edit({ ...plan, steps: [...plan.steps, freshStep()] })}>Добавить следующий шаг</Button>
-          <div className={section}>
-            <label className={label}>Количество вариантов<input className={field} type="number" min={1} max={limit('max_variants', 1)} value={plan.variants} onChange={e => edit({ ...plan, variants: Number(e.target.value) })} /></label>
-            {plan.steps.length > 1 && <label className={label}>Продолжение цепочки<select className={field} value={plan.continuation} onChange={e => edit({ ...plan, continuation: e.target.value as Plan['continuation'] })}><option value="automatic">Автоматически после каждого результата</option><option value="manual">Подтверждать следующий шаг</option></select></label>}
-            <p className="text-xs text-muted-foreground">Каждый вариант запускается отдельно. При сбое позднего шага предыдущие результаты сохраняются; возвращается резерв неуспешного и незапущенных шагов.</p>
-            <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={blocked || !plan.source_asset_id} onClick={() => void action('save', async () => { await saveCurrent(); await refresh() })}>Сохранить проект</Button><Button disabled={blocked || !plan.source_asset_id} onClick={() => void action('quote', getQuote)}>Рассчитать стоимость</Button></div>
-            {bootstrap.is_admin && <div className="mt-3 space-y-2 rounded-xl border border-border p-3"><p className="text-sm font-medium">Рецепт для «Трендов»</p><p className="text-xs text-muted-foreground">Для каждого фото выше выберите «Пользователь заменяет» или «Закреплённый референс». Дополнительные поля укажите названиями через запятую.</p><input className={field} value={recipeFieldLabels} onChange={e => setRecipeFieldLabels(e.target.value)} placeholder="Имя, Возраст, Надпись" /><Button type="button" variant="outline" disabled={blocked || !plan.source_asset_id} onClick={() => void action('publish-recipe', publishRecipe)}>Создать приватный рецепт</Button>{publishedRecipe && <p className="break-all text-xs">Рецепт готов: <strong>{publishedRecipe.id}</strong> · пользовательских фото: {publishedRecipe.slots.length}{publishedRecipe.current_cost !== null ? ` · сейчас ${publishedRecipe.current_cost} 🍌` : ''}</p>}</div>}
-          </div>
         </fieldset>
-        {quote && <div className="space-y-3 rounded-2xl border border-gold/40 bg-gold/5 p-4">
-          <h3 className="font-medium">Подтверждение запуска</h3>
-          <p>Резерв: <strong>{bootstrap.is_admin ? '0' : quote.total_credits} бананов</strong>{bootstrap.is_admin && <span className="text-sm text-muted-foreground"> · пользовательский тариф {quote.total_credits}</span>}</p>
-          <p className="text-xs text-muted-foreground">Действует до {new Date(quote.expires_ms).toLocaleTimeString()}. Сейчас на балансе {bootstrap.credits}.</p>
-          {quote.allocations.map(a => <div key={`${a.variant}:${a.ordinal}`} className="flex justify-between gap-2 text-sm"><span>Вариант {a.variant + 1}, шаг {a.ordinal + 1}: {operationLabels[a.operation]}{a.maximum_reserve ? ' · максимальный резерв' : ''}</span><span>{a.reserved_credits} 🍌</span></div>)}
-          {quote.allocations.some(a => a.maximum_reserve) && <p className="text-xs">Стоимость следующих шагов уточняется по фактическому входу. Неиспользованный резерв возвращается автоматически. Больше подтверждённой суммы не списывается.</p>}
-          {bootstrap.is_admin && <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={ack} onChange={e => setAck(e.target.checked)} />Подтверждаю платный запрос к Higgsfield. Бананы администратора не списываются, но провайдер расходует реальные средства.</label>}
-          <Button disabled={blocked || !bootstrap.enabled || !bootstrap.configured || (bootstrap.is_admin && !ack)} onClick={() => void action('start', start)}>Запустить</Button>
-          <p className="text-xs text-muted-foreground">При потере связи повтор этой кнопки использует тот же запуск, а не создаёт ещё одно списание.</p>
-        </div>}
-      </>}
+
+        {quote && <div className="space-y-3 rounded-[26px] border border-white/10 bg-white/[0.035] p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-xs text-muted-foreground">К запуску</p><h3 className="text-lg font-semibold">{bootstrap.is_admin ? 'Тестовый запуск' : `${quote.total_credits} бананов`}</h3></div><span className="text-xs text-muted-foreground">до {new Date(quote.expires_ms).toLocaleTimeString()}</span></div>{quote.allocations.map(a => <div key={`${a.variant}:${a.ordinal}`} className="flex justify-between gap-2 text-sm text-muted-foreground"><span>Вариант {a.variant + 1}, шаг {a.ordinal + 1}</span><span>{a.reserved_credits} 🍌</span></div>)}{bootstrap.is_admin && <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={ack} onChange={e => setAck(e.target.checked)} />Подтверждаю реальный расход в Higgsfield.</label>}<Button className="h-12 w-full rounded-2xl text-base" disabled={blocked || !bootstrap.enabled || !bootstrap.configured || (bootstrap.is_admin && !ack)} onClick={() => void action('start', start)}>Запустить</Button></div>}
+
+        {!quote && <div className="sticky bottom-3 z-10 rounded-[24px] border border-white/10 bg-background/90 p-2 shadow-2xl backdrop-blur-xl"><Button className="h-12 w-full rounded-[18px] text-base" disabled={blocked || !plan.source_asset_id} onClick={() => void action('quote', getQuote)}>Рассчитать стоимость</Button></div>}
+      </div>}
       {tab === 'history' && <div className="space-y-4">
         <div className="flex flex-wrap gap-2">{bootstrap.runs.map(item => <Button key={item.id} variant={run?.id === item.id ? 'default' : 'outline'} size="sm" disabled={blocked} onClick={() => void action('run', async () => { setRun((await genjutsuCall<{ run: Run }>('run', { run_id: item.id })).run) })}>{new Date(item.created_ms).toLocaleDateString()} · {statusLabels[item.state] || item.state} · {item.id.slice(0, 6)}</Button>)}</div>
         {!bootstrap.runs.length && !run && <p className={section}>Здесь появятся принятые задачи. Черновики доступны в разделе «Создать».</p>}
