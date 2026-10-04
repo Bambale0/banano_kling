@@ -1,3 +1,4 @@
+import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { TaskDetailPanel } from '@/components/task-detail-panel'
@@ -72,8 +73,12 @@ describe('TaskDetailPanel publication references', () => {
     } as unknown as ReturnType<typeof useApp>)
   })
 
-  it('lets a Seedance author exclude their face but publish outfit and video refs', async () => {
+  it('lets a Seedance author inspect refs, then exclude their face from publication', async () => {
     render(<TaskDetailPanel />)
+
+    expect(screen.getByRole('link', { name: 'Открыть фото-референс 1' })).toHaveAttribute('href', 'https://example.test/face.jpg')
+    expect(screen.getByLabelText('Видео-референс 1')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Открыть видео-референс 1' })).toHaveAttribute('href', 'https://example.test/motion.mp4')
 
     fireEvent.click(screen.getByRole('button', { name: /^Опубликовать$/i }))
     fireEvent.click(screen.getByRole('button', { name: /Рефы \(3\)/i }))

@@ -6763,14 +6763,36 @@ def _public_reference_urls(row: db_backend.Row, urls: Any) -> list[str]:
 
 
 def _feed_reference_image_candidates(request_data: dict[str, Any]) -> list[str]:
+    """Return owner-visible source images without losing legacy video frames.
+
+    Older Telegram video tasks stored the start image only as ``v_image_url``;
+    Seedance 2.5 stores first/last frames separately.  Keep the historical
+    reference_images indices stable by appending scalar frame aliases after the
+    list candidates instead of prepending them.
+    """
     source_refs = request_data.get("source_reference_images")
-    if isinstance(source_refs, list):
-        return _reference_url_candidates(source_refs)
-    return _reference_url_candidates(request_data.get("reference_images", []))
+    base = source_refs if isinstance(source_refs, list) else request_data.get("reference_images", [])
+    candidates = _reference_url_candidates(base)
+    for key in (
+        "v_image_url",
+        "first_frame_url",
+        "seedance25_first_frame_url",
+        "last_frame_url",
+        "seedance25_last_frame_url",
+    ):
+        value = str(request_data.get(key) or "").strip()
+        if value and value not in candidates:
+            candidates.append(value)
+    return candidates
 
 
 def _feed_reference_video_candidates(request_data: dict[str, Any]) -> list[str]:
-    return _reference_url_candidates(request_data.get("v_reference_videos", []))
+    candidates: list[str] = []
+    for key in ("v_reference_videos", "reference_videos", "video_references"):
+        for url in _reference_url_candidates(request_data.get(key, [])):
+            if url not in candidates:
+                candidates.append(url)
+    return candidates
 
 
 def _feed_reference_images(row: db_backend.Row, request_data: dict[str, Any]) -> list[str]:
@@ -6938,8 +6960,11 @@ def _generation_row_to_card(
     # A remix may contain reference URLs inherited from somebody else's
     # publication. They are never exposed through child cards, including to
     # the child owner: owning a result is not ownership of the original inputs.
+    # Raw source references are author-side provenance.  Public viewers may
+    # repeat with explicitly granted private inputs server-side, but must never
+    # receive the underlying image/video URLs in feed/profile payloads.
     references_allowed_for_viewer = bool(
-        references_visible and not is_remix
+        viewer_is_owner and references_visible and not is_remix
     )
     all_reference_images = _feed_reference_images(row, request_data)
     all_reference_videos = _feed_reference_videos(row, request_data)
@@ -6964,7 +6989,8 @@ def _generation_row_to_card(
     public_reference_videos = (
         selected_reference_videos if references_visible_for_viewer else []
     )
-    references_count = len(selected_reference_images) + len(selected_reference_videos)
+    selected_references_count = len(selected_reference_images) + len(selected_reference_videos)
+    references_count = len(public_reference_images) + len(public_reference_videos)
     preview_url = feed_urls[0] if feed_urls else ""
     if preview_url and str(row["type"]) == "image":
         try:
@@ -6999,7 +7025,7 @@ def _generation_row_to_card(
         "reference_videos": public_reference_videos,
         "references_count": references_count,
         "references_hidden": bool(
-            references_count and not references_visible_for_viewer
+            selected_references_count and not references_visible_for_viewer
         ),
         "author": author,
         "author_referral_code": (

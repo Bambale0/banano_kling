@@ -130,11 +130,12 @@ async def test_publication_visibility_controls_repeat_and_withdrawal(scope, lega
     source = await get_card(owner_card["id"], viewer_user_id=viewer.id)
     payload = await database.get_generation_task_payload(owner_card["id"])
     references, _ = miniapp._merge_remix_image_references(source, payload, [user_face])
-    expected = [user_face, hidden_face, selected_outfit] if legacy else [user_face, selected_outfit]
-    assert references == expected
+    # Publication visibility is display-only for the owner. Foreign viewers do
+    # not receive source URLs and therefore cannot inherit them client-side.
+    assert references == [user_face]
     assert miniapp._filter_foreign_feed_source_references(
-        source, payload, [hidden_face, *references], viewer_telegram_id=viewer.telegram_id
-    ) == ([hidden_face, user_face, selected_outfit] if legacy else [user_face, selected_outfit])
+        source, payload, [hidden_face, selected_outfit, *references], viewer_telegram_id=viewer.telegram_id
+    ) == [user_face]
 
     # Hiding references must override a previously stored selection/card.
     await database.share_to_feed(
@@ -169,7 +170,7 @@ async def test_publication_visibility_controls_repeat_and_withdrawal(scope, lega
     profile_refs, _ = miniapp._merge_remix_image_references(
         source, profile_payload, [user_face]
     )
-    assert profile_refs == expected
+    assert profile_refs == [user_face]
 
     assert await publication_scope.remove_publication(owner_card["id"], author.id)
     withdrawn_payload = await database.get_generation_task_payload(owner_card["id"])
@@ -248,3 +249,82 @@ async def test_foreign_repeat_does_not_inherit_references_through_legacy_child()
         card, payload, [user_reference, inherited_reference],
         viewer_telegram_id=viewer.telegram_id,
     ) == [user_reference]
+
+
+@pytest.mark.asyncio
+async def test_public_viewer_never_receives_raw_reference_urls_even_when_author_enables_them():
+    author = await database.get_or_create_user(830101)
+    viewer = await database.get_or_create_user(830102)
+    face = "https://example.test/private-face.png"
+    outfit = "https://example.test/private-outfit.png"
+    await database.add_generation_task(
+        author.id,
+        author.telegram_id,
+        "owner-visible-public-hidden-refs",
+        "image",
+        "banana_pro",
+        prompt="portrait",
+        request_data={"source_reference_images": [face, outfit]},
+    )
+    await database.complete_video_task(
+        "owner-visible-public-hidden-refs",
+        "https://example.test/result.png",
+    )
+    owner_card = await database.share_to_feed(
+        "owner-visible-public-hidden-refs",
+        author.id,
+        references_visible=True,
+        reference_image_indices=[0, 1],
+    )
+    assert owner_card is not None
+    assert owner_card["reference_images"] == [face, outfit]
+
+    public_card = await database.get_feed_generation_card(
+        owner_card["id"],
+        viewer_user_id=viewer.id,
+    )
+    assert public_card is not None
+    assert public_card["reference_images"] == []
+    assert public_card["reference_videos"] == []
+    assert public_card["references_count"] == 0
+    assert face not in json.dumps(public_card)
+    assert outfit not in json.dumps(public_card)
+
+
+@pytest.mark.asyncio
+async def test_video_owner_detail_recovers_legacy_start_image_and_video_references(monkeypatch):
+    from bot.handlers import publication_scope_compat as publication_scope
+
+    monkeypatch.setattr(miniapp, "DATABASE_PATH", database.DATABASE_PATH)
+    publication_scope._SCHEMA_READY_PATHS.discard(str(database.DATABASE_PATH))
+    await publication_scope._ensure_publication_scope_schema()
+    author = await database.get_or_create_user(830103)
+    start_image = "https://example.test/outfit.png"
+    motion_video = "https://example.test/motion.mp4"
+    await database.add_generation_task(
+        author.id,
+        author.telegram_id,
+        "legacy-video-reference-detail",
+        "video",
+        "seedance_2",
+        prompt="look",
+        request_data={
+            "reference_images": [],
+            "v_image_url": start_image,
+            "v_reference_videos": [motion_video],
+        },
+    )
+    await database.complete_video_task(
+        "legacy-video-reference-detail",
+        "https://example.test/result.mp4",
+    )
+
+    detail = await miniapp._fetch_task_detail(
+        author.telegram_id,
+        "legacy-video-reference-detail",
+    )
+    assert detail is not None
+    assert detail["publication_reference_images"] == [start_image]
+    assert detail["publication_reference_videos"] == [motion_video]
+    assert detail["publication_reference_image_indices"] == [0]
+    assert detail["publication_reference_video_indices"] == [0]
