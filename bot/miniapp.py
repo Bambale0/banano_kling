@@ -1374,12 +1374,19 @@ def _merge_remix_image_references(
     task_payload: dict[str, Any],
     submitted_references: list[str],
 ) -> tuple[list[str], int]:
-    """Keep explicitly published supporting refs while replacing identity refs."""
+    """Keep source refs only for their owner; foreign repeats are permission-only.
+
+    Public display consent must never double as provider-use consent. Foreign
+    viewers submit only their own inputs; any author-approved retained refs are
+    merged later from ``feed_repeat_reference_selection`` on the server.
+    """
     references = list(dict.fromkeys(submitted_references))
-    retained = _selected_published_image_references(task_payload, source_card)
-    for url in retained:
-        if url not in references:
-            references.append(url)
+    retained: list[str] = []
+    if source_card.get("is_mine"):
+        retained = _selected_published_image_references(task_payload, source_card)
+        for url in retained:
+            if url not in references:
+                references.append(url)
 
     if (
         not references
@@ -1423,16 +1430,10 @@ def _filter_foreign_feed_source_references(
         # Provider contact sheets can contain the hidden originals even though
         # the publication's canonical source list excludes those derivatives.
         source_references.update(str(url or "").strip() for url in provider_references)
-    published_source_references = set(
-        _selected_published_image_references(task_payload, source_card)
-    )
     filtered: list[str] = []
     for item in references:
         url = str(item or "").strip()
         if not url or url in filtered:
-            continue
-        if url in published_source_references:
-            filtered.append(url)
             continue
         owner_telegram_id = _reference_upload_owner_telegram_id(url)
         if url in source_references:

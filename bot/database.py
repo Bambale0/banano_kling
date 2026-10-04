@@ -6788,7 +6788,12 @@ def _feed_reference_image_candidates(request_data: dict[str, Any]) -> list[str]:
 
 def _feed_reference_video_candidates(request_data: dict[str, Any]) -> list[str]:
     candidates: list[str] = []
-    for key in ("v_reference_videos", "reference_videos", "video_references"):
+    for key in (
+        "v_reference_videos",
+        "reference_videos",
+        "reference_video_urls",
+        "video_references",
+    ):
         for url in _reference_url_candidates(request_data.get(key, [])):
             if url not in candidates:
                 candidates.append(url)
@@ -6917,22 +6922,22 @@ async def cleanup_public_feed_limits(*, force: bool = False) -> dict[str, int]:
 
 
 def _author_display_name(row: db_backend.Row) -> str:
-    username = ""
-    if "author_username" in row.keys() and row["author_username"]:
-        username = str(row["author_username"]).strip().lstrip("@")
+    username = str(_generation_attr(row, "author_username", "") or "").strip().lstrip("@")
     if username:
         return f"@{username}"
 
     name_parts = []
     for key in ("author_first_name", "author_last_name"):
-        if key in row.keys() and row[key]:
-            name_parts.append(str(row[key]).strip())
+        value = _generation_attr(row, key)
+        if value:
+            name_parts.append(str(value).strip())
     display_name = " ".join(part for part in name_parts if part)
     if display_name:
         return display_name
 
-    if "author_telegram_id" in row.keys() and row["author_telegram_id"]:
-        return f"user_{row['author_telegram_id']}"
+    telegram_id = _generation_attr(row, "author_telegram_id")
+    if telegram_id:
+        return f"user_{telegram_id}"
     return f"user_{row['user_id']}"
 
 
@@ -6960,9 +6965,9 @@ def _generation_row_to_card(
     # A remix may contain reference URLs inherited from somebody else's
     # publication. They are never exposed through child cards, including to
     # the child owner: owning a result is not ownership of the original inputs.
-    # Raw source references are author-side provenance.  Public viewers may
-    # repeat with explicitly granted private inputs server-side, but must never
-    # receive the underlying image/video URLs in feed/profile payloads.
+    # Source refs are owner-side provenance. Public viewers may repeat with
+    # separately granted private inputs server-side, but never receive raw
+    # source image/video URLs through feed or profile payloads.
     references_allowed_for_viewer = bool(
         viewer_is_owner and references_visible and not is_remix
     )
@@ -6979,6 +6984,8 @@ def _generation_row_to_card(
         if selection is not None
         else all_reference_videos
     )
+    selected_references_count = len(selected_reference_images) + len(selected_reference_videos)
+
     references_visible_for_viewer = bool(
         references_allowed_for_viewer
         and (selected_reference_images or selected_reference_videos)
@@ -6989,7 +6996,6 @@ def _generation_row_to_card(
     public_reference_videos = (
         selected_reference_videos if references_visible_for_viewer else []
     )
-    selected_references_count = len(selected_reference_images) + len(selected_reference_videos)
     references_count = len(public_reference_images) + len(public_reference_videos)
     preview_url = feed_urls[0] if feed_urls else ""
     if preview_url and str(row["type"]) == "image":

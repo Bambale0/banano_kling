@@ -105,7 +105,9 @@ async def test_hidden_grant_used_only_in_provider_payload(monkeypatch, endpoint,
     assert launch.await_args.kwargs["private_repeat_reference_images"] == [outfit]
     assert outfit not in response.text and face not in response.text
     assert outfit not in caplog.text and face not in caplog.text
-    assert miniapp.touch_saved_references.await_args.args[1] == ([viewer, outfit] if published else [viewer])
+    # Foreign source refs stay server-side even when the author also chose to
+    # display them publicly; only the viewer's own upload enters their library.
+    assert miniapp.touch_saved_references.await_args.args[1] == [viewer]
 
 
 @pytest.mark.asyncio
