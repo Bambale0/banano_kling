@@ -443,15 +443,15 @@ export function TaskDetailPanel() {
                   statusColor="text-gold"
                 />
                 <InfoItem
-                  label="Референсы"
-                  value={`${taskDetail.request_data?.reference_images?.length || 0}`}
+                  label="Фото-референсы"
+                  value={`${publicationReferenceImages.length}`}
                 />
-                {taskDetail.request_data?.v_reference_videos && (
+                {taskDetail.type === 'video' || publicationReferenceVideos.length > 0 ? (
                   <InfoItem
                     label="Видео-референсы"
-                    value={`${taskDetail.request_data.v_reference_videos.length}`}
+                    value={`${publicationReferenceVideos.length}`}
                   />
-                )}
+                ) : null}
                 {taskDetail.duration && (
                   <InfoItem 
                     label="Длительность" 
@@ -496,24 +496,53 @@ export function TaskDetailPanel() {
                 </p>
               </div>
 
-              {/* References */}
-              {taskDetail.request_data?.reference_images && taskDetail.request_data.reference_images.length > 0 && (
+              {/* Owner/admin reference inspection. Public cards never receive these raw URLs. */}
+              {referenceCount > 0 ? (
                 <div>
-                  <h3 className="text-sm font-medium text-foreground mb-2">
-                    Референсы ({taskDetail.request_data.reference_images.length})
+                  <h3 className="mb-2 text-sm font-medium text-foreground">
+                    Референсы ({referenceCount})
                   </h3>
                   <div className="flex gap-2 overflow-x-auto pb-2">
-                    {taskDetail.request_data.reference_images.map((url, i) => (
-                      <div 
-                        key={i}
-                        className="w-20 h-20 rounded-xl overflow-hidden flex-shrink-0 bg-secondary/50"
+                    {publicationReferenceImages.map((url, index) => (
+                      <a
+                        key={`detail-image-${publicationReferenceImageIndices[index] ?? index}`}
+                        href={url}
+                        target="_blank"
+                        rel="noreferrer"
+                        aria-label={`Открыть фото-референс ${index + 1}`}
+                        className="h-20 w-20 flex-shrink-0 overflow-hidden rounded-xl bg-secondary/50"
                       >
-                        <img src={url} alt="" className="w-full h-full object-cover" />
+                        <img src={url} alt="" className="h-full w-full object-cover" />
+                      </a>
+                    ))}
+                    {publicationReferenceVideos.map((url, index) => (
+                      <div
+                        key={`detail-video-${publicationReferenceVideoIndices[index] ?? index}`}
+                        className="w-32 flex-shrink-0 overflow-hidden rounded-xl bg-secondary/50"
+                      >
+                        <video
+                          src={url}
+                          muted
+                          playsInline
+                          controls
+                          preload="metadata"
+                          aria-label={`Видео-референс ${index + 1}`}
+                          className="h-20 w-full bg-black object-cover"
+                        />
+                        <a
+                          href={url}
+                          target="_blank"
+                          rel="noreferrer"
+                          aria-label={`Открыть видео-референс ${index + 1}`}
+                          className="block px-2 py-1 text-center text-[10px] text-cyan"
+                        >
+                          Открыть
+                        </a>
                       </div>
                     ))}
                   </div>
                 </div>
-              )}
+              ) : null}
 
               {/* Actions */}
               {taskDetail.status === 'completed' && taskDetail.result_url && (
