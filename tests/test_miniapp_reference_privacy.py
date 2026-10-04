@@ -130,8 +130,9 @@ async def test_publication_visibility_controls_repeat_and_withdrawal(scope, lega
     source = await get_card(owner_card["id"], viewer_user_id=viewer.id)
     payload = await database.get_generation_task_payload(owner_card["id"])
     references, _ = miniapp._merge_remix_image_references(source, payload, [user_face])
-    # Publication visibility is display-only for the owner. Foreign viewers do
-    # not receive source URLs and therefore cannot inherit them client-side.
+    # Foreign viewers never receive source URLs. Repeat consent is resolved
+    # separately on the server and cannot be inferred from publication display.
+    assert source["reference_images"] == []
     assert references == [user_face]
     assert miniapp._filter_foreign_feed_source_references(
         source, payload, [hidden_face, selected_outfit, *references], viewer_telegram_id=viewer.telegram_id
@@ -328,3 +329,53 @@ async def test_video_owner_detail_recovers_legacy_start_image_and_video_referenc
     assert detail["publication_reference_videos"] == [motion_video]
     assert detail["publication_reference_image_indices"] == [0]
     assert detail["publication_reference_video_indices"] == [0]
+
+
+@pytest.mark.asyncio
+async def test_curated_trend_references_stay_private_for_foreign_viewers():
+    author = await database.get_or_create_user(830104)
+    viewer = await database.get_or_create_user(830105)
+    start_image = "https://example.test/user-face-trend.png"
+    outfit = "https://example.test/secret-outfit-trend.png"
+    motion = "https://example.test/secret-motion-trend.mp4"
+    await database.add_generation_task(
+        author.id,
+        author.telegram_id,
+        "curated-private-trend-card",
+        "video",
+        "seedance_2",
+        action_type="trend",
+        request_data={
+            "v_image_url": start_image,
+            "reference_images": [outfit],
+            "v_reference_videos": [motion],
+            "fixed_asset_counts": {"image": 1, "video": 1, "audio": 0},
+        },
+    )
+    await database.complete_video_task(
+        "curated-private-trend-card",
+        "https://example.test/trend-result.mp4",
+    )
+    owner_card = await database.share_to_feed(
+        "curated-private-trend-card",
+        author.id,
+        references_visible=True,
+        reference_image_indices=[0, 1],
+        reference_video_indices=[0],
+    )
+    assert owner_card is not None
+    assert set(owner_card["reference_images"]) == {start_image, outfit}
+    assert owner_card["reference_videos"] == [motion]
+
+    public_card = await database.get_feed_generation_card(
+        owner_card["id"], viewer_user_id=viewer.id
+    )
+    assert public_card is not None
+    assert public_card["reference_images"] == []
+    assert public_card["reference_videos"] == []
+    assert public_card["references_count"] == 0
+    assert public_card["references_hidden"] is True
+    serialized = json.dumps(public_card)
+    assert start_image not in serialized
+    assert outfit not in serialized
+    assert motion not in serialized

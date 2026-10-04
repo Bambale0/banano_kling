@@ -91,7 +91,7 @@ async def test_own_profile_remix_keeps_selected_outfit_after_face_upload(monkeyp
     assert source_face not in launch.await_args.kwargs["reference_images"]
 
 
-def test_foreign_remix_restores_only_explicitly_selected_source_references():
+def test_foreign_remix_never_restores_display_only_source_references():
     submitted = ["https://example.test/user-face.png"]
     outfit = "https://example.test/outfit.png"
     hidden_face = "https://example.test/source-face.png"
@@ -115,14 +115,14 @@ def test_foreign_remix_restores_only_explicitly_selected_source_references():
         submitted,
     )
 
-    assert references == [*submitted, outfit]
-    assert retained_count == 1
+    assert references == submitted
+    assert retained_count == 0
     assert miniapp._filter_foreign_feed_source_references(
         card,
         task_payload,
-        [hidden_face, *references],
+        [hidden_face, outfit, *references],
         viewer_telegram_id=123,
-    ) == [*submitted, outfit]
+    ) == submitted
 
 
 @pytest.mark.asyncio
@@ -173,6 +173,8 @@ async def test_foreign_remix_obeys_visibility_before_launch(monkeypatch, referen
     response = await route(_Request(body))
 
     assert response.status == 500
-    expected = [user_face, retained_outfit] if references_visible else [user_face]
+    # Visibility controls preview only. Foreign repeats never inherit source
+    # inputs unless the author granted them separately via private repeat consent.
+    expected = [user_face]
     assert launch.await_args.kwargs["reference_images"] == expected
     assert miniapp.touch_saved_references.await_args.args[1] == expected
