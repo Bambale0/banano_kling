@@ -4766,6 +4766,15 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
         audio_references = list(body.get("audio_references", []) or [])
         if not audio_url and audio_references:
             audio_url = str(audio_references[0] or "") or None
+        private_repeat_image_refs = set(
+            _clean_unique_values(body.get("_private_repeat_reference_images", []))
+        ) if source_feed_gen_id else set()
+        private_repeat_video_refs = set(
+            _clean_unique_values(body.get("_private_repeat_reference_videos", []))
+        ) if source_feed_gen_id else set()
+        private_repeat_audio_refs = set(
+            _clean_unique_values(body.get("_private_repeat_reference_audios", []))
+        ) if source_feed_gen_id else set()
         grok_mode = str(body.get("grok_mode", "normal") or "normal")
         grok_resolution = str(body.get("grok_resolution", "480p") or "480p")
         veo_generation_type = str(
@@ -5001,13 +5010,19 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
                 status=400,
             )
 
-        if image_url:
+        if image_url and image_url not in private_repeat_image_refs:
             await touch_saved_references(telegram_id, [image_url], kind="image")
-        if image_references:
-            await touch_saved_references(telegram_id, image_references, kind="image")
-        if video_references:
-            await touch_saved_references(telegram_id, video_references, kind="video")
-        if audio_url:
+        client_image_references = [
+            url for url in image_references if url not in private_repeat_image_refs
+        ]
+        if client_image_references:
+            await touch_saved_references(telegram_id, client_image_references, kind="image")
+        client_video_references = [
+            url for url in video_references if url not in private_repeat_video_refs
+        ]
+        if client_video_references:
+            await touch_saved_references(telegram_id, client_video_references, kind="video")
+        if audio_url and audio_url not in private_repeat_audio_refs:
             await touch_saved_references(telegram_id, [audio_url], kind="audio")
 
         pricing_quality = _video_pricing_quality(
