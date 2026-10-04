@@ -19,6 +19,7 @@ import {
 } from '@/lib/api'
 import { toast } from 'sonner'
 import { copyTextToClipboard } from '@/lib/clipboard'
+import { normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
 import { SeedanceTrendPublisher } from '@/components/seedance-trend-publisher'
 
 const EMPTY_REFERENCE_URLS: string[] = []
@@ -503,25 +504,27 @@ export function TaskDetailPanel() {
                     Референсы ({referenceCount})
                   </h3>
                   <div className="flex gap-2 overflow-x-auto pb-2">
-                    {publicationReferenceImages.map((url, index) => (
-                      <a
+                    {publicationReferenceImages.map((url, index) => {
+                      const mediaUrl = normalizeMiniAppMediaUrl(url)
+                      return <a
                         key={`detail-image-${publicationReferenceImageIndices[index] ?? index}`}
-                        href={url}
+                        href={mediaUrl}
                         target="_blank"
                         rel="noreferrer"
                         aria-label={`Открыть фото-референс ${index + 1}`}
                         className="h-20 w-20 flex-shrink-0 overflow-hidden rounded-xl bg-secondary/50"
                       >
-                        <img src={url} alt="" className="h-full w-full object-cover" />
+                        <img src={mediaUrl} alt="" className="h-full w-full object-cover" />
                       </a>
-                    ))}
-                    {publicationReferenceVideos.map((url, index) => (
-                      <div
+                    })}
+                    {publicationReferenceVideos.map((url, index) => {
+                      const mediaUrl = normalizeMiniAppMediaUrl(url)
+                      return <div
                         key={`detail-video-${publicationReferenceVideoIndices[index] ?? index}`}
                         className="w-32 flex-shrink-0 overflow-hidden rounded-xl bg-secondary/50"
                       >
                         <video
-                          src={url}
+                          src={videoPreviewFrameUrl(mediaUrl)}
                           muted
                           playsInline
                           controls
@@ -530,7 +533,7 @@ export function TaskDetailPanel() {
                           className="h-20 w-full bg-black object-cover"
                         />
                         <a
-                          href={url}
+                          href={mediaUrl}
                           target="_blank"
                           rel="noreferrer"
                           aria-label={`Открыть видео-референс ${index + 1}`}
@@ -539,7 +542,7 @@ export function TaskDetailPanel() {
                           Открыть
                         </a>
                       </div>
-                    ))}
+                    })}
                   </div>
                 </div>
               ) : null}
@@ -659,9 +662,10 @@ export function TaskDetailPanel() {
                         {publicationReferenceImages.map((url, index) => {
                           const sourceIndex = publicationReferenceImageIndices[index]
                           const selected = selectedReferenceImages.has(sourceIndex)
+                          const mediaUrl = normalizeMiniAppMediaUrl(url)
                           return (
                             <div key={`image-${index}`} className={cn('relative h-20 w-20 shrink-0 overflow-hidden rounded-lg border', selected ? 'border-cyan/50' : 'border-border/40 opacity-45')}>
-                              <img src={url} alt={`Фото-референс ${index + 1}`} className="h-full w-full object-cover" />
+                              <img src={mediaUrl} alt={`Фото-референс ${index + 1}`} className="h-full w-full object-cover" />
                               <button
                                 type="button"
                                 aria-label={`${selected ? 'Исключить' : 'Вернуть'} фото-референс ${index + 1}`}
@@ -676,9 +680,10 @@ export function TaskDetailPanel() {
                         {publicationReferenceVideos.map((url, index) => {
                           const sourceIndex = publicationReferenceVideoIndices[index]
                           const selected = selectedReferenceVideos.has(sourceIndex)
+                          const mediaUrl = normalizeMiniAppMediaUrl(url)
                           return (
                             <div key={`video-${index}`} className={cn('relative h-20 w-28 shrink-0 overflow-hidden rounded-lg border bg-secondary/60', selected ? 'border-cyan/50' : 'border-border/40 opacity-45')}>
-                              <video src={url} aria-label={`Видео-референс ${index + 1}`} muted playsInline className="h-full w-full object-cover" />
+                              <video src={videoPreviewFrameUrl(mediaUrl)} aria-label={`Видео-референс ${index + 1}`} muted playsInline preload="metadata" className="h-full w-full object-cover" />
                               <button
                                 type="button"
                                 aria-label={`${selected ? 'Исключить' : 'Вернуть'} видео-референс ${index + 1}`}
@@ -712,6 +717,7 @@ export function TaskDetailPanel() {
                           {publicationReferenceImages.map((url, index) => {
                             const sourceIndex = publicationReferenceImageIndices[index]
                             const selected = selectedRepeatReferenceImages.has(sourceIndex)
+                            const mediaUrl = normalizeMiniAppMediaUrl(url)
                             return (
                               <button
                                 key={`repeat-image-${sourceIndex}`}
@@ -726,7 +732,7 @@ export function TaskDetailPanel() {
                                   selected ? 'border-cyan' : 'border-border/50',
                                 )}
                               >
-                                <img src={url} alt="" className="h-full w-full object-cover" />
+                                <img src={mediaUrl} alt="" className="h-full w-full object-cover" />
                                 <span className={cn(
                                   'absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full border bg-background/90',
                                   selected ? 'border-cyan text-cyan' : 'border-border text-muted-foreground',
