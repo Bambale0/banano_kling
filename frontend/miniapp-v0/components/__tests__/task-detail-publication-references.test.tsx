@@ -92,4 +92,42 @@ describe('TaskDetailPanel publication references', () => {
       referenceVideoIndices: [0],
     }))
   })
+
+  it('normalizes local upload refs to the Mini App origin for WebView previews', () => {
+    mockedUseApp.mockReturnValue({
+      state: { user: { isAdmin: false } },
+      taskDetail: {
+        task_id: 'seedance-task',
+        type: 'video',
+        model: 'seedance_2',
+        model_label: 'Seedance 2',
+        aspect_ratio: '16:9',
+        status: 'completed',
+        result_url: 'https://example.test/result.mp4',
+        created_at: '2026-10-04T11:49:55Z',
+        prompt_preview: 'look',
+        prompt: 'look',
+        cost: 0,
+        publication_reference_images: [
+          'https://tanyapi.chillcreative.ru/uploads/refs/image/8166443943/202610/ref.png',
+        ],
+        publication_reference_videos: [
+          'https://tanyapi.chillcreative.ru/uploads/refs/video/8166443943/202610/ref.mp4',
+        ],
+      },
+      isTaskDetailOpen: true,
+      closeTaskDetail: jest.fn(),
+      updateTask: jest.fn(),
+    } as unknown as ReturnType<typeof useApp>)
+
+    render(<TaskDetailPanel />)
+
+    const expectedImage = `${window.location.origin}/uploads/refs/image/8166443943/202610/ref.png`
+    const expectedVideo = `${window.location.origin}/uploads/refs/video/8166443943/202610/ref.mp4`
+    const imageLink = screen.getByRole('link', { name: 'Открыть фото-референс 1' })
+    expect(imageLink).toHaveAttribute('href', expectedImage)
+    expect(imageLink.querySelector('img')).toHaveAttribute('src', expectedImage)
+    expect(screen.getByRole('link', { name: 'Открыть видео-референс 1' })).toHaveAttribute('href', expectedVideo)
+    expect(screen.getByLabelText('Видео-референс 1')).toHaveAttribute('src', expect.stringContaining(expectedVideo))
+  })
 })
