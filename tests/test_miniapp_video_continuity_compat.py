@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from bot.handlers.miniapp_video_continuity_compat import (
     _video_remix_link,
     enrich_video_repeat_body,
@@ -281,3 +283,168 @@ def test_seedance25_first_last_repeat_uses_two_new_photos_as_frames() -> None:
     assert restored["seedance25_scenario"] == "first_last"
     assert restored["seedance25_first_frame_url"] == "https://example.test/user-first.jpg"
     assert restored["seedance25_last_frame_url"] == "https://example.test/user-last.jpg"
+
+
+def test_seedance25_repeat_preserves_only_author_selected_reference_slots() -> None:
+    face = "https://example.test/face.png"
+    cake = "https://example.test/cake.png"
+    outfit = "https://example.test/outfit.png"
+    car = "https://example.test/car.png"
+    viewer = "https://example.test/viewer.png"
+    source_task = {
+        "type": "video",
+        "status": "completed",
+        "prompt": "Image1 person with Image2 cake, Image3 outfit and Image4 car",
+        "model": "seedance_2_5",
+        "duration": 10,
+        "aspect_ratio": "9:16",
+        "is_public_feed": True,
+        "feed_references_visible": True,
+        "feed_reference_selection": {"images": [cake, outfit, car], "videos": []},
+        "request_data": {
+            "v_type": "video",
+            "seedance25_scenario": "multimodal",
+            "reference_images": [face, cake, outfit, car],
+            "v_reference_videos": [],
+        },
+    }
+
+    restored = enrich_video_repeat_body(
+        {
+            "v_model": "seedance_2_5",
+            "source_feed_gen_id": 291846,
+            "reference_images": [viewer],
+        },
+        source_task,
+    )
+
+    assert restored["seedance25_scenario"] == "multimodal"
+    assert restored["reference_images"] == [viewer, cake, outfit, car]
+    assert face not in restored["reference_images"]
+    assert restored["_private_repeat_reference_images"] == [cake, outfit, car]
+
+
+def test_video_repeat_does_not_restore_unselected_publication_refs_without_replacement() -> None:
+    face = "https://example.test/face.png"
+    outfit = "https://example.test/outfit.png"
+    source_task = {
+        "type": "video",
+        "status": "completed",
+        "prompt": "Image1 person Image2 outfit",
+        "model": "seedance_2",
+        "duration": 5,
+        "aspect_ratio": "9:16",
+        "is_public_feed": True,
+        "feed_references_visible": True,
+        "feed_reference_selection": {"images": [outfit], "videos": []},
+        "request_data": {
+            "v_type": "video",
+            "reference_images": [face, outfit],
+        },
+    }
+
+    restored = enrich_video_repeat_body(
+        {
+            "v_model": "seedance_2",
+            "source_feed_gen_id": 42,
+            "reference_images": [],
+        },
+        source_task,
+    )
+
+    assert face not in restored.get("reference_images", [])
+    assert outfit not in restored.get("reference_images", [])
+    assert restored.get("_private_repeat_reference_images", []) == []
+
+
+@pytest.mark.asyncio
+async def test_generic_video_repeat_keeps_private_author_refs_out_of_viewer_library(monkeypatch) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from bot import miniapp
+
+    viewer = "https://example.test/viewer.png"
+    private_outfit = "https://example.test/private-outfit.png"
+    body = {
+        "init_data": "signed",
+        "source_feed_gen_id": 42,
+        "v_model": "seedance_2",
+        "v_type": "imgtxt",
+        "prompt": "repeat",
+        "v_duration": 5,
+        "v_ratio": "9:16",
+        "v_image_url": viewer,
+        "reference_images": [viewer, private_outfit],
+        "_private_repeat_reference_images": [private_outfit],
+    }
+    monkeypatch.setattr(
+        miniapp,
+        "_get_user_context",
+        AsyncMock(return_value=(700003, {"user": SimpleNamespace(id=503, credits=100)})),
+    )
+    monkeypatch.setattr(
+        miniapp,
+        "_get_repeat_source_card",
+        AsyncMock(return_value={"id": 42, "gen_type": "video", "model": "seedance_2"}),
+    )
+    monkeypatch.setattr(
+        miniapp,
+        "get_generation_task_payload",
+        AsyncMock(return_value={"prompt": "repeat", "request_data": {}}),
+    )
+    monkeypatch.setattr(miniapp, "missing_local_upload_sources", lambda _refs: [])
+    touch = AsyncMock()
+    monkeypatch.setattr(miniapp, "touch_saved_references", touch)
+    monkeypatch.setattr(miniapp.config, "is_admin", lambda _telegram_id: True)
+    launch = AsyncMock(return_value={"status": "failed", "error": "synthetic"})
+    monkeypatch.setattr(miniapp, "_launch_video_generation_task", launch)
+
+    response = await miniapp.miniapp_generate_video(
+        SimpleNamespace(app={}, json=AsyncMock(return_value=body))
+    )
+
+    assert response.status == 500
+    assert launch.await_args.kwargs["image_url"] == viewer
+    assert private_outfit in launch.await_args.kwargs["image_references"]
+    touched = [
+        url
+        for call in touch.await_args_list
+        for url in call.args[1]
+    ]
+    assert viewer in touched
+    assert private_outfit not in touched
+
+
+def test_video_repeat_preserves_selected_video_reference_slots() -> None:
+    source_motion = "https://example.test/source-motion.mp4"
+    author_style = "https://example.test/author-style.mp4"
+    viewer_motion = "https://example.test/viewer-motion.mp4"
+    source_task = {
+        "type": "video",
+        "status": "completed",
+        "prompt": "Video1 motion Video2 style",
+        "model": "seedance_2",
+        "duration": 5,
+        "aspect_ratio": "9:16",
+        "is_public_feed": True,
+        "feed_references_visible": True,
+        "feed_reference_selection": {"images": [], "videos": [author_style]},
+        "request_data": {
+            "v_type": "video",
+            "v_reference_videos": [source_motion, author_style],
+        },
+    }
+
+    restored = enrich_video_repeat_body(
+        {
+            "v_model": "seedance_2",
+            "source_feed_gen_id": 43,
+            "v_reference_videos": [viewer_motion],
+        },
+        source_task,
+    )
+
+    assert restored["v_reference_videos"] == [viewer_motion, author_style]
+    assert source_motion not in restored["v_reference_videos"]
+    assert restored["_private_repeat_reference_videos"] == [author_style]

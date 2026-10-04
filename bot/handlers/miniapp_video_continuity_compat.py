@@ -127,6 +127,69 @@ def _missing(value: Any) -> bool:
     return value is None or value == "" or value == []
 
 
+def _publication_repeat_selection(source_task: dict[str, Any]) -> dict[str, list[str]] | None:
+    """Return the author's explicit visible ref selection for server-side reuse.
+
+    Presence of ``feed_reference_selection`` switches modern publications to
+    fail-closed semantics: only refs the author explicitly opened in the
+    publication may be retained in another user's repeat. Older publications
+    without that field keep the legacy exact-repeat behavior.
+    """
+    raw = source_task.get("feed_reference_selection")
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {"images": [], "videos": []}
+    if not isinstance(raw, dict) or not source_task.get("feed_references_visible"):
+        return {"images": [], "videos": []}
+
+    result: dict[str, list[str]] = {}
+    for kind in ("images", "videos"):
+        values = raw.get(kind)
+        result[kind] = _clean_list(values) if isinstance(values, (list, tuple, set)) else []
+    return result
+
+
+def _merge_selected_reference_slots(
+    source_values: list[str],
+    selected_values: list[str],
+    explicit_values: list[str],
+) -> tuple[list[str], list[str]]:
+    """Keep selected source refs on their original numbered slots.
+
+    Unselected slots before the last retained source ref must be replaced by
+    viewer-supplied media. If there are not enough replacements we deliberately
+    fall back to the viewer's explicit refs and retain no private source media,
+    rather than shifting ImageN/VideoN bindings or reusing an unselected ref.
+    """
+    selected_set = set(selected_values)
+    retained = [value for value in source_values if value in selected_set]
+    if not retained:
+        return _clean_list(explicit_values), []
+
+    retained_set = set(retained)
+    replacements = [
+        value for value in _clean_list(explicit_values)
+        if value not in retained_set
+    ]
+    last_retained = max(index for index, value in enumerate(source_values) if value in retained_set)
+    replacement_iter = iter(replacements)
+    merged: list[str] = []
+    for value in source_values[: last_retained + 1]:
+        if value in retained_set:
+            merged.append(value)
+            continue
+        replacement = next(replacement_iter, None)
+        if replacement is None:
+            return _clean_list(explicit_values), []
+        merged.append(replacement)
+    merged.extend(replacement_iter)
+    return _clean_list(merged), retained
+
+
 def _source_id(body: dict[str, Any]) -> int | None:
     raw = body.get("source_feed_gen_id") or body.get("sourceFeedGenId")
     return int(raw) if str(raw or "").isdigit() else None
@@ -201,17 +264,70 @@ def enrich_video_repeat_body(
             normalized["v_image_url"] = requested_images[0]
             normalized["reference_images"] = requested_images[1:]
 
+    publication_selection = _publication_repeat_selection(source_task)
+    private_reference_images: list[str] = []
+    private_reference_videos: list[str] = []
+    private_reference_audios: list[str] = []
+
     for target, aliases in _REPEAT_LIST_ALIASES.items():
-        if not _clean_list(normalized.get(target)):
-            restored = _first_list(request_data, aliases)
-            if restored:
-                normalized[target] = restored
+        restored = _first_list(request_data, aliases)
+        if publication_selection is not None and target in {"reference_images", "v_reference_videos"}:
+            if target == "reference_images":
+                merged, retained = _merge_selected_reference_slots(
+                    restored,
+                    publication_selection["images"],
+                    explicit_reference_images,
+                )
+                private_reference_images = retained
+            else:
+                merged, retained = _merge_selected_reference_slots(
+                    restored,
+                    publication_selection["videos"],
+                    explicit_reference_videos,
+                )
+                private_reference_videos = retained
+            if merged:
+                normalized[target] = merged
+            else:
+                normalized.pop(target, None)
+            continue
+
+        if not _clean_list(normalized.get(target)) and restored:
+            normalized[target] = restored
+            if target == "reference_images":
+                private_reference_images = restored
+            elif target == "v_reference_videos":
+                private_reference_videos = restored
+            elif target == "seedance25_reference_audio_urls":
+                private_reference_audios = restored
 
     for target, aliases in _REPEAT_SCALAR_ALIASES.items():
         if _missing(normalized.get(target)):
             restored = _first_value(request_data, aliases)
             if restored is not None:
                 normalized[target] = restored
+                restored_text = str(restored or "").strip()
+                if restored_text and target in {
+                    "v_image_url",
+                    "seedance25_first_frame_url",
+                    "seedance25_last_frame_url",
+                } and restored_text not in private_reference_images:
+                    private_reference_images.append(restored_text)
+                if restored_text and target == "audio_url" and restored_text not in private_reference_audios:
+                    private_reference_audios.append(restored_text)
+
+    if private_reference_images:
+        normalized["_private_repeat_reference_images"] = private_reference_images
+    else:
+        normalized.pop("_private_repeat_reference_images", None)
+    if private_reference_videos:
+        normalized["_private_repeat_reference_videos"] = private_reference_videos
+    else:
+        normalized.pop("_private_repeat_reference_videos", None)
+    if private_reference_audios:
+        normalized["_private_repeat_reference_audios"] = private_reference_audios
+    else:
+        normalized.pop("_private_repeat_reference_audios", None)
 
     if _missing(normalized.get("audio_url")):
         audio_urls = _clean_list(normalized.get("seedance25_reference_audio_urls"))
@@ -259,9 +375,12 @@ def enrich_video_repeat_body(
             or explicit_audio_references
         ):
             normalized["seedance25_scenario"] = "multimodal"
-            if explicit_reference_images:
+            # ``reference_images`` / ``v_reference_videos`` may already contain
+            # the server-side slot-preserving merge above. Do not overwrite that
+            # with only the browser-visible refs.
+            if explicit_reference_images and publication_selection is None:
                 normalized["reference_images"] = explicit_reference_images
-            if explicit_reference_videos:
+            if explicit_reference_videos and publication_selection is None:
                 normalized["v_reference_videos"] = explicit_reference_videos
             if explicit_audio_references:
                 normalized["seedance25_reference_audio_urls"] = explicit_audio_references
