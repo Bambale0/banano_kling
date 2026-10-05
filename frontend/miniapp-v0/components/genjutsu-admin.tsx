@@ -12,10 +12,18 @@ const labels: Record<string, string> = {
   input_url_ttl_seconds: 'Срок ссылки для провайдера, с', preview_url_ttl_seconds: 'Срок ссылки предпросмотра, с', presets_ttl_seconds: 'Кеш стилей, с',
   unknown_review_seconds: 'Порог неизвестной отправки, с', max_quote_credits: 'Максимальный резерв, бананы',
   provider_retry_deadline_seconds: 'Дедлайн повторов провайдера/хранилища, с',
+  notification_max_attempts: 'Попыток уведомления', notification_retry_deadline_seconds: 'Срок повторов уведомления, с',
   upload_video_bytes: 'Максимум видео, байты', upload_image_bytes: 'Максимум изображения, байты', upload_audio_bytes: 'Максимум аудио, байты',
   result_max_bytes: 'Максимум результата, байты', max_source_duration_ms: 'Максимальная загрузка видео, мс',
   owner_storage_bytes: 'Хранилище пользователя, байты', total_storage_bytes: 'Общее хранилище, байты',
   max_parallel_uploads: 'Параллельных загрузок пользователя', media_parallelism: 'Параллельных обработок медиа',
+}
+
+const notificationLabels: Record<string, string> = {
+  failed: 'Заголовок ошибки', canceled: 'Заголовок отмены', partial: 'Заголовок частичного результата',
+  moderation: 'Причина: модерация', provider_failure: 'Причина: ошибка провайдера',
+  technical_failure: 'Причина: техническая ошибка', canceled_steps: 'Остановленные шаги',
+  no_charge: 'Без списания', refund: 'Возврат на баланс', charge: 'Итоговое списание', details: 'Подробности работы',
 }
 
 export function GenjutsuAdmin({ onChanged }: { onChanged: () => Promise<unknown> }) {
@@ -30,6 +38,8 @@ export function GenjutsuAdmin({ onChanged }: { onChanged: () => Promise<unknown>
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+
+  const notificationTemplates = settings?.notification_templates as Record<string, string> | undefined
 
   async function act(work: () => Promise<void>) {
     setBusy(true); setError(''); setNotice('')
@@ -66,6 +76,11 @@ export function GenjutsuAdmin({ onChanged }: { onChanged: () => Promise<unknown>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={settings.verified_operations.includes(op)} onChange={e => setSettings({ ...settings, verified_operations: e.target.checked ? [...settings.verified_operations, op] : settings.verified_operations.filter(v => v !== op) })} />Режим проверен</label>
       </section>)}
       <details><summary className="cursor-pointer text-sm">Лимиты и параметры восстановления</summary><div className="mt-3 grid gap-3 sm:grid-cols-2">{Object.entries(settings).filter(([key, value]) => typeof value === 'number' && labels[key]).map(([key, value]) => <label key={key} className="text-xs text-muted-foreground">{labels[key]}<input type="number" step={1} className={field} value={Number(value)} onChange={e => setSettings({ ...settings, [key]: Number(e.target.value) })} /></label>)}</div></details>
+      {notificationTemplates && <details>
+        <summary className="cursor-pointer text-sm">Тексты уведомлений</summary>
+        <p className="mt-2 text-xs text-muted-foreground">Обычный текст, до 300 символов на поле. Условия показа и суммы определяет сервер. В возврате сохраните {'{refunded_credits}'}, в итоговом списании — {'{charged_credits}'}, по одному разу. Другие подстановки не поддерживаются.</p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">{Object.entries(notificationLabels).map(([key, label]) => <label key={key} className="text-xs text-muted-foreground">{label}<textarea aria-label={label} className={field} rows={3} maxLength={300} value={notificationTemplates[key] ?? ''} onChange={e => setSettings({ ...settings, notification_templates: { ...notificationTemplates, [key]: e.target.value } })} /></label>)}</div>
+      </details>}
       <Button onClick={() => void act(async () => {
         await genjutsuCall('save_settings', { settings, expected_version: version }); await load(); await onChanged(); setNotice('Настройки сохранены')
       })}>Сохранить настройки</Button>

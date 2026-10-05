@@ -5,6 +5,7 @@ import copy
 import hashlib
 import json
 import re
+import unicodedata
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -50,11 +51,42 @@ def text(value: Any, limit: int, code: str) -> str:
     return value
 
 
+# These keys and substitutions are a closed protocol, not configurable policy.
+NOTIFICATION_TEMPLATE_FIELDS = {
+    'failed': None, 'canceled': None, 'partial': None,
+    'moderation': None, 'provider_failure': None, 'technical_failure': None,
+    'canceled_steps': None, 'no_charge': None, 'details': None,
+    'refund': '{refunded_credits}', 'charge': '{charged_credits}',
+}
+
+
+def validate_notification_templates(raw: Any) -> dict[str, str]:
+    code = 'invalid_notification_templates'
+    if not isinstance(raw, dict) or set(raw) != set(NOTIFICATION_TEMPLATE_FIELDS):
+        raise PipelineError(code)
+    for key, placeholder in NOTIFICATION_TEMPLATE_FIELDS.items():
+        value = raw[key]
+        if (not isinstance(value, str) or not value.strip()
+                or any(unicodedata.category(char).startswith('C') and char != '\n' for char in value)):
+            raise PipelineError(code)
+        # Count like the browser's maxLength, bounding even astral emoji.
+        # At most eight lines are selected, safely below Telegram's text limit.
+        if len(value.encode('utf-16-le')) // 2 > 300:
+            raise PipelineError(code)
+        if placeholder is not None and value.count(placeholder) != 1:
+            raise PipelineError(code)
+        literal = value.replace(placeholder, '') if placeholder is not None else value
+        if '{' in literal or '}' in literal:
+            raise PipelineError(code)
+    return dict(raw)
+
+
 def validate_settings(raw: Mapping[str, Any]) -> dict[str, Any]:
     defaults = default_settings()
     object_fields(raw, set(defaults), 'invalid_settings')
     data = copy.deepcopy(defaults)
     data.update(copy.deepcopy(raw))
+    data['notification_templates'] = validate_notification_templates(data['notification_templates'])
     for key in ('public_enabled', 'admin_enabled'):
         if type(data[key]) is not bool:
             raise PipelineError('invalid_settings')
@@ -69,6 +101,8 @@ def validate_settings(raw: Mapping[str, Any]) -> dict[str, Any]:
         'preview_url_ttl_seconds': (300, 86400), 'presets_ttl_seconds': (30, 3600),
         'unknown_review_seconds': (60, 86400), 'max_quote_credits': (1, 1000000),
         'provider_retry_deadline_seconds': (300, 86400),
+        'notification_max_attempts': (1, 20),
+        'notification_retry_deadline_seconds': (60, 86400),
         'upload_video_bytes': (1024, 209715200), 'upload_image_bytes': (1024, 67108864),
         'upload_audio_bytes': (1024, 67108864), 'result_max_bytes': (1024, 536870912),
         'max_source_duration_ms': (30000, 3600000),

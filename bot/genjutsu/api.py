@@ -19,8 +19,25 @@ from .provider import ProviderFailure, request_id
 
 logger = logging.getLogger(__name__)
 
+# Never copy an arbitrary request action into diagnostic logs.
+KNOWN_ACTIONS = frozenset({
+    'availability', 'bootstrap', 'presets', 'save_project', 'project', 'versions',
+    'trim', 'import', 'quote', 'start', 'run', 'cancel', 'continue', 'redeliver',
+    'settings', 'save_settings', 'admin_runs', 'admin_refund', 'admin_reconcile',
+    'admin_adopt', 'events', 'recipe_get', 'recipe_costs', 'recipe_list',
+    'recipe_publish', 'recipe_archive', 'recipe_quote', 'upload', 'callback',
+})
+
 # Stable codes are also consumed by the Mini App. Raw provider errors are never returned.
 MESSAGES = {
+    'invalid_notification_templates': 'Проверьте тексты уведомлений и обязательные поля в фигурных скобках.',
+    'invalid_title': 'Введите название проекта от 1 до 120 символов.',
+    'invalid_reference_count': 'Проверьте количество фото-референсов для выбранного режима: добавьте недостающие или удалите лишние фото.',
+    'reference_required': 'Добавьте фото-референс для выбранного режима.',
+    'reference_unavailable': 'Фото-референс недоступен. Загрузите его заново.',
+    'asset_unavailable': 'Один из исходных файлов недоступен. Загрузите видео или фото заново.',
+    'duplicate_reference': 'Одно фото добавлено несколько раз. Удалите повторный референс.',
+    'preset_required': 'Выберите стиль для обработки видео.',
     'integration_not_configured': '\u0418\u043d\u0442\u0435\u0433\u0440\u0430\u0446\u0438\u044f Genjutsu \u0435\u0449\u0451 \u043d\u0435 \u043d\u0430\u0441\u0442\u0440\u043e\u0435\u043d\u0430.',
     'feature_disabled': 'Genjutsu \u043f\u043e\u043a\u0430 \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u0435\u043d \u0434\u043b\u044f \u043d\u043e\u0432\u044b\u0445 \u0437\u0430\u043f\u0443\u0441\u043a\u043e\u0432.',
     'price_not_configured': '\u0410\u0434\u043c\u0438\u043d\u0438\u0441\u0442\u0440\u0430\u0442\u043e\u0440 \u0435\u0449\u0451 \u043d\u0435 \u0437\u0430\u0434\u0430\u043b \u0446\u0435\u043d\u0443 \u044d\u0442\u043e\u0439 \u043e\u043f\u0435\u0440\u0430\u0446\u0438\u0438.',
@@ -131,7 +148,7 @@ class API:
         return result
 
     @staticmethod
-    def error(exc: Exception) -> web.Response:
+    def error(exc: Exception, *, action=None) -> web.Response:
         if isinstance(exc, PipelineError):
             code, status = exc.code, exc.status
         elif isinstance(exc, ProviderFailure):
@@ -140,12 +157,19 @@ class API:
             code, status = 'unauthorized', 403
         else:
             code, status = 'internal_error', 500
-            logger.error('genjutsu_api_error', extra={'error_type':type(exc).__name__})
+        safe_action = action if isinstance(action, str) and action in KNOWN_ACTIONS else 'unknown'
+        logger.log(
+            logging.ERROR if status >= 500 else logging.WARNING,
+            'genjutsu_api_error action=%s code=%s status=%s error_type=%s',
+            safe_action, code, status, type(exc).__name__,
+            extra={'action':safe_action, 'code':code, 'status':status, 'error_type':type(exc).__name__},
+        )
         message = MESSAGES.get(code, '\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0432\u044b\u043f\u043e\u043b\u043d\u0438\u0442\u044c \u043e\u043f\u0435\u0440\u0430\u0446\u0438\u044e. \u041f\u0440\u043e\u0432\u0435\u0440\u044c\u0442\u0435 \u0432\u0445\u043e\u0434\u043d\u044b\u0435 \u0434\u0430\u043d\u043d\u044b\u0435 \u0438\u043b\u0438 \u043e\u0431\u0440\u0430\u0442\u0438\u0442\u0435\u0441\u044c \u0432 \u043f\u043e\u0434\u0434\u0435\u0440\u0436\u043a\u0443.')
         return web.json_response({'ok':False,'code':code,'error':message}, status=status,
                                  headers={'Cache-Control':'no-store'})
 
     async def handle(self, request):
+        action = None
         try:
             body = await self.body(request)
             owner, admin = await self.authenticate(request, body)
@@ -157,9 +181,9 @@ class API:
             data = await self.dispatch(owner, admin, action, body)
             return web.json_response({'ok':True, **data}, headers={'Cache-Control':'no-store'})
         except (ValueError, TypeError, KeyError) as exc:
-            return self.error(exc if isinstance(exc, PipelineError) else PipelineError('invalid_request'))
+            return self.error(exc if isinstance(exc, PipelineError) else PipelineError('invalid_request'), action=action)
         except Exception as exc:  # noqa: BLE001 - HTTP boundary maps unknown failures safely.
-            return self.error(exc)
+            return self.error(exc, action=action)
 
     async def dispatch(self, owner, admin, action, body):
         repo, pipeline = self.repository, self.pipeline
@@ -177,7 +201,7 @@ class API:
                 'configured':pipeline.configured, 'provider_ready':pipeline.provider.configured,
                 'media_ready':pipeline.media.configured,
                 'enabled':settings['admin_enabled' if admin else 'public_enabled'],
-                'limits':{k:v for k,v in settings.items() if k not in ('prices','public_enabled','admin_enabled')},
+                'limits':{k:v for k,v in settings.items() if k not in ('prices','public_enabled','admin_enabled','notification_templates')},
                 'config_version':version, 'credits':float(await repo.balance(owner)),
                 'projects':await repo.list_projects(owner), 'runs':await repo.list_runs(owner),
                 'assets':[self.public_asset(a,settings) for a in await repo.list_assets(owner)]}
@@ -195,7 +219,22 @@ class API:
             project_id = self.ident(body,'project_id')
             if self.recipes and await self.recipes.is_private_project(project_id):
                 raise PipelineError('project_unavailable', status=404)
-            return {'project':await repo.get_project(owner,project_id,body.get('revision'))}
+            project = await repo.get_project(owner,project_id,body.get('revision'))
+            source_asset = None
+            source_id = project['plan'].get('source_asset_id')
+            if isinstance(source_id, str) and source_id:
+                try:
+                    assets = await repo.get_assets(owner, {source_id})
+                except PipelineError as exc:
+                    # Saved drafts remain repairable when the source is missing or foreign.
+                    if exc.code != 'asset_unavailable':
+                        raise
+                else:
+                    asset = assets[source_id]
+                    if asset['kind'] == 'video':
+                        source_asset = {key:asset[key] for key in ('id','kind','duration_ms')
+                                        if key in asset and asset[key] is not None}
+            return {'project':project, 'source_asset':source_asset}
         if action == 'versions':
             self.fields(body, {'project_id'})
             project_id = self.ident(body,'project_id')
@@ -312,9 +351,9 @@ class API:
             return web.json_response({'ok':True,'asset':self.public_asset(asset,(await self.repository.settings())[0])},
                                      headers={'Cache-Control':'no-store'})
         except (ValueError,TypeError) as exc:
-            return self.error(exc if isinstance(exc,PipelineError) else PipelineError('invalid_upload'))
+            return self.error(exc if isinstance(exc,PipelineError) else PipelineError('invalid_upload'), action='upload')
         except Exception as exc:  # noqa: BLE001 - upload boundary must not leak internals.
-            return self.error(exc)
+            return self.error(exc, action='upload')
 
     async def media(self, request):
         aid = request.match_info['asset_id']
@@ -343,4 +382,4 @@ class API:
             await self.repository.wake_step(sid,attempt,rid)
             return web.json_response({'ok':True})
         except (PipelineError,ProviderFailure) as exc:
-            return self.error(exc)
+            return self.error(exc, action='callback')

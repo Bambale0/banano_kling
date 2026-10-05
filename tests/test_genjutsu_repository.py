@@ -49,7 +49,7 @@ async def build_repo(tmp_path, credits=100):
     return repo, connect
 
 
-async def make_quote(repo):
+async def make_quote(repo, *, variants=1, steps=1):
     source = await repo.add_asset(101, "video", "a" * 32 + ".mp4", {
         "duration_ms": 5_000, "size_bytes": 100, "mime": "video/mp4",
     })
@@ -64,9 +64,10 @@ async def make_quote(repo):
             "references": [{"asset_id": ref["id"], "role": "character", "label": ""}],
             "preset_id": None,
         }],
-        "variants": 1,
+        "variants": variants,
         "continuation": "automatic",
     }
+    draft["steps"] *= steps
     project = await repo.save_project(101, "race", draft)
     settings, version = await repo.settings()
     owned = await repo.get_assets(101, {source["id"], ref["id"]})

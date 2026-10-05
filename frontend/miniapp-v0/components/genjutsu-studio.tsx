@@ -9,7 +9,6 @@ import {
   ImagePlus,
   Layers3,
   Plus,
-  Scissors,
   Sparkles,
   Video as VideoIcon,
   WandSparkles,
@@ -21,6 +20,7 @@ import {
   operationLabels, roleLabels, statusLabels, uploadGenjutsu,
 } from '@/lib/genjutsu-api'
 import { GenjutsuAdmin } from './genjutsu-admin'
+import { GenjutsuVideoRange, fullVideoRange, inspectVideoRange, videoSeconds, type VideoRange } from './genjutsu-video-range'
 
 const field = 'w-full rounded-2xl border border-white/10 bg-white/[0.035] px-4 py-3 text-[15px] text-foreground outline-none transition focus:border-white/20 focus:bg-white/[0.055]'
 const section = 'rounded-[26px] border border-white/[0.08] bg-white/[0.025] p-4 space-y-3'
@@ -53,7 +53,8 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
   const [error, setError] = useState('')
   const [tab, setTab] = useState<'editor' | 'history' | 'admin'>(initial.admin ? 'admin' : 'editor')
   const [versions, setVersions] = useState<{ revision: number; title: string }[]>([])
-  const [trim, setTrim] = useState({ start: '0', end: '5' })
+  const [trim, setTrim] = useState<(VideoRange & { assetId: string }) | null>(null)
+  const inputRevision = useRef(0)
   const [ack, setAck] = useState(false)
   const [compare, setCompare] = useState(false)
   const [recipe, setRecipe] = useState<Recipe | null>(null)
@@ -69,12 +70,24 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
   const pendingSave = useRef<Promise<Project> | null>(null)
   const alive = useRef(true)
   const video = assets.find(a => a.id === plan.source_asset_id)
+  const sourceVideo = recipe ? recipeSource : video
+  const sourceCapability = bootstrap?.catalog[recipe?.steps[0]?.operation || plan.steps[0]?.operation]
+  const selectedRange = trim?.assetId === sourceVideo?.id ? trim : fullVideoRange(sourceVideo)
+  const rangeState = inspectVideoRange(sourceVideo, selectedRange || fullVideoRange(sourceVideo), sourceCapability)
+  const missingSource = Boolean(!recipe && plan.source_asset_id && !sourceVideo)
+  const rangeNeedsAction = missingSource || Boolean(sourceVideo && (rangeState.error || rangeState.changed))
   const needsPolling = Boolean(run && ((run.state !== 'review' && !terminal.has(run.state)) || run.steps.some(s => ['pending', 'sending'].includes(s.delivery_status || ''))))
   const limit = (key: string, fallback: number) => Number(bootstrap?.limits[key] ?? fallback)
 
   const refresh = useCallback(async () => {
     const value = await genjutsuCall<Bootstrap>('bootstrap')
-    if (alive.current) { setBootstrap(value); setAssets(value.assets) }
+    if (alive.current) {
+      setBootstrap(value)
+      setAssets(previous => {
+        const active = previous.find(asset => asset.id === current.current.plan.source_asset_id)
+        return active && !value.assets.some(asset => asset.id === active.id) ? [...value.assets, active] : value.assets
+      })
+    }
     return value
   }, [])
 
@@ -177,7 +190,30 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run?.id, needsPolling])
 
-  function edit(next: Plan) { setPlan(next); setQuote(null); setAck(false); setError('') }
+  function invalidateQuote() { inputRevision.current += 1; setQuote(null); setAck(false) }
+  function edit(next: Plan) {
+    if (next.source_asset_id !== current.current.plan.source_asset_id) setTrim(null)
+    current.current.plan = next; setPlan(next); invalidateQuote(); setError('')
+  }
+  function changeRange(next: VideoRange) {
+    if (!sourceVideo) return
+    setTrim({ ...next, assetId: sourceVideo.id }); invalidateQuote(); setError('')
+  }
+  async function applyRange() {
+    if (!sourceVideo || rangeState.error || !rangeState.changed) return
+    const revision = inputRevision.current
+    const result = await genjutsuCall<{ asset: Asset }>('trim', {
+      asset_id: sourceVideo.id, start_ms: rangeState.startMs, end_ms: rangeState.endMs,
+    })
+    if (!alive.current || revision !== inputRevision.current) return
+    setAssets(prev => [result.asset, ...prev.filter(asset => asset.id !== result.asset.id)])
+    setTrim(null)
+    if (recipe) { setRecipeSource(result.asset); invalidateQuote() }
+    else edit({ ...current.current.plan, source_asset_id: result.asset.id })
+    const prepared = inspectVideoRange(result.asset, fullVideoRange(result.asset), sourceCapability)
+    if (prepared.error) setError(prepared.error)
+    else setNotice(`Фрагмент подготовлен: ${videoSeconds(result.asset.duration_ms || 0)} с. Рассчитайте стоимость.`)
+  }
   function patchStep(index: number, patch: Partial<Step>) {
     edit({ ...plan, steps: plan.steps.map((s, i) => i === index ? { ...s, ...patch } : s) })
   }
@@ -186,20 +222,30 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
     setFavorites(next)
     try { localStorage.setItem('genjutsu-favorite-presets', JSON.stringify(next)) } catch { /* Optional preference. */ }
   }
-  async function newWork(next = freshPlan()) {
+  async function newWork(next = freshPlan(), source?: Asset) {
     if (current.current.plan.source_asset_id && bootstrap?.enabled) await saveCurrent()
     current.current = { project: null, title: 'Новая работа', plan: next }
+    if (source?.id === next.source_asset_id) setAssets(prev => [source, ...prev.filter(asset => asset.id !== source.id)])
+    invalidateQuote(); setTrim(null)
     saved.current = ''; setRecipe(null); setRecipeSource(null); setRecipeAssets([]); setRecipeValues({}); setPublishedRecipe(null)
     setProject(null); setTitle('Новая работа'); setPlan(next); setQuote(null); setTab('editor'); setVersions([])
   }
   async function openProject(id: string, revision?: number) {
     if (current.current.plan.source_asset_id && bootstrap?.enabled) await saveCurrent()
-    const value = await genjutsuCall<{ project: Project }>('project', { project_id: id, ...(revision ? { revision } : {}) })
+    const value = await genjutsuCall<{ project: Project; source_asset?: Pick<Asset, 'id' | 'kind' | 'duration_ms'> | null }>('project', { project_id: id, ...(revision ? { revision } : {}) })
     const latest = revision ? await genjutsuCall<{ project: Project }>('project', { project_id: id }) : value
     // Restoring a snapshot creates a new version, never writes over history.
     const restored = { ...value.project, revision: latest.project.revision }
+    if (value.source_asset?.id === restored.plan.source_asset_id) {
+      const source = value.source_asset
+      setAssets(prev => {
+        const existing = prev.find(asset => asset.id === source.id)
+        return [{ ...existing, ...source, url: existing?.url || null }, ...prev.filter(asset => asset.id !== source.id)]
+      })
+    }
     current.current = { project: restored, title: restored.title, plan: restored.plan }
     saved.current = revision ? '' : JSON.stringify([restored.title, restored.plan])
+    invalidateQuote(); setTrim(null)
     setProject(restored); setPlan(restored.plan); setTitle(restored.title); setQuote(null); setTab('editor')
     setVersions((await genjutsuCall<{ items: { revision: number; title: string }[] }>('versions', { project_id: id })).items)
   }
@@ -220,7 +266,7 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
           ...s, references: [...s.references, { asset_id: asset.id, role: 'character', label: '', binding: 'user' as const }],
         }),
       }
-      current.current.plan = next; edit(next)
+      edit(next)
     }
   }
   async function uploadRecipeSource(file: File | undefined) {
@@ -228,7 +274,7 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
     const asset = await uploadGenjutsu(file, 'video')
     setAssets(prev => [asset, ...prev.filter(item => item.id !== asset.id)])
     setRecipeSource(asset)
-    setQuote(null)
+    setTrim(null); invalidateQuote()
   }
 
   async function uploadRecipeReference(file: File | undefined, index: number) {
@@ -240,17 +286,19 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
       next[index] = asset
       return next
     })
-    setQuote(null)
+    invalidateQuote()
   }
 
   async function quoteRecipe() {
-    if (!recipe || (recipe.source_slot && !recipeSource) || recipeAssets.some(asset => !asset)) return
+    if (!recipe || (recipe.source_slot && (!recipeSource || rangeNeedsAction)) || recipeAssets.some(asset => !asset)) return
+    const revision = inputRevision.current
     const result = await genjutsuCall<{ quote: Quote; recipe: Recipe }>('recipe_quote', {
       recipe_id: recipe.id,
       ...(recipe.source_slot ? { source_asset_id: recipeSource?.id } : {}),
       reference_asset_ids: recipeAssets.map(asset => asset?.id || ''),
       user_values: recipeValues,
     })
+    if (!alive.current || revision !== inputRevision.current) return
     setQuote(result.quote)
     setRecipe(result.recipe)
     setAck(false)
@@ -281,12 +329,16 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
   }
 
   async function getQuote() {
+    if (!sourceVideo || rangeNeedsAction) return
+    const revision = inputRevision.current
     const savedProject = await saveCurrent()
+    if (!alive.current || revision !== inputRevision.current) return
     const result = await genjutsuCall<{ quote: Quote }>('quote', { project_id: savedProject.id, revision: savedProject.revision })
+    if (!alive.current || revision !== inputRevision.current) return
     setQuote(result.quote); setAck(false)
   }
   async function start() {
-    if (!quote) return
+    if (!quote || rangeNeedsAction) return
     const value = await genjutsuCall<{ run: Run }>('start', {
       quote_id: quote.id, request_key: launchKey(quote.id), acknowledge_provider_cost: ack,
     })
@@ -335,7 +387,7 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
           <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
             {recipe.steps.map((step, index) => <span key={index} className="rounded-full border border-border px-2 py-1">Шаг {index + 1}: {operationLabels[step.operation]} · {step.resolution}</span>)}
           </div>
-          {recipe.current_cost !== null && <p className="text-sm">Текущая стоимость рецепта: <strong>{recipe.current_cost} 🍌</strong></p>}
+          {!recipe.source_slot && recipe.current_cost !== null && <p className="text-sm">Текущая стоимость рецепта: <strong>{recipe.current_cost} 🍌</strong></p>}
         </div>
         <fieldset className={`${section} min-w-0`} disabled={!bootstrap.enabled || blocked}>
           <div>
@@ -350,6 +402,7 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
               <input aria-label={recipe.source_slot.label} type="file" accept="video/mp4,video/quicktime,video/*" className="sr-only" onChange={e => { const file = e.target.files?.[0]; void action('recipe-source-upload', () => uploadRecipeSource(file)); e.target.value = '' }} />
             </label>
             {recipeSource?.url && <video src={recipeSource.url} controls playsInline preload="metadata" className="max-h-52 w-full rounded-2xl bg-black object-contain" />}
+            {recipeSource && <GenjutsuVideoRange asset={recipeSource} range={selectedRange || fullVideoRange(recipeSource)} capability={sourceCapability} disabled={blocked} onChange={changeRange} onApply={() => void action('recipe-trim', applyRange)} />}
           </div>}
           {recipe.slots.length > 0 && <div className="space-y-3 border-t border-white/[0.06] pt-3">
             {recipe.slots.map((slot, index) => <div key={index} className="space-y-2">
@@ -363,16 +416,17 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
             </div>)}
           </div>}
           {recipe.user_fields.length > 0 && <div className="space-y-3 border-t border-white/[0.06] pt-3">
-            {recipe.user_fields.map(fieldSpec => <label key={fieldSpec.key} className={label}>{fieldSpec.label}<input className={field} type={fieldSpec.type === 'number' ? 'number' : fieldSpec.type === 'date' ? 'date' : 'text'} maxLength={fieldSpec.max_length || 160} value={recipeValues[fieldSpec.key] || ''} onChange={e => { setRecipeValues(current => ({ ...current, [fieldSpec.key]: e.target.value })); setQuote(null) }} required={fieldSpec.required !== false} /></label>)}
+            {recipe.user_fields.map(fieldSpec => <label key={fieldSpec.key} className={label}>{fieldSpec.label}<input className={field} type={fieldSpec.type === 'number' ? 'number' : fieldSpec.type === 'date' ? 'date' : 'text'} maxLength={fieldSpec.max_length || 160} value={recipeValues[fieldSpec.key] || ''} onChange={e => { setRecipeValues(current => ({ ...current, [fieldSpec.key]: e.target.value })); invalidateQuote() }} required={fieldSpec.required !== false} /></label>)}
           </div>}
-          <Button className="h-12 w-full rounded-2xl text-base" disabled={blocked || Boolean(recipe.source_slot && !recipeSource) || recipeAssets.some(asset => !asset) || recipe.user_fields.some(fieldSpec => fieldSpec.required !== false && !(recipeValues[fieldSpec.key] || '').trim())} onClick={() => void action('recipe-quote', quoteRecipe)}>Рассчитать стоимость</Button>
+          <Button className="h-12 w-full rounded-2xl text-base" disabled={blocked || Boolean(recipe.source_slot && (!recipeSource || rangeNeedsAction)) || recipeAssets.some(asset => !asset) || recipe.user_fields.some(fieldSpec => fieldSpec.required !== false && !(recipeValues[fieldSpec.key] || '').trim())} onClick={() => void action('recipe-quote', quoteRecipe)}>Рассчитать стоимость</Button>
         </fieldset>
         {quote && <div className="space-y-3 rounded-2xl border border-gold/40 bg-gold/5 p-4">
           <h3 className="font-medium">Подтверждение запуска</h3>
+          {recipeSource && <p className="text-sm">Длительность видео к запуску: {videoSeconds(recipeSource.duration_ms || 0)} с</p>}
           <p>Резерв: <strong>{bootstrap.is_admin ? '0' : quote.total_credits} бананов</strong>{bootstrap.is_admin && <span className="text-sm text-muted-foreground"> · пользовательский тариф {quote.total_credits}</span>}</p>
-          {quote.allocations.map(a => <div key={`${a.variant}:${a.ordinal}`} className="flex justify-between gap-2 text-sm"><span>Вариант {a.variant + 1}, шаг {a.ordinal + 1}: {operationLabels[a.operation]}</span><span>{a.reserved_credits} 🍌</span></div>)}
+          {quote.allocations.map(a => <div key={`${a.variant}:${a.ordinal}`} className="flex justify-between gap-2 text-sm"><span>Вариант {a.variant + 1}, шаг {a.ordinal + 1}: {operationLabels[a.operation]} · {a.maximum_reserve ? 'до ' : ''}{a.billable_seconds} с к оплате</span><span>{a.reserved_credits} 🍌</span></div>)}
           {bootstrap.is_admin && <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={ack} onChange={e => setAck(e.target.checked)} />Подтверждаю реальный расход в Higgsfield.</label>}
-          <Button disabled={blocked || !bootstrap.configured || (bootstrap.is_admin && !ack)} onClick={() => void action('start', start)}>Запустить тренд</Button>
+          <Button disabled={blocked || rangeNeedsAction || !bootstrap.enabled || !bootstrap.configured || (bootstrap.is_admin && !ack)} onClick={() => void action('start', start)}>Запустить тренд</Button>
         </div>}
       </div>}
       {tab === 'editor' && !recipe && <div className="space-y-6">
@@ -401,7 +455,7 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
           <div className="mt-4 space-y-3">
             <div className="flex gap-2"><Button disabled={blocked} variant="outline" onClick={() => void action('new', () => newWork())}>Новый проект</Button>
               <label className="min-w-0 flex-1"><span className="sr-only">Открыть проект</span><select className={field} disabled={blocked} value={project?.id || ''} onChange={e => e.target.value && void action('open', () => openProject(e.target.value))}><option value="">Черновики и проекты</option>{bootstrap.projects.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}</select></label></div>
-            <label className={label}>Название работы<input className={field} value={title} maxLength={120} onChange={e => { setTitle(e.target.value); setQuote(null) }} /></label>
+            <label className={label}>Название работы<input className={field} value={title} maxLength={120} onChange={e => { current.current.title = e.target.value; setTitle(e.target.value); invalidateQuote() }} /></label>
             {project && <p className="text-xs text-muted-foreground">Версия {project.revision} · изменения сохраняются автоматически</p>}
             {versions.length > 1 && <label className={label}>Восстановить версию<select className={field} value="" disabled={blocked} onChange={e => e.target.value && project && void action('restore', () => openProject(project.id, Number(e.target.value)))}><option value="">Выбрать сохранённую версию</option>{versions.map(v => <option key={v.revision} value={v.revision}>{v.revision}: {v.title}</option>)}</select></label>}
           </div>
@@ -418,11 +472,8 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
             </label>
             <label className={label}>Видео из библиотеки<select className={field} value={plan.source_asset_id} onChange={e => edit({ ...plan, source_asset_id: e.target.value })}><option value="">Выберите исходник</option>{assets.filter(a => a.kind === 'video').map(a => <option key={a.id} value={a.id}>Видео {a.id.slice(0, 6)} · {((a.duration_ms || 0) / 1000).toFixed(2)} с</option>)}</select></label>
             {video && <div className="overflow-hidden rounded-[24px] border border-white/[0.08] bg-black"><video key={video.url} src={video.url || undefined} controls playsInline preload="metadata" className="max-h-[360px] w-full bg-black" /></div>}
-            {video && <details className="group rounded-[20px] border border-white/[0.06] bg-white/[0.02] px-4 py-3">
-              <summary className="flex cursor-pointer list-none items-center justify-between text-sm font-medium"><span className="flex items-center gap-2"><Scissors className="h-4 w-4 text-muted-foreground" />Выбрать фрагмент</span><ChevronRight className="h-4 w-4 text-muted-foreground transition group-open:rotate-90" /></summary>
-              <div className="mt-4 space-y-3"><p className="text-xs text-muted-foreground">Фактическая длительность: {((video.duration_ms || 0) / 1000).toFixed(3)} с.</p><div className="grid grid-cols-2 gap-2"><label className={label}>Начало, сек.<input className={field} type="number" step="0.001" min="0" value={trim.start} onChange={e => setTrim({ ...trim, start: e.target.value })} /></label><label className={label}>Конец, сек.<input className={field} type="number" step="0.001" value={trim.end} onChange={e => setTrim({ ...trim, end: e.target.value })} /></label></div>
-                <Button variant="outline" onClick={() => void action('trim', async () => { const result = await genjutsuCall<{ asset: Asset }>('trim', { asset_id: video.id, start_ms: Math.round(Number(trim.start) * 1000), end_ms: Math.round(Number(trim.end) * 1000) }); setAssets(prev => [result.asset, ...prev]); edit({ ...plan, source_asset_id: result.asset.id }) })}>Подготовить фрагмент</Button></div>
-            </details>}
+            {missingSource && <p role="alert" className="text-sm text-destructive">Исходное видео недоступно. Выберите его из библиотеки или загрузите снова.</p>}
+            {video && <GenjutsuVideoRange asset={video} range={selectedRange || fullVideoRange(video)} capability={sourceCapability} disabled={blocked} onChange={changeRange} onApply={() => void action('trim', applyRange)} />}
           </section>
 
           {primaryCaps && <section className="space-y-3">
@@ -460,9 +511,9 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
           })}
         </fieldset>
 
-        {quote && <div className="space-y-3 rounded-[26px] border border-white/10 bg-white/[0.035] p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-xs text-muted-foreground">К запуску</p><h3 className="text-lg font-semibold">{bootstrap.is_admin ? 'Тестовый запуск' : `${quote.total_credits} бананов`}</h3></div><span className="text-xs text-muted-foreground">до {new Date(quote.expires_ms).toLocaleTimeString()}</span></div>{quote.allocations.map(a => <div key={`${a.variant}:${a.ordinal}`} className="flex justify-between gap-2 text-sm text-muted-foreground"><span>Вариант {a.variant + 1}, шаг {a.ordinal + 1}</span><span>{a.reserved_credits} 🍌</span></div>)}{bootstrap.is_admin && <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={ack} onChange={e => setAck(e.target.checked)} />Подтверждаю реальный расход в Higgsfield.</label>}<Button className="h-12 w-full rounded-2xl text-base" disabled={blocked || !bootstrap.enabled || !bootstrap.configured || (bootstrap.is_admin && !ack)} onClick={() => void action('start', start)}>Запустить</Button></div>}
+        {quote && <div className="space-y-3 rounded-[26px] border border-white/10 bg-white/[0.035] p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-xs text-muted-foreground">К запуску</p><h3 className="text-lg font-semibold">{bootstrap.is_admin ? 'Тестовый запуск' : `${quote.total_credits} бананов`}</h3></div><span className="text-xs text-muted-foreground">до {new Date(quote.expires_ms).toLocaleTimeString()}</span></div>{bootstrap.is_admin && <p className="text-sm">С вашего баланса: <strong>0 бананов</strong>. Пользовательский тариф: {quote.total_credits} бананов. Реальный расход Higgsfield подтверждается ниже.</p>}{video && <p className="text-sm">Длительность видео к запуску: {videoSeconds(video.duration_ms || 0)} с</p>}{quote.allocations.map(a => <div key={`${a.variant}:${a.ordinal}`} className="flex justify-between gap-2 text-sm text-muted-foreground"><span>Вариант {a.variant + 1}, шаг {a.ordinal + 1} · {a.maximum_reserve ? 'до ' : ''}{a.billable_seconds} с к оплате</span><span>{a.reserved_credits} 🍌</span></div>)}{bootstrap.is_admin && <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={ack} onChange={e => setAck(e.target.checked)} />Подтверждаю реальный расход в Higgsfield.</label>}<Button className="h-12 w-full rounded-2xl text-base" disabled={blocked || rangeNeedsAction || !bootstrap.enabled || !bootstrap.configured || (bootstrap.is_admin && !ack)} onClick={() => void action('start', start)}>Запустить</Button></div>}
 
-        {!quote && <div className="sticky bottom-3 z-10 rounded-[24px] border border-white/10 bg-background/90 p-2 shadow-2xl backdrop-blur-xl"><Button className="h-12 w-full rounded-[18px] text-base" disabled={blocked || !plan.source_asset_id} onClick={() => void action('quote', getQuote)}>Рассчитать стоимость</Button></div>}
+        {!quote && <div className="sticky bottom-3 z-10 rounded-[24px] border border-white/10 bg-background/90 p-2 shadow-2xl backdrop-blur-xl"><Button className="h-12 w-full rounded-[18px] text-base" disabled={blocked || !plan.source_asset_id || rangeNeedsAction} onClick={() => void action('quote', getQuote)}>Рассчитать стоимость</Button></div>}
       </div>}
       {tab === 'history' && <div className="space-y-4">
         <div className="flex flex-wrap gap-2">{bootstrap.runs.map(item => <Button key={item.id} variant={run?.id === item.id ? 'default' : 'outline'} size="sm" disabled={blocked} onClick={() => void action('run', async () => { setRun((await genjutsuCall<{ run: Run }>('run', { run_id: item.id })).run) })}>{new Date(item.created_ms).toLocaleDateString()} · {statusLabels[item.state] || item.state} · {item.id.slice(0, 6)}</Button>)}</div>
@@ -470,7 +521,10 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
         {run && <div className={section}>
           <div className="flex flex-wrap items-center justify-between gap-2"><div><h3>{statusLabels[run.state] || run.state}</h3><p className="break-all text-xs text-muted-foreground">{run.id}</p></div><Button variant="outline" disabled={blocked} onClick={() => void action('refresh-run', async () => { setRun((await genjutsuCall<{ run: Run }>('run', { run_id: run.id })).run) })}>Обновить статус</Button></div>
           <div className="flex flex-wrap gap-2">{!terminal.has(run.state) && <Button variant="outline" disabled={blocked || Boolean(run.cancel_requested)} onClick={() => void action('cancel', () => runAction('cancel'))}>Отменить оставшиеся шаги</Button>}
-            {run.plan && <Button variant="outline" disabled={blocked} onClick={() => void action('repeat', () => newWork(run.plan))}>Повторить с настройками</Button>}
+            {run.plan && <Button variant="outline" disabled={blocked} onClick={() => void action('repeat', async () => {
+              const source = run.steps.find(step => step.source_asset?.id === run.plan?.source_asset_id)?.source_asset
+              await newWork(run.plan, source)
+            })}>Повторить с настройками</Button>}
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={compare} onChange={e => setCompare(e.target.checked)} />Показать исходник рядом</label></div>
           {run.steps.map(step => <article key={step.id} className="space-y-2 border-t border-border pt-3">
             <h4 className="text-sm font-medium">Вариант {step.variant + 1} · шаг {step.ordinal + 1} · {operationLabels[step.spec.operation]} · {step.spec.resolution}</h4>
@@ -478,7 +532,7 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
             <p className="text-xs text-muted-foreground">Резерв {step.reserved_credits} 🍌 · возврат {step.refunded_credits} 🍌{step.actual_credits !== null ? ` · расчёт ${step.actual_credits} 🍌` : ''}</p>
             {step.error_code && <p className="break-all text-xs text-destructive">Код: {step.error_code}. Результаты остальных шагов не потеряны.</p>}
             <div className={compare ? 'grid gap-2 sm:grid-cols-2' : ''}>{compare && step.source_asset?.url && <div><p className="text-xs">Исходник</p><video src={step.source_asset.url} controls playsInline preload="metadata" className="max-h-80 w-full rounded-xl bg-black" /></div>}{step.output_asset?.url && <div><p className="text-xs">Результат</p><video src={step.output_asset.url} controls playsInline preload="metadata" className="max-h-80 w-full rounded-xl bg-black" /></div>}</div>
-            {step.output_asset?.url && <div className="flex flex-wrap gap-2"><a className="rounded-lg border border-border px-3 py-2 text-sm" href={`${step.output_asset.url}&download=1`} target="_blank" rel="noreferrer">Скачать оригинал</a><Button variant="outline" size="sm" disabled={blocked} onClick={() => void action('edit-result', async () => { const output = step.output_asset!; setAssets(prev => [output, ...prev.filter(a => a.id !== output.id)]); await newWork({ ...freshPlan(), source_asset_id: output.id }) })}>Редактировать результат</Button><Button size="sm" variant="ghost" disabled={blocked} onClick={() => void action('redeliver', () => runAction('redeliver', step.id))}>Отправить ещё раз</Button></div>}
+            {step.output_asset?.url && <div className="flex flex-wrap gap-2"><a className="rounded-lg border border-border px-3 py-2 text-sm" href={`${step.output_asset.url}&download=1`} target="_blank" rel="noreferrer">Скачать оригинал</a><Button variant="outline" size="sm" disabled={blocked} onClick={() => void action('edit-result', async () => { const output = step.output_asset!; await newWork({ ...freshPlan(), source_asset_id: output.id }, output) })}>Редактировать результат</Button><Button size="sm" variant="ghost" disabled={blocked} onClick={() => void action('redeliver', () => runAction('redeliver', step.id))}>Отправить ещё раз</Button></div>}
             {step.delivery_status && <p className="text-xs text-muted-foreground">Telegram: {statusLabels[step.delivery_status] || step.delivery_status}. Файл доступен в этой работе независимо от чата.</p>}
             {step.status === 'awaiting_confirmation' && <Button disabled={blocked} onClick={() => void action('continue', () => runAction('continue', step.id))}>Продолжить этот шаг</Button>}
           </article>)}

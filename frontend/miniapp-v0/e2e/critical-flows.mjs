@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { chromium } from 'playwright'
 
 const baseUrl = 'http://127.0.0.1:4173/mini-app/'
@@ -84,6 +85,22 @@ const genjutsuCapability = {
   max_images: 8, max_prompt_length: 10000, minimum_video_ms: 4000,
   maximum_video_ms: 30000, roles: ['character', 'wardrobe', 'product', 'object', 'location', 'style'],
 }
+
+
+const notificationDefaults = JSON.parse(readFileSync(new URL('../../../bot/genjutsu/defaults.json', import.meta.url), 'utf8')).notification_templates
+const durationVideo = { id: 'duration-video', kind: 'video', duration_ms: 10056, url: null }
+const durationPhoto = { id: 'duration-photo', kind: 'image', url: null }
+const durationAssets = new Map([[durationVideo.id, durationVideo], [durationPhoto.id, durationPhoto]])
+const durationRecipe = {
+  id: 'a'.repeat(32), title: 'Mobile recipe',
+  source_slot: { kind: 'video', label: 'Видео-референс' },
+  slots: [{ step_index: 0, reference_index: 0, role: 'character', label: 'Фото героя' }],
+  user_fields: [], steps: [{ operation: 'motion_transfer', resolution: '720p' }],
+  variants: 1, continuation: 'automatic', current_cost: 20,
+}
+let durationSequence = 0
+let durationPlan = null
+const durationTrims = []
 
 const curatedTrend = {
   id: 11,
@@ -243,8 +260,41 @@ try {
     const request = route.request()
     const path = new URL(request.url()).pathname
 
+    if (path.endsWith('/genjutsu/upload')) {
+      const kind = new URL(request.url()).searchParams.get('kind')
+      const asset = { ...(kind === 'video' ? durationVideo : durationPhoto), id: `duration-upload-${++durationSequence}` }
+      durationAssets.set(asset.id, asset)
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, asset }) })
+      return
+    }
     if (path.endsWith('/genjutsu')) {
       const requestBody = JSON.parse(request.postData() || '{}')
+      if (requestBody.action === 'save_project') {
+        durationPlan = requestBody.plan
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+          ok: true, project: { id: 'duration-project', revision: 1, title: requestBody.title, plan: requestBody.plan },
+        }) })
+        return
+      }
+      if (requestBody.action === 'trim') {
+        durationTrims.push(requestBody)
+        const asset = { ...durationVideo, id: `duration-trim-${++durationSequence}`, duration_ms: requestBody.end_ms - requestBody.start_ms }
+        durationAssets.set(asset.id, asset)
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, asset }) })
+        return
+      }
+      if (requestBody.action === 'quote' || requestBody.action === 'recipe_quote') {
+        const source = durationAssets.get(requestBody.action === 'quote' ? durationPlan.source_asset_id : requestBody.source_asset_id)
+        const seconds = Math.ceil(source.duration_ms / 1000)
+        const quote = { id: `duration-quote-${++durationSequence}`, expires_ms: Date.now() + 300000,
+          total_credits: seconds * 8, plan_hash: 'synthetic',
+          allocations: [{ variant: 0, ordinal: 0, operation: 'motion_transfer', billable_seconds: seconds,
+            credits_per_second: 8, reserved_credits: seconds * 8, maximum_reserve: false }] }
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+          ok: true, quote, ...(requestBody.action === 'recipe_quote' ? { recipe: durationRecipe } : {}),
+        }) })
+        return
+      }
       if (requestBody.action === 'recipe_get') {
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
           ok: true, recipe: {
@@ -269,7 +319,7 @@ try {
               configured: genjutsuMobileReady, enabled: genjutsuMobileReady, is_admin: bootstrapPayload.is_admin,
               credits: bootstrapPayload.credits, provider_ready: false, media_ready: false,
               config_version: 0, limits: { max_steps: 3, max_variants: 4, poll_seconds: 5 },
-              prices: {}, projects: [], runs: [], assets: [],
+              prices: {}, projects: [], runs: [], assets: genjutsuMobileReady ? [durationVideo, durationPhoto] : [],
             }
           : requestBody.action === 'settings'
             ? {
@@ -278,6 +328,7 @@ try {
                   admin_enabled: true, public_enabled: false, verified_operations: [],
                   prices: { motion_transfer: { '720p': null }, object_swap: { '720p': null }, restyle: { '720p': null } },
                   max_steps: 3, max_variants: 4, poll_seconds: 5,
+                  notification_templates: notificationDefaults,
                 },
                 version: 1,
                 coverage: [],
@@ -824,6 +875,87 @@ try {
       await page.getByRole('dialog').waitFor({ state: 'hidden' })
     }
   }
+
+
+  // The default range uses actual uploaded metadata, not the old hidden 5 seconds.
+  bootstrapPayload.is_admin = false
+  for (const width of [320, 360, 390, 430]) {
+    await page.setViewportSize({ width, height: 820 })
+    for (const recipeMode of [false, true]) {
+      await page.evaluate(recipe => window.dispatchEvent(new CustomEvent('genjutsu:open', {
+        detail: recipe ? { recipe_id: 'a'.repeat(32) } : {},
+      })), recipeMode)
+      if (recipeMode) {
+        await page.getByLabel('Видео-референс', { exact: true }).setInputFiles({
+          name: 'synthetic.mp4', mimeType: 'video/mp4', buffer: Buffer.from('mocked video'),
+        })
+        await page.getByLabel('Фото героя', { exact: true }).setInputFiles({
+          name: 'synthetic.png', mimeType: 'image/png', buffer: Buffer.from('mocked image'),
+        })
+      } else {
+        await page.getByLabel('Видео из библиотеки').selectOption(durationVideo.id)
+        await page.getByLabel('Добавить референс к шагу 1').selectOption(durationPhoto.id)
+      }
+      const begin = page.getByLabel('Начало, сек.', { exact: true })
+      const end = page.getByLabel('Конец, сек.', { exact: true })
+      await end.waitFor()
+      assert.equal(await begin.inputValue(), '0')
+      assert.equal(await end.inputValue(), '10.056')
+      assert.equal(await begin.evaluate(el => Boolean(el.closest('details'))), false)
+      assert.equal(await page.getByText('Выбрать фрагмент', { exact: true }).count(), 0)
+      const trimCount = durationTrims.length
+      await page.getByRole('button', { name: 'Рассчитать стоимость', exact: true }).click()
+      await page.getByText('88 бананов', { exact: true }).waitFor()
+      assert.equal(durationTrims.length, trimCount, 'Whole video must not be silently trimmed')
+      await page.getByText('Длительность видео к запуску: 10.056 с', { exact: true }).waitFor()
+      assert.ok((await page.getByRole('region', { name: 'Студия Genjutsu' }).innerText()).includes('11 с к оплате'))
+      await begin.scrollIntoViewIfNeeded()
+      if (process.env.GENJUTSU_QA_SCREENSHOTS) await page.screenshot({
+        path: `${process.env.GENJUTSU_QA_SCREENSHOTS}/duration-full-${width}-${recipeMode ? 'recipe' : 'editor'}.png`,
+      })
+      await end.fill('5')
+      await page.getByRole('button', { name: recipeMode ? 'Запустить тренд' : 'Запустить', exact: true }).waitFor({ state: 'hidden' })
+      assert.equal(await page.getByRole('button', { name: 'Рассчитать стоимость', exact: true }).isDisabled(), true)
+      await page.getByRole('button', { name: 'Применить фрагмент', exact: true }).click()
+      await page.getByText('Фрагмент подготовлен: 5 с. Рассчитайте стоимость.', { exact: true }).waitFor()
+      assert.equal(await begin.inputValue(), '0')
+      assert.equal(await end.inputValue(), '5')
+      assert.equal(durationTrims.length, trimCount + 1)
+      assert.equal(durationTrims.at(-1).start_ms, 0)
+      assert.equal(durationTrims.at(-1).end_ms, 5000)
+      await page.getByRole('button', { name: 'Рассчитать стоимость', exact: true }).click()
+      await page.getByText('40 бананов', { exact: true }).waitFor()
+      const region = page.getByRole('region', { name: 'Студия Genjutsu' })
+      assert.equal(await region.evaluate(el => el.scrollWidth <= el.clientWidth), true)
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+      await begin.scrollIntoViewIfNeeded()
+      if (process.env.GENJUTSU_QA_SCREENSHOTS) await page.screenshot({
+        path: `${process.env.GENJUTSU_QA_SCREENSHOTS}/duration-${width}-${recipeMode ? 'recipe' : 'editor'}.png`,
+      })
+      await page.getByRole('button', { name: 'Закрыть студию' }).click()
+      await page.getByRole('dialog').waitFor({ state: 'hidden' })
+    }
+  }
+
+  bootstrapPayload.is_admin = true
+  await page.setViewportSize({ width: 320, height: 820 })
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('genjutsu:open', { detail: { admin: true } })))
+  const templates = page.getByText('Тексты уведомлений', { exact: true })
+  await templates.click()
+  await page.getByLabel('Возврат на баланс', { exact: true }).waitFor()
+  const adminRegion = page.getByRole('region', { name: 'Студия Genjutsu' })
+  assert.equal(await adminRegion.evaluate(el => el.scrollWidth <= el.clientWidth), true)
+  const clippedTemplates = await adminRegion.locator('textarea').evaluateAll(elements => elements.filter(el => {
+    const rect = el.getBoundingClientRect()
+    return rect.width > 0 && (rect.left < -1 || rect.right > innerWidth + 1)
+  }).length)
+  assert.equal(clippedTemplates, 0, 'Notification templates must fit 320px')
+  await page.getByLabel('Возврат на баланс', { exact: true }).scrollIntoViewIfNeeded()
+  if (process.env.GENJUTSU_QA_SCREENSHOTS) await page.screenshot({
+    path: `${process.env.GENJUTSU_QA_SCREENSHOTS}/notification-admin-320.png`,
+  })
+  await page.getByRole('button', { name: 'Закрыть студию' }).click()
+  await page.getByRole('dialog').waitFor({ state: 'hidden' })
 
   console.log('Mini App critical browser E2E passed')
 } finally {

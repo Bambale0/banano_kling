@@ -91,6 +91,13 @@ SCHEMA = [
         lease_token TEXT, lease_until_ms BIGINT NOT NULL DEFAULT 0,
         next_ms BIGINT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
         message_id TEXT, error_code TEXT)''',
+    '''CREATE TABLE IF NOT EXISTS genjutsu_notifications (
+        run_id TEXT PRIMARY KEY REFERENCES genjutsu_runs(id), summary TEXT NOT NULL,
+        status TEXT NOT NULL, created_ms BIGINT NOT NULL, deadline_ms BIGINT NOT NULL,
+        max_attempts INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+        next_ms BIGINT NOT NULL, lease_token TEXT, lease_until_ms BIGINT NOT NULL DEFAULT 0,
+        message_id TEXT, error_code TEXT)''',
+    '''CREATE INDEX IF NOT EXISTS genjutsu_notifications_due ON genjutsu_notifications(status,next_ms)''',
     '''CREATE INDEX IF NOT EXISTS genjutsu_projects_owner ON genjutsu_projects(owner,updated_ms)''',
     '''CREATE INDEX IF NOT EXISTS genjutsu_runs_owner ON genjutsu_runs(owner,created_ms)''',
     '''CREATE INDEX IF NOT EXISTS genjutsu_steps_due ON genjutsu_steps(status,next_poll_ms,lease_until_ms)''',
@@ -329,7 +336,7 @@ class Repository:
                 WHERE {where} ORDER BY created_ms DESC LIMIT 100''', tuple(args))
 
     async def _refresh_run(self, db, run_id: str) -> None:
-        run = await one(db, 'SELECT cancel_requested FROM genjutsu_runs WHERE id=?', (run_id,))
+        run = await one(db, 'SELECT state,cancel_requested FROM genjutsu_runs WHERE id=?', (run_id,))
         states = [r['status'] for r in await many(db, 'SELECT status FROM genjutsu_steps WHERE run_id=?', (run_id,))]
         terminal = {'completed', 'failed', 'canceled'}
         if all(state in terminal for state in states):
@@ -346,6 +353,71 @@ class Repository:
         else:
             state = 'running'
         await db.execute('UPDATE genjutsu_runs SET state=?,updated_ms=? WHERE id=?', (state, self.clock(), run_id))
+        if state in {'failed', 'canceled', 'partial'} and run['state'] not in {'completed', 'failed', 'canceled', 'partial'}:
+            # Future terminal transitions only. Migration and repeated refreshes
+            # never create notices for historical terminal runs.
+            await self._enqueue_terminal_notification(db, run_id, state)
+
+    async def _enqueue_terminal_notification(self, db, run_id: str, state: str) -> None:
+        steps = await many(db, 'SELECT status,error_code FROM genjutsu_steps WHERE run_id=?', (run_id,))
+        totals = await many(db, '''SELECT kind,SUM(amount) AS amount FROM genjutsu_finance
+            WHERE run_id=? GROUP BY kind''', (run_id,))
+        finance = {row['kind']: int(row['amount']) for row in totals}
+        failed = [step for step in steps if step['status'] == 'failed']
+        summary = {
+            'state': state,
+            'completed_count': sum(step['status'] == 'completed' for step in steps),
+            'canceled_count': sum(step['status'] == 'canceled' for step in steps),
+            'moderation_count': sum(step['error_code'] == 'provider_nsfw' for step in failed),
+            'provider_failure_count': sum(step['error_code'] == 'provider_failed' for step in failed),
+            'technical_failure_count': sum(step['error_code'] not in {'provider_nsfw', 'provider_failed'} for step in failed),
+            'reserved_credits': finance.get('reserve', 0),
+            'refunded_credits': finance.get('refund', 0),
+            'charged_credits': finance.get('reserve', 0) - finance.get('refund', 0),
+        }
+        settings, _ = await self._settings(db)
+        now = self.clock()
+        await db.execute('''INSERT INTO genjutsu_notifications(
+            run_id,summary,status,created_ms,deadline_ms,max_attempts,next_ms)
+            VALUES(?,?,'pending',?,?,?,?) ON CONFLICT(run_id) DO NOTHING''',
+            (run_id, encode(summary), now, now + settings['notification_retry_deadline_seconds'] * 1000,
+             settings['notification_max_attempts'], now))
+
+    async def claim_notification(self, settings: dict) -> dict | None:
+        async with self.transaction() as db:
+            now = self.clock()
+            # A lost acknowledgement must never cause an automatic duplicate.
+            await db.execute("""UPDATE genjutsu_notifications SET status='delivery_unknown',
+                error_code='delivery_outcome_unknown',lease_token=NULL,lease_until_ms=0
+                WHERE status='sending' AND lease_until_ms<=?""", (now,))
+            await db.execute("""UPDATE genjutsu_notifications SET status='unavailable',
+                error_code='notification_retry_exhausted'
+                WHERE status='pending' AND (deadline_ms<=? OR attempts>=max_attempts)""", (now,))
+            row = await one(db, '''SELECT n.*,r.owner FROM genjutsu_notifications n
+                JOIN genjutsu_runs r ON r.id=n.run_id
+                WHERE n.status='pending' AND n.next_ms<=? ORDER BY n.next_ms LIMIT 1''', (now,))
+            if row is None:
+                return None
+            token = uuid4().hex
+            await db.execute("""UPDATE genjutsu_notifications SET status='sending',lease_token=?,
+                lease_until_ms=?,attempts=attempts+1 WHERE run_id=?""",
+                (token, now + settings['lease_seconds'] * 1000, row['run_id']))
+            row.update(lease_token=token, attempts=row['attempts'] + 1, summary=json.loads(row['summary']))
+            return row
+
+    async def finish_notification(self, run_id: str, token: str, status: str, *,
+                                  message_id: str | None = None, error_code: str | None = None,
+                                  delay_seconds: int = 0) -> None:
+        if status not in {'delivered', 'unavailable', 'delivery_unknown', 'pending'}:
+            raise PipelineError('invalid_delivery_status')
+        async with self.transaction() as db:
+            cursor = await db.execute('''UPDATE genjutsu_notifications SET status=?,message_id=?,error_code=?,
+                lease_token=NULL,lease_until_ms=0,next_ms=? WHERE run_id=? AND lease_token=? AND status='sending' ''',
+                (status, message_id, error_code, self.clock() + delay_seconds * 1000, run_id, token))
+            if cursor.rowcount != 1:
+                raise PipelineError('lease_lost', status=409)
+            await self._event(db, 'notification_delivery_finished', run_id=run_id,
+                              details={'status': status, 'error_code': error_code})
 
     async def _refund(self, db, step: dict, owner: int, target: int) -> None:
         if not 0 <= target <= step['reserved_credits']:

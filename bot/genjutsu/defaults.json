@@ -42,5 +42,20 @@
   "owner_storage_bytes": 2147483648,
   "total_storage_bytes": 53687091200,
   "max_parallel_uploads": 2,
-  "media_parallelism": 2
+  "media_parallelism": 2,
+  "notification_max_attempts": 5,
+  "notification_retry_deadline_seconds": 3600,
+  "notification_templates": {
+    "failed": "Genjutsu: не удалось завершить работу.",
+    "canceled": "Genjutsu: работа отменена.",
+    "partial": "Genjutsu: работа завершена частично. Готовые результаты сохранены.",
+    "moderation": "Провайдер отклонил генерацию по правилам модерации. Точная причина не передана.",
+    "provider_failure": "Провайдер сообщил об ошибке генерации без подробной причины.",
+    "technical_failure": "Возникла техническая ошибка обработки.",
+    "canceled_steps": "Незавершённые шаги остановлены.",
+    "no_charge": "Списания бананов не было.",
+    "refund": "При завершении возвращено {refunded_credits} 🍌 на ваш баланс.",
+    "charge": "Итоговое списание при завершении: {charged_credits} 🍌.",
+    "details": "Подробности доступны в работе."
+  }
 }
