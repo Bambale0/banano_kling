@@ -57,8 +57,10 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
   const [ack, setAck] = useState(false)
   const [compare, setCompare] = useState(false)
   const [recipe, setRecipe] = useState<Recipe | null>(null)
+  const [recipeSource, setRecipeSource] = useState<Asset | null>(null)
   const [recipeAssets, setRecipeAssets] = useState<Array<Asset | null>>([])
   const [recipeValues, setRecipeValues] = useState<Record<string, string>>({})
+  const [recipeSourceBinding, setRecipeSourceBinding] = useState<'user' | 'fixed'>('user')
   const [recipeFieldLabels, setRecipeFieldLabels] = useState('')
   const [publishedRecipe, setPublishedRecipe] = useState<Recipe | null>(null)
   const current = useRef({ plan, title, project })
@@ -102,6 +104,7 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
         const value = await genjutsuCall<{ recipe: Recipe }>('recipe_get', { recipe_id: initial.recipe_id })
         if (alive.current) {
           setRecipe(value.recipe)
+          setRecipeSource(null)
           setRecipeAssets(Array(value.recipe.slots.length).fill(null))
           setRecipeValues(Object.fromEntries(value.recipe.user_fields.map(field => [field.key, ''])))
           setTitle(value.recipe.title)
@@ -186,7 +189,7 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
   async function newWork(next = freshPlan()) {
     if (current.current.plan.source_asset_id && bootstrap?.enabled) await saveCurrent()
     current.current = { project: null, title: 'Новая работа', plan: next }
-    saved.current = ''; setRecipe(null); setRecipeAssets([]); setRecipeValues({}); setPublishedRecipe(null)
+    saved.current = ''; setRecipe(null); setRecipeSource(null); setRecipeAssets([]); setRecipeValues({}); setPublishedRecipe(null)
     setProject(null); setTitle('Новая работа'); setPlan(next); setQuote(null); setTab('editor'); setVersions([])
   }
   async function openProject(id: string, revision?: number) {
@@ -220,6 +223,14 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
       current.current.plan = next; edit(next)
     }
   }
+  async function uploadRecipeSource(file: File | undefined) {
+    if (!file) return
+    const asset = await uploadGenjutsu(file, 'video')
+    setAssets(prev => [asset, ...prev.filter(item => item.id !== asset.id)])
+    setRecipeSource(asset)
+    setQuote(null)
+  }
+
   async function uploadRecipeReference(file: File | undefined, index: number) {
     if (!file) return
     const asset = await uploadGenjutsu(file, 'image')
@@ -233,9 +244,10 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
   }
 
   async function quoteRecipe() {
-    if (!recipe || recipeAssets.some(asset => !asset)) return
+    if (!recipe || (recipe.source_slot && !recipeSource) || recipeAssets.some(asset => !asset)) return
     const result = await genjutsuCall<{ quote: Quote; recipe: Recipe }>('recipe_quote', {
       recipe_id: recipe.id,
+      ...(recipe.source_slot ? { source_asset_id: recipeSource?.id } : {}),
       reference_asset_ids: recipeAssets.map(asset => asset?.id || ''),
       user_values: recipeValues,
     })
@@ -263,6 +275,7 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
       title: savedProject.title,
       user_fields: labels.map(label => ({ key: label.slice(0, 48), label: label.slice(0, 64) })),
       verification_run_id: verification.id,
+      source_binding: recipeSourceBinding,
     })
     setPublishedRecipe(value.recipe)
   }
@@ -295,8 +308,8 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
   const primaryStep = plan.steps[0]
   const primaryCaps = bootstrap?.catalog[primaryStep?.operation]
 
-  return <section className="mx-auto w-full max-w-2xl space-y-5 pb-28" aria-label="Студия Genjutsu">
-    <header className="sticky top-0 z-20 -mx-2 flex items-center justify-between gap-3 border-b border-white/[0.06] bg-background/90 px-2 py-3 backdrop-blur-xl">
+  return <section className="mx-auto min-w-0 w-full max-w-2xl space-y-5 overflow-x-hidden pb-28" aria-label="Студия Genjutsu">
+    <header className="sticky top-0 z-20 flex min-w-0 items-center justify-between gap-3 border-b border-white/[0.06] bg-background/90 px-1 py-3 backdrop-blur-xl sm:px-2">
       <div className="min-w-0">
         <div className="flex items-center gap-2"><span className="inline-flex h-7 items-center rounded-full border border-white/10 bg-white/[0.035] px-2.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Higgsfield</span><span className="text-lg font-semibold tracking-tight">Genjutsu</span></div>
         <p className="mt-1 truncate text-xs text-muted-foreground">Редактирование видео по референсам</p>
@@ -324,14 +337,35 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
           </div>
           {recipe.current_cost !== null && <p className="text-sm">Текущая стоимость рецепта: <strong>{recipe.current_cost} 🍌</strong></p>}
         </div>
-        <fieldset className="space-y-3" disabled={!bootstrap.enabled || blocked}>
-          {recipe.slots.map((slot, index) => <div key={index} className={section}>
-            <label className={label}>{slot.label}<input type="file" accept="image/*" className={field} onChange={e => { const file = e.target.files?.[0]; void action('recipe-upload', () => uploadRecipeReference(file, index)); e.target.value = '' }} /></label>
-            <p className="text-xs text-muted-foreground">Роль: {roleLabels[slot.role] || slot.role}</p>
-            {recipeAssets[index]?.url && <img src={recipeAssets[index]?.url || undefined} alt={slot.label} className="h-28 w-28 rounded-xl object-cover" />}
-          </div>)}
-          {recipe.user_fields.map(fieldSpec => <label key={fieldSpec.key} className={label}>{fieldSpec.label}<input className={field} type={fieldSpec.type === 'number' ? 'number' : fieldSpec.type === 'date' ? 'date' : 'text'} maxLength={fieldSpec.max_length || 160} value={recipeValues[fieldSpec.key] || ''} onChange={e => { setRecipeValues(current => ({ ...current, [fieldSpec.key]: e.target.value })); setQuote(null) }} required={fieldSpec.required !== false} /></label>)}
-          <Button disabled={blocked || recipeAssets.some(asset => !asset) || recipe.user_fields.some(fieldSpec => fieldSpec.required !== false && !(recipeValues[fieldSpec.key] || '').trim())} onClick={() => void action('recipe-quote', quoteRecipe)}>Рассчитать стоимость</Button>
+        <fieldset className={section} disabled={!bootstrap.enabled || blocked}>
+          <div>
+            <h3 className="font-semibold">Референсы тренда</h3>
+            <p className="mt-1 text-xs text-muted-foreground">Прикрепите нужные фото и видео здесь — скрытые материалы автора не показываются.</p>
+          </div>
+          {recipe.source_slot && <div className="space-y-2">
+            <label className={uploadCard}>
+              <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-white/[0.06]"><VideoIcon className="h-5 w-5" /></span>
+              <span className="min-w-0 flex-1"><span className="block truncate font-medium">{recipe.source_slot.label}</span><span className="mt-0.5 block text-xs text-muted-foreground">{recipeSource ? 'Видео загружено — нажмите, чтобы заменить' : 'MP4 или MOV · движение берётся из этого видео'}</span></span>
+              <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/[0.07]"><Plus className="h-4 w-4" /></span>
+              <input aria-label={recipe.source_slot.label} type="file" accept="video/mp4,video/quicktime,video/*" className="sr-only" onChange={e => { const file = e.target.files?.[0]; void action('recipe-source-upload', () => uploadRecipeSource(file)); e.target.value = '' }} />
+            </label>
+            {recipeSource?.url && <video src={recipeSource.url} controls playsInline preload="metadata" className="max-h-52 w-full rounded-2xl bg-black object-contain" />}
+          </div>}
+          {recipe.slots.length > 0 && <div className="space-y-3 border-t border-white/[0.06] pt-3">
+            {recipe.slots.map((slot, index) => <div key={index} className="space-y-2">
+              <label className={uploadCard}>
+                <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-white/[0.06]"><ImagePlus className="h-5 w-5" /></span>
+                <span className="min-w-0 flex-1"><span className="block truncate font-medium">{slot.label}</span><span className="mt-0.5 block text-xs text-muted-foreground">{recipeAssets[index] ? 'Фото загружено — нажмите, чтобы заменить' : roleLabels[slot.role] || slot.role}</span></span>
+                <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/[0.07]"><Plus className="h-4 w-4" /></span>
+                <input aria-label={slot.label} type="file" accept="image/*" className="sr-only" onChange={e => { const file = e.target.files?.[0]; void action('recipe-upload', () => uploadRecipeReference(file, index)); e.target.value = '' }} />
+              </label>
+              {recipeAssets[index]?.url && <img src={recipeAssets[index]?.url || undefined} alt={slot.label} className="h-24 w-24 rounded-xl object-cover" />}
+            </div>)}
+          </div>}
+          {recipe.user_fields.length > 0 && <div className="space-y-3 border-t border-white/[0.06] pt-3">
+            {recipe.user_fields.map(fieldSpec => <label key={fieldSpec.key} className={label}>{fieldSpec.label}<input className={field} type={fieldSpec.type === 'number' ? 'number' : fieldSpec.type === 'date' ? 'date' : 'text'} maxLength={fieldSpec.max_length || 160} value={recipeValues[fieldSpec.key] || ''} onChange={e => { setRecipeValues(current => ({ ...current, [fieldSpec.key]: e.target.value })); setQuote(null) }} required={fieldSpec.required !== false} /></label>)}
+          </div>}
+          <Button className="h-12 w-full rounded-2xl text-base" disabled={blocked || Boolean(recipe.source_slot && !recipeSource) || recipeAssets.some(asset => !asset) || recipe.user_fields.some(fieldSpec => fieldSpec.required !== false && !(recipeValues[fieldSpec.key] || '').trim())} onClick={() => void action('recipe-quote', quoteRecipe)}>Рассчитать стоимость</Button>
         </fieldset>
         {quote && <div className="space-y-3 rounded-2xl border border-gold/40 bg-gold/5 p-4">
           <h3 className="font-medium">Подтверждение запуска</h3>
@@ -342,30 +376,21 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
         </div>}
       </div>}
       {tab === 'editor' && !recipe && <div className="space-y-6">
-        <section className="space-y-3">
+        <section className="min-w-0 space-y-3">
           <div>
             <h3 className="text-lg font-semibold tracking-tight">Что можно изменить</h3>
             <p className="mt-1 text-sm text-muted-foreground">Выберите сценарий — остальные поля подстроятся автоматически.</p>
           </div>
-          <div className="-mx-2 flex snap-x gap-3 overflow-x-auto px-2 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div data-testid="genjutsu-operation-grid" className="grid min-w-0 grid-cols-3 gap-2">
             {(Object.keys(bootstrap.catalog) as Operation[]).map(op => {
               const copy = operationCopy[op]
               const Icon = copy.icon
               const active = primaryStep.operation === op
-              return <button key={op} type="button" onClick={() => patchStep(0, { operation: op, preset_id: null })} className={`relative min-w-[178px] snap-start overflow-hidden rounded-[26px] border p-4 text-left transition active:scale-[0.99] ${active ? 'border-white/25 bg-white/[0.08]' : 'border-white/[0.08] bg-white/[0.025]'}`}>
-                <div className="absolute -right-5 -top-5 h-24 w-24 rounded-full bg-white/[0.04] blur-sm" />
-                <div className="relative flex h-28 flex-col justify-between">
-                  <span className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-white/[0.08]"><Icon className="h-5 w-5" /></span>
-                  <div><p className="text-sm font-semibold">{copy.example}</p><p className="mt-1 text-xs text-muted-foreground">{copy.title}</p></div>
-                </div>
+              return <button key={op} type="button" onClick={() => patchStep(0, { operation: op, preset_id: null })} className={`min-w-0 rounded-[20px] border px-2 py-3 text-center transition active:scale-[0.99] ${active ? 'border-white/25 bg-white/[0.08] text-foreground' : 'border-white/[0.08] bg-white/[0.025] text-muted-foreground'}`}>
+                <span className="mx-auto inline-flex h-9 w-9 items-center justify-center rounded-xl bg-white/[0.07]"><Icon className="h-4 w-4" /></span>
+                <span className="mt-2 block break-words text-[11px] font-semibold leading-tight sm:text-xs">{copy.example}</span>
               </button>
             })}
-          </div>
-        </section>
-
-        <section className="space-y-3">
-          <div className="grid grid-cols-3 rounded-[22px] border border-white/[0.06] bg-white/[0.025] p-1">
-            {(Object.keys(bootstrap.catalog) as Operation[]).map(op => <button key={op} type="button" className={`rounded-[18px] px-2 py-2.5 text-xs font-medium transition ${primaryStep.operation === op ? 'bg-white/10 text-foreground shadow-sm' : 'text-muted-foreground'}`} onClick={() => patchStep(0, { operation: op, preset_id: null })}>{op === 'motion_transfer' ? 'Движение' : op === 'object_swap' ? 'Замена' : 'Стиль'}</button>)}
           </div>
           <p className="px-1 text-sm text-muted-foreground">{operationCopy[primaryStep.operation].description}</p>
           <label className="sr-only">Операция шага 1<select value={primaryStep.operation} onChange={e => patchStep(0, { operation: e.target.value as Operation, preset_id: null })}>{(Object.keys(bootstrap.catalog) as Operation[]).map(op => <option key={op} value={op}>{operationLabels[op]}</option>)}</select></label>
@@ -426,7 +451,7 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
             <label className="sr-only">Качество шага 1<select value={primaryStep.resolution} onChange={e => patchStep(0, { resolution: e.target.value })}>{primaryCaps.resolutions.map(v => <option key={v}>{v}</option>)}</select></label>
           </section>}
 
-          <details className="group rounded-[22px] border border-white/[0.06] bg-white/[0.02] px-4 py-3"><summary className="flex cursor-pointer list-none items-center justify-between text-sm font-medium"><span className="flex items-center gap-2"><Sparkles className="h-4 w-4 text-muted-foreground" />Что сохранить и дополнительные настройки</span><ChevronRight className="h-4 w-4 text-muted-foreground transition group-open:rotate-90" /></summary><div className="mt-4 space-y-4"><label className={label}>Что сохранить<input className={field} maxLength={2000} value={primaryStep.preserve} onChange={e => patchStep(0, { preserve: e.target.value })} placeholder="Например: лицо, движение камеры и фон" /></label><label className={label}>Количество вариантов<input className={field} type="number" min={1} max={limit('max_variants', 1)} value={plan.variants} onChange={e => edit({ ...plan, variants: Number(e.target.value) })} /></label>{plan.steps.length > 1 && <label className={label}>Продолжение цепочки<select className={field} value={plan.continuation} onChange={e => edit({ ...plan, continuation: e.target.value as Plan['continuation'] })}><option value="automatic">Автоматически</option><option value="manual">Подтверждать следующий шаг</option></select></label>}<div className="flex flex-wrap gap-2"><Button variant="outline" disabled={blocked || !plan.source_asset_id} onClick={() => void action('save', async () => { await saveCurrent(); await refresh() })}>Сохранить проект</Button><Button variant="outline" disabled={plan.steps.length >= limit('max_steps', 1)} onClick={() => edit({ ...plan, steps: [...plan.steps, freshStep()] })}>Добавить шаг</Button></div>{bootstrap.is_admin && <div className="space-y-2 rounded-2xl border border-white/[0.06] p-3"><p className="text-sm font-medium">Рецепт для «Трендов»</p><p className="text-xs text-muted-foreground">Закреплённые refs остаются скрытыми от пользователя.</p><input className={field} value={recipeFieldLabels} onChange={e => setRecipeFieldLabels(e.target.value)} placeholder="Имя, Возраст, Надпись" /><Button type="button" variant="outline" disabled={blocked || !plan.source_asset_id} onClick={() => void action('publish-recipe', publishRecipe)}>Создать приватный рецепт</Button>{publishedRecipe && <p className="break-all text-xs">Рецепт готов: <strong>{publishedRecipe.id}</strong> · фото: {publishedRecipe.slots.length}{publishedRecipe.current_cost !== null ? ` · ${publishedRecipe.current_cost} 🍌` : ''}</p>}</div>}</div></details>
+          <details className="group rounded-[22px] border border-white/[0.06] bg-white/[0.02] px-4 py-3"><summary className="flex cursor-pointer list-none items-center justify-between text-sm font-medium"><span className="flex items-center gap-2"><Sparkles className="h-4 w-4 text-muted-foreground" />Что сохранить и дополнительные настройки</span><ChevronRight className="h-4 w-4 text-muted-foreground transition group-open:rotate-90" /></summary><div className="mt-4 space-y-4"><label className={label}>Что сохранить<input className={field} maxLength={2000} value={primaryStep.preserve} onChange={e => patchStep(0, { preserve: e.target.value })} placeholder="Например: лицо, движение камеры и фон" /></label><label className={label}>Количество вариантов<input className={field} type="number" min={1} max={limit('max_variants', 1)} value={plan.variants} onChange={e => edit({ ...plan, variants: Number(e.target.value) })} /></label>{plan.steps.length > 1 && <label className={label}>Продолжение цепочки<select className={field} value={plan.continuation} onChange={e => edit({ ...plan, continuation: e.target.value as Plan['continuation'] })}><option value="automatic">Автоматически</option><option value="manual">Подтверждать следующий шаг</option></select></label>}<div className="flex flex-wrap gap-2"><Button variant="outline" disabled={blocked || !plan.source_asset_id} onClick={() => void action('save', async () => { await saveCurrent(); await refresh() })}>Сохранить проект</Button><Button variant="outline" disabled={plan.steps.length >= limit('max_steps', 1)} onClick={() => edit({ ...plan, steps: [...plan.steps, freshStep()] })}>Добавить шаг</Button></div>{bootstrap.is_admin && <div className="space-y-2 rounded-2xl border border-white/[0.06] p-3"><p className="text-sm font-medium">Рецепт для «Трендов»</p><p className="text-xs text-muted-foreground">Закреплённые refs остаются скрытыми от пользователя.</p><label className={label}>Видео тренда<select className={field} value={recipeSourceBinding} onChange={e => setRecipeSourceBinding(e.target.value as 'user' | 'fixed')}><option value="user">Пользователь загружает своё видео</option><option value="fixed">Оставить видео автора скрытым</option></select></label><input className={field} value={recipeFieldLabels} onChange={e => setRecipeFieldLabels(e.target.value)} placeholder="Имя, Возраст, Надпись" /><Button type="button" variant="outline" disabled={blocked || !plan.source_asset_id} onClick={() => void action('publish-recipe', publishRecipe)}>Создать приватный рецепт</Button>{publishedRecipe && <p className="break-all text-xs">Рецепт готов: <strong>{publishedRecipe.id}</strong> · фото: {publishedRecipe.slots.length}{publishedRecipe.current_cost !== null ? ` · ${publishedRecipe.current_cost} 🍌` : ''}</p>}</div>}</div></details>
 
           {plan.steps.slice(1).map((step, offset) => {
             const index = offset + 1

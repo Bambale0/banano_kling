@@ -52,7 +52,7 @@ export function GenjutsuEntry() {
     window.history.replaceState(window.history.state, '', url.toString())
   }
   return <Dialog open={options !== null} onOpenChange={open => { if (!open) window.dispatchEvent(new Event('genjutsu:request-close')) }}>
-    <DialogContent showCloseButton={false} className="max-h-[94dvh] max-w-[min(940px,96vw)] overflow-y-auto p-4 sm:max-w-[min(940px,96vw)] sm:p-6" onPointerDownOutside={event => event.preventDefault()}>
+    <DialogContent showCloseButton={false} className="inset-0 top-0 left-0 h-[100dvh] max-h-[100dvh] w-screen max-w-none translate-x-0 translate-y-0 gap-0 overflow-x-hidden overflow-y-auto rounded-none border-0 p-3 pt-[max(0.75rem,env(safe-area-inset-top))] pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:inset-auto sm:top-[50%] sm:left-[50%] sm:h-auto sm:max-h-[94dvh] sm:w-[calc(100vw-2rem)] sm:max-w-[760px] sm:translate-x-[-50%] sm:translate-y-[-50%] sm:gap-4 sm:rounded-[28px] sm:border sm:p-6" onPointerDownOutside={event => event.preventDefault()}>
       <DialogTitle className="sr-only">Студия Genjutsu</DialogTitle>
       <DialogDescription className="sr-only">Редактирование видео с помощью Higgsfield. Перед запуском показывается стоимость.</DialogDescription>
       {options && <Studio key={session} initial={options} onClose={close} />}

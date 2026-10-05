@@ -702,8 +702,31 @@ try {
   // Genjutsu is reachable from the shared product shell and loads its real lazy UI.
   await page.getByRole('button', { name: 'Студия', exact: true }).click()
   await page.getByRole('button', { name: /Higgsfield Genjutsu/ }).click()
-  await page.getByRole('region', { name: 'Студия Genjutsu' }).waitFor()
+  const genjutsuRegion = page.getByRole('region', { name: 'Студия Genjutsu' })
+  await genjutsuRegion.waitFor()
   await page.getByText('Интеграция ещё не настроена.', { exact: false }).waitFor()
+  const genjutsuDialog = page.getByRole('dialog')
+  const dialogBox = await genjutsuDialog.boundingBox()
+  assert.ok(dialogBox, 'Genjutsu dialog must be visible')
+  assert.ok(dialogBox.x <= 1, `mobile dialog must start at viewport edge, got x=${dialogBox.x}`)
+  assert.ok(dialogBox.width >= 429, `mobile dialog must fill 430px viewport, got width=${dialogBox.width}`)
+  assert.equal(
+    await genjutsuRegion.evaluate((element) => element.scrollWidth <= element.clientWidth),
+    true,
+    'Genjutsu region must not scroll horizontally on mobile',
+  )
+  const operationGrid = genjutsuRegion.locator('[data-testid="genjutsu-operation-grid"]')
+  await operationGrid.waitFor()
+  assert.equal(
+    await operationGrid.evaluate((element) => element.scrollWidth <= element.clientWidth),
+    true,
+    'Genjutsu operation chooser must fit without horizontal scrolling',
+  )
+  assert.equal(
+    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    true,
+    'Genjutsu must not widen the Telegram viewport',
+  )
   await page.getByRole('button', { name: 'Закрыть студию' }).click()
 
   // Admin launch opens Genjutsu directly on management in the real lazy UI.

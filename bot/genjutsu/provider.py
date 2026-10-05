@@ -65,9 +65,21 @@ class Higgsfield:
             raise ProviderFailure('provider_invalid_url')
         parsed = urlsplit(value)
         base = urlsplit(self.base_url)
+        base_port = base.port or (443 if base.scheme == 'https' else 80)
+        parsed_port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+        allowed_origins = {(base.scheme, base.hostname, base_port)}
+        # Higgsfield's generation endpoint is api.higgsfield.ai, while current
+        # acceptance receipts return authenticated status/cancel URLs on
+        # platform.higgsfield.ai. Keep this fail-closed to the provider-owned
+        # production origin instead of accepting arbitrary response URLs.
         if (
-            parsed.scheme != base.scheme
-            or parsed.netloc != base.netloc
+            base.scheme == 'https'
+            and base.hostname == 'api.higgsfield.ai'
+            and base_port == 443
+        ):
+            allowed_origins.add(('https', 'platform.higgsfield.ai', 443))
+        if (
+            (parsed.scheme, parsed.hostname, parsed_port) not in allowed_origins
             or parsed.username
             or parsed.password
             or parsed.fragment
@@ -75,6 +87,16 @@ class Higgsfield:
         ):
             raise ProviderFailure('provider_invalid_url')
         return value
+
+    def _request_handle_url(self, external_id: str, action: str) -> str:
+        rid = request_id(external_id)
+        if action not in {'status', 'cancel'}:
+            raise ProviderFailure('provider_invalid_url')
+        base = urlsplit(self.base_url)
+        base_port = base.port or (443 if base.scheme == 'https' else 80)
+        if base.scheme == 'https' and base.hostname == 'api.higgsfield.ai' and base_port == 443:
+            return f'https://platform.higgsfield.ai/requests/{rid}/{action}'
+        return f'requests/{rid}/{action}'
 
     async def _request(self, method: str, path: str, *, timeout: int,
                        payload=None, params=None, submission: bool = False,
@@ -155,7 +177,7 @@ class Higgsfield:
     async def status(self, external_id: str, *, timeout: int, status_url: str | None = None) -> dict:
         rid = request_id(external_id)
         data, correlation_id = await self._request(
-            'GET', status_url or f'requests/{rid}/status', timeout=timeout
+            'GET', status_url or self._request_handle_url(rid, 'status'), timeout=timeout
         )
         state = data.get('status')
         if state not in {'queued', 'in_progress', 'completed', 'failed', 'nsfw', 'canceled'}:
@@ -170,8 +192,9 @@ class Higgsfield:
 
     async def cancel(self, external_id: str, *, timeout: int, cancel_url: str | None = None) -> None:
         # An acknowledgement is not a terminal state. Always follow with status().
+        rid = request_id(external_id)
         await self._request(
-            'POST', cancel_url or f'requests/{request_id(external_id)}/cancel', timeout=timeout
+            'POST', cancel_url or self._request_handle_url(rid, 'cancel'), timeout=timeout
         )
 
     async def presets(self, *, timeout: int) -> list[dict]:

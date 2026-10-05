@@ -36,3 +36,16 @@ test('normal genjutsu start parameter keeps the user editor', async () => {
   render(<GenjutsuEntry />)
   expect(await screen.findByText('USER_OPEN')).toBeInTheDocument()
 })
+
+
+test('mobile Genjutsu opens edge-to-edge without horizontal dialog overflow', async () => {
+  startParam.mockReturnValue('genjutsu')
+  render(<GenjutsuEntry />)
+  await screen.findByText('USER_OPEN')
+  const dialog = document.querySelector('[data-slot="dialog-content"]')
+  expect(dialog).not.toBeNull()
+  expect(dialog?.className).toContain('w-screen')
+  expect(dialog?.className).toContain('max-w-none')
+  expect(dialog?.className).toContain('overflow-x-hidden')
+  expect(dialog?.className).toContain('rounded-none')
+})
