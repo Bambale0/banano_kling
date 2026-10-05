@@ -39,7 +39,9 @@ async def test_postgres_migration_and_concurrent_refund_are_idempotent():
         columns = await connection.execute(
             "SELECT column_name FROM information_schema.columns WHERE table_name='genjutsu_recipes'"
         )
-        assert "verification_run_id" in {row[0] async for row in columns}
+        recipe_columns = {row[0] async for row in columns}
+        assert "verification_run_id" in recipe_columns
+        assert "source_binding" in recipe_columns
         await connection.execute(
             "INSERT INTO users(telegram_id, credits) VALUES(%s, 100) "
             "ON CONFLICT(telegram_id) DO UPDATE SET credits=100",

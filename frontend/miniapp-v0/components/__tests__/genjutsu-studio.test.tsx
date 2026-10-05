@@ -1,14 +1,15 @@
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { GenjutsuStudio } from '../genjutsu-studio'
-import { genjutsuCall } from '@/lib/genjutsu-api'
+import { genjutsuCall, uploadGenjutsu } from '@/lib/genjutsu-api'
 import catalog from '../../../../bot/genjutsu/catalog.json'
 
 jest.mock('@/lib/api', () => ({ getApiBasePath: () => '/mini-app/api', getInitData: () => 'signed-test', getStartParamFallback: () => '' }))
-jest.mock('@/lib/genjutsu-api', () => ({ ...jest.requireActual('@/lib/genjutsu-api'), genjutsuCall: jest.fn() }))
+jest.mock('@/lib/genjutsu-api', () => ({ ...jest.requireActual('@/lib/genjutsu-api'), genjutsuCall: jest.fn(), uploadGenjutsu: jest.fn() }))
 jest.mock('../genjutsu-admin', () => ({ GenjutsuAdmin: () => <div>GENJUTSU_ADMIN_PANEL</div> }))
 
 const call = genjutsuCall as jest.Mock
+const uploadCall = uploadGenjutsu as jest.Mock
 const initial = {}
 const bootstrap = {
   catalog, configured: true, enabled: true, is_admin: false, credits: 1000,
@@ -21,6 +22,7 @@ const bootstrap = {
 
 beforeEach(() => {
   jest.clearAllMocks(); sessionStorage.clear()
+  uploadCall.mockReset()
   Object.defineProperty(global.crypto, 'randomUUID', { configurable: true, value: () => '11111111-2222-4333-8444-555555555555' })
   call.mockImplementation(async (action: string, body: Record<string, unknown>) => {
     if (action === 'bootstrap') return bootstrap
@@ -125,6 +127,7 @@ test('admin recipe publication requires and sends a completed verification run',
       expect(body.verification_run_id).toBe('verified-run')
       expect(body.project_id).toBe('project')
       expect(body.revision).toBe(1)
+      expect(body.source_binding).toBe('user')
       return { recipe }
     }
     return original(action, body)
@@ -153,4 +156,66 @@ test('admin entry never exposes management to a non-admin', async () => {
   expect(await screen.findByLabelText('Видео из библиотеки')).toBeInTheDocument()
   expect(screen.queryByText('GENJUTSU_ADMIN_PANEL')).not.toBeInTheDocument()
   expect(screen.queryByRole('button', { name: 'Управление' })).not.toBeInTheDocument()
+})
+
+
+test('trend recipe accepts one video reference plus photo references before quoting', async () => {
+  const recipe = {
+    id: 'c'.repeat(32),
+    title: 'Motion trend',
+    source_slot: { kind: 'video', label: 'Видео-референс' },
+    slots: [{ step_index: 0, reference_index: 0, role: 'character', label: 'Фото героя' }],
+    user_fields: [],
+    steps: [{ operation: 'motion_transfer', resolution: '720p' }],
+    variants: 1,
+    continuation: 'automatic',
+    current_cost: 20,
+  }
+  const original = call.getMockImplementation()!
+  call.mockImplementation(async (action: string, body: Record<string, unknown>) => {
+    if (action === 'recipe_get') return { recipe }
+    if (action === 'recipe_quote') {
+      expect(body).toEqual({
+        recipe_id: recipe.id,
+        source_asset_id: 'recipe-video',
+        reference_asset_ids: ['recipe-face'],
+        user_values: {},
+      })
+      return { recipe, quote: { id: 'recipe-quote', expires_ms: Date.now() + 300000, total_credits: 24, allocations: [], plan_hash: 'hidden' } }
+    }
+    return original(action, body)
+  })
+  uploadCall.mockImplementation(async (file: File, kind: string) => ({
+    id: kind === 'video' ? 'recipe-video' : 'recipe-face',
+    kind,
+    url: kind === 'video' ? 'https://files.example/video.mp4' : 'https://files.example/face.png',
+    ...(kind === 'video' ? { duration_ms: 5000 } : {}),
+  }))
+
+  render(<GenjutsuStudio initial={{ recipe_id: recipe.id }} onClose={jest.fn()} />)
+  expect(await screen.findByText('Motion trend')).toBeInTheDocument()
+
+  fireEvent.change(screen.getByLabelText('Видео-референс'), {
+    target: { files: [new File(['video'], 'motion.mp4', { type: 'video/mp4' })] },
+  })
+  await waitFor(() => expect(uploadCall).toHaveBeenCalledWith(expect.any(File), 'video'))
+  await waitFor(() => expect(screen.getByText('Видео загружено — нажмите, чтобы заменить')).toBeInTheDocument())
+
+  fireEvent.change(screen.getByLabelText('Фото героя'), {
+    target: { files: [new File(['image'], 'face.png', { type: 'image/png' })] },
+  })
+  await waitFor(() => expect(uploadCall).toHaveBeenCalledWith(expect.any(File), 'image'))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Рассчитать стоимость' })).toBeEnabled())
+  fireEvent.click(screen.getByRole('button', { name: 'Рассчитать стоимость' }))
+  expect(await screen.findByText('24 бананов')).toBeInTheDocument()
+  expect(uploadCall).toHaveBeenCalledWith(expect.any(File), 'video')
+  expect(uploadCall).toHaveBeenCalledWith(expect.any(File), 'image')
+})
+
+test('mobile operation chooser is a bounded grid without horizontal scrolling', async () => {
+  render(<GenjutsuStudio initial={initial} onClose={jest.fn()} />)
+  await screen.findByLabelText('Видео из библиотеки')
+  const chooser = screen.getByTestId('genjutsu-operation-grid')
+  expect(chooser.className).toContain('grid')
+  expect(chooser.className).not.toContain('overflow-x-auto')
 })

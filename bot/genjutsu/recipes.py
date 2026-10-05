@@ -12,6 +12,8 @@ import json
 from typing import Any
 from uuid import uuid4
 
+import aiosqlite
+
 from bot.trend_user_fields import (
     TrendUserFieldsError,
     clean_submitted_user_values,
@@ -32,6 +34,7 @@ SCHEMA = [
         title TEXT NOT NULL,
         plan TEXT NOT NULL,
         user_fields TEXT NOT NULL,
+        source_binding TEXT NOT NULL DEFAULT 'fixed',
         active INTEGER NOT NULL DEFAULT 1,
         created_ms BIGINT NOT NULL,
         updated_ms BIGINT NOT NULL
@@ -60,8 +63,10 @@ def _slots(plan: dict) -> list[dict[str, Any]]:
     return slots
 
 
-def _fixed_assets(plan: dict) -> set[str]:
-    result = {str(plan.get("source_asset_id") or "")}
+def _fixed_assets(plan: dict, *, source_binding: str = "fixed") -> set[str]:
+    result = set()
+    if source_binding == "fixed":
+        result.add(str(plan.get("source_asset_id") or ""))
     for step in plan.get("steps") or []:
         for ref in step.get("references") or []:
             if ref.get("binding", "user") == "fixed":
@@ -79,6 +84,19 @@ class RecipeStore:
             execute_ddl = getattr(db, "execute_native_ddl", db.execute)
             for sql in SCHEMA:
                 await execute_ddl(sql)
+            # Commit the base schema before the additive compatibility migration.
+            # PostgreSQL rolls back the current transaction on duplicate-column
+            # errors, so a later idempotent ALTER must not undo a fresh CREATE.
+            await db.commit()
+            try:
+                await execute_ddl(
+                    "ALTER TABLE genjutsu_recipes "
+                    "ADD COLUMN source_binding TEXT NOT NULL DEFAULT 'fixed'"
+                )
+            except aiosqlite.OperationalError as exc:
+                message = str(exc).lower()
+                if "already exists" not in message and "duplicate column" not in message:
+                    raise
             await db.commit()
 
     async def _row(self, recipe_id: str, *, active_only: bool = True) -> dict:
@@ -104,12 +122,16 @@ class RecipeStore:
         title: str,
         user_fields: Any,
         verification_run_id: str,
+        *,
+        source_binding: str = "fixed",
     ) -> dict:
         title = text(title, 120, "invalid_title").strip()
         if not title:
             raise PipelineError("invalid_title")
         if type(revision) is not int or revision < 1:
             raise PipelineError("invalid_revision")
+        if source_binding not in {"fixed", "user"}:
+            raise PipelineError("invalid_source_binding")
         project = await self.repository.get_project(owner, project_id, revision)
         settings, _ = await self.repository.settings()
         owned = await self.repository.get_assets(owner, asset_ids(project["plan"]))
@@ -131,10 +153,11 @@ class RecipeStore:
         async with self.repository.transaction() as db:
             await db.execute(
                 """INSERT INTO genjutsu_recipes(
-                    id,owner,project_id,revision,verification_run_id,title,plan,user_fields,active,created_ms,updated_ms
-                ) VALUES(?,?,?,?,?,?,?,?,1,?,?)""",
+                    id,owner,project_id,revision,verification_run_id,title,plan,user_fields,
+                    source_binding,active,created_ms,updated_ms
+                ) VALUES(?,?,?,?,?,?,?,?,?,1,?,?)""",
                 (rid, owner, project_id, revision, verification_run_id, title,
-                 encode(plan), encode(normalized_fields), now, now),
+                 encode(plan), encode(normalized_fields), source_binding, now, now),
             )
         return await self.public(rid)
 
@@ -159,17 +182,26 @@ class RecipeStore:
     async def public(self, recipe_id: str) -> dict:
         row = await self._row(recipe_id)
         plan = row["plan"]
-        source = await self.repository.get_asset_internal(plan["source_asset_id"])
+        source_binding = row.get("source_binding") or "fixed"
         current_cost = None
-        if source:
-            try:
-                settings, _ = await self.repository.settings()
-                current_cost = quote_plan(plan, {plan["source_asset_id"]: source}, settings)["total_credits"]
-            except PipelineError:
-                current_cost = None
+        if source_binding == "fixed":
+            source = await self.repository.get_asset_internal(plan["source_asset_id"])
+            if source:
+                try:
+                    settings, _ = await self.repository.settings()
+                    current_cost = quote_plan(
+                        plan, {plan["source_asset_id"]: source}, settings
+                    )["total_credits"]
+                except PipelineError:
+                    current_cost = None
         return {
             "id": row["id"],
             "title": row["title"],
+            "source_slot": (
+                {"kind": "video", "label": "Видео с нужным движением"}
+                if source_binding == "user"
+                else None
+            ),
             "slots": _slots(plan),
             "user_fields": row["user_fields"],
             "steps": [
@@ -187,9 +219,27 @@ class RecipeStore:
         recipe_id: str,
         reference_asset_ids: Any,
         user_values: Any,
+        *,
+        source_asset_id: Any = None,
     ) -> dict:
         row = await self._row(recipe_id)
         plan = copy.deepcopy(row["plan"])
+        source_binding = row.get("source_binding") or "fixed"
+        if source_binding == "user":
+            if not isinstance(source_asset_id, str) or not source_asset_id or len(source_asset_id) > 100:
+                raise PipelineError("source_required")
+            try:
+                source_assets = await self.repository.get_assets(owner, {source_asset_id})
+            except PipelineError as exc:
+                if exc.code == "asset_unavailable":
+                    raise PipelineError("source_unavailable", status=404) from exc
+                raise
+            if source_assets[source_asset_id]["kind"] != "video":
+                raise PipelineError("source_unavailable", status=404)
+            plan["source_asset_id"] = source_asset_id
+        elif source_asset_id not in (None, ""):
+            raise PipelineError("source_not_replaceable")
+
         slots = _slots(plan)
         if not isinstance(reference_asset_ids, list) or len(reference_asset_ids) != len(slots):
             raise PipelineError("recipe_reference_count")
@@ -243,7 +293,7 @@ class RecipeStore:
         async with self.repository.connect() as db:
             row = await one(
                 db,
-                """SELECT rp.recipe_id,r.plan,p.owner
+                """SELECT rp.recipe_id,r.plan,r.source_binding,p.owner
                    FROM genjutsu_recipe_projects rp
                    JOIN genjutsu_recipes r ON r.id=rp.recipe_id
                    JOIN genjutsu_projects p ON p.id=rp.project_id
@@ -253,7 +303,13 @@ class RecipeStore:
         if not row:
             return draft, set(), False
         template = json.loads(row["plan"])
-        if draft.get("source_asset_id") != template.get("source_asset_id"):
+        source_binding = row.get("source_binding") or "fixed"
+        if (
+            source_binding == "fixed"
+            and draft.get("source_asset_id") != template.get("source_asset_id")
+        ):
+            raise PipelineError("recipe_integrity_failed", status=409)
+        if source_binding == "user" and not draft.get("source_asset_id"):
             raise PipelineError("recipe_integrity_failed", status=409)
         if len(draft.get("steps") or []) != len(template.get("steps") or []):
             raise PipelineError("recipe_integrity_failed", status=409)
@@ -270,7 +326,7 @@ class RecipeStore:
                     and current_ref.get("asset_id") != original_ref.get("asset_id")
                 ):
                     raise PipelineError("recipe_integrity_failed", status=409)
-        return draft, _fixed_assets(template), True
+        return draft, _fixed_assets(template, source_binding=source_binding), True
 
     async def dispatch(self, owner: int, admin: bool, action: str, body: dict, api) -> dict:
         if action == "recipe_get":
@@ -299,7 +355,17 @@ class RecipeStore:
                 raise PipelineError("admin_required", status=403)
             return {"items": await self.list_admin(owner)}
         if action == "recipe_publish":
-            api.fields(body, {"project_id", "revision", "title", "user_fields", "verification_run_id"})
+            api.fields(
+                body,
+                {
+                    "project_id",
+                    "revision",
+                    "title",
+                    "user_fields",
+                    "verification_run_id",
+                    "source_binding",
+                },
+            )
             if not admin:
                 raise PipelineError("admin_required", status=403)
             await api.require_creation(True)
@@ -311,6 +377,7 @@ class RecipeStore:
                     body.get("title"),
                     body.get("user_fields"),
                     api.ident(body, "verification_run_id"),
+                    source_binding=body.get("source_binding", "fixed"),
                 )
             }
         if action == "recipe_archive":
@@ -320,7 +387,10 @@ class RecipeStore:
             await self.archive(owner, api.ident(body, "recipe_id"))
             return {"archived": True}
         if action == "recipe_quote":
-            api.fields(body, {"recipe_id", "reference_asset_ids", "user_values"})
+            api.fields(
+                body,
+                {"recipe_id", "source_asset_id", "reference_asset_ids", "user_values"},
+            )
             await api.require_creation(admin)
             recipe_id = api.ident(body, "recipe_id")
             project = await self.instantiate(
@@ -328,6 +398,7 @@ class RecipeStore:
                 recipe_id,
                 body.get("reference_asset_ids"),
                 body.get("user_values"),
+                source_asset_id=body.get("source_asset_id"),
             )
             quote = await api.pipeline.quote(owner, project["id"], project["revision"])
             return {

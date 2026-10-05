@@ -98,3 +98,18 @@ async def test_submission_5xx_is_uncertain_and_must_not_be_blindly_retried():
         assert captured.value.code == "provider_http_503"
     finally:
         await server.close()
+
+
+def test_production_provider_accepts_higgsfield_platform_status_host_only():
+    provider = Higgsfield("secret", "https://api.higgsfield.ai")
+
+    status_url = "https://platform.higgsfield.ai/requests/request-123/status"
+    cancel_url = "https://platform.higgsfield.ai/requests/request-123/cancel"
+
+    assert provider._provider_url(status_url) == status_url
+    assert provider._provider_url(cancel_url) == cancel_url
+    assert provider._request_handle_url("request-123", "status") == status_url
+    assert provider._request_handle_url("request-123", "cancel") == cancel_url
+
+    with pytest.raises(ProviderFailure, match="provider_invalid_url"):
+        provider._provider_url("https://evil.example/requests/request-123/status")

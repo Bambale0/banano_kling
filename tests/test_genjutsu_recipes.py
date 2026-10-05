@@ -28,6 +28,7 @@ async def build(tmp_path):
     await repo.migrate()
     recipes = RecipeStore(repo)
     await recipes.migrate()
+    await recipes.migrate()
     settings, version = await repo.settings()
     settings["prices"] = {
         "motion_transfer": {"480p": 1, "720p": 2, "1080p": 3},
@@ -153,4 +154,114 @@ async def test_recipe_publish_requires_completed_matching_admin_run(tmp_path):
     with pytest.raises(Exception, match="recipe_live_verification_required"):
         await recipes.publish(
             999, project["id"], project["revision"], "Public title", [], "not-verified",
+        )
+
+
+@pytest.mark.asyncio
+async def test_recipe_user_video_slot_replaces_template_source_and_keeps_fixed_refs_private(tmp_path):
+    repo, recipes = await build(tmp_path)
+    template_source = await repo.add_asset(999, "video", "a" * 32 + ".mp4", {
+        "duration_ms": 5_000, "size_bytes": 100, "mime": "video/mp4",
+        "width": 1280, "height": 720,
+    })
+    placeholder = await repo.add_asset(999, "image", "b" * 32 + ".png", {
+        "size_bytes": 10, "mime": "image/png",
+    })
+    fixed = await repo.add_asset(999, "image", "c" * 32 + ".png", {
+        "size_bytes": 10, "mime": "image/png",
+    })
+    user_video = await repo.add_asset(101, "video", "d" * 32 + ".mp4", {
+        "duration_ms": 6_000, "size_bytes": 100, "mime": "video/mp4",
+        "width": 1280, "height": 720,
+    })
+    user_image = await repo.add_asset(101, "image", "e" * 32 + ".png", {
+        "size_bytes": 10, "mime": "image/png",
+    })
+    plan = {
+        "source_asset_id": template_source["id"],
+        "steps": [{
+            "operation": "motion_transfer", "resolution": "720p",
+            "prompt": "Secret", "preserve": "",
+            "references": [
+                {"asset_id": placeholder["id"], "role": "character", "label": "Ваш герой", "binding": "user"},
+                {"asset_id": fixed["id"], "role": "wardrobe", "label": "Скрытая одежда", "binding": "fixed"},
+            ],
+            "preset_id": None,
+        }],
+        "variants": 1, "continuation": "automatic",
+    }
+    project = await repo.save_project(999, "Template", plan)
+    repo.verified_admin_run = AsyncMock(return_value=True)
+
+    recipe = await recipes.publish(
+        999, project["id"], project["revision"], "Public title", [], "verified-run",
+        source_binding="user",
+    )
+
+    assert recipe["source_slot"] == {
+        "kind": "video",
+        "label": "Видео с нужным движением",
+    }
+    assert template_source["id"] not in repr(recipe)
+    assert fixed["id"] not in repr(recipe)
+
+    instance = await recipes.instantiate(
+        101,
+        recipe["id"],
+        [user_image["id"]],
+        {},
+        source_asset_id=user_video["id"],
+    )
+    hidden = await repo.get_project(101, instance["id"])
+    draft, grants, private = await recipes.resolve_project(101, instance["id"], 1, hidden["plan"])
+
+    assert private is True
+    assert draft["source_asset_id"] == user_video["id"]
+    assert draft["steps"][0]["references"][0]["asset_id"] == user_image["id"]
+    assert fixed["id"] in grants
+    assert template_source["id"] not in grants
+
+
+@pytest.mark.asyncio
+async def test_recipe_user_video_slot_rejects_image_as_source(tmp_path):
+    repo, recipes = await build(tmp_path)
+    template_source = await repo.add_asset(999, "video", "f" * 32 + ".mp4", {
+        "duration_ms": 5_000, "size_bytes": 100, "mime": "video/mp4",
+        "width": 1280, "height": 720,
+    })
+    placeholder = await repo.add_asset(999, "image", "1" * 31 + "0.png", {
+        "size_bytes": 10, "mime": "image/png",
+    })
+    wrong_source = await repo.add_asset(101, "image", "2" * 31 + "0.png", {
+        "size_bytes": 10, "mime": "image/png",
+    })
+    user_image = await repo.add_asset(101, "image", "3" * 31 + "0.png", {
+        "size_bytes": 10, "mime": "image/png",
+    })
+    plan = {
+        "source_asset_id": template_source["id"],
+        "steps": [{
+            "operation": "motion_transfer", "resolution": "720p",
+            "prompt": "Secret", "preserve": "",
+            "references": [{
+                "asset_id": placeholder["id"], "role": "character", "label": "Ваш герой", "binding": "user",
+            }],
+            "preset_id": None,
+        }],
+        "variants": 1, "continuation": "automatic",
+    }
+    project = await repo.save_project(999, "Template", plan)
+    repo.verified_admin_run = AsyncMock(return_value=True)
+    recipe = await recipes.publish(
+        999, project["id"], project["revision"], "Public title", [], "verified-run",
+        source_binding="user",
+    )
+
+    with pytest.raises(Exception, match="source_unavailable"):
+        await recipes.instantiate(
+            101,
+            recipe["id"],
+            [user_image["id"]],
+            {},
+            source_asset_id=wrong_source["id"],
         )
