@@ -25,7 +25,7 @@ KNOWN_ACTIONS = frozenset({
     'trim', 'import', 'quote', 'start', 'run', 'cancel', 'continue', 'redeliver',
     'settings', 'save_settings', 'admin_runs', 'admin_refund', 'admin_reconcile',
     'admin_adopt', 'events', 'recipe_get', 'recipe_costs', 'recipe_list',
-    'recipe_publish', 'recipe_archive', 'recipe_quote', 'upload', 'callback',
+    'recipe_publish', 'recipe_archive', 'recipe_quote', 'feed_publish', 'upload', 'callback',
 })
 
 # Stable codes are also consumed by the Mini App. Raw provider errors are never returned.
@@ -38,6 +38,12 @@ MESSAGES = {
     'asset_unavailable': 'Один из исходных файлов недоступен. Загрузите видео или фото заново.',
     'duplicate_reference': 'Одно фото добавлено несколько раз. Удалите повторный референс.',
     'preset_required': 'Выберите стиль для обработки видео.',
+    'completed_output_required': 'В ленту можно опубликовать только готовый итоговый результат.',
+    'private_recipe_publication_forbidden': 'Работу по чужому приватному рецепту нельзя опубликовать как новый рецепт.',
+    'feed_publication_conflict': 'Этот результат уже опубликован с другими настройками повтора.',
+    'feed_publication_withdrawn': 'Публикация снята с ленты. Вернуть её можно в настройках публикации в профиле.',
+    'feed_storage_failed': 'Не удалось сохранить видео для ленты. Попробуйте ещё раз.',
+
     'integration_not_configured': '\u0418\u043d\u0442\u0435\u0433\u0440\u0430\u0446\u0438\u044f Genjutsu \u0435\u0449\u0451 \u043d\u0435 \u043d\u0430\u0441\u0442\u0440\u043e\u0435\u043d\u0430.',
     'feature_disabled': 'Genjutsu \u043f\u043e\u043a\u0430 \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u0435\u043d \u0434\u043b\u044f \u043d\u043e\u0432\u044b\u0445 \u0437\u0430\u043f\u0443\u0441\u043a\u043e\u0432.',
     'price_not_configured': '\u0410\u0434\u043c\u0438\u043d\u0438\u0441\u0442\u0440\u0430\u0442\u043e\u0440 \u0435\u0449\u0451 \u043d\u0435 \u0437\u0430\u0434\u0430\u043b \u0446\u0435\u043d\u0443 \u044d\u0442\u043e\u0439 \u043e\u043f\u0435\u0440\u0430\u0446\u0438\u0438.',
@@ -59,12 +65,13 @@ MESSAGES = {
 
 
 class API:
-    def __init__(self, pipeline, authenticate: Callable[..., Awaitable[tuple[int, bool]]], *, importer=None, recipes=None):
+    def __init__(self, pipeline, authenticate: Callable[..., Awaitable[tuple[int, bool]]], *, importer=None, recipes=None, feed=None):
         self.pipeline = pipeline
         self.repository = pipeline.repository
         self.authenticate = authenticate
         self.importer = importer
         self.recipes = recipes
+        self.feed = feed
 
     def register(self, app: web.Application, *, base='/mini-app/api') -> None:
         # Legacy add_post wrappers eagerly parse JSON/multipart. These two
@@ -187,6 +194,12 @@ class API:
 
     async def dispatch(self, owner, admin, action, body):
         repo, pipeline = self.repository, self.pipeline
+        if action == 'feed_publish':
+            self.fields(body, {'run_id', 'step_id', 'title', 'source_binding'})
+            if self.feed is None:
+                raise PipelineError('feed_publication_unavailable', status=503)
+            return await self.feed.publish(owner, self.ident(body, 'run_id'), self.ident(body, 'step_id'),
+                                           body.get('title'), body.get('source_binding'))
         if action == 'availability':
             self.fields(body, set())
             settings, _ = await repo.settings()

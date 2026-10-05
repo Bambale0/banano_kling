@@ -168,6 +168,11 @@ async def repeat_advanced_video_result(callback: types.CallbackQuery, state: FSM
         await callback.answer("Не удалось найти данные для повтора.", show_alert=True)
         return
 
+    from bot.genjutsu.feed import redirect_legacy_repeat
+
+    if await redirect_legacy_repeat(callback, task):
+        return
+
     try:
         request_data = json.loads(task.request_data) if task.request_data else {}
     except (TypeError, ValueError, json.JSONDecodeError):

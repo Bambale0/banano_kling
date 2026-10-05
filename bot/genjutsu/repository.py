@@ -109,6 +109,7 @@ SCHEMA = [
 class Repository:
     def __init__(self, connect: Callable, *, clock: Callable[[], int] | None = None):
         self.connect = connect
+        self.start_validator = None
         self.clock = clock or (lambda: time.time_ns() // 1000000)
 
     async def migrate(self) -> None:
@@ -279,6 +280,8 @@ class Repository:
             project = await one(db, 'SELECT revision FROM genjutsu_projects WHERE id=? AND owner=?', (q['project_id'], owner))
             if not project or project['revision'] != q['revision']:
                 raise PipelineError('project_conflict', status=409)
+            if self.start_validator:
+                await self.start_validator(db, q)
             plan, quote = json.loads(q['plan']), json.loads(q['quote'])
             if not admin_free and any(s['operation'] not in settings['verified_operations'] for s in plan['steps']):
                 raise PipelineError('operation_not_verified', status=503)

@@ -7027,6 +7027,14 @@ def _generation_row_to_card(
             has_image_references=bool(all_reference_images),
             has_video_references=bool(all_reference_videos),
         ),
+        "genjutsu_title": (
+            request_data.get("genjutsu_title") if str(row["model"] or "") == "genjutsu" else None
+        ),
+        "genjutsu_recipe_id": (
+            request_data.get("genjutsu_recipe_id")
+            if str(row["model"] or "") == "genjutsu"
+            else None
+        ),
         "reference_images": public_reference_images,
         "reference_videos": public_reference_videos,
         "references_count": references_count,

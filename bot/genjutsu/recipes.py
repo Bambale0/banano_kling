@@ -43,6 +43,15 @@ SCHEMA = [
         project_id TEXT PRIMARY KEY REFERENCES genjutsu_projects(id),
         recipe_id TEXT NOT NULL REFERENCES genjutsu_recipes(id)
     )""",
+    """CREATE TABLE IF NOT EXISTS genjutsu_feed_publications (
+        step_id TEXT PRIMARY KEY REFERENCES genjutsu_steps(id),
+        run_id TEXT NOT NULL REFERENCES genjutsu_runs(id),
+        recipe_id TEXT NOT NULL UNIQUE REFERENCES genjutsu_recipes(id),
+        task_id TEXT NOT NULL UNIQUE,
+        title TEXT NOT NULL,
+        source_binding TEXT NOT NULL,
+        created_ms BIGINT NOT NULL
+    )""",
     "CREATE INDEX IF NOT EXISTS genjutsu_recipes_owner ON genjutsu_recipes(owner,updated_ms)",
 ]
 
@@ -110,9 +119,40 @@ class RecipeStore:
             )
         if not row:
             raise PipelineError("recipe_unavailable", status=404)
+        if active_only:
+            await self.require_publication(recipe_id)
         row["plan"] = json.loads(row["plan"])
         row["user_fields"] = json.loads(row["user_fields"])
         return row
+
+    async def require_publication(self, recipe_id: str) -> None:
+        """Feed withdrawal revokes new repeats without exposing the saved plan."""
+        async with self.repository.connect() as db:
+            binding = await one(db, "SELECT task_id FROM genjutsu_feed_publications WHERE recipe_id=?", (recipe_id,))
+            if not binding:
+                return  # Curated Trends recipes retain their existing lifecycle.
+            task = await one(db, """SELECT id FROM generation_tasks WHERE task_id=?
+                AND model='genjutsu' AND status='completed'
+                AND (is_public_feed=1 OR COALESCE(is_profile_visible,0)=1)""", (binding["task_id"],))
+        if not task:
+            raise PipelineError("recipe_unavailable", status=404)
+
+    async def validate_start(self, db, quote: dict) -> None:
+        """Serialize Feed withdrawal with admission; accepted runs keep running."""
+        binding = await one(db, """SELECT fp.task_id,fp.recipe_id
+            FROM genjutsu_recipe_projects rp
+            JOIN genjutsu_feed_publications fp ON fp.recipe_id=rp.recipe_id
+            WHERE rp.project_id=?""", (quote["project_id"],))
+        if not binding:
+            return  # Unrelated legacy/curated recipes retain their admission path.
+        # UPDATE locks the publication on PostgreSQL too. Feed withdrawal uses
+        # this same task row, so its commit cannot race the balance reservation.
+        await db.execute("UPDATE generation_tasks SET updated_at=updated_at WHERE task_id=?", (binding["task_id"],))
+        row = await one(db, """SELECT gt.status,gt.is_public_feed,gt.is_profile_visible,r.active
+            FROM generation_tasks gt JOIN genjutsu_recipes r ON r.id=?
+            WHERE gt.task_id=? AND gt.model='genjutsu'""", (binding["recipe_id"], binding["task_id"]))
+        if not row or row["active"] != 1 or not (row["is_public_feed"] or row["is_profile_visible"]) or row["status"] != "completed":
+            raise PipelineError("recipe_unavailable", status=404)
 
     async def publish(
         self,
@@ -306,6 +346,7 @@ class RecipeStore:
         # or missing; never reinterpret its saved plan as an ordinary project.
         if row["active"] != 1:
             raise PipelineError("recipe_unavailable", status=404)
+        await self.require_publication(row["recipe_id"])
         template = json.loads(row["plan"])
         source_binding = row.get("source_binding") or "fixed"
         if (

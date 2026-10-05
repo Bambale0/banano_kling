@@ -541,4 +541,15 @@ CREATE TABLE IF NOT EXISTS genjutsu_recipe_projects (
 );
 CREATE INDEX IF NOT EXISTS genjutsu_recipes_owner ON genjutsu_recipes(owner, updated_ms);
 
+-- Final owned Genjutsu results published through ordinary Feed.
+CREATE TABLE IF NOT EXISTS genjutsu_feed_publications (
+    step_id TEXT PRIMARY KEY REFERENCES genjutsu_steps(id),
+    run_id TEXT NOT NULL REFERENCES genjutsu_runs(id),
+    recipe_id TEXT NOT NULL UNIQUE REFERENCES genjutsu_recipes(id),
+    task_id TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL,
+    source_binding TEXT NOT NULL,
+    created_ms BIGINT NOT NULL
+);
+
 COMMIT;

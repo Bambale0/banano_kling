@@ -12,6 +12,7 @@ from aiohttp import web
 from .api import API
 from .contract import PipelineError, integer
 from .delivery import Delivery, DeliveryFailure, TerminalNotifications
+from .feed import FeedPublisher, copy_public_output
 from .media import MediaStore
 from .pipeline import Pipeline
 from .provider import Higgsfield
@@ -22,12 +23,14 @@ logger = logging.getLogger(__name__)
 RUNTIME_KEY = web.AppKey('genjutsu_pipeline', Pipeline)
 
 
-def studio_url(base: str, *, run_id: str | None = None) -> str:
+def studio_url(base: str, *, run_id: str | None = None, recipe_id: str | None = None) -> str:
     parts = urlsplit(base)
     query = dict(parse_qsl(parts.query))
     query['genjutsu'] = '1'
     if run_id:
         query['genjutsu_run'] = run_id
+    if recipe_id:
+        query['genjutsu_recipe'] = recipe_id
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 
@@ -92,6 +95,7 @@ def setup_genjutsu(app: web.Application, *, base: str = '/mini-app/api') -> None
         config.GENJUTSU_MEDIA_SIGNING_KEY,
     )
     recipes = RecipeStore(repository)
+    repository.start_validator = recipes.validate_start
     pipeline = Pipeline(repository, provider, media, plan_resolver=recipes.resolve_project)
     app[RUNTIME_KEY] = pipeline
 
@@ -161,7 +165,14 @@ def setup_genjutsu(app: web.Application, *, base: str = '/mini-app/api') -> None
             raise DeliveryFailure(code) from exc
         return str(message.message_id)
 
-    API(pipeline, authenticate, importer=import_owned, recipes=recipes).register(app, base=base)
+    async def publish_output(asset, step_id):
+        from bot.services.feed_persist import FEED_STORAGE_DIR
+
+        return await copy_public_output(media, asset, step_id, directory=FEED_STORAGE_DIR,
+                                        base_url=config.static_base_url)
+
+    feed = FeedPublisher(repository, recipes, publish_output)
+    API(pipeline, authenticate, importer=import_owned, recipes=recipes, feed=feed).register(app, base=base)
     delivery = Delivery(pipeline, send)
 
     async def send_notice(owner, text, run_id, timeout):
