@@ -1,5 +1,18 @@
 # Execution ledger
 
+## 2026-10-05 — Keep archived Genjutsu recipes private
+
+- Baseline: merged `tanyapi` `4c316a1e9de479a69b66103c4ba65a6a537e708e`; isolated branch `fix/genjutsu-archived-recipe-privacy`. Existing mobile-release worktree is untouched.
+- Preflight: PR #249 adds caller-owned video sources to private recipes. The previous resolver filtered out inactive recipes and treated the saved recipe project as an ordinary project. With all media caller-owned, an archived recipe could be requoted with `private_recipe=0`, exposing its private plan through the normal run response.
+- Safe reproduction: fake users, fake assets, isolated SQLite and no provider calls. The user-video case returned the synthetic private prompt after archive; fixed-source control rejected the asset.
+- Scope: retain recipe-project bindings and fail closed for archived or missing recipes; preserve redaction for historical misclassified recipe runs. No schema, price, balance, provider, public-enabled, or live-generation changes.
+- Regression: ordinary API recipe quote/start/bootstrap, archived/missing recipe, both user/fixed source; regular projects must still quote, existing private runs remain redacted. Historical false-flag quote/run responses must be redacted while privileged admin access remains unchanged.
+- RED: four new unavailable-recipe cases failed against the baseline as expected. Resolver patch then passed the focused 25-test contract/provider/repository/recipe suite.
+- Verification: real pytest RED (4 unavailable-recipe cases, then 4 historical-redaction cases), then **30 passed / 1 dedicated-PostgreSQL skip** in the complete focused Genjutsu suite; changed-file Ruff, compileall and git diff --check passed. Independent review confirmed all public detailed run responses use the guarded response path. The full safe suite passed: **1582 passed / 18 skipped**, 92.91s. Dedicated PostgreSQL, frontend/browser, image and deployment verification are delegated to exact-SHA CI; production deployment remains pending.
+- Additional mobile acceptance on production assets with synthetic API responses found a 320px trend fieldset wider than its 296px region (317px scrollWidth), a narrow header collision with Close, and the section's overflow-x:hidden creating an unintended vertical scroll ancestor for the sticky action. The scoped follow-up uses min-width:0 on the recipe fieldset, wraps the header title, and uses overflow-x:clip so the dialog owns vertical scrolling. Browser regression passed for editor and photo/video trend form at 320/360/390/430px, visible-control bounds, header non-overlap, actual file-picker activation without uploads, dialog scroll ownership and viewport-aligned action after scrolling. Full frontend: 27 suites / 99 tests passed, TypeScript, changed ESLint, production build and critical browser E2E passed; generated screenshots were visually checked. Independent review approved the final CSS/test diff.
+- Rollout: PR #250 to `tanyapi`, independent review, exact-head CI, normal merge, exact production deployment and health verification. GitHub currently reports the base branch unprotected; settings are not changed by this task. Public rollout remains gated on separately authorized live provider coverage.
+
+
 ## 2026-10-05 — Genjutsu trend video/photo refs, mobile-fit studio and public launch
 
 - Baseline: production/origin `tanyapi` `09c1cc01afb1470f98f8dbaf404364b95737d556`; branch `fix/genjutsu-trend-media-mobile`.

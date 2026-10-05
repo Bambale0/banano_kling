@@ -308,13 +308,13 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
   const primaryStep = plan.steps[0]
   const primaryCaps = bootstrap?.catalog[primaryStep?.operation]
 
-  return <section className="mx-auto min-w-0 w-full max-w-2xl space-y-5 overflow-x-hidden pb-28" aria-label="Студия Genjutsu">
+  return <section className="mx-auto min-w-0 w-full max-w-2xl space-y-5 overflow-x-clip pb-28" aria-label="Студия Genjutsu">
     <header className="sticky top-0 z-20 flex min-w-0 items-center justify-between gap-3 border-b border-white/[0.06] bg-background/90 px-1 py-3 backdrop-blur-xl sm:px-2">
       <div className="min-w-0">
-        <div className="flex items-center gap-2"><span className="inline-flex h-7 items-center rounded-full border border-white/10 bg-white/[0.035] px-2.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Higgsfield</span><span className="text-lg font-semibold tracking-tight">Genjutsu</span></div>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1"><span className="inline-flex h-7 items-center rounded-full border border-white/10 bg-white/[0.035] px-2.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Higgsfield</span><span className="text-lg font-semibold tracking-tight">Genjutsu</span></div>
         <p className="mt-1 truncate text-xs text-muted-foreground">Редактирование видео по референсам</p>
       </div>
-      <Button className="rounded-full px-4" variant="ghost" aria-label="Закрыть студию" disabled={blocked} onClick={() => void action('close', async () => { if (plan.source_asset_id && bootstrap?.enabled) await saveCurrent(); onClose() })}>Закрыть</Button>
+      <Button className="shrink-0 rounded-full px-4" variant="ghost" aria-label="Закрыть студию" disabled={blocked} onClick={() => void action('close', async () => { if (plan.source_asset_id && bootstrap?.enabled) await saveCurrent(); onClose() })}>Закрыть</Button>
     </header>
     <nav className="grid grid-cols-2 rounded-[22px] border border-white/[0.06] bg-white/[0.025] p-1" aria-label="Разделы Genjutsu">
       <button type="button" className={`rounded-[18px] px-3 py-2.5 text-sm font-medium transition ${tab === 'editor' ? 'bg-white/10 text-foreground shadow-sm' : 'text-muted-foreground'}`} onClick={() => setTab('editor')}>Создать</button>
@@ -337,7 +337,7 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
           </div>
           {recipe.current_cost !== null && <p className="text-sm">Текущая стоимость рецепта: <strong>{recipe.current_cost} 🍌</strong></p>}
         </div>
-        <fieldset className={section} disabled={!bootstrap.enabled || blocked}>
+        <fieldset className={`${section} min-w-0`} disabled={!bootstrap.enabled || blocked}>
           <div>
             <h3 className="font-semibold">Референсы тренда</h3>
             <p className="mt-1 text-xs text-muted-foreground">Прикрепите нужные фото и видео здесь — скрытые материалы автора не показываются.</p>

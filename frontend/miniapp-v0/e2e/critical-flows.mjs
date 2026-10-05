@@ -187,6 +187,7 @@ try {
     if (message.type() === 'error') console.error('Browser console error:', message.text())
   })
 
+  let genjutsuMobileReady = false
   let seedanceGenerationPayload = null
   let copiedTrendPayload = null
   let paymentPayload = null
@@ -244,6 +245,18 @@ try {
 
     if (path.endsWith('/genjutsu')) {
       const requestBody = JSON.parse(request.postData() || '{}')
+      if (requestBody.action === 'recipe_get') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+          ok: true, recipe: {
+            id: 'a'.repeat(32), title: 'Mobile recipe',
+            source_slot: { kind: 'video', label: 'Видео-референс' },
+            slots: [{ step_index: 0, reference_index: 0, role: 'character', label: 'Фото героя' }],
+            user_fields: [], steps: [{ operation: 'motion_transfer', resolution: '720p' }],
+            variants: 1, continuation: 'automatic', current_cost: 20,
+          },
+        }) })
+        return
+      }
       const body = requestBody.action === 'availability'
         ? { ok: true, visible: true }
         : requestBody.action === 'bootstrap'
@@ -253,7 +266,7 @@ try {
                 object_swap: genjutsuCapability,
                 restyle: genjutsuCapability,
               },
-              configured: false, enabled: false, is_admin: bootstrapPayload.is_admin,
+              configured: genjutsuMobileReady, enabled: genjutsuMobileReady, is_admin: bootstrapPayload.is_admin,
               credits: bootstrapPayload.credits, provider_ready: false, media_ready: false,
               config_version: 0, limits: { max_steps: 3, max_variants: 4, poll_seconds: 5 },
               prices: {}, projects: [], runs: [], assets: [],
@@ -735,6 +748,82 @@ try {
   await page.getByRole('region', { name: 'Студия Genjutsu' }).waitFor()
   await page.getByText(/Управление доступом и тарифами/).waitFor()
   await page.getByRole('button', { name: 'Закрыть студию' }).click()
+
+
+  // Exercise the actual editor and recipe upload surface at narrow phone widths.
+  genjutsuMobileReady = true
+  for (const width of [320, 360, 390, 430]) {
+    await page.setViewportSize({ width, height: 820 })
+    for (const recipeMode of [false, true]) {
+      await page.evaluate((recipe) => window.dispatchEvent(new CustomEvent('genjutsu:open', {
+        detail: recipe ? { recipe_id: 'a'.repeat(32) } : {},
+      })), recipeMode)
+      const region = page.getByRole('region', { name: 'Студия Genjutsu' })
+      await region.waitFor()
+      await (recipeMode
+        ? page.getByText('Референсы тренда', { exact: true })
+        : page.getByTestId('genjutsu-operation-grid')).waitFor()
+      // Wait for the open animation to finish before measuring the viewport.
+      await page.waitForFunction(() => {
+        const dialog = document.querySelector('[role="dialog"]')
+        if (!dialog) return false
+        const rect = dialog.getBoundingClientRect()
+        return Math.abs(rect.x) < 0.1 && Math.abs(rect.width - innerWidth) < 0.1
+          && getComputedStyle(dialog).opacity === '1'
+      })
+      assert.equal(await region.evaluate(el => el.scrollWidth <= el.clientWidth), true,
+        `Genjutsu ${recipeMode ? 'recipe' : 'editor'} must fit ${width}px`)
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+      assert.equal(await region.evaluate(el => getComputedStyle(el).overflowY), 'visible',
+        'The dialog must own vertical scrolling')
+      const outsideControls = await region.evaluate(el => [...el.querySelectorAll('fieldset,label,button,select')].filter(child => {
+        const box = child.getBoundingClientRect()
+        return !child.closest('.sr-only') && box.width > 0 && (box.left < -1 || box.right > innerWidth + 1)
+      }).map(child => ({ tag: child.tagName, className: child.className, text: child.textContent?.slice(0, 80) })))
+      assert.deepEqual(outsideControls, [], `Visible form controls must stay inside ${width}px`)
+      const headerOverlap = await region.locator('header').evaluate(header => {
+        const close = header.querySelector('button').getBoundingClientRect()
+        return [...header.querySelector('div > div').children].some(el => {
+          const box = el.getBoundingClientRect()
+          return box.right > close.left && box.left < close.right
+            && box.bottom > close.top && box.top < close.bottom
+        })
+      })
+      assert.equal(headerOverlap, false, `Genjutsu title must not overlap Close at ${width}px`)
+      if (recipeMode) {
+        const video = page.getByLabel('Видео-референс', { exact: true })
+        const photo = page.getByLabel('Фото героя', { exact: true })
+        assert.match(await video.getAttribute('accept'), /video\//)
+        assert.match(await photo.getAttribute('accept'), /image\//)
+        assert.equal(await video.isEnabled(), true)
+        assert.equal(await photo.isEnabled(), true)
+        for (const input of [video, photo]) {
+          const chooseFile = page.waitForEvent('filechooser')
+          await input.locator('..').click()
+          await (await chooseFile).setFiles([])
+        }
+        assert.equal(await region.evaluate(el => {
+          const inputs = [...el.querySelectorAll('input[type="file"]')]
+          return inputs.length === 2 && inputs[0].closest('fieldset') === inputs[1].closest('fieldset')
+        }), true, 'Trend photo and video inputs must share one surface')
+      } else {
+        const videoInput = region.locator('input[type="file"][accept*="video"]').first()
+        const chooseFile = page.waitForEvent('filechooser')
+        await videoInput.locator('..').click()
+        await (await chooseFile).setFiles([])
+        await page.getByRole('dialog').evaluate(el => { el.scrollTop = 250 })
+        const button = await page.getByRole('button', { name: 'Рассчитать стоимость', exact: true }).boundingBox()
+        assert.ok(button && 820 - (button.y + button.height) >= 0
+          && 820 - (button.y + button.height) <= 48,
+        `Genjutsu sticky action must use the dialog viewport at ${width}px`)
+      }
+      if (process.env.GENJUTSU_QA_SCREENSHOTS) {
+        await page.screenshot({ path: `${process.env.GENJUTSU_QA_SCREENSHOTS}/genjutsu-${width}-${recipeMode ? 'recipe' : 'editor'}.png` })
+      }
+      await page.getByRole('button', { name: 'Закрыть студию' }).click()
+      await page.getByRole('dialog').waitFor({ state: 'hidden' })
+    }
+  }
 
   console.log('Mini App critical browser E2E passed')
 } finally {

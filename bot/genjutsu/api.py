@@ -98,6 +98,10 @@ class API:
     async def run_view(self, owner: int, run_id: str, *, privileged=False) -> dict:
         run = await self.repository.get_run(owner, run_id, admin=privileged)
         settings, _ = await self.repository.settings()
+        # Older quotes/runs can carry a false privacy flag. The persistent
+        # project binding still requires redaction after recipe archival.
+        if not run['private_recipe'] and self.recipes and await self.recipes.is_private_project(run['project_id']):
+            run['private_recipe'] = 1
         private = bool(run['private_recipe']) and not privileged
         visible_fields = ('id','state','created_ms','updated_ms','cancel_requested','admin_free','private_recipe')
         result = {k:run[k] for k in visible_fields}

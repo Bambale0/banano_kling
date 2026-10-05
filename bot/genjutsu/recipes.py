@@ -293,15 +293,19 @@ class RecipeStore:
         async with self.repository.connect() as db:
             row = await one(
                 db,
-                """SELECT rp.recipe_id,r.plan,r.source_binding,p.owner
+                """SELECT rp.recipe_id,r.plan,r.source_binding,r.active,p.owner
                    FROM genjutsu_recipe_projects rp
-                   JOIN genjutsu_recipes r ON r.id=rp.recipe_id
                    JOIN genjutsu_projects p ON p.id=rp.project_id
-                   WHERE rp.project_id=? AND p.owner=? AND r.active=1""",
+                   LEFT JOIN genjutsu_recipes r ON r.id=rp.recipe_id
+                   WHERE rp.project_id=? AND p.owner=?""",
                 (project_id, owner),
             )
         if not row:
             return draft, set(), False
+        # A recipe binding remains private even when its recipe is archived
+        # or missing; never reinterpret its saved plan as an ordinary project.
+        if row["active"] != 1:
+            raise PipelineError("recipe_unavailable", status=404)
         template = json.loads(row["plan"])
         source_binding = row.get("source_binding") or "fixed"
         if (
