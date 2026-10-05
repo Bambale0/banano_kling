@@ -309,7 +309,7 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
   const primaryCaps = bootstrap?.catalog[primaryStep?.operation]
 
   return <section className="mx-auto min-w-0 w-full max-w-2xl space-y-5 overflow-x-hidden pb-28" aria-label="Студия Genjutsu">
-    <header className="sticky top-0 z-20 -mx-2 flex items-center justify-between gap-3 border-b border-white/[0.06] bg-background/90 px-2 py-3 backdrop-blur-xl">
+    <header className="sticky top-0 z-20 flex min-w-0 items-center justify-between gap-3 border-b border-white/[0.06] bg-background/90 px-1 py-3 backdrop-blur-xl sm:px-2">
       <div className="min-w-0">
         <div className="flex items-center gap-2"><span className="inline-flex h-7 items-center rounded-full border border-white/10 bg-white/[0.035] px-2.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Higgsfield</span><span className="text-lg font-semibold tracking-tight">Genjutsu</span></div>
         <p className="mt-1 truncate text-xs text-muted-foreground">Редактирование видео по референсам</p>
