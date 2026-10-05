@@ -93,9 +93,12 @@ describe('SeedanceTrendPublisher', () => {
     await waitFor(() => expect(mockedFetchSource).toHaveBeenCalledWith(task.task_id))
     expect(await screen.findByText('Исходный @Image1')).toBeInTheDocument()
     expect(screen.getByText('Исходный @Image2')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /@Video1 · скрыто закреплён/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /@Video1 · скрыт, без замены/i })).toBeInTheDocument()
+    expect(screen.getByText(/Оригиналы не показываются при повторе/)).toBeInTheDocument()
     const replaceButtons = screen.getAllByRole('button', { name: /разрешить замену/i })
     fireEvent.click(replaceButtons[replaceButtons.length - 1])
+    expect(screen.getByRole('button', { name: /^Скрыт, пользователь заменяет$/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /@Video1 · закрепить без замены/i })).toBeInTheDocument()
 
     const publishButton = screen.getByRole('button', { name: /^Опубликовать тренд$/i })
     await waitFor(() => expect(publishButton).toBeEnabled())
@@ -115,5 +118,35 @@ describe('SeedanceTrendPublisher', () => {
     expect(JSON.stringify(mockedPublish.mock.calls[0][0])).not.toContain('creator.jpg')
     expect(JSON.stringify(mockedPublish.mock.calls[0][0])).not.toContain('dress.jpg')
     expect(JSON.stringify(mockedPublish.mock.calls[0][0])).not.toContain('motion.mp4')
+  })
+
+  it('keeps fixed refs private when replacement is not enabled', async () => {
+    render(<SeedanceTrendPublisher task={task} />)
+    fireEvent.click(screen.getByRole('button', { name: /Сделать Seedance-трендом/i }))
+    await screen.findByText('Исходный @Image2')
+    const publishButton = screen.getByRole('button', { name: /^Опубликовать тренд$/i })
+    await waitFor(() => expect(publishButton).toBeEnabled())
+    fireEvent.click(publishButton)
+    await waitFor(() => expect(mockedPublish).toHaveBeenCalledTimes(1))
+    expect(mockedPublish).toHaveBeenCalledWith(expect.objectContaining({
+      fixedImageIndices: [2], fixedVideoIndices: [1],
+      replaceableImageIndices: [], replaceableVideoIndices: [],
+    }))
+  })
+
+  it('switches a hidden image between replaceable and fixed without overlapping slots', async () => {
+    render(<SeedanceTrendPublisher task={task} />)
+    fireEvent.click(screen.getByRole('button', { name: /Сделать Seedance-трендом/i }))
+    await screen.findByText('Исходный @Image2')
+    const controls = screen.getAllByRole('button', { name: /скрыть и разрешить замену/i })
+    fireEvent.click(controls.find(button => !button.hasAttribute('disabled'))!)
+    expect(screen.getByRole('button', { name: /^Скрыт, пользователь заменяет$/i })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /^Закрепить без замены$/i }))
+    const publishButton = screen.getByRole('button', { name: /^Опубликовать тренд$/i })
+    fireEvent.click(publishButton)
+    await waitFor(() => expect(mockedPublish).toHaveBeenCalledTimes(1))
+    expect(mockedPublish).toHaveBeenCalledWith(expect.objectContaining({
+      fixedImageIndices: [2], replaceableImageIndices: [],
+    }))
   })
 })

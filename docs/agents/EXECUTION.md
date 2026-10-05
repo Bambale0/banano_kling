@@ -1202,3 +1202,10 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Review corrections: match existing shared-Profile semantics; do not resurrect a withdrawn/discovery-removed post on a stale publish retry; preserve completed snapshot chains/variants and full quote; put schema addition before COMMIT; retain idempotent accepted-run retries after withdrawal.
 - Verification: 32 new Feed bridge tests; focused Genjutsu matrix 62 passed, 2 PostgreSQL tests skipped locally. Full safe backend suite 1614 passed, 19 skipped in 92.19s. Real PostgreSQL bridge regression added to the existing runtime CI file and must pass in CI before merge. Isolated tests used env-i, BANANO_SKIP_PROJECT_ENV=1, BANANO_DISABLE_FILE_LOGGING=1. No production data, provider/balance calls or real user publications.
 - Parent owns frontend integration, PR251 conflict resolution, independent review, exact-head CI and authorized merge/release. Backend artifact is ready for that integration after remaining static checks.
+
+## 2026-10-05: clarify hidden versus replaceable Seedance references
+
+- Baseline: f70f84738981f145c630265664e87913437a1bb9 (tanyapi). Audit confirmed PR226/227/235 server-only fixed references and typed replacement slots are present.
+- No permission, provider payload, billing, or fixed-binding behavior changes. Publisher copy now distinguishes hidden fixed references from hidden originals replaced by user uploads. Added mode-switch and fixed-preservation UI regression tests.
+- Checks: isolated backend reference/admin/trend/privacy suite 78 passed on baseline; frontend publisher/runner/API/settings suite 14 passed on final edits; targeted ESLint passed. No paid generation or production publication. Browser verification remains part of the combined Genjutsu Feed integration.
+- Genjutsu ordinary Feed publication is a separate implementation; do not describe this clarity patch as that bridge.
