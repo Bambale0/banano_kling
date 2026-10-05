@@ -72,7 +72,7 @@ def _advanced_video_models_keyboard(current_model: str | None = None) -> types.I
 
 
 def _initial_type_for_model(model: str) -> str:
-    if model in _GROK_VIDEO_MODELS:
+    if model in _GROK_VIDEO_MODELS or model == "seedance_2":
         return "imgtxt"
     if model in {"motion_control_v26", "motion_control_v30", "glow"}:
         return "motion"

@@ -1,5 +1,18 @@
 # Execution ledger
 
+## 2026-10-05 — Restore photo-first defaults for Seedance 2.0 video
+
+- Baseline: `origin/tanyapi` `2d276814151b5c8cd44f4b37524a2e53b71147a7`; branch `fix/restore-video-photo-defaults`.
+- Reported production symptom: after selecting Seedance 2.0, Telegram opens `Текст → Видео`; users can attach a photo-reference but the screen still shows text mode, so the request is treated as text/reference generation instead of the familiar photo-first flow.
+- Runtime/code evidence: the active advanced selector sets every ordinary model to `text`; `seedance_multimodal_compat` already documents `imgtxt` as the ordinary Seedance default, but that default is bypassed by `video_generation_compat._initial_type_for_model`. Production logs confirm Seedance 2.0 can send image references correctly at the provider boundary. Grok already has the corresponding photo-first normalization from the 2026-10-02 regression fix.
+- Root cause: the newer advanced video selector bypassed the older Seedance defaulting seam. A stale Seedance FSM can also remain `text` after a photo-reference was attached, reproducing the screenshot even though the reference URL is present.
+- Intended result: selecting Seedance 2.0 opens in `Фото + Текст` by default; an existing Seedance `text` session with photo references self-recovers to `imgtxt`; explicit text-only Seedance with no photo remains supported. Grok photo-first behavior is preserved.
+- Scope: Telegram FSM/UI only. No pricing, provider IDs, payload schema, DB schema, Mini App API, balance/refund or Seedance 2.5 behavior changes.
+- TDD: before fix, selection regressions failed `text != imgtxt` (2 failed / 6 passed in the focused red run). After the minimal fix, the focused Grok + Seedance video matrix is **131 passed**; final local full suite is **1571 passed, 18 skipped**.
+- Review: explicit Seedance `Текст → Видео` remains available. Switching to text-only now clears Seedance photo/video media so stale references cannot silently turn the session back into photo mode. Mini App was audited but is not changed by this Telegram-FSM regression fix; Seedance 2.5 is also unchanged.
+- Verification: changed-line Ruff **0 relevant** (89 legacy diagnostics outside touched lines ignored by the repository gate); changed Python compiles and `git diff --check` passes.
+- TODO: [x] production evidence; [x] RED regression; [x] minimal fix; [x] focused/full tests; [x] changed-line lint/final review; [ ] PR/CI/auto-merge; [ ] exact deployed SHA + production smoke/log verification.
+
 ## 2026-10-03 — Profile remix retains published outfit reference
 
 - Baseline: production/origin `tanyapi` `14588e1172a2b5b95290a179d1b3c840ebc87d6c`; branch `fix/profile-remix-retain-selected-references`.

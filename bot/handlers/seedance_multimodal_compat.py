@@ -92,6 +92,8 @@ async def _normalize_seedance_reference_state(state: FSMContext) -> dict[str, An
         updates["v_image_url"] = None
     if images != list(data.get("reference_images") or []):
         updates["reference_images"] = images
+    if data.get("v_type") == "text" and images:
+        updates["v_type"] = "imgtxt"
     if updates:
         await state.update_data(**updates)
         data = await state.get_data()
