@@ -8,6 +8,7 @@ import pytest
 
 from bot.handlers import generation as generation_module
 from bot.handlers.seedance_multimodal_compat import (
+    _normalize_seedance_reference_state,
     default_video_type,
     reference_only_seedance_media_inputs,
 )
@@ -88,6 +89,9 @@ class _PromptState:
     async def update_data(self, **kwargs):
         self.data.update(kwargs)
 
+    async def set_state(self, value):
+        self.state = value
+
 
 class _PromptMessage:
     def __init__(self, text: str):
@@ -129,3 +133,105 @@ async def test_seedance_prompt_accepts_reference_only_photo_from_media_step(monk
     assert state.data["video_flow_step"] == "configure"
     assert state.data["user_prompt"] == "Оживить фото"
     assert not any("стартовое фото" in answer.lower() for answer in message.answers)
+
+
+@pytest.mark.asyncio
+async def test_seedance_stale_text_state_with_photo_reference_recovers_to_photo_mode():
+    state = _PromptState(
+        {
+            "generation_type": "video",
+            "v_type": "text",
+            "v_model": "seedance_2",
+            "v_image_url": None,
+            "reference_images": ["https://files.example/reference.png"],
+        }
+    )
+
+    normalized = await _normalize_seedance_reference_state(state)
+
+    assert normalized["v_type"] == "imgtxt"
+    assert normalized["reference_images"] == ["https://files.example/reference.png"]
+    assert normalized.get("v_image_url") is None
+
+
+@pytest.mark.asyncio
+async def test_seedance_explicit_text_mode_without_photo_stays_text_mode():
+    state = _PromptState(
+        {
+            "generation_type": "video",
+            "v_type": "text",
+            "v_model": "seedance_2",
+            "v_image_url": None,
+            "reference_images": [],
+        }
+    )
+
+    normalized = await _normalize_seedance_reference_state(state)
+
+    assert normalized["v_type"] == "text"
+
+
+@pytest.mark.asyncio
+async def test_seedance_generic_model_selection_defaults_to_photo_mode(monkeypatch):
+    shown: list[str] = []
+
+    async def fake_media_screen(callback, state, edit=True):
+        del callback, edit
+        shown.append((await state.get_data())["v_type"])
+
+    monkeypatch.setattr(generation_module, "_show_video_media_screen", fake_media_screen)
+    state = _PromptState(
+        {
+            "v_type": "text",
+            "v_model": "v3_pro",
+            "v_duration": 5,
+            "v_ratio": "16:9",
+            "video_flow_step": "select_model",
+        }
+    )
+
+    class _Callback:
+        from_user = SimpleNamespace(id=123456789)
+        message = SimpleNamespace()
+
+        async def answer(self, *args, **kwargs):
+            del args, kwargs
+
+    await generation_module._apply_video_model_selection(_Callback(), state, "seedance_2")
+
+    assert state.data["v_model"] == "seedance_2"
+    assert state.data["v_type"] == "imgtxt"
+    assert shown == ["imgtxt"]
+
+
+@pytest.mark.asyncio
+async def test_seedance_explicit_text_switch_clears_photo_references(monkeypatch):
+    rendered: list[dict] = []
+
+    async def fake_media_screen(callback, state, edit=True):
+        del callback, edit
+        rendered.append(await state.get_data())
+
+    monkeypatch.setattr(generation_module, "_show_video_media_screen", fake_media_screen)
+    state = _PromptState(
+        {
+            "generation_type": "video",
+            "v_type": "imgtxt",
+            "v_model": "seedance_2",
+            "reference_images": ["https://files.example/reference.png"],
+            "v_reference_videos": ["https://files.example/reference.mp4"],
+            "v_image_url": "https://files.example/legacy-start.png",
+        }
+    )
+
+    class _Callback:
+        async def answer(self, *args, **kwargs):
+            del args, kwargs
+
+    await generation_module.handle_v_type_text(_Callback(), state)
+
+    assert state.data["v_type"] == "text"
+    assert state.data["reference_images"] == []
+    assert state.data["v_reference_videos"] == []
+    assert state.data["v_image_url"] is None
+    assert rendered[-1]["v_type"] == "text"

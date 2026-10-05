@@ -5108,6 +5108,15 @@ async def handle_v_type_text(callback: types.CallbackQuery, state: FSMContext):
         return
 
     updates = {"v_type": "text"}
+    if current_model == "seedance_2":
+        # Explicitly switching Seedance to text-only must not keep stale media.
+        # Otherwise the reference-only normalizer correctly treats text+photos
+        # as a stale photo-mode session and restores imgtxt.
+        updates.update(
+            reference_images=[],
+            v_reference_videos=[],
+            v_image_url=None,
+        )
     if current_model.startswith("veo3"):
         updates["veo_generation_type"] = "TEXT_2_VIDEO"
     await state.update_data(**updates)
@@ -5338,7 +5347,7 @@ async def _apply_video_model_selection(
         current_v_type = "text"
     if model.startswith("veo3") and current_v_type == "video":
         current_v_type = "text"
-    if model in _GROK_VIDEO_MODELS:
+    if model in _GROK_VIDEO_MODELS or model == "seedance_2":
         current_v_type = "imgtxt"
 
     updates = {

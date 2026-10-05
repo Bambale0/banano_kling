@@ -177,12 +177,22 @@ async def test_missing_grok_photo_is_rejected_before_billing_and_preserves_promp
 
 
 @pytest.mark.parametrize("model, expected", [
-    ("v3_pro", "text"), ("veo3", "text"), ("seedance_2", "text"),
+    ("v3_pro", "text"), ("veo3", "text"), ("seedance_2", "imgtxt"),
     ("motion_control_v26", "motion"), ("avatar_std", "avatar"),
     ("gemini_omni_audio", "audio"), ("gemini_omni_character", "character"),
 ])
 def test_non_grok_initial_modes_unchanged(model, expected):
     assert advanced._initial_type_for_model(model) == expected
+
+
+async def test_seedance20_public_selection_opens_in_photo_reference_mode(state, boundary):
+    await advanced.select_advanced_video_model(callback("seedance_2"), state)
+    data = await state.get_data()
+    assert data["v_model"] == "seedance_2"
+    assert data["v_type"] == "imgtxt"
+    assert await state.get_state() == GenerationStates.waiting_for_video_prompt.state
+    boundary.debit.assert_not_awaited()
+    boundary.post.assert_not_awaited()
 
 
 @pytest.mark.parametrize("model", MODELS)
