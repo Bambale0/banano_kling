@@ -515,6 +515,14 @@ CREATE TABLE IF NOT EXISTS genjutsu_deliveries (
     next_ms BIGINT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
     message_id TEXT, error_code TEXT
 );
+CREATE TABLE IF NOT EXISTS genjutsu_notifications (
+    run_id TEXT PRIMARY KEY REFERENCES genjutsu_runs(id), summary TEXT NOT NULL,
+    status TEXT NOT NULL, created_ms BIGINT NOT NULL, deadline_ms BIGINT NOT NULL,
+    max_attempts INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+    next_ms BIGINT NOT NULL, lease_token TEXT, lease_until_ms BIGINT NOT NULL DEFAULT 0,
+    message_id TEXT, error_code TEXT
+);
+CREATE INDEX IF NOT EXISTS genjutsu_notifications_due ON genjutsu_notifications(status, next_ms);
 CREATE INDEX IF NOT EXISTS genjutsu_projects_owner ON genjutsu_projects(owner, updated_ms);
 CREATE INDEX IF NOT EXISTS genjutsu_runs_owner ON genjutsu_runs(owner, created_ms);
 CREATE INDEX IF NOT EXISTS genjutsu_steps_due ON genjutsu_steps(status, next_poll_ms, lease_until_ms);

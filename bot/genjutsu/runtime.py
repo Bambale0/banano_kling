@@ -11,7 +11,7 @@ from aiohttp import web
 
 from .api import API
 from .contract import PipelineError, integer
-from .delivery import Delivery, DeliveryFailure
+from .delivery import Delivery, DeliveryFailure, TerminalNotifications
 from .media import MediaStore
 from .pipeline import Pipeline
 from .provider import Higgsfield
@@ -29,6 +29,29 @@ def studio_url(base: str, *, run_id: str | None = None) -> str:
     if run_id:
         query['genjutsu_run'] = run_id
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+
+
+async def send_terminal_notification(bot, base: str, owner: int, text: str, run_id: str, timeout: int) -> str:
+    from aiogram.exceptions import (
+        TelegramBadRequest,
+        TelegramForbiddenError,
+        TelegramRetryAfter,
+    )
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+        text='Открыть работу', web_app=WebAppInfo(url=studio_url(base, run_id=run_id)))]] )
+    try:
+        message = await bot.send_message(owner, text, parse_mode=None, reply_markup=keyboard,
+                                         request_timeout=timeout)
+    except TelegramRetryAfter as exc:
+        raise DeliveryFailure('rate_limited', retry_after=int(exc.retry_after)) from exc
+    except TelegramForbiddenError as exc:
+        raise DeliveryFailure('chat_unavailable') from exc
+    except TelegramBadRequest as exc:
+        code = 'chat_unavailable' if any(v in str(exc).lower() for v in ('chat not found', 'user is deactivated')) else 'message_rejected'
+        raise DeliveryFailure(code) from exc
+    return str(message.message_id)
 
 
 async def authenticate(request: web.Request, body: dict) -> tuple[int, bool]:
@@ -141,12 +164,18 @@ def setup_genjutsu(app: web.Application, *, base: str = '/mini-app/api') -> None
     API(pipeline, authenticate, importer=import_owned, recipes=recipes).register(app, base=base)
     delivery = Delivery(pipeline, send)
 
+    async def send_notice(owner, text, run_id, timeout):
+        return await send_terminal_notification(app['bot'], config.mini_app_url, owner, text, run_id, timeout)
+
+    notifications = TerminalNotifications(repository, send_notice)
+
     async def lifecycle(application):
         await repository.migrate()
         await recipes.migrate()
         stop = asyncio.Event()
         tasks = [asyncio.create_task(pipeline.worker(stop), name='genjutsu-generation'),
-                 asyncio.create_task(delivery.worker(stop), name='genjutsu-delivery')]
+                 asyncio.create_task(delivery.worker(stop), name='genjutsu-delivery'),
+                 asyncio.create_task(notifications.worker(stop), name='genjutsu-notifications')]
         logger.info('genjutsu_runtime_started', extra={
             'provider_configured': provider.configured, 'media_configured': media.configured})
         try:
