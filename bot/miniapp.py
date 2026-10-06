@@ -3145,7 +3145,7 @@ async def miniapp_write_access(request: web.Request) -> web.Response:
                 "needs_bot_start": needs_bot_start,
             }
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - translate API boundary failures uniformly
         return _miniapp_error_response(
             exc,
             log_message="Mini App write access confirmation failed",
