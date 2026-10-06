@@ -262,6 +262,9 @@ try {
 
     if (path.endsWith('/genjutsu/upload')) {
       const kind = new URL(request.url()).searchParams.get('kind')
+      // Upload completion is asynchronous. Keep this delay so the browser
+      // fixture cannot silently depend on an instant response between inputs.
+      if (kind === 'video') await new Promise(resolve => setTimeout(resolve, 150))
       const asset = { ...(kind === 'video' ? durationVideo : durationPhoto), id: `duration-upload-${++durationSequence}` }
       durationAssets.set(asset.id, asset)
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, asset }) })
@@ -889,9 +892,13 @@ try {
         await page.getByLabel('Видео-референс', { exact: true }).setInputFiles({
           name: 'synthetic.mp4', mimeType: 'video/mp4', buffer: Buffer.from('mocked video'),
         })
+        // setInputFiles does not wait for a disabled fieldset. Wait for the
+        // first action to finish before submitting the second reference.
+        await page.getByText('Видео загружено — нажмите, чтобы заменить', { exact: true }).waitFor()
         await page.getByLabel('Фото героя', { exact: true }).setInputFiles({
           name: 'synthetic.png', mimeType: 'image/png', buffer: Buffer.from('mocked image'),
         })
+        await page.getByText('Фото загружено — нажмите, чтобы заменить', { exact: true }).waitFor()
       } else {
         await page.getByLabel('Видео из библиотеки').selectOption(durationVideo.id)
         await page.getByLabel('Добавить референс к шагу 1').selectOption(durationPhoto.id)
