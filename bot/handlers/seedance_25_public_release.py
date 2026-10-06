@@ -17,9 +17,12 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 from functools import wraps
+from pathlib import Path
+from urllib.parse import urlsplit
 from typing import Any
 
 from aiohttp import web
@@ -32,6 +35,8 @@ from bot.services.delivery_state import (
     terminal_telegram_delivery_reason,
 )
 from bot.services.preset_manager import preset_manager
+from bot.services.seedance25_identity import IDENTITY_ROLE_VERSION, validate_identity_transfer_refs
+from bot.video_reference_policy import apply_video_reference_cost
 from bot.services.seedance_25_service import (
     get_seedance25_callback_url,
     seedance_25_service,
@@ -143,7 +148,7 @@ def _duration_label(value: int) -> str:
     return "Auto" if int(value) == -1 else f"{int(value)}с"
 
 
-async def _public_show_screen(target, state: FSMContext, *, edit: bool = True) -> None:
+async def _public_show_screen(target, state: FSMContext, *, edit: bool = True, actor_id: int | None = None) -> None:
     data = await state.get_data()
     scenario = data.get("seedance25_scenario", "text")
     first = bool(data.get("seedance25_first_frame_url"))
@@ -151,14 +156,27 @@ async def _public_show_screen(target, state: FSMContext, *, edit: bool = True) -
     images = len(data.get("reference_images") or [])
     videos = len(data.get("v_reference_videos") or [])
     audios = len(data.get("seedance25_reference_audio_urls") or [])
-    user_id = getattr(getattr(target, "from_user", None), "id", None)
+    user_id = actor_id if actor_id is not None else getattr(getattr(target, "from_user", None), "id", None)
     is_admin = bool(user_id and config.is_admin(int(user_id)))
-    editing = data.get("seedance25_video_editing") is True
+    identity = data.get("seedance25_identity_transfer") is True
+    editing = data.get("seedance25_video_editing") is True or identity
     display_data = dict(data, seedance25_editing_allowed=is_admin)
     if editing:
         display_data.update(v_duration=-1, v_ratio="adaptive")
     duration = int(display_data.get("v_duration", 5))
     quote = preview_module._price_quote(display_data)
+    identity_error = ""
+    if identity:
+        quote = None
+        try:
+            identity_payload = _scenario_payload(data, "")
+            await _validate_public_payload(identity_payload, is_admin=is_admin, telegram_id=user_id)
+            current_quote = _identity_quote(identity_payload)
+            quote = current_quote["cost"]
+            await state.update_data(seedance25_identity_quote=current_quote)
+        except ValueError as exc:
+            identity_error = str(exc)
+            await state.update_data(seedance25_identity_quote=None)
 
     if scenario == "first_frame":
         media_hint = f"Загрузите <b>1 фото</b> как первый кадр. Сейчас: {'✅' if first else '—'}"
@@ -183,19 +201,31 @@ async def _public_show_screen(target, state: FSMContext, *, edit: bool = True) -
     else:
         media_hint = "Медиа не требуется — отправьте текстовый промпт."
 
+    if identity:
+        media_hint = (
+            "Перенос персонажа: <b>1–3 фото одного человека</b> и <b>одно исходное видео 4–30с</b>. "
+            "Первое фото задаёт личность, остальные уточняют ракурсы; видео задаёт движение, камеру и сцену. "
+            f"Сейчас фото: <code>{images}/3</code>, видео: <code>{videos}/1</code>."
+        )
+    if identity and quote is not None:
+        media_hint += f" Исходник: <b>{identity_payload['source_video_duration_seconds']:g}с</b>; расчёт: <b>{identity_payload['billing_duration']}с</b>."
     billing_line = (
         f"💰 Цена: <code>{quote}</code>🍌. Для администратора списание отключено."
         if is_admin
         else f"💰 Цена: <code>{quote}</code>🍌 — будет списана при запуске."
     )
+    if identity and quote is None:
+        billing_line = "Цена появится после проверки загруженных фото и видео. " + identity_error
+    elif identity:
+        billing_line += " Расчёт по длительности исходника с округлением вверх до секунды."
     auto_note = (
         "\n⚠️ Auto сейчас доступен только администратору: для пользователей выберите 4–30с."
-        if duration == -1 and not is_admin
+        if duration == -1 and not is_admin and not identity
         else ""
     )
     text = (
         "🆕 <b>Seedance 2.5 · NEW</b>\n\n"
-        f"Сценарий: <b>{preview_module._scenario_label(scenario)}</b>\n"
+        f"Сценарий: <b>{'Замена персонажа' if identity else preview_module._scenario_label(scenario)}</b>\n"
         f"Качество: <code>{data.get('seedance25_resolution', '720p')}</code> · "
         f"Формат кадра: <code>{display_data.get('v_ratio', 'adaptive')}</code> · "
         f"Длительность: <code>{_duration_label(duration)}</code>\n"
@@ -221,10 +251,63 @@ async def _public_show_screen(target, state: FSMContext, *, edit: bool = True) -
     await state.set_state(generation_module.GenerationStates.waiting_for_video_prompt)
 
 
+def _identity_intent(data: dict[str, Any]) -> bool:
+    identity = data.get("seedance25_identity_transfer", data.get("identityTransfer", False))
+    if not isinstance(identity, bool):
+        raise ValueError("Некорректный режим переноса персонажа")  # noqa: TRY004 - maps input validation to HTTP 400
+    if "identityTransfer" in data and data["identityTransfer"] is not identity:
+        raise ValueError("Противоречивый режим переноса персонажа")
+    if identity:
+        if data.get("seedance25_scenario") != "multimodal":
+            raise ValueError("Перенос персонажа требует мультимодальный сценарий")
+        validate_identity_transfer_refs(
+            images=fullstack._clean_urls(data.get("reference_images") or []),
+            videos=fullstack._clean_urls(data.get("v_reference_videos") or []),
+            audio=fullstack._clean_urls(data.get("seedance25_reference_audio_urls") or []),
+            first_frame=data.get("seedance25_first_frame_url"),
+            last_frame=data.get("seedance25_last_frame_url"),
+        )
+    return identity
+
+
+def _identity_local_path(source: str, kind: str, telegram_id: int) -> str:
+    """Require this user's managed upload, including containment after symlinks."""
+    parts = urlsplit(source)
+    base = urlsplit(config.static_base_url)
+    if (parts.scheme, parts.netloc) != (base.scheme, base.netloc) or parts.username or parts.query or parts.fragment:
+        raise ValueError("Используйте исходный URL файла, загруженного в приложение")
+    prefix = f"/uploads/refs/{kind}/{int(telegram_id)}/"
+    if parts.scheme not in {"http", "https"} or not parts.path.startswith(prefix):
+        raise ValueError("Для переноса персонажа загрузите свои фото и исходное видео в приложение")
+    suffix = parts.path[len(prefix):]
+    if not suffix or any(part in {"", ".", ".."} for part in suffix.split("/")) or "%" in suffix or "\\" in suffix:
+        raise ValueError("Некорректный путь исходного референса")
+    local = fullstack.resolve_local_upload_path(source)
+    root = Path("static/uploads/refs", kind, str(int(telegram_id))).resolve()
+    expected = Path("static", parts.path.lstrip("/")).resolve()
+    if not local or Path(local).resolve() != expected or not Path(local).resolve().is_relative_to(root) or not Path(local).is_file():
+        raise ValueError("Исходный референс недоступен; загрузите его заново")
+    return local
+
+
+def _identity_quote(payload: dict[str, Any]) -> dict[str, Any]:
+    duration = payload["billing_duration"]
+    return {
+        "cost": float(apply_video_reference_cost(MODEL_KEY, preset_manager.get_video_cost_with_quality(MODEL_KEY, duration, payload["resolution"]), payload["video_urls"])),
+        "billing_duration": duration,
+        "source_video_url": payload["video_urls"][0],
+        "source_feed_gen_id": payload.get("source_feed_gen_id"),
+        "parent_generation_id": payload.get("parent_generation_id"),
+        "resolution": payload["resolution"],
+    }
+
+
 def _scenario_payload(data: dict[str, Any], prompt: str) -> dict[str, Any]:
+    identity = _identity_intent(data)
     editing = data.get("seedance25_video_editing", False)
     if not isinstance(editing, bool):
         raise ValueError("Некорректный режим редактирования видео")  # noqa: TRY004 - user-input validation maps to HTTP 400
+    editing = editing or identity
     scenario = str(data.get("seedance25_scenario") or "text")
     first = data.get("seedance25_first_frame_url") if scenario in {"first_frame", "first_last"} else None
     last = data.get("seedance25_last_frame_url") if scenario == "first_last" else None
@@ -237,6 +320,7 @@ def _scenario_payload(data: dict[str, Any], prompt: str) -> dict[str, Any]:
         "duration": -1 if editing else int(data.get("v_duration", 5)),
         "ratio": "adaptive" if editing else str(data.get("v_ratio") or "adaptive"),
         "seedance25_video_editing": editing,
+        "seedance25_identity_transfer": identity,
         "resolution": str(data.get("seedance25_resolution") or "720p"),
         "first_frame": str(first or "").strip() or None,
         "last_frame": str(last or "").strip() or None,
@@ -256,12 +340,42 @@ async def _validate_public_payload(
     *,
     is_admin: bool,
     trusted_trend: bool = False,
+    telegram_id: int | None = None,
 ) -> None:
     scenario = payload["scenario"]
+    identity = payload.get("seedance25_identity_transfer", False)
+    if not isinstance(identity, bool):
+        raise ValueError("Некорректный режим переноса персонажа")  # noqa: TRY004 - maps input validation to HTTP 400
+    # Shared adapter validation runs before credit checks, debit or any provider call.
+    seedance_25_service.prepare_prompt(
+        payload["prompt"], image_urls=payload["image_urls"], video_urls=payload["video_urls"],
+        audio_urls=payload["audio_urls"], identity_transfer=identity,
+        first_frame=payload["first_frame"], last_frame=payload["last_frame"],
+    )
+    seedance_25_service.normalize_duration(payload["duration"])
+    if payload["ratio"] not in seedance_25_service.ALLOWED_RATIOS:
+        raise ValueError("Некорректный формат Seedance 2.5")
+    if payload["resolution"] not in seedance_25_service.ALLOWED_RESOLUTIONS:
+        raise ValueError("Некорректное качество Seedance 2.5")
+    if payload["output_format"] not in seedance_25_service.ALLOWED_OUTPUT_FORMATS:
+        raise ValueError("Некорректный формат файла Seedance 2.5")
+    if identity:
+        if telegram_id is None:
+            raise ValueError("Не удалось проверить владельца исходного видео")
+        for source in payload["image_urls"]:
+            _identity_local_path(source, "image", telegram_id)
+        _identity_local_path(payload["video_urls"][0], "video", telegram_id)
+        measured = await fullstack._validate_local_source(payload["video_urls"][0], "video")
+        if measured is None or not math.isfinite(measured) or not 4 <= measured <= 30:
+            raise ValueError("Для переноса персонажа загрузите исходное видео 4–30 секунд; длительность должна быть проверена сервером")
+        payload["billing_duration"] = math.ceil(measured)
+        payload["source_video_duration_seconds"] = measured
+        payload["duration"], payload["ratio"] = -1, "adaptive"
+        payload["seedance25_video_editing"] = True
     editing = payload.get("seedance25_video_editing", False)
     if not isinstance(editing, bool):
         raise ValueError("Некорректный режим редактирования видео")  # noqa: TRY004 - user-input validation maps to HTTP 400
-    if editing:
+    if editing and not identity:
         if not is_admin and not trusted_trend:
             raise ValueError("Редактирование видео пока доступно только администратору: длительность определяется исходником")
         if scenario != "multimodal" or len(payload["video_urls"]) != 1:
@@ -281,7 +395,7 @@ async def _validate_public_payload(
         payload["image_urls"] or payload["video_urls"] or payload["audio_urls"]
     ):
         raise ValueError("Добавьте хотя бы один мультимодальный референс")
-    if payload["duration"] == -1 and not is_admin and not trusted_trend:
+    if payload["duration"] == -1 and not is_admin and not trusted_trend and not identity:
         raise ValueError("Auto-длительность пока доступна только администратору; выберите 4–30 секунд")
     await fullstack._validate_seedance_sources(
         first_frame_url=payload["first_frame"],
@@ -310,6 +424,7 @@ async def _launch_provider(payload: dict[str, Any]) -> dict[str, Any]:
         nsfw_checker=payload["nsfw_checker"],
         callBackUrl=get_seedance25_callback_url(),
         **({"video_editing": True} if payload.get("seedance25_video_editing") is True else {}),
+        **({"identity_transfer": True} if payload.get("seedance25_identity_transfer") is True else {}),
     )
 
 
@@ -323,6 +438,11 @@ def _request_data(payload: dict[str, Any], *, is_admin: bool, quote: float, sour
         "v_type": "text" if payload["scenario"] == "text" else "imgtxt" if payload["scenario"] in {"first_frame", "first_last"} else "video",
         "seedance25_scenario": payload["scenario"],
         "seedance25_video_editing": payload.get("seedance25_video_editing", False),
+        "seedance25_identity_transfer": payload.get("seedance25_identity_transfer", False),
+        "seedance25_identity_role_version": IDENTITY_ROLE_VERSION if payload.get("seedance25_identity_transfer") else None,
+        "seedance25_reference_roles": ({"images": "same_person_identity", "video": "motion_scene_camera_only"} if payload.get("seedance25_identity_transfer") else None),
+        "billing_duration": payload.get("billing_duration", payload["duration"]),
+        "source_video_duration_seconds": payload.get("source_video_duration_seconds"),
         "duration": payload["duration"],
         "aspect_ratio": payload["ratio"],
         "first_frame_url": payload["first_frame"],
@@ -347,19 +467,24 @@ def _request_data(payload: dict[str, Any], *, is_admin: bool, quote: float, sour
     }
 
 
-async def _public_message_launch(message: types.Message, state: FSMContext, prompt: str) -> None:
+async def _public_message_launch(message: types.Message, state: FSMContext, prompt: str, *, actor_id: int | None = None) -> None:
+    telegram_id = actor_id if actor_id is not None else message.from_user.id
     data = await state.get_data()
-    is_admin = config.is_admin(message.from_user.id)
+    is_admin = config.is_admin(telegram_id)
     try:
         payload = _scenario_payload(data, prompt)
-        await _validate_public_payload(payload, is_admin=is_admin)
+        await _validate_public_payload(payload, is_admin=is_admin, telegram_id=telegram_id)
     except ValueError as exc:
         await message.answer(f"❌ {exc}")
         return
 
-    quote = float(preview_module._price_quote(dict(data, v_duration=payload["duration"], v_ratio=payload["ratio"])))
-    if not is_admin and not await generation_module.check_can_afford(message.from_user.id, quote):
-        credits = await generation_module.get_user_credits(message.from_user.id)
+    quote = _identity_quote(payload)["cost"] if payload.get("seedance25_identity_transfer") else float(preview_module._price_quote(dict(data, v_duration=payload["duration"], v_ratio=payload["ratio"])))
+    if payload.get("seedance25_identity_transfer") and not is_admin and data.get("seedance25_identity_quote") != _identity_quote(payload):
+        await _public_show_screen(message, state, edit=False, actor_id=telegram_id)
+        await message.answer("Проверьте обновлённую цену выше и отправьте промпт ещё раз для запуска.")
+        return
+    if not is_admin and not await generation_module.check_can_afford(telegram_id, quote):
+        credits = await generation_module.get_user_credits(telegram_id)
         await message.answer(
             f"❌ Недостаточно бананов. Нужно <b>{quote:g}🍌</b>, на балансе <b>{credits:g}🍌</b>.",
             parse_mode="HTML",
@@ -374,13 +499,13 @@ async def _public_message_launch(message: types.Message, state: FSMContext, prom
     )
     try:
         if not is_admin:
-            await generation_module.deduct_credits(message.from_user.id, quote)
+            await generation_module.deduct_credits(telegram_id, quote)
             charged = True
 
         result = await _launch_provider(payload)
         if not result or not result.get("task_id"):
             if charged:
-                await generation_module.add_credits(message.from_user.id, quote)
+                await generation_module.add_credits(telegram_id, quote)
                 charged = False
             error = result.get("error") if isinstance(result, dict) else "provider response has no task_id"
             await processing.delete()
@@ -391,11 +516,11 @@ async def _public_message_launch(message: types.Message, state: FSMContext, prom
             )
             return
 
-        user = await generation_module.get_or_create_user(message.from_user.id)
+        user = await generation_module.get_or_create_user(telegram_id)
         task_id = str(result["task_id"])
         await generation_module.add_generation_task(
             user.id,
-            message.from_user.id,
+            telegram_id,
             task_id,
             "video",
             "no_preset_video",
@@ -421,9 +546,9 @@ async def _public_message_launch(message: types.Message, state: FSMContext, prom
         logger.exception("Public Seedance 2.5 Telegram launch failed")
         if charged:
             try:
-                await generation_module.add_credits(message.from_user.id, quote)
+                await generation_module.add_credits(telegram_id, quote)
             except Exception:
-                logger.exception("Seedance 2.5 immediate refund failed for %s", message.from_user.id)
+                logger.exception("Seedance 2.5 immediate refund failed for %s", telegram_id)
         try:
             await processing.delete()
         except Exception:
@@ -446,6 +571,8 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
         body.get("start_param_fallback"),
     )
     user = ctx["user"]
+    if not isinstance(body.get("seedance25_quote_only", False), bool):
+        return web.json_response({"ok": False, "error": "Некорректный запрос расчёта цены"}, status=400)
     is_admin = config.is_admin(telegram_id)
     source_feed_gen_id_raw = body.get("source_feed_gen_id") or body.get("sourceFeedGenId")
     source_feed_gen_id = (
@@ -477,6 +604,7 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
     data = {
         "seedance25_scenario": str(body.get("seedance25_scenario") or "text").strip().lower(),
         "seedance25_video_editing": body.get("seedance25_video_editing", False),
+        "seedance25_identity_transfer": body.get("seedance25_identity_transfer", body.get("identityTransfer", False)),
         "v_duration": int(body.get("v_duration", 5)),
         "v_ratio": str(body.get("v_ratio") or "adaptive").strip().lower(),
         "seedance25_resolution": str(body.get("seedance25_resolution") or "720p").strip().lower(),
@@ -491,6 +619,12 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
         "seedance25_web_search": bool(body.get("seedance25_web_search", False)),
         "seedance25_nsfw_checker": bool(body.get("seedance25_nsfw_checker", False)),
     }
+    try:
+        if "identityTransfer" in body:
+            data["identityTransfer"] = body["identityTransfer"]
+        _identity_intent(data)
+    except ValueError as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=400)
     scenario = data["seedance25_scenario"]
     if scenario not in {"text", "first_frame", "first_last", "multimodal"}:
         return web.json_response({"ok": False, "error": "Некорректный сценарий Seedance 2.5"}, status=400)
@@ -517,11 +651,23 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
 
     try:
         payload = _scenario_payload(data, str(body.get("prompt") or ""))
-        await _validate_public_payload(payload, is_admin=is_admin)
+        await _validate_public_payload(payload, is_admin=is_admin, telegram_id=telegram_id)
     except ValueError as exc:
         return web.json_response({"ok": False, "error": str(exc)}, status=400)
 
-    quote = float(preview_module._price_quote(dict(data, v_duration=payload["duration"], v_ratio=payload["ratio"])))
+    payload.update(source_feed_gen_id=source_feed_gen_id, parent_generation_id=immediate_parent_id)
+    quote = _identity_quote(payload)["cost"] if payload.get("seedance25_identity_transfer") else float(preview_module._price_quote(dict(data, v_duration=payload["duration"], v_ratio=payload["ratio"])))
+    if payload.get("seedance25_identity_transfer"):
+        current_quote = _identity_quote(payload)
+        quote = current_quote["cost"]
+        if body.get("seedance25_quote_only") is True:
+            return web.json_response({"ok": True, "quote_only": True, **current_quote,
+                                      "source_video_duration_seconds": payload["source_video_duration_seconds"],
+                                      "seedance25_identity_quote": current_quote})
+        if not is_admin and body.get("seedance25_identity_quote") != current_quote:
+            return web.json_response({"ok": False, "error": "Цена или исходное видео изменились. Обновите расчёт перед запуском."}, status=400)
+    elif body.get("seedance25_quote_only") is True:
+        return web.json_response({"ok": False, "error": "Расчёт доступен для переноса персонажа"}, status=400)
     if not is_admin and not await miniapp_module.check_can_afford(telegram_id, quote):
         fresh = await miniapp_module.get_or_create_user(telegram_id)
         return web.json_response(
@@ -608,6 +754,9 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
                 "duration": payload["duration"],
                 "aspect_ratio": payload["ratio"],
                 "scenario": payload["scenario"],
+                "billing_duration": payload.get("billing_duration", payload["duration"]),
+                "source_video_duration_seconds": payload.get("source_video_duration_seconds"),
+                "seedance25_identity_transfer": payload.get("seedance25_identity_transfer", False),
             }
         )
     except Exception as exc:
@@ -740,6 +889,9 @@ async def _public_send_results(
     resolution = str(request_data.get("resolution") or "720p")
     duration = request_data.get("duration")
     scenario = str(request_data.get("seedance25_scenario") or "text")
+    identity = request_data.get("seedance25_identity_transfer") is True
+    if identity:
+        scenario = "Замена персонажа"
     admin_free = bool(request_data.get("admin_free"))
     cost = float(request_data.get("charged_cost") or 0)
     billing = "без списания для администратора" if admin_free else f"списано {cost:g}🍌"
@@ -751,7 +903,11 @@ async def _public_send_results(
         f"• Формат: <code>{output_format.upper()}</code>\n"
         f"• Оплата: <code>{billing}</code>"
     )
-    if duration is not None:
+    if identity and request_data.get("source_video_duration_seconds") is not None:
+        measured = float(request_data["source_video_duration_seconds"])
+        billed = int(request_data["billing_duration"])
+        caption += f"\n• Исходное видео: <code>{measured:g}с</code> · расчёт: <code>{billed}с</code>"
+    elif duration is not None:
         caption += f"\n• Длительность: <code>{'Auto' if int(duration) == -1 else str(duration) + 'с'}</code>"
     from bot import keyboards as keyboard_module
 
@@ -970,7 +1126,7 @@ def install_seedance_25_public_release() -> None:
         data = await state.get_data()
         if data.get("v_model") != MODEL_KEY:
             return await current_callback_launch(callback, state, prompt, cost, is_admin)
-        await _public_message_launch(callback.message, state, prompt)
+        await _public_message_launch(callback.message, state, prompt, actor_id=callback.from_user.id)
         try:
             await callback.answer("Seedance 2.5 запускаю")
         except Exception:

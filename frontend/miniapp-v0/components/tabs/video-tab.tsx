@@ -23,8 +23,9 @@ export function VideoTab() {
     refreshTasks,
   } = useApp()
   const presetTargetsSeedance25 = videoPromptPreset?.model === 'seedance_2_5'
+  const presetIsIdentityTransfer = presetTargetsSeedance25 && videoPromptPreset?.seedance25IdentityTransfer === true
   const presetIsSeedanceRepeat = Boolean(
-    presetTargetsSeedance25 && videoPromptPreset?.sourceFeedGenId,
+    presetTargetsSeedance25 && !presetIsIdentityTransfer && videoPromptPreset?.sourceFeedGenId,
   )
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [lastРезультат, setLastРезультат] = useState<Task | null>(null)
@@ -223,6 +224,8 @@ export function VideoTab() {
             model={seedance25Model}
             credits={state.user.credits}
             isAdmin={state.user.isAdmin}
+            promptPreset={videoPromptPreset}
+            onPromptPresetConsumed={handleVideoPromptPresetConsumed}
             onQueued={handleSeedanceQueued}
             onSavedReference={addSavedReference}
           />

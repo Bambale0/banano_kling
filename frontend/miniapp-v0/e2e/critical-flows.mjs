@@ -981,3 +981,6 @@ await import('./genjutsu-feed-bridge.mjs')
 
 // Generic Seedance admin upload and reference privacy stay in the browser gate.
 await import('./seedance-trend-upload.mjs')
+
+// Explicit identity-transfer pricing, reference roles, and ordinary mode regression.
+await import('./seedance25-identity-transfer.mjs')

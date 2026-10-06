@@ -17,6 +17,11 @@ from urllib.parse import urlsplit, urlunsplit
 
 from bot.config import config
 from bot.services.kling_service import KlingService
+from bot.services.seedance25_identity import (
+    IDENTITY_ROLE_VERSION,
+    build_identity_transfer_prompt,
+    validate_identity_transfer_refs,
+)
 from bot.services.seedance_reference_binding import (
     canonicalize_seedance_reference_tags,
     missing_seedance_reference_tags,
@@ -153,6 +158,33 @@ class Seedance25Service(KlingService):
             return "multimodal"
         return "text"
 
+    @classmethod
+    def prepare_prompt(cls, prompt: str, *, image_urls: list[str], video_urls: list[str],
+                       audio_urls: list[str], identity_transfer: bool = False,
+                       first_frame: str | None = None, last_frame: str | None = None) -> str:
+        """Validate the exact provider prompt before charging or submitting."""
+        if not isinstance(identity_transfer, bool):
+            raise ValueError("Seedance 2.5 identity_transfer must be a boolean")  # noqa: TRY004 - adapter validation contract
+        raw = str(prompt or "").strip()
+        if len(raw) > cls.MAX_PROMPT_LENGTH:
+            raise ValueError(f"Seedance 2.5 prompt exceeds {cls.MAX_PROMPT_LENGTH} characters")
+        if identity_transfer:
+            validate_identity_transfer_refs(images=image_urls, videos=video_urls,
+                                            audio=audio_urls, first_frame=first_frame,
+                                            last_frame=last_frame)
+            raw = build_identity_transfer_prompt(raw, image_count=len(image_urls))
+        normalized = canonicalize_seedance_reference_tags(
+            raw, image_count=len(image_urls), video_count=len(video_urls), audio_count=len(audio_urls)
+        )
+        missing = missing_seedance_reference_tags(
+            normalized, image_count=len(image_urls), video_count=len(video_urls), audio_count=len(audio_urls)
+        )
+        if missing:
+            raise ValueError("Prompt references missing Seedance media: " + ", ".join(missing))
+        if len(normalized) > cls.MAX_PROMPT_LENGTH:
+            raise ValueError(f"Seedance 2.5 prompt exceeds {cls.MAX_PROMPT_LENGTH} characters after reference-role instructions")
+        return normalized
+
     async def generate_video(
         self,
         prompt: str,
@@ -166,6 +198,7 @@ class Seedance25Service(KlingService):
         reference_video_urls: list[str] | None = None,
         reference_audio_urls: list[str] | None = None,
         video_editing: bool = False,
+        identity_transfer: bool = False,
         return_last_frame: bool = False,
         generate_audio: bool = True,
         output_format: str = "mp4",
@@ -205,39 +238,13 @@ class Seedance25Service(KlingService):
         if video_editing and len(video_urls) != 1:
             return {"success": False, "error": "Seedance 2.5 video editing requires exactly one video reference"}
 
-        normalized_prompt = canonicalize_seedance_reference_tags(
-            raw_prompt,
-            image_count=len(image_urls),
-            video_count=len(video_urls),
-            audio_count=len(audio_urls),
-        )
-        if normalized_prompt != raw_prompt:
-            logger.info(
-                "Seedance 2.5 reference aliases normalized: images=%s videos=%s audio=%s",
-                len(image_urls),
-                len(video_urls),
-                len(audio_urls),
+        try:
+            normalized_prompt = self.prepare_prompt(
+                raw_prompt, image_urls=image_urls, video_urls=video_urls, audio_urls=audio_urls,
+                identity_transfer=identity_transfer, first_frame=first_frame_url, last_frame=last_frame_url,
             )
-        missing_tags = missing_seedance_reference_tags(
-            normalized_prompt,
-            image_count=len(image_urls),
-            video_count=len(video_urls),
-            audio_count=len(audio_urls),
-        )
-        if missing_tags:
-            return {
-                "success": False,
-                "error": (
-                    "Prompt references missing Seedance media: "
-                    + ", ".join(missing_tags)
-                ),
-            }
-
-        if len(normalized_prompt) > self.MAX_PROMPT_LENGTH:
-            return {
-                "success": False,
-                "error": f"Seedance 2.5 prompt exceeds {self.MAX_PROMPT_LENGTH} characters",
-            }
+        except ValueError as exc:
+            return {"success": False, "error": str(exc)}
 
         normalized_ratio = str(aspect_ratio or "adaptive").strip().lower()
         if normalized_ratio not in self.ALLOWED_RATIOS:
@@ -277,7 +284,7 @@ class Seedance25Service(KlingService):
         # Editing intent is local application metadata, not a KIE API field.
         # Validate normal inputs first so stale valid settings can be normalized
         # without allowing invalid settings to bypass the provider contract.
-        if video_editing:
+        if video_editing or identity_transfer:
             normalized_duration = self.AUTO_DURATION
             normalized_ratio = "adaptive"
 
@@ -317,11 +324,13 @@ class Seedance25Service(KlingService):
             payload["callBackUrl"] = callback_url
 
         logger.info(
-            "Seedance 2.5 request: scenario=%s video_editing=%s duration=%s ratio=%s resolution=%s "
+            "Seedance 2.5 request: scenario=%s video_editing=%s identity_transfer=%s role_version=%s duration=%s ratio=%s resolution=%s "
             "refs(image=%s,video=%s,audio=%s) generated_audio=%s output=%s "
             "web_search=%s nsfw_checker=%s return_last_frame=%s callback=%s",
             scenario,
             video_editing,
+            identity_transfer,
+            IDENTITY_ROLE_VERSION if identity_transfer else None,
             normalized_duration,
             normalized_ratio,
             normalized_resolution,
@@ -342,7 +351,10 @@ class Seedance25Service(KlingService):
             result.setdefault("provider_model", self.MODEL_NAME)
             result.setdefault("duration", normalized_duration)
             result.setdefault("aspect_ratio", normalized_ratio)
-            result.setdefault("video_editing", video_editing)
+            result.setdefault("video_editing", video_editing or identity_transfer)
+            if identity_transfer:
+                result.setdefault("identity_transfer", True)
+                result.setdefault("identity_role_version", IDENTITY_ROLE_VERSION)
         return result
 
 

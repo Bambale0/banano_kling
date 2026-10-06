@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useApp } from '@/lib/app-context'
+import { hydrateSeedance25IdentityPreset } from '@/lib/seedance25-repeat'
 import { openGenjutsu } from '@/lib/genjutsu-api'
 import type { FeedComment, FeedItem, ScenarioType, UploadedFile } from '@/lib/types'
 import { cn, isHttpUrl } from '@/lib/utils'
@@ -210,13 +211,20 @@ export function FeedTab() {
   const [brokenMediaIds, setBrokenMediaIds] = useState<Set<number>>(() => new Set())
   const [loading, setLoading] = useState(false)
   const [busyId, setBusyId] = useState<number | null>(null)
+  const repeatRequest = useRef(0)
+  useEffect(() => () => { repeatRequest.current += 1 }, [])
   const [error, setError] = useState<string | null>(null)
   const [previewItem, setPreviewItem] = useState<FeedItem | null>(null)
+  const dismissPreview = useCallback(() => {
+    repeatRequest.current += 1
+    setBusyId(null)
+    setPreviewItem(null)
+  }, [])
   useEffect(() => {
-    const closePreview = () => setPreviewItem(null)
+    const closePreview = () => dismissPreview()
     window.addEventListener('banano:feed-preview-close', closePreview)
     return () => window.removeEventListener('banano:feed-preview-close', closePreview)
-  }, [])
+  }, [dismissPreview])
   const [referencePreview, setReferencePreview] = useState<{ type: 'image' | 'video'; url: string } | null>(null)
   const [revealedPreviewIds, setRevealedPreviewIds] = useState<Set<number>>(() => new Set())
   const [commentsItem, setCommentsItem] = useState<FeedItem | null>(null)
@@ -354,7 +362,9 @@ export function FeedTab() {
         : [feedDeepLink.item, ...prev]
     })
     if (feedDeepLink.action === 'preview') {
-      setPreviewItem(feedDeepLink.item)
+      repeatRequest.current += 1
+    setBusyId(null)
+    setPreviewItem(feedDeepLink.item)
     }
     consumeFeedDeepLink()
   }, [consumeFeedDeepLink, feedDeepLink, isLive])
@@ -428,10 +438,10 @@ export function FeedTab() {
     setActiveTab(1)
   }
 
-  const handleVideoRepeat = (item: FeedItem) => {
+  const handleVideoRepeat = async (item: FeedItem) => {
     if (!isLive || item.gen_type !== 'video') return
     if (item.genjutsu_recipe_id) {
-      setPreviewItem(null)
+      dismissPreview()
       openGenjutsu({ recipe_id: item.genjutsu_recipe_id })
       return
     }
@@ -451,7 +461,10 @@ export function FeedTab() {
       : videoReferences.length
         ? 'video'
         : normalizeVideoScenario(item.scenario)
-    setVideoPromptPreset({
+    const repeatToken = ++repeatRequest.current
+    setBusyId(item.id)
+    try {
+    const preset = await hydrateSeedance25IdentityPreset(item, {
       title: 'Повторить видео из ленты',
       prompt: item.prompt || '',
       model: modelExists ? item.model : state.videoModels[0]?.id || 'v3_pro',
@@ -464,8 +477,15 @@ export function FeedTab() {
       initialPhotoReferences: scenario === 'imgtxt' ? imageReferences.slice(1) : imageReferences,
       initialVideoReferences: videoReferences,
     })
-    setPreviewItem(null)
+    if (repeatToken !== repeatRequest.current) return
+    setVideoPromptPreset(preset)
+    dismissPreview()
     setActiveTab(2)
+    } catch (error) {
+      if (repeatToken === repeatRequest.current) setError(getErrorMessage(error, 'Не удалось восстановить настройки видео. Попробуйте снова.'))
+    } finally {
+      if (repeatToken === repeatRequest.current) setBusyId(null)
+    }
   }
 
   const handleToggleBlur = async (item: FeedItem) => {
@@ -619,7 +639,7 @@ export function FeedTab() {
                   <div className="relative overflow-hidden bg-secondary/50">
                     <button
                       type="button"
-                      onClick={() => setPreviewItem(item)}
+                      onClick={() => { repeatRequest.current += 1; setBusyId(null); setPreviewItem(item) }}
                       className="group block w-full text-left"
                       aria-label={item.gen_type === 'video' ? 'Открыть видео' : 'Открыть фото'}
                     >
@@ -797,7 +817,7 @@ export function FeedTab() {
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-background/95 px-3 py-6">
           <button
             type="button"
-            onClick={() => setPreviewItem(null)}
+            onClick={() => dismissPreview()}
             className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-secondary/80 text-foreground"
             aria-label="Закрыть"
           >
@@ -817,7 +837,7 @@ export function FeedTab() {
                 preload="auto"
                 onError={() => {
                   handleMediaError(previewItem)
-                  setPreviewItem(null)
+                  dismissPreview()
                 }}
               />
             ) : (
@@ -826,7 +846,7 @@ export function FeedTab() {
                 alt=""
                 onError={() => {
                   handleMediaError(previewItem)
-                  setPreviewItem(null)
+                  dismissPreview()
                 }}
                 className={cn(
                   'max-h-full w-auto max-w-full object-contain',

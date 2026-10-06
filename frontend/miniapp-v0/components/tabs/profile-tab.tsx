@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useApp } from '@/lib/app-context'
+import { hydrateSeedance25IdentityPreset } from '@/lib/seedance25-repeat'
 import { openGenjutsu } from '@/lib/genjutsu-api'
 import type { FeedComment, FeedItem, ProfileSummary, ScenarioType, UploadedFile } from '@/lib/types'
 import { cn, isHttpUrl } from '@/lib/utils'
@@ -181,11 +182,16 @@ export function ProfileTab() {
   const [brokenMediaIds, setBrokenMediaIds] = useState<Set<number>>(() => new Set())
   const [profile, setProfile] = useState<ProfileSummary | null>(null)
   const [previewItem, setPreviewItem] = useState<FeedItem | null>(null)
+  const dismissPreview = useCallback(() => {
+    repeatRequest.current += 1
+    setBusyId(null)
+    setPreviewItem(null)
+  }, [])
   useEffect(() => {
-    const closePreview = () => setPreviewItem(null)
+    const closePreview = () => dismissPreview()
     window.addEventListener('banano:feed-preview-close', closePreview)
     return () => window.removeEventListener('banano:feed-preview-close', closePreview)
-  }, [])
+  }, [dismissPreview])
   const [commentsItem, setCommentsItem] = useState<FeedItem | null>(null)
   const [comments, setComments] = useState<FeedComment[]>([])
   const [commentsLoading, setCommentsLoading] = useState(false)
@@ -199,6 +205,8 @@ export function ProfileTab() {
   } | null>(null)
   const [loading, setLoading] = useState(false)
   const [busyId, setBusyId] = useState<number | null>(null)
+  const repeatRequest = useRef(0)
+  useEffect(() => () => { repeatRequest.current += 1 }, [])
   const [copied, setCopied] = useState<string | number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [feedRefreshToken, setFeedRefreshToken] = useState(0)
@@ -334,6 +342,8 @@ export function ProfileTab() {
         ? prev.map((item) => (item.id === feedDeepLink.item.id ? feedDeepLink.item : item))
         : [feedDeepLink.item, ...prev]
     })
+    repeatRequest.current += 1
+    setBusyId(null)
     setPreviewItem(feedDeepLink.item)
     consumeFeedDeepLink()
   }, [consumeFeedDeepLink, feedDeepLink, isLive])
@@ -595,10 +605,10 @@ export function ProfileTab() {
     }
   }
 
-  function handleRemix(item: FeedItem) {
+  async function handleRemix(item: FeedItem) {
     if (!profileInteractionsEnabled(item)) return
     if (isLive && item.genjutsu_recipe_id) {
-      setPreviewItem(null)
+      dismissPreview()
       openGenjutsu({ recipe_id: item.genjutsu_recipe_id })
       return
     }
@@ -611,7 +621,10 @@ export function ProfileTab() {
       const imageReferences = item.references_hidden ? [] : (item.reference_images || []).map((url, index) => feedReferenceToUploadedFile(url, index))
       const videoReferences = item.references_hidden ? [] : (item.reference_videos || []).map((url, index) => feedReferenceToUploadedFile(url, index, 'video'))
       const scenario = imageReferences.length ? 'imgtxt' : videoReferences.length ? 'video' : normalizeVideoScenario(item.scenario)
-      setVideoPromptPreset({
+      const repeatToken = ++repeatRequest.current
+      setBusyId(item.id)
+      try {
+      const preset = await hydrateSeedance25IdentityPreset(item, {
         title: 'Повторить видео из ленты',
         prompt: item.prompt || '',
         model: modelExists ? item.model : state.videoModels[0]?.id || 'v3_pro',
@@ -624,7 +637,14 @@ export function ProfileTab() {
         initialPhotoReferences: scenario === 'imgtxt' ? imageReferences.slice(1) : imageReferences,
         initialVideoReferences: videoReferences,
       })
+      if (repeatToken !== repeatRequest.current) return
+      setVideoPromptPreset(preset)
       setActiveTab(2)
+      } catch (error) {
+        if (repeatToken === repeatRequest.current) setError(getErrorMessage(error, 'Не удалось восстановить настройки видео. Попробуйте снова.'))
+      } finally {
+        if (repeatToken === repeatRequest.current) setBusyId(null)
+      }
       return
     }
     const modelExists = state.imageModels.some((model) => model.id === item.model)
@@ -806,7 +826,7 @@ export function ProfileTab() {
               <button
                 type="button"
                 className="group h-full w-full text-left"
-                onClick={() => setPreviewItem(item)}
+                onClick={() => { repeatRequest.current += 1; setBusyId(null); setPreviewItem(item) }}
                 aria-label="Открыть публикацию"
               >
                 {brokenMediaIds.has(item.id) ? (
@@ -940,7 +960,7 @@ export function ProfileTab() {
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-background/95 px-3 py-6">
           <button
             type="button"
-            onClick={() => setPreviewItem(null)}
+            onClick={() => dismissPreview()}
             className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-secondary/80 text-foreground"
             aria-label="Закрыть"
           >
@@ -964,7 +984,7 @@ export function ProfileTab() {
                 alt=""
                 onError={() => {
                   handleMediaError(previewItem)
-                  setPreviewItem(null)
+                  dismissPreview()
                 }}
                 className={cn(
                   'max-h-full w-auto max-w-full object-contain transition-all',

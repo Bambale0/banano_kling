@@ -952,6 +952,8 @@ async def _auto_retry_seedance25_video_editing(
     # Public editing remains disabled because its output duration follows the
     # source video while retail pricing is quoted from the selected duration.
     # Do not silently change a paid user's contract or create an unpriced task.
+    if request_data.get("seedance25_identity_transfer") is True:
+        return False
     if request_data.get("admin_free") is not True:
         return False
 
@@ -1759,6 +1761,9 @@ async def _store_video_reference(message: types.Message, state: FSMContext, medi
         await message.answer("Видео-референсы доступны только в мультимодальном режиме Seedance 2.5.")
         return
     urls = _clean_urls(data.get("v_reference_videos") or [])
+    if data.get("seedance25_identity_transfer") is True and urls:
+        await message.answer("Для замены персонажа нужно одно исходное видео. Очистите референсы для нового набора.")
+        return
     if len(urls) >= 10:
         await message.answer("❌ Максимум 10 видео-референсов.")
         return
@@ -1792,6 +1797,9 @@ async def _store_video_reference(message: types.Message, state: FSMContext, medi
 
 async def _store_audio_reference(message: types.Message, state: FSMContext, media, ext: str, mime: str) -> None:
     data = await state.get_data()
+    if data.get("seedance25_identity_transfer") is True:
+        await message.answer("В замене персонажа отдельное аудио не используется. Выберите обычные референсы для аудио.")
+        return
     if data.get("seedance25_scenario") != "multimodal":
         await message.answer("Аудио-референсы доступны только в мультимодальном режиме Seedance 2.5.")
         return

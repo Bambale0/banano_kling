@@ -22,6 +22,8 @@ export interface PromptPreset {
 }
 
 export interface VideoPromptPreset {
+  seedance25IdentityTransfer?: boolean
+  seedance25Resolution?: '480p' | '720p'
   title: string
   prompt: string
   model?: string | null
