@@ -979,3 +979,78 @@ def test_legacy_trend_runner_fails_closed_for_genjutsu_recipe():
     )
     with pytest.raises(TrendRunValidationError, match="Genjutsu"):
         trusted_trend_run(trend, ("https://example.test/ref.jpg",))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("replaceable", [False, True])
+@pytest.mark.parametrize("duration,expected_status", [(1.5, 400), (16, 400), ((10, 10), 400), (5, 200)])
+async def test_seedance2_private_repeat_validates_actual_video_before_charge(
+    monkeypatch, tmp_path, replaceable, duration, expected_status
+):
+    from pathlib import Path
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from aiohttp import web
+
+    from bot import miniapp as miniapp_module
+    from bot import trend_api as api
+    from tests.test_seedance_trend_upload_api import add_seedance2_video
+
+    monkeypatch.chdir(tmp_path)
+    durations = duration if isinstance(duration, tuple) else (duration,)
+    relative_videos = [
+        add_seedance2_video(f"repeat-video-{index}", seconds, ("purple", "yellow")[index])
+        for index, seconds in enumerate(durations)
+    ]
+    base = api.config.static_base_url.rstrip("/")
+    videos = [base + relative for relative in relative_videos]
+    face = base + "/uploads/refs/image/9001/face.png"
+    dress = base + "/uploads/trend-assets/dress.png"
+    prompt = _private_seedance_trend()
+    slots = [{"media_type": "image", "position": 1, "label": "ВАШЕ ЛИЦО"}]
+    inputs = [{"media_type": "image", "position": 1, "url": face}]
+    assets = [{"media_type": "image", "position": 2, "file_url": dress}]
+    for index, video in enumerate(videos, start=1):
+        if replaceable:
+            slots.append({"media_type": "video", "position": index, "label": "ВАШЕ ВИДЕО"})
+            inputs.append({"media_type": "video", "position": index, "url": video})
+        else:
+            assets.append({"media_type": "video", "position": index, "file_url": video})
+    prompt["generation_settings"].update(
+        reference_plan_version=2, reference_slots=slots, reference_count=len(slots),
+        fixed_video_reference_count=0 if replaceable else len(videos),
+    )
+    monkeypatch.setattr(
+        miniapp_module, "_get_user_context",
+        AsyncMock(return_value=(9001, {"user": SimpleNamespace(id=9, credits=100)})),
+    )
+    monkeypatch.setattr(api, "get_prompt_by_id", AsyncMock(return_value=prompt))
+    monkeypatch.setattr(api, "list_trend_reference_assets", AsyncMock(return_value=assets))
+    launch = AsyncMock(return_value=web.json_response({"ok": True, "status": "queued"}))
+    debit = AsyncMock()
+    monkeypatch.setattr(api, "_run_video_trend", launch)
+    monkeypatch.setattr(api, "_debit_for_generation", debit)
+
+    class Request:
+        def __init__(self):
+            self.app = {}
+
+        async def json(self):
+            return {
+                "init_data": "signed", "trend_id": 77,
+                "reference_urls": [item["url"] for item in inputs],
+                "reference_inputs": inputs,
+            }
+
+    response = await api.miniapp_run_trend(Request())
+    assert response.status == expected_status, response.text
+    debit.assert_not_awaited()
+    if expected_status == 400:
+        import json
+        assert "секунд" in json.loads(response.text)["error"]
+        launch.assert_not_awaited()
+    else:
+        launch.assert_awaited_once()
+        assert launch.await_args.kwargs["trend"].provider_video_urls == tuple(videos)
+    assert all(Path("static" + relative).is_file() for relative in relative_videos)

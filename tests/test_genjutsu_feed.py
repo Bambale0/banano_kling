@@ -372,7 +372,13 @@ async def test_legacy_telegram_repeat_redirects_before_billing(handler_name, mon
     deduct.assert_not_awaited()
     launch.assert_not_awaited()
     markup = callback.message.answer.await_args.kwargs["reply_markup"]
-    assert "genjutsu_recipe=" + result["recipe"]["id"] in markup.inline_keyboard[0][0].web_app.url
+    from urllib.parse import parse_qs, urlsplit
+
+    url = markup.inline_keyboard[0][0].web_app.url
+    assert parse_qs(urlsplit(url).query)["startapp"] == [
+        f'feed_{result["card"]["id"]}_ref_{ctx.owner.referral_code}'
+    ]
+    assert "genjutsu_recipe" not in url
 
 
 @pytest.mark.asyncio
@@ -416,7 +422,7 @@ async def test_generic_miniapp_repeat_requires_genjutsu_recipe_before_provider(m
 
 
 @pytest.mark.asyncio
-async def test_feed_keyboard_opens_genjutsu_private_recipe():
+async def test_feed_keyboard_opens_genjutsu_preview_with_author_referral():
     from bot.handlers.common import _build_feed_keyboard
 
     ctx = await setup_owned_run()
@@ -424,7 +430,12 @@ async def test_feed_keyboard_opens_genjutsu_private_recipe():
     markup = await _build_feed_keyboard(bot=SimpleNamespace(get_me=AsyncMock(return_value=SimpleNamespace(username="fixture_bot"))), card=result["card"], source_code="r", index=0, total=1, photo_index=0, photos_count=1)
     buttons = [button for row in markup.inline_keyboard for button in row]
     repeat = next(button for button in buttons if button.text == "🔁 Повторить в Genjutsu")
-    assert "genjutsu_recipe_" + result["recipe"]["id"] in repeat.web_app.url
+    from urllib.parse import parse_qs, urlsplit
+
+    assert parse_qs(urlsplit(repeat.web_app.url).query)["startapp"] == [
+        f'feed_{result["card"]["id"]}_ref_{ctx.owner.referral_code}'
+    ]
+    assert "genjutsu_recipe" not in repeat.web_app.url
 
 
 @pytest.mark.asyncio
@@ -565,3 +576,173 @@ async def test_admin_recipe_list_keeps_curated_recipes_when_feed_publication_is_
     response = await ctx.api.dispatch(101, True, "recipe_list", {"action": "recipe_list"})
     assert [item["id"] for item in response["items"]] == [curated["id"]]
     assert response["items"][0]["title"] == "Curated recipe"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("viewer,admin", [(101, False), (202, False), (202, True)])
+@pytest.mark.parametrize("profile_only", [False, True])
+async def test_recipe_link_preview_returns_public_card_without_private_inputs(viewer, admin, profile_only):
+    ctx = await setup_owned_run()
+    published = await publish(ctx)
+    if profile_only:
+        published["card"] = await database.share_to_feed(published["card"]["id"], ctx.owner.id, publication_scope="profile")
+    ctx.api.authenticate = AsyncMock(return_value=(viewer, admin))
+    before = await ctx.repo.balance(viewer)
+    app = web.Application()
+    ctx.api.register(app)
+    async with TestClient(TestServer(app)) as client:
+        response = await client.post("/mini-app/api/genjutsu", json={
+            "action": "recipe_preview", "recipe_id": published["recipe"]["id"], "init_data": "fixture",
+        })
+        assert response.status == 200
+        assert response.headers["Cache-Control"] == "no-store"
+        result = await response.json()
+    assert set(result) == {"ok", "card"}
+    card = result["card"]
+    assert card["id"] == published["card"]["id"]
+    assert card["genjutsu_recipe_id"] == published["recipe"]["id"]
+    assert card["result_url"] == published["card"]["result_url"]
+    assert card["author_referral_code"] == ctx.owner.referral_code
+    assert card["is_mine"] is (viewer == 101)
+    assert bool(card.get("can_remove")) is admin
+    assert bool(card.get("can_blur")) is (admin or viewer == 101)
+    assert card["prompt"] == ""
+    assert card["reference_images"] == card["reference_videos"] == []
+    for secret in ("PRIVATE_PROMPT", "PRIVATE_PRESERVE", "PRIVATE_FIXED_LABEL",
+                   ctx.source["id"], ctx.photo["id"], ctx.fixed["id"], ctx.output["storage_key"]):
+        assert secret not in repr(result)
+    assert await ctx.repo.balance(viewer) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("admin", [False, True])
+@pytest.mark.parametrize("state", [
+    "withdrawn", "deleted", "archived", "failed", "missing_media", "wrong_model", "wrong_recipe", "empty_binding",
+])
+async def test_bound_recipe_preview_fails_closed_instead_of_opening_editor(state, admin):
+    from bot.genjutsu.repository import encode
+
+    ctx = await setup_owned_run()
+    published = await publish(ctx)
+    card_id, recipe_id = published["card"]["id"], published["recipe"]["id"]
+    ctx.api.authenticate = AsyncMock(return_value=(202, admin))
+    if state == "withdrawn":
+        await withdraw(ctx, card_id)
+    elif state == "archived":
+        await ctx.recipes.archive(101, recipe_id)
+    else:
+        async with ctx.repo.transaction() as db:
+            if state == "deleted":
+                await db.execute("DELETE FROM generation_tasks WHERE id=?", (card_id,))
+            elif state == "failed":
+                await db.execute("UPDATE generation_tasks SET status='failed' WHERE id=?", (card_id,))
+            elif state == "missing_media":
+                await db.execute("UPDATE generation_tasks SET result_url=NULL,result_urls='[]' WHERE id=?", (card_id,))
+            elif state == "wrong_model":
+                await db.execute("UPDATE generation_tasks SET model='kling' WHERE id=?", (card_id,))
+            elif state == "empty_binding":
+                await db.execute("UPDATE genjutsu_feed_publications SET task_id='' WHERE recipe_id=?", (recipe_id,))
+            else:
+                await db.execute("UPDATE generation_tasks SET request_data=? WHERE id=?",
+                                 (encode({"genjutsu_recipe_id": "0" * 32}), card_id))
+    app = web.Application()
+    ctx.api.register(app)
+    async with TestClient(TestServer(app)) as client:
+        response = await client.post("/mini-app/api/genjutsu", json={
+            "action": "recipe_preview", "recipe_id": recipe_id,
+        })
+        assert response.status == 404
+        result = await response.json()
+    assert result["code"] == "recipe_unavailable"
+    assert "card" not in result
+    assert "PRIVATE_" not in repr(result)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("archived", [False, True])
+async def test_unbound_curated_recipe_preview_preserves_editor_only_while_active(archived):
+    ctx = await setup_owned_run()
+    async with ctx.repo.transaction() as db:
+        await db.execute("UPDATE genjutsu_runs SET admin_free=1 WHERE id=?", (ctx.run["id"],))
+    recipe = await ctx.recipes.publish(
+        101, ctx.project["id"], 1, "Curated recipe", [], ctx.run["id"],
+    )
+    if archived:
+        await ctx.recipes.archive(101, recipe["id"])
+    app = web.Application()
+    ctx.api.register(app)
+    async with TestClient(TestServer(app)) as client:
+        response = await client.post("/mini-app/api/genjutsu", json={
+            "action": "recipe_preview", "recipe_id": recipe["id"],
+        })
+        result = await response.json()
+    if archived:
+        assert response.status == 404
+        assert result["code"] == "recipe_unavailable"
+    else:
+        assert response.status == 200
+        assert result == {"ok": True, "card": None}
+
+
+@pytest.mark.asyncio
+async def test_recipe_preview_requires_authentication_before_resolving_any_card():
+    ctx = await setup_owned_run()
+    published = await publish(ctx)
+    ctx.api.authenticate = AsyncMock(side_effect=PermissionError("fixture unauthenticated"))
+    preview = AsyncMock()
+    ctx.recipes.preview = preview
+    app = web.Application()
+    ctx.api.register(app)
+    async with TestClient(TestServer(app)) as client:
+        response = await client.post("/mini-app/api/genjutsu", json={
+            "action": "recipe_preview", "recipe_id": published["recipe"]["id"],
+        })
+        assert response.status == 403
+        assert (await response.json())["code"] == "unauthorized"
+    preview.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body,status", [
+    ({"recipe_id": "0" * 32}, 404),
+    ({"recipe_id": "short"}, 404),
+    ({}, 400),
+    ({"recipe_id": None}, 400),
+    ({"recipe_id": "0" * 32, "viewer_user_id": 1}, 400),
+    ({"recipe_id": "0" * 32, "admin": True}, 400),
+    ({"recipe_id": "0" * 32, "plan": {}}, 400),
+])
+async def test_recipe_preview_rejects_unknown_recipe_and_untrusted_fields(body, status):
+    ctx = await setup_owned_run()
+    app = web.Application()
+    ctx.api.register(app)
+    async with TestClient(TestServer(app)) as client:
+        response = await client.post("/mini-app/api/genjutsu", json={"action": "recipe_preview", **body})
+        assert response.status == status
+        assert "card" not in await response.json()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["archive", "withdraw"])
+async def test_recipe_preview_fails_closed_if_publication_is_revoked_during_resolution(change, monkeypatch):
+    ctx = await setup_owned_run()
+    published = await publish(ctx)
+    get_card = database.get_profile_generation_card
+
+    async def revoke_after_card(*args, **kwargs):
+        card = await get_card(*args, **kwargs)
+        if change == "archive":
+            await ctx.recipes.archive(101, published["recipe"]["id"])
+        else:
+            await withdraw(ctx, published["card"]["id"])
+        return card
+
+    monkeypatch.setattr(database, "get_profile_generation_card", revoke_after_card)
+    app = web.Application()
+    ctx.api.register(app)
+    async with TestClient(TestServer(app)) as client:
+        response = await client.post("/mini-app/api/genjutsu", json={
+            "action": "recipe_preview", "recipe_id": published["recipe"]["id"],
+        })
+        assert response.status == 404
+        assert (await response.json())["code"] == "recipe_unavailable"

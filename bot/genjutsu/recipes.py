@@ -137,6 +137,42 @@ class RecipeStore:
         if not task:
             raise PipelineError("recipe_unavailable", status=404)
 
+    async def preview(self, recipe_id: str, viewer: int) -> dict | None:
+        """Resolve a published recipe to its ordinary, privacy-filtered card."""
+        if not isinstance(recipe_id, str) or len(recipe_id) != 32:
+            raise PipelineError("recipe_unavailable", status=404)
+        async with self.repository.connect() as db:
+            publication = await one(db, """SELECT fp.recipe_id AS publication_recipe_id,fp.task_id,u.id AS viewer_user_id
+                FROM genjutsu_recipes r
+                LEFT JOIN genjutsu_feed_publications fp ON fp.recipe_id=r.id
+                LEFT JOIN users u ON u.telegram_id=?
+                WHERE r.id=? AND r.active=1""", (viewer, recipe_id))
+        if not publication:
+            raise PipelineError("recipe_unavailable", status=404)
+        if publication["publication_recipe_id"] is None:
+            return None  # Curated recipes without a Feed publication keep their editor flow.
+
+        from bot.database import get_profile_generation_card
+
+        card = await get_profile_generation_card(
+            publication["task_id"], viewer_user_id=publication["viewer_user_id"]
+        )
+        if not card or card.get("model") != "genjutsu" or card.get("genjutsu_recipe_id") != recipe_id:
+            raise PipelineError("recipe_unavailable", status=404)
+        # Fail closed if the recipe or publication was revoked during resolution.
+        async with self.repository.connect() as db:
+            active = await one(db, """SELECT r.id FROM genjutsu_recipes r
+                JOIN genjutsu_feed_publications fp ON fp.recipe_id=r.id
+                JOIN generation_tasks gt ON gt.task_id=fp.task_id
+                WHERE r.id=? AND r.active=1 AND fp.task_id=?
+                AND gt.model='genjutsu' AND gt.status='completed'
+                AND gt.result_url IS NOT NULL
+                AND (gt.is_public_feed=1 OR COALESCE(gt.is_profile_visible,0)=1)""",
+                (recipe_id, publication["task_id"]))
+        if not active:
+            raise PipelineError("recipe_unavailable", status=404)
+        return card
+
     async def validate_start(self, db, quote: dict) -> None:
         """Serialize Feed withdrawal with admission; accepted runs keep running."""
         binding = await one(db, """SELECT fp.task_id,fp.recipe_id
@@ -383,6 +419,15 @@ class RecipeStore:
         return draft, _fixed_assets(template, source_binding=source_binding), True
 
     async def dispatch(self, owner: int, admin: bool, action: str, body: dict, api) -> dict:
+        if action == "recipe_preview":
+            api.fields(body, {"recipe_id"})
+            card = await self.preview(api.ident(body, "recipe_id"), owner)
+            if card:
+                if admin:
+                    card["can_remove"] = True
+                if admin or bool(card.get("is_mine")):
+                    card["can_blur"] = True
+            return {"card": card}
         if action == "recipe_get":
             api.fields(body, {"recipe_id"})
             return {"recipe": await self.public(api.ident(body, "recipe_id"))}

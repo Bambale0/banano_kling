@@ -1,12 +1,16 @@
-"""Admin API for publishing private-reference Seedance trends from completed tasks."""
+"""Admin API for private-reference Seedance trends from tasks or owned uploads."""
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import json
 import logging
 import math
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from aiohttp import web
 
@@ -15,6 +19,7 @@ from bot.database import (
     approve_prompt,
     create_prompt,
     get_active_seedance_trend_by_source_generation,
+    get_active_seedance_trend_by_upload_fingerprint,
     get_generation_task_payload,
 )
 from bot.seedance_trend_recipe import (
@@ -27,14 +32,23 @@ from bot.seedance_trend_recipe import (
     extract_seedance_reference_snapshot,
 )
 from bot.services.feed_persist import persist_feed_result_urls
+from bot.services.media_input_utils import (
+    is_local_upload_source,
+    resolve_local_upload_path,
+)
 from bot.services.trend_reference_storage import (
     TrendReferenceStorageError,
     persist_trend_reference,
+    validate_seedance2_reference_videos,
+    validate_trend_reference_source,
 )
+from bot.trend_user_fields import normalize_user_fields_settings
 from bot.trend_visibility import sanitize_prompt_for_public
 from bot.utils.validators import detect_explicit_prompt_policy_violation
 
 logger = logging.getLogger(__name__)
+
+_UPLOAD_PUBLISH_LOCK = web.AppKey("seedance_upload_publish_lock", asyncio.Lock)
 
 _VIDEO_EXTENSIONS = (".mp4", ".mov", ".m4v", ".webm")
 
@@ -452,8 +466,380 @@ async def miniapp_admin_publish_seedance_trend(request: web.Request) -> web.Resp
         )
 
 
+def _upload_integer(value: Any, *, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{field} должен быть целым числом")
+    return value
+
+
+def _upload_indices(value: Any, *, field: str) -> list[int]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise TypeError(f"{field} должен быть списком")
+    result = [_upload_integer(item, field=field) for item in value]
+    if len(set(result)) != len(result):
+        raise ValueError(f"Повторяющиеся индексы в {field}")
+    return result
+
+
+def _owned_upload_path(
+    value: Any, *, telegram_id: int, media_type: str
+) -> tuple[str, Path]:
+    """Accept canonical owner-scoped local uploads, never arbitrary URLs/paths."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("Загрузите файл через форму тренда")
+    url = value.strip()
+    parsed = urlsplit(url)
+    if (
+        parsed.query
+        or parsed.fragment
+        or parsed.username
+        or parsed.password
+        or "%" in url
+        or "\\" in url
+        or any(ord(char) < 32 for char in url)
+        or not is_local_upload_source(url)
+    ):
+        raise ValueError("Некорректная ссылка на загруженный файл")
+    prefix = f"/uploads/refs/{media_type}/{telegram_id}/"
+    if not parsed.path.startswith(prefix):
+        raise ValueError("Тип или владелец загруженного файла не совпадает")
+    filename = parsed.path[len(prefix) :]
+    if any(part in {"", ".", ".."} for part in filename.split("/")):
+        raise ValueError("Некорректный путь загруженного файла")
+    local_path = resolve_local_upload_path(url)
+    if not local_path:
+        raise ValueError("Загруженный файл уже удалён. Загрузите его заново")
+    path = Path(local_path).resolve()
+    owner_root = Path("static/uploads/refs").resolve() / media_type / str(telegram_id)
+    try:
+        path.relative_to(owner_root)
+    except ValueError as exc:
+        raise ValueError("Файл находится вне папки владельца") from exc
+    if not path.is_file():
+        raise ValueError("Загруженный файл недоступен")
+    return url, path
+
+
+def _upload_generation_config(body: Mapping[str, Any], model: str) -> dict[str, Any]:
+    from bot import miniapp as miniapp_module
+    from bot.services.seedance_25_service import Seedance25Service
+    from bot.services.seedance_service import SeedanceService
+
+    editing = body.get("seedance25_video_editing", False)
+    if not isinstance(editing, bool):
+        raise TypeError("Некорректный режим редактирования видео")
+    if editing and model != "seedance_2_5":
+        raise ValueError("Редактирование видео поддерживается только Seedance 2.5")
+    duration = _upload_integer(body.get("duration", 5), field="duration")
+    ratio = str(body.get("aspect_ratio") or "9:16").strip().lower()
+    resolution = str(body.get("resolution") or "720p").strip().lower()
+    if model == "seedance_2_5":
+        from bot.handlers import seedance_25_public_release as public_release
+
+        meta = public_release._public_model_meta()
+        resolutions = Seedance25Service.ALLOWED_RESOLUTIONS
+    else:
+        meta = miniapp_module._find_video_model_meta(model) or {}
+        resolutions = SeedanceService.SUPPORTED_RESOLUTIONS
+    if resolution not in resolutions:
+        raise ValueError("Качество не поддерживается выбранной моделью")
+    if duration not in meta.get("durations", []):
+        raise ValueError("Длительность не поддерживается выбранной моделью")
+    if ratio not in meta.get("ratios", []):
+        raise ValueError("Формат кадра не поддерживается выбранной моделью")
+    if not editing and duration == -1:
+        raise ValueError("Для тренда выберите точную длительность")
+    return {
+        "duration": -1 if editing else duration,
+        "aspect_ratio": "adaptive" if editing else ratio,
+        "resolution": resolution,
+        "seedance25_video_editing": editing,
+    }
+
+
+async def _upload_reference_sources(
+    body: Mapping[str, Any], *, telegram_id: int, model: str
+) -> tuple[dict[str, list[str]], dict[str, str], str, str]:
+    from bot.video_reference_policy import (
+        get_max_audio_references,
+        get_max_video_image_references,
+        get_max_video_references,
+    )
+
+    limits = {
+        "image": get_max_video_image_references(model),
+        "video": get_max_video_references(model),
+        "audio": get_max_audio_references(model),
+    }
+    sources: dict[str, list[str]] = {}
+    paths: set[Path] = set()
+    digests: dict[str, str] = {}
+    # Validate even excluded inputs. Never deduplicate silently: it changes tags.
+    for media_type, limit in limits.items():
+        raw = body.get(f"{media_type}_urls", [])
+        if not isinstance(raw, list):
+            raise TypeError(f"{media_type}_urls должен быть списком")
+        if len(raw) > limit:
+            raise ValueError(f"Слишком много {media_type}-референсов: максимум {limit}")
+        sources[media_type] = []
+        for value in raw:
+            url, path = _owned_upload_path(
+                value, telegram_id=telegram_id, media_type=media_type
+            )
+            if path in paths:
+                raise ValueError("Один файл нельзя добавить в референсы несколько раз")
+            paths.add(path)
+            digest = await validate_trend_reference_source(url, media_type=media_type)
+            if digest in digests.values():
+                raise ValueError("Референсы не должны повторять один и тот же файл")
+            digests[url] = digest
+            sources[media_type].append(url)
+
+    raw_preview = body.get("preview_url")
+    if not isinstance(raw_preview, str):
+        raise TypeError("Загрузите отдельное публичное превью тренда")
+    preview_path = urlsplit(raw_preview).path
+    preview_type = (
+        "video" if preview_path.startswith("/uploads/refs/video/") else "image"
+    )
+    if body.get("preview_type") not in {None, preview_type}:
+        raise ValueError("Тип превью не совпадает с загруженным файлом")
+    preview_url, preview_file = _owned_upload_path(
+        raw_preview, telegram_id=telegram_id, media_type=preview_type
+    )
+    preview_digest = await validate_trend_reference_source(
+        preview_url, media_type=preview_type
+    )
+    if preview_file in paths or preview_digest in digests.values():
+        raise ValueError("Превью должно быть отдельным файлом, не приватным референсом")
+    digests[preview_url] = preview_digest
+    return sources, digests, preview_url, preview_type
+
+
+async def miniapp_admin_publish_seedance_upload_trend(
+    request: web.Request,
+) -> web.Response:
+    """Publish a private recipe directly from the admin's typed uploads."""
+    try:
+        body = await request.json()
+        if not isinstance(body, Mapping):
+            raise TypeError("Некорректный запрос")
+        from bot import miniapp as miniapp_module
+
+        telegram_id, context = await miniapp_module._get_user_context(
+            request.app,
+            str(body.get("init_data") or ""),
+            body.get("start_param_fallback"),
+        )
+        if not config.is_admin(telegram_id):
+            raise web.HTTPForbidden(text="Нет доступа")
+        user = context["user"]
+        model = str(body.get("model") or "").strip()
+        if model not in SUPPORTED_MODELS:
+            raise ValueError("Поддерживаются только Seedance 2.0/2.5")
+        title = str(body.get("title") or "").strip()
+        description = str(body.get("description") or "").strip()
+        if not title or len(title) > 80 or len(description) > 240:
+            raise ValueError(
+                "Укажите название до 80 символов и описание до 240 символов"
+            )
+        prompt_text = str(body.get("prompt_text") or "").strip()
+        if not prompt_text:
+            raise ValueError("Введите текст промпта")
+        settings_input = _upload_generation_config(body, model)
+        (
+            sources,
+            digests,
+            source_preview,
+            preview_type,
+        ) = await _upload_reference_sources(body, telegram_id=telegram_id, model=model)
+        selections = {
+            f"{mode}_{media_type}_indices": _upload_indices(
+                body.get(f"{mode}_{media_type}_indices"),
+                field=f"{mode}_{media_type}_indices",
+            )
+            for mode in ("fixed", "replaceable")
+            for media_type in ("image", "video", "audio")
+        }
+        recipe = compile_seedance_trend_recipe(
+            prompt=prompt_text,
+            model=model,
+            source_images=sources["image"],
+            source_videos=sources["video"],
+            source_audios=sources["audio"],
+            identity_image_index=_upload_integer(
+                body.get("identity_image_index"), field="identity_image_index"
+            ),
+            **selections,
+        )
+        policy_error = detect_explicit_prompt_policy_violation(recipe.prompt)
+        if policy_error:
+            raise ValueError(policy_error)
+        user_fields = normalize_user_fields_settings(
+            {"user_fields": body.get("user_fields", [])}, prompt=recipe.prompt
+        )
+        request_data = {
+            **settings_input,
+            "reference_images": sources["image"],
+            "v_reference_videos": sources["video"],
+            "reference_audios": sources["audio"],
+        }
+        # Validate the exact included recipe against the same media validator as
+        # the generator. Excluded inputs were still checked for owner/type above.
+        if model == "seedance_2_5":
+            from bot.handlers import seedance_25_fullstack as fullstack
+
+            included: dict[str, list[str]] = {}
+            for kind in ("image", "video", "audio"):
+                positions = {
+                    asset.source_position
+                    for asset in recipe.assets
+                    if asset.media_type == kind
+                } | {
+                    slot.source_position
+                    for slot in recipe.user_slots
+                    if slot.media_type == kind
+                }
+                included[kind] = [
+                    (config.static_base_url.rstrip("/") + url)
+                    if url.startswith("/")
+                    else url
+                    for pos in sorted(positions)
+                    for url in [sources[kind][pos - 1]]
+                ]
+            await fullstack._validate_seedance_sources(
+                first_frame_url=None,
+                last_frame_url=None,
+                image_urls=included["image"],
+                video_urls=included["video"],
+                audio_urls=included["audio"],
+            )
+        if model == "seedance_2":
+            included_video_positions = {
+                asset.source_position
+                for asset in recipe.assets
+                if asset.media_type == "video"
+            } | {
+                slot.source_position
+                for slot in recipe.user_slots
+                if slot.media_type == "video"
+            }
+            await validate_seedance2_reference_videos(
+                [
+                    sources["video"][position - 1]
+                    for position in sorted(included_video_positions)
+                ]
+            )
+        task = {"model": model, **settings_input}
+        # Validate editing counts/duration before copying any private assets.
+        provisional_assets = [
+            {"media_type": asset.media_type, "file_url": asset.source_url}
+            for asset in recipe.assets
+        ]
+        settings = await _generation_settings(
+            task, request_data, recipe, provisional_assets
+        )
+        settings.update(user_fields)
+        settings["preview_type"] = preview_type
+        fingerprint = hashlib.sha256(
+            json.dumps(
+                {
+                    "model": model,
+                    "prompt": recipe.prompt,
+                    "title": title,
+                    "description": description,
+                    "settings": settings,
+                    "sources": {
+                        kind: [digests[url] for url in urls]
+                        for kind, urls in sources.items()
+                    },
+                    "preview": digests[source_preview],
+                    "selections": selections,
+                    "identity": recipe.identity_source_position,
+                },
+                sort_keys=True,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        settings["seedance_upload_fingerprint"] = fingerprint
+
+        # Best-effort creation dedupe, including response-loss retries. The
+        # process-local lock is not a cross-worker uniqueness guarantee.
+        lock = request.app.setdefault(_UPLOAD_PUBLISH_LOCK, asyncio.Lock())
+        async with lock:
+            existing = await get_active_seedance_trend_by_upload_fingerprint(
+                fingerprint, author_id=int(user.id)
+            )
+            if existing:
+                approved = (
+                    existing
+                    if existing.get("status") == "approved"
+                    else await approve_prompt(int(existing["id"]))
+                )
+                if not approved:
+                    raise RuntimeError("Trend approval failed")
+                return web.json_response(
+                    {"ok": True, "prompt": sanitize_prompt_for_public(approved)}
+                )
+            assets = await _persist_recipe_assets(recipe)
+            persisted_preview = await persist_feed_result_urls(
+                [source_preview], require_local=True
+            )
+            if len(persisted_preview) != 1:
+                raise ValueError("Не удалось сохранить превью тренда")
+            prompt = await create_prompt(
+                author_id=user.id,
+                prompt_text=recipe.prompt,
+                title=title,
+                description=description or None,
+                category="video",
+                preview_url=persisted_preview[0],
+                model=model,
+                tags=["trend", "trend-video", "seedance-private-references"],
+                generation_settings=settings,
+                is_public=True,
+                trend_reference_assets=assets,
+            )
+            if not prompt:
+                raise RuntimeError("Prompt row was not created")
+            approved = await approve_prompt(int(prompt["id"]))
+            if not approved:
+                raise RuntimeError("Trend approval failed")
+        logger.info(
+            "Seedance upload trend published: trend_id=%s model=%s admin=%s fixed_assets=%s user_slots=%s",
+            approved["id"],
+            model,
+            telegram_id,
+            len(recipe.assets),
+            len(recipe.user_slots),
+        )
+        return web.json_response(
+            {"ok": True, "prompt": sanitize_prompt_for_public(approved)}
+        )
+    except (TypeError, ValueError, TrendReferenceStorageError) as error:
+        return web.json_response({"ok": False, "error": str(error)}, status=400)
+    except web.HTTPException as error:
+        return web.json_response(
+            {"ok": False, "error": str(error.text or "Нет доступа")},
+            status=int(error.status),
+        )
+    except Exception:
+        logger.exception("Seedance upload trend publish failed")
+        return web.json_response(
+            {"ok": False, "error": "Не удалось опубликовать Seedance-тренд"}, status=500
+        )
+
+
 def setup_seedance_trend_admin_routes(app: web.Application, miniapp_root: str) -> None:
     root = str(miniapp_root or "/mini-app").rstrip("/") or "/mini-app"
+    app[_UPLOAD_PUBLISH_LOCK] = asyncio.Lock()
+    app.router.add_post(
+        f"{root}/api/admin/trends/seedance/publish-upload",
+        miniapp_admin_publish_seedance_upload_trend,
+    )
     app.router.add_post(
         f"{root}/api/admin/trends/seedance/source",
         miniapp_admin_seedance_trend_source,

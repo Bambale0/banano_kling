@@ -78,6 +78,7 @@ export interface VideoModel {
   supports_omni_character_audio_ids?: boolean
   max_image_references?: number
   max_video_references?: number
+  max_audio_references?: number
 }
 
 export interface PaymentPackage {

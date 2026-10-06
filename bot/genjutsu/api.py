@@ -24,7 +24,7 @@ KNOWN_ACTIONS = frozenset({
     'availability', 'bootstrap', 'presets', 'save_project', 'project', 'versions',
     'trim', 'import', 'quote', 'start', 'run', 'cancel', 'continue', 'redeliver',
     'settings', 'save_settings', 'admin_runs', 'admin_refund', 'admin_reconcile',
-    'admin_adopt', 'events', 'recipe_get', 'recipe_costs', 'recipe_list',
+    'admin_adopt', 'events', 'recipe_get', 'recipe_preview', 'recipe_costs', 'recipe_list',
     'recipe_publish', 'recipe_archive', 'recipe_quote', 'feed_publish', 'upload', 'callback',
 })
 

@@ -1,5 +1,33 @@
 # Execution ledger
 
+## 2026-10-06 — Combined video preview and Seedance reference release
+
+- Baseline: fresh `origin/tanyapi` at `3fd259c4704ae13593018b90da4b8b0a40bb8ab9`; integration branch `fix/video-preview-trend-references`. Both reviewed task patches were applied to a separate clean checkout; only the append-only execution ledger overlapped and both task records were preserved.
+- Authorized release scope: publish one PR for the two requested changes, require exact-head checks, merge to tanyapi and verify the normal CI/CD deployment. No unrelated production writes, paid generation, refunds, customer deliveries, credential changes or security changes.
+- Integration change: include the new Seedance upload mobile fixture in the existing critical-flows browser gate, alongside Genjutsu preview and private-repeat permission journeys. All browser calls use synthetic fixtures; all backend tests use the repository safe suite with project environment loading disabled.
+- No migration, dependency/lockfile, provider, balance or admin authorization changes. Upload limits remain model/config-derived. New upload publication deduplication remains process-local; cross-worker exactly-once behavior is not claimed.
+- Component verification before integration: Higgsfield backend 1757 passed/19 skipped, 31 frontend suites/172 tests, full critical browser aggregate passed; Seedance backend 1791 passed/19 skipped, 32 frontend suites/170 tests, mobile 320/360/390/430px and independent review passed.
+- Combined verification: final safe backend **1845 passed / 19 skipped**; frontend **33 suites / 192 tests**, full ESLint, TypeScript and production static export passed. Full critical browser aggregate passed including private-repeat consent, new/legacy Genjutsu links and Seedance upload at mobile widths. Deployment shell syntax and changed-line Ruff passed. PostgreSQL-specific tests remain for remote CI. Independent integration review approved both changes and the Seedance2 validation fix; the last optional frontend delta re-read was cancelled, so its verification is the author-run red/green/full suite, not a second independent sign-off. Exact-head remote CI and deployed revisions remain release gates.
+- Final review fixes: reuse Seedance2 canonical limits (2–15 seconds per included video, at most 15 seconds combined, 50 MB) at publication and on assembled fixed/replacement inputs before debit; use the existing chunked Seedance2.5 video uploader; clear stale link errors after navigation. Exact user-supplied remix/feed start-parameter patterns are covered with synthetic Genjutsu cards; live metadata of those two publications was not verified because the optional read was cancelled.
+- Cleanup: preserve reviewed source patches, logs and screenshots; after release validation, stop only task-owned test processes and move generated task dependencies/caches to a recoverable task archive. Never touch unrelated worktrees or runtime data.
+
+
+## 2026-10-06 — Shared Higgsfield links preview before repeat
+
+- Baseline: `tanyapi` `3fd259c4704ae13593018b90da4b8b0a40bb8ab9`; isolated `fix/higgsfield-preview-links` clone. No production checkout, credentials or live data used. Initial implementation phase stopped before publication; the combined release phase is authorized separately above.
+- User-visible result: new Telegram links and already-issued published Genjutsu recipe links open the existing Feed/Profile video player first. Only its explicit Repeat button opens the unchanged own-reference recipe form.
+- Preflight: ordinary video `feed_*` sharing already previewed correctly. Telegram Genjutsu buttons and legacy recipe URL/start parameters bypassed preview. Existing Feed/Profile card hydration and private recipe admission can be reused; no schema/config/admin/pricing/provider change is needed.
+- API: authenticated read-only `recipe_preview` resolves publication binding to canonical privacy-filtered card for the viewer, checks active recipe and availability, and rechecks withdrawal after resolution. No private plan, source IDs, signed media or original references enter the response. Active unbound curated recipe returns explicit null to preserve its existing editor contract; malformed/withdrawn/deleted/archived bound publications never use that fallback.
+- UI: AppProvider owns incoming published recipe navigation. GenjutsuEntry remains responsible for explicit studio events and owner/admin entry. Old generic remix links for Genjutsu also preview rather than selecting a different model. Standard author referral suffix is preserved on new Telegram links. Server referral handling, repeat admission and billing remain unchanged.
+- Navigation: stale async results are fenced after user navigation or a newer history location. Close/repeat handoff is consumed once; Back/Forward uses current location rather than immutable Telegram launch snapshots. An empty Telegram SDK hash cleanup is not treated as new navigation.
+- Test seams: authenticated HTTP/API, Telegram callback/keyboard, real AppProvider routing, existing Feed/Profile UI, static-export browser with synthetic media and denied external/provider requests. No paid generation, real publication/upload/delivery or refund tests.
+- Skills: current Bambale0/skills tdd + diagnosing-bugs public-seam red/green; Bambale0/claw frontend-qa/backend-python guidance; anthropics/skills webapp-testing. Repository-specific safety instructions take precedence over generic skill steps. Repository `.agents/skills` is absent.
+- Verified so far: backend focused 67 tests; final safe backend 1757 passed/19 skipped (PostgreSQL-specific coverage not run); changed Python compile and changed-line Ruff clean. Frontend 31 Jest suites/172 tests, full ESLint, TypeScript and production static export passed. No new dependency or lockfile edits.
+- [x] Reproduce links and navigation races with RED tests; [x] implement resolver and preview routing; [x] unit/integration/static checks; [x] final mobile link journey (320/360/390/430px); [x] independent review; [x] preserve source patch and verification artifacts; [ ] reversibly tidy own generated files after remaining validation decision.
+- Final mobile evidence: five new/legacy link variants and unavailable-state checks passed on 320/360/390/430px; 360px Back/Forward and delayed quote dismissal passed. Screenshot inspected. Review fixes cover Telegram reactivation, Entry-owned lazy/busy recipe dismissal, visible error UI, and owner/admin card capability parity. The final fixture hardening (activation waits for resolver request; video readyState) passed in the full critical aggregate after preparing the documented static export mount. Earlier cancelled calls did not run tests.
+- Release follow-up: publish a draft combined PR against tanyapi under the authorized release phase and run exact-head required CI, including PostgreSQL. No production verification or monitoring is part of this task.
+
+
 ## 2026-10-06 — Mini App write-access gate for referral/deep-link users
 
 - Baseline: `origin/tanyapi` / production `bc588f9d8060c396d3f8b26350345e673e4ee000`; branch `feat/miniapp-write-access-gate`.
@@ -1249,3 +1277,31 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - No permission, provider payload, billing, or fixed-binding behavior changes. Publisher copy now distinguishes hidden fixed references from hidden originals replaced by user uploads. Added mode-switch and fixed-preservation UI regression tests.
 - Checks: isolated backend reference/admin/trend/privacy suite 78 passed on baseline; frontend publisher/runner/API/settings suite 14 passed on final edits; targeted ESLint passed. No paid generation or production publication. Browser verification remains part of the combined Genjutsu Feed integration.
 - Genjutsu ordinary Feed publication is a separate implementation; do not describe this clarity patch as that bridge.
+
+
+
+## 2026-10-06 — Direct-upload Seedance trend references (in progress)
+
+- Baseline: `3fd259c`, task branch `feature/seedance-trend-upload-refs`, isolated checkout; production remains untouched.
+- Request: add the existing hidden-fixed / user-replaceable / excluded reference choices to ordinary Trends → Add for Seedance 2.0/2.5. Preview is separate from generation references. No other models, old-trend rewrites, publication or deployment are authorized.
+- Audit: generic `trends-tab.tsx` has preview/prompt/settings but no source-reference editor; generic `prompts/submit` does not compile a private recipe. Completed-task Seedance publisher already has a private compiler, durable typed assets, server-owned ordered slots, hidden prompt, exact input validation and measured editing pricing. Reuse these, not Feed grants or Genjutsu recipes.
+- Existing contracts: `seedance_trend_admin_api.py`, `seedance_trend_recipe.py`, `trend_api.py`, `trend_reference_storage.py`. No database schema changes intended.
+- Plan: (1) add synthetic failing API and component tests; (2) validated admin direct-upload API reusing private compiler/storage/settings; (3) model-specific source-reference editor and matching API client; (4) mobile browser upload/mode/reset/publish/repeat checks; (5) full applicable checks and independent review; (6) report patch and limitations without push/deploy.
+- API: `admin/trends/seedance/publish-upload`, owner-bound typed source URL arrays, 1-based identity/fixed/replaceable selections, title/description/private prompt, separate preview and validated generation settings. Existing task-based endpoint remains compatible.
+- Security: authenticate admin server-side; local owned upload and actual media validation; no raw fixed assets in responses; keep type/order/duration/provider constraints and pre-charge run validation. No paid calls, refunds, resends, production mutations or real customer media used.
+- UI acceptance: controls are visible during generic Seedance creation, each selected ref can be hidden-fixed/replaced/excluded, pending uploads cannot publish, reset/cancel/model switch cannot resurrect stale references, other model forms unchanged.
+- Test seams: HTTP creation API, compiler/runtime recipe assembly, rendered React interaction, browser wire request with all external providers denied/mocked. Reuse runtime pricing and provider adapters; no new prices or mutable business hardcodes.
+- Operational context: related read-only production audit was completed separately; this is a verified missing feature, not a provider incident. No production logs/DB changes required for implementation.
+- Review sources: repository AGENTS/README/reference contract; Bambale0 skills implement/TDD/code-review; claw PR/QA checklist; anthropics webapp-testing.
+- Rollout: explicitly out of scope until separate approval.
+
+### Verification checkpoint (2026-10-06 13:06 UTC)
+
+- Backend focused: 146 passed. Full safe backend: 1791 passed, 19 skipped, 262 warnings in 113.47 s; `tests/ --ignore=tests/live -m "not live_smoke"`, isolated venv/database and synthetic media. No provider calls.
+- Frontend full: 32 suites / 170 tests passed; API transport has 3 tests, new rendered creation flow has 13 tests. Full lint, TypeScript and production static build passed.
+- Existing critical browser aggregate passed, including private Feed and Genjutsu suites. New direct-upload mobile fixture passed at 320/360/390/430 px, confirms typed wire selections and repeat form privacy.
+- Visual QA found clipped long replacement text at 320 px; compact selector text plus wrapping explanation was added. Final copy-only build `20261006130258` passes focused tests/lint/build. After explicit retry approval, final mobile rerun passed all four widths at 13:07 UTC; the final 320 px screenshot was inspected, compact option and wrapping explanation are readable and controls are hit-test reachable above navigation.
+- Independent review found header-only Seedance 2 video/audio validation insufficient; fixed by upload-only bounded ffprobe, file/pipe protocol allowlist, stream kind/positive duration checks, cancellation/timeout kill and reap. Focused malformed-container/audio-only-MP4 tests added. Independent read-only peer recheck completed at 13:10 UTC with no blocking specification findings.
+- Standards review of frontend reported no blocking issue. Optional improvement: show the 12-replaceable-slot count before server validation.
+- Source publication idempotency is best effort via per-author content fingerprint and process-local lock; concurrent requests across separate workers do not have a database uniqueness guarantee. No charge/generation occurs during publication.
+- No schema migration, rates/provider changes, old-trend rewrites or production mutation. Dependencies retained for authorized subsequent combined integration; no push/PR/merge/deploy performed.

@@ -55,9 +55,15 @@ try {
     const requests = []
     const forbidden = []
     let published = false
+    let previewCard = card
+    let previewUnavailable = false
+    let delayPreview = false
+    let delayQuote = false
     page.on('pageerror', error => errors.push(error.message))
     await page.addInitScript(() => {
-      window.Telegram = { WebApp: { initData: 'query_id=genjutsu-feed-e2e', initDataUnsafe: {}, ready() {}, expand() {}, onEvent() {}, offEvent() {} } }
+      window.Telegram = { WebApp: { initData: 'query_id=genjutsu-feed-e2e', initDataUnsafe: {}, ready() {}, expand() {},
+        onEvent(name, handler) { window.addEventListener('fixture:telegram:' + name, handler) },
+        offEvent(name, handler) { window.removeEventListener('fixture:telegram:' + name, handler) } } }
     })
     // Deny every nonfixture external request. All account/API mutations stay synthetic.
     await page.route('**/*', async route => {
@@ -82,10 +88,20 @@ try {
             limits: { max_steps: 3, max_variants: 4, poll_seconds: 5 }, prices: {}, projects: [], runs: [{ id: run.id, state: run.state, created_ms: run.created_ms }], assets: [] }
           else if (body.action === 'run') response = { ok: true, run }
           else if (body.action === 'feed_publish') { published = true; response = { ok: true, card, recipe } }
+          else if (body.action === 'recipe_preview') {
+            if (delayPreview) await new Promise(resolve => setTimeout(resolve, 800))
+            response = previewUnavailable
+              ? { ok: false, code: 'recipe_unavailable', error: 'Публикация недоступна' }
+              : { ok: true, card: previewCard }
+          }
           else if (body.action === 'recipe_get') response = { ok: true, recipe }
-          else if (body.action === 'recipe_quote') response = { ok: true, recipe, quote: { id: 'own-quote', expires_ms: Date.now() + 300000, total_credits: 56, allocations: [], plan_hash: 'private' } }
+          else if (body.action === 'recipe_quote') {
+            if (delayQuote) await new Promise(resolve => setTimeout(resolve, 800))
+            response = { ok: true, recipe, quote: { id: 'own-quote', expires_ms: Date.now() + 300000, total_credits: 56, allocations: [], plan_hash: 'private' } }
+          }
           else { forbidden.push(body.action); response = { ok: false, error: 'Unexpected action' } }
         } else if (url.pathname.endsWith('/bootstrap')) response = bootstrap
+        else if (url.pathname.endsWith('/feed/item')) response = { ok: true, feed_item: previewCard }
         else if (url.pathname.endsWith('/feed/profile')) response = { ok: true, feed: published ? [card] : [], profile: { name: 'E2E Owner', first_name: 'E2E', referral_code: 'E2EOWNER', posts_count: 1 } }
         else if (url.pathname.endsWith('/feed') || url.pathname.endsWith('/feed/my')) response = { ok: true, feed: published ? [card] : [], models: [{ id: 'genjutsu', label: 'Higgsfield Genjutsu' }] }
         else if (url.pathname.endsWith('/prompts')) response = { ok: true, prompts: [] }
@@ -167,9 +183,92 @@ try {
       // The source preview must be dismissed along with the repeat handoff.
       assert.equal(await page.getByRole('button', { name: /^Повторить(?: · [0-9]+)?$/ }).count(), 0)
     }
+    // Shared links reuse exactly the ordinary Feed/Profile video preview.
+    for (const [label, query, scope] of [
+      ['feed', '?startapp=feed_777_ref_E2EOWNER', 'feed'],
+      ['old-remix', '?startapp=remix_777_ref_E2EOWNER', 'feed'],
+      ['recipe-start', '?startapp=genjutsu_recipe_' + recipe.id, 'feed'],
+      ['recipe-query', '?genjutsu=1&genjutsu_recipe=' + recipe.id, 'feed'],
+      ['profile-recipe', '?startapp=genjutsu_recipe_' + recipe.id, 'profile'],
+    ]) {
+      previewCard = { ...card, publication_scope: scope }
+      delayPreview = label === 'recipe-query'
+      const before = requests.length
+      const resolvingRecipe = label === 'recipe-query'
+        ? page.waitForRequest(request => request.postData()?.includes('recipe_preview')) : null
+      await page.goto(baseUrl + query)
+      if (resolvingRecipe) {
+        await resolvingRecipe
+        await page.evaluate(() => window.dispatchEvent(new Event('fixture:telegram:activated')))
+      }
+      await page.waitForLoadState('networkidle')
+      const repeat = page.getByRole('button', { name: /^Повторить(?: · [0-9]+)?$/ })
+      await repeat.waitFor()
+      if (label === 'recipe-query') {
+        await page.evaluate(() => window.dispatchEvent(new Event('fixture:telegram:activated')))
+        assert.equal(await repeat.isVisible(), true, 'Telegram reactivation keeps the shared preview')
+      }
+      assert.equal(await region.count(), 0, label + ': no editor before explicit repeat')
+      assert.equal(requests.slice(before).some(item => ['recipe_get', 'recipe_quote'].includes(item.action)), false)
+      const playingVideo = page.locator('video[controls]')
+      assert.ok(await playingVideo.count() > 0, label + ': existing video player is shown')
+      assert.equal(await playingVideo.first().getAttribute('src'), asset.url)
+      await page.waitForFunction(() => [...document.querySelectorAll('video[controls]')].some(video => video.readyState >= 2))
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+      if (width === 360 && label === 'recipe-start') await page.screenshot({ path: 'test-results/genjutsu-deeplink-preview-360.png', fullPage: true })
+      await repeat.click()
+      await region.getByText(recipe.title, { exact: true }).waitFor()
+      assert.equal(await region.getByLabel('Видео-референс', { exact: true }).count(), 1)
+      assert.equal(await region.getByLabel('Фото героя', { exact: true }).count(), 1)
+      assert.equal(await region.getByRole('button', { name: 'Рассчитать стоимость', exact: true }).isEnabled(), false)
+      await region.getByRole('button', { name: 'Закрыть студию' }).click()
+      await region.waitFor({ state: 'hidden' })
+      await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+      await page.waitForLoadState('networkidle')
+      assert.equal(await repeat.count(), 0, label + ': dismiss stays dismissed after sync')
+      assert.equal(await region.count(), 0)
+    }
+    previewCard = card
+    delayPreview = false
+    if (width === 360) {
+      // Same-document Back/Forward and a busy repeat must not revive old UI.
+      await page.goto(baseUrl)
+      await page.waitForLoadState('networkidle')
+      await page.evaluate(() => {
+        history.pushState({}, '', '?startapp=feed_777_ref_E2EOWNER')
+        window.dispatchEvent(new PopStateEvent('popstate'))
+      })
+      const repeat = page.getByRole('button', { name: /^Повторить(?: · [0-9]+)?$/ })
+      await repeat.waitFor()
+      await page.goBack()
+      await repeat.waitFor({ state: 'hidden' })
+      await page.goForward()
+      await repeat.waitFor()
+      await repeat.click()
+      await region.getByText(recipe.title, { exact: true }).waitFor()
+      await region.getByLabel('Видео-референс', { exact: true }).setInputFiles({ name: 'own.mp4', mimeType: 'video/mp4', buffer: media })
+      await region.getByText('Видео загружено — нажмите, чтобы заменить').waitFor()
+      await region.getByLabel('Фото героя', { exact: true }).setInputFiles({ name: 'own.png', mimeType: 'image/png', buffer: image })
+      delayQuote = true
+      const quoting = page.waitForRequest(request => request.postData()?.includes('recipe_quote'))
+      await region.getByRole('button', { name: 'Рассчитать стоимость', exact: true }).click()
+      await quoting
+      await page.goBack()
+      await region.waitFor({ state: 'hidden' })
+      await page.waitForLoadState('networkidle')
+      assert.equal(await region.count(), 0, 'Late quote cannot restore dismissed repeat')
+      assert.equal(await repeat.count(), 0)
+      delayQuote = false
+    }
+    previewUnavailable = true
+    await page.goto(baseUrl + '?startapp=genjutsu_recipe_' + recipe.id)
+    await page.getByText('Публикация недоступна', { exact: true }).waitFor()
+    assert.equal(await region.count(), 0)
+    assert.equal(await page.getByRole('button', { name: /^Повторить(?: · [0-9]+)?$/ }).count(), 0)
+    previewUnavailable = false
     assert.deepEqual(forbidden, [], 'No generation or generic repeat API is allowed')
     assert.deepEqual(errors, [], 'No browser errors at ' + width)
-    console.log('PASS ' + width + 'px: completed output publication, cancel/reopen source policy, feed/profile repeat, own video+photo server quote, no hidden originals or real generation')
+    console.log('PASS ' + width + 'px: new/legacy Feed/Profile deep links preview before explicit repeat, unavailable fail-closed, completed output publication, cancel/reopen source policy, feed/profile repeat, own video+photo server quote, no hidden originals or real generation')
     await context.close()
   }
 } finally {

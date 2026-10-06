@@ -212,6 +212,11 @@ export function FeedTab() {
   const [busyId, setBusyId] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [previewItem, setPreviewItem] = useState<FeedItem | null>(null)
+  useEffect(() => {
+    const closePreview = () => setPreviewItem(null)
+    window.addEventListener('banano:feed-preview-close', closePreview)
+    return () => window.removeEventListener('banano:feed-preview-close', closePreview)
+  }, [])
   const [referencePreview, setReferencePreview] = useState<{ type: 'image' | 'video'; url: string } | null>(null)
   const [revealedPreviewIds, setRevealedPreviewIds] = useState<Set<number>>(() => new Set())
   const [commentsItem, setCommentsItem] = useState<FeedItem | null>(null)

@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import { GenjutsuEntry } from '../genjutsu-entry'
 import { getStartParamFallback } from '@/lib/api'
 
@@ -48,4 +48,33 @@ test('mobile Genjutsu opens edge-to-edge without horizontal dialog overflow', as
   expect(dialog?.className).toContain('max-w-none')
   expect(dialog?.className).toContain('overflow-x-hidden')
   expect(dialog?.className).toContain('rounded-none')
+})
+
+
+test.each(['start', 'query'])('published recipe %s links are owned by the preview router', async (kind) => {
+  const id = 'a'.repeat(32)
+  startParam.mockReturnValue(kind === 'start' ? 'genjutsu_recipe_' + id : '')
+  if (kind === 'query') window.history.replaceState({}, '', '/mini-app/?genjutsu=1&genjutsu_recipe=' + id)
+  render(<GenjutsuEntry />)
+  expect(screen.queryByTestId('genjutsu-studio')).not.toBeInTheDocument()
+})
+
+
+test('history navigation dismisses a recipe even when the child cannot handle close', async () => {
+  startParam.mockReturnValue('')
+  render(<GenjutsuEntry />)
+  act(() => window.dispatchEvent(new CustomEvent('genjutsu:open', { detail: { recipe_id: 'a'.repeat(32) } })))
+  await screen.findByTestId('genjutsu-studio')
+  // The mock deliberately has no request-close listener, just like a pending
+  // lazy chunk or a Studio that is busy and cannot save/close right now.
+  act(() => window.dispatchEvent(new Event('genjutsu:history-navigation')))
+  expect(screen.queryByTestId('genjutsu-studio')).not.toBeInTheDocument()
+})
+
+test('history recipe dismissal leaves owned editor/admin session contracts unchanged', async () => {
+  startParam.mockReturnValue('genjutsu_admin')
+  render(<GenjutsuEntry />)
+  await screen.findByText('ADMIN_OPEN')
+  act(() => window.dispatchEvent(new Event('genjutsu:history-navigation')))
+  expect(screen.getByText('ADMIN_OPEN')).toBeInTheDocument()
 })
