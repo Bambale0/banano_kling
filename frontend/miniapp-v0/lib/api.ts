@@ -24,6 +24,8 @@ declare global {
         initDataUnsafe?: { start_param?: string }
         ready?: () => void
         expand?: () => void
+        requestWriteAccess?: (callback?: (allowed: boolean) => void) => void
+        openTelegramLink?: (url: string) => void
         openInvoice?: (url: string, callback?: (status: string) => void) => void
       }
     }
@@ -399,6 +401,22 @@ export async function bootstrapApp(): Promise<BootstrapResponse> {
     throw new Error('Откройте mini app из Telegram и попробуйте снова.')
   }
   return postJson<BootstrapResponse>('bootstrap', { init_data: initData })
+}
+
+export async function confirmTelegramWriteAccess(): Promise<{
+  ok: true
+  chat_available: boolean
+  confirmation_sent: boolean
+  needs_bot_start: boolean
+}> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+  return postJson('write-access', {
+    init_data: initData,
+    granted: true,
+  })
 }
 
 export async function createPayment(payload: {

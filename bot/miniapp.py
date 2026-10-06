@@ -75,6 +75,8 @@ from bot.database import (
     like_prompt,
     list_saved_references,
     mark_task_delivery_status,
+    mark_telegram_chat_available,
+    mark_telegram_chat_unavailable,
     reject_prompt,
     remove_from_feed,
     remove_from_library,
@@ -3030,6 +3032,7 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
             ),
             "bot_username": me.username,
             "username": me.username,
+            "telegram_chat_available": await can_attempt_telegram_delivery(telegram_id),
             "mini_app_url": config.mini_app_url,
             "is_admin": config.is_admin(telegram_id),
             "actions": sorted(ACTIONS.keys()),
@@ -3087,6 +3090,65 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
         return _miniapp_error_response(
             e,
             log_message="Mini App bootstrap failed",
+        )
+
+
+async def miniapp_write_access(request: web.Request) -> web.Response:
+    """Persist Mini App consent that allows the bot to send result messages."""
+    try:
+        body = await _miniapp_payload(request)
+        if body.get("granted") is not True:
+            return web.json_response(
+                {"ok": False, "error": "write_access_not_granted"},
+                status=400,
+            )
+
+        telegram_id, _ctx = await _get_user_context(
+            request.app,
+            body.get("init_data", ""),
+            body.get("start_param_fallback"),
+        )
+        await mark_telegram_chat_available(telegram_id)
+
+        confirmation_sent = False
+        needs_bot_start = False
+        try:
+            await request.app["bot"].send_message(
+                telegram_id,
+                "✅ Готово! Теперь результаты фото и видео из NEUROMIX будут приходить сюда.",
+            )
+            confirmation_sent = True
+        except Exception as exc:  # noqa: BLE001 - permission proof is best-effort
+            from bot.services.delivery_state import terminal_telegram_delivery_reason
+
+            reason = terminal_telegram_delivery_reason(exc)
+            if reason:
+                await mark_telegram_chat_unavailable(telegram_id)
+                needs_bot_start = True
+                logger.info(
+                    "Mini App write access still unavailable after grant: telegram_id=%s reason=%s",
+                    telegram_id,
+                    reason,
+                )
+            else:
+                logger.warning(
+                    "Mini App write access confirmation send failed transiently: telegram_id=%s error=%s",
+                    telegram_id,
+                    type(exc).__name__,
+                )
+
+        return web.json_response(
+            {
+                "ok": True,
+                "chat_available": not needs_bot_start,
+                "confirmation_sent": confirmation_sent,
+                "needs_bot_start": needs_bot_start,
+            }
+        )
+    except Exception as exc:
+        return _miniapp_error_response(
+            exc,
+            log_message="Mini App write access confirmation failed",
         )
 
 
@@ -5722,6 +5784,7 @@ def setup_miniapp_routes(app: web.Application):
     app.router.add_get(miniapp_root, _miniapp_frontend_redirect)
     app.router.add_get(f"{miniapp_root}/", _miniapp_frontend_redirect)
     app.router.add_post(miniapp_root + "/api/bootstrap", miniapp_bootstrap)
+    app.router.add_post(miniapp_root + "/api/write-access", miniapp_write_access)
     app.router.add_post(miniapp_root + "/api/client-log", miniapp_client_log)
     app.router.add_post(miniapp_root + "/api/action", miniapp_action)
     app.router.add_post(miniapp_root + "/api/upload", miniapp_upload)

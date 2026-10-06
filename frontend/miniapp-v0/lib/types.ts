@@ -189,6 +189,7 @@ export interface BootstrapResponse {
   prompt_repeat_balance_rub?: number
   prompt_repeat_total_rub?: number
   bot_username?: string
+  telegram_chat_available?: boolean
   credits: number
   is_admin: boolean
   mini_app_url: string
@@ -353,6 +354,7 @@ export interface AppState {
     promptRepeatBalanceRub?: number
     promptRepeatTotalRub?: number
     botUsername?: string
+    telegramChatAvailable: boolean
     credits: number
     isAdmin: boolean
   }

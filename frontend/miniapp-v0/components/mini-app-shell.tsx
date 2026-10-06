@@ -14,6 +14,7 @@ import { MiniAppLoader } from './mini-app-loader'
 import { TelegramOpenGate } from './telegram-open-gate'
 import { PartnerApprovalSheet } from './partner-approval-sheet'
 import { GenjutsuEntry } from './genjutsu-entry'
+import { BotWriteAccessGate } from './bot-write-access-gate'
 
 const TaskDetailPanel = dynamic(() =>
   import('./task-detail-panel').then((module) => module.TaskDetailPanel),
@@ -35,7 +36,7 @@ interface TelegramActivationBridge {
 }
 
 function MiniAppBody({ children }: MiniAppShellProps) {
-  const { state, activeWorkspace, setActiveTab } = useApp()
+  const { state, activeWorkspace, setActiveTab, refreshTasks } = useApp()
   const isBootstrapping = state.isLoading
   const isLocked = state.mode === 'locked'
 
@@ -84,6 +85,11 @@ function MiniAppBody({ children }: MiniAppShellProps) {
           <GenjutsuEntry />
           <BalanceSheet />
           {activeWorkspace === 'partners' ? <PartnerApprovalSheet /> : <WorkspaceSheet />}
+          <BotWriteAccessGate
+            required={!state.user.telegramChatAvailable}
+            botUsername={state.user.botUsername}
+            onRefresh={refreshTasks}
+          />
         </>
       )}
       <Toaster richColors position="top-center" />
