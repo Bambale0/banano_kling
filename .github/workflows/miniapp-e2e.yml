@@ -58,6 +58,9 @@ jobs:
       - name: Verify bot Start gate and return flows
         run: node e2e/bot-start-gate.mjs
 
+      - name: Verify media deep-link Start return flows
+        run: node e2e/bot-start-media-targets.mjs
+
       - name: Capture locked dependency audit report
         if: always()
         run: npm audit --json > npm-audit.json || true
