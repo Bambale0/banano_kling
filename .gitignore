@@ -112,3 +112,5 @@ data/genjutsu_media/
 # Runtime backfill checkpoints (persistent cursor in /app/data, see docs/environment.md)
 data/*-checkpoint.json
 data/*_checkpoint.json
+# Local orphan helper, not tracked (duplicates scripts/docker_healthcheck.py, unused)
+scripts/restart_check.py
