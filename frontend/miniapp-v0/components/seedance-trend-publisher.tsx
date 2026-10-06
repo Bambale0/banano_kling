@@ -105,10 +105,9 @@ export function SeedanceTrendPublisher({ task }: SeedanceTrendPublisherProps) {
   }, [open, task.model_label, task.task_id])
 
   const fixedCount = fixedImages.size + fixedVideos.size + fixedAudios.size
-  const replaceableCount = replaceableImages.size + replaceableVideos.size + replaceableAudios.size
   const canPublish = useMemo(
-    () => Boolean(source && identityIndex && fixedCount + replaceableCount > 0 && title.trim() && !loading && !saving),
-    [fixedCount, identityIndex, loading, replaceableCount, saving, source, title],
+    () => Boolean(source && identityIndex && title.trim() && !loading && !saving),
+    [identityIndex, loading, saving, source, title],
   )
 
   const chooseIdentity = (index: number) => {

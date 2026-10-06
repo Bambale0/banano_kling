@@ -463,15 +463,9 @@ export function TrendsTab() {
       setError('Укажите название поля шаблона')
       return
     }
-    if (hasOwnReferences) {
-      const identity = ownReferences.identityImageIndex
-      const otherReferences = referenceIndices(ownReferences.images, 'fixed', identity).length + referenceIndices(ownReferences.images, 'replaceable', identity).length
-        + referenceIndices(ownReferences.videos, 'fixed').length + referenceIndices(ownReferences.videos, 'replaceable').length
-        + referenceIndices(ownReferences.audios, 'fixed').length + referenceIndices(ownReferences.audios, 'replaceable').length
-      if (!identity || !otherReferences) {
-        setError('Для шаблона выберите фото для замены лица и хотя бы ещё один закреплённый или заменяемый референс')
-        return
-      }
+    if (hasOwnReferences && !ownReferences.identityImageIndex) {
+      setError('Для шаблона выберите фото для замены лица')
+      return
     }
     submittingRef.current = true
     setSubmitting(true)

@@ -401,3 +401,23 @@ def test_assemble_inputs_requires_exactly_one_user_identity() -> None:
         assemble_seedance_trend_inputs([], [])
     with pytest.raises(SeedanceTrendRecipeError, match="exactly one"):
         assemble_seedance_trend_inputs([USER_FACE, FACE], [])
+
+
+@pytest.mark.parametrize("model", ["seedance_2", "seedance_2_5"])
+def test_compiler_accepts_single_identity_without_other_references(model):
+    recipe = compile_seedance_trend_recipe(
+        prompt="Animate @Image1",
+        model=model,
+        source_images=[FACE],
+        source_videos=[],
+        source_audios=[],
+        identity_image_index=1,
+        fixed_image_indices=[],
+        fixed_video_indices=[],
+        fixed_audio_indices=[],
+    )
+    assert recipe.assets == ()
+    assert len(recipe.user_slots) == 1
+    assert recipe.user_slots[0].media_type == "image"
+    assert recipe.user_slots[0].position == 1
+    assert FACE not in recipe.prompt

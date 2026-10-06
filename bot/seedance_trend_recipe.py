@@ -302,19 +302,8 @@ def compile_seedance_trend_recipe(
             raise SeedanceTrendRecipeError(
                 f"A {kind} reference cannot be both fixed and replaceable: {overlap}"
             )
-    if not any(
-        (
-            fixed_images,
-            fixed_videos,
-            fixed_audios,
-            replaceable_images,
-            replaceable_videos,
-            replaceable_audios,
-        )
-    ):
-        raise SeedanceTrendRecipeError(
-            "Keep or replace at least one template reference"
-        )
+    # The primary replaceable identity slot is sufficient for a one-photo trend.
+    # Additional fixed or replaceable references are optional.
 
     image_mapping: dict[int, int] = {identity_position: 1}
     assets: list[SeedanceTrendAsset] = []
