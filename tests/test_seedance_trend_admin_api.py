@@ -326,3 +326,83 @@ async def test_publish_seedance_trend_rejects_duplicate_source_before_copying_as
     assert response.status == 409
     assert payload["prompt"]["prompt_text"] == ""
     persist.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["seedance_2", "seedance_2_5"])
+@pytest.mark.parametrize("has_image", [False, True])
+async def test_source_inspection_accepts_one_identity_but_requires_image(
+    monkeypatch, model, has_image
+):
+    task = {
+        "id": 501, "task_id": "single-photo-source", "model": model,
+        "duration": 5, "aspect_ratio": "9:16", "prompt": "Animate @Image1",
+        "result_url": "https://provider.example.test/result.mp4",
+        "request_data": {
+            "reference_images": ["https://source.example.test/face.png"] if has_image else [],
+            "v_reference_videos": [],
+        },
+    }
+    monkeypatch.setattr(
+        api, "_admin_source_task",
+        AsyncMock(return_value=(9001, SimpleNamespace(id=81), task)),
+    )
+
+    class Request:
+        def __init__(self):
+            self.app = {}
+
+        async def json(self):
+            return {"task_id": "single-photo-source"}
+
+    response = await api.miniapp_admin_seedance_trend_source(Request())
+    assert response.status == (200 if has_image else 400), response.text
+    if has_image:
+        payload = json.loads(response.text)
+        assert payload["source"]["model"] == model
+        assert len(payload["source"]["references"]["images"]) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case,status", [
+    ("non_admin", 403), ("foreign_task", 404), ("unsupported_model", 400),
+    ("incomplete", 400), ("repeat_task", 400),
+])
+async def test_single_photo_source_preserves_access_and_eligibility(
+    monkeypatch, case, status
+):
+    from bot import miniapp
+
+    monkeypatch.setattr(
+        miniapp, "_get_user_context",
+        AsyncMock(return_value=(9001, {"user": SimpleNamespace(id=81)})),
+    )
+    monkeypatch.setattr(api.config, "is_admin", lambda uid: case != "non_admin")
+    task = {
+        "id": 501, "task_id": "single-photo-source", "model": "seedance_2",
+        "type": "video", "status": "completed",
+        "result_url": "https://provider.example.test/result.mp4",
+        "request_data": {"reference_images": ["https://source.example.test/face.png"]},
+    }
+    if case == "unsupported_model":
+        task["model"] = "kling"
+    if case == "incomplete":
+        task["status"] = "processing"
+    if case == "repeat_task":
+        task["action_type"] = "trend"
+    lookup = AsyncMock(return_value=None if case == "foreign_task" else task)
+    monkeypatch.setattr(api, "get_generation_task_payload", lookup)
+
+    class Request:
+        def __init__(self):
+            self.app = {}
+
+        async def json(self):
+            return {"task_id": "single-photo-source"}
+
+    response = await api.miniapp_admin_seedance_trend_source(Request())
+    assert response.status == status, response.text
+    if case == "non_admin":
+        lookup.assert_not_awaited()
+    else:
+        lookup.assert_awaited_once_with("single-photo-source", user_id=81)

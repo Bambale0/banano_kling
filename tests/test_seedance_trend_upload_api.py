@@ -743,3 +743,112 @@ async def test_seedance2_upload_does_not_apply_provider_duration_to_excluded_vid
         asset["media_type"] != "video"
         for asset in create.await_args.kwargs["trend_reference_assets"]
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["seedance_2", "seedance_2_5"])
+@pytest.mark.parametrize("excluded_extra", [False, True])
+async def test_single_identity_upload_roundtrips_to_repeat(
+    uploaded_trend, monkeypatch, model, excluded_extra
+):
+    from bot.handlers import seedance_25_fullstack as fullstack
+    from bot.trend_api import trusted_trend_run
+
+    body, request, create = uploaded_trend
+    body.update(
+        model=model,
+        image_urls=body["image_urls"][:2 if excluded_extra else 1],
+        fixed_image_indices=[],
+        prompt_text="Animate @Image1",
+        user_fields=[],
+    )
+    validate = AsyncMock()
+    monkeypatch.setattr(fullstack, "_validate_seedance_sources", validate)
+    response = await api.miniapp_admin_publish_seedance_upload_trend(request(body))
+    assert response.status == 200, response.text
+    saved = json.loads(json.dumps(create.await_args.kwargs))
+    settings = saved["generation_settings"]
+    assert settings["reference_plan_version"] == 2
+    assert settings["reference_count"] == 1
+    assert settings["reference_slots"] == [
+        {"media_type": "image", "position": 1, "label": "ВАШЕ ЛИЦО"}
+    ]
+    assert saved["trend_reference_assets"] == []
+    assert all(settings[f"fixed_{kind}_reference_count"] == 0
+               for kind in ("image", "video", "audio"))
+    assert "face.png" not in json.dumps(saved)
+    assert "dress.png" not in json.dumps(saved)
+    assert "refs/" not in response.text
+    user_photo = "https://test.example/current-user.png"
+    run = trusted_trend_run(
+        {"id": 77, "status": "approved", **saved},
+        (user_photo,),
+        template_assets=saved["trend_reference_assets"],
+        reference_inputs=({"media_type": "image", "position": 1, "url": user_photo},),
+    )
+    assert run.model == model
+    assert run.provider_image_urls == (user_photo,)
+    assert run.provider_video_urls == ()
+    assert run.provider_audio_urls == ()
+    assert run.template_image_urls == ()
+    assert run.template_video_urls == ()
+    assert run.template_audio_urls == ()
+    if model == "seedance_2_5":
+        validate.assert_awaited_once()
+        assert len(validate.await_args.kwargs["image_urls"]) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("identity", [0, None])
+async def test_single_photo_upload_still_requires_identity(uploaded_trend, identity):
+    body, request, create = uploaded_trend
+    body.update(image_urls=body["image_urls"][:1], fixed_image_indices=[],
+                prompt_text="Animate @Image1", identity_image_index=identity)
+    response = await api.miniapp_admin_publish_seedance_upload_trend(request(body))
+    assert response.status == 400
+    create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["seedance_2", "seedance_2_5"])
+async def test_single_identity_sqlite_publication_and_repeat(
+    uploaded_trend, monkeypatch, model
+):
+    from bot import database, miniapp
+    from bot.handlers import seedance_25_fullstack as fullstack
+    from bot.trend_api import trusted_trend_run
+
+    body, request, _create = uploaded_trend
+    body.update(model=model, image_urls=body["image_urls"][:1],
+                fixed_image_indices=[], prompt_text="Animate @Image1")
+    user = await database.get_or_create_user(9001)
+    monkeypatch.setattr(
+        miniapp, "_get_user_context", AsyncMock(return_value=(9001, {"user": user}))
+    )
+    for name in ("create_prompt", "approve_prompt",
+                 "get_active_seedance_trend_by_upload_fingerprint"):
+        monkeypatch.setattr(api, name, getattr(database, name))
+    monkeypatch.setattr(fullstack, "_validate_seedance_sources", AsyncMock())
+    first = await api.miniapp_admin_publish_seedance_upload_trend(request(body))
+    assert first.status == 200, first.text
+    retry = await api.miniapp_admin_publish_seedance_upload_trend(request(body))
+    assert retry.status == 200, retry.text
+    public = json.loads(first.text)["prompt"]
+    assert json.loads(retry.text)["prompt"]["id"] == public["id"]
+    assert public["prompt_text"] == ""
+    assert public["model"] is None
+    assert "refs/" not in first.text
+    saved = await database.get_prompt_by_id(public["id"])
+    assets = await database.list_trend_reference_assets(public["id"])
+    assert assets == []
+    assert saved["generation_settings"]["reference_count"] == 1
+    assert len(await database.get_author_prompts(user.id)) == 1
+    user_photo = "/uploads/refs/image/222/current-user.png"
+    run = trusted_trend_run(
+        saved, (user_photo,), {"age": "31"}, template_assets=assets,
+        reference_inputs=({"media_type": "image", "position": 1, "url": user_photo},),
+    )
+    assert run.provider_image_urls == (user_photo,)
+    assert run.provider_video_urls == run.provider_audio_urls == ()
+    assert "Возраст: 31" in run.prompt
+    assert "face.png" not in run.prompt

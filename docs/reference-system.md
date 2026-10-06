@@ -307,7 +307,7 @@ POST /mini-app/api/admin/trends/seedance/publish
 - собственной завершённой video task;
 - моделью `seedance_2` или `seedance_2_5`;
 - не повтором из feed и не уже запущенным trend;
-- содержать лицо автора и минимум один retained asset.
+- содержать фото лица автора; дополнительные retained assets необязательны.
 
 Администратор явно выбирает один identity image, а каждому другому
 image/video/audio задаёт действие: скрыто закрепить, заменить файлом следующего

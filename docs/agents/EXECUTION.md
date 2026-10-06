@@ -1378,3 +1378,19 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Pixel QA: inspected fresh 320px input screenshot and 430px price/CTA screenshot. Role labels wrap, counts and source-length/price are readable, no horizontal clipping; CTA remains above bottom navigation in viewport screenshot. Screenshots are local QA artifacts, not committed.
 - Independent read-only review: no remaining source-level security, financial, provider-contract or repeat/navigation blockers after fixes.
 - No production service/static change, real generation, payment/refund, resend, migration or new tariff. Draft PR only; merge/deploy require separate approval.
+
+
+## 2026-10-06 — Single-photo Seedance trends
+- Baseline: tanyapi 7ade537898ce9250be50bfc32c7756aec8670144.
+- Goal: allow one primary replaceable identity image plus prompt, with no additional template media, for Seedance 2.0 and 2.5.
+- Audit: upload frontend and shared compiler both required another included reference. The version-2 slot assembler already supports zero fixed assets. Owner/type checks and excluded-reference prompt validation stay unchanged.
+- Scope: remove redundant minimum-two checks; retain mandatory valid identity, overlap checks and private media handling. No database migration, config, pricing, provider or permission change.
+- Regression plan: compiler and upload-to-serialized-recipe-to-repeat for both models, excluded extras, missing identity, privacy, frontend publication, existing multimodal suites, browser mocks, lint/type/build/CI.
+- Evidence before fix: focused backend run produced six expected failures with “Keep or replace at least one template reference”; two missing-identity cases passed.
+- Guidance used: Bambale0 skills diagnosing-bugs (red regression first), Bambale0 claw QA source-to-action contract checks, anthropics webapp-testing browser verification.
+- Release plan: dedicated fix branch -> reviewed PR to tanyapi -> required green gates and native squash auto-merge -> exact deployed SHA and read-only/mocked production UI verification. No real trend publication or paid generation.
+- Review found the same minimum-two rule in Studio source inspection and its publisher button; both are included so uploads and completed source tasks share the one-photo contract. Access/model/completion/repeat-origin checks remain unchanged.
+- Interim verification: 1940 passed / 19 skipped full safe backend suite, 208 frontend Jest tests, static production build; final reruns follow the Studio regression additions.
+- Final local verification: 1949 passed / 19 skipped full safe backend tests; 35 Jest suites / 216 tests passed; full Mini App ESLint, TypeScript, targeted Ruff, deployment shell syntax, production static build and git diff --check passed. Six mocked browser cases passed (four mobile multimodal widths plus one-photo Seedance 2.0 and 2.5). Independent final source review found no blockers.
+- Security: no live trend publication or provider generation; all browser API calls mocked, SQLite tests isolated. Existing production checkout left untouched.
+- Release status: PR/CI and exact production revision verification pending; do not claim deployed yet.

@@ -148,12 +148,8 @@ async def miniapp_admin_seedance_trend_source(request: web.Request) -> web.Respo
         snapshot = extract_seedance_reference_snapshot(
             str(task.get("model") or ""), request_data
         )
-        if not snapshot.images or (
-            len(snapshot.images) + len(snapshot.videos) + len(snapshot.audios) < 2
-        ):
-            raise ValueError(
-                "В исходной задаче должно быть лицо автора и хотя бы один закрепляемый референс"
-            )
+        if not snapshot.images:
+            raise ValueError("В исходной задаче должно быть фото для замены лица")
         return web.json_response(
             {
                 "ok": True,

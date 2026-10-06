@@ -5,6 +5,7 @@ import { SeedanceTrendPublisher } from '@/components/seedance-trend-publisher'
 import {
   fetchSeedanceTrendSource,
   publishSeedanceTrend,
+  type SeedanceTrendSource,
 } from '@/lib/seedance-trend-admin-api'
 import type { TaskDetail } from '@/lib/types'
 
@@ -38,6 +39,14 @@ const task: TaskDetail = {
   prompt: '@Image1 wears @Image2 and follows @Video1',
   cost: 20,
   duration: 12,
+}
+
+function mockSource(model: SeedanceTrendSource['model'], references: SeedanceTrendSource['references']) {
+  mockedFetchSource.mockResolvedValue({
+    task_id: task.task_id, generation_id: 501, model, duration: 12,
+    aspect_ratio: 'adaptive', prompt: 'Animate @Image1',
+    result_url: task.result_url as string, references,
+  })
 }
 
 describe('SeedanceTrendPublisher', () => {
@@ -149,4 +158,65 @@ describe('SeedanceTrendPublisher', () => {
       fixedImageIndices: [2], replaceableImageIndices: [],
     }))
   })
+  it.each([
+    ['seedance_2', false], ['seedance_2_5', false],
+    ['seedance_2', true], ['seedance_2_5', true],
+  ] as const)('publishes %s with only identity included (excluded extras: %s)', async (model, excludedExtras) => {
+    mockSource(model, {
+      images: [
+        { index: 1, preview_url: 'https://example.test/creator.jpg', default_action: 'replace_with_user' },
+        ...(excludedExtras ? [{ index: 2, preview_url: 'https://example.test/dress.jpg', default_action: 'keep_hidden' as const }] : []),
+      ],
+      videos: excludedExtras ? [{ index: 1, preview_url: 'https://example.test/motion.mp4', default_action: 'keep_hidden' }] : [],
+      audios: excludedExtras ? [{ index: 1, preview_url: 'https://example.test/music.mp3', default_action: 'keep_hidden' }] : [],
+    })
+    render(<SeedanceTrendPublisher task={{ ...task, model }} />)
+    fireEvent.click(screen.getByRole('button', { name: /Сделать Seedance-трендом/i }))
+    await screen.findByText('Исходный @Image1')
+    if (excludedExtras) {
+      fireEvent.click(screen.getByRole('button', { name: /^Скрыт, без замены$/i }))
+      fireEvent.click(screen.getByRole('button', { name: /@Video1 · скрыт, без замены/i }))
+      fireEvent.click(screen.getByRole('button', { name: /@Audio1 · скрыт, без замены/i }))
+    }
+    const publishButton = screen.getByRole('button', { name: /^Опубликовать тренд$/i })
+    expect(publishButton).toBeEnabled()
+    fireEvent.change(screen.getByLabelText('Название'), { target: { value: ' ' } })
+    expect(publishButton).toBeDisabled()
+    fireEvent.change(screen.getByLabelText('Название'), { target: { value: 'One photo' } })
+    fireEvent.click(publishButton)
+    await waitFor(() => expect(mockedPublish).toHaveBeenCalledTimes(1))
+    expect(mockedPublish).toHaveBeenCalledWith(expect.objectContaining({
+      taskId: task.task_id, title: 'One photo', identityImageIndex: 1,
+      fixedImageIndices: [], replaceableImageIndices: [],
+      fixedVideoIndices: [], replaceableVideoIndices: [],
+      fixedAudioIndices: [], replaceableAudioIndices: [],
+    }))
+  })
+
+  it.each(['seedance_2', 'seedance_2_5'] as const)('requires an identity image for a %s source', async (model) => {
+    mockSource(model, {
+      images: [],
+      videos: [{ index: 1, preview_url: 'https://example.test/motion.mp4', default_action: 'keep_hidden' }],
+      audios: [],
+    })
+    render(<SeedanceTrendPublisher task={{ ...task, model }} />)
+    fireEvent.click(screen.getByRole('button', { name: /Сделать Seedance-трендом/i }))
+    await screen.findByRole('button', { name: /@Video1 · скрыт, без замены/i })
+    const publishButton = screen.getByRole('button', { name: /^Опубликовать тренд$/i })
+    expect(publishButton).toBeDisabled()
+    fireEvent.click(publishButton)
+    expect(mockedPublish).not.toHaveBeenCalled()
+  })
+
+  it.each(['seedance_2', 'seedance_2_5'] as const)('keeps %s publication disabled when source preview validation fails', async (model) => {
+    mockedFetchSource.mockRejectedValueOnce(new Error('У генерации нет готового видео для preview'))
+    render(<SeedanceTrendPublisher task={{ ...task, model }} />)
+    fireEvent.click(screen.getByRole('button', { name: /Сделать Seedance-трендом/i }))
+    expect(await screen.findByText('У генерации нет готового видео для preview')).toBeInTheDocument()
+    const publishButton = screen.getByRole('button', { name: /^Опубликовать тренд$/i })
+    expect(publishButton).toBeDisabled()
+    fireEvent.click(publishButton)
+    expect(mockedPublish).not.toHaveBeenCalled()
+  })
+
 })

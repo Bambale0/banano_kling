@@ -120,12 +120,55 @@ it('clears own refs on trend-kind change and hides uploads for other models', as
   expect(screen.queryByRole('region', { name: 'Референсы шаблона' })).not.toBeInTheDocument()
 })
 
-it('requires an identity photo and another included reference instead of falling back to the generic endpoint', async () => {
-  await openSeedance()
-  fireEvent.change(screen.getByPlaceholderText('Название тренда'), { target: { value: 'Own refs' } })
-  fireEvent.change(screen.getByPlaceholderText('Скрытый prompt, который подставится при повторе'), { target: { value: 'Use @Image1' } })
+it.each(['seedance_2', 'seedance_2_5'])('publishes %s with just one replaceable identity photo', async (model) => {
+  await openSeedance(model)
+  fireEvent.change(screen.getByPlaceholderText('Название тренда'), { target: { value: 'One photo' } })
+  fireEvent.change(screen.getByPlaceholderText('Скрытый prompt, который подставится при повторе'), { target: { value: 'Animate @Image1' } })
   await addFiles('Preview тренда', [image('public.jpg')])
   await addFiles('Фото-референсы тренда', [image('face.jpg')])
+  fireEvent.click(screen.getByRole('button', { name: 'Опубликовать тренд' }))
+  await waitFor(() => expect(mockedPublish).toHaveBeenCalledTimes(1))
+  expect(mockedPublish).toHaveBeenCalledWith(expect.objectContaining({
+    model, title: 'One photo', promptText: 'Animate @Image1',
+    previewUrl: 'https://media.example/public.jpg',
+    imageUrls: ['https://media.example/face.jpg'], videoUrls: [], audioUrls: [],
+    identityImageIndex: 1, fixedImageIndices: [], replaceableImageIndices: [],
+    fixedVideoIndices: [], replaceableVideoIndices: [], fixedAudioIndices: [], replaceableAudioIndices: [],
+  }))
+  expect(submitPrompt).not.toHaveBeenCalled()
+})
+
+it.each(['seedance_2', 'seedance_2_5'])('publishes %s with only identity included when all other media are excluded', async (model) => {
+  await openSeedance(model)
+  fireEvent.change(screen.getByPlaceholderText('Название тренда'), { target: { value: 'One included photo' } })
+  fireEvent.change(screen.getByPlaceholderText('Скрытый prompt, который подставится при повторе'), { target: { value: 'Animate @Image1' } })
+  await addFiles('Preview тренда', [image('public.jpg')])
+  await addFiles('Фото-референсы тренда', [image('face.jpg'), image('excluded.jpg')])
+  await addFiles('Видео-референсы тренда', [new File(['video'], 'excluded.mp4', { type: 'video/mp4' })])
+  await addFiles('Аудио-референсы тренда', [new File(['audio'], 'excluded.mp3', { type: 'audio/mpeg' })])
+  for (const token of ['Image2', 'Video1', 'Audio1']) {
+    fireEvent.change(screen.getByLabelText(`Режим @${token}`), { target: { value: 'excluded' } })
+  }
+  fireEvent.click(screen.getByRole('button', { name: 'Опубликовать тренд' }))
+  await waitFor(() => expect(mockedPublish).toHaveBeenCalledTimes(1))
+  expect(mockedPublish).toHaveBeenCalledWith(expect.objectContaining({
+    model, identityImageIndex: 1,
+    fixedImageIndices: [], replaceableImageIndices: [],
+    fixedVideoIndices: [], replaceableVideoIndices: [], fixedAudioIndices: [], replaceableAudioIndices: [],
+  }))
+  expect(submitPrompt).not.toHaveBeenCalled()
+})
+
+it.each([
+  ['seedance_2', 'fixed'], ['seedance_2', 'excluded'],
+  ['seedance_2_5', 'fixed'], ['seedance_2_5', 'excluded'],
+])('requires an identity photo for %s with a %s video reference', async (model, mode) => {
+  await openSeedance(model)
+  fireEvent.change(screen.getByPlaceholderText('Название тренда'), { target: { value: 'Missing identity' } })
+  fireEvent.change(screen.getByPlaceholderText('Скрытый prompt, который подставится при повторе'), { target: { value: 'Animate the user photo' } })
+  await addFiles('Preview тренда', [image('public.jpg')])
+  await addFiles('Видео-референсы тренда', [new File(['video'], 'motion.mp4', { type: 'video/mp4' })])
+  fireEvent.change(screen.getByLabelText('Режим @Video1'), { target: { value: mode } })
   fireEvent.click(screen.getByRole('button', { name: 'Опубликовать тренд' }))
   expect(await screen.findByText(/Для шаблона выберите фото для замены лица/)).toBeInTheDocument()
   expect(mockedPublish).not.toHaveBeenCalled()
