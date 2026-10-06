@@ -1700,6 +1700,7 @@ async def _fetch_recent_tasks(telegram_id: int, limit: int = 8) -> list[dict[str
                completed_at, updated_at, created_at
             FROM generation_tasks
             WHERE telegram_id = ?
+              AND COALESCE(model, '') <> 'genjutsu'
             ORDER BY created_at DESC
             LIMIT ?
             """,
@@ -4713,6 +4714,13 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
                 return web.json_response(
                     {"ok": False, "error": "Видео из ленты не найдено"},
                     status=404,
+                )
+            if source_feed_card.get("genjutsu_recipe_id"):
+                return web.json_response(
+                    {"ok": False, "code": "genjutsu_recipe_required",
+                     "error": "Откройте повтор в Genjutsu и подставьте свои референсы.",
+                     "recipe_id": source_feed_card["genjutsu_recipe_id"]},
+                    status=409,
                 )
             source_feed_task = await get_generation_task_payload(source_feed_gen_id)
             if not source_feed_task:

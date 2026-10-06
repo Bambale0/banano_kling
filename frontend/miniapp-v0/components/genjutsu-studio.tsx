@@ -21,6 +21,7 @@ import {
 } from '@/lib/genjutsu-api'
 import { GenjutsuAdmin } from './genjutsu-admin'
 import { GenjutsuVideoRange, fullVideoRange, inspectVideoRange, videoSeconds, type VideoRange } from './genjutsu-video-range'
+import { GenjutsuFeedPublisher } from './genjutsu-feed-publisher'
 
 const field = 'w-full rounded-2xl border border-white/10 bg-white/[0.035] px-4 py-3 text-[15px] text-foreground outline-none transition focus:border-white/20 focus:bg-white/[0.055]'
 const section = 'rounded-[26px] border border-white/[0.08] bg-white/[0.025] p-4 space-y-3'
@@ -387,6 +388,7 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
           <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
             {recipe.steps.map((step, index) => <span key={index} className="rounded-full border border-border px-2 py-1">Шаг {index + 1}: {operationLabels[step.operation]} · {step.resolution}</span>)}
           </div>
+          <p className="text-xs text-muted-foreground">Вариантов в повторе: {recipe.variants}. Расчёт включает всю цепочку и все варианты.</p>
           {!recipe.source_slot && recipe.current_cost !== null && <p className="text-sm">Текущая стоимость рецепта: <strong>{recipe.current_cost} 🍌</strong></p>}
         </div>
         <fieldset className={`${section} min-w-0`} disabled={!bootstrap.enabled || blocked}>
@@ -533,6 +535,7 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
             {step.error_code && <p className="break-all text-xs text-destructive">Код: {step.error_code}. Результаты остальных шагов не потеряны.</p>}
             <div className={compare ? 'grid gap-2 sm:grid-cols-2' : ''}>{compare && step.source_asset?.url && <div><p className="text-xs">Исходник</p><video src={step.source_asset.url} controls playsInline preload="metadata" className="max-h-80 w-full rounded-xl bg-black" /></div>}{step.output_asset?.url && <div><p className="text-xs">Результат</p><video src={step.output_asset.url} controls playsInline preload="metadata" className="max-h-80 w-full rounded-xl bg-black" /></div>}</div>
             {step.output_asset?.url && <div className="flex flex-wrap gap-2"><a className="rounded-lg border border-border px-3 py-2 text-sm" href={`${step.output_asset.url}&download=1`} target="_blank" rel="noreferrer">Скачать оригинал</a><Button variant="outline" size="sm" disabled={blocked} onClick={() => void action('edit-result', async () => { const output = step.output_asset!; await newWork({ ...freshPlan(), source_asset_id: output.id }, output) })}>Редактировать результат</Button><Button size="sm" variant="ghost" disabled={blocked} onClick={() => void action('redeliver', () => runAction('redeliver', step.id))}>Отправить ещё раз</Button></div>}
+            <GenjutsuFeedPublisher key={run.id + ':' + step.id} run={run} step={step} disabled={blocked} />
             {step.delivery_status && <p className="text-xs text-muted-foreground">Telegram: {statusLabels[step.delivery_status] || step.delivery_status}. Файл доступен в этой работе независимо от чата.</p>}
             {step.status === 'awaiting_confirmation' && <Button disabled={blocked} onClick={() => void action('continue', () => runAction('continue', step.id))}>Продолжить этот шаг</Button>}
           </article>)}

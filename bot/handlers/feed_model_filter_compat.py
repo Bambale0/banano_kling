@@ -22,7 +22,7 @@ _MODEL_ALIASES = {
     "nano_banana_pro": DEFAULT_FEED_MODEL,
     "gemini-3-pro-image-preview": DEFAULT_FEED_MODEL,
 }
-_MODEL_LABELS: dict[str, str] = {DEFAULT_FEED_MODEL: "Nano Banana Pro"}
+_MODEL_LABELS: dict[str, str] = {DEFAULT_FEED_MODEL: "Nano Banana Pro", "genjutsu": "Higgsfield Genjutsu"}
 _SELECTED_MODEL_BY_TELEGRAM_ID: dict[int, str] = {}
 _FILTER_CACHE: dict[
     tuple[str, str, int | None, bool],

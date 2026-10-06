@@ -78,7 +78,7 @@ export function SeedanceTrendPublisher({ task }: SeedanceTrendPublisherProps) {
           null
         setSource(nextSource)
         setTitle(`Повтори образ · ${task.model_label}`.slice(0, 80))
-        setDescription('Загрузите своё лицо — одежда, аксессуары и остальные детали применятся автоматически.')
+        setDescription('Загрузите свои файлы в отмеченные слоты. Закреплённые детали применятся автоматически.')
         setIdentityIndex(suggestedIdentity)
         setFixedImages(
           new Set(
@@ -197,7 +197,7 @@ export function SeedanceTrendPublisher({ task }: SeedanceTrendPublisherProps) {
             )}
           >
             {fixed ? <Check className="h-3.5 w-3.5" /> : <LockKeyhole className="h-3.5 w-3.5" />}
-            {fixed ? 'Закреплён скрыто' : 'Не использовать'}
+            {fixed ? 'Скрыт, без замены' : replaceable ? 'Закрепить без замены' : 'Не использовать'}
           </button>
           <button
             type="button"
@@ -218,7 +218,7 @@ export function SeedanceTrendPublisher({ task }: SeedanceTrendPublisherProps) {
             )}
           >
             <UserRound className="h-3.5 w-3.5" />
-            {replaceable ? 'Заменит пользователь' : 'Разрешить замену'}
+            {replaceable ? 'Скрыт, пользователь заменяет' : 'Скрыть и разрешить замену'}
           </button>
         </div>
       </div>
@@ -261,7 +261,7 @@ export function SeedanceTrendPublisher({ task }: SeedanceTrendPublisherProps) {
           )}
         >
           {fixed ? <Check className="h-3.5 w-3.5" /> : <LockKeyhole className="h-3.5 w-3.5" />}
-          @{kind === 'video' ? 'Video' : 'Audio'}{item.index} · {fixed ? 'скрыто закреплён' : 'исключён'}
+          @{kind === 'video' ? 'Video' : 'Audio'}{item.index} · {fixed ? 'скрыт, без замены' : replaceable ? 'закрепить без замены' : 'исключён'}
         </button>
         <button
           type="button"
@@ -282,7 +282,7 @@ export function SeedanceTrendPublisher({ task }: SeedanceTrendPublisherProps) {
           )}
         >
           <UserRound className="h-3.5 w-3.5" />
-          {replaceable ? 'пользователь заменит' : 'разрешить замену'}
+          {replaceable ? 'Скрыт, пользователь заменяет' : 'Скрыть и разрешить замену'}
         </button>
       </div>
     )
@@ -299,7 +299,7 @@ export function SeedanceTrendPublisher({ task }: SeedanceTrendPublisherProps) {
           <DialogHeader>
             <DialogTitle>Тренд из готовой Seedance-генерации</DialogTitle>
             <DialogDescription>
-              Выберите фото автора, которое нужно заменить. Остальные выбранные медиа сохранятся на сервере и не будут видны пользователям.
+              Выберите фото для замены лица. Для остальных фото, видео и аудио можно выбрать: скрыть без замены или скрыть и разрешить пользователю загрузить свой файл. Оригиналы не показываются при повторе.
             </DialogDescription>
           </DialogHeader>
 

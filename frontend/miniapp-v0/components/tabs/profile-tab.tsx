@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useApp } from '@/lib/app-context'
+import { openGenjutsu } from '@/lib/genjutsu-api'
 import type { FeedComment, FeedItem, ProfileSummary, ScenarioType, UploadedFile } from '@/lib/types'
 import { cn, isHttpUrl } from '@/lib/utils'
 import { normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
@@ -591,6 +592,15 @@ export function ProfileTab() {
 
   function handleRemix(item: FeedItem) {
     if (!profileInteractionsEnabled(item)) return
+    if (isLive && item.genjutsu_recipe_id) {
+      setPreviewItem(null)
+      openGenjutsu({ recipe_id: item.genjutsu_recipe_id })
+      return
+    }
+    if (item.model === 'genjutsu') {
+      setError('Повтор этой публикации недоступен. Обновите ленту.')
+      return
+    }
     if (item.gen_type === 'video') {
       const modelExists = state.videoModels.some((model) => model.id === item.model)
       const imageReferences = item.references_hidden ? [] : (item.reference_images || []).map((url, index) => feedReferenceToUploadedFile(url, index))

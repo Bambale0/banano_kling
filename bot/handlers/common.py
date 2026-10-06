@@ -2520,6 +2520,12 @@ async def _build_feed_keyboard(
 
     gen_type = str(card.get("gen_type") or card.get("type") or "").strip().lower()
     task_id = str(card.get("task_id") or "").strip()
+    recipe_id = card.get("genjutsu_recipe_id")
+    if recipe_id and gen_type == "video":
+        rows.append([types.InlineKeyboardButton(
+            text="🔁 Повторить в Genjutsu",
+            web_app=WebAppInfo(url=_mini_app_url_with_start_param(f"genjutsu_recipe_{recipe_id}")),
+        )])
     if task_id and gen_type == "image":
         if username and gen_id:
             rows.append(
