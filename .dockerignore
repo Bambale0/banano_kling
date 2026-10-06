@@ -30,6 +30,9 @@ backups
 outputs
 reports
 static/uploads
+data/genjutsu_media
+data/*-checkpoint.json
+data/*_checkpoint.json
 tmp
 temp
 

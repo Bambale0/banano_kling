@@ -106,3 +106,9 @@ docs/plans/
 claw/
 claw-tools/
 /root/claw-tools
+
+# Runtime generated Genjutsu media (private durable storage, volume ./data:/app/data)
+data/genjutsu_media/
+# Runtime backfill checkpoints (persistent cursor in /app/data, see docs/environment.md)
+data/*-checkpoint.json
+data/*_checkpoint.json
