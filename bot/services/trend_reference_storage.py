@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
+import math
 import mimetypes
 import os
 from dataclasses import dataclass
@@ -155,6 +157,125 @@ def _media_metadata(
             raise TrendReferenceStorageError("Reference is not a supported audio file")
 
     return extension, mime
+
+
+async def _validate_media_stream(path: str, media_type: str) -> float:
+    """Probe uploaded containers locally; headers alone cannot prove stream type."""
+    process = await asyncio.create_subprocess_exec(
+        "ffprobe",
+        "-v",
+        "error",
+        "-protocol_whitelist",
+        "file,pipe",
+        "-show_entries",
+        "stream=codec_type,duration:format=duration",
+        "-of",
+        "json",
+        path,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        stdout, _stderr = await asyncio.wait_for(process.communicate(), timeout=15)
+    except (TimeoutError, asyncio.CancelledError):
+        if process.returncode is None:
+            process.kill()
+        await process.communicate()
+        raise
+    if process.returncode != 0:
+        raise TrendReferenceStorageError(
+            "Не удалось прочитать загруженное видео или аудио"
+        )
+    try:
+        metadata = json.loads(stdout)
+        streams = [
+            stream
+            for stream in metadata.get("streams", [])
+            if stream.get("codec_type") == media_type
+        ]
+        durations = [
+            float(
+                stream.get("duration")
+                or (metadata.get("format") or {}).get("duration")
+                or 0
+            )
+            for stream in streams
+        ]
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise TrendReferenceStorageError(
+            "Некорректные метаданные загруженного файла"
+        ) from exc
+    if not durations or not any(
+        math.isfinite(value) and value > 0 for value in durations
+    ):
+        raise TrendReferenceStorageError("В файле нет медиа-потока нужного типа")
+    return max(value for value in durations if math.isfinite(value) and value > 0)
+
+
+async def validate_seedance2_reference_videos(sources: list[str]) -> None:
+    """Apply existing Seedance 2 video limits to the actual provider inputs."""
+    from bot.handlers.seedance_multimodal_compat import (
+        SEEDANCE_MAX_REFERENCE_VIDEO_SECONDS,
+        SEEDANCE_MAX_TOTAL_REFERENCE_VIDEO_SECONDS,
+        SEEDANCE_MAX_VIDEO_BYTES,
+        SEEDANCE_MIN_REFERENCE_VIDEO_SECONDS,
+    )
+
+    total_duration = 0.0
+    for source in sources:
+        path = resolve_local_upload_path(source)
+        if not path:
+            raise TrendReferenceStorageError(
+                "Видео-референс недоступен. Загрузите его заново"
+            )
+        data, content_type = await _read_local(
+            Path(path), limit=SEEDANCE_MAX_VIDEO_BYTES
+        )
+        _media_metadata("video", data, content_type=content_type, source_url=source)
+        try:
+            duration = await _validate_media_stream(path, "video")
+        except (OSError, TimeoutError) as exc:
+            raise TrendReferenceStorageError(
+                "Не удалось проверить видео. Попробуйте ещё раз"
+            ) from exc
+        if not (
+            SEEDANCE_MIN_REFERENCE_VIDEO_SECONDS
+            <= duration
+            <= SEEDANCE_MAX_REFERENCE_VIDEO_SECONDS
+        ):
+            raise TrendReferenceStorageError(
+                "Видео-референс Seedance должен длиться "
+                f"от {SEEDANCE_MIN_REFERENCE_VIDEO_SECONDS} "
+                f"до {SEEDANCE_MAX_REFERENCE_VIDEO_SECONDS} секунд"
+            )
+        total_duration += duration
+    if total_duration > SEEDANCE_MAX_TOTAL_REFERENCE_VIDEO_SECONDS:
+        raise TrendReferenceStorageError(
+            "Общая длительность видео-референсов Seedance не должна превышать "
+            f"{SEEDANCE_MAX_TOTAL_REFERENCE_VIDEO_SECONDS} секунд"
+        )
+
+
+async def validate_trend_reference_source(source_url: str, *, media_type: str) -> str:
+    """Validate local media without saving it and return its content fingerprint."""
+    normalized_type = _normalize_media_type(media_type)
+    local_path = resolve_local_upload_path(source_url)
+    if not local_path:
+        raise TrendReferenceStorageError("Загруженный файл уже недоступен")
+    data, content_type = await _read_local(
+        Path(local_path), limit=MAX_BYTES[normalized_type]
+    )
+    _media_metadata(
+        normalized_type, data, content_type=content_type, source_url=source_url
+    )
+    if normalized_type in {"video", "audio"}:
+        try:
+            await _validate_media_stream(local_path, normalized_type)
+        except (OSError, TimeoutError) as exc:
+            raise TrendReferenceStorageError(
+                "Не удалось проверить видео или аудио. Попробуйте ещё раз"
+            ) from exc
+    return hashlib.sha256(data).hexdigest()
 
 
 async def persist_trend_reference(

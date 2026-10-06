@@ -975,3 +975,6 @@ await import('./private-repeat-permission.mjs')
 
 // Ordinary Genjutsu output publication and private recipe repeats stay offline.
 await import('./genjutsu-feed-bridge.mjs')
+
+// Generic Seedance admin upload and reference privacy stay in the browser gate.
+await import('./seedance-trend-upload.mjs')

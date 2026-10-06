@@ -1114,6 +1114,17 @@ async def miniapp_run_trend(request: web.Request) -> web.Response:
                 len(template_assets),
             )
 
+        if trend.reference_contract == REFERENCE_CONTRACT and trend.model == "seedance_2":
+            from bot.services.trend_reference_storage import (
+                TrendReferenceStorageError,
+                validate_seedance2_reference_videos,
+            )
+
+            try:
+                await validate_seedance2_reference_videos(list(trend.provider_video_urls))
+            except TrendReferenceStorageError as exc:
+                raise TrendRunValidationError(str(exc)) from exc
+
         if trend.kind == "video":
             response = await _run_video_trend(
                 telegram_id=telegram_id,

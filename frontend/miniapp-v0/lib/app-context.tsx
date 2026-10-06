@@ -4,9 +4,9 @@ import { createContext, useContext, useState, useCallback, useEffect, useRef, ty
 import type { AppState, BootstrapResponse, FeedDeepLink, FeedItem, PromptItem, PromptPreset, SavedReference, ScenarioType, Task, TaskDetail, UploadedFile, VideoPromptPreset, WorkspacePanel } from './types'
 import { mockAppState, mockImageModels, mockVideoModels } from './mock-data'
 import { bootstrapApp, fetchFeedItem, fetchPromptDetail, fetchTaskDetail, getInitData, getStartParamFallback, hasTelegramInitData, waitForTelegramInitData } from './api'
-import { parseMiniAppStartParam } from './start-params'
+import { genjutsuRecipeStartParam, parseMiniAppStartParam, startParamFromLocation } from './start-params'
 import { isVideoTrendItem, resolveTrendSettings } from './trend-settings'
-import { openGenjutsu } from './genjutsu-api'
+import { genjutsuCall, openGenjutsu } from './genjutsu-api'
 
 interface AppContextType {
   state: AppState
@@ -169,6 +169,39 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [activeTab, setActiveTabState] = useState(1)
   const pollRef = useRef<number | null>(null)
   const handledStartParamRef = useRef<string | null>(null)
+  const pendingStartParamRef = useRef<string | null>(null)
+  const startNavigationVersionRef = useRef(0)
+  const [historyLocation, setHistoryLocation] = useState<{ search: string; hash: string } | null>(null)
+  const cancelStartNavigation = useCallback(() => {
+    setState(previous => previous.error ? { ...previous, error: null } : previous)
+    startNavigationVersionRef.current += 1
+    if (pendingStartParamRef.current) handledStartParamRef.current = pendingStartParamRef.current
+    pendingStartParamRef.current = null
+  }, [])
+
+  useEffect(() => {
+    const navigate = (event: Event) => {
+      const { search, hash } = window.location
+      const nextStart = startParamFromLocation(search, hash)
+      // Telegram SDK may strip its launch hash during initialization. That is
+      // not a user navigation and must not discard the captured deep link.
+      if (event.type === 'hashchange' && !nextStart && !genjutsuRecipeStartParam('', search)) return
+      cancelStartNavigation()
+      handledStartParamRef.current = null
+      setFeedDeepLink(null)
+      window.dispatchEvent(new Event('banano:feed-preview-close'))
+      window.dispatchEvent(new Event('genjutsu:history-navigation'))
+      setHistoryLocation({ search: window.location.search, hash: window.location.hash })
+    }
+    window.addEventListener('popstate', navigate)
+    window.addEventListener('hashchange', navigate)
+    window.addEventListener('genjutsu:open', cancelStartNavigation)
+    return () => {
+      window.removeEventListener('popstate', navigate)
+      window.removeEventListener('hashchange', navigate)
+      window.removeEventListener('genjutsu:open', cancelStartNavigation)
+    }
+  }, [cancelStartNavigation])
 
   const applyTaskDetail = useCallback((detail: TaskDetail | null) => {
     setTaskDetail(detail)
@@ -249,6 +282,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const selectTask = useCallback((task: Task | null) => {
+    cancelStartNavigation()
     setSelectedTask(task)
     if (task) {
       setIsTaskDetailOpen(true)
@@ -271,7 +305,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       applyTaskDetail(null)
       setIsTaskDetailOpen(false)
     }
-  }, [applyTaskDetail])
+  }, [applyTaskDetail, cancelStartNavigation])
 
   const closeTaskDetail = useCallback(() => {
     setIsTaskDetailOpen(false)
@@ -282,16 +316,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [applyTaskDetail])
 
   const openBalance = useCallback(() => {
+    cancelStartNavigation()
     setIsBalanceOpen(true)
-  }, [])
+  }, [cancelStartNavigation])
 
   const closeBalance = useCallback(() => {
     setIsBalanceOpen(false)
   }, [])
 
   const openWorkspace = useCallback((panel: WorkspacePanel) => {
+    cancelStartNavigation()
     setActiveWorkspace(panel)
-  }, [])
+  }, [cancelStartNavigation])
 
   const closeWorkspace = useCallback(() => {
     setActiveWorkspace(null)
@@ -302,17 +338,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const setActiveTab = useCallback((tab: number) => {
+    cancelStartNavigation()
+    setFeedDeepLink(null)
     if (tab === 7) {
       setViewedProfileCode(null)
     }
     setActiveTabState(tab)
-  }, [])
+  }, [cancelStartNavigation])
 
   const openProfile = useCallback((referralCode?: string | null) => {
+    cancelStartNavigation()
     const code = String(referralCode || '').trim().toUpperCase()
     setViewedProfileCode(code || null)
     setActiveTabState(7)
-  }, [])
+  }, [cancelStartNavigation])
 
   const refreshTasks = useCallback(async () => {
     setState(prev => ({ ...prev, isLoading: true, error: null }))
@@ -375,7 +414,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (state.mode !== 'live' || state.isLoading) return
 
-    const rawStartParam = getStartParamFallback()
+    // After Back/Forward use the actual location, not Telegram's immutable
+    // launch snapshot; otherwise an old recipe link can resurrect its form.
+    const startParam = historyLocation
+      ? startParamFromLocation(historyLocation.search, historyLocation.hash)
+      : getStartParamFallback()
+    const rawStartParam = genjutsuRecipeStartParam(startParam, historyLocation?.search ?? window.location.search) || startParam
     if (!rawStartParam || handledStartParamRef.current === rawStartParam) return
 
     const target = parseMiniAppStartParam(rawStartParam)
@@ -386,6 +430,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const startTarget = target
 
     let cancelled = false
+    const navigationVersion = ++startNavigationVersionRef.current
+    pendingStartParamRef.current = rawStartParam
+    const isCurrent = () => !cancelled && navigationVersion === startNavigationVersionRef.current
     async function routeStartParam() {
       try {
         if (startTarget.kind === 'ref') {
@@ -398,10 +445,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
           return
         }
 
-        if (startTarget.kind === 'feed' || startTarget.kind === 'remix') {
-          const item = await fetchFeedItem(startTarget.genId)
-          if (cancelled) return
-          if (startTarget.kind === 'remix') {
+        if (startTarget.kind === 'feed' || startTarget.kind === 'remix' || startTarget.kind === 'genjutsu_recipe') {
+          const item = startTarget.kind === 'genjutsu_recipe'
+            ? (await genjutsuCall<{ card: FeedItem | null }>('recipe_preview', { recipe_id: startTarget.recipeId })).card
+            : await fetchFeedItem(startTarget.genId)
+          if (!isCurrent()) return
+          if (item === null && startTarget.kind === 'genjutsu_recipe') {
+            openGenjutsu({ recipe_id: startTarget.recipeId })
+            return
+          }
+          if (!item?.id) throw new Error('Публикация недоступна. Обновите ссылку.')
+          if (startTarget.kind === 'remix' && item.model !== 'genjutsu' && !item.genjutsu_recipe_id) {
             applyFeedRemix(item)
             return
           }
@@ -417,7 +471,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         if (startTarget.kind === 'prompt') {
           const prompt = await fetchPromptDetail(startTarget.promptId)
-          if (cancelled) return
+          if (!isCurrent()) return
           const isTrend = (prompt.tags || []).some(
             (tag) => String(tag).toLowerCase() === 'trend',
           )
@@ -466,21 +520,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         if (startTarget.kind === 'task') {
           const detail = await fetchTaskDetail(startTarget.taskId)
-          if (cancelled) return
+          if (!isCurrent()) return
           setSelectedTask(detail)
           setTaskDetail(detail)
           setIsTaskDetailOpen(true)
         }
       } catch (error) {
-        if (!cancelled) {
+        if (isCurrent()) {
           setState(prev => ({
             ...prev,
             error: getErrorMessage(error, 'Не удалось открыть ссылку Mini App.'),
           }))
         }
       } finally {
-        if (!cancelled) {
+        if (isCurrent()) {
           handledStartParamRef.current = rawStartParam
+          pendingStartParamRef.current = null
         }
       }
     }
@@ -489,7 +544,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true
     }
-  }, [applyFeedRemix, openProfile, state.imageModels, state.isLoading, state.mode, state.videoModels])
+  }, [applyFeedRemix, historyLocation, openProfile, state.imageModels, state.isLoading, state.mode, state.videoModels])
 
   const setCredits = useCallback((amount: number) => {
     setState(prev => ({

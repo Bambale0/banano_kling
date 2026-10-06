@@ -542,6 +542,7 @@ VIDEO_MODELS = (
         "supports": ["text", "imgtxt", "video"],
         "max_image_references": 9,
         "max_video_references": 3,
+        "max_audio_references": get_max_audio_references("seedance_2"),
     },
     {
         "id": "gemini_omni",

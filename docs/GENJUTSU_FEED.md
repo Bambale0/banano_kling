@@ -17,6 +17,14 @@ The response contains the ordinary public card and the existing public Recipe in
 
 One publication is stored per final step. Concurrent identical requests converge on the same task and recipe. Changing the declaration returns feed_publication_conflict. A stale publish request after removal from discovery returns feed_publication_withdrawn; an explicit owner publication edit can restore the post.
 
+## Shared links and video preview
+
+New Telegram entry links use the same `feed_<id>_ref_<author>` route as ordinary videos. Already-issued `genjutsu_recipe_<id>` start parameters and `?genjutsu=1&genjutsu_recipe=<id>` URLs resolve through authenticated `recipe_preview` to the existing Feed/Profile video player. Opening a shared publication does not load the repeat form or quote it. The viewer explicitly presses Repeat after watching, then supplies their own declared photo/video slots.
+
+`recipe_preview` returns only `{card: <public FeedItem>}`. Profile-only publications keep their Profile surface. Withdrawn, deleted, archived or inconsistent publication bindings fail closed; a missing card does not fall back to another video model. Only active curated recipes with no Feed-publication binding return `{card: null}` and retain their existing direct recipe entry. Owned run and admin studio entry remain unchanged.
+
+The incoming route is consumed once. Closing a preview or repeat form does not reopen it on bootstrap refresh. Newer navigation and Back/Forward fence late resolution responses, while Telegram's normal removal of launch URL data does not discard the initial link. No private recipe plan, source video or original reference image is exposed by preview resolution.
+
 ## Visibility and repeat admission
 
 Removing a post from discovery Feed while retaining its shared Profile leaves repeat available, following the existing publication contract. Full publication withdrawal blocks new recipe access, quote creation and launching an already-issued quote. Admission locks the publication row in the same transaction as reservation, so withdrawal cannot race the final permission check.

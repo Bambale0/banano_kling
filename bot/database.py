@@ -5928,6 +5928,37 @@ async def get_prompt_by_id(prompt_id: int, *, approved_public_only: bool = False
     return _prompt_to_dict(_row_to_user_prompt(row))
 
 
+
+async def get_active_seedance_trend_by_upload_fingerprint(
+    fingerprint: str, *, author_id: int
+) -> dict[str, Any] | None:
+    """Find an identical active admin upload without adding a schema contract."""
+    if not re.fullmatch(r"[a-f0-9]{64}", str(fingerprint or "")):
+        raise ValueError("Invalid upload fingerprint")
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
+        cursor = await db.execute(
+            """
+            SELECT * FROM user_prompts
+            WHERE author_id = ? AND status IN ('pending', 'approved')
+              AND source_generation_id IS NULL
+              AND model IN ('seedance_2', 'seedance_2_5')
+              AND generation_settings LIKE ?
+            ORDER BY id DESC
+            """,
+            (int(author_id), '%"seedance_upload_fingerprint": "' + fingerprint + '"%'),
+        )
+        rows = await cursor.fetchall()
+    for row in rows:
+        prompt = _prompt_to_dict(_row_to_user_prompt(row))
+        if (
+            prompt and "seedance-private-references" in prompt.get("tags", [])
+            and prompt.get("generation_settings", {}).get("seedance_upload_fingerprint") == fingerprint
+        ):
+            return prompt
+    return None
+
+
 async def get_active_seedance_trend_by_source_generation(
     source_generation_id: int,
     *,

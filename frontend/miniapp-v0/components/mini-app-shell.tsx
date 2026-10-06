@@ -5,7 +5,7 @@ import { type ReactNode, useEffect } from 'react'
 import { ThemeProvider } from '@/components/theme-provider'
 import { AppProvider, useApp } from '@/lib/app-context'
 import { getStartParamFallback } from '@/lib/api'
-import { parseMiniAppStartParam } from '@/lib/start-params'
+import { genjutsuRecipeStartParam, parseMiniAppStartParam } from '@/lib/start-params'
 import { HeroHeader } from './hero-header'
 import { TabNav } from './tab-nav'
 import { Toaster } from '@/components/ui/sonner'
@@ -45,7 +45,8 @@ function MiniAppBody({ children }: MiniAppShellProps) {
 
     const webApp = window.Telegram?.WebApp as unknown as TelegramActivationBridge | undefined
     const openDefaultTrends = () => {
-      const rawStartParam = getStartParamFallback()
+      const start = getStartParamFallback()
+      const rawStartParam = genjutsuRecipeStartParam(start, window.location.search) || start
       const target = rawStartParam ? parseMiniAppStartParam(rawStartParam) : null
       if (target) return
       setActiveTab(5)
@@ -75,6 +76,7 @@ function MiniAppBody({ children }: MiniAppShellProps) {
             <HeroHeader />
             <main className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden pb-[calc(6rem+env(safe-area-inset-bottom))]">
               <div className="mx-auto w-full max-w-[1180px]">
+                {state.error && <p role="alert" className="mx-4 mt-4 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{state.error}</p>}
                 {children}
               </div>
             </main>

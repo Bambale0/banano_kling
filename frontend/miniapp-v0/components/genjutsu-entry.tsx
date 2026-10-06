@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { getStartParamFallback } from '@/lib/api'
+import { genjutsuRecipeStartParam } from '@/lib/start-params'
 import { genjutsuCall, openGenjutsu } from '@/lib/genjutsu-api'
 
 const Studio = dynamic(() => import('./genjutsu-studio').then(module => module.GenjutsuStudio), {
@@ -36,7 +37,8 @@ export function GenjutsuEntry() {
     window.addEventListener('genjutsu:open', show)
     const params = new URLSearchParams(window.location.search)
     const start = getStartParamFallback()
-    if (params.get('genjutsu') === '1' || start === 'genjutsu' || start === 'genjutsu_admin' || start.startsWith('genjutsu_recipe_')) {
+    const recipeLink = genjutsuRecipeStartParam(start, window.location.search)
+    if (!recipeLink && (params.get('genjutsu') === '1' || start === 'genjutsu' || start === 'genjutsu_admin')) {
       const rid = params.get('genjutsu_run')
       const recipe = params.get('genjutsu_recipe') || (start.startsWith('genjutsu_recipe_') ? start.slice(16) : '')
       setOptions({ ...(rid && /^[a-f0-9]{32}$/.test(rid) ? { run_id: rid } : {}),
@@ -45,6 +47,18 @@ export function GenjutsuEntry() {
     }
     return () => window.removeEventListener('genjutsu:open', show)
   }, [])
+  useEffect(() => {
+    // Entry owns the dialog even before its lazy Studio chunk has loaded.
+    // Recipe sessions have no editor draft to save; invalidate them on history
+    // navigation even during an upload/quote, without rewriting the new URL.
+    const leaveRecipe = () => {
+      if (!options?.recipe_id) return
+      setOptions(null)
+      setSession(value => value + 1)
+    }
+    window.addEventListener('genjutsu:history-navigation', leaveRecipe)
+    return () => window.removeEventListener('genjutsu:history-navigation', leaveRecipe)
+  }, [options])
   function close() {
     setOptions(null)
     const url = new URL(window.location.href)

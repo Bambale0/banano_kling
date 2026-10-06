@@ -7,6 +7,8 @@ import type { PromptItem, TrendGenerationSettings, TrendUserField } from '@/lib/
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { deactivatePrompt, fetchPromptLink, fetchPrompts, submitPrompt, uploadFile } from '@/lib/api'
+import { publishSeedanceTrendUpload } from '@/lib/seedance-trend-admin-api'
+import { SeedanceTrendUploadReferences, emptySeedanceUploadReferences, type SeedanceUploadReference } from '@/components/seedance-trend-upload-references'
 import { updateTrendPreview } from '@/lib/trend-admin-api'
 import { mediaAspectRatio, normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
 import { formatTrendRepeatCost } from '@/lib/trend-price'
@@ -103,8 +105,13 @@ function previewKindForTrend(trend: PromptItem, legacyVideoFallback = false): Tr
   return legacyVideoFallback ? 'video' : 'image'
 }
 
+function referenceIndices(items: SeedanceUploadReference[], mode: 'fixed' | 'replaceable', identityIndex?: number | null) {
+  return items.flatMap((item, offset) => item.mode === mode && offset + 1 !== identityIndex ? [offset + 1] : [])
+}
+
 export function TrendsTab() {
   const { state, trendToRun, setTrendToRun } = useApp()
+  const submittingRef = useRef(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const editFileInputRef = useRef<HTMLInputElement>(null)
   const previewUploadAttemptRef = useRef(0)
@@ -131,6 +138,8 @@ export function TrendsTab() {
   const [previewUrl, setPreviewUrl] = useState('')
   const [uploadingPreview, setUploadingPreview] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [ownReferences, setOwnReferences] = useState(emptySeedanceUploadReferences)
+  const [uploadingOwnReferences, setUploadingOwnReferences] = useState(false)
   const [removingId, setRemovingId] = useState<number | null>(null)
   const [copiedId, setCopiedId] = useState<number | null>(null)
   const [editingTrend, setEditingTrend] = useState<PromptItem | null>(null)
@@ -141,6 +150,9 @@ export function TrendsTab() {
   const [videoAspectRatios, setVideoAspectRatios] = useState<Record<number, string>>({})
   const [videoPreviewReady, setVideoPreviewReady] = useState<Record<number, boolean>>({})
   const [videoPreviewFailed, setVideoPreviewFailed] = useState<Record<number, boolean>>({})
+
+  const isSeedanceUpload = trendKind === 'video' && (model === 'seedance_2' || model === 'seedance_2_5')
+  const hasOwnReferences = isSeedanceUpload && (ownReferences.images.length + ownReferences.videos.length + ownReferences.audios.length > 0)
 
   const isLive = state.mode === 'live'
   const isAdmin = state.user.isAdmin
@@ -235,12 +247,9 @@ export function TrendsTab() {
 
   useEffect(() => {
     if (trendKind !== 'video' || !selectedTrendVideoModel) return
-    setVideoDuration((current) => (
-      selectedTrendVideoModel.durations.includes(current)
-        ? current
-        : selectedTrendVideoModel.durations[0] || 5
-    ))
-  }, [selectedTrendVideoModel, trendKind])
+    const durations = hasOwnReferences ? selectedTrendVideoModel.durations.filter((duration) => duration > 0) : selectedTrendVideoModel.durations
+    setVideoDuration((current) => (durations.includes(current) ? current : durations[0] || 5))
+  }, [hasOwnReferences, selectedTrendVideoModel, trendKind])
 
   useEffect(() => {
     const selectedModel = trendKind === 'video'
@@ -263,19 +272,37 @@ export function TrendsTab() {
     trendRatio,
   ])
 
+  useEffect(() => {
+    setOwnReferences(emptySeedanceUploadReferences())
+    setUploadingOwnReferences(false)
+  }, [model, trendKind])
+
+  const clearPreview = () => {
+    previewUploadAttemptRef.current += 1
+    previewUploadPromiseRef.current = null
+    setUploadingPreview(false)
+    setPreviewUrl((current) => {
+      if (current.startsWith('blob:')) URL.revokeObjectURL(current)
+      return ''
+    })
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
   const changeTrendKind = (nextKind: TrendKind) => {
-    if (nextKind === trendKind) return
+    if (submittingRef.current || nextKind === trendKind) return
     setTrendKind(nextKind)
   }
 
   const changePreviewKind = (nextKind: TrendPreviewKind) => {
-    if (nextKind === previewKind) return
+    if (submittingRef.current || nextKind === previewKind) return
     setPreviewKind(nextKind)
-    setPreviewUrl('')
-    if (fileInputRef.current) fileInputRef.current.value = ''
+    clearPreview()
   }
 
   const resetForm = () => {
+    clearPreview()
+    setOwnReferences(emptySeedanceUploadReferences())
+    setUploadingOwnReferences(false)
     setTrendKind('image')
     setPreviewKind('image')
     setTitle('')
@@ -308,7 +335,7 @@ export function TrendsTab() {
   }
 
   const handlePreviewUpload = async (file?: File) => {
-    if (!file) return
+    if (!file || submittingRef.current) return
     const detectedKind = previewKindFromFile(file)
     if (!detectedKind || detectedKind !== previewKind) {
       setError(previewKind === 'video' ? 'Выберите видео MP4/WebM/MOV' : 'Выберите изображение JPG/PNG/WebP')
@@ -422,7 +449,7 @@ export function TrendsTab() {
   }
 
   const handleCreate = async () => {
-    if (!isAdmin || submitting) return
+    if (!isAdmin || submittingRef.current || uploadingPreview || uploadingOwnReferences) return
     const isGenjutsu = trendKind === 'video' && model === 'genjutsu'
     if (!title.trim() || !previewUrl || !model || (!isGenjutsu && !promptText.trim())) {
       setError(isGenjutsu ? 'Заполните название, preview и выберите рецепт Genjutsu' : 'Заполните название, preview, нейросеть и скрытый prompt')
@@ -436,6 +463,17 @@ export function TrendsTab() {
       setError('Укажите название поля шаблона')
       return
     }
+    if (hasOwnReferences) {
+      const identity = ownReferences.identityImageIndex
+      const otherReferences = referenceIndices(ownReferences.images, 'fixed', identity).length + referenceIndices(ownReferences.images, 'replaceable', identity).length
+        + referenceIndices(ownReferences.videos, 'fixed').length + referenceIndices(ownReferences.videos, 'replaceable').length
+        + referenceIndices(ownReferences.audios, 'fixed').length + referenceIndices(ownReferences.audios, 'replaceable').length
+      if (!identity || !otherReferences) {
+        setError('Для шаблона выберите фото для замены лица и хотя бы ещё один закреплённый или заменяемый референс')
+        return
+      }
+    }
+    submittingRef.current = true
     setSubmitting(true)
     setError(null)
     try {
@@ -516,7 +554,29 @@ export function TrendsTab() {
             nsfw_enabled: false,
           }
 
-      const created = await submitPrompt({
+      const created = hasOwnReferences && isSeedanceUpload && ownReferences.identityImageIndex
+        ? await publishSeedanceTrendUpload({
+            model: model as 'seedance_2' | 'seedance_2_5',
+            title: title.trim(),
+            description: description.trim(),
+            promptText: promptText.trim(),
+            previewUrl: finalPreviewUrl,
+            previewType: previewKind,
+            imageUrls: ownReferences.images.map((item) => item.url),
+            videoUrls: ownReferences.videos.map((item) => item.url),
+            audioUrls: ownReferences.audios.map((item) => item.url),
+            identityImageIndex: ownReferences.identityImageIndex,
+            fixedImageIndices: referenceIndices(ownReferences.images, 'fixed', ownReferences.identityImageIndex),
+            fixedVideoIndices: referenceIndices(ownReferences.videos, 'fixed'),
+            fixedAudioIndices: referenceIndices(ownReferences.audios, 'fixed'),
+            replaceableImageIndices: referenceIndices(ownReferences.images, 'replaceable', ownReferences.identityImageIndex),
+            replaceableVideoIndices: referenceIndices(ownReferences.videos, 'replaceable'),
+            replaceableAudioIndices: referenceIndices(ownReferences.audios, 'replaceable'),
+            duration: videoDuration,
+            aspectRatio: trendRatio,
+            userFields,
+          })
+        : await submitPrompt({
         title: title.trim(),
         description: description.trim(),
         promptText: isGenjutsu && selectedGenjutsuRecipe ? `Genjutsu recipe ${selectedGenjutsuRecipe.id}` : promptText.trim(),
@@ -533,6 +593,7 @@ export function TrendsTab() {
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось опубликовать тренд')
     } finally {
+      submittingRef.current = false
       setSubmitting(false)
     }
   }
@@ -727,7 +788,17 @@ export function TrendsTab() {
             type="button"
             size="sm"
             className="shrink-0 bg-gold text-primary-foreground hover:bg-gold/90"
-            onClick={() => setIsCreateOpen((value) => !value)}
+            disabled={submitting}
+            onClick={() => {
+              if (submittingRef.current) return
+              if (isCreateOpen) {
+                setOwnReferences(emptySeedanceUploadReferences())
+                setUploadingOwnReferences(false)
+                if (uploadingPreview) clearPreview()
+                setError(null)
+              }
+              setIsCreateOpen((value) => !value)
+            }}
           >
             {isCreateOpen ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
             {isCreateOpen ? 'Закрыть' : 'Добавить'}
@@ -736,7 +807,8 @@ export function TrendsTab() {
       </div>
 
       {isAdmin && isCreateOpen ? (
-        <section className="glass space-y-4 rounded-2xl border border-gold/25 p-4">
+        <section className="glass min-w-0 rounded-2xl border border-gold/25 p-4">
+          <fieldset disabled={submitting} className="min-w-0 space-y-4">
           <div>
             <p className="text-sm font-semibold text-foreground">Новый тренд</p>
             <p className="mt-1 text-xs text-muted-foreground">
@@ -831,7 +903,7 @@ export function TrendsTab() {
               <label className="block space-y-2">
                 <span className="text-xs font-medium text-muted-foreground">Длительность</span>
                 <select value={videoDuration} onChange={(event) => setVideoDuration(Number(event.target.value))} className="h-11 w-full rounded-xl border border-border/50 bg-secondary/70 px-3 text-sm text-foreground">
-                  {(selectedTrendVideoModel?.durations || [5]).map((duration) => (
+                  {(selectedTrendVideoModel?.durations || [5]).filter((duration) => !hasOwnReferences || duration > 0).map((duration) => (
                     <option key={duration} value={duration}>{duration} сек</option>
                   ))}
                 </select>
@@ -901,10 +973,7 @@ export function TrendsTab() {
                 )}
                 <button
                   type="button"
-                  onClick={() => {
-                    setPreviewUrl('')
-                    if (fileInputRef.current) fileInputRef.current.value = ''
-                  }}
+                  onClick={clearPreview}
                   className="absolute right-2 top-2 rounded-full bg-background/80 p-2 text-foreground backdrop-blur"
                   aria-label="Удалить preview"
                 >
@@ -915,6 +984,7 @@ export function TrendsTab() {
               <div className="relative flex aspect-[16/9] w-full flex-col items-center justify-center gap-2 overflow-hidden rounded-2xl border border-dashed border-border/70 bg-secondary/35 p-4 text-sm text-muted-foreground transition-colors hover:border-gold/40 hover:text-foreground">
                 <input
                   ref={fileInputRef}
+                  aria-label="Preview тренда"
                   type="file"
                   accept={previewKind === 'video' ? 'video/mp4,video/webm,video/quicktime' : 'image/jpeg,image/png,image/webp,image/avif'}
                   className="relative z-10 block w-full cursor-pointer rounded-lg border border-border/60 bg-background/80 px-3 py-2 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-60 file:mr-3 file:rounded-md file:border-0 file:bg-gold file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-primary-foreground"
@@ -935,6 +1005,15 @@ export function TrendsTab() {
               <p className="text-xs text-muted-foreground">Сохраняю preview на сервере. Не закрывайте mini app до завершения.</p>
             ) : null}
           </div>
+
+          {isSeedanceUpload && <SeedanceTrendUploadReferences
+            key={`${trendKind}:${model}`}
+            value={ownReferences}
+            model={selectedTrendVideoModel}
+            onChange={setOwnReferences}
+            onUploadingChange={setUploadingOwnReferences}
+            disabled={submitting}
+          />}
 
           {model !== 'genjutsu' && <div className="space-y-3 rounded-2xl border border-border/50 bg-secondary/25 p-3">
             <div>
@@ -1021,12 +1100,13 @@ export function TrendsTab() {
           <Button
             type="button"
             className="w-full bg-gold text-primary-foreground hover:bg-gold/90"
-            disabled={submitting || uploadingPreview}
+            disabled={submitting || uploadingPreview || uploadingOwnReferences}
             onClick={() => void handleCreate()}
           >
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
             Опубликовать тренд
           </Button>
+          </fieldset>
         </section>
       ) : null}
 

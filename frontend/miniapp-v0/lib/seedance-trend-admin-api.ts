@@ -1,6 +1,6 @@
 'use client'
 
-import type { PromptItem } from './types'
+import type { PromptItem, TrendUserField } from './types'
 import { getApiBasePath, getInitData, getStartParamFallback } from './api'
 
 export interface SeedanceTrendReferenceItem {
@@ -89,6 +89,57 @@ export async function publishSeedanceTrend(payload: {
       replaceable_image_indices: payload.replaceableImageIndices,
       replaceable_video_indices: payload.replaceableVideoIndices,
       replaceable_audio_indices: payload.replaceableAudioIndices,
+    },
+  )
+  return response.prompt
+}
+
+
+export interface SeedanceTrendUploadPayload {
+  model: 'seedance_2' | 'seedance_2_5'
+  title: string
+  description: string
+  promptText: string
+  previewUrl: string
+  previewType: 'image' | 'video'
+  imageUrls: string[]
+  videoUrls: string[]
+  audioUrls: string[]
+  identityImageIndex: number
+  fixedImageIndices: number[]
+  fixedVideoIndices: number[]
+  fixedAudioIndices: number[]
+  replaceableImageIndices: number[]
+  replaceableVideoIndices: number[]
+  replaceableAudioIndices: number[]
+  duration: number
+  aspectRatio: string
+  userFields: TrendUserField[]
+}
+
+export async function publishSeedanceTrendUpload(payload: SeedanceTrendUploadPayload): Promise<PromptItem> {
+  const response = await postAdmin<{ ok: true; prompt: PromptItem }>(
+    'admin/trends/seedance/publish-upload',
+    {
+      model: payload.model,
+      title: payload.title,
+      description: payload.description,
+      prompt_text: payload.promptText,
+      preview_url: payload.previewUrl,
+      preview_type: payload.previewType,
+      image_urls: payload.imageUrls,
+      video_urls: payload.videoUrls,
+      audio_urls: payload.audioUrls,
+      identity_image_index: payload.identityImageIndex,
+      fixed_image_indices: payload.fixedImageIndices,
+      fixed_video_indices: payload.fixedVideoIndices,
+      fixed_audio_indices: payload.fixedAudioIndices,
+      replaceable_image_indices: payload.replaceableImageIndices,
+      replaceable_video_indices: payload.replaceableVideoIndices,
+      replaceable_audio_indices: payload.replaceableAudioIndices,
+      duration: payload.duration,
+      aspect_ratio: payload.aspectRatio,
+      user_fields: payload.userFields,
     },
   )
   return response.prompt

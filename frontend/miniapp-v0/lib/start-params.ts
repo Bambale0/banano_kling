@@ -7,6 +7,7 @@ export type MiniAppStartTarget =
   | { kind: 'remix'; genId: number; referralCodeForAttribution?: string }
   | { kind: 'prompt'; promptId: number; referralCodeForAttribution?: string }
   | { kind: 'task'; taskId: string }
+  | { kind: 'genjutsu_recipe'; recipeId: string; referralCodeForAttribution?: string }
 
 function normalizeCode(value: string) {
   return value.trim().toUpperCase()
@@ -55,6 +56,11 @@ export function parseMiniAppStartParam(rawValue: string): MiniAppStartTarget | n
       : null
   }
 
+  if (raw.startsWith('genjutsu_recipe_')) {
+    const { value, referralCodeForAttribution } = splitReferral(raw.slice('genjutsu_recipe_'.length))
+    return /^[a-f0-9]{32}$/.test(value) ? { kind: 'genjutsu_recipe', recipeId: value, referralCodeForAttribution } : null
+  }
+
   if (raw.startsWith('feed_') || raw.startsWith('remix_')) {
     const kind = raw.startsWith('remix_') ? 'remix' : 'feed'
     const payload = raw.slice(raw.indexOf('_') + 1)
@@ -76,4 +82,21 @@ export function parseMiniAppStartParam(rawValue: string): MiniAppStartTarget | n
   }
 
   return null
+}
+
+// Recipe URLs from legacy Telegram callbacks belong to the public preview
+// router. Owned run/admin entry remains a separate studio contract.
+export function genjutsuRecipeStartParam(start: string, search: string): string {
+  const params = new URLSearchParams(search)
+  if (params.get('genjutsu') === '1' && params.has('genjutsu_recipe') && !params.get('genjutsu_run')) {
+    return 'genjutsu_recipe_' + params.get('genjutsu_recipe')
+  }
+  return start.startsWith('genjutsu_recipe_') ? start : ''
+}
+
+export function startParamFromLocation(search: string, hash: string): string {
+  const query = new URLSearchParams(search)
+  const fragment = new URLSearchParams(hash.replace(/^#/, ''))
+  return query.get('startapp') || query.get('tgWebAppStartParam')
+    || fragment.get('startapp') || fragment.get('tgWebAppStartParam') || ''
 }

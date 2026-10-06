@@ -181,6 +181,11 @@ export function ProfileTab() {
   const [brokenMediaIds, setBrokenMediaIds] = useState<Set<number>>(() => new Set())
   const [profile, setProfile] = useState<ProfileSummary | null>(null)
   const [previewItem, setPreviewItem] = useState<FeedItem | null>(null)
+  useEffect(() => {
+    const closePreview = () => setPreviewItem(null)
+    window.addEventListener('banano:feed-preview-close', closePreview)
+    return () => window.removeEventListener('banano:feed-preview-close', closePreview)
+  }, [])
   const [commentsItem, setCommentsItem] = useState<FeedItem | null>(null)
   const [comments, setComments] = useState<FeedComment[]>([])
   const [commentsLoading, setCommentsLoading] = useState(false)

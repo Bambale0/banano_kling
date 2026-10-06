@@ -154,10 +154,9 @@ async def redirect_legacy_repeat(callback, task) -> bool:
         return False
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
-    from bot.config import config
     from bot.database import get_profile_generation_card
-
-    from .runtime import studio_url
+    from bot.keyboards import _mini_app_url_with_start_param
+    from bot.miniapp_links import feed_start_param
 
     card = await get_profile_generation_card(task.id)
     recipe_id = card.get("genjutsu_recipe_id") if card else None
@@ -166,10 +165,12 @@ async def redirect_legacy_repeat(callback, task) -> bool:
         return True
     await callback.answer()
     await callback.message.answer(
-        "Откройте Genjutsu, чтобы подставить свои референсы и проверить стоимость.",
+        "Посмотрите видео в ленте, затем нажмите «Повторить».",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
             text="Повторить в Genjutsu",
-            web_app=WebAppInfo(url=studio_url(config.mini_app_url, recipe_id=recipe_id)),
+            web_app=WebAppInfo(url=_mini_app_url_with_start_param(
+                feed_start_param(card["id"], card.get("author_referral_code"))
+            )),
         )]]),
     )
     return True
