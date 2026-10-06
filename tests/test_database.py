@@ -2137,3 +2137,55 @@ async def test_claim_task_delivery_does_not_retry_unavailable(monkeypatch):
 
     assert await database.claim_task_delivery("telegram-unavailable") is False
     connect.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_unavailable_chat_can_be_revalidated_for_result_delivery(isolated_database):
+    user = await database.get_or_create_user(
+        990101,
+        initial_telegram_chat_state="unavailable",
+    )
+    probe = AsyncMock(return_value=object())
+
+    assert await database.can_attempt_telegram_delivery(
+        user.telegram_id,
+        probe=probe,
+    ) is True
+    probe.assert_awaited_once_with(user.telegram_id)
+
+    async with db_backend.connect(database.DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
+        row = await (await db.execute(
+            "SELECT telegram_chat_state FROM users WHERE telegram_id = ?",
+            (user.telegram_id,),
+        )).fetchone()
+    assert row["telegram_chat_state"] == "available"
+
+
+@pytest.mark.asyncio
+async def test_unavailable_chat_live_terminal_probe_remains_blocked(isolated_database):
+    user = await database.get_or_create_user(
+        990102,
+        initial_telegram_chat_state="unavailable",
+    )
+    probe = AsyncMock(side_effect=RuntimeError("Bad Request: chat not found"))
+
+    assert await database.can_attempt_telegram_delivery(
+        user.telegram_id,
+        probe=probe,
+    ) is False
+
+
+@pytest.mark.asyncio
+async def test_unavailable_chat_transient_probe_does_not_suppress_result(isolated_database):
+    user = await database.get_or_create_user(
+        990103,
+        initial_telegram_chat_state="unavailable",
+    )
+    probe = AsyncMock(side_effect=TimeoutError("telegram probe timeout"))
+
+    assert await database.can_attempt_telegram_delivery(
+        user.telegram_id,
+        probe=probe,
+    ) is True
+    assert await database.can_attempt_telegram_delivery(user.telegram_id) is False

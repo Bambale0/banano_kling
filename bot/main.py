@@ -1551,7 +1551,10 @@ async def _send_polled_nexus_image_result(
 
     reference_preview_urls = _extract_reference_image_urls(task)
     model_label = _get_task_model_label(getattr(task, "model", None), getattr(task, "type", None))
-    if not await can_attempt_telegram_delivery(telegram_id):
+    if not await can_attempt_telegram_delivery(
+        telegram_id,
+        probe=getattr(bot_instance, "get_chat", None),
+    ):
         await complete_video_task(task_lookup_id, persisted_url)
         await mark_task_delivery_status(
             task_lookup_id,
@@ -3044,7 +3047,10 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                         task, context="kling_success_code200"
                     )
                     if telegram_id:
-                        if not await can_attempt_telegram_delivery(telegram_id):
+                        if not await can_attempt_telegram_delivery(
+                            telegram_id,
+                            probe=getattr(request.app["bot"], "get_chat", None),
+                        ):
                             await complete_video_task(task_id, video_url)
                             await mark_task_delivery_status(
                                 task_id,
@@ -3250,7 +3256,10 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                         bot_instance = request.app["bot"]
                         try:
                             if status in {"success", "completed"} and video_url:
-                                if not await can_attempt_telegram_delivery(telegram_id):
+                                if not await can_attempt_telegram_delivery(
+                                    telegram_id,
+                                    probe=getattr(request.app["bot"], "get_chat", None),
+                                ):
                                     await complete_video_task(task_id, video_url)
                                     await mark_task_delivery_status(
                                         task_id,
@@ -4610,7 +4619,10 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         )
                         return web.Response(status=200)
 
-                    if not await can_attempt_telegram_delivery(telegram_id):
+                    if not await can_attempt_telegram_delivery(
+                        telegram_id,
+                        probe=getattr(request.app["bot"], "get_chat", None),
+                    ):
                         await complete_video_task(task_id, asset_id)
                         await mark_task_delivery_status(
                             task_id,
@@ -4698,7 +4710,10 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 logger.error(f"Cannot find telegram_id for user_id {task.user_id}")
                 return web.Response(status=200)
 
-            if not await can_attempt_telegram_delivery(telegram_id):
+            if not await can_attempt_telegram_delivery(
+                telegram_id,
+                probe=getattr(request.app["bot"], "get_chat", None),
+            ):
                 await complete_video_task(task_id, result_url)
                 await mark_task_delivery_status(
                     task_id,

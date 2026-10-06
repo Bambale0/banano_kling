@@ -1297,3 +1297,76 @@ async def test_seedance25_transient_delivery_error_remains_pending(monkeypatch):
         "pending",
         error="request timeout",
     )
+
+
+@pytest.mark.asyncio
+async def test_seedance25_ephemeral_result_is_persisted_before_completion(monkeypatch):
+    from bot import database
+
+    user = await database.get_or_create_user(123456)
+    await database.add_generation_task(
+        user.id,
+        user.telegram_id,
+        "seedance-ephemeral-result",
+        "video",
+        "no_preset_video",
+        model="seedance_2_5",
+        request_data="{}",
+    )
+    persist = AsyncMock(return_value=[
+        "https://tanyapi.chillcreative.ru/uploads/feed/durable.mp4"
+    ])
+    monkeypatch.setattr(
+        "bot.services.feed_persist.persist_feed_result_urls",
+        persist,
+    )
+
+    await fullstack_module._store_task_result(
+        "seedance-ephemeral-result",
+        "https://tempfile.aiquickdraw.com/seedance/provider.mp4",
+        ["https://tempfile.aiquickdraw.com/seedance/provider.mp4"],
+        success=True,
+    )
+
+    task = await database.get_task_by_id("seedance-ephemeral-result")
+    assert task.status == "completed"
+    assert task.result_url == "https://tanyapi.chillcreative.ru/uploads/feed/durable.mp4"
+    assert task.result_urls == [
+        "https://tanyapi.chillcreative.ru/uploads/feed/durable.mp4"
+    ]
+    persist.assert_awaited_once_with(
+        ["https://tempfile.aiquickdraw.com/seedance/provider.mp4"],
+        require_local=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_seedance25_ephemeral_result_persist_failure_keeps_task_retryable(monkeypatch):
+    from bot import database
+
+    user = await database.get_or_create_user(123456)
+    await database.add_generation_task(
+        user.id,
+        user.telegram_id,
+        "seedance-ephemeral-persist-fail",
+        "video",
+        "no_preset_video",
+        model="seedance_2_5",
+        request_data="{}",
+    )
+    monkeypatch.setattr(
+        "bot.services.feed_persist.persist_feed_result_urls",
+        AsyncMock(return_value=[]),
+    )
+
+    with pytest.raises(RuntimeError, match="durable Seedance 2.5 result"):
+        await fullstack_module._store_task_result(
+            "seedance-ephemeral-persist-fail",
+            "https://tempfile.aiquickdraw.com/seedance/provider.mp4",
+            ["https://tempfile.aiquickdraw.com/seedance/provider.mp4"],
+            success=True,
+        )
+
+    task = await database.get_task_by_id("seedance-ephemeral-persist-fail")
+    assert task.status == "pending"
+    assert task.result_url is None
