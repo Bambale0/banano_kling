@@ -31,6 +31,7 @@ interface AppContextType {
   closeWorkspace: () => void
   consumeFeedDeepLink: () => void
   refreshTasks: () => Promise<void>
+  refreshTelegramChatAccess: (signal: AbortSignal) => Promise<boolean>
   setCredits: (amount: number) => void
   addTask: (task: Task) => void
   updateTask: (taskId: string, patch: Partial<Task>) => void
@@ -155,6 +156,7 @@ function feedReferenceToUploadedFile(url: string, index: number, type: 'image' |
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
+  const chatAccessRevision = useRef(0)
   const [state, setState] = useState<AppState>(() => createLockedState(null, true))
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
   const [taskDetail, setTaskDetail] = useState<TaskDetail | null>(null)
@@ -207,7 +209,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setTaskDetail(detail)
   }, [])
 
-  const applyBootstrap = useCallback((data: BootstrapResponse) => {
+  const applyBootstrap = useCallback((data: BootstrapResponse, accessRevision: number) => {
     setSelectedTask((current) => {
       if (!current) return current
       const fresh = data.recent_tasks.find((task) => task.task_id === current.task_id)
@@ -218,7 +220,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const fresh = data.recent_tasks.find((task) => task.task_id === current.task_id)
       return fresh ? { ...current, ...fresh } : current
     })
-    setState({
+    setState(prev => ({
       mode: 'live',
       isLoading: false,
       error: null,
@@ -235,7 +237,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         promptRepeatBalanceRub: data.prompt_repeat_balance_rub || 0,
         promptRepeatTotalRub: data.prompt_repeat_total_rub || 0,
         botUsername: data.bot_username || '',
-        telegramChatAvailable: data.telegram_chat_available !== false,
+        telegramChatAvailable: accessRevision === chatAccessRevision.current
+          ? data.telegram_chat_available ?? prev.user.telegramChatAvailable
+          : prev.user.telegramChatAvailable,
         credits: data.credits,
         isAdmin: data.is_admin,
       },
@@ -246,7 +250,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       paymentPackages:
         data.payment_packages?.length ? data.payment_packages : mockAppState.paymentPackages,
       lastSync: new Date(),
-    })
+    }))
   }, [])
 
   const applyLockedState = useCallback((message: string | null = telegramLockedMessage) => {
@@ -353,6 +357,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setActiveTabState(7)
   }, [cancelStartNavigation])
 
+  // Capability-only verification must not unmount generation forms or replace drafts.
+  const refreshTelegramChatAccess = useCallback(async (signal: AbortSignal) => {
+    const data = await bootstrapApp(signal)
+    if (signal.aborted) throw new DOMException('Check cancelled', 'AbortError')
+    const available = data.telegram_chat_available === true
+    chatAccessRevision.current += 1
+    setState(prev => ({
+      ...prev,
+      user: { ...prev.user, telegramChatAvailable: available },
+    }))
+    return available
+  }, [])
+
   const refreshTasks = useCallback(async () => {
     setState(prev => ({ ...prev, isLoading: true, error: null }))
     const hasInitData = hasTelegramInitData() || await waitForTelegramInitData(5000)
@@ -361,8 +378,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return
     }
     try {
+      const accessRevision = chatAccessRevision.current
       const data = await bootstrapApp()
-      applyBootstrap(data)
+      applyBootstrap(data, accessRevision)
     } catch {
       applyBootstrapErrorState('Не удалось обновить данные прямо сейчас. Показываю только подтверждённые данные без демо-подстановок.')
     }
@@ -607,8 +625,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (syncing || document.visibilityState !== 'visible' || !getInitData()) return
       syncing = true
       try {
+        const accessRevision = chatAccessRevision.current
         const data = await bootstrapApp()
-        applyBootstrap(data)
+        applyBootstrap(data, accessRevision)
       } catch {
         // Keep the last confirmed state; the next tick or focus event retries.
       } finally {
@@ -691,6 +710,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         closeWorkspace,
         consumeFeedDeepLink,
         refreshTasks,
+        refreshTelegramChatAccess,
         setCredits,
         addTask,
         updateTask,

@@ -511,13 +511,17 @@ try {
   assert.equal(await page.evaluate(() => window.__copiedText),
     `https://t.me/test_bot?startapp=prompt_${curatedTrend.id}_ref_E2EADMIN`)
 
-  // Telegram can keep the WebView alive between openings. Re-activation must
-  // restore the product default for sessions without an actionable deep link.
+  // Returning from a bot Start link must not reset an in-progress form.
+  // Trends remains the first-launch default; later navigation is explicit.
   await page.getByRole('button', { name: 'Фото', exact: true }).click()
-  await page.getByText('Curated Video', { exact: true }).waitFor({ state: 'hidden' })
+  const returnDraft = page.getByPlaceholder('Опишите сцену, стиль, свет, камеру, детали персонажей и желаемый результат...')
+  await returnDraft.fill('Keep this draft when Telegram activates the WebView')
   await page.evaluate(() => {
     for (const handler of window.__telegramEventHandlers?.activated || []) handler()
   })
+  assert.equal(await returnDraft.inputValue(), 'Keep this draft when Telegram activates the WebView')
+  assert.equal(await page.getByText('Curated Video', { exact: true }).count(), 0)
+  await page.getByRole('button', { name: 'Тренды', exact: true }).click()
   await page.getByText('Curated Video', { exact: true }).waitFor()
 
   // Payment E2E: Robokassa is primary, KASSA is reserve, Lava stays lower.

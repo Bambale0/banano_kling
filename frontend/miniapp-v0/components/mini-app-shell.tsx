@@ -30,20 +30,15 @@ interface MiniAppShellProps {
   children: ReactNode
 }
 
-interface TelegramActivationBridge {
-  onEvent?: (eventType: string, handler: () => void) => void
-  offEvent?: (eventType: string, handler: () => void) => void
-}
 
 function MiniAppBody({ children }: MiniAppShellProps) {
-  const { state, activeWorkspace, setActiveTab, refreshTasks } = useApp()
+  const { state, activeWorkspace, setActiveTab, refreshTelegramChatAccess } = useApp()
   const isBootstrapping = state.isLoading
   const isLocked = state.mode === 'locked'
 
   useEffect(() => {
     if (typeof window === 'undefined' || state.mode !== 'live') return
 
-    const webApp = window.Telegram?.WebApp as unknown as TelegramActivationBridge | undefined
     const openDefaultTrends = () => {
       const start = getStartParamFallback()
       const rawStartParam = genjutsuRecipeStartParam(start, window.location.search) || start
@@ -53,10 +48,7 @@ function MiniAppBody({ children }: MiniAppShellProps) {
     }
 
     openDefaultTrends()
-    if (!webApp?.onEvent) return
-
-    webApp.onEvent('activated', openDefaultTrends)
-    return () => webApp.offEvent?.('activated', openDefaultTrends)
+    // Returning from the bot must preserve the active form and its references.
   }, [setActiveTab, state.mode])
 
   return (
@@ -74,6 +66,11 @@ function MiniAppBody({ children }: MiniAppShellProps) {
         <>
           <div className="relative flex flex-col min-h-screen safe-top min-w-0 overflow-x-hidden">
             <HeroHeader />
+          <BotWriteAccessGate
+            required={!state.user.telegramChatAvailable}
+            botUsername={state.user.botUsername}
+            onRefresh={refreshTelegramChatAccess}
+          />
             <main className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden pb-[calc(6rem+env(safe-area-inset-bottom))]">
               <div className="mx-auto w-full max-w-[1180px]">
                 {state.error && <p role="alert" className="mx-4 mt-4 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{state.error}</p>}
@@ -87,11 +84,6 @@ function MiniAppBody({ children }: MiniAppShellProps) {
           <GenjutsuEntry />
           <BalanceSheet />
           {activeWorkspace === 'partners' ? <PartnerApprovalSheet /> : <WorkspaceSheet />}
-          <BotWriteAccessGate
-            required={!state.user.telegramChatAvailable}
-            botUsername={state.user.botUsername}
-            onRefresh={refreshTasks}
-          />
         </>
       )}
       <Toaster richColors position="top-center" />

@@ -1,5 +1,21 @@
 # Execution ledger
 
+## 2026-10-06 — Direct bot Start gate, bounded return verification
+
+- Baseline: tanyapi `b7c71a51727d4d5953536a50b9c0c2d15ef3dee6`; isolated branch `fix/bot-start-gate`.
+- User outcome (clarified 16:28 UTC): bot delivery is OPTIONAL. Primary button opens bot Start directly, with «Пропустить» to use generation/Studio immediately. Session-only dismissal survives tab/refresh without pretending delivery permission exists; a nonblocking re-entry offer remains. Return verification is bounded and server-confirmed.
+- Audit: old native callback and fetch have no deadlines; pending UI hides fallback. cmd_start marks chat available before routing. Existing refreshTasks unmounts forms via global loader, so return verification must update only the confirmed capability without loading/navigation reset.
+- Scope: frontend gate/API/context and mock-only regression/E2E. No database/schema/config/payment/provider changes, no real bot messages, generations or production writes.
+- Plan: RED regression → direct Start action → abortable capability refresh → timeout/cancel/return tests → 4-width mock browser coverage → lint/types/build/full tests → review → draft PR; release requires separate authorization.
+- Skills: Bambale0/skills diagnosing-bugs and tdd; Bambale0/claw evidence-first workflow; anthropics/skills webapp-testing. Test seams: gate interaction, bootstrap capability update, mocked browser return journey.
+- Progress: original never-callback regression reproduced RED; direct Start and abortable capability-only checks implemented. Prior-bootstrap capability revision guard prevents stale reopening; activated no longer resets a live form.
+- Verification: TypeScript, lint, full frontend 34 suites / 214 tests and production export build passed. New offline browser suite passed twice at 320/375/390/430px with real 12s timeout, denial/error/cancel/return/reappearance and form/reference preservation. 320/430 screenshots visually checked: no clipping or overlap. Independent read-only review found no remaining blocker. Existing full critical E2E passed (132.7s, exit 0) with its prior forced-tab-reset assertion updated to the new preservation contract.
+- Config/schema/provider/payment changes: none. No real Telegram permission request, message, generation or payment executed. Legacy native endpoint remains for older clients; new UI never calls it.
+- Latest optional-flow verification: focused 27 tests and full frontend 34 suites / 216 tests, TypeScript, lint and production build passed. Independent optional-UI/backend review found no blocker. Backend generation admission and Studio retrieval remain independent of delivery capability; result retention precedes message guards. Final optional-generation mobile E2E passed all 320/375/390/430px (84.76s): Skip persists through return/tab/refresh/reload, mock image+video generation succeeds with delivery=false and zero bot calls, draft/reference DOM survives dismissal, pending checks cancel, and offer can reopen. Optional modal/banner screenshots reviewed at 320px. Final existing critical E2E rerun is running on the same export.
+- Remaining: exact PR CI, authorized production rollout and read-only SHA/health/static smoke verification.
+- Rollback: revert this PR; no schema migration. Old Telegram clients may close the WebView when opening Telegram links; this fix preserves live-session forms, not arbitrary reload persistence.
+
+
 ## 2026-10-06 — Combined video preview and Seedance reference release
 
 - Baseline: fresh `origin/tanyapi` at `3fd259c4704ae13593018b90da4b8b0a40bb8ab9`; integration branch `fix/video-preview-trend-references`. Both reviewed task patches were applied to a separate clean checkout; only the append-only execution ledger overlapped and both task records were preserved.
