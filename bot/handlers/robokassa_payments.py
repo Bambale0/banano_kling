@@ -192,6 +192,15 @@ async def initiate_robokassa_payment(
     total_credits = total_package_credits(package, promo_bonus)
     user = await get_or_create_user(callback.from_user.id)
 
+    try:
+        robokassa_service.validate_receipt_config()
+    except ValueError:
+        logger.error("Robokassa checkout blocked: invalid receipt configuration")
+        await callback.answer(
+            "Robokassa временно недоступна. Попробуйте резервный способ оплаты.",
+            show_alert=True,
+        )
+        return
     order_id = ""
     for _ in range(3):
         candidate = new_invoice_id()
@@ -222,6 +231,10 @@ async def initiate_robokassa_payment(
         amount_rub=package["price_rub"],
         inv_id=order_id,
         description=f"Покупка {total_credits} бананов ({package.get("name", "")})",
+        receipt_name=(
+            "Пополнение баланса NEUROMIX для генерации изображений и видео, "
+            f"{total_credits} кредитов"
+        ),
     )
 
     bonus_text = ""
@@ -426,6 +439,13 @@ async def _create_robokassa_miniapp_checkout(
     )
     total_credits = miniapp_module.total_package_credits(package, promo_bonus)
 
+    try:
+        robokassa_service.validate_receipt_config()
+    except ValueError:
+        logger.error("Robokassa checkout blocked: invalid receipt configuration")
+        return web.json_response(
+            {"ok": False, "error": "Robokassa временно недоступна"}, status=503
+        )
     order_id = ""
     for _ in range(3):
         candidate = new_invoice_id()
@@ -454,6 +474,10 @@ async def _create_robokassa_miniapp_checkout(
         amount_rub=package["price_rub"],
         inv_id=order_id,
         description=f"Покупка {total_credits} бананов ({package.get("name", "")})",
+        receipt_name=(
+            "Пополнение баланса NEUROMIX для генерации изображений и видео, "
+            f"{total_credits} кредитов"
+        ),
     )
     return web.json_response(
         {

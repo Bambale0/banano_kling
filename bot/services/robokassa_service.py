@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 import secrets
 import time
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 
 def sanitize_description(value: Any, *, max_length: int = 100) -> str:
@@ -28,6 +29,11 @@ def sanitize_description(value: Any, *, max_length: int = 100) -> str:
     return (cleaned or "Оплата")[:max_length]
 
 ROBOKASSA_MAX_INV_ID = 9_223_372_036_854_775_807
+_RECEIPT_TAXES = {"none", "vat0", "vat10", "vat110", "vat20", "vat22",
+                  "vat120", "vat122", "vat5", "vat7", "vat105", "vat107"}
+_RECEIPT_METHODS = {"full_prepayment", "prepayment", "advance", "full_payment",
+                    "partial_payment", "credit", "credit_payment"}
+_RECEIPT_OBJECTS = {"service", "payment", "intellectual_activity", "property_right"}
 _SUPPORTED_HASHES = {"md5", "sha1", "sha256", "sha512"}
 
 
@@ -44,7 +50,7 @@ def normalize_amount(value: Any) -> str:
         amount = Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     except (InvalidOperation, ValueError, TypeError) as exc:
         raise ValueError("Invalid payment amount") from exc
-    if amount <= 0:
+    if not amount.is_finite() or amount <= 0:
         raise ValueError("Payment amount must be positive")
     return format(amount, ".2f")
 
@@ -97,8 +103,13 @@ def build_checkout_signature(
     *,
     algorithm: str = "md5",
     shp: dict[str, Any] | None = None,
+    receipt: str | None = None,
 ) -> str:
-    parts = [merchant_login, raw_amount, inv_id, password1]
+    # Receipt is already URL encoded; use the exact value sent to the provider.
+    parts = [merchant_login, raw_amount, inv_id]
+    if receipt is not None:
+        parts.append(receipt)
+    parts.append(password1)
     parts.extend(f"{key}={value}" for key, value in _shp_items(shp))
     return _hash_text(":".join(parts), algorithm)
 
@@ -128,6 +139,11 @@ class RobokassaService:
         self.hash_algorithm = (
             os.getenv("ROBOKASSA_HASH_ALGORITHM", "md5").strip().lower() or "md5"
         )
+        # Tax must be explicitly confirmed for this merchant before rollout.
+        # Omit SNO rather than inventing a KKT regime for a self-employed seller.
+        self.receipt_tax = os.getenv("ROBOKASSA_RECEIPT_TAX", "").strip()
+        self.receipt_payment_method = os.getenv("ROBOKASSA_RECEIPT_PAYMENT_METHOD", "").strip()
+        self.receipt_payment_object = os.getenv("ROBOKASSA_RECEIPT_PAYMENT_OBJECT", "").strip()
         self.test_mode = _env_bool("ROBOKASSA_TEST_MODE", False)
         self.pay_base_url = (
             os.getenv(
@@ -158,6 +174,32 @@ class RobokassaService:
     def active_password2(self) -> str:
         return self.test_password2 if self.test_mode else self.password2
 
+    def validate_receipt_config(self) -> None:
+        if self.receipt_tax not in _RECEIPT_TAXES:
+            raise ValueError("ROBOKASSA_RECEIPT_TAX must be explicitly configured")
+        if self.receipt_payment_method and self.receipt_payment_method not in _RECEIPT_METHODS:
+            raise ValueError("Invalid ROBOKASSA_RECEIPT_PAYMENT_METHOD")
+        if self.receipt_payment_object and self.receipt_payment_object not in _RECEIPT_OBJECTS:
+            raise ValueError("Invalid ROBOKASSA_RECEIPT_PAYMENT_OBJECT")
+
+    def build_receipt(self, amount: str, name: str) -> str:
+        self.validate_receipt_config()
+        item = {
+            "name": sanitize_description(name, max_length=128),
+            "quantity": 1,
+            "tax": self.receipt_tax,
+        }
+        if self.receipt_payment_method:
+            item["payment_method"] = self.receipt_payment_method
+        if self.receipt_payment_object:
+            item["payment_object"] = self.receipt_payment_object
+        # Serialize the validated decimal amount as a JSON number without a
+        # float round-trip. One balance package is one item, including bonuses.
+        amount = normalize_amount(amount)
+        item_json = json.dumps(item, ensure_ascii=False, separators=(",", ":"))
+        receipt_json = '{"items":[' + item_json[:-1] + ',"sum":' + amount + '}]}'
+        return quote(receipt_json, safe="")
+
     def create_payment_url(
         self,
         *,
@@ -165,6 +207,7 @@ class RobokassaService:
         inv_id: str,
         description: str,
         email: str | None = None,
+        receipt_name: str | None = None,
     ) -> str:
         if not self.enabled:
             raise RuntimeError("Robokassa is not configured")
@@ -174,18 +217,21 @@ class RobokassaService:
             raise ValueError("Robokassa InvId must be a positive 64-bit integer")
 
         amount = normalize_amount(amount_rub)
+        receipt = self.build_receipt(amount, receipt_name or description)
         signature = build_checkout_signature(
             self.merchant_login,
             amount,
             invoice,
             self.active_password1,
             algorithm=self.hash_algorithm,
+            receipt=receipt,
         )
         params: dict[str, str] = {
             "MerchantLogin": self.merchant_login,
             "OutSum": amount,
             "InvId": invoice,
             "Description": sanitize_description(description),
+            "Receipt": receipt,
             "SignatureValue": signature,
             "Culture": "ru",
             "Encoding": "utf-8",
