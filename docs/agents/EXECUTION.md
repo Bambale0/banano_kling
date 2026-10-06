@@ -1305,3 +1305,28 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Standards review of frontend reported no blocking issue. Optional improvement: show the 12-replaceable-slot count before server validation.
 - Source publication idempotency is best effort via per-author content fingerprint and process-local lock; concurrent requests across separate workers do not have a database uniqueness guarantee. No charge/generation occurs during publication.
 - No schema migration, rates/provider changes, old-trend rewrites or production mutation. Dependencies retained for authorized subsequent combined integration; no push/PR/merge/deploy performed.
+## 2026-10-06: Robokassa nomenclature (isolated, not released)
+
+- Baseline: tanyapi 3fd259c4704ae13593018b90da4b8b0a40bb8ab9.
+- Scope: new checkout Receipt for Telegram/Mini App. No production/credentials,
+  provider calls, receipt registration, refunds, cabinet changes, push or deploy.
+- Audit: shared adapter omitted Receipt completely; Description is not an item.
+  Existing amount normalization/signature helpers and both shared callers reused.
+- Invariants: one package = one item; sum equals normalized OutSum; Receipt bound
+  to checkout signature; result signature/idempotent payment completion unchanged.
+- Configuration: explicit receipt tax; optional method/object; no invented SNO.
+  NPD confirmed by owner; RoboChecks SMZ activation unverified release blocker.
+- No schema/API response changes, frontend or migration required. Receipt name
+  derives from actual selected credits; prices/bonus rules remain existing config.
+- Steps: (1) official docs and code audit; (2) red regression (11 passed, 1 failed
+  KeyError Receipt); (3) signed encoded Receipt; (4) both callers, config guard before
+  pending transaction; (5) offline decimal/negative/signature tests; (6) review.
+- Test seam: public checkout URL and callback verifier, synthetic credentials only.
+  33 focused service tests passed. Final combined run: 63 passed (one existing aiohttp NotAppKeyWarning), covering both checkout surfaces and invalid-config guards, existing payment/partner regressions. Ruff, py_compile and git diff --check passed.
+- Observability: invalid config logged without secrets or personal information.
+- Real payment/receipt/end-to-end provider smoke deliberately not run.
+- Rollout: separately approve release, configure ROBOKASSA_RECEIPT_TAX=none for
+  confirmed self-employed seller, verify active SMZ/My Tax integration, run normal
+  CI. No automatic repair of historical payments. Existing callbacks stay enabled.
+
+- Release continuation 2026-10-06: owner approved separate PR/merge/deploy and tax=none. Rebased on PR259 squash 2c080035; preserved both execution entries. Merge serialized after verified PR259 deployment. No actual checkout/payment is authorized by this continuation.
