@@ -338,6 +338,7 @@ export const mockAppState: AppState = {
     promptRepeatBalanceRub: 120,
     promptRepeatTotalRub: 340,
     botUsername: 'BananaBoombot_bot',
+    telegramChatAvailable: true,
     credits: 5,
     isAdmin: false,
   },

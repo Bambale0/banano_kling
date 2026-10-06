@@ -1,5 +1,17 @@
 # Execution ledger
 
+## 2026-10-06 — Mini App write-access gate for referral/deep-link users
+
+- Baseline: `origin/tanyapi` / production `bc588f9d8060c396d3f8b26350345e673e4ee000`; branch `feat/miniapp-write-access-gate`.
+- Problem: a user can open a photo/video flow directly from a Mini App/referral deep link without ever starting the bot chat. The generation completes and remains visible in Studio, but Telegram cannot deliver the result because the user has not granted write access (`telegram_chat_state=unavailable`).
+- Product fix: bootstrap now exposes `telegram_chat_available`. Live Mini App screens show a blocking, screenshot-matched write-access modal whenever delivery is unavailable, before the user can continue generating.
+- Consent path: the primary button invokes Telegram `requestWriteAccess()` from the required user gesture. On native grant, `/mini-app/api/write-access` records chat availability and sends one confirmation message as a best-effort proof that delivery is possible. If Telegram reports a terminal `chat not found`/blocked state, availability is rolled back and the UI falls back to `https://t.me/<bot>?start=miniapp_delivery`.
+- Direct-link compatibility: Telegram clients where native write-access is unavailable/unsupported immediately fall back to opening the bot chat. Returning from the bot triggers a bootstrap refresh; `/start` already marks the chat available, so the gate disappears automatically.
+- Scope: applies to every Mini App photo/video path, not only one referral type. Existing bot users are unaffected; missing bootstrap field defaults open during rolling deploys.
+- TDD RED: frontend test initially failed because the gate component did not exist; backend tests failed because no write-access endpoint/state transition existed. GREEN: 3 backend consent/fallback tests, 3 frontend modal tests; focused Mini App/delivery/database matrix **101 passed**; full Mini App **30 suites / 154 tests passed**; TypeScript, ESLint and production export build pass; full backend **1723 passed / 19 skipped**.
+- Safety/reliability: user consent is explicit; no permission bypass. Terminal Telegram send errors restore `unavailable`; transient confirmation failures do not revoke granted consent. The existing owed-result delivery recovery remains the final authority for real sends. Changed-line Ruff reports **0 relevant diagnostics** and `git diff --check` passes.
+- TODO: [x] reproduce/root cause; [x] TDD; [x] backend capability + consent endpoint; [x] blocking Mini App gate + fallback; [x] focused/frontend verification; [x] final full backend suite; [x] changed-line review; [ ] PR/CI/merge/deploy; [ ] production smoke with a fresh direct Mini App user.
+
 ## 2026-10-06 — Full generation delivery audit: Seedance + images + video
 
 - Baseline: `origin/tanyapi` / production `58bce7f968ef03aea71655b81c3517a2b5ca5dd3`; branch `fix/generation-delivery-audit`.
