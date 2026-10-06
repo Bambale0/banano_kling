@@ -20,6 +20,9 @@ export interface Seedance25GeneratePayload {
   ratio: 'adaptive' | '16:9' | '9:16' | '1:1' | '4:3' | '3:4' | '21:9'
   duration: number
   videoEditing?: boolean
+  identityTransfer?: boolean
+  sourceFeedGenId?: number | null
+  identityQuote?: Seedance25IdentityQuote
   resolution: Seedance25Resolution
   outputFormat: Seedance25OutputFormat
   generateAudio: boolean
@@ -45,6 +48,22 @@ export interface Seedance25GenerateResponse {
   duration: number
   aspect_ratio: string
   scenario: Seedance25Scenario
+}
+
+export interface Seedance25IdentityQuote {
+  cost: number
+  billing_duration: number
+  source_video_url: string
+  resolution: Seedance25Resolution
+}
+
+export interface Seedance25QuoteResponse {
+  ok: true
+  quote_only: true
+  cost: number
+  billing_duration: number
+  source_video_duration_seconds: number
+  seedance25_identity_quote: Seedance25IdentityQuote
 }
 
 interface Seedance25UploadAssemblyResponse {
@@ -142,9 +161,10 @@ export async function uploadSeedance25Video(file: File): Promise<UploadedFile> {
   }
 }
 
-export async function generateSeedance25(
+async function requestSeedance25<T>(
   payload: Seedance25GeneratePayload,
-): Promise<Seedance25GenerateResponse> {
+  quoteOnly = false,
+): Promise<T> {
   const initData = getInitData()
   if (!initData) throw new Error('Откройте Mini App из Telegram и попробуйте снова.')
 
@@ -167,9 +187,13 @@ export async function generateSeedance25(
             ? 'video'
             : 'imgtxt',
       seedance25_scenario: payload.scenario,
+      ...(payload.sourceFeedGenId ? { source_feed_gen_id: payload.sourceFeedGenId } : {}),
+      ...(quoteOnly ? { seedance25_quote_only: true } : {}),
+      seedance25_identity_transfer: payload.identityTransfer === true,
+      ...(payload.identityQuote ? { seedance25_identity_quote: payload.identityQuote } : {}),
       prompt: payload.prompt,
-      v_ratio: payload.videoEditing ? 'adaptive' : payload.ratio,
-      v_duration: payload.videoEditing ? -1 : payload.duration,
+      v_ratio: payload.videoEditing || payload.identityTransfer ? 'adaptive' : payload.ratio,
+      v_duration: payload.videoEditing || payload.identityTransfer ? -1 : payload.duration,
       seedance25_video_editing: payload.videoEditing === true,
       seedance25_resolution: payload.resolution,
       seedance25_output_format: payload.outputFormat,
@@ -185,8 +209,16 @@ export async function generateSeedance25(
     }),
   })
 
-  return parseJsonResponse<Seedance25GenerateResponse>(
+  return parseJsonResponse<T>(
     response,
     'Seedance 2.5 API вернул некорректный ответ.',
   )
+}
+
+export async function generateSeedance25(payload: Seedance25GeneratePayload): Promise<Seedance25GenerateResponse> {
+  return requestSeedance25<Seedance25GenerateResponse>(payload)
+}
+
+export async function quoteSeedance25Identity(payload: Seedance25GeneratePayload): Promise<Seedance25QuoteResponse> {
+  return requestSeedance25<Seedance25QuoteResponse>(payload, true)
 }

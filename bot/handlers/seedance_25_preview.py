@@ -104,6 +104,7 @@ def _defaults() -> dict:
         "v_reference_videos": [],
         "seedance25_scenario": "text",
         "seedance25_video_editing": False,
+        "seedance25_identity_transfer": False,
         "seedance25_first_frame_url": None,
         "seedance25_last_frame_url": None,
         "seedance25_reference_audio_urls": [],
@@ -148,6 +149,11 @@ def _seedance_25_keyboard(data: dict):
             text=("✅ " if scenario == key else "") + label,
             callback_data=f"s25_scenario_{key}",
         )
+
+    builder.button(
+        text=("✅ " if data.get("seedance25_identity_transfer") is True else "") + "👤 Перенос персонажа",
+        callback_data="s25_toggle_identity",
+    )
 
     for value in ("480p", "720p"):
         builder.button(
@@ -497,7 +503,8 @@ async def guard_seedance_25_callback(callback: types.CallbackQuery, state: FSMCo
 
 @router.callback_query(F.data.startswith("s25_scenario_"))
 async def seedance25_scenario(callback: types.CallbackQuery, state: FSMContext):
-    if await _assert_preview(callback, state) is None:
+    data = await _assert_preview(callback, state)
+    if data is None:
         return
     scenario = callback.data.replace("s25_scenario_", "", 1)
     if scenario not in {"text", "first_frame", "first_last", "multimodal"}:
@@ -506,8 +513,12 @@ async def seedance25_scenario(callback: types.CallbackQuery, state: FSMContext):
     updates = {
         "seedance25_scenario": scenario,
         "seedance25_video_editing": False,
+        "seedance25_identity_transfer": False,
         "v_type": "text" if scenario == "text" else "imgtxt" if scenario in {"first_frame", "first_last"} else "video",
     }
+    if data.get("seedance25_identity_transfer") is True:
+        updates.update(data.get("seedance25_identity_inactive_media") or {})
+        updates["seedance25_identity_quote"] = None
     # Enforce the provider's mutually-exclusive scenarios in state as well as
     # in the service adapter.
     if scenario in {"text", "first_frame", "first_last"}:
@@ -543,7 +554,7 @@ async def seedance25_ratio(callback: types.CallbackQuery, state: FSMContext):
     data = await _assert_preview(callback, state)
     if data is None:
         return
-    if data.get("seedance25_video_editing") is True:
+    if data.get("seedance25_video_editing") is True or data.get("seedance25_identity_transfer") is True:
         await callback.answer("При редактировании формат берётся из исходного видео.", show_alert=True)
         return
     value = callback.data.replace("s25_ratio_", "", 1).replace("_", ":")
@@ -558,7 +569,7 @@ async def seedance25_duration(callback: types.CallbackQuery, state: FSMContext):
     data = await _assert_preview(callback, state)
     if data is None:
         return
-    if data.get("seedance25_video_editing") is True:
+    if data.get("seedance25_video_editing") is True or data.get("seedance25_identity_transfer") is True:
         await callback.answer("При редактировании длительность берётся из исходного видео.", show_alert=True)
         return
     current = int(data.get("v_duration", 5))
@@ -570,6 +581,30 @@ async def seedance25_duration(callback: types.CallbackQuery, state: FSMContext):
         delta = 1 if callback.data.endswith("plus") else -1
         value = max(4, min(30, current + delta))
     await state.update_data(v_duration=value)
+    await _show_seedance_25_screen(callback, state)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "s25_toggle_identity")
+async def seedance25_toggle_identity(callback: types.CallbackQuery, state: FSMContext):
+    data = await _assert_preview(callback, state)
+    if data is None:
+        return
+    enabled = data.get("seedance25_identity_transfer") is not True
+    inactive_keys = ("seedance25_first_frame_url", "seedance25_last_frame_url", "seedance25_reference_audio_urls")
+    updates = {
+        "seedance25_identity_transfer": enabled,
+        "seedance25_identity_quote": None,
+        "seedance25_video_editing": False,
+        "seedance25_scenario": "multimodal",
+        "v_type": "video",
+    }
+    if enabled:
+        updates["seedance25_identity_inactive_media"] = {**(data.get("seedance25_identity_inactive_media") or {}), **{key: data.get(key) for key in inactive_keys if data.get(key)}}
+        updates.update(seedance25_first_frame_url=None, seedance25_last_frame_url=None, seedance25_reference_audio_urls=[])
+    else:
+        updates.update(data.get("seedance25_identity_inactive_media") or {})
+    await state.update_data(**updates)
     await _show_seedance_25_screen(callback, state)
     await callback.answer()
 
@@ -587,7 +622,11 @@ async def seedance25_toggle_editing(callback: types.CallbackQuery, state: FSMCon
     if data.get("seedance25_scenario") != "multimodal":
         await callback.answer("Выберите сценарий «По референсам».", show_alert=True)
         return
-    await state.update_data(seedance25_video_editing=not (data.get("seedance25_video_editing") is True))
+    updates = {"seedance25_video_editing": not (data.get("seedance25_video_editing") is True)}
+    if data.get("seedance25_identity_transfer") is True:
+        updates.update(data.get("seedance25_identity_inactive_media") or {})
+        updates.update(seedance25_identity_transfer=False, seedance25_identity_quote=None)
+    await state.update_data(**updates)
     await _show_seedance_25_screen(callback, state)
     await callback.answer()
 
@@ -616,6 +655,8 @@ async def seedance25_clear_media(callback: types.CallbackQuery, state: FSMContex
     if await _assert_preview(callback, state) is None:
         return
     await state.update_data(
+        seedance25_identity_inactive_media=None,
+        seedance25_identity_quote=None,
         seedance25_first_frame_url=None,
         seedance25_last_frame_url=None,
         reference_images=[],

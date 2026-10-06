@@ -1330,3 +1330,39 @@ Reference cleanup reports how many generation snapshot refs are protected.
   CI. No automatic repair of historical payments. Existing callbacks stay enabled.
 
 - Release continuation 2026-10-06: owner approved separate PR/merge/deploy and tax=none. Rebased on PR259 squash 2c080035; preserved both execution entries. Merge serialized after verified PR259 deployment. No actual checkout/payment is authorized by this continuation.
+
+
+## 2026-10-06 — Seedance 2.5 explicit identity transfer (in progress)
+
+- Baseline: `origin/tanyapi` b7c71a51727d4d5953536a50b9c0c2d15ef3dee6; isolated `feature/seedance25-identity-transfer` worktree. Production and the separate bot-start removal release are untouched.
+- User outcome: an explicit character-replacement scenario for ordinary users as well as admins, using the APIX role-separated reference contract. Normal multimodal/reference generation remains unchanged.
+- Fresh audit: Tanya already passes ordered image/video reference arrays to KIE `bytedance/seedance-2-5`; its dedicated form has no identity-role prompt contract. Explicit editing controls provider duration -1/adaptive but ordinary auto/edit is admin-restricted. APIX identity transfer assigns image identity and video motion/scene roles; its old Seedance 2 direct-video bypass is unrelated and must not be copied.
+- Reuse: existing media upload/validation, source-duration probing, preset-manager rates, provider adapter, task persistence and failure/refund lifecycle. No provider migration, new tariff, schema migration, secret or production configuration change planned.
+- Immutable technical contract: 1–3 identity photos of the same person plus exactly one 4–30 second source video; stable per-media ordering and @ImageN/@Video1 bindings; source-video identity must not compete with identity photos. Additional user instruction is preserved separately from the generated provider role instructions.
+- Billing invariant: provider duration remains auto (-1), while paid identity uses server-measured source seconds rounded up for existing per-second pricing. Unknown/unverifiable duration is rejected before debit. Quote and launch must agree; admin-free tests are insufficient. Unrelated auto/edit restrictions stay intact.
+- Security: validate roles/counts/final prompt before paid submission; do not log full prompts/media/secrets; accept only supported KIE fields; no implicit paid retry, actual generation, refund, resend or external customer communication during implementation.
+- Steps: (1) red/mock provider and paid launch regressions; (2) shared server identity contract and safe billing/quote seam; (3) explicit UI with ordered role labels and mode-switch preservation; (4) focused/full backend and frontend tests, lint/types/build; (5) mocked mobile browser/visual QA; (6) independent review, draft PR. Merge/deploy require separate approval.
+- Test seams: provider request capture, authenticated Mini App quote/start with synthetic media, Telegram shared validation, negative missing/extra references, ordinary 15-second reference versus auto source-length edit, stale quote or unknown-duration rejection, role-binding and mode-change regressions.
+- Verification layers: DB schema unchanged; task metadata compatibility and charge/refund invariants require mocked tests. No runtime or paid quality test is claimed. Full safe suites exclude live providers.
+- Guidance: AGENTS.md, .agents/README, README and current provider/reference code; primary engineering playbook discovery plus claw code-review and anthropics webapp-testing guidance.
+
+### Implementation checkpoint (18:24 UTC)
+
+- Provider tracer RED: identity keyword unsupported; GREEN after the shared role contract. Initial 22 provider/spec tests passed.
+- Review fixed existing video-reference price multiplier omission before release: current quote/debit/persist use ceil(source seconds) × existing rate × existing multiplier, no tariff change.
+- Added fail-closed owner/canonical local path validation before probing; both original and expanded prompts/tags are validated before debit. Provider receives only documented KIE fields.
+- Telegram effective keyboard/repeat state preserve identity, measured quote is shown and rechecked, and callback launch attributes payer/owner to the callback actor instead of bot-authored message.from_user.
+- Quote-only validates a strict boolean and cannot create/debit. Provider auto-retry explicitly excludes identity. Original prompt is persisted without the generated role prefix.
+- Latest focused backend 130 passed; prior full safe suite 1921 passed / 19 skipped. Exact final full rerun in progress after repeat/quote lineage guards. Legacy Ruff comparison has zero newly introduced findings.
+- Frontend full lint/type/Jest checkpoint: 197 tests passed. Mocked paid identity and ordinary 15-second reference browser paths passed at 320/375/390/430px; final repeat and validation rerun still pending.
+- Owner-only task-detail hydration is reused by Feed/Profile/deep-link own repeats, with stale-route checks. No public reference metadata or database schema expansion. Mode switches clear lineage; explicit empty inputs stay empty; quote uses current prompt.
+- Two Sentinel calls were canceled and not bypassed; after explicit user continuation approval, the exact calls were retried once and succeeded. No production mutation or real generation occurred.
+
+### Final isolated verification (18:38 UTC)
+
+- Frozen backend full safe suite: **1930 passed, 19 skipped**, 308 warnings. Repeated with a newly created `PYTHONPYCACHEPREFIX` to guarantee freshly compiled source: same result, exit 0 in 121.68 seconds. Focused backend: **130 passed**. Compilation and diff checks passed; new code Ruff clean, 17 existing modified-legacy findings exactly match baseline.
+- Final frontend: full lint and TypeScript passed; **201 Jest tests passed**. Production static export rebuilt after clearing only isolated generated webpack cache because source-preserving writes retain mtimes.
+- Full critical browser aggregate: **passed**, exit 0 in 187.05 seconds. Includes existing critical, private-repeat, Genjutsu and Seedance upload suites plus identity mobile at 320/375/390/430px, paid quote/start, normal 15-second reference, invalid/short/external inputs, balance, resolution, stale-price recalculation, owner/denied/foreign repeats, Close during hydration and stale/deep-link navigation. All provider/application transports mocked.
+- Pixel QA: inspected fresh 320px input screenshot and 430px price/CTA screenshot. Role labels wrap, counts and source-length/price are readable, no horizontal clipping; CTA remains above bottom navigation in viewport screenshot. Screenshots are local QA artifacts, not committed.
+- Independent read-only review: no remaining source-level security, financial, provider-contract or repeat/navigation blockers after fixes.
+- No production service/static change, real generation, payment/refund, resend, migration or new tariff. Draft PR only; merge/deploy require separate approval.

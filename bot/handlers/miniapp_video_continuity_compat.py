@@ -55,6 +55,7 @@ _REPEAT_SCALAR_ALIASES: dict[str, tuple[str, ...]] = {
     "audio_url": ("audio_url", "audio_reference"),
     "seedance25_scenario": ("seedance25_scenario", "scenario"),
     "seedance25_video_editing": ("seedance25_video_editing",),
+    "seedance25_identity_transfer": ("seedance25_identity_transfer",),
     "seedance25_resolution": ("seedance25_resolution", "resolution"),
     "seedance25_output_format": ("seedance25_output_format", "output_format"),
     "seedance25_generate_audio": ("seedance25_generate_audio", "generate_audio"),
@@ -224,6 +225,7 @@ def enrich_video_repeat_body(
 
     normalized = dict(body)
     request_data = _source_request_data(source_task)
+    explicit_identity = body.get("seedance25_identity_transfer") is True
 
     # Keep the browser's explicit media separate from server-restored private
     # references. For Seedance 2.5 repeats, user-selected media must be able to
@@ -270,6 +272,11 @@ def enrich_video_repeat_body(
     private_reference_audios: list[str] = []
 
     for target, aliases in _REPEAT_LIST_ALIASES.items():
+        # A dedicated identity form owns its complete selection. An explicit
+        # empty list means removal, never permission to resurrect private media.
+        if explicit_identity and target in body:
+            normalized[target] = _clean_list(body[target])
+            continue
         restored = _first_list(request_data, aliases)
         if publication_selection is not None and target in {"reference_images", "v_reference_videos"}:
             if target == "reference_images":
@@ -302,6 +309,8 @@ def enrich_video_repeat_body(
                 private_reference_audios = restored
 
     for target, aliases in _REPEAT_SCALAR_ALIASES.items():
+        if explicit_identity and target in body:
+            continue
         if _missing(normalized.get(target)):
             restored = _first_value(request_data, aliases)
             if restored is not None:
@@ -350,9 +359,13 @@ def enrich_video_repeat_body(
     if str(normalized.get("v_model") or "").strip() == "seedance_2_5":
         # Keep strict booleans: malformed values pass through to launch validation,
         # while an explicit False deliberately opts out of the source edit recipe.
-        if normalized.get("seedance25_video_editing") is True:
+        if normalized.get("seedance25_video_editing") is True or normalized.get("seedance25_identity_transfer") is True:
             normalized["v_duration"] = -1
             normalized["v_ratio"] = "adaptive"
+        if explicit_identity:
+            # Prompt and omitted settings may be inherited, but the user's
+            # explicit scenario/media must survive unchanged for validation.
+            return normalized
         restored_scenario = str(
             _first_value(
                 request_data,

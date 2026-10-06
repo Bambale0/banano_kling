@@ -30,7 +30,8 @@ def _clear_seedance_keyboard(data: dict):
     resolution = str(data.get("seedance25_resolution") or "720p")
     ratio = str(data.get("v_ratio") or "adaptive")
     duration = int(data.get("v_duration", 5))
-    editing = data.get("seedance25_video_editing") is True and scenario == "multimodal"
+    identity = data.get("seedance25_identity_transfer") is True
+    editing = (data.get("seedance25_video_editing") is True or identity) and scenario == "multimodal"
 
     # What the user wants to create — human labels instead of API terminology.
     builder.button(
@@ -46,9 +47,11 @@ def _clear_seedance_keyboard(data: dict):
         callback_data="s25_scenario_first_last",
     )
     builder.button(
-        text=_selected(scenario == "multimodal", "🧩 По референсам"),
+        text=_selected(scenario == "multimodal" and not identity, "🧩 По референсам"),
         callback_data="s25_scenario_multimodal",
     )
+
+    builder.button(text=_selected(identity, "👤 Замена персонажа"), callback_data="s25_toggle_identity")
 
     builder.button(
         text=_selected(resolution == "480p", "🖥 480p"),
@@ -259,7 +262,8 @@ def _repeat_state_payload(task, request_data: dict, prompt: str) -> dict:
 
     duration = int(request_data.get("v_duration", getattr(task, "duration", None) or 5))
     ratio = str(request_data.get("v_ratio") or getattr(task, "aspect_ratio", None) or "adaptive")
-    editing = request_data.get("seedance25_video_editing") is True
+    identity = request_data.get("seedance25_identity_transfer") is True
+    editing = request_data.get("seedance25_video_editing") is True or identity
     if editing:
         duration, ratio = -1, "adaptive"
     resolution = str(
@@ -287,6 +291,8 @@ def _repeat_state_payload(task, request_data: dict, prompt: str) -> dict:
         "user_prompt": prompt,
         "seedance25_scenario": scenario,
         "seedance25_video_editing": editing,
+        "seedance25_identity_transfer": identity,
+        "seedance25_identity_quote": None,
         "seedance25_first_frame_url": first_frame,
         "seedance25_last_frame_url": last_frame,
         "seedance25_reference_audio_urls": audio_refs,
@@ -369,6 +375,9 @@ async def seedance25_public_image_upload(message: types.Message, state: FSMConte
         )
         return
 
+    if data.get("seedance25_identity_transfer") is True and len(data.get("reference_images") or []) >= 3:
+        await message.answer("Для замены персонажа максимум 3 фото одного человека. Очистите референсы для нового набора.")
+        return
     obj = message.document or (message.photo[-1] if message.photo else None)
     if obj is None:
         return
@@ -400,7 +409,7 @@ async def seedance25_public_image_upload(message: types.Message, state: FSMConte
             30,
         )
         await state.update_data(reference_images=refs)
-        notice = f"✅ Фото-референс добавлен: {len(refs)}/30."
+        notice = f"✅ Фото-референс добавлен: {len(refs)}/{3 if data.get('seedance25_identity_transfer') is True else 30}."
     else:
         await message.answer("❌ Неизвестный сценарий Seedance 2.5. Выберите режим заново.")
         return

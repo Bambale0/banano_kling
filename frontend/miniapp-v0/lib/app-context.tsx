@@ -7,6 +7,7 @@ import { bootstrapApp, fetchFeedItem, fetchPromptDetail, fetchTaskDetail, getIni
 import { genjutsuRecipeStartParam, parseMiniAppStartParam, startParamFromLocation } from './start-params'
 import { isVideoTrendItem, resolveTrendSettings } from './trend-settings'
 import { genjutsuCall, openGenjutsu } from './genjutsu-api'
+import { hydrateSeedance25IdentityPreset } from './seedance25-repeat'
 
 interface AppContextType {
   state: AppState
@@ -368,7 +369,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [applyBootstrap, applyBootstrapErrorState, applyLockedState])
 
-  const applyFeedRemix = useCallback((item: FeedItem) => {
+  const applyFeedRemix = useCallback(async (item: FeedItem, isCurrent: () => boolean) => {
     if (item.gen_type === 'video') {
       const modelExists = state.videoModels.some((model) => model.id === item.model)
       const imageReferences = item.references_hidden ? [] : (item.reference_images || []).map((url, index) => feedReferenceToUploadedFile(url, index))
@@ -378,7 +379,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         : videoReferences.length
           ? 'video'
           : normalizeVideoScenario(item.scenario)
-      setVideoPromptPreset({
+      const preset = await hydrateSeedance25IdentityPreset(item, {
         title: 'Повторить видео из ссылки',
         prompt: item.prompt || '',
         model: modelExists ? item.model : state.videoModels[0]?.id || 'v3_pro',
@@ -391,6 +392,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         initialPhotoReferences: scenario === 'imgtxt' ? imageReferences.slice(1) : imageReferences,
         initialVideoReferences: videoReferences,
       })
+      if (!isCurrent()) return
+      setVideoPromptPreset(preset)
       setActiveTabState(2)
       return
     }
@@ -456,7 +459,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           }
           if (!item?.id) throw new Error('Публикация недоступна. Обновите ссылку.')
           if (startTarget.kind === 'remix' && item.model !== 'genjutsu' && !item.genjutsu_recipe_id) {
-            applyFeedRemix(item)
+            await applyFeedRemix(item, isCurrent)
             return
           }
           setFeedDeepLink({ item, action: 'preview' })
