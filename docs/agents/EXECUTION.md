@@ -1,5 +1,17 @@
 # Execution ledger
 
+## 2026-10-06 — Emergency removal of bot write-access UI
+
+- User explicitly requested immediate server hotfix removing the permission window entirely; supersedes optional Start/Skip proposal in unmerged draft PR #262.
+- Baseline production/backend: b7c71a51727d4d5953536a50b9c0c2d15ef3dee6. Removed only BotWriteAccessGate import/render and its unused refreshTasks binding from MiniAppShell. No replacement banner; no auth, payment, generation, ownership, database or Telegram-delivery logic changed.
+- Backed up exact served static tree, shell source and unchanged nginx config at 17:37:22 UTC before mutation. Focused shell lint and production build/typecheck passed.
+- Published static export to the verified Nginx root at 17:38 UTC, keeping old hashed chunks for in-flight WebViews. Served HTTP 200 and public HTML checksum matched new build (asset version 20261006173756).
+- Live production-static browser smoke at 390px used fully mocked APIs with telegram_chat_available=false: no permission window/banner, Photo editable, Video accessible, zero real API calls or generations. Backend remained running/healthy with unchanged StartedAt 14:37:52 UTC.
+- Existing already-open WebViews need close/reopen to load the new entrypoint. Retained backup permits a static rollback; no backend restart or nginx changes performed.
+- Durable follow-up keeps the narrow gate removal plus sharp 0.35.5/librsvg security patch required by CI. Existing browser critical flows now run with telegram_chat_available=false and explicitly assert the permission UI is absent. No optional-banner/Start-gate changes from PR #262 are included.
+- This source commit keeps future deployments from restoring the removed window. PR #262 remains draft/unmerged and must not be released as-is.
+
+
 ## 2026-10-06 — Combined video preview and Seedance reference release
 
 - Baseline: fresh `origin/tanyapi` at `3fd259c4704ae13593018b90da4b8b0a40bb8ab9`; integration branch `fix/video-preview-trend-references`. Both reviewed task patches were applied to a separate clean checkout; only the append-only execution ledger overlapped and both task records were preserved.

@@ -19,6 +19,8 @@ const bootstrapPayload = {
   prompt_repeat_balance_rub: 0,
   prompt_repeat_total_rub: 0,
   bot_username: 'test_bot',
+  // Delivery permission must not gate any Mini App generation or navigation.
+  telegram_chat_available: false,
   credits: 125,
   is_admin: true,
   mini_app_url: baseUrl,
@@ -494,6 +496,7 @@ try {
     waitUntil: 'networkidle',
   })
   await page.getByText('Онлайн', { exact: true }).waitFor()
+  assert.equal(await page.getByText('Разреши боту писать тебе', { exact: true }).count(), 0)
 
   // Default landing E2E: a normal Mini App launch opens Trends before any nav click.
   // Pinterest AI is excluded from the showcase; it is reachable via Services only.
