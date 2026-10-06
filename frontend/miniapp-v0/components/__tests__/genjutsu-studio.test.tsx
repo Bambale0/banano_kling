@@ -777,3 +777,41 @@ test.each(['Повторить с настройками', 'Редактиров
   await waitFor(() => expect(screen.getByLabelText('Конец, сек.')).toHaveValue(button === 'Повторить с настройками' ? 10.056 : 10))
   expect(screen.getByRole('button', { name: 'Рассчитать стоимость' })).toBeEnabled()
 })
+
+
+test('provider moderation is explained without exposing the misleading provider_nsfw code', async () => {
+  const run = {
+    id: '8fed8d02bfdf4b2bbe0be1b9d1ce8572',
+    project_id: 'project',
+    state: 'failed',
+    admin_free: 0,
+    cancel_requested: 0,
+    credits: 1000,
+    created_ms: Date.now(),
+    steps: [{
+      id: 'step-one',
+      variant: 0,
+      ordinal: 0,
+      status: 'failed',
+      spec: { operation: 'motion_transfer', resolution: '480p' },
+      reserved_credits: 128,
+      actual_credits: 128,
+      refunded_credits: 128,
+      error_code: 'provider_nsfw',
+      delivery_status: null,
+      delivery_error: null,
+    }],
+  }
+  const original = call.getMockImplementation()!
+  call.mockImplementation(async (action: string, body: Record<string, unknown>) => {
+    if (action === 'run') return { run }
+    return original(action, body)
+  })
+
+  render(<GenjutsuStudio initial={{ run_id: run.id }} onClose={jest.fn()} />)
+
+  expect(await screen.findByText('Модерация провайдера')).toBeInTheDocument()
+  expect(screen.getByText(/возможны ложные срабатывания/i)).toBeInTheDocument()
+  expect(screen.queryByText(/provider_nsfw/i)).not.toBeInTheDocument()
+  expect(screen.getByText(/возврат 128 🍌/i)).toBeInTheDocument()
+})

@@ -1,4 +1,5 @@
 import asyncio
+import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -245,3 +246,75 @@ async def test_nonterminal_provider_http_error_never_refunds_accepted_generation
     assert view["steps"][0]["status"] == "recovery_review"
     assert view["steps"][0]["refunded_credits"] == 0
     assert await repo.balance(101) == before - quote["total_credits"]
+
+
+@pytest.mark.asyncio
+async def test_provider_observation_keeps_terminal_status_and_safe_provider_reason(tmp_path):
+    repo, _ = await build_repo(tmp_path)
+    quote = await make_quote(repo)
+    run = await repo.start(101, "provider-observation", quote["id"])
+    settings, _ = await repo.settings()
+    step = await repo.claim_step(settings)
+
+    await repo.record_provider_observation(
+        step["id"],
+        step["lease_token"],
+        "corr-123",
+        "provider_status_observed",
+        details={
+            "provider_status": "nsfw",
+            "provider_reason": "content_safety_restrictions",
+        },
+    )
+
+    events = await repo.events(run["id"])
+    event = next(item for item in events if item["event"] == "provider_status_observed")
+    details = json.loads(event["details"])
+    assert details == {
+        "provider_correlation_id": "corr-123",
+        "provider_status": "nsfw",
+        "provider_reason": "content_safety_restrictions",
+    }
+
+
+@pytest.mark.asyncio
+async def test_terminal_provider_moderation_refunds_and_records_safe_reason(tmp_path):
+    repo, _ = await build_repo(tmp_path)
+    quote = await make_quote(repo)
+    before = await repo.balance(101)
+    run = await repo.start(101, "provider-moderation-terminal", quote["id"])
+    settings, _ = await repo.settings()
+    ready = await repo.claim_step(settings)
+    attempt = await repo.begin_submission(ready["id"], ready["lease_token"], 5_000)
+    await repo.accept_submission(ready["id"], attempt, "req-moderation")
+
+    class Provider:
+        configured = True
+
+        async def status(self, *args, **kwargs):
+            return {
+                "status": "nsfw",
+                "correlation_id": "corr-moderation",
+                "reason": "content_safety_restrictions",
+            }
+
+    pipeline = Pipeline(repo, Provider(), SimpleNamespace(configured=True))
+    assert await pipeline.tick() is True
+
+    view = await repo.get_run(101, run["id"])
+    step = view["steps"][0]
+    assert view["state"] == "failed"
+    assert step["status"] == "failed"
+    assert step["error_code"] == "provider_nsfw"
+    assert step["refunded_credits"] == quote["total_credits"]
+    assert await repo.balance(101) == before
+
+    events = await repo.events(run["id"])
+    observation = next(
+        item for item in events
+        if item["event"] == "provider_status_observed"
+    )
+    details = json.loads(observation["details"])
+    assert details["provider_status"] == "nsfw"
+    assert details["provider_reason"] == "content_safety_restrictions"
+    assert details["provider_correlation_id"] == "corr-moderation"

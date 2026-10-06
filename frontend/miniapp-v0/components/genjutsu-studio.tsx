@@ -33,6 +33,15 @@ const operationCopy: Record<Operation, { title: string; description: string; exa
   restyle: { title: 'Стилизация', description: 'Измените визуальный стиль видео с готовым пресетом.', example: 'Новый стиль', icon: WandSparkles },
 }
 const terminal = new Set(['completed', 'failed', 'canceled', 'partial'])
+const moderationErrors = new Set(['provider_nsfw', 'provider_moderation'])
+
+function stepFailure(errorCode: string) {
+  if (moderationErrors.has(errorCode)) return {
+    title: 'Модерация провайдера',
+    detail: 'Higgsfield отклонил запрос по content safety. Это не означает, что контент обязательно NSFW: возможны ложные срабатывания. Попробуйте уточнить формулировку или заменить референс.',
+  }
+  return { title: 'Ошибка генерации', detail: `Технический код: ${errorCode}. Результаты остальных шагов не потеряны.` }
+}
 
 export function GenjutsuStudio({ initial = {}, onClose }: {
   initial?: { task_id?: string; run_id?: string; recipe_id?: string; admin?: boolean }; onClose: () => void
@@ -532,7 +541,7 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
             <h4 className="text-sm font-medium">Вариант {step.variant + 1} · шаг {step.ordinal + 1} · {operationLabels[step.spec.operation]} · {step.spec.resolution}</h4>
             <p className="text-sm">{statusLabels[step.status] || step.status}</p>
             <p className="text-xs text-muted-foreground">Резерв {step.reserved_credits} 🍌 · возврат {step.refunded_credits} 🍌{step.actual_credits !== null ? ` · расчёт ${step.actual_credits} 🍌` : ''}</p>
-            {step.error_code && <p className="break-all text-xs text-destructive">Код: {step.error_code}. Результаты остальных шагов не потеряны.</p>}
+            {step.error_code && <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-xs"><p className="font-medium text-destructive">{stepFailure(step.error_code).title}</p><p className="mt-1 text-muted-foreground">{stepFailure(step.error_code).detail}</p></div>}
             <div className={compare ? 'grid gap-2 sm:grid-cols-2' : ''}>{compare && step.source_asset?.url && <div><p className="text-xs">Исходник</p><video src={step.source_asset.url} controls playsInline preload="metadata" className="max-h-80 w-full rounded-xl bg-black" /></div>}{step.output_asset?.url && <div><p className="text-xs">Результат</p><video src={step.output_asset.url} controls playsInline preload="metadata" className="max-h-80 w-full rounded-xl bg-black" /></div>}</div>
             {step.output_asset?.url && <div className="flex flex-wrap gap-2"><a className="rounded-lg border border-border px-3 py-2 text-sm" href={`${step.output_asset.url}&download=1`} target="_blank" rel="noreferrer">Скачать оригинал</a><Button variant="outline" size="sm" disabled={blocked} onClick={() => void action('edit-result', async () => { const output = step.output_asset!; await newWork({ ...freshPlan(), source_asset_id: output.id }, output) })}>Редактировать результат</Button><Button size="sm" variant="ghost" disabled={blocked} onClick={() => void action('redeliver', () => runAction('redeliver', step.id))}>Отправить ещё раз</Button></div>}
             <GenjutsuFeedPublisher key={run.id + ':' + step.id} run={run} step={step} disabled={blocked} />

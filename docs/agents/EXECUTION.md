@@ -1,5 +1,18 @@
 # Execution ledger
 
+## 2026-10-06 — Genjutsu provider moderation false-positive handling
+
+- Baseline: production/origin `tanyapi` `3d7e959ef6fa2a1133ec16611e70086a29ecb213`; branch `fix/genjutsu-moderation-labels`.
+- Repro: run `8fed8d02bfdf4b2bbe0be1b9d1ce8572`, step `1e86a1d2060d433d8ecdb2d571649114`, provider request `06c6f2cf-3ded-4ac3-a063-be92ba3c81b2`.
+- Evidence: the live provider status endpoint returned HTTP 200 with terminal `status=nsfw` and the broader message `content safety restrictions`. The saved source and reference media were inspected and appear benign, so Tanya did not invent the terminal status and this case is consistent with an upstream false-positive. The provider does not expose the exact classifier rule.
+- Billing: the reported run is an admin-free test with zero reserve. Sampled paid Genjutsu moderation failures all had full reserve refunds.
+- Root product bug: user history exposed raw internal `provider_nsfw`, while the provider adapter discarded the provider reason and durable status events recorded only a correlation ID.
+- Fix: retain the internal code for accounting/audit compatibility, show users `Модерация провайдера` with false-positive guidance instead of the raw code, and persist only a normalized provider reason category plus terminal provider status in event details. Raw provider text is deliberately not stored because it may contain signed URLs or user content. Identical safety-blocked requests are not auto-retried.
+- TDD: provider reason regression RED when the reason was discarded; frontend regression RED on raw `provider_nsfw`; privacy regression RED when a provider URL would have survived. All are GREEN after the narrow fix.
+- Verification: focused Genjutsu backend **162 passed**; Mini App **29 suites / 151 tests passed**; TypeScript, changed frontend ESLint and production build pass; full backend **1714 passed / 19 skipped**. Changed-line Ruff has **0 relevant diagnostics** and `git diff --check` passes.
+- Review: the internal moderation code remains stable for accounting/notifications; user history no longer treats it as a factual content label; admin diagnostics keep the raw internal code. Provider response text is not persisted, only a safe normalized reason category. No automatic retry or moderation bypass was introduced.
+- TODO: [x] live provider/status/media diagnosis; [x] billing/refund audit; [x] RED regressions; [x] narrow provider/event/UI fix; [x] focused/full local verification; [x] changed-line lint/review; [ ] PR/CI/merge; [ ] exact deployed SHA + production smoke/log verification.
+
 ## 2026-10-05 — Actual video duration and reliable terminal notices
 
 - Baseline: `tanyapi` `f70f84738981f145c630265664e87913437a1bb9`; isolated branch `fix/genjutsu-actual-video-range`.
