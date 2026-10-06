@@ -104,6 +104,10 @@ class FeedPublisher:
                 recipe = await one(db, "SELECT active FROM genjutsu_recipes WHERE id=?", (recipe_id,))
                 if not recipe or recipe["active"] != 1:
                     raise PipelineError("recipe_unavailable", status=404)
+                # Ordinary publication edits do not lock genjutsu_control.
+                # Lock their task row before checking visibility so a concurrent
+                # withdrawal cannot commit between this check and our UPDATE.
+                await db.execute("UPDATE generation_tasks SET updated_at=updated_at WHERE task_id=?", (previous["task_id"],))
                 publication = await one(db, "SELECT is_public_feed,is_adult_content FROM generation_tasks WHERE task_id=?", (previous["task_id"],))
                 if not publication or publication["is_public_feed"] != 1 or publication["is_adult_content"]:
                     raise PipelineError("feed_publication_withdrawn", status=409)

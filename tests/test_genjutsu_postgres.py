@@ -1,6 +1,7 @@
 """Genjutsu schema and financial invariants through the real PostgreSQL adapter."""
 import asyncio
 import os
+from contextlib import asynccontextmanager
 from uuid import uuid4
 
 import psycopg
@@ -204,4 +205,72 @@ async def test_postgres_feed_publication_and_withdrawal_admission_are_transactio
     balance = await repo.balance(owner)
     with pytest.raises(PipelineError, match="recipe_unavailable"):
         await repo.start(owner, "pg-withdraw-" + uuid4().hex, repeat_quote["id"])
+    assert await repo.balance(owner) == balance
+
+
+    # Hold the ordinary publication row while the stale retry starts. Without
+    # the task-row lock, its SELECT reads the old visible version; our commit
+    # then lands before its final UPDATE and the stale retry resurrects Feed.
+    # With the lock, the retry waits, sees the withdrawal and fails closed.
+    original_connect = repo.connect
+    task_id = "genjutsu-feed-" + step["id"]
+    for keep_profile in (False, True):
+        reached_guard = asyncio.Event()
+        release_read = asyncio.Event()
+
+        class ObservedConnection:
+            def __init__(self, connection, reached=reached_guard, release=release_read):
+                self.connection = connection
+                self.reached_guard = reached
+                self.release_read = release
+
+            def __getattr__(self, name):
+                return getattr(self.connection, name)
+
+            async def execute(self, sql, parameters=()):
+                if sql.startswith("UPDATE generation_tasks SET updated_at=updated_at"):
+                    self.reached_guard.set()
+                cursor = await self.connection.execute(sql, parameters)
+                if sql.startswith("SELECT is_public_feed,is_adult_content FROM generation_tasks"):
+                    self.reached_guard.set()
+                    await self.release_read.wait()
+                return cursor
+
+        @asynccontextmanager
+        async def observed_connect():
+            async with original_connect() as connection:
+                yield ObservedConnection(connection)
+
+        repo.connect = observed_connect
+        pending = None
+        try:
+            async with await psycopg.AsyncConnection.connect(os.environ["DATABASE_URL"]) as withdrawal:
+                await withdrawal.execute(
+                    "UPDATE generation_tasks SET is_public_feed=TRUE,is_profile_visible=TRUE WHERE task_id=%s",
+                    (task_id,),
+                )
+                await withdrawal.commit()
+                await withdrawal.execute(
+                    "UPDATE generation_tasks SET is_public_feed=FALSE,is_profile_visible=%s WHERE task_id=%s",
+                    (keep_profile, task_id),
+                )
+                pending = asyncio.create_task(
+                    publisher.publish(owner, run["id"], step["id"], "PG public", "user")
+                )
+                await asyncio.wait_for(reached_guard.wait(), timeout=10)
+                await withdrawal.commit()
+                release_read.set()
+                with pytest.raises(PipelineError, match="feed_publication_withdrawn"):
+                    await asyncio.wait_for(pending, timeout=10)
+                current = await (await withdrawal.execute(
+                    "SELECT is_public_feed,is_profile_visible FROM generation_tasks WHERE task_id=%s",
+                    (task_id,),
+                )).fetchone()
+                assert current == (False, keep_profile)
+        finally:
+            release_read.set()
+            if pending is not None and not pending.done():
+                pending.cancel()
+                await asyncio.gather(pending, return_exceptions=True)
+            repo.connect = original_connect
     assert await repo.balance(owner) == balance

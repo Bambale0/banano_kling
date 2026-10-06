@@ -217,7 +217,16 @@ class RecipeStore:
                 "SELECT id FROM genjutsu_recipes WHERE owner=? AND active=1 ORDER BY updated_ms DESC LIMIT 100",
                 (owner,),
             )
-        return [await self.public(row["id"]) for row in rows]
+        items = []
+        for row in rows:
+            try:
+                items.append(await self.public(row["id"]))
+            except PipelineError as exc:
+                # A withdrawn Feed recipe or a concurrent archive must not
+                # hide unrelated healthy curated recipes from the selector.
+                if exc.code != "recipe_unavailable":
+                    raise
+        return items
 
     async def public(self, recipe_id: str) -> dict:
         row = await self._row(recipe_id)

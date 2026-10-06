@@ -551,3 +551,17 @@ async def test_feed_removal_keeps_shared_profile_recipe_available():
     profile = await database.get_profile_generation_card(result["card"]["id"])
     assert profile["genjutsu_recipe_id"] == result["recipe"]["id"]
     assert (await ctx.recipes.public(result["recipe"]["id"]))["id"] == result["recipe"]["id"]
+
+
+@pytest.mark.asyncio
+async def test_admin_recipe_list_keeps_curated_recipes_when_feed_publication_is_withdrawn():
+    ctx = await setup_owned_run()
+    published = await publish(ctx)
+    ctx.repo.verified_admin_run = AsyncMock(return_value=True)
+    curated = await ctx.recipes.publish(
+        101, ctx.project["id"], 1, "Curated recipe", [], ctx.run["id"],
+    )
+    await withdraw(ctx, published["card"]["id"])
+    response = await ctx.api.dispatch(101, True, "recipe_list", {"action": "recipe_list"})
+    assert [item["id"] for item in response["items"]] == [curated["id"]]
+    assert response["items"][0]["title"] == "Curated recipe"
