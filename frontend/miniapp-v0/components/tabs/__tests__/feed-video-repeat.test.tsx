@@ -4,7 +4,9 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { FeedTab } from '@/components/tabs/feed-tab'
 import { useApp } from '@/lib/app-context'
 import { fetchFeed, repeatFeedVideo } from '@/lib/api'
+import { openGenjutsu } from '@/lib/genjutsu-api'
 
+jest.mock('@/lib/genjutsu-api', () => ({ openGenjutsu: jest.fn() }))
 jest.mock('@/lib/app-context', () => ({ useApp: jest.fn() }))
 jest.mock('@/lib/api', () => ({
   addFeedComment: jest.fn(),
@@ -50,6 +52,7 @@ const videoItem = {
 }
 
 describe('FeedTab editable video repeat', () => {
+  beforeEach(() => jest.clearAllMocks())
   it('opens hidden image-only Seedance repeats in photo + text mode', async () => {
     const setActiveTab = jest.fn()
     const setVideoPromptPreset = jest.fn()
@@ -107,4 +110,42 @@ describe('FeedTab editable video repeat', () => {
     expect(mockedRepeatFeedVideo).not.toHaveBeenCalled()
     expect(screen.queryByRole('button', { name: /Настроить/i })).not.toBeInTheDocument()
   })
+  it('opens opaque Genjutsu recipes without generic video fallback or generation', async () => {
+    const setActiveTab = jest.fn()
+    const setVideoPromptPreset = jest.fn()
+    mockedUseApp.mockReturnValue({
+      state: { mode: 'live', user: { credits: 100, isAdmin: false }, imageModels: [], videoModels: [] },
+      feedDeepLink: null, consumeFeedDeepLink: jest.fn(), setActiveTab, setVideoPromptPreset,
+      setPromptPreset: jest.fn(), openProfile: jest.fn(),
+    } as unknown as ReturnType<typeof useApp>)
+    mockedFetchFeed.mockResolvedValue({
+      feed: [{ ...videoItem, model: 'genjutsu', genjutsu_recipe_id: 'recipe-id' }],
+      models: [{ id: 'genjutsu', label: 'Higgsfield Genjutsu' }],
+    } as Awaited<ReturnType<typeof fetchFeed>>)
+    render(<FeedTab />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Открыть видео' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Повторить$/i }))
+    expect(openGenjutsu).toHaveBeenCalledWith({ recipe_id: 'recipe-id' })
+    expect(setVideoPromptPreset).not.toHaveBeenCalled()
+    expect(setActiveTab).not.toHaveBeenCalled()
+    expect(mockedRepeatFeedVideo).not.toHaveBeenCalled()
+  })
+  it('does not fall back to an unrelated model if Genjutsu linkage is missing', async () => {
+    const setVideoPromptPreset = jest.fn()
+    mockedUseApp.mockReturnValue({
+      state: { mode: 'live', user: { credits: 100, isAdmin: false }, imageModels: [], videoModels: [] },
+      feedDeepLink: null, consumeFeedDeepLink: jest.fn(), setActiveTab: jest.fn(), setVideoPromptPreset,
+      setPromptPreset: jest.fn(), openProfile: jest.fn(),
+    } as unknown as ReturnType<typeof useApp>)
+    mockedFetchFeed.mockResolvedValue({
+      feed: [{ ...videoItem, model: 'genjutsu', genjutsu_recipe_id: null }], models: [],
+    } as Awaited<ReturnType<typeof fetchFeed>>)
+    render(<FeedTab />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Открыть видео' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Повторить$/i }))
+    expect(await screen.findByText('Повтор этой публикации недоступен. Обновите ленту.')).toBeInTheDocument()
+    expect(openGenjutsu).not.toHaveBeenCalled()
+    expect(setVideoPromptPreset).not.toHaveBeenCalled()
+  })
+
 })

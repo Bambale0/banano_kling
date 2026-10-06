@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { useApp } from '@/lib/app-context'
+import { openGenjutsu } from '@/lib/genjutsu-api'
 import type { FeedComment, FeedItem, ScenarioType, UploadedFile } from '@/lib/types'
 import { cn, isHttpUrl } from '@/lib/utils'
 import {
@@ -424,6 +425,15 @@ export function FeedTab() {
 
   const handleVideoRepeat = (item: FeedItem) => {
     if (!isLive || item.gen_type !== 'video') return
+    if (item.genjutsu_recipe_id) {
+      setPreviewItem(null)
+      openGenjutsu({ recipe_id: item.genjutsu_recipe_id })
+      return
+    }
+    if (item.model === 'genjutsu') {
+      setError('Повтор этой публикации недоступен. Обновите ленту.')
+      return
+    }
     const modelExists = state.videoModels.some((model) => model.id === item.model)
     const imageReferences = item.references_hidden
       ? []

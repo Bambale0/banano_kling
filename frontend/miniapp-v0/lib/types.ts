@@ -280,6 +280,7 @@ export interface PromptItem {
 }
 
 export interface FeedItem {
+  genjutsu_recipe_id?: string | null
   id: number
   task_id: string
   model: string

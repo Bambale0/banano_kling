@@ -965,3 +965,6 @@ try {
 
 // Include owner reference-consent regression in the existing CI browser gate.
 await import('./private-repeat-permission.mjs')
+
+// Ordinary Genjutsu output publication and private recipe repeats stay offline.
+await import('./genjutsu-feed-bridge.mjs')
