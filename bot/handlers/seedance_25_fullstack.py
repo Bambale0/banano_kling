@@ -1234,7 +1234,46 @@ async def _load_task_row(task_id: str):
         return await cursor.fetchone()
 
 
+async def _persist_seedance25_ephemeral_results(
+    video_url: str | None,
+    urls: list[str],
+) -> tuple[str | None, list[str]]:
+    """Localize known short-lived Seedance result URLs before completion."""
+    if not video_url:
+        return video_url, urls
+
+    candidates: list[str] = []
+    for value in [video_url, *urls]:
+        candidate = str(value or "").strip()
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+    if not candidates:
+        return video_url, urls
+
+    from bot.database import FEED_EPHEMERAL_RESULT_HOSTS
+
+    def is_ephemeral(value: str) -> bool:
+        host = (urlsplit(value).hostname or "").strip().lower().lstrip(".")
+        return any(
+            host == expected or host.endswith(f".{expected}")
+            for expected in FEED_EPHEMERAL_RESULT_HOSTS
+        )
+
+    if not any(is_ephemeral(value) for value in candidates):
+        return video_url, urls
+
+    from bot.services.feed_persist import persist_feed_result_urls
+
+    persisted = await persist_feed_result_urls(candidates, require_local=True)
+    if len(persisted) != len(candidates):
+        raise RuntimeError("durable Seedance 2.5 result persistence failed")
+    mapped = dict(zip(candidates, persisted))
+    return mapped.get(video_url, video_url), [mapped.get(value, value) for value in urls]
+
+
 async def _store_task_result(task_id: str, video_url: str | None, urls: list[str], *, success: bool) -> None:
+    if success:
+        video_url, urls = await _persist_seedance25_ephemeral_results(video_url, urls)
     async with db_backend.connect() as db:
         db.row_factory = db_backend.Row
         cursor = await db.execute(
@@ -1309,6 +1348,19 @@ async def _claim_seedance25_delivery(task_id: str) -> bool:
     return await claim_task_delivery(task_id, lease_seconds=SEEDANCE25_DELIVERY_TIMEOUT_SECONDS + 60)
 
 
+async def _can_attempt_seedance25_result_delivery(
+    app: web.Application,
+    telegram_id: int,
+) -> bool:
+    from bot.database import can_attempt_telegram_delivery
+
+    bot_instance = app.get("bot")
+    probe = getattr(bot_instance, "get_chat", None)
+    if probe is None:
+        return await can_attempt_telegram_delivery(telegram_id)
+    return await can_attempt_telegram_delivery(telegram_id, probe=probe)
+
+
 async def _retry_seedance25_delivery(
     app: web.Application,
     row,
@@ -1316,9 +1368,7 @@ async def _retry_seedance25_delivery(
 ) -> bool:
     task_id = str(row["task_id"] or "").strip()
     telegram_id = int(row["telegram_id"])
-    from bot.database import can_attempt_telegram_delivery
-
-    if not await can_attempt_telegram_delivery(telegram_id):
+    if not await _can_attempt_seedance25_result_delivery(app, telegram_id):
         await _mark_seedance25_delivery(
             task_id,
             "unavailable",
@@ -1484,9 +1534,8 @@ async def _process_seedance25_payload(app: web.Application, payload: dict[str, A
         return False
 
     await _store_task_result(task_id, video_url, urls, success=True)
-    from bot.database import can_attempt_telegram_delivery
 
-    if not await can_attempt_telegram_delivery(telegram_id):
+    if not await _can_attempt_seedance25_result_delivery(app, telegram_id):
         await _mark_seedance25_delivery(
             task_id,
             "unavailable",

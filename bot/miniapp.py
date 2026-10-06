@@ -1562,7 +1562,13 @@ async def _deliver_miniapp_direct_image_result(
     """
     if launch_result.get("status") != "done" or not launch_result.get("saved_url"):
         return
-    if not await can_attempt_telegram_delivery(telegram_id):
+    chat_probe = getattr(app["bot"], "get_chat", None)
+    can_deliver = (
+        await can_attempt_telegram_delivery(telegram_id, probe=chat_probe)
+        if chat_probe is not None
+        else await can_attempt_telegram_delivery(telegram_id)
+    )
+    if not can_deliver:
         logger.info(
             "Mini App Telegram delivery skipped: event=direct_image reason=chat_not_started telegram_id=%s task_id=%s",
             telegram_id,

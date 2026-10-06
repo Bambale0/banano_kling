@@ -559,3 +559,62 @@ def test_terminal_telegram_delivery_reason_is_structured():
         == "user_deactivated"
     )
     assert terminal_telegram_delivery_reason("network error") is None
+
+
+@pytest.mark.asyncio
+async def test_kie_success_revalidates_stale_unavailable_chat_and_delivers(
+    isolated_database,
+    monkeypatch,
+):
+    result_url = "https://cdn.example/revalidated-result.png"
+    user = await bot.database.get_or_create_user(
+        123458,
+        initial_telegram_chat_state="unavailable",
+    )
+    await bot.database.add_generation_task(
+        user.id,
+        user.telegram_id,
+        "kie-revalidated-success",
+        "image",
+        "miniapp_image",
+        model="seedream_5_pro",
+        request_data={"source": "miniapp"},
+    )
+    payload = {
+        "code": 200,
+        "data": {
+            "taskId": "kie-revalidated-success",
+            "state": "success",
+            "model": "seedream/5-pro-image-to-image",
+            "resultJson": json.dumps({"resultUrls": [result_url]}),
+        },
+    }
+    bot_instance = SimpleNamespace(
+        get_chat=AsyncMock(return_value=SimpleNamespace(type="private")),
+        send_photo=AsyncMock(),
+        send_message=AsyncMock(),
+    )
+    request = FakeRequest(payload, bot_instance)
+    request["skip_kie_ai_secret_check"] = True
+    monkeypatch.setattr(
+        "bot.services.kie_webhook_verification.kie_market_service.get_task_status",
+        AsyncMock(return_value=payload["data"]),
+    )
+    monkeypatch.setattr(
+        main,
+        "_persist_result_url_if_needed",
+        AsyncMock(return_value=result_url),
+    )
+    monkeypatch.setattr(main, "_download_remote_bytes", AsyncMock(return_value=None))
+    monkeypatch.setattr(main, "_send_original_file", AsyncMock(return_value=False))
+
+    response = await main.handle_kie_ai_webhook(request)
+
+    task = await bot.database.get_task_by_id("kie-revalidated-success")
+    metadata = json.loads(task.request_data or "{}")
+    assert response.status == 200
+    assert task.status == "completed"
+    assert metadata["delivery_status"] == "delivered"
+    bot_instance.get_chat.assert_awaited_once_with(user.telegram_id)
+    bot_instance.send_photo.assert_awaited_once()
+    assert await bot.database.can_attempt_telegram_delivery(user.telegram_id) is True

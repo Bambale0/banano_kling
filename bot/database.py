@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from math import isfinite
@@ -14,6 +15,7 @@ from bot import db as db_backend
 from bot.services.delivery_state import (
     TASK_DELIVERY_STATUSES,
     TERMINAL_TASK_DELIVERY_STATUSES,
+    terminal_telegram_delivery_reason,
 )
 
 logger = logging.getLogger(__name__)
@@ -1493,8 +1495,17 @@ async def get_or_create_user(
         )
 
 
-async def can_attempt_telegram_delivery(telegram_id: int) -> bool:
-    """Preserve legacy delivery unless Mini App established there is no bot chat."""
+async def can_attempt_telegram_delivery(
+    telegram_id: int,
+    *,
+    probe: Callable[[int], Awaitable[Any]] | None = None,
+) -> bool:
+    """Return whether Telegram delivery should be attempted.
+
+    ``unavailable`` is useful for suppressing nonessential Mini App notices,
+    but it must not permanently suppress an owed generation result. Result
+    paths may pass a live Telegram probe to revalidate a stale chat state.
+    """
     async with db_backend.connect(DATABASE_PATH) as db:
         cursor = await db.execute(
             "SELECT telegram_chat_state FROM users WHERE telegram_id = ?",
@@ -1504,7 +1515,26 @@ async def can_attempt_telegram_delivery(telegram_id: int) -> bool:
     if not row:
         return True
     state = row["telegram_chat_state"] if hasattr(row, "keys") else row[0]
-    return str(state or "").strip().lower() != "unavailable"
+    if str(state or "").strip().lower() != "unavailable":
+        return True
+    if probe is None:
+        return False
+
+    try:
+        await probe(telegram_id)
+    except Exception as exc:  # noqa: BLE001 - probe failures must not suppress owed results
+        if terminal_telegram_delivery_reason(exc):
+            return False
+        logger.warning(
+            "Telegram chat revalidation inconclusive; attempting result delivery: telegram_id=%s error=%s",
+            telegram_id,
+            type(exc).__name__,
+        )
+        return True
+
+    await mark_telegram_chat_available(telegram_id)
+    logger.info("Telegram chat revalidated for result delivery: telegram_id=%s", telegram_id)
+    return True
 
 
 async def _mark_telegram_chat_state(telegram_id: int, state: str) -> bool:
