@@ -480,14 +480,15 @@ class Repository:
             return step
 
     async def record_provider_observation(self, step_id: str, token: str, correlation_id: str | None,
-                                          event: str) -> None:
+                                          event: str, *, details: dict | None = None) -> None:
         async with self.transaction() as db:
             step = await self._leased_step(db, step_id, token)
             if correlation_id:
                 await db.execute('UPDATE genjutsu_steps SET provider_correlation_id=? WHERE id=?',
                                  (correlation_id, step_id))
+            event_details = {**(details or {}), 'provider_correlation_id': correlation_id}
             await self._event(db, event, run_id=step['run_id'], step_id=step_id,
-                              details={'provider_correlation_id': correlation_id})
+                              details=event_details)
 
     async def verified_admin_run(self, owner: int, run_id: str, project_id: str,
                                  revision: int, plan: dict) -> bool:

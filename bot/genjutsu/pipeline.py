@@ -162,10 +162,17 @@ class Pipeline:
                     timeout=settings['request_timeout_seconds'],
                     status_url=step.get('provider_status_url'),
                 )
-                await self.repository.record_provider_observation(
-                    sid, token, result.get('correlation_id'), 'provider_status_observed'
-                )
                 state = result['status']
+                await self.repository.record_provider_observation(
+                    sid,
+                    token,
+                    result.get('correlation_id'),
+                    'provider_status_observed',
+                    details={
+                        'provider_status': state,
+                        'provider_reason': result.get('reason'),
+                    },
+                )
                 if state == 'completed':
                     await self.repository.defer_step(sid, token, status='storing', delay_seconds=0,
                                                      remote_result_url=result['result_url'])

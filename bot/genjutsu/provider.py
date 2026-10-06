@@ -183,6 +183,16 @@ class Higgsfield:
         if state not in {'queued', 'in_progress', 'completed', 'failed', 'nsfw', 'canceled'}:
             raise ProviderFailure('provider_unknown_status')
         result = {'status': state, 'correlation_id': correlation_id}
+        error = data.get('error')
+        if isinstance(error, str) and error.strip():
+            # Do not persist or echo provider response text: it can contain
+            # signed media URLs or user content. Keep only a bounded category.
+            normalized = ' '.join(error.split()).lower()
+            result['reason'] = (
+                'content_safety_restrictions'
+                if 'content safety restrictions' in normalized
+                else 'provider_reported_error'
+            )
         if state == 'completed':
             video = data.get('video')
             if not isinstance(video, dict):

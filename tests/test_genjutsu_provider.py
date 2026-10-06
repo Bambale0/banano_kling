@@ -113,3 +113,27 @@ def test_production_provider_accepts_higgsfield_platform_status_host_only():
 
     with pytest.raises(ProviderFailure, match="provider_invalid_url"):
         provider._provider_url("https://evil.example/requests/request-123/status")
+
+
+@pytest.mark.asyncio
+async def test_nsfw_terminal_status_preserves_generic_content_safety_reason():
+    async def status(_request):
+        return web.json_response({
+            "status": "nsfw",
+            "error": "This request could not be completed because of content safety restrictions. Review https://private.example/input?id=secret and your reference media.",
+            "request_id": "request-safe-dog",
+        })
+
+    app = web.Application()
+    app.router.add_get("/requests/{rid}/status", status)
+    server = TestServer(app)
+    await server.start_server()
+    try:
+        provider = Higgsfield("secret", str(server.make_url("")).rstrip("/"), allow_insecure_for_tests=True)
+        result = await provider.status("request-safe-dog", timeout=5)
+        assert result["status"] == "nsfw"
+        assert result["reason"] == "content_safety_restrictions"
+        assert "error" not in result
+        assert "private.example" not in repr(result)
+    finally:
+        await server.close()
