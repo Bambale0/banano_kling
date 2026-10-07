@@ -23,7 +23,7 @@ tanyapi → feature/* | fix/* | agent/* → PR в tanyapi
 | --- | --- | --- |
 | Telegram Mini App | `https://tanyapp.xn--e1aikcel5c5a.online/mini-app/` | Nginx, статический Next.js export и reverse proxy к API |
 | Backend API | `https://tanyapi.chillcreative.ru` | Telegram webhook, Mini App API, webhooks провайдеров и платежей |
-| Media origin/CDN | `https://media.chillcreative.ru/uploads/...` | Nginx-раздача `static/uploads` через Cloudflare |
+| Media origin | `https://tanyapp.xn--e1aikcel5c5a.online/uploads/...` | Nginx proxy `/uploads/` к backend `static/uploads` |
 | Production checkout | `144.76.188.75`, `/root/tanya/banano_kling`, ветка `tanyapi` | Backend и актуальный frontend Nginx размещены на этом сервере |
 | Backend runtime | Docker container `banano-kling-bot` | Compose, localhost API `127.0.0.1:1888`; старый `banano-kling.service` отключён |
 

@@ -17,6 +17,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from bot.config import config
 from bot.services.kling_service import KlingService
+from bot.services.media_input_utils import canonicalize_local_upload_url
 from bot.services.seedance25_identity import (
     IDENTITY_ROLE_VERSION,
     build_identity_transfer_prompt,
@@ -90,7 +91,10 @@ class Seedance25Service(KlingService):
         seen: set[str] = set()
         for raw in values or []:
             value = str(raw or "").strip()
-            if not value or value in seen:
+            if not value:
+                continue
+            value = canonicalize_local_upload_url(value)
+            if value in seen:
                 continue
             seen.add(value)
             cleaned.append(value)
@@ -269,6 +273,10 @@ class Seedance25Service(KlingService):
 
         first_frame = str(first_frame_url or "").strip() or None
         last_frame = str(last_frame_url or "").strip() or None
+        if first_frame:
+            first_frame = canonicalize_local_upload_url(first_frame)
+        if last_frame:
+            last_frame = canonicalize_local_upload_url(last_frame)
 
         try:
             scenario = self.validate_scenario(

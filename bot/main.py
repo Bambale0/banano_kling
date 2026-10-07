@@ -939,8 +939,10 @@ def _is_local_static_result_url(url: str) -> bool:
     candidate = str(url or "").strip()
     if not candidate:
         return False
-    base_url = str(getattr(config, "static_base_url", "") or "").rstrip("/")
-    return bool(base_url) and candidate.startswith(f"{base_url}/uploads/")
+
+    from bot.services.media_input_utils import is_local_upload_source
+
+    return is_local_upload_source(candidate)
 
 def _guess_storage_extension(result_url: str, task_type: str = "image") -> str:
     candidate = Path(urlparse(str(result_url or "")).path).suffix.lower().lstrip(".")
@@ -953,7 +955,9 @@ async def _persist_result_url_if_needed(result_url: str | None, *, task_type: st
     if not candidate or not candidate.startswith(("http://", "https://")):
         return result_url
     if _is_local_static_result_url(candidate):
-        return candidate
+        from bot.services.media_input_utils import canonicalize_local_upload_url
+
+        return canonicalize_local_upload_url(candidate)
 
     result_host = (urlparse(candidate).hostname or "").strip().lower().lstrip(".")
     from bot.database import FEED_EPHEMERAL_RESULT_HOSTS

@@ -142,6 +142,7 @@ from bot.quality_pricing import QUALITY_COSTS, SEEDREAM_5_PRO_QUALITY_COSTS
 from bot.services.ai_assistant_service import ai_assistant_service
 from bot.services.lava_service import lava_service
 from bot.services.media_input_utils import (
+    canonicalize_local_upload_url,
     is_reference_contact_sheet_url,
     missing_local_upload_sources,
     resolve_local_upload_path,
@@ -705,7 +706,10 @@ def _clean_unique_values(values: list[Any] | None) -> list[str]:
     seen: set[str] = set()
     for value in values or []:
         text = str(value or "").strip()
-        if not text or text in seen:
+        if not text:
+            continue
+        text = canonicalize_local_upload_url(text)
+        if text in seen:
             continue
         seen.add(text)
         cleaned.append(text)

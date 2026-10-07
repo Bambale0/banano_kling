@@ -78,6 +78,7 @@ from bot.services.gemini_service import gemini_service
 from bot.services.gpt_image_service import gpt_image_service
 from bot.services.grok_service import grok_service
 from bot.services.media_input_utils import (
+    canonicalize_local_upload_url,
     filter_available_image_sources,
     is_reference_contact_sheet_url,
     missing_local_upload_sources,
@@ -184,7 +185,10 @@ def _clean_unique_urls(values) -> list[str]:
     seen: set[str] = set()
     for value in values or []:
         url = str(value or "").strip()
-        if not url or url in seen:
+        if not url:
+            continue
+        url = canonicalize_local_upload_url(url)
+        if url in seen:
             continue
         seen.add(url)
         cleaned.append(url)

@@ -5369,7 +5369,7 @@ async def handle_motion_character_upload(message: types.Message, state: FSMConte
     image_data = image_bytes.read()
 
     os.makedirs("static/uploads", exist_ok=True)
-    host = config.WEBHOOK_HOST.rstrip("/")
+    host = config.static_base_url.rstrip("/")
     fname = f"{uuid.uuid4().hex}.jpg"
     fpath = f"static/uploads/{fname}"
     with open(fpath, "wb") as f:
@@ -5413,7 +5413,7 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
     video_data = video_bytes.read()
 
     os.makedirs("static/uploads", exist_ok=True)
-    host = config.WEBHOOK_HOST.rstrip("/")
+    host = config.static_base_url.rstrip("/")
     fname = f"{uuid.uuid4().hex}.mp4"
     fpath = f"static/uploads/{fname}"
     with open(fpath, "wb") as f:

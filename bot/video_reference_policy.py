@@ -9,6 +9,7 @@ from bot.model_capabilities import (
     normalize_video_model_key,
     supports_video_reference,
 )
+from bot.services.media_input_utils import canonicalize_local_upload_url
 
 DEFAULT_VIDEO_REFERENCE_MODEL = "seedance_2"
 SEEDANCE_VIDEO_REFERENCE_PRICE_MULTIPLIER = 2
@@ -85,7 +86,10 @@ def normalize_reference_urls(
     seen: set[str] = set()
     for url in urls or []:
         value = str(url or "").strip()
-        if not value or value in seen:
+        if not value:
+            continue
+        value = canonicalize_local_upload_url(value)
+        if value in seen:
             continue
         seen.add(value)
         normalized.append(value)

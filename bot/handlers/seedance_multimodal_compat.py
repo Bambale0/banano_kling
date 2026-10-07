@@ -20,6 +20,7 @@ from bot.keyboards import (
     get_main_menu_button_keyboard,
     get_reference_videos_upload_keyboard,
 )
+from bot.services.media_input_utils import canonicalize_local_upload_url
 from bot.states import GenerationStates
 
 from . import generation as generation_module
@@ -49,7 +50,10 @@ def _clean_reference_urls(values, *, max_count: int) -> list[str]:
     seen: set[str] = set()
     for value in values or []:
         url = str(value or "").strip()
-        if not url or url in seen:
+        if not url:
+            continue
+        url = canonicalize_local_upload_url(url)
+        if url in seen:
             continue
         seen.add(url)
         cleaned.append(url)

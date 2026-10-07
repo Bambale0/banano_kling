@@ -8,7 +8,7 @@
 | --- | --- | --- | --- |
 | Backend | `tanyapi.chillcreative.ru` | `144.76.188.75` | `/root/tanya/banano_kling`, `banano-kling.service` |
 | Frontend | `cdn.chillcreative.ru` | `91.200.84.187` | `/var/www/cdn.chillcreative.ru` |
-| Media | `media.chillcreative.ru` | Cloudflare -> `144.76.188.75` | `static/uploads` через bind mount |
+| Media | `tanyapp.xn--e1aikcel5c5a.online` | `144.76.188.75` | Nginx `/uploads/` -> backend `static/uploads` |
 
 Обязательная ветка на обоих checkout:
 
@@ -117,7 +117,7 @@ WEBHOOK_BIND_HOST=127.0.0.1
 WEBHOOK_PORT=1888
 MINI_APP_PATH=/mini-app
 MINI_APP_URL=https://cdn.chillcreative.ru/mini-app/
-STATIC_BASE_URL=https://media.chillcreative.ru
+STATIC_BASE_URL=https://tanyapp.xn--e1aikcel5c5a.online
 ```
 
 Точные обязательные provider/payment значения перечислены в [environment.md](environment.md).
@@ -172,44 +172,40 @@ journalctl -u banano-kling.service -f
 
 ## 8. Media origin deploy
 
-### Автоматический вариант
+Production media uses the same public origin as the Mini App:
 
-```bash
-cd /root/tanya/banano_kling
-
-LETSENCRYPT_EMAIL='admin@example.com' \
-ORIGIN_IPV4='144.76.188.75' \
-sudo -E bash scripts/deploy_media_origin.sh
+```text
+https://tanyapp.xn--e1aikcel5c5a.online/uploads/...
 ```
 
-Скрипт должен:
+Required runtime values:
 
-- проверить ветку `tanyapi`;
-- установить/проверить Nginx и Certbot;
-- создать bind mount существующего `static/uploads`;
-- выпустить сертификат;
-- настроить media Nginx;
-- обновить Cloudflare DNS/cache/HTTP3 при наличии token;
-- обновить `STATIC_BASE_URL`;
-- выполнить backfill WebP-превью;
-- провести smoke tests.
-
-Подробности: [../ops/media/README.md](../ops/media/README.md).
-
-### Ручная проверка media
-
-```bash
-curl -sSI https://media.chillcreative.ru/uploads/feed/<real-file.webp>
-curl -sSI https://media.chillcreative.ru/uploads/feed/<real-file.webp>
+```dotenv
+STATIC_BASE_URL=https://tanyapp.xn--e1aikcel5c5a.online
+GENJUTSU_PUBLIC_BASE_URL=https://tanyapp.xn--e1aikcel5c5a.online
 ```
 
-Проверить headers:
+`WEBHOOK_HOST` remains the backend/webhook origin `https://tanyapi.chillcreative.ru`; do not replace payment/provider webhook URLs as part of the media-origin change.
 
-- `HTTP/2 200`;
-- `Cache-Control`;
-- `CF-Cache-Status`;
-- `Age` после cache hit;
-- отсутствие нежелательного `Alt-Svc: h3` во время диагностики VPN.
+The active Nginx vhost `/etc/nginx/sites-available/tanyapp.xn--e1aikcel5c5a.online.conf` proxies `/uploads/` and signed `/genjutsu/` routes to backend port `1888`. Validate config before reload:
+
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+Smoke a real stored media path, including Range support used by video clients:
+
+```bash
+curl -sSI https://tanyapp.xn--e1aikcel5c5a.online/uploads/feed/<real-file.webp>
+curl -sS -o /dev/null -H 'Range: bytes=0-1023' \
+  -w '%{http_code}\n' \
+  https://tanyapp.xn--e1aikcel5c5a.online/uploads/<real-video.mp4>
+```
+
+Expected: ordinary media returns `200`; a valid ranged video request returns `206`. Old `tanyapi.chillcreative.ru/uploads/...` links stay readable only for backward compatibility and must not be generated for new media.
+
+The standalone `media.chillcreative.ru` installer under `ops/media/` is legacy infrastructure and is not the current production deploy path.
 
 ## 9. Frontend remote profile
 

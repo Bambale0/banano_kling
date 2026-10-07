@@ -1470,3 +1470,24 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Frontend: local/provider media rewrites now use the live Mini App origin instead of restoring media to the backend hostname.
 - Tests: add regression coverage for canonical and legacy local upload hosts; update Mini App media contract.
 - Verification pending at time of entry: focused pytest/Jest, diff review, runtime restart/deploy path, HTTPS media smoke.
+
+- Follow-up audit after PR #267 merge: production CI/deploy for merge SHA `4c6fab2` failed because Ruff reported `I001` on `bot/services/media_input_utils.py`; Mini App production revision therefore remained on `6351c20`.
+- Additional root causes found: Motion Control uploads still built public URLs from `WEBHOOK_HOST`; legacy local result URLs were recognized only when already on the configured origin; valid legacy references could still be handed to providers with the old hostname.
+- Follow-up branch: `fix/media-public-origin-neironych-followup`. Motion Control now uses `config.static_base_url`; local `/uploads/*` URLs are canonicalized onto the configured media origin while unrelated external URLs remain untouched; legacy local result URLs are rebased instead of leaking the old hostname.
+- Production database read-only audit: legacy `tanyapi.chillcreative.ru/uploads/` strings remain primarily inside historical `generation_tasks.request_data` (283166 rows at audit time) and four prompt rows. No destructive bulk rewrite is used; runtime canonicalization preserves historical compatibility and new writes use the canonical origin.
+- Genjutsu uses one public base for signed media and provider callbacks. Because production `GENJUTSU_PUBLIC_BASE_URL` now points at the Mini App/media origin, Nginx on `tanyapp.xn--e1aikcel5c5a.online` was extended with a signed `/genjutsu/` reverse-proxy path to backend port 1888. `nginx -t` passed and Nginx reloaded; invalid signed-media probe returns the same 403 on old and new domains, and a ranged `/uploads/` probe on the new origin returns HTTP 206 with 1024 bytes.
+- Focused backend verification after follow-up changes: 88 passed, 1 skipped across config, durable-result, Seedream reference transport, saved-reference and trend API suites. Mini App: 216/216 Jest tests passed; ESLint passed; production static build passed.
+- Full safe backend regression suite started after focused verification; final CI/deploy acceptance still pending.
+
+- Follow-up TDD uncovered one more runtime override: `seedance_multimodal_compat` replaces `generation._seedance_media_inputs` at import time, so canonicalization in the generic generation helper alone was insufficient. Its reference cleaner now canonicalizes legacy local image/video URLs before runtime/provider use.
+- Canonicalization is also enforced in ordinary Mini App media lists, Seedance 2.0, Seedance 2.5, first/last frames, and shared video-reference normalization. External non-local URLs remain unchanged.
+- Clean-checkout-equivalent safe suite was run using only Git-tracked tests (local ignored historical tests excluded, matching GitHub CI checkout): `2056 passed, 45 skipped`. Focused media/Seedance/private-repeat tests also passed. The earlier 6-failure local run included ignored historical tests that are not present in the GitHub checkout; only the tracked Seedance regression was relevant and was fixed before the green run.
+
+
+## 2026-10-07 — media migration reconciliation
+
+- Imported the existing follow-up patch into an isolated worktree at `ac9365d`; preserved the original tracked diff and separated runtime `data/price.json`. No production checkout reset, price change, or untracked receipt cleanup was performed.
+- Added a failing regression for alternate frontend upload origins, then canonicalized the already supported CDN and legacy Mini App origins at the backend boundary. Frontend display stays same-origin; provider references are normalized to configured `STATIC_BASE_URL` regardless of the supported frontend entry point. External hosts and non-upload paths remain unchanged.
+- Read-only live checks: Mini App and its public `icon.svg` return HTTPS 200 with successful certificate validation; DNS resolves to 144.76.188.75. The live nginx file already proxies `/genjutsu/`; unsigned synthetic media IDs return 403 on old and new domains. No user media or signed credentials were fetched.
+- Live selected public configuration: static and Genjutsu origins use the new Mini App host; webhook origin stays on the old backend host. These observations do not prove deployment of this isolated source change.
+- Historical database links are retained; canonicalization is applied at runtime rather than destructive bulk rewriting. Production deployment and final exact-SHA smoke remain owned by the coordinated release task.
