@@ -9,6 +9,7 @@ from bot import notification_service
 async def test_worker_recovers_expired_delivery_leases(monkeypatch) -> None:
     class Cursor:
         rowcount = 3
+        fetchall = AsyncMock(return_value=[])
 
     class Connection:
         execute = AsyncMock(return_value=Cursor())

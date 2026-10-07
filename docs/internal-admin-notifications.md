@@ -38,14 +38,90 @@ POST /internal/admin/notifications/campaigns/{id}/cancel
 ## Delivery safety
 
 - `FOR UPDATE SKIP LOCKED` для конкурентного claim;
-- lease на `sending`, просроченный lease возвращается в retry;
+- lease на `sending`; подтверждённые части не повторяются, неизвестный результат требует сверки;
 - экспоненциальный backoff и Telegram `retry_after`;
 - максимум 5 попыток;
 - blocked/deactivated chats учитываются отдельно;
-- уникальность `(campaign_id, telegram_id)` исключает дубли;
+- уникальность `(campaign_id, telegram_id)` исключает повторное создание строки получателя; она сама по себе не гарантирует exactly-once в Telegram;
 - текст отправляется как plain text;
 - кнопка разрешает только `https://` или `tg://`.
 
 ## Repeat button compatibility
 
 Старые result keyboards использовали `repeat_result_*`, а безопасный repeat-flow слушает `repeat_image_*`. Compatibility router сохраняет работу уже отправленных сообщений и направляет оба callback-формата в один экран подтверждения.
+
+
+## Telegram promo editor (schema v2)
+
+The existing Telegram admin → Рассылка entry opens saved promo drafts and history.
+Create a draft, enter text, add up to ten photos/videos, then add zero to two buttons.
+Each button has a 1–64 character label and a server-searched existing published trend.
+The selector uses the existing approved/public user_prompts model and trend tag.
+It does not create duplicate availability flags or accept arbitrary URLs.
+
+Buttons open the existing prompt deep link in the Mini App; the recipient sees the
+selected trend and chooses the normal repeat action. No referral is attributed to an
+administrator or another recipient by the broadcast link.
+
+One photo/video carries its text and keyboard. Two or more files are sent as one
+album, followed by a separate text message with vertical buttons. An album requires
+promo text. Existing single-media messages without captions remain supported.
+Telegram albums do not accept inline keyboards.
+
+### Test and launch
+
+«Тест на админах» queues this exact normalized snapshot to config.admin_ids. The same
+worker and renderer deliver tests and broadcasts. At least one complete successful
+delivery to a current admin enables final confirmation. The editor reports pending,
+failed and uncertain targets. Delivery is not proof that a human clicked either link.
+
+All newly composed Telegram promos, including those without buttons, require a
+matching successful test. Changes to text, formatting, ordered media or buttons clear
+the test. The final launch transaction rechecks the immutable payload, current bot
+username/deep links, current admin receipt, trend availability and confirmed audience
+count. Concurrent clicks materialize only one recipient set. Launched snapshots are
+read-only; duplicate creates a fresh draft with no test authority.
+
+The old Telegram confirmation safely reopens the editor. Legacy signed internal
+campaign endpoints remain for their existing clients, but reject v2 promo test/start
+requests so they cannot bypass the Telegram test gate. Previously queued historical
+campaigns are not retroactively gated.
+
+### Delivery and recovery
+
+The existing PostgreSQL tables receive additive promo revision/snapshot/test fields and
+per-part receipts. Startup DDL is serialized with a transaction advisory lock.
+Each Telegram call is preceded by committed ownership-fenced intent and followed by
+committed message IDs. Confirmed albums are skipped when retrying a subsequent text
+part. Definite 429 failures respect retry_after. Forbidden/deactivated/missing chats
+are terminal for that recipient. Unknown network acceptance, timeouts and 5xx responses
+are recorded as uncertain; no blind retry can guarantee deduplication because Telegram
+does not supply send idempotency keys. This deliberately favors avoiding duplicate
+promos over automatic retry of an ambiguous 5xx response.
+
+An expired in-flight part without a receipt requires reconciliation. A crash after
+all receipts were persisted can complete without another Telegram call. Logs contain
+IDs, hashes, part method, attempt, error category and timings, never promo text, media
+contents, auth data or raw exception URLs.
+
+### Deployment and rollback constraints
+
+Deploy all notification workers on this version before enabling new promo creation.
+Do not run old and new consumers together: older code cannot render v2 albums/buttons.
+Do not roll code back while v2 campaigns are running. First freeze/drain their queued
+work with an authorized operation and preserve receipts; then roll back. An additive
+schema alone does not make the old consumer safe for v2 snapshots.
+
+No real Telegram test or mass send is part of automated regression tests. The release
+acceptance still requires a specifically approved admin-only test using safe content:
+two videos, two published trends, actual button clicks, correct Mini App cards, edit
+invalidation and post-deploy logs. Do not start a paid repeat to validate navigation.
+
+### Verification
+
+Default offline suite includes renderer and Telegram handler regressions. Real
+PostgreSQL tests use tests/test_promo_campaigns_postgres.py only with explicit
+PROMO_POSTGRES_TEST=1 and PARTNER_POSTGRES_TEST=1 on a guarded local test database.
+The Runtime PostgreSQL Regression workflow creates a separate banano_promo_test
+database and exercises migration, concurrent launch, test hash, partial delivery and
+uncertain-recovery behavior without Telegram network calls.

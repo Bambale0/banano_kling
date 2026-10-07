@@ -502,6 +502,10 @@ class AccessGuardMiddleware(BaseMiddleware):
             if callable(get_state):
                 raw_state = str(await get_state() or "")
         return raw_state in {
+            "PromoAdminStates:text",
+            "PromoAdminStates:media",
+            "PromoAdminStates:button_label",
+            "PromoAdminStates:trend_query",
             "AdminTestLabStates:gpt25_prompt",
             "AdminTestLabStates:gpt25_references",
             "SeedanceAdminTestStates:prompt",

@@ -532,6 +532,8 @@ async def start_campaign_handler(request: web.Request) -> web.Response:
         campaign = await cursor.fetchone()
         if not campaign:
             raise web.HTTPNotFound(text="campaign_not_found")
+        if dict(campaign).get("promo_version") == 2:
+            raise CommandConflictError("PROMO_NOT_TESTED: use the tested Telegram promo launch flow")
         if campaign["status"] not in {"draft", "scheduled", "running"}:
             raise CommandConflictError(
                 f"campaign cannot be started from status {campaign['status']}"
