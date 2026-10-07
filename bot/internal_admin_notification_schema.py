@@ -137,6 +137,17 @@ async def ensure_internal_admin_notification_schema() -> None:
                     )
                     """
                 )
+                # Append-only attribution metadata; never store promo text in the audit.
+                await cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS notification_promo_revisions (
+                        campaign_id BIGINT NOT NULL REFERENCES notification_campaigns(id),
+                        revision INTEGER NOT NULL CHECK (revision > 0),
+                        admin_telegram_id BIGINT NOT NULL,
+                        payload_hash TEXT NOT NULL,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(campaign_id, revision)
+                    )
+                """)
                 # Additive promo extension: existing campaigns keep their status and payload.
                 for column in (
                     "promo_version INTEGER NOT NULL DEFAULT 0",

@@ -85,6 +85,8 @@ async def test_admin_test_claim_requires_current_run_current_hash_and_admin_targ
     assert parameters == (worker.MAX_ATTEMPTS, 123, 456)
     update_sql, update_params = connection.execute.await_args_list[1].args
     assert "attempt_token = ?" in update_sql
+    assert "lease_until = CURRENT_TIMESTAMP + (? * INTERVAL '1 second')" in update_sql
+    assert update_params[0] == worker.LEASE_SECONDS
     assert claimed["attempt_token"] == update_params[1]
     assert claimed["attempt_token"] != "owned-token"
     assert claimed["attempts"] == 2
@@ -185,8 +187,11 @@ async def test_retry_after_persists_receipts_and_schedules_delay(monkeypatch):
     parameters = connection.execute.await_args.args[1]
     assert parameters[0] == "failed"
     assert parameters[3] is False
-    delta = parameters[5] - worker.datetime.now(worker.UTC).replace(tzinfo=None)
-    assert 45 <= delta.total_seconds() <= 47
+    assert parameters[5] == 47
+    assert (
+        "next_attempt_at = CURRENT_TIMESTAMP + (? * INTERVAL '1 second')"
+        in connection.execute.await_args.args[0]
+    )
     assert "secret-token" not in repr(connection.execute.await_args_list)
     saved = copy.deepcopy(delivery["delivery_parts"])
     delivery.update(delivery_parts=saved, attempt_token="next-owner", attempts=2)
@@ -271,6 +276,10 @@ async def test_recovery_separates_unconfirmed_parts_from_confirmed_receipts(
     assert "THEN 'sent'" in sql
     assert "NOT IN ('sent', 'pending', 'retryable')" in sql
     assert "attempt_token = NULL" in sql
+    assert "d.attempt_token IS NOT NULL" in sql
+    assert "d.attempt_token IS NULL" in sql
+    assert "GREATEST(d.attempts - 1, 0)" in sql
+    assert "delivery lease expired before API intent" in sql
     assert "MAX((p->>'retry_after')::integer)" in sql
     assert "lease_until < CURRENT_TIMESTAMP" in sql
 
@@ -290,8 +299,16 @@ async def test_obsolete_test_runs_are_cancelled_without_touching_inflight_or_leg
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("admins, expected", [([123], "t.telegram_id NOT IN (?)"), ([], "THEN 'test_recipient_no_longer_admin'")])
-async def test_revoked_admin_tests_cancel_and_refresh_summary(monkeypatch, admins, expected):
+@pytest.mark.parametrize(
+    "admins, expected",
+    [
+        ([123], "t.telegram_id NOT IN (?)"),
+        ([], "THEN 'test_recipient_no_longer_admin'"),
+    ],
+)
+async def test_revoked_admin_tests_cancel_and_refresh_summary(
+    monkeypatch, admins, expected
+):
     from bot import promo_campaigns
 
     monkeypatch.setattr(worker, "config", SimpleNamespace(admin_ids=admins))
@@ -314,7 +331,9 @@ async def test_success_logs_only_identifiers_and_delivery_metadata(monkeypatch, 
     connection = Connection()
     monkeypatch.setattr(worker.db_backend, "connect", lambda: connection)
     bot = SimpleNamespace(
-        send_media_group=AsyncMock(return_value=[SimpleNamespace(message_id=1), SimpleNamespace(message_id=2)]),
+        send_media_group=AsyncMock(
+            return_value=[SimpleNamespace(message_id=1), SimpleNamespace(message_id=2)]
+        ),
         send_message=AsyncMock(return_value=SimpleNamespace(message_id=3)),
     )
     delivery = item()

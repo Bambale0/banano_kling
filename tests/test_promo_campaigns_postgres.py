@@ -38,7 +38,7 @@ async def promo_database(isolated_database, monkeypatch):
     assert db_backend.is_postgres()
     await close_postgres_pool()
     async with await psycopg.AsyncConnection.connect(dsn) as conn:
-        await conn.execute("DROP TABLE IF EXISTS notification_test_sends, notification_deliveries, notification_campaigns, user_prompts, users CASCADE")
+        await conn.execute("DROP TABLE IF EXISTS notification_promo_revisions, notification_test_sends, notification_deliveries, notification_campaigns, user_prompts, users CASCADE")
         await conn.commit()
     await _bootstrap_production_like_partner_schema()
     async with await psycopg.AsyncConnection.connect(dsn) as conn:
@@ -545,3 +545,357 @@ async def test_trend_unpublication_waits_for_launch_commit(monkeypatch):
         result = await launch
         await hiding
     assert result["status"] == "running"
+
+
+@pytest.fixture(params=["UTC", "Europe/London", "Asia/Kolkata"])
+async def worker_clock(monkeypatch, request):
+    """Exercise the actual pooled adapter, including a year-round UTC offset."""
+    timezone = request.param
+    monkeypatch.setenv("PGOPTIONS", f"-c timezone={timezone}")
+    await close_postgres_pool()
+    async with db_backend.connect() as conn:
+        conn.row_factory = db_backend.Row
+        cur = await conn.execute("SELECT current_setting('TimeZone') AS timezone")
+        assert (await cur.fetchone())["timezone"] == timezone
+    yield
+    await close_postgres_pool()
+
+
+async def _deadline_remaining(table, column, row_id):
+    assert table in {"notification_test_sends", "notification_deliveries"}
+    assert column in {"lease_until", "next_attempt_at"}
+    async with db_backend.connect() as conn:
+        conn.row_factory = db_backend.Row
+        cur = await conn.execute(
+            f"SELECT EXTRACT(EPOCH FROM ({column} - CURRENT_TIMESTAMP::timestamp)) AS remaining "
+            f"FROM {table} WHERE id = ?", (row_id,),
+        )
+        return float((await cur.fetchone())["remaining"])
+
+
+@pytest.mark.asyncio
+async def test_admin_and_mass_delivery_leases_use_database_clock(worker_clock):
+    bot = fake_bot()
+    item = await draft()
+    await promos.test_promo(item["id"], ADMIN, bot, item["revision"], "non-utc-clock")
+    test_delivery = await worker._claim_test_delivery()
+    assert test_delivery is not None
+    assert 80 < await _deadline_remaining(
+        "notification_test_sends", "lease_until", test_delivery["id"]
+    ) <= worker.LEASE_SECONDS
+    await worker.process_delivery(bot, test_delivery)
+    await promos.refresh_test_state(item["id"], test_delivery["content_hash"])
+    tested = await promos.get_promo(item["id"], ADMIN)
+    assert tested["ready"], tested["test_summary"]
+    assert bot.send_media_group.await_count == 1
+    assert bot.send_message.await_count == 1
+
+    await promos.start_promo(
+        item["id"], ADMIN, bot, item["revision"], tested["content_hash"], 3
+    )
+    mass_delivery = await worker._claim_delivery()
+    assert mass_delivery is not None
+    assert 80 < await _deadline_remaining(
+        "notification_deliveries", "lease_until", mass_delivery["id"]
+    ) <= worker.LEASE_SECONDS
+    await worker.process_delivery(bot, mass_delivery)
+    await worker._refresh_campaign(item["id"])
+    assert (await promos.get_promo(item["id"], ADMIN))["sent_count"] == 1
+    assert bot.send_media_group.await_count == 2
+    assert bot.send_message.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_retry_and_legacy_deadlines_use_database_clock(worker_clock):
+    from aiogram.exceptions import TelegramRetryAfter
+    from aiogram.methods import SendMessage
+
+    bot = fake_bot()
+    item = await draft()
+    await promos.test_promo(item["id"], ADMIN, bot, item["revision"], "non-utc-retry")
+    delivery = await worker._claim_test_delivery()
+    bot.send_message.side_effect = TelegramRetryAfter(
+        method=SendMessage(chat_id=ADMIN, text="test"), message="retry", retry_after=47,
+    )
+    await worker.process_delivery(bot, delivery)
+    assert 45 < await _deadline_remaining(
+        "notification_test_sends", "next_attempt_at", delivery["id"]
+    ) <= 47
+    async with db_backend.connect() as conn:
+        conn.row_factory = db_backend.Row
+        cur = await conn.execute(
+            "SELECT status, delivery_parts FROM notification_test_sends WHERE id = ?",
+            (delivery["id"],),
+        )
+        row = await cur.fetchone()
+        assert row["status"] == "failed"
+        assert promos._decode(row["delivery_parts"], [])[0]["status"] == "sent"
+        cur = await conn.execute(
+            "INSERT INTO notification_deliveries (campaign_id, telegram_id, status) "
+            "VALUES (?, 1001, 'queued') RETURNING id", (item["id"],),
+        )
+        legacy_id = (await cur.fetchone())["id"]
+        await conn.commit()
+    await worker._mark_failed(legacy_id, 1, RuntimeError("definite rejection"))
+    assert 3 < await _deadline_remaining(
+        "notification_deliveries", "next_attempt_at", legacy_id
+    ) <= 5
+
+
+@pytest.mark.asyncio
+async def test_fifth_inflight_admin_attempt_cannot_be_replaced():
+    bot = fake_bot()
+    item = await draft()
+    queued = await promos.test_promo(item["id"], ADMIN, bot, item["revision"], "fifth-first")
+    async with db_backend.connect() as conn:
+        # The other admin already completed; the fifth attempt is still in flight.
+        await conn.execute(
+            "UPDATE notification_test_sends SET status = 'cancelled' WHERE campaign_id = ?",
+            (item["id"],),
+        )
+        await conn.execute(
+            """UPDATE notification_test_sends SET status = 'sending', attempts = 5,
+               attempt_token = 'fifth-attempt', lease_until = CURRENT_TIMESTAMP + INTERVAL '60 seconds'
+               WHERE campaign_id = ? AND telegram_id = ?""",
+            (item["id"], ADMIN),
+        )
+        await conn.commit()
+    repeated = await promos.test_promo(item["id"], ADMIN, bot, item["revision"], "fifth-second")
+    assert repeated["test_run_key"] == queued["test_run_key"]
+    async with db_backend.connect() as conn:
+        conn.row_factory = db_backend.Row
+        cur = await conn.execute("SELECT COUNT(*) AS n FROM notification_test_sends WHERE campaign_id = ?", (item["id"],))
+        assert (await cur.fetchone())["n"] == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("is_test", [True, False])
+async def test_fenced_unstarted_fifth_claim_recovers_without_spending_attempt(is_test):
+    bot = fake_bot()
+    item = await draft()
+    if is_test:
+        await promos.test_promo(item["id"], ADMIN, bot, item["revision"], "unstarted")
+    else:
+        tested = await _test_and_deliver(item, bot)
+        await promos.start_promo(
+            item["id"], ADMIN, bot, item["revision"], tested["content_hash"], 3
+        )
+    bot.send_media_group.reset_mock()
+    bot.send_message.reset_mock()
+    table = "notification_test_sends" if is_test else "notification_deliveries"
+    claim = worker._claim_test_delivery if is_test else worker._claim_delivery
+    async with db_backend.connect() as conn:
+        await conn.execute(
+            f"UPDATE {table} SET attempts = ? WHERE campaign_id = ?",
+            (worker.MAX_ATTEMPTS - 1, item["id"]),
+        )
+        await conn.commit()
+    claimed = await claim()
+    assert claimed["attempts"] == worker.MAX_ATTEMPTS
+    assert claimed["attempt_token"]
+    assert promos._decode(claimed["delivery_parts"], []) == []
+    async with db_backend.connect() as conn:
+        await conn.execute(
+            f"UPDATE {table} SET lease_until = CURRENT_TIMESTAMP - INTERVAL '1 second' "
+            "WHERE id = ?", (claimed["id"],),
+        )
+        await conn.commit()
+    assert await worker._recover_table(is_test=is_test) == 1
+    async with db_backend.connect() as conn:
+        conn.row_factory = db_backend.Row
+        cur = await conn.execute(f"SELECT * FROM {table} WHERE id = ?", (claimed["id"],))
+        row = await cur.fetchone()
+        assert row["status"] == "failed"
+        assert row["attempts"] == worker.MAX_ATTEMPTS - 1
+        assert row["attempt_token"] is None
+        assert promos._decode(row["delivery_parts"], []) == []
+    bot.send_media_group.assert_not_awaited()
+    bot.send_message.assert_not_awaited()
+    resumed = await claim()
+    assert resumed["id"] == claimed["id"]
+    assert resumed["attempt_token"] != claimed["attempt_token"]
+    await worker.process_delivery(bot, resumed)
+    bot.send_media_group.assert_awaited_once()
+    bot.send_message.assert_awaited_once()
+    async with db_backend.connect() as conn:
+        conn.row_factory = db_backend.Row
+        cur = await conn.execute(f"SELECT status FROM {table} WHERE id = ?", (claimed["id"],))
+        assert (await cur.fetchone())["status"] == "sent"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status, token", [("sending", None), ("uncertain", "old-owner")])
+async def test_legacy_unfenced_or_already_uncertain_empty_attempt_is_not_retried(status, token):
+    item = await draft()
+    async with db_backend.connect() as conn:
+        await conn.execute(
+            "UPDATE notification_campaigns SET status = 'running' WHERE id = ?", (item["id"],)
+        )
+        cur = await conn.execute(
+            """INSERT INTO notification_deliveries
+               (campaign_id, telegram_id, status, attempts, attempt_token, lease_until)
+               VALUES (?, 1001, ?, ?, ?, CURRENT_TIMESTAMP - INTERVAL '1 second') RETURNING id""",
+            (item["id"], status, worker.MAX_ATTEMPTS, token),
+        )
+        delivery_id = (await cur.fetchone())[0]
+        await conn.commit()
+    recovered = await worker._recover_expired_leases()
+    assert recovered == (1 if status == "sending" else 0)
+    async with db_backend.connect() as conn:
+        conn.row_factory = db_backend.Row
+        cur = await conn.execute(
+            "SELECT status, attempts FROM notification_deliveries WHERE id = ?", (delivery_id,)
+        )
+        row = await cur.fetchone()
+        assert row["status"] == "uncertain"
+        assert row["attempts"] == worker.MAX_ATTEMPTS
+    assert await worker._claim_delivery() is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("is_test", [True, False])
+async def test_partial_inflight_progress_is_never_retried_by_unstarted_claim_recovery(is_test):
+    bot = fake_bot()
+    item = await draft()
+    if is_test:
+        await promos.test_promo(item["id"], ADMIN, bot, item["revision"], "partial-intent")
+    else:
+        tested = await _test_and_deliver(item, bot)
+        await promos.start_promo(
+            item["id"], ADMIN, bot, item["revision"], tested["content_hash"], 3
+        )
+    table = "notification_test_sends" if is_test else "notification_deliveries"
+    claim = worker._claim_test_delivery if is_test else worker._claim_delivery
+    claimed = await claim()
+    bot.send_media_group.reset_mock()
+    bot.send_message.reset_mock()
+    bot.send_message.side_effect = asyncio.CancelledError()
+    with pytest.raises(asyncio.CancelledError):
+        await worker.process_delivery(bot, claimed)
+    async with db_backend.connect() as conn:
+        conn.row_factory = db_backend.Row
+        cur = await conn.execute(f"SELECT delivery_parts FROM {table} WHERE id = ?", (claimed["id"],))
+        parts = promos._decode((await cur.fetchone())["delivery_parts"], [])
+        assert parts[0]["status"] == "sent"
+        assert parts[1]["status"] == "sending"
+        await conn.execute(
+            f"UPDATE {table} SET lease_until = CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE id = ?",
+            (claimed["id"],),
+        )
+        await conn.commit()
+    assert await worker._recover_table(is_test=is_test) == 1
+    async with db_backend.connect() as conn:
+        conn.row_factory = db_backend.Row
+        cur = await conn.execute(f"SELECT status, attempts FROM {table} WHERE id = ?", (claimed["id"],))
+        row = await cur.fetchone()
+        assert row["status"] == "uncertain"
+        assert row["attempts"] == claimed["attempts"]
+    next_claim = await claim()
+    assert next_claim is None or next_claim["id"] != claimed["id"]
+    bot.send_media_group.assert_awaited_once()
+    bot.send_message.assert_awaited_once()
+
+
+async def _promo_revision_audit(campaign_id):
+    async with db_backend.connect() as conn:
+        conn.row_factory = db_backend.Row
+        cursor = await conn.execute(
+            "SELECT campaign_id, revision, admin_telegram_id, payload_hash, created_at "
+            "FROM notification_promo_revisions WHERE campaign_id = ? ORDER BY revision",
+            (campaign_id,),
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+
+
+@pytest.mark.asyncio
+async def test_promo_revision_audit_records_creation_and_actual_edit_actor():
+    from datetime import datetime
+
+    created = await promos.create_promo(ADMIN, "audited-create")
+    replay = await promos.create_promo(ADMIN, "audited-create")
+    assert replay["id"] == created["id"]
+    assert replay["revision"] == 1
+    initial = await _promo_revision_audit(created["id"])
+    assert len(initial) == 1
+    assert initial[0]["admin_telegram_id"] == ADMIN
+    assert initial[0]["revision"] == 1
+    assert initial[0]["payload_hash"] == created["content_hash"]
+    assert datetime.fromisoformat(str(initial[0]["created_at"])).tzinfo is not None
+
+    edited = await promos.save_promo(created["id"], OTHER_ADMIN, payload(), 1)
+    rows = await _promo_revision_audit(created["id"])
+    assert [(row["revision"], row["admin_telegram_id"]) for row in rows] == [(1, ADMIN), (2, OTHER_ADMIN)]
+    assert rows[0] == initial[0]
+    assert rows[1]["payload_hash"] == edited["content_hash"]
+    assert rows[1]["created_at"] >= rows[0]["created_at"]
+    assert set(rows[1]) == {"campaign_id", "revision", "admin_telegram_id", "payload_hash", "created_at"}
+
+
+@pytest.mark.asyncio
+async def test_unchanged_invalid_and_stale_saves_add_no_revision_audit():
+    item = await draft()
+    before = await _promo_revision_audit(item["id"])
+    identical = await promos.save_promo(item["id"], OTHER_ADMIN, item["message"], item["revision"])
+    assert identical["revision"] == item["revision"]
+    with pytest.raises(promos.PromoError, match="актуальную версию"):
+        await promos.save_promo(item["id"], OTHER_ADMIN, payload(buttons=0), item["revision"] - 1)
+    invalid = payload()
+    invalid["media"] = [{"type": "document", "file_id": "unsupported"}]
+    with pytest.raises(promos.PromoError):
+        await promos.save_promo(item["id"], OTHER_ADMIN, invalid, item["revision"])
+    assert await _promo_revision_audit(item["id"]) == before
+    current = await promos.get_promo(item["id"], ADMIN)
+    assert current["revision"] == item["revision"]
+    assert current["message"] == item["message"]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_audits_new_creation_and_copy_actor_without_changing_source():
+    original = await draft()
+    original_audit = await _promo_revision_audit(original["id"])
+    duplicate = await promos.duplicate_promo(original["id"], OTHER_ADMIN)
+    assert duplicate["id"] != original["id"]
+    assert duplicate["message"] == original["message"]
+    rows = await _promo_revision_audit(duplicate["id"])
+    assert [(row["revision"], row["admin_telegram_id"]) for row in rows] == [(1, OTHER_ADMIN), (2, OTHER_ADMIN)]
+    assert rows[-1]["payload_hash"] == duplicate["content_hash"]
+    assert await _promo_revision_audit(original["id"]) == original_audit
+
+
+@pytest.mark.asyncio
+async def test_failed_revision_audit_insert_rolls_back_campaign_edit_and_create():
+    item = await draft()
+    before = await _promo_revision_audit(item["id"])
+    # The compatibility adapter deliberately skips generic DDL; use psycopg,
+    # as schema creation does, only against the fixture's guarded test database.
+    async with await psycopg.AsyncConnection.connect(os.environ["DATABASE_URL"]) as conn:
+        await conn.execute(
+            "ALTER TABLE notification_promo_revisions ADD CONSTRAINT test_reject_actor "
+            "CHECK (admin_telegram_id <> 999999998)"
+        )
+        await conn.commit()
+    with pytest.raises(Exception, match="test_reject_actor"):
+        await promos.save_promo(item["id"], OTHER_ADMIN, payload(buttons=0), item["revision"])
+    with pytest.raises(Exception, match="test_reject_actor"):
+        await promos.create_promo(OTHER_ADMIN, "audit-must-commit")
+    current = await promos.get_promo(item["id"], ADMIN)
+    assert current["message"] == item["message"]
+    assert current["revision"] == item["revision"]
+    assert await _promo_revision_audit(item["id"]) == before
+    assert [entry["id"] for entry in await promos.list_promos(ADMIN)] == [item["id"]]
+
+
+@pytest.mark.asyncio
+async def test_promo_test_timestamp_is_timezone_aware_in_detail_and_list(worker_clock):
+    from datetime import datetime
+
+    tested = await _test_and_deliver(await draft(), fake_bot())
+    listed = next(entry for entry in await promos.list_promos(ADMIN) if entry["id"] == tested["id"])
+    async with db_backend.connect() as conn:
+        conn.row_factory = db_backend.Row
+        cursor = await conn.execute("SELECT EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) AS now_epoch")
+        now_epoch = float((await cursor.fetchone())["now_epoch"])
+    for item in (tested, listed):
+        timestamp = datetime.fromisoformat(item["tested_at"])
+        assert timestamp.tzinfo is not None
+        assert 0 <= now_epoch - timestamp.timestamp() < 10

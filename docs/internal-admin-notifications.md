@@ -125,3 +125,25 @@ PROMO_POSTGRES_TEST=1 and PARTNER_POSTGRES_TEST=1 on a guarded local test databa
 The Runtime PostgreSQL Regression workflow creates a separate banano_promo_test
 database and exercises migration, concurrent launch, test hash, partial delivery and
 uncertain-recovery behavior without Telegram network calls.
+
+
+### Database clock and reviewed edge cases
+
+Lease and retry deadlines use PostgreSQL clock arithmetic, matching the session timezone
+of the existing TIMESTAMP columns. UTC, Europe/London and Asia/Kolkata are covered by
+real-adapter regression tests.
+
+A recovered fenced claim with an empty part list is provably unsent: both current
+senders persist intent before calling Telegram. It can reclaim its unused attempt
+budget and retry. Historical unfenced empty claims and any unconfirmed in-flight part
+remain uncertain and are never blindly replayed. A fifth in-flight test attempt still
+counts as pending and cannot be replaced by another test run.
+
+New promo revisions record campaign, revision, acting administrator, payload hash and
+timestamp in the same transaction as the edit. No-op saves and stale rejected edits
+do not add revision history.
+
+Operational configuration review remains a separate improvement: request timeout and
+lease retain their safe technical defaults (60 and 90 seconds with the invariant
+timeout < lease). This release does not add dynamic runtime policy changes or weaken
+the fencing guarantees.
