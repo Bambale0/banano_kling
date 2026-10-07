@@ -1436,6 +1436,29 @@ Reference cleanup reports how many generation snapshot refs are protected.
   GitHub publication/CI and release. Tests use synthetic recipients and mocked Bot API only.
 
 
+## 2026-10-07 — Production promo lease clock correction
+
+- PR266 deployed as 6351c208eddf248e4e2ddc01b3cef825daf6340d; Git/container/public
+  revision matched and health was OK. The approved synthetic admin test exposed a runtime
+  deadline bug: production PostgreSQL uses Europe/London, while leases were naive UTC values.
+- Both test recipients lost the lease fence before the first Telegram part call. Persisted
+  part lists stayed empty; their rows are retained as uncertain. No mass delivery rows were
+  created. The separately approved upload album succeeded and its file IDs can be reused.
+- Reproduced through the real pooled PostgreSQL adapter: a new 90-second lease measured
+  -3510 seconds. The first non-UTC acceptance run had 11 failures / 18 passes.
+- Correction uses database clock arithmetic for claims, lease renewal, completion retry
+  deadlines and legacy retry scheduling. No production timezone/server setting changes.
+- Regression runs exercise UTC, Europe/London and Asia/Kolkata through test-process PGOPTIONS.
+  Real admin smoke must be repeated only after verifying the corrected deployed revision;
+  preserved evidence proves the first campaign test never reached Telegram.
+
+- PR266 review follow-up: fixed fifth in-flight test replacement, safe recovery of fenced
+  claims before intent (including reclaiming unused fifth attempts), and prospective
+  transactional revision attribution. Existing unfenced or in-flight uncertain attempts
+  are not automatically retried. tested_at is serialized with its database timezone.
+- Combined isolated PostgreSQL acceptance: 47 passed; focused non-PG regressions: 104 passed.
+  Dynamic policy configuration was assessed as a separate operational improvement, not
+  a current P1 correctness failure; validated 60/90-second technical defaults remain.
 ## 2026-10-07 — canonical public media origin
 
 - Baseline: `6351c208eddf` on `tanyapi`; task branch `fix/media-public-origin-neironych`.

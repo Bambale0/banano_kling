@@ -6,7 +6,6 @@ import hashlib
 import json
 import logging
 import time
-from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -70,7 +69,11 @@ async def _recover_table(*, is_test: bool) -> int:
         SELECT 1 FROM jsonb_array_elements(d.delivery_parts) p
         WHERE p->>'status' IS DISTINCT FROM 'sent'
     ))"""
-    unsafe = """(jsonb_array_length(d.delivery_parts) = 0
+    # Every fenced sender commits part intent before calling Telegram. An empty
+    # progress list on a new fenced claim proves this claim made no API attempt.
+    unstarted = """(jsonb_array_length(d.delivery_parts) = 0
+        AND d.attempt_token IS NOT NULL)"""
+    unsafe = """((jsonb_array_length(d.delivery_parts) = 0 AND d.attempt_token IS NULL)
         OR EXISTS (SELECT 1 FROM jsonb_array_elements(d.delivery_parts) p
                    WHERE COALESCE(p->>'status', '') NOT IN ('sent', 'pending', 'retryable')))"""
     async with db_backend.connect() as connection:
@@ -80,6 +83,8 @@ async def _recover_table(*, is_test: bool) -> int:
             UPDATE {table} d
             SET status = CASE WHEN {all_sent} THEN 'sent'
                               WHEN {unsafe} THEN 'uncertain' ELSE 'failed' END,
+                attempts = CASE WHEN {unstarted} THEN GREATEST(d.attempts - 1, 0)
+                                ELSE d.attempts END,
                 telegram_message_id = CASE WHEN {all_sent}
                     THEN (d.delivery_parts->-1->'message_ids'->>-1)::bigint
                     ELSE d.telegram_message_id END,
@@ -95,6 +100,7 @@ async def _recover_table(*, is_test: bool) -> int:
                     ), 0) * INTERVAL '1 second'
                 ),
                 {error_column} = CASE WHEN {all_sent} THEN NULL
+                    WHEN {unstarted} THEN 'delivery lease expired before API intent'
                     WHEN {unsafe} THEN 'unconfirmed_previous_attempt [reconciliation-required]'
                     ELSE 'delivery lease expired before next part' END,
                 updated_at = CURRENT_TIMESTAMP
@@ -161,9 +167,8 @@ async def _claim(*, is_test: bool) -> dict[str, Any] | None:
     admins = _admin_ids() if is_test else []
     if is_test and not admins:
         return None
-    lease_until = datetime.now(UTC).replace(tzinfo=None) + timedelta(
-        seconds=LEASE_SECONDS
-    )
+    # TIMESTAMP columns and comparisons use the PostgreSQL session timezone.
+    # Derive deadlines from that same database clock, never naive client UTC.
     token = uuid4().hex
     condition = "c.status = 'running'"
     parameters: list[Any] = [MAX_ATTEMPTS]
@@ -203,12 +208,12 @@ async def _claim(*, is_test: bool) -> dict[str, Any] | None:
             f"""
             UPDATE {table}
             SET status = 'sending', attempts = attempts + 1,
-                lease_until = ?, attempt_token = ?,
+                lease_until = CURRENT_TIMESTAMP + (? * INTERVAL '1 second'), attempt_token = ?,
                 {"error" if is_test else "last_error"} = NULL,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
-            (lease_until, token, row["id"]),
+            (LEASE_SECONDS, token, row["id"]),
         )
         await connection.commit()
     item = dict(row)
@@ -231,7 +236,7 @@ async def _save_progress(item: dict[str, Any], progress: list[dict[str, Any]]) -
     condition = "c.status = 'running'"
     parameters: list[Any] = [
         json.dumps(progress, ensure_ascii=False),
-        datetime.now(UTC).replace(tzinfo=None) + timedelta(seconds=LEASE_SECONDS),
+        LEASE_SECONDS,
         int(item["id"]),
         item["attempt_token"],
     ]
@@ -247,7 +252,9 @@ async def _save_progress(item: dict[str, Any], progress: list[dict[str, Any]]) -
         cursor = await connection.execute(
             f"""
             UPDATE {table} d
-            SET delivery_parts = ?::jsonb, lease_until = ?, updated_at = CURRENT_TIMESTAMP
+            SET delivery_parts = ?::jsonb,
+                lease_until = CURRENT_TIMESTAMP + (? * INTERVAL '1 second'),
+                updated_at = CURRENT_TIMESTAMP
             FROM notification_campaigns c
             WHERE d.id = ? AND d.attempt_token = ? AND d.status = 'sending'
               AND d.lease_until > CURRENT_TIMESTAMP
@@ -296,7 +303,8 @@ async def _finish(
             SET status = ?, telegram_message_id = COALESCE(?, telegram_message_id),
                 sent_at = CASE WHEN ? = 'sent' THEN CURRENT_TIMESTAMP ELSE sent_at END,
                 attempts = CASE WHEN ? THEN ? ELSE attempts END,
-                lease_until = NULL, attempt_token = NULL, next_attempt_at = ?,
+                lease_until = NULL, attempt_token = NULL,
+                next_attempt_at = CURRENT_TIMESTAMP + (? * INTERVAL '1 second'),
                 {"error" if item.get("is_test") else "last_error"} = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ? AND attempt_token = ? AND status = 'sending'
               AND lease_until > CURRENT_TIMESTAMP
@@ -307,8 +315,7 @@ async def _finish(
                 status,
                 terminal,
                 MAX_ATTEMPTS,
-                datetime.now(UTC).replace(tzinfo=None)
-                + timedelta(seconds=max(1, delay)),
+                max(1, delay),
                 error_text,
                 int(item["id"]),
                 item["attempt_token"],
@@ -343,12 +350,13 @@ async def _mark_failed(
     async with db_backend.connect() as connection:
         await connection.execute(
             """
-            UPDATE notification_deliveries SET status = ?, next_attempt_at = ?, last_error = ?,
+            UPDATE notification_deliveries SET status = ?,
+                next_attempt_at = CURRENT_TIMESTAMP + (? * INTERVAL '1 second'), last_error = ?,
                 updated_at = CURRENT_TIMESTAMP WHERE id = ? AND attempt_token IS NULL
             """,
             (
                 "failed",
-                datetime.now(UTC).replace(tzinfo=None) + timedelta(seconds=delay),
+                delay,
                 code,
                 delivery_id,
             ),

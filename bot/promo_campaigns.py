@@ -81,10 +81,30 @@ async def _transaction():
             raise
 
 
+def _promo_columns() -> str:
+    # The legacy column stores the database's local wall clock without a zone.
+    # Attach the same database session zone before returning an ISO timestamp.
+    if db_backend.is_postgres():
+        return "*, tested_at AT TIME ZONE current_setting('TimeZone') AS tested_at_aware"
+    return "*"
+
+
+async def _record_revision(
+    conn: Any, campaign_id: int, revision: int, admin_id: int, payload_hash: str,
+) -> None:
+    """Append normalized-payload attribution inside the campaign transaction."""
+    await conn.execute(
+        """INSERT INTO notification_promo_revisions
+           (campaign_id, revision, admin_telegram_id, payload_hash)
+           VALUES (?, ?, ?, ?)""",
+        (campaign_id, revision, admin_id, payload_hash),
+    )
+
+
 async def _fetch(conn: Any, campaign_id: int, *, lock: bool = False) -> dict[str, Any]:
     suffix = " FOR UPDATE" if lock and db_backend.is_postgres() else ""
     cur = await conn.execute(
-        "SELECT * FROM notification_campaigns WHERE id = ? AND promo_version = 2" + suffix,
+        f"SELECT {_promo_columns()} FROM notification_campaigns WHERE id = ? AND promo_version = 2" + suffix,
         (campaign_id,),
     )
     row = await cur.fetchone()
@@ -155,6 +175,8 @@ async def _audience(conn: Any) -> int:
 
 def _view(row: dict[str, Any]) -> dict[str, Any]:
     result = dict(row)
+    if "tested_at_aware" in result:
+        result["tested_at"] = result.pop("tested_at_aware")
     for key, default in (("message", {}), ("message_snapshot", None), ("test_summary", {})):
         result[key] = _decode(result.get(key), default)
     for key in ("tested_at", "created_at", "updated_at", "started_at", "completed_at"):
@@ -176,6 +198,7 @@ async def create_promo(admin_id: int, idempotency_key: str | None = None) -> dic
     message = normalize_message(
         {"schema_version": 2, "text": "", "parse_mode": "HTML", "media": [], "buttons": []}, allow_empty=True
     )
+    digest = hashlib.sha256(_json(message).encode()).hexdigest()
     key = f"promo-create:{admin_id}:{idempotency_key or uuid.uuid4().hex}"
     slot = _json_slot()
     async with _transaction() as conn:
@@ -186,11 +209,12 @@ async def create_promo(admin_id: int, idempotency_key: str | None = None) -> dic
                 VALUES (?, 'telegram', 'draft', {slot}, {slot}, ?, ?, ?, 2, 1, ?)
                 ON CONFLICT (idempotency_key) DO NOTHING RETURNING id""",
             ("Промо-рассылка", _json({"type": "all"}), _json(message), str(admin_id),
-             "Telegram admin promo", key, hashlib.sha256(_json(message).encode()).hexdigest()),
+             "Telegram admin promo", key, digest),
         )
         row = await cur.fetchone()
         if row:
             campaign_id = int(row["id"])
+            await _record_revision(conn, campaign_id, 1, admin_id, digest)
         else:
             cur = await conn.execute(
                 "SELECT id FROM notification_campaigns WHERE idempotency_key = ?", (key,)
@@ -227,7 +251,7 @@ async def get_promo(campaign_id: int, admin_id: int) -> dict[str, Any]:
 async def list_promos(admin_id: int, limit: int = 8, before: int | None = None) -> list[dict[str, Any]]:
     _admin(admin_id)
     await ensure_internal_admin_notification_schema()
-    sql = "SELECT * FROM notification_campaigns WHERE promo_version = 2"
+    sql = f"SELECT {_promo_columns()} FROM notification_campaigns WHERE promo_version = 2"
     args: list[Any] = []
     if before:
         sql += " AND id < ?"
@@ -263,6 +287,7 @@ async def save_promo(
                     updated_at = CURRENT_TIMESTAMP WHERE id = ?""",
                 (_json(normalized), digest, campaign_id),
             )
+            await _record_revision(conn, campaign_id, int(row["revision"]) + 1, admin_id, digest)
             await conn.execute(
                 """UPDATE notification_test_sends SET status = 'cancelled'
                    WHERE campaign_id = ? AND status IN ('queued', 'failed') AND test_run_key IS NOT NULL""",
@@ -305,8 +330,8 @@ async def test_promo(
         digest = snapshot["content_hash"]
         cur = await conn.execute(
             """SELECT COUNT(*) AS n FROM notification_test_sends
-               WHERE campaign_id = ? AND test_run_key = ? AND status IN ('queued','sending','failed')
-                 AND attempts < 5""", (campaign_id, row.get("test_run_key")),
+               WHERE campaign_id = ? AND test_run_key = ?
+                 AND (status IN ('queued','sending') OR (status = 'failed' AND attempts < 5))""", (campaign_id, row.get("test_run_key")),
         )
         pending = int((await cur.fetchone())["n"])
         if row.get("test_run_key") == run_key or pending:
