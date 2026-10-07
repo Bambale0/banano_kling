@@ -509,7 +509,12 @@ async def test_video_repeat_api_rejects_incomplete_fixed_reference_slots(
     monkeypatch.setattr(miniapp, "_get_user_context", AsyncMock(
         return_value=(700001, {"user": SimpleNamespace(id=501)})))
     monkeypatch.setattr(miniapp, "_get_repeat_source_card", AsyncMock(
-        return_value={"id": 42, "gen_type": "video"}))
+        return_value={
+            "id": 42, "gen_type": "video", "prompt": "",
+            "reference_images": [], "reference_videos": [],
+            "references_hidden": True, "prompt_hidden": True,
+            "prompt_actions_allowed": False,
+        }))
     monkeypatch.setattr(continuity, "get_generation_task_payload", AsyncMock(
         return_value=source_task))
     continuity.install_miniapp_video_continuity_compat()
@@ -526,7 +531,10 @@ async def test_video_repeat_api_rejects_incomplete_fixed_reference_slots(
         assert response.status == 200
         delegate.assert_awaited_once()
         restored = await request.json()
+        # Public preview redaction never revokes the stored selection contract.
         assert restored[target] == [*replacements, fixed]
+        assert restored["prompt"] == source_task["prompt"]
+        assert source_task["prompt"] not in response.text
         assert all(url not in restored[target] for url in source_identity)
         assert restored[f"_private_repeat_reference_{kind}"] == [fixed]
 
@@ -685,8 +693,80 @@ def test_video_repeat_retains_only_matching_known_upload_alias(selected, expecte
         "request_data": {"seedance25_scenario": "multimodal",
                          "reference_images": [face, fixed]},
     }
+    if not expected_fixed:
+        with pytest.raises(VideoRepeatReferenceError, match="не полностью"):
+            enrich_video_repeat_body(
+                {"source_feed_gen_id": 42, "reference_images": [viewer]}, source,
+            )
+        return
     result = enrich_video_repeat_body(
         {"source_feed_gen_id": 42, "reference_images": [viewer]}, source,
     )
-    assert result["reference_images"] == ([viewer, fixed] if expected_fixed else [viewer])
+    assert result["reference_images"] == [viewer, fixed]
     assert face not in result["reference_images"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind,target", [
+    ("images", "reference_images"), ("videos", "v_reference_videos"),
+])
+@pytest.mark.parametrize("stored", ["partial", "missing", "malformed"])
+async def test_selected_video_recipe_cannot_silently_lose_stored_references(
+    video_repeat_entrypoint, kind, target, stored,
+):
+    import json
+    entry = video_repeat_entrypoint
+    first = "https://example.test/fixed-one"
+    second = "https://example.test/fixed-two"
+    request_data = {
+        "seedance25_scenario": "multimodal", target: [first],
+    } if stored == "partial" else (None if stored == "missing" else "{broken-json")
+    entry.source.return_value.update(
+        feed_references_visible=True,
+        feed_reference_selection={"images": [], "videos": [], kind: [first, second]},
+        request_data=request_data,
+    )
+    response = await entry.call(entry.request({"source_feed_gen_id": 42}))
+    assert response.status == 400
+    assert json.loads(response.text)["code"] == "repeat_reference_incomplete"
+    assert first not in response.text and second not in response.text
+    entry.delegate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field,target,scenario", [
+    ("v_image_url", "v_image_url", "imgtxt"),
+    ("first_frame_url", "seedance25_first_frame_url", "first_frame"),
+    ("last_frame_url", "seedance25_last_frame_url", "first_last"),
+])
+async def test_selected_scalar_video_reference_is_a_valid_stored_candidate(
+    video_repeat_entrypoint, field, target, scenario,
+):
+    entry = video_repeat_entrypoint
+    fixed = "https://example.test/fixed-frame.png"
+    entry.source.return_value.update(
+        model="seedance_2" if scenario == "imgtxt" else "seedance_2_5",
+        feed_references_visible=True,
+        feed_reference_selection={"images": [fixed], "videos": []},
+        request_data={field: fixed, "seedance25_scenario": scenario, "v_type": "imgtxt"},
+    )
+    request = entry.request({"source_feed_gen_id": 42})
+    response = await entry.call(request)
+    assert response.status == 200
+    assert (await request.json())[target] == fixed
+    entry.delegate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("selection", [None, {"images": [], "videos": []}])
+async def test_empty_video_selection_does_not_require_a_stored_recipe(
+    video_repeat_entrypoint, selection,
+):
+    entry = video_repeat_entrypoint
+    entry.source.return_value.update(
+        feed_references_visible=True, feed_reference_selection=selection,
+        request_data=None,
+    )
+    response = await entry.call(entry.request({"source_feed_gen_id": 42}))
+    assert response.status == 200
+    entry.delegate.assert_awaited_once()

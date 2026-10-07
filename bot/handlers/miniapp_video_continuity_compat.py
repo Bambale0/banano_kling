@@ -165,6 +165,39 @@ class VideoRepeatReferenceError(ValueError):
     """An incomplete source recipe must never reach billing or generation."""
 
 
+def _validate_selected_reference_candidates(
+    request_data: dict[str, Any],
+    selection: dict[str, list[str]] | None,
+) -> None:
+    """Reject partial/missing recipes without changing publication permissions."""
+    if selection is None:
+        return
+    candidates = {
+        "images": [
+            value for key in _REPEAT_LIST_ALIASES["reference_images"]
+            for value in _clean_list(request_data.get(key))
+        ],
+        "videos": [
+            value for key in _REPEAT_LIST_ALIASES["v_reference_videos"]
+            for value in _clean_list(request_data.get(key))
+        ],
+    }
+    # Frame-only recipes are valid image sources even without a reference list.
+    for target in ("v_image_url", "seedance25_first_frame_url", "seedance25_last_frame_url"):
+        for key in _REPEAT_SCALAR_ALIASES[target]:
+            value = request_data.get(key)
+            if isinstance(value, str) and value.strip():
+                candidates["images"].append(value.strip())
+    # The existing publication selection contract covers images/videos only.
+    for kind, values in candidates.items():
+        identities = {reference_source_identity(value) for value in values}
+        if any(reference_source_identity(value) not in identities for value in selection[kind]):
+            raise VideoRepeatReferenceError(
+                "Исходные референсы для этого повтора сохранены не полностью. "
+                "Откройте другую публикацию или попросите автора обновить её."
+            )
+
+
 def _merge_selected_reference_slots(
     source_values: list[str],
     selected_values: list[str],
@@ -284,6 +317,7 @@ def enrich_video_repeat_body(
             normalized["reference_images"] = requested_images[1:]
 
     publication_selection = _publication_repeat_selection(source_task)
+    _validate_selected_reference_candidates(request_data, publication_selection)
     private_reference_images: list[str] = []
     private_reference_videos: list[str] = []
     private_reference_audios: list[str] = []
