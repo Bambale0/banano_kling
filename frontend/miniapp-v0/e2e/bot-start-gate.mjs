@@ -39,6 +39,17 @@ async function waitForServer() {
   throw new Error('Bot Start static export server did not start')
 }
 
+// Correlate with a NEW capability request. An older ordinary bootstrap may
+// finish after a fixture state change and must not satisfy this assertion.
+function nextCapabilityResponse(page) {
+  return page.waitForRequest(request => request.url().endsWith('/bootstrap')
+    && request.headers()['x-e2e-capability-check'] === '1').then(async request => {
+    const response = await request.response()
+    assert.ok(response, 'Return capability request completed without transport abort')
+    return response
+  })
+}
+
 async function emitReturn(page, event, visible = true) {
   await page.evaluate(({ event, visible }) => {
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: visible ? 'visible' : 'hidden' })
@@ -62,6 +73,9 @@ try {
     const generatedRequests = []
     const generatedTasks = new Map()
     const pending = []
+    let staleBackgroundReply
+    let signalStaleBackground
+    let staleBackgroundReady
     let chatAvailable = true
     let startRequirement = 'auto'
     const startRequired = () => startRequirement === 'auto' ? !chatAvailable : startRequirement
@@ -118,6 +132,12 @@ try {
         const json = body => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
         if (endpoint === 'bootstrap') {
           bootstrapRequests.push(JSON.parse(request.postData() || '{}'))
+          if (request.headers()['x-e2e-stale-background'] === '1') {
+            const snapshot = { ...bootstrap, telegram_chat_available: chatAvailable, telegram_bot_start_required: startRequired() }
+            staleBackgroundReply = () => route.fulfill(json(snapshot))
+            signalStaleBackground()
+            return
+          }
           if (responseMode === 'hang' && request.headers()['x-e2e-capability-check'] === '1') {
             pending.push(async available => {
               // An aborted request may already be closed; a late response must
@@ -267,7 +287,7 @@ try {
     await assertDraftPreserved('timeout and retry')
 
     for (const event of ['focus', 'visibilitychange', 'activated']) {
-      const checked = page.waitForResponse(response => response.url().endsWith('/bootstrap'))
+      const checked = nextCapabilityResponse(page)
       await emitReturn(page, event)
       await checked
       await status.getByText(/Доступ пока не подтверждён/).waitFor()
@@ -287,7 +307,7 @@ try {
     // explicitly clear the known-never-started flag before this offer closes.
     chatAvailable = true
     startRequirement = true
-    const stillRequired = page.waitForResponse(response => response.url().endsWith('/bootstrap'))
+    const stillRequired = nextCapabilityResponse(page)
     await retry.click()
     const stillRequiredPayload = await (await stillRequired).json()
     assert.equal(stillRequiredPayload.telegram_chat_available, true)
@@ -298,8 +318,18 @@ try {
 
     // Each return closes the offer when the server explicitly clears the flag.
     for (const event of ['activated', 'focus', 'visibilitychange']) {
+      // A previous ordinary bootstrap may finish after the server state changed.
+      // Force that order once so this check cannot accidentally consume it.
+      if (width === 430 && event === 'focus') {
+        staleBackgroundReady = new Promise(resolve => { signalStaleBackground = resolve })
+        await page.evaluate(() => { void fetch('/mini-app/api/bootstrap', {
+          method: 'POST', headers: { 'content-type': 'application/json', 'x-e2e-stale-background': '1' }, body: JSON.stringify({ start_param_fallback: 'ref_E2ESTART' }),
+        }) })
+        await staleBackgroundReady
+      }
       chatAvailable = true
-      const checked = page.waitForResponse(response => response.url().endsWith('/bootstrap'))
+      const checked = nextCapabilityResponse(page)
+      if (staleBackgroundReply) { await staleBackgroundReply(); staleBackgroundReply = undefined }
       await emitReturn(page, event)
       const confirmed = await (await checked).json()
       assert.equal(confirmed.telegram_bot_start_required, false, event + ': server clears Start requirement')
