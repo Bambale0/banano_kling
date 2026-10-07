@@ -172,22 +172,17 @@ def _validate_selected_reference_candidates(
     """Reject partial/missing recipes without changing publication permissions."""
     if selection is None:
         return
+    # Match restoration's alias precedence: a populated primary list/role
+    # shadows legacy aliases, so those cannot prove a selected recipe is intact.
     candidates = {
-        "images": [
-            value for key in _REPEAT_LIST_ALIASES["reference_images"]
-            for value in _clean_list(request_data.get(key))
-        ],
-        "videos": [
-            value for key in _REPEAT_LIST_ALIASES["v_reference_videos"]
-            for value in _clean_list(request_data.get(key))
-        ],
+        "images": _first_list(request_data, _REPEAT_LIST_ALIASES["reference_images"]),
+        "videos": _first_list(request_data, _REPEAT_LIST_ALIASES["v_reference_videos"]),
     }
     # Frame-only recipes are valid image sources even without a reference list.
     for target in ("v_image_url", "seedance25_first_frame_url", "seedance25_last_frame_url"):
-        for key in _REPEAT_SCALAR_ALIASES[target]:
-            value = request_data.get(key)
-            if isinstance(value, str) and value.strip():
-                candidates["images"].append(value.strip())
+        value = _first_value(request_data, _REPEAT_SCALAR_ALIASES[target])
+        if isinstance(value, str) and value.strip():
+            candidates["images"].append(value.strip())
     # The existing publication selection contract covers images/videos only.
     for kind, values in candidates.items():
         identities = {reference_source_identity(value) for value in values}

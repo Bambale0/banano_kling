@@ -770,3 +770,29 @@ async def test_empty_video_selection_does_not_require_a_stored_recipe(
     response = await entry.call(entry.request({"source_feed_gen_id": 42}))
     assert response.status == 200
     entry.delegate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target,secondary,kind", [
+    ("reference_images", "reference_image_urls", "images"),
+    ("v_reference_videos", "reference_video_urls", "videos"),
+])
+async def test_selected_reference_in_shadowed_alias_rejects_before_launch(
+    video_repeat_entrypoint, target, secondary, kind,
+):
+    import json
+    entry = video_repeat_entrypoint
+    active = "https://example.test/active-primary-reference"
+    shadowed = "https://example.test/shadowed-selected-reference"
+    entry.source.return_value.update(
+        feed_references_visible=True,
+        feed_reference_selection={"images": [], "videos": [], kind: [shadowed]},
+        request_data={
+            "seedance25_scenario": "multimodal", target: [active], secondary: [shadowed],
+        },
+    )
+    response = await entry.call(entry.request({"source_feed_gen_id": 42}))
+    assert response.status == 400
+    assert json.loads(response.text)["code"] == "repeat_reference_incomplete"
+    assert shadowed not in response.text
+    entry.delegate.assert_not_awaited()
