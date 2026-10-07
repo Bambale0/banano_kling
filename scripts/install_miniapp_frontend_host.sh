@@ -427,6 +427,11 @@ $(proxy_common_block)
 $(proxy_common_block)
     }
 
+    # Signed media and callbacks use the configured public media origin.
+    location ^~ /genjutsu/ {
+$(proxy_common_block)
+    }
+
     location ^~ /mini-app/_next/static/ {
         try_files \$uri =404;
         access_log off;
@@ -491,6 +496,11 @@ $(proxy_common_block)
     }
 
     location ^~ /uploads/ {
+$(proxy_common_block)
+    }
+
+    # Signed media and callbacks use the configured public media origin.
+    location ^~ /genjutsu/ {
 $(proxy_common_block)
     }
 
