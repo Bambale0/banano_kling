@@ -65,7 +65,8 @@ def test_production_backend_deploy_remains_on_tanyapi() -> None:
 
     assert "branches: [tanyapi]" in workflow
     assert "git fetch --prune origin tanyapi" in workflow
-    assert "git switch tanyapi" in workflow
+    assert workflow.count('[ "$(git branch --show-current)" = tanyapi ] || {') == 2
+    assert "git switch tanyapi" not in workflow
     assert "branches: [main]" not in workflow
 
 
