@@ -147,6 +147,7 @@ from bot.services.media_input_utils import (
     canonicalize_local_upload_url,
     is_reference_contact_sheet_url,
     missing_local_upload_sources,
+    reference_source_identity,
     resolve_local_upload_path,
 )
 from bot.services.photo_prompt_billing import (
@@ -1333,14 +1334,16 @@ def _selected_published_image_references(
     if not isinstance(selected_images, list):
         return []
 
-    source_images = set(_source_image_references_from_task_payload(task_payload))
+    source_images = {reference_source_identity(url): url
+                     for url in _source_image_references_from_task_payload(task_payload)}
     if not viewer_is_owner:
         # The card already enforces remix/transitive and availability policy.
-        source_images.intersection_update(source_card.get("reference_images") or [])
+        public_ids = {reference_source_identity(url) for url in source_card.get("reference_images") or []}
+        source_images = {key: url for key, url in source_images.items() if key in public_ids}
     retained: list[str] = []
     for item in selected_images:
-        url = str(item or "").strip()
-        if url and url in source_images and url not in retained:
+        url = source_images.get(reference_source_identity(str(item or "").strip()))
+        if url and url not in retained:
             retained.append(url)
     return retained
 
@@ -1355,9 +1358,12 @@ def _selected_private_repeat_references(task_payload: dict[str, Any]) -> list[st
         return []
     from bot.database import _is_feed_result_url_available
 
-    sources = set(_source_image_references_from_task_payload(task_payload))
-    return [url for url in generation_repeat_reference_selection(task_payload)
-            if url in sources and _is_feed_result_url_available(task_payload, url)]
+    sources = {reference_source_identity(url): url
+               for url in _source_image_references_from_task_payload(task_payload)}
+    return [sources[reference_source_identity(url)]
+            for url in generation_repeat_reference_selection(task_payload)
+            if reference_source_identity(url) in sources
+            and _is_feed_result_url_available(task_payload, sources[reference_source_identity(url)])]
 
 
 def _merge_private_repeat_references(task_payload: dict[str, Any], references: list[str]) -> list[str]:
@@ -1370,8 +1376,16 @@ def _merge_private_repeat_references(task_payload: dict[str, Any], references: l
         return references
     if len(private) != len(granted):
         raise ValueError("Референсы для повтора больше недоступны. Откройте публикацию заново.")
-    sources = _source_image_references_from_task_payload(task_payload)
-    retained = set(private) | (set(sources) & set(references))
+    return _merge_image_reference_slots(
+        _source_image_references_from_task_payload(task_payload), references, private,
+    )
+
+
+def _merge_image_reference_slots(sources: list[str], references: list[str], fixed: list[str]) -> list[str]:
+    """Keep ImageN bindings for already-authorized fixed inputs; never infer a grant."""
+    source_by_identity = {reference_source_identity(url): url for url in sources}
+    references = [source_by_identity.get(reference_source_identity(url), url) for url in references]
+    retained = set(fixed) | (set(sources) & set(references))
     submitted = iter(url for url in references if url not in retained)
     last_retained = max(index for index, url in enumerate(sources) if url in retained)
     merged: list[str] = []
@@ -1402,9 +1416,10 @@ def _merge_remix_image_references(
     retained: list[str] = []
     if source_card.get("is_mine"):
         retained = _selected_published_image_references(task_payload, source_card)
-        for url in retained:
-            if url not in references:
-                references.append(url)
+        if retained:
+            references = _merge_image_reference_slots(
+                _source_image_references_from_task_payload(task_payload), references, retained,
+            )
 
     if (
         not references
@@ -1448,13 +1463,14 @@ def _filter_foreign_feed_source_references(
         # Provider contact sheets can contain the hidden originals even though
         # the publication's canonical source list excludes those derivatives.
         source_references.update(str(url or "").strip() for url in provider_references)
+    source_identities = {reference_source_identity(url) for url in source_references}
     filtered: list[str] = []
     for item in references:
         url = str(item or "").strip()
         if not url or url in filtered:
             continue
         owner_telegram_id = _reference_upload_owner_telegram_id(url)
-        if url in source_references:
+        if reference_source_identity(url) in source_identities:
             continue
         if (
             owner_telegram_id is not None
@@ -4408,11 +4424,12 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
             for item in list(body.get("reference_images", []) or [])
             if str(item).strip()
         ]
-        references, retained_reference_count = _merge_remix_image_references(
-            source,
-            source_task,
-            submitted_references,
-        )
+        try:
+            references, retained_reference_count = _merge_remix_image_references(
+                source, source_task, submitted_references,
+            )
+        except ValueError as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
         references = _filter_foreign_feed_source_references(
             source,
             source_task,
@@ -4599,22 +4616,30 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
                     status=400,
                 )
             prompt = compose_feed_remix_prompt(source_prompt, prompt)
+            # Use the same owner/foreign recipe assembly as the feed remix API.
+            # Client-empty is valid when every required slot is explicitly fixed.
+            try:
+                references, _ = _merge_remix_image_references(
+                    source_feed_task, source_feed_payload, references,
+                )
+            except ValueError as exc:
+                return web.json_response({"ok": False, "error": str(exc)}, status=400)
             references = _filter_foreign_feed_source_references(
                 source_feed_task,
                 source_feed_payload,
                 references,
                 viewer_telegram_id=telegram_id,
             )
-            if not references:
-                return web.json_response(
-                    {"ok": False, "error": "Добавьте своё фото или референс для remix"},
-                    status=400,
-                )
             client_references = list(references)
             try:
                 references = _merge_private_repeat_references(source_feed_payload, references)
             except ValueError as exc:
                 return web.json_response({"ok": False, "error": str(exc)}, status=400)
+            if not references:
+                return web.json_response(
+                    {"ok": False, "error": "Добавьте своё фото или референс для remix"},
+                    status=400,
+                )
             # P2-03: propagate original source_feed_gen_id for multi-hop remix lineage
             immediate_parent_id = source_feed_gen_id
             source_feed_gen_id = int(source_feed_payload.get("source_feed_gen_id") or source_feed_gen_id)

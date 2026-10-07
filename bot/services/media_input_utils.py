@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Iterable
 from datetime import datetime
 from functools import lru_cache
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from PIL import Image, ImageOps
 
@@ -93,6 +93,22 @@ def _local_upload_candidate(source: str) -> str | None:
         return path
 
     return None
+
+
+def reference_source_identity(source: str) -> tuple[str, str]:
+    """Compare known app upload aliases without granting access to external hosts.
+
+    This is an identity key only, never a provider URL or a filesystem read.
+    Query/fragment differences do not turn a stored private upload into a new
+    user input. External URLs retain their complete identity.
+    """
+    value = str(source or "").strip()
+    candidate = _local_upload_candidate(value)
+    if candidate:
+        normalized = os.path.normpath(unquote(candidate))
+        if normalized.startswith("static/uploads/"):
+            return ("local", normalized)
+    return ("url", value)
 
 
 def is_local_upload_source(source: str) -> bool:

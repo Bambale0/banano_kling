@@ -1,8 +1,10 @@
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
 from bot.handlers.miniapp_video_continuity_compat import (
+    VideoRepeatReferenceError,
     _video_remix_link,
     enrich_video_repeat_body,
 )
@@ -343,18 +345,15 @@ def test_video_repeat_does_not_restore_unselected_publication_refs_without_repla
         },
     }
 
-    restored = enrich_video_repeat_body(
-        {
-            "v_model": "seedance_2",
-            "source_feed_gen_id": 42,
-            "reference_images": [],
-        },
-        source_task,
-    )
-
-    assert face not in restored.get("reference_images", [])
-    assert outfit not in restored.get("reference_images", [])
-    assert restored.get("_private_repeat_reference_images", []) == []
+    with pytest.raises(VideoRepeatReferenceError, match="не хватает"):
+        enrich_video_repeat_body(
+            {
+                "v_model": "seedance_2",
+                "source_feed_gen_id": 42,
+                "reference_images": [],
+            },
+            source_task,
+        )
 
 
 @pytest.mark.asyncio
@@ -388,10 +387,20 @@ async def test_generic_video_repeat_keeps_private_author_refs_out_of_viewer_libr
         "_get_repeat_source_card",
         AsyncMock(return_value={"id": 42, "gen_type": "video", "model": "seedance_2"}),
     )
+    source_task = {
+        "prompt": "repeat", "model": "seedance_2",
+        "feed_references_visible": True,
+        "feed_reference_selection": {"images": [private_outfit], "videos": []},
+        "request_data": {"reference_images": [
+            "https://example.test/author-face.png", private_outfit,
+        ]},
+    }
     monkeypatch.setattr(
-        miniapp,
-        "get_generation_task_payload",
-        AsyncMock(return_value={"prompt": "repeat", "request_data": {}}),
+        miniapp, "get_generation_task_payload", AsyncMock(return_value=source_task),
+    )
+    from bot.handlers import miniapp_video_continuity_compat as continuity
+    monkeypatch.setattr(
+        continuity, "get_generation_task_payload", AsyncMock(return_value=source_task),
     )
     monkeypatch.setattr(miniapp, "missing_local_upload_sources", lambda _refs: [])
     touch = AsyncMock()
@@ -448,3 +457,342 @@ def test_video_repeat_preserves_selected_video_reference_slots() -> None:
     assert restored["v_reference_videos"] == [viewer_motion, author_style]
     assert source_motion not in restored["v_reference_videos"]
     assert restored["_private_repeat_reference_videos"] == [author_style]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind,target,suffix", [
+    ("images", "reference_images", ".png"),
+    ("videos", "v_reference_videos", ".mp4"),
+])
+@pytest.mark.parametrize("replacement_count", [0, 1, 2])
+async def test_video_repeat_api_rejects_incomplete_fixed_reference_slots(
+    monkeypatch, kind, target, suffix, replacement_count,
+):
+    """Real installed entry point must stop before its billing/provider handler."""
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from aiohttp import web
+
+    from bot import miniapp
+    from bot.handlers import miniapp_video_continuity_compat as continuity
+
+    source_identity = [f"https://example.test/author-{i}{suffix}" for i in range(2)]
+    fixed = f"https://example.test/fixed-template{suffix}"
+    replacements = [f"https://example.test/viewer-{i}{suffix}" for i in range(replacement_count)]
+    source_task = {
+        "prompt": "Synthetic slot-preserving recipe",
+        "model": "seedance_2_5",
+        "feed_references_visible": True,
+        "feed_reference_selection": {"images": [], "videos": [], kind: [fixed]},
+        "request_data": {
+            "v_type": "video", "seedance25_scenario": "multimodal",
+            target: [*source_identity, fixed],
+        },
+    }
+    body = {"init_data": "signed", "source_feed_gen_id": 42, target: replacements}
+
+    class Request:
+        def __init__(self):
+            self.app = {}
+            self._read_bytes = json.dumps(body).encode()
+
+        async def json(self):
+            return json.loads(self._read_bytes)
+
+    request = Request()
+    delegate = AsyncMock(return_value=web.json_response({"ok": True}))
+    monkeypatch.setattr(miniapp, "miniapp_generate_video", delegate)
+    monkeypatch.setattr(miniapp, "miniapp_feed_share", AsyncMock())
+    monkeypatch.setattr(miniapp, "_video_continuity_compat_installed", False, raising=False)
+    monkeypatch.setattr(miniapp, "_get_user_context", AsyncMock(
+        return_value=(700001, {"user": SimpleNamespace(id=501)})))
+    monkeypatch.setattr(miniapp, "_get_repeat_source_card", AsyncMock(
+        return_value={
+            "id": 42, "gen_type": "video", "prompt": "",
+            "reference_images": [], "reference_videos": [],
+            "references_hidden": True, "prompt_hidden": True,
+            "prompt_actions_allowed": False,
+        }))
+    monkeypatch.setattr(continuity, "get_generation_task_payload", AsyncMock(
+        return_value=source_task))
+    continuity.install_miniapp_video_continuity_compat()
+
+    response = await miniapp.miniapp_generate_video(request)
+
+    if replacement_count < 2:
+        assert response.status == 400
+        assert json.loads(response.text)["code"] == "repeat_reference_incomplete"
+        assert fixed not in response.text
+        assert all(url not in response.text for url in source_identity)
+        delegate.assert_not_awaited()
+    else:
+        assert response.status == 200
+        delegate.assert_awaited_once()
+        restored = await request.json()
+        # Public preview redaction never revokes the stored selection contract.
+        assert restored[target] == [*replacements, fixed]
+        assert restored["prompt"] == source_task["prompt"]
+        assert source_task["prompt"] not in response.text
+        assert all(url not in restored[target] for url in source_identity)
+        assert restored[f"_private_repeat_reference_{kind}"] == [fixed]
+
+
+@pytest.fixture
+def video_repeat_entrypoint(monkeypatch):
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from aiohttp import web
+
+    from bot import miniapp
+    from bot.handlers import miniapp_video_continuity_compat as continuity
+
+    class Request:
+        def __init__(self, body):
+            self.app = {}
+            self._read_bytes = json.dumps(body).encode()
+
+        async def json(self):
+            return json.loads(self._read_bytes)
+
+    delegate = AsyncMock(return_value=web.json_response({"ok": True}))
+    context = AsyncMock(return_value=(700001, {"user": SimpleNamespace(id=501)}))
+    card = AsyncMock(return_value={"id": 42, "gen_type": "video"})
+    source = AsyncMock(return_value={
+        "prompt": "synthetic recipe", "model": "seedance_2_5", "request_data": {},
+    })
+    availability = MagicMock(return_value=[])
+    monkeypatch.setattr(miniapp, "miniapp_generate_video", delegate)
+    monkeypatch.setattr(miniapp, "miniapp_feed_share", AsyncMock())
+    monkeypatch.setattr(miniapp, "_video_continuity_compat_installed", False, raising=False)
+    monkeypatch.setattr(miniapp, "_get_user_context", context)
+    monkeypatch.setattr(miniapp, "_get_repeat_source_card", card)
+    monkeypatch.setattr(continuity, "get_generation_task_payload", source)
+    monkeypatch.setattr(continuity, "missing_local_upload_sources", availability, raising=False)
+    continuity.install_miniapp_video_continuity_compat()
+    return SimpleNamespace(
+        call=miniapp.miniapp_generate_video, request=Request, delegate=delegate,
+        context=context, card=card, source=source, availability=availability,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure,expected_status", [
+    ("transient_source", 503), ("missing_source", 404), ("missing_card", 404),
+    ("invalid_auth", 401), ("forbidden", 403),
+])
+async def test_video_repeat_restore_failure_never_falls_through(
+    video_repeat_entrypoint, failure, expected_status,
+):
+    import json
+    entry = video_repeat_entrypoint
+    secret_url = "https://example.test/private-fixed.png"
+    if failure == "transient_source":
+        # A second lookup would succeed: no retry/fallback may start an empty recipe.
+        entry.source.side_effect = [RuntimeError(secret_url), entry.source.return_value]
+    elif failure == "missing_source":
+        entry.source.return_value = None
+    elif failure == "missing_card":
+        entry.card.return_value = None
+    elif failure == "invalid_auth":
+        entry.context.side_effect = ValueError("Invalid Telegram signature")
+    else:
+        entry.context.side_effect = PermissionError(secret_url)
+    response = await entry.call(entry.request({"source_feed_gen_id": 42}))
+    assert response.status == expected_status
+    assert json.loads(response.text)["ok"] is False
+    assert secret_url not in response.text
+    entry.delegate.assert_not_awaited()
+    if failure == "transient_source":
+        assert entry.source.await_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scenario,field,list_value", [
+    ("multimodal", "reference_images", True),
+    ("multimodal", "v_reference_videos", True),
+    ("multimodal", "seedance25_reference_audio_urls", True),
+    ("first_frame", "seedance25_first_frame_url", False),
+    ("first_last", "seedance25_last_frame_url", False),
+])
+@pytest.mark.parametrize("missing", [False, True])
+async def test_restored_video_media_is_validated_before_launch(
+    video_repeat_entrypoint, scenario, field, list_value, missing,
+):
+    import json
+    entry = video_repeat_entrypoint
+    private_url = "/uploads/synthetic-private-reference.bin"
+    value = [private_url] if list_value else private_url
+    entry.source.return_value["request_data"] = {
+        "seedance25_scenario": scenario, field: value,
+    }
+    entry.availability.side_effect = (
+        lambda values: [private_url] if missing and private_url in values else []
+    )
+    request = entry.request({"source_feed_gen_id": 42})
+    response = await entry.call(request)
+    entry.availability.assert_called_once()
+    assert private_url in entry.availability.call_args.args[0]
+    if missing:
+        assert response.status == 400
+        assert json.loads(response.text)["code"] == "repeat_reference_incomplete"
+        assert private_url not in response.text
+        entry.delegate.assert_not_awaited()
+    else:
+        assert response.status == 200
+        entry.delegate.assert_awaited_once()
+        assert (await request.json())[field] == value
+
+
+@pytest.mark.asyncio
+async def test_replaced_first_frame_does_not_validate_unused_original(video_repeat_entrypoint):
+    entry = video_repeat_entrypoint
+    old = "/uploads/removed-original.png"
+    replacement = "/uploads/viewer-replacement.png"
+    entry.source.return_value["request_data"] = {
+        "seedance25_scenario": "first_frame", "first_frame_url": old,
+    }
+    entry.availability.side_effect = lambda values: [old] if old in values else []
+    request = entry.request({"source_feed_gen_id": 42, "reference_images": [replacement]})
+    response = await entry.call(request)
+    assert response.status == 200
+    assert old not in entry.availability.call_args.args[0]
+    assert replacement in entry.availability.call_args.args[0]
+    assert (await request.json())["seedance25_first_frame_url"] == replacement
+
+
+@pytest.mark.asyncio
+async def test_ordinary_video_without_repeat_source_is_untouched(video_repeat_entrypoint):
+    entry = video_repeat_entrypoint
+    body = {"prompt": "My original video", "reference_images": ["/uploads/my-photo.png"]}
+    request = entry.request(body)
+    response = await entry.call(request)
+    assert response.status == 200
+    assert await request.json() == body
+    entry.delegate.assert_awaited_once()
+    entry.context.assert_not_awaited()
+    entry.source.assert_not_awaited()
+    entry.availability.assert_not_called()
+
+
+@pytest.mark.parametrize("selected,expected_fixed", [
+    ("https://media.chillcreative.ru/uploads/fixed-template.png?revision=2", True),
+    ("https://unrelated.example/uploads/fixed-template.png", False),
+])
+def test_video_repeat_retains_only_matching_known_upload_alias(selected, expected_fixed):
+    face = "https://example.test/source-face.png"
+    fixed = "/uploads/fixed-template.png"
+    viewer = "https://example.test/new-face.png"
+    source = {
+        "model": "seedance_2_5", "prompt": "Image1 with Image2",
+        "feed_references_visible": True,
+        "feed_reference_selection": {"images": [selected], "videos": []},
+        "request_data": {"seedance25_scenario": "multimodal",
+                         "reference_images": [face, fixed]},
+    }
+    if not expected_fixed:
+        with pytest.raises(VideoRepeatReferenceError, match="не полностью"):
+            enrich_video_repeat_body(
+                {"source_feed_gen_id": 42, "reference_images": [viewer]}, source,
+            )
+        return
+    result = enrich_video_repeat_body(
+        {"source_feed_gen_id": 42, "reference_images": [viewer]}, source,
+    )
+    assert result["reference_images"] == [viewer, fixed]
+    assert face not in result["reference_images"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind,target", [
+    ("images", "reference_images"), ("videos", "v_reference_videos"),
+])
+@pytest.mark.parametrize("stored", ["partial", "missing", "malformed"])
+async def test_selected_video_recipe_cannot_silently_lose_stored_references(
+    video_repeat_entrypoint, kind, target, stored,
+):
+    import json
+    entry = video_repeat_entrypoint
+    first = "https://example.test/fixed-one"
+    second = "https://example.test/fixed-two"
+    request_data = {
+        "seedance25_scenario": "multimodal", target: [first],
+    } if stored == "partial" else (None if stored == "missing" else "{broken-json")
+    entry.source.return_value.update(
+        feed_references_visible=True,
+        feed_reference_selection={"images": [], "videos": [], kind: [first, second]},
+        request_data=request_data,
+    )
+    response = await entry.call(entry.request({"source_feed_gen_id": 42}))
+    assert response.status == 400
+    assert json.loads(response.text)["code"] == "repeat_reference_incomplete"
+    assert first not in response.text and second not in response.text
+    entry.delegate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field,target,scenario", [
+    ("v_image_url", "v_image_url", "imgtxt"),
+    ("first_frame_url", "seedance25_first_frame_url", "first_frame"),
+    ("last_frame_url", "seedance25_last_frame_url", "first_last"),
+])
+async def test_selected_scalar_video_reference_is_a_valid_stored_candidate(
+    video_repeat_entrypoint, field, target, scenario,
+):
+    entry = video_repeat_entrypoint
+    fixed = "https://example.test/fixed-frame.png"
+    entry.source.return_value.update(
+        model="seedance_2" if scenario == "imgtxt" else "seedance_2_5",
+        feed_references_visible=True,
+        feed_reference_selection={"images": [fixed], "videos": []},
+        request_data={field: fixed, "seedance25_scenario": scenario, "v_type": "imgtxt"},
+    )
+    request = entry.request({"source_feed_gen_id": 42})
+    response = await entry.call(request)
+    assert response.status == 200
+    assert (await request.json())[target] == fixed
+    entry.delegate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("selection", [None, {"images": [], "videos": []}])
+async def test_empty_video_selection_does_not_require_a_stored_recipe(
+    video_repeat_entrypoint, selection,
+):
+    entry = video_repeat_entrypoint
+    entry.source.return_value.update(
+        feed_references_visible=True, feed_reference_selection=selection,
+        request_data=None,
+    )
+    response = await entry.call(entry.request({"source_feed_gen_id": 42}))
+    assert response.status == 200
+    entry.delegate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target,secondary,kind", [
+    ("reference_images", "reference_image_urls", "images"),
+    ("v_reference_videos", "reference_video_urls", "videos"),
+])
+async def test_selected_reference_in_shadowed_alias_rejects_before_launch(
+    video_repeat_entrypoint, target, secondary, kind,
+):
+    import json
+    entry = video_repeat_entrypoint
+    active = "https://example.test/active-primary-reference"
+    shadowed = "https://example.test/shadowed-selected-reference"
+    entry.source.return_value.update(
+        feed_references_visible=True,
+        feed_reference_selection={"images": [], "videos": [], kind: [shadowed]},
+        request_data={
+            "seedance25_scenario": "multimodal", target: [active], secondary: [shadowed],
+        },
+    )
+    response = await entry.call(entry.request({"source_feed_gen_id": 42}))
+    assert response.status == 400
+    assert json.loads(response.text)["code"] == "repeat_reference_incomplete"
+    assert shadowed not in response.text
+    entry.delegate.assert_not_awaited()

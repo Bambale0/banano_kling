@@ -24,3 +24,17 @@ Public reference-media responses now use `Cache-Control: private, no-store`, and
 ## Verification and release
 
 All automated checks use synthetic URLs/assets and mocked providers. No paid generation or real customer private-asset reads are part of this implementation. See the execution ledger for exact tests, review findings, and release status. Merge/deploy requires separate authorization.
+
+
+## Repeat integrity (2026-10-07)
+
+Image creation and Feed remix now assemble the same authorized recipe. A repeat
+whose slots are all explicitly fixed does not require an extra uploaded photo.
+Owner-selected inputs retain their original ImageN positions; a missing earlier
+replacement rejects before billing rather than shifting a later fixed object.
+
+Video repeats likewise reject incomplete fixed-reference slots or failed recipe
+restoration before reaching the generation handler. Private inputs remain server-side.
+Known canonical and legacy local-upload aliases represent one source identity for
+permission checks; unrelated external hosts do not. Existing grants/revocation and
+reference-display settings retain their separate meanings.

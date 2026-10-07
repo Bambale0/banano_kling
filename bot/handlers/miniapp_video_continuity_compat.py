@@ -9,6 +9,7 @@ rather than the text-bot post link.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Iterable
 from functools import wraps
 from typing import Any
@@ -16,6 +17,12 @@ from typing import Any
 from aiohttp import web
 
 from bot.database import get_generation_task_payload
+from bot.services.media_input_utils import (
+    missing_local_upload_sources,
+    reference_source_identity,
+)
+
+logger = logging.getLogger(__name__)
 
 _REPEAT_LIST_ALIASES: dict[str, tuple[str, ...]] = {
     "reference_images": ("reference_images", "reference_image_urls"),
@@ -154,6 +161,38 @@ def _publication_repeat_selection(source_task: dict[str, Any]) -> dict[str, list
     return result
 
 
+class VideoRepeatReferenceError(ValueError):
+    """An incomplete source recipe must never reach billing or generation."""
+
+
+def _validate_selected_reference_candidates(
+    request_data: dict[str, Any],
+    selection: dict[str, list[str]] | None,
+) -> None:
+    """Reject partial/missing recipes without changing publication permissions."""
+    if selection is None:
+        return
+    # Match restoration's alias precedence: a populated primary list/role
+    # shadows legacy aliases, so those cannot prove a selected recipe is intact.
+    candidates = {
+        "images": _first_list(request_data, _REPEAT_LIST_ALIASES["reference_images"]),
+        "videos": _first_list(request_data, _REPEAT_LIST_ALIASES["v_reference_videos"]),
+    }
+    # Frame-only recipes are valid image sources even without a reference list.
+    for target in ("v_image_url", "seedance25_first_frame_url", "seedance25_last_frame_url"):
+        value = _first_value(request_data, _REPEAT_SCALAR_ALIASES[target])
+        if isinstance(value, str) and value.strip():
+            candidates["images"].append(value.strip())
+    # The existing publication selection contract covers images/videos only.
+    for kind, values in candidates.items():
+        identities = {reference_source_identity(value) for value in values}
+        if any(reference_source_identity(value) not in identities for value in selection[kind]):
+            raise VideoRepeatReferenceError(
+                "Исходные референсы для этого повтора сохранены не полностью. "
+                "Откройте другую публикацию или попросите автора обновить её."
+            )
+
+
 def _merge_selected_reference_slots(
     source_values: list[str],
     selected_values: list[str],
@@ -162,30 +201,36 @@ def _merge_selected_reference_slots(
     """Keep selected source refs on their original numbered slots.
 
     Unselected slots before the last retained source ref must be replaced by
-    viewer-supplied media. If there are not enough replacements we deliberately
-    fall back to the viewer's explicit refs and retain no private source media,
-    rather than shifting ImageN/VideoN bindings or reusing an unselected ref.
+    viewer-supplied media. Insufficient replacements are an error: silently
+    dropping retained media would run a different recipe and charge the user.
+    Never shift ImageN/VideoN bindings or reuse an unselected source reference.
     """
-    selected_set = set(selected_values)
-    retained = [value for value in source_values if value in selected_set]
+    selected_set = {reference_source_identity(value) for value in selected_values}
+    retained = [value for value in source_values if reference_source_identity(value) in selected_set]
     if not retained:
         return _clean_list(explicit_values), []
 
-    retained_set = set(retained)
+    retained_set = {reference_source_identity(value) for value in retained}
     replacements = [
         value for value in _clean_list(explicit_values)
-        if value not in retained_set
+        if reference_source_identity(value) not in retained_set
     ]
-    last_retained = max(index for index, value in enumerate(source_values) if value in retained_set)
+    last_retained = max(
+        index for index, value in enumerate(source_values)
+        if reference_source_identity(value) in retained_set
+    )
     replacement_iter = iter(replacements)
     merged: list[str] = []
     for value in source_values[: last_retained + 1]:
-        if value in retained_set:
+        if reference_source_identity(value) in retained_set:
             merged.append(value)
             continue
         replacement = next(replacement_iter, None)
         if replacement is None:
-            return _clean_list(explicit_values), []
+            raise VideoRepeatReferenceError(
+                "Для этого повтора не хватает ваших фото или видео для замены "
+                "исходных референсов. Добавьте недостающие файлы и попробуйте снова."
+            )
         merged.append(replacement)
     merged.extend(replacement_iter)
     return _clean_list(merged), retained
@@ -267,6 +312,7 @@ def enrich_video_repeat_body(
             normalized["reference_images"] = requested_images[1:]
 
     publication_selection = _publication_repeat_selection(source_task)
+    _validate_selected_reference_candidates(request_data, publication_selection)
     private_reference_images: list[str] = []
     private_reference_videos: list[str] = []
     private_reference_audios: list[str] = []
@@ -401,6 +447,34 @@ def enrich_video_repeat_body(
     return normalized
 
 
+def _active_video_reference_urls(body: dict[str, Any]) -> list[str]:
+    """Validate media used by the selected scenario, not superseded frame aliases."""
+    scenario = str(body.get("seedance25_scenario") or "").strip().lower()
+    if str(body.get("v_model") or "").strip() == "seedance_2_5":
+        if scenario == "text":
+            return []
+        if scenario in {"first_frame", "first_last"}:
+            frames = [body.get("seedance25_first_frame_url")]
+            if scenario == "first_last":
+                frames.append(body.get("seedance25_last_frame_url"))
+            return _clean_list(frames)
+        if scenario == "multimodal":
+            return _clean_list([
+                *_clean_list(body.get("reference_images")),
+                *_clean_list(body.get("v_reference_videos")),
+                *_clean_list(body.get("seedance25_reference_audio_urls")),
+            ])
+
+    return _clean_list([
+        *[value for target in _REPEAT_LIST_ALIASES for value in _clean_list(body.get(target))],
+        *_clean_list(body.get("audio_references")),
+        body.get("v_image_url"),
+        body.get("seedance25_first_frame_url"),
+        body.get("seedance25_last_frame_url"),
+        body.get("audio_url"),
+    ])
+
+
 async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) -> dict[str, Any]:
     source_id = _source_id(body)
     if not source_id:
@@ -408,26 +482,27 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
 
     import bot.miniapp as miniapp_module
 
-    try:
-        _telegram_id, context = await miniapp_module._get_user_context(
-            request.app,
-            str(body.get("init_data") or ""),
-            body.get("start_param_fallback"),
+    _telegram_id, context = await miniapp_module._get_user_context(
+        request.app,
+        str(body.get("init_data") or ""),
+        body.get("start_param_fallback"),
+    )
+    card = await miniapp_module._get_repeat_source_card(
+        source_id,
+        viewer_user_id=context["user"].id,
+    )
+    if not card or str(card.get("gen_type") or "").lower() != "video":
+        raise web.HTTPNotFound(reason="Видео для повтора не найдено")
+    source_task = await get_generation_task_payload(source_id)
+    if not source_task:
+        raise web.HTTPNotFound(reason="Видео для повтора не найдено")
+    enriched = enrich_video_repeat_body(body, source_task)
+    if missing_local_upload_sources(_active_video_reference_urls(enriched)):
+        raise VideoRepeatReferenceError(
+            "Один или несколько референсов для повтора больше недоступны. "
+            "Загрузите недостающие файлы или откройте другую публикацию."
         )
-        card = await miniapp_module._get_repeat_source_card(
-            source_id,
-            viewer_user_id=context["user"].id,
-        )
-        if not card or str(card.get("gen_type") or "").lower() != "video":
-            return body
-        source_task = await get_generation_task_payload(source_id)
-        if not source_task:
-            return body
-        return enrich_video_repeat_body(body, source_task)
-    except Exception:
-        # The original handler owns user-facing auth/not-found semantics. If
-        # enrichment cannot be performed, delegate unchanged instead of masking it.
-        return body
+    return enriched
 
 
 def _replace_cached_json(request: web.Request, body: dict[str, Any]) -> None:
@@ -492,7 +567,33 @@ def install_miniapp_video_continuity_compat() -> None:
             body = await request.json()
         except Exception:
             return await current_generate_video(request)
-        enriched = await _restore_repeat_request(request, body)
+        if not isinstance(body, dict):
+            return await current_generate_video(request)
+        try:
+            enriched = await _restore_repeat_request(request, body)
+        except VideoRepeatReferenceError as exc:
+            return web.json_response(
+                {"ok": False, "code": "repeat_reference_incomplete", "error": str(exc)},
+                status=400,
+            )
+        except Exception as exc:  # noqa: BLE001 - fail closed at the repeat boundary
+            # A retry in the original handler might succeed but lose the
+            # private recipe. Never launch after partial restoration failure.
+            expected = miniapp_module._miniapp_expected_error_response(exc)
+            status = expected.status if expected is not None else 503
+            message = {
+                401: "Откройте Mini App заново из Telegram.",
+                403: "Нет доступа к этому повтору.",
+                404: "Видео для повтора не найдено.",
+            }.get(status, "Не удалось восстановить данные повтора. Попробуйте ещё раз.")
+            logger.warning(
+                "Video repeat restoration rejected: source_generation_id=%s error_type=%s status=%s",
+                _source_id(body), type(exc).__name__, status,
+            )
+            return web.json_response(
+                {"ok": False, "code": "repeat_source_unavailable", "error": message},
+                status=status,
+            )
         if enriched != body:
             _replace_cached_json(request, enriched)
         return await current_generate_video(request)
