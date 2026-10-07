@@ -148,15 +148,38 @@ jobs:
           EXPECTED_SHA="$2"
           RUNTIME_PRICE_FILE="data/price.json"
           runtime_price_backup=""
+          runtime_price_default=""
 
-          cleanup_runtime_price_backup() {
-            if [ -n "${runtime_price_backup:-}" ] && [ -f "$runtime_price_backup" ]; then
-              rm -f "$runtime_price_backup"
+          validate_runtime_price() {
+            if [ ! -f "$1" ] || [ -L "$1" ] \
+              || ! python3 -c 'import json, sys; sys.exit(0 if isinstance(json.load(open(sys.argv[1], encoding="utf-8")), dict) else 1)' "$1"; then
+              echo "Invalid runtime pricing JSON object or file type; refusing deployment" >&2
+              return 1
             fi
           }
+
+          cleanup_runtime_price_backup() {
+            local exit_status=$?
+            if [ -n "${runtime_price_default:-}" ]; then
+              rm -f -- "$runtime_price_default"
+            fi
+            if [ -n "${runtime_price_backup:-}" ] && [ -f "$runtime_price_backup" ]; then
+              if [ "$exit_status" -eq 0 ]; then
+                rm -f -- "$runtime_price_backup"
+              else
+                echo "Runtime pricing backup retained at $runtime_price_backup" >&2
+              fi
+            fi
+            # Never copy a snapshot back: an admin may have saved newer prices.
+            exit "$exit_status"
+          }
           trap cleanup_runtime_price_backup EXIT
+          trap 'exit 129' HUP
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
 
           command -v git >/dev/null
+          command -v python3 >/dev/null
           command -v docker >/dev/null
           command -v flock >/dev/null
 
@@ -201,39 +224,59 @@ jobs:
             exit 1
           }
 
-          preserve_runtime_price=true
-          force_apply_runtime_price="$(
-            git show "$EXPECTED_SHA:$RUNTIME_PRICE_FILE" \
-              | python3 -c 'import json, sys; print("true" if json.load(sys.stdin).get("force_apply_runtime_price") is True else "false")'
-          )"
-          if [ "$force_apply_runtime_price" = true ]; then
-            preserve_runtime_price=false
-            echo "Applying versioned pricing from $RUNTIME_PRICE_FILE"
-          elif ! cmp -s \
-            <(git show "HEAD:$RUNTIME_PRICE_FILE") \
-            <(git show "$EXPECTED_SHA:$RUNTIME_PRICE_FILE"); then
-            preserve_runtime_price=false
-            echo "Applying versioned pricing from $RUNTIME_PRICE_FILE"
+          # Production pricing is mutable runtime state managed by admins.
+          # Standard releases never write an existing price file, even when defaults
+          # change or contain the legacy force_apply_runtime_price flag.
+          [ "$(git branch --show-current)" = tanyapi ] || {
+            echo "Production checkout must already be on tanyapi; refusing branch switch" >&2
+            exit 1
+          }
+          # An excluded child path cannot protect against replacing its parent with
+          # a file/symlink. Reject such source trees before any worktree update.
+          target_data_type="$(git cat-file -t "$EXPECTED_SHA:data" 2>/dev/null || true)"
+          if [ -L data ] || { [ -n "$target_data_type" ] && [ "$target_data_type" != tree ]; }; then
+            echo "Production data directory cannot be replaced by deployment" >&2
+            exit 1
+          fi
+          target_price_type="$(git cat-file -t "$EXPECTED_SHA:$RUNTIME_PRICE_FILE" 2>/dev/null || true)"
+          if [ -n "$target_price_type" ] && [ "$target_price_type" != blob ]; then
+            echo "Versioned runtime price path must be a file or absent" >&2
+            exit 1
           fi
 
-          # Production pricing is mutable runtime state managed by admins.
-          # Preserve it unless the deployed commit intentionally changes it.
-          if [ "$preserve_runtime_price" = true ] && [ -f "$RUNTIME_PRICE_FILE" ]; then
-            runtime_price_backup="$(mktemp)"
+          if [ -e "$RUNTIME_PRICE_FILE" ] || [ -L "$RUNTIME_PRICE_FILE" ]; then
+            validate_runtime_price "$RUNTIME_PRICE_FILE"
+            runtime_price_backup="$(mktemp "${TMPDIR:-/tmp}/banano-runtime-price.XXXXXX")"
             cp -- "$RUNTIME_PRICE_FILE" "$runtime_price_backup"
+            cmp -s -- "$RUNTIME_PRICE_FILE" "$runtime_price_backup"
+            validate_runtime_price "$runtime_price_backup"
             echo "Preserving runtime pricing from $RUNTIME_PRICE_FILE"
           fi
 
-          git switch tanyapi
-          git reset --hard "$EXPECTED_SHA"
-          [ "$(git rev-parse HEAD)" = "$EXPECTED_SHA" ]
+          # Restore source additions, changes and deletions, always excluding prices.
+          # The mixed reset updates HEAD/index only; it cannot overwrite a concurrent
+          # admin save, unlike reset --hard followed by snapshot restoration.
+          git restore --source="$EXPECTED_SHA" --worktree -- . ":(top,exclude)$RUNTIME_PRICE_FILE"
+          git reset --mixed --no-refresh "$EXPECTED_SHA"
+          actual_sha="$(git rev-parse HEAD)"
+          [ "$actual_sha" = "$EXPECTED_SHA" ]
 
-          if [ -n "$runtime_price_backup" ]; then
-            cp -- "$runtime_price_backup" "$RUNTIME_PRICE_FILE"
-            rm -f "$runtime_price_backup"
-            runtime_price_backup=""
-            echo "Restored runtime pricing to $RUNTIME_PRICE_FILE"
+          if [ -z "$runtime_price_backup" ] && [ ! -e "$RUNTIME_PRICE_FILE" ] && [ ! -L "$RUNTIME_PRICE_FILE" ]; then
+            # Seed first installs only. The atomic hard link cannot replace a price
+            # file created by an admin after the existence check above.
+            mkdir -p -- "$(dirname -- "$RUNTIME_PRICE_FILE")"
+            runtime_price_default="$(mktemp "data/.price-default.XXXXXX")"
+            git show "$EXPECTED_SHA:$RUNTIME_PRICE_FILE" > "$runtime_price_default"
+            validate_runtime_price "$runtime_price_default"
+            if ln -T -- "$runtime_price_default" "$RUNTIME_PRICE_FILE" 2>/dev/null; then
+              echo "Initialized absent runtime pricing from the checked-in default"
+            else
+              validate_runtime_price "$RUNTIME_PRICE_FILE"
+              echo "Preserving runtime pricing created during deployment"
+            fi
           fi
+          validate_runtime_price "$RUNTIME_PRICE_FILE"
+          echo "Retained runtime pricing at $RUNTIME_PRICE_FILE"
 
           run_root() {
             if [ "$(id -u)" -eq 0 ]; then
@@ -349,15 +392,38 @@ jobs:
           EXPECTED_SHA="$2"
           RUNTIME_PRICE_FILE="data/price.json"
           runtime_price_backup=""
+          runtime_price_default=""
 
-          cleanup_runtime_price_backup() {
-            if [ -n "${runtime_price_backup:-}" ] && [ -f "$runtime_price_backup" ]; then
-              rm -f "$runtime_price_backup"
+          validate_runtime_price() {
+            if [ ! -f "$1" ] || [ -L "$1" ] \
+              || ! python3 -c 'import json, sys; sys.exit(0 if isinstance(json.load(open(sys.argv[1], encoding="utf-8")), dict) else 1)' "$1"; then
+              echo "Invalid runtime pricing JSON object or file type; refusing deployment" >&2
+              return 1
             fi
           }
+
+          cleanup_runtime_price_backup() {
+            local exit_status=$?
+            if [ -n "${runtime_price_default:-}" ]; then
+              rm -f -- "$runtime_price_default"
+            fi
+            if [ -n "${runtime_price_backup:-}" ] && [ -f "$runtime_price_backup" ]; then
+              if [ "$exit_status" -eq 0 ]; then
+                rm -f -- "$runtime_price_backup"
+              else
+                echo "Runtime pricing backup retained at $runtime_price_backup" >&2
+              fi
+            fi
+            # Never copy a snapshot back: an admin may have saved newer prices.
+            exit "$exit_status"
+          }
           trap cleanup_runtime_price_backup EXIT
+          trap 'exit 129' HUP
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
 
           command -v git >/dev/null
+          command -v python3 >/dev/null
           command -v docker >/dev/null
           command -v flock >/dev/null
 
@@ -402,40 +468,59 @@ jobs:
             exit 1
           }
 
-          preserve_runtime_price=true
-          force_apply_runtime_price="$(
-            git show "$EXPECTED_SHA:$RUNTIME_PRICE_FILE" \
-              | python3 -c 'import json, sys; print("true" if json.load(sys.stdin).get("force_apply_runtime_price") is True else "false")'
-          )"
-          if [ "$force_apply_runtime_price" = true ]; then
-            preserve_runtime_price=false
-            echo "Applying versioned pricing from $RUNTIME_PRICE_FILE"
-          elif ! cmp -s \
-            <(git show "HEAD:$RUNTIME_PRICE_FILE") \
-            <(git show "$EXPECTED_SHA:$RUNTIME_PRICE_FILE"); then
-            preserve_runtime_price=false
-            echo "Applying versioned pricing from $RUNTIME_PRICE_FILE"
+          # Production pricing is mutable runtime state managed by admins.
+          # Standard releases never write an existing price file, even when defaults
+          # change or contain the legacy force_apply_runtime_price flag.
+          [ "$(git branch --show-current)" = tanyapi ] || {
+            echo "Production checkout must already be on tanyapi; refusing branch switch" >&2
+            exit 1
+          }
+          # An excluded child path cannot protect against replacing its parent with
+          # a file/symlink. Reject such source trees before any worktree update.
+          target_data_type="$(git cat-file -t "$EXPECTED_SHA:data" 2>/dev/null || true)"
+          if [ -L data ] || { [ -n "$target_data_type" ] && [ "$target_data_type" != tree ]; }; then
+            echo "Production data directory cannot be replaced by deployment" >&2
+            exit 1
+          fi
+          target_price_type="$(git cat-file -t "$EXPECTED_SHA:$RUNTIME_PRICE_FILE" 2>/dev/null || true)"
+          if [ -n "$target_price_type" ] && [ "$target_price_type" != blob ]; then
+            echo "Versioned runtime price path must be a file or absent" >&2
+            exit 1
           fi
 
-          # Production pricing is mutable runtime state managed by admins.
-          # Preserve it unless the deployed commit intentionally changes it.
-          if [ "$preserve_runtime_price" = true ] && [ -f "$RUNTIME_PRICE_FILE" ]; then
-            runtime_price_backup="$(mktemp)"
+          if [ -e "$RUNTIME_PRICE_FILE" ] || [ -L "$RUNTIME_PRICE_FILE" ]; then
+            validate_runtime_price "$RUNTIME_PRICE_FILE"
+            runtime_price_backup="$(mktemp "${TMPDIR:-/tmp}/banano-runtime-price.XXXXXX")"
             cp -- "$RUNTIME_PRICE_FILE" "$runtime_price_backup"
+            cmp -s -- "$RUNTIME_PRICE_FILE" "$runtime_price_backup"
+            validate_runtime_price "$runtime_price_backup"
             echo "Preserving runtime pricing from $RUNTIME_PRICE_FILE"
           fi
 
-          git switch tanyapi
-          git reset --hard "$EXPECTED_SHA"
+          # Restore source additions, changes and deletions, always excluding prices.
+          # The mixed reset updates HEAD/index only; it cannot overwrite a concurrent
+          # admin save, unlike reset --hard followed by snapshot restoration.
+          git restore --source="$EXPECTED_SHA" --worktree -- . ":(top,exclude)$RUNTIME_PRICE_FILE"
+          git reset --mixed --no-refresh "$EXPECTED_SHA"
           actual_sha="$(git rev-parse HEAD)"
           [ "$actual_sha" = "$EXPECTED_SHA" ]
 
-          if [ -n "$runtime_price_backup" ]; then
-            cp -- "$runtime_price_backup" "$RUNTIME_PRICE_FILE"
-            rm -f "$runtime_price_backup"
-            runtime_price_backup=""
-            echo "Restored runtime pricing to $RUNTIME_PRICE_FILE"
+          if [ -z "$runtime_price_backup" ] && [ ! -e "$RUNTIME_PRICE_FILE" ] && [ ! -L "$RUNTIME_PRICE_FILE" ]; then
+            # Seed first installs only. The atomic hard link cannot replace a price
+            # file created by an admin after the existence check above.
+            mkdir -p -- "$(dirname -- "$RUNTIME_PRICE_FILE")"
+            runtime_price_default="$(mktemp "data/.price-default.XXXXXX")"
+            git show "$EXPECTED_SHA:$RUNTIME_PRICE_FILE" > "$runtime_price_default"
+            validate_runtime_price "$runtime_price_default"
+            if ln -T -- "$runtime_price_default" "$RUNTIME_PRICE_FILE" 2>/dev/null; then
+              echo "Initialized absent runtime pricing from the checked-in default"
+            else
+              validate_runtime_price "$RUNTIME_PRICE_FILE"
+              echo "Preserving runtime pricing created during deployment"
+            fi
           fi
+          validate_runtime_price "$RUNTIME_PRICE_FILE"
+          echo "Retained runtime pricing at $RUNTIME_PRICE_FILE"
 
           bash scripts/deploy_backend_docker.sh deploy
           bash scripts/deploy_backend_docker.sh status

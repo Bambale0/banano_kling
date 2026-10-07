@@ -88,20 +88,44 @@ getent ahostsv4 tanyapp.xn--e1aikcel5c5a.online
 curl -fsSI https://tanyapp.xn--e1aikcel5c5a.online/mini-app/
 ```
 
-## 4. Подготовка backend checkout
+## 4. Backend checkout и административные цены
+
+Обычный release выполняет `.github/workflows/deploy-production-reliable.yml`.
+Стандартный fallback `.github/workflows/deploy-production.yml` соблюдает тот же
+контракт в обоих путях (SSH и local). Checkout уже должен находиться на `tanyapi`:
+другая ветка блокирует deploy вместо автоматического `git switch`.
+
+`data/price.json` на сервере — изменяемые административные данные. Deploy проверяет
+JSON-объект и сохраняет резервную копию существующего файла, но никогда не пишет
+обратно в этот runtime-путь. `git restore --worktree` обновляет остальные исходники
+с исключением `data/price.json`, включая удалённые и переименованные файлы;
+`git reset --mixed --no-refresh` затем обновляет только HEAD/index до точного SHA.
+Изменение versioned defaults и старый `force_apply_runtime_price` не разрешают
+заменять административные тарифы. Сохранение администратором во время Git update
+остаётся на месте; содержимое, inode и права существующего файла не меняются
+checkout-этапом deploy. Exit trap тоже не восстанавливает устаревший snapshot.
+
+Только для отсутствующего runtime-файла deploy подготавливает и проверяет default
+из точного commit, затем атомарно создаёт имя через hard link без замены существующего
+пути. Если администратор создал файл между проверкой и этим действием, его файл
+сохраняется. Публикация тарифов — отдельное явное действие через существующий
+административный механизм.
+
+Некорректный существующий JSON, JSON не-объект, symlink или конфликт структуры
+`data`/`data/price.json` в целевом дереве блокирует deploy без замены runtime-данных.
+При ошибке source/index update или более позднего этапа резервная копия остаётся
+по пути, указанному в логе; автоматически копировать её поверх актуального файла
+нельзя. Неудачное обновление исходников может оставить частично обновлённый checkout:
+перед повторным release потребуется проверить и согласовать его состояние.
+
+Не выполнять вручную `git reset --hard` на рабочем production checkout: он может
+заменить административные цены. Для просмотра текущего состояния достаточно:
 
 ```bash
 cd /root/tanya/banano_kling
-
-git fetch --prune origin tanyapi
-git switch tanyapi
 git status --short
-git reset --hard origin/tanyapi
-
 git log -1 --oneline
 ```
-
-Перед `reset --hard` убедиться, что локальные изменения не нужны.
 
 ## 5. Backend configuration
 
