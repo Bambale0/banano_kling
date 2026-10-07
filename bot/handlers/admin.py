@@ -50,6 +50,7 @@ from bot.database import (
     set_promo_code_active,
     set_user_banned,
 )
+from bot.handlers import promo_admin
 from bot.keyboards import (
     get_admin_keyboard,
     get_back_keyboard,
@@ -74,6 +75,7 @@ from bot.states import AdminStates
 
 logger = logging.getLogger(__name__)
 router = Router()
+router.include_router(promo_admin.router)
 PRICE_PATH = Path(config.PRICE_PATH)
 BROADCAST_MESSAGE_LIMIT = 4096
 BROADCAST_PHOTO_CAPTION_LIMIT = 1024
@@ -4292,183 +4294,32 @@ async def admin_process_credits_amount(message: types.Message, state: FSMContext
 
 @router.callback_query(F.data == "admin_broadcast")
 async def admin_broadcast_prompt(callback: types.CallbackQuery, state: FSMContext):
-    """Запрашивает текст или фото для рассылки"""
-    if not is_admin(callback.from_user.id):
-        await callback.answer("⛔ Нет доступа")
-        return
-
-    await callback.message.edit_text(
-        "📢 <b>Рассылка всем пользователям</b>\n\n"
-        "Отправьте текст сообщения или фото с подписью.\n"
-        "Можно отправить фото без подписи — пользователи получат только изображение.\n\n"
-        "<i>В тексте и подписи поддерживается HTML-форматирование</i>",
-        reply_markup=get_back_keyboard("admin_back"),
-        parse_mode="HTML",
-    )
-
-    await state.set_state(AdminStates.waiting_broadcast_text)
+    """Open durable promo drafts from the existing Telegram admin entry."""
+    await promo_admin.open_promos(callback, state)
 
 
 @router.message(AdminStates.waiting_broadcast_text)
 async def admin_process_broadcast_text(message: types.Message, state: FSMContext):
-    """Показывает превью рассылки"""
-    broadcast_media_type = None
-    broadcast_media_file_id = None
-
-    if message.photo:
-        broadcast_media_type = "photo"
-        broadcast_media_file_id = message.photo[-1].file_id
-        broadcast_text = (message.caption or "").strip()
-
-        if len(broadcast_text) > BROADCAST_PHOTO_CAPTION_LIMIT:
-            await message.answer(
-                "❌ Подпись к фото слишком длинная.\n"
-                f"Максимум: <code>{BROADCAST_PHOTO_CAPTION_LIMIT}</code> символов.",
-                reply_markup=get_back_keyboard("admin_back"),
-                parse_mode="HTML",
-            )
-            return
-    elif message.video:
-        broadcast_media_type = "video"
-        broadcast_media_file_id = message.video.file_id
-        broadcast_text = (message.caption or "").strip()
-
-        if len(broadcast_text) > BROADCAST_PHOTO_CAPTION_LIMIT:
-            await message.answer(
-                "❌ Подпись к видео слишком длинная.\n"
-                f"Максимум: <code>{BROADCAST_PHOTO_CAPTION_LIMIT}</code> символов.",
-                reply_markup=get_back_keyboard("admin_back"),
-                parse_mode="HTML",
-            )
-            return
-    elif message.text:
-        broadcast_text = message.text.strip()
-
-        if not broadcast_text:
-            await message.answer(
-                "❌ Текст рассылки пустой. Отправьте текст, фото или видео.",
-                reply_markup=get_back_keyboard("admin_back"),
-            )
-            return
-
-        if len(broadcast_text) > BROADCAST_MESSAGE_LIMIT:
-            await message.answer(
-                "❌ Текст рассылки слишком длинный.\n"
-                f"Максимум: <code>{BROADCAST_MESSAGE_LIMIT}</code> символов.",
-                reply_markup=get_back_keyboard("admin_back"),
-                parse_mode="HTML",
-            )
-            return
-    else:
-        await message.answer(
-            "❌ Для рассылки отправьте текст, фото или видео с необязательной подписью.",
-            reply_markup=get_back_keyboard("admin_back"),
-        )
+    """Retired FSM input cannot create an untested mass campaign."""
+    if not message.from_user or not is_admin(message.from_user.id):
+        await message.answer("⛔ Нет доступа")
         return
-
-    await state.update_data(
-        broadcast_text=broadcast_text,
-        broadcast_media_type=broadcast_media_type,
-        broadcast_media_file_id=broadcast_media_file_id,
+    await state.clear()
+    await message.answer(
+        "Редактор рассылок обновлён. Откройте сохранённые промо и создайте черновик. "
+        "Перед массовой отправкой обязателен «Тест на админах».",
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[[
+            types.InlineKeyboardButton(text="📢 Открыть промо", callback_data="admin_broadcast")
+        ]]),
     )
-
-    if broadcast_media_type == "photo":
-        await message.answer_photo(
-            photo=broadcast_media_file_id,
-            caption=broadcast_text or None,
-            parse_mode="HTML" if broadcast_text else None,
-        )
-        await message.answer(
-            "📢 <b>Превью рассылки с фото выше.</b>\n\n"
-            "Подтверждаете отправку?",
-            reply_markup=_broadcast_confirm_keyboard(),
-            parse_mode="HTML",
-        )
-    elif broadcast_media_type == "video":
-        await message.answer_video(
-            video=broadcast_media_file_id,
-            caption=broadcast_text or None,
-            parse_mode="HTML" if broadcast_text else None,
-        )
-        await message.answer(
-            "📢 <b>Превью рассылки с видео выше.</b>\n\n"
-            "Подтверждаете отправку?",
-            reply_markup=_broadcast_confirm_keyboard(),
-            parse_mode="HTML",
-        )
-    else:
-        await message.answer(
-            "📢 <b>Превью рассылки:</b>\n"
-            "───────────────\n"
-            f"{broadcast_text}\n"
-            "───────────────\n"
-            "Подтверждаете отправку?",
-            reply_markup=_broadcast_confirm_keyboard(),
-            parse_mode="HTML",
-        )
-
-    await state.set_state(AdminStates.confirming_broadcast)
 
 
 @router.callback_query(F.data == "admin_broadcast_confirm")
 async def admin_execute_broadcast(
     callback: types.CallbackQuery, state: FSMContext, bot: Bot
 ):
-    """Запускает рассылку в фоне, чтобы не блокировать обработку апдейтов."""
-    if not is_admin(callback.from_user.id):
-        await callback.answer("⛔ Нет доступа")
-        return
-
-    data = await state.get_data()
-    broadcast_text = data.get("broadcast_text")
-    broadcast_media_type = data.get("broadcast_media_type")
-    broadcast_media_file_id = data.get("broadcast_media_file_id")
-
-    if not broadcast_text and not broadcast_media_file_id:
-        await callback.message.edit_text(
-            "❌ Не найден текст, фото или видео для рассылки.",
-            reply_markup=get_admin_keyboard(),
-        )
-        await state.clear()
-        return
-
-    status_message = callback.message
-    if status_message is None:
-        await callback.answer("❌ Не найдено сообщение для статуса рассылки")
-        return
-
-    await status_message.edit_text(
-        "📢 <b>Создаю устойчивую рассылку...</b>",
-        parse_mode="HTML",
-    )
-    try:
-        campaign_id, total = await _create_admin_broadcast_campaign(
-            bot=bot,
-            created_by=callback.from_user.id,
-            broadcast_text=broadcast_text,
-            broadcast_media_type=broadcast_media_type,
-            broadcast_media_file_id=broadcast_media_file_id,
-        )
-    except Exception:
-        logger.exception("Failed to create durable broadcast campaign")
-        await status_message.edit_text(
-            "❌ Не удалось создать устойчивую рассылку. Попробуйте ещё раз.",
-            reply_markup=get_admin_keyboard(),
-        )
-        await state.clear()
-        return
-
-    await status_message.edit_text(
-        f"📢 <b>Рассылка запущена устойчиво</b>\n\n"
-        f"ID кампании: <code>{campaign_id}</code>\n"
-        f"Получателей в очереди: <code>{total}</code>\n\n"
-        "Если бот перезапустится, рассылка продолжится с очереди, а не начнётся заново.",
-        parse_mode="HTML",
-    )
-    await state.clear()
-    await callback.answer("Рассылка запущена")
-
-    asyncio.create_task(_watch_admin_broadcast_campaign(status_message, campaign_id))
+    """Historical buttons always reopen the editor, never bypass the test gate."""
+    await promo_admin.open_promos(callback, state)
 
 
 async def _create_admin_broadcast_campaign(

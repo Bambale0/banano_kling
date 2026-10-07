@@ -1394,3 +1394,43 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Final local verification: 1949 passed / 19 skipped full safe backend tests; 35 Jest suites / 216 tests passed; full Mini App ESLint, TypeScript, targeted Ruff, deployment shell syntax, production static build and git diff --check passed. Six mocked browser cases passed (four mobile multimodal widths plus one-photo Seedance 2.0 and 2.5). Independent final source review found no blockers.
 - Security: no live trend publication or provider generation; all browser API calls mocked, SQLite tests isolated. Existing production checkout left untouched.
 - Release status: PR/CI and exact production revision verification pending; do not claim deployed yet.
+
+
+## 2026-10-07 — Telegram promo buttons for existing trends
+
+- Baseline: tanyapi 8885e4b5f07012167343997159495731633c1318; isolated feature/promo-trend-buttons.
+- User scope: existing Telegram admin flow, not a new Mini App editor.
+- Audit: reuse notification_campaigns, notification_deliveries and bot-owned queue worker;
+  existing internal API was single-text/button, Telegram FSM single media and no tested-content gate.
+- Public interfaces under test (explicit user specification): Telegram handlers, normalized
+  Bot API payload, campaign operations, PostgreSQL transactions, worker delivery/recovery.
+- Implementation: 0–2 text+trend_id buttons; server-paginated approved/public trend lookup;
+  existing prompt_link builder; albums then text+vertical keyboard; persistent draft revisions;
+  queued tests for config.admin_ids through the same renderer/worker; matching tested hash
+  required for launch; immutable snapshot; atomic audience materialization; persisted part receipts.
+- Historical running campaigns are not converted to new drafts. New Telegram promos, including
+  zero-button promos, require an admin test. Internal legacy endpoints cannot launch/test a v2
+  promo around this gate. Old Telegram confirmation reopens the new editor.
+- Additive migration extends existing tables. No new queue infrastructure or credentials.
+  Uncertain Telegram acceptance is terminal and requires reconciliation, not blind replay.
+- Provider generation, payment, balance, referral attribution and optional bot-start offer:
+  unchanged. No paid generation, real admin test, mass send, production migration or release run.
+- Guidance used: current repository AGENTS; existing Bambale0/skills implement/tdd/code-review,
+  Bambale0/claw safety/QA guidance. External playbook updates were denied and not retried.
+- Progress: first 17 real PostgreSQL acceptance tests passed on isolated localhost test DB;
+  renderer/worker tests and Telegram handler tests passing separately. Independent safety review
+  and broader regressions still in progress.
+- Release remaining: final checks/review, publication authorization, confirmed safe smoke content
+  and eligible admin recipients, real Telegram link click checks, release and exact revision check.
+
+- Final verification: broad safe backend suite 2042 passed / 41 skipped; latest changed-path
+  retest 117 passed; isolated PostgreSQL suite 27 passed including real Telegram handler→DB
+  composition, revoked/no admins, edit during in-flight album, concurrent edit/launch,
+  row-lock availability guarantee, remaining admin tests after launch and crash recovery.
+- Independent review found and resolved ambiguous 5xx replay, revoked-admin pending deadlock,
+  and availability TOCTOU. Schema constraint upgrade now runs only when its definition needs
+  changing. No unresolved high-severity finding remained in the reviewed queue/backend scope.
+- Deployment caveat: no mixed old/new worker versions or code rollback with active v2 work.
+  Previously failed legacy attempts remain as-is; their past Telegram acceptance is unknown.
+- Acceptance not yet performed: real Telegram delivery/click-through, production logs,
+  GitHub publication/CI and release. Tests use synthetic recipients and mocked Bot API only.

@@ -43,6 +43,8 @@ async def ensure_internal_admin_notification_schema() -> None:
         connection = await psycopg.AsyncConnection.connect(database_url)
         try:
             async with connection.cursor() as cursor:
+                # Serialize additive DDL across worker processes at startup.
+                await cursor.execute("SELECT pg_advisory_xact_lock(784203119)")
                 await cursor.execute(
                     """
                     CREATE TABLE IF NOT EXISTS notification_campaigns (
@@ -135,6 +137,66 @@ async def ensure_internal_admin_notification_schema() -> None:
                     )
                     """
                 )
+                # Additive promo extension: existing campaigns keep their status and payload.
+                for column in (
+                    "promo_version INTEGER NOT NULL DEFAULT 0",
+                    "revision INTEGER NOT NULL DEFAULT 1",
+                    "content_hash TEXT",
+                    "tested_content_hash TEXT",
+                    "tested_at TIMESTAMP",
+                    "tested_by TEXT",
+                    "test_run_key TEXT",
+                    "test_summary JSONB",
+                    "message_snapshot JSONB",
+                ):
+                    await cursor.execute(
+                        f"ALTER TABLE notification_campaigns ADD COLUMN IF NOT EXISTS {column}"
+                    )
+                for column in (
+                    "delivery_parts JSONB NOT NULL DEFAULT '[]'::jsonb",
+                    "attempt_token TEXT",
+                ):
+                    await cursor.execute(
+                        f"ALTER TABLE notification_deliveries ADD COLUMN IF NOT EXISTS {column}"
+                    )
+                # Migrate once; avoid rescanning delivery history at every restart.
+                await cursor.execute("""
+                    SELECT pg_get_constraintdef(oid) FROM pg_constraint
+                    WHERE conrelid = 'notification_deliveries'::regclass
+                      AND conname = 'notification_deliveries_status_check'
+                """)
+                definition = await cursor.fetchone()
+                if not definition or "'uncertain'" not in definition[0]:
+                    await cursor.execute(
+                        "ALTER TABLE notification_deliveries "
+                        "DROP CONSTRAINT IF EXISTS notification_deliveries_status_check"
+                    )
+                    await cursor.execute("""
+                        ALTER TABLE notification_deliveries
+                        ADD CONSTRAINT notification_deliveries_status_check CHECK (
+                            status IN ('queued', 'sending', 'sent', 'failed', 'blocked',
+                                       'cancelled', 'uncertain')
+                        )
+                    """)
+                for column in (
+                    "content_hash TEXT",
+                    "test_run_key TEXT",
+                    "message_snapshot JSONB",
+                    "delivery_parts JSONB NOT NULL DEFAULT '[]'::jsonb",
+                    "attempt_token TEXT",
+                    "attempts INTEGER NOT NULL DEFAULT 0",
+                    "lease_until TIMESTAMP",
+                    "next_attempt_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+                    "sent_at TIMESTAMP",
+                    "updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+                ):
+                    await cursor.execute(
+                        f"ALTER TABLE notification_test_sends ADD COLUMN IF NOT EXISTS {column}"
+                    )
+                await cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_notification_test_sends_claim
+                    ON notification_test_sends(status, next_attempt_at, lease_until, id)
+                """)
             await connection.commit()
         except Exception:
             await connection.rollback()

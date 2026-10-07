@@ -64,6 +64,8 @@ async def test_campaign_handler(request: web.Request) -> web.Response:
     campaign = await notifications._fetch_campaign(campaign_id)
     if campaign is None:
         raise web.HTTPNotFound(text="campaign_not_found")
+    if dict(campaign).get("promo_version") == 2:
+        raise CommandConflictError("Use Telegram Test on admins for this promo version")
 
     async with db_backend.connect() as connection:
         connection.row_factory = db_backend.Row

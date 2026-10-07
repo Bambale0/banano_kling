@@ -4,6 +4,11 @@ on:
   pull_request:
     branches: [tanyapi]
     paths:
+      - 'bot/promo_campaigns.py'
+      - 'bot/promo_message.py'
+      - 'bot/notification_service.py'
+      - 'bot/internal_admin_notification_schema.py'
+      - 'tests/test_promo_campaigns_postgres.py'
       - 'bot/database.py'
       - 'bot/db.py'
       - 'bot/postgres_pool.py'
@@ -21,6 +26,11 @@ on:
   push:
     branches: [tanyapi]
     paths:
+      - 'bot/promo_campaigns.py'
+      - 'bot/promo_message.py'
+      - 'bot/notification_service.py'
+      - 'bot/internal_admin_notification_schema.py'
+      - 'tests/test_promo_campaigns_postgres.py'
       - 'bot/database.py'
       - 'bot/db.py'
       - 'bot/postgres_pool.py'
@@ -82,3 +92,17 @@ jobs:
           python -m pip check
       - name: Run PostgreSQL regressions
         run: pytest tests/test_runtime72_saved_references.py tests/test_runtime72_postgres_refunds.py tests/test_result_durability_postgres.py tests/test_genjutsu_postgres.py -vv --tb=short
+
+      - name: Create isolated promo test database
+        run: |
+          python - <<'PYCODE'
+          import os
+          import psycopg
+          with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as connection:
+              connection.execute("CREATE DATABASE banano_promo_test")
+          PYCODE
+      - name: Run promo PostgreSQL acceptance tests
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/banano_promo_test
+          PROMO_POSTGRES_TEST: '1'
+        run: pytest tests/test_promo_campaigns_postgres.py -vv --tb=short
