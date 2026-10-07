@@ -1547,3 +1547,8 @@ Reference cleanup reports how many generation snapshot refs are protected.
   integration review remain the next gate before publication and serial release.
 - No new Nginx runtime writes, provider generations, mass broadcasts or extra admin test
   content are part of this integration. Previously approved synthetic smoke is retained.
+
+- Final integrated backend passed 2,121 tests / 66 skipped on caf53145; 47 isolated PostgreSQL campaign tests passed. All backend source, Python tests, dependency and configuration inputs remained identical after the final frontend-only fix. A redundant repeat full-backend invocation was cancelled and was not retried; the existing complete result remains applicable.
+- Integrated frontend passed all 251 tests, TypeScript, lint and export. Independent review reproduced a Genjutsu/optional-offer modal collision; explicit open-state coordination fixes direct-query, startapp, prompt-linked and no-preview recipe entry without discarding drafts. Four regression scenarios passed after a fresh build. Required CI now runs all five browser suites; redundant extra checks were removed from the separate optional workflow.
+- The task-owned isolated PostgreSQL container was stopped after verification; its data and all source/test artifacts are retained. No production messages, configuration or runtime checkout changes were made during integration.
+- Final aggregate job_4836411f0b73 succeeded (347.6 seconds): 251 Jest tests and all five browser suites, including four Genjutsu entry regressions. Independent review has no remaining source blockers. Changed-line Ruff found zero relevant violations across 18 Python files. Production rollout and the bounded real Telegram test remain the subsequent verification step.

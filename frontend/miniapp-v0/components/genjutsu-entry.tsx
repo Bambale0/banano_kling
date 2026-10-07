@@ -26,9 +26,13 @@ export function GenjutsuButton({ taskId, compact = false }: { taskId?: string; c
   </Button>
 }
 
-export function GenjutsuEntry() {
+export function GenjutsuEntry({ onOpenChange }: { onOpenChange?: (open: boolean) => void } = {}) {
   const [options, setOptions] = useState<Options | null>(null)
   const [session, setSession] = useState(0)
+  useEffect(() => {
+    onOpenChange?.(options !== null)
+    return () => onOpenChange?.(false)
+  }, [onOpenChange, options])
   useEffect(() => {
     const show = (event: Event) => {
       const detail = (event as CustomEvent<Options>).detail || {}

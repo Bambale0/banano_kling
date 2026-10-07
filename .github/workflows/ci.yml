@@ -241,6 +241,9 @@ jobs:
         run: |
           node e2e/critical-flows.mjs
           node e2e/hidden-repeat-prompt.mjs
+          node e2e/bot-start-gate.mjs
+          node e2e/bot-start-media-targets.mjs
+          node e2e/bot-start-genjutsu.mjs
 
       - name: Record Mini App E2E result
         id: result

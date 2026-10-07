@@ -1,7 +1,7 @@
 'use client'
 
 import dynamic from 'next/dynamic'
-import { type ReactNode, useEffect } from 'react'
+import { type ReactNode, useEffect, useState } from 'react'
 import { ThemeProvider } from '@/components/theme-provider'
 import { AppProvider, useApp } from '@/lib/app-context'
 import { getStartParamFallback } from '@/lib/api'
@@ -33,6 +33,7 @@ interface MiniAppShellProps {
 
 function MiniAppBody({ children }: MiniAppShellProps) {
   const { state, activeWorkspace, trendToRun, setActiveTab, refreshTelegramChatAccess } = useApp()
+  const [genjutsuOpen, setGenjutsuOpen] = useState(false)
   const isBootstrapping = state.isLoading
   const isLocked = state.mode === 'locked'
 
@@ -69,7 +70,7 @@ function MiniAppBody({ children }: MiniAppShellProps) {
           {/* A deep-linked trend owns the active Radix modal. Delivery is optional,
               so defer its offer instead of blocking the trend or fighting its focus trap. */}
           <BotWriteAccessGate
-            required={state.user.telegramBotStartRequired && !trendToRun}
+            required={state.user.telegramBotStartRequired && !trendToRun && !genjutsuOpen}
             botUsername={state.user.botUsername}
             onRefresh={refreshTelegramChatAccess}
           />
@@ -83,7 +84,7 @@ function MiniAppBody({ children }: MiniAppShellProps) {
           </div>
 
           <TaskDetailPanel />
-          <GenjutsuEntry />
+          <GenjutsuEntry onOpenChange={setGenjutsuOpen} />
           <BalanceSheet />
           {activeWorkspace === 'partners' ? <PartnerApprovalSheet /> : <WorkspaceSheet />}
         </>
