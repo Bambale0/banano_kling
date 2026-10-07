@@ -1,5 +1,30 @@
 # Execution ledger
 
+## 2026-10-07 — Resume optional bot Start offer
+
+- Latest instruction resumes the optional offer only for explicit never-started users. Current integration baseline is tanyapi ac9365d96459a3932c4a934600cc071a2ccec63b, including durable gate removal, Seedance identity and promo fixes. The historical emergency removal below is preserved as a completed release record.
+- Added lifecycle marker in the existing text state (no schema migration), bootstrap contract and mock-only regression coverage. New/unknown/blocked states remain distinct.
+- Resumed backend tests: 32 focused passed, including delivery-proof bookkeeping failure isolation. On the integrated baseline: 2079 backend passed / 66 skipped (live, credential and PostgreSQL-pool checks excluded locally); 243 frontend tests / 36 suites, TypeScript, lint, export build and changed-line Ruff passed. Four-width (320/375/390/430) offline Start/Skip tests and eight media-target flows passed; screenshots inspected at 320/430. Existing critical E2E and final combined review remain pending. Release coordination belongs to the combined release owner; no independent production writes.
+
+## 2026-10-06 — Direct bot Start gate, bounded return verification
+
+- Baseline: tanyapi `b7c71a51727d4d5953536a50b9c0c2d15ef3dee6`; isolated branch `fix/bot-start-gate`.
+- User outcome (clarified 16:28 UTC): bot delivery is OPTIONAL. Primary button opens bot Start directly, with «Пропустить» to use generation/Studio immediately. Session-only dismissal survives tab/refresh without pretending delivery permission exists; a nonblocking re-entry offer remains. Return verification is bounded and server-confirmed.
+- Audit: old native callback and fetch have no deadlines; pending UI hides fallback. cmd_start marks chat available before routing. Existing refreshTasks unmounts forms via global loader, so return verification must update only the confirmed capability without loading/navigation reset.
+- Scope: frontend gate/API/context and mock-only regression/E2E. No database/schema/config/payment/provider changes, no real bot messages, generations or production writes.
+- Plan: RED regression → direct Start action → abortable capability refresh → timeout/cancel/return tests → 4-width mock browser coverage → lint/types/build/full tests → review → draft PR; release requires separate authorization.
+- Skills: Bambale0/skills diagnosing-bugs and tdd; Bambale0/claw evidence-first workflow; anthropics/skills webapp-testing. Test seams: gate interaction, bootstrap capability update, mocked browser return journey.
+- Progress: original never-callback regression reproduced RED; direct Start and abortable capability-only checks implemented. Prior-bootstrap capability revision guard prevents stale reopening; activated no longer resets a live form.
+- Verification: TypeScript, lint, full frontend 34 suites / 214 tests and production export build passed. New offline browser suite passed twice at 320/375/390/430px with real 12s timeout, denial/error/cancel/return/reappearance and form/reference preservation. 320/430 screenshots visually checked: no clipping or overlap. Independent read-only review found no remaining blocker. Existing full critical E2E passed (132.7s, exit 0) with its prior forced-tab-reset assertion updated to the new preservation contract.
+- Config/schema/provider/payment changes: none. No real Telegram permission request, message, generation or payment executed. Legacy native endpoint remains for older clients; new UI never calls it.
+- Latest optional-flow verification: focused 27 tests and full frontend 34 suites / 216 tests, TypeScript, lint and production build passed. Independent optional-UI/backend review found no blocker. Backend generation admission and Studio retrieval remain independent of delivery capability; result retention precedes message guards. Final optional-generation mobile E2E passed all 320/375/390/430px (84.76s): Skip persists through return/tab/refresh/reload, mock image+video generation succeeds with delivery=false and zero bot calls, draft/reference DOM survives dismissal, pending checks cancel, and offer can reopen. Optional modal/banner screenshots reviewed at 320px. Final existing critical E2E rerun also passed on the optional export (132.79s).
+- CI recovery: PR #262 browser workflow identified high-severity sharp/librsvg advisory GHSA-wq5f-xc86-pv6w. Raised only sharp and its platform binaries/libvips from 0.35.4 to 0.35.5 (libvips package 1.3.4) via registry.npmjs.org; Next dedupes to the same version. npm audit --audit-level=high now passes; remaining moderate dev-tool findings were not force-downgraded. Full 216 tests, lint and production build re-passed. Security gate unchanged.
+- Target-link release review: 7 browser paths preserved exact media IDs/URL/DOM, but photo trend deep links exposed competing modal pointer/focus trapping. Deferred the optional delivery offer while trendToRun owns the active Radix modal; trend generation stays available and offer returns after closing the trend. No Radix protections bypassed. Committed offline media-target regression reproduced RED on original export and passed GREEN on fresh export: 8 prompt/feed/remix/profile/trend target flows in 16.7s, with exact ID/URL/DOM retention. Trend close exposes a clickable optional offer; same trend reopens after Start and Skip. Final 216 tests/types/lint/build passed; independent source review passed.
+- Latest direction 18:01 UTC: user requested the completed OPTIONAL offer now. Temporary no-gate static hotfix remains live until this verified release; removal-only PR #263 is held draft. Resume PR #262 with the trend-modal deferral and media-target regression, without force-push or restoring the defective original gate.
+- Latest audience constraint 18:34 UTC: offer only for known-never-opened/no-private-chat users. Frontend now requires explicit telegram_bot_start_required=true, with missing/false defaulting hidden independently of delivery availability; both values are protected against stale bootstrap responses. New lifecycle state never_started is initialized only on new Mini App users and retired monotonically by private contact/proof; legacy/blocked/unknown states are not classified as new. Backend lifecycle tests and privacy-safe mocked browser coverage are in progress.
+- Remaining: exact PR CI, authorized production rollout and read-only SHA/health/static smoke verification.
+- Rollback: revert this PR; no schema migration. Old Telegram clients may close the WebView when opening Telegram links; this fix preserves live-session forms, not arbitrary reload persistence.
+
 ## 2026-10-06 — Emergency removal of bot write-access UI
 
 - User explicitly requested immediate server hotfix removing the permission window entirely; supersedes optional Start/Skip proposal in unmerged draft PR #262.
@@ -1505,3 +1530,20 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Existing playbooks used: evidence-first `Bambale0/skills` diagnosing-bugs, architecture/privacy/release discipline from `Bambale0/claw`, and isolated Playwright approach from `anthropics/skills` webapp-testing. No external playbook clones were modified.
 - No schema migration, mutable pricing/provider configuration, generation submission or production checkout mutation. Only synthetic API/media fixtures are used in browser tests; external requests are denied.
 - Release: local commit handoff to the single coordinated release owner; no independent push, merge or deployment. Exact deployed SHA/production smoke remain unverified.
+
+
+## 2026-10-07 — Coordinated Tanya completion release
+
+- Single integration branch starts at ac9365d and preserves the already merged promo
+  database-clock fixes. Production still requires reconciliation of the captured domain
+  patch before any deployment retry; runtime price and untracked receipts are preserved.
+- Integrated domain commits94d28be/9a97ead, private-repeat commit36dec6e, optional Start/Skip
+  packagef43f326. Code merged automatically; append-only ledger conflicts retain both sides.
+- Source verification: domain2054 safe tests plus30 config/routing tests; privacy147 focused
+  backend +388 broader,224 frontend tests and mobile/privacy/critical E2E passed; optional2079
+  safe backend,243 frontend, TypeScript/lint/build, four-width offer flows, eight media
+  targets and final critical E2E passed (job5b0404fa6e50, exit0).
+- Integrated full backend/frontend/build/E2E, PostgreSQL regression and independent
+  integration review remain the next gate before publication and serial release.
+- No new Nginx runtime writes, provider generations, mass broadcasts or extra admin test
+  content are part of this integration. Previously approved synthetic smoke is retained.

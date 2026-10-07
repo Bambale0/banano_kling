@@ -525,6 +525,24 @@ class AccessGuardMiddleware(BaseMiddleware):
         if not user:
             return await handler(event, data)
 
+        # Any verified incoming private message/callback proves the owner has
+        # opened this bot, even if access policy rejects the requested action.
+        # Create through the normal one-time user path before marking proof so
+        # a later/concurrent Mini App insert cannot resurrect never_started.
+        message = event.message if isinstance(event, types.CallbackQuery) else event
+        chat = getattr(message, "chat", None)
+        if (
+            getattr(chat, "type", None) == "private"
+            and getattr(chat, "id", None) == user.id
+        ):
+            try:
+                from bot.database import get_or_create_user, mark_telegram_chat_available
+
+                await get_or_create_user(user.id, initial_telegram_chat_state="available")
+                await mark_telegram_chat_available(user.id)
+            except Exception:
+                logger.exception("Unable to record incoming private-chat evidence")
+
         is_admin_user = config.is_admin(user.id)
         is_subscription_check_callback = (
             self._callback_data(event) == SUBSCRIPTION_CHECK_CALLBACK

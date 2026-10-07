@@ -1253,7 +1253,7 @@ async def get_or_create_user(
     """
     code = (referral_code or "").strip().upper()
     normalized_chat_state = str(initial_telegram_chat_state or "").strip().lower()
-    if normalized_chat_state not in {"", "available", "unavailable"}:
+    if normalized_chat_state not in {"", "available", "unavailable", "never_started"}:
         raise ValueError(
             f"Unsupported initial Telegram chat state: {initial_telegram_chat_state}"
         )
@@ -1495,6 +1495,37 @@ async def get_or_create_user(
         )
 
 
+async def needs_telegram_bot_start(telegram_id: int) -> bool:
+    """Offer Start only to users positively identified as Mini-App-only.
+
+    Legacy/unknown rows and previously reachable chats are not proof that a
+    user never opened the bot. No delivery failure may create this marker.
+    """
+    async with db_backend.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT telegram_chat_state FROM users WHERE telegram_id = ?",
+            (telegram_id,),
+        )
+        row = await cursor.fetchone()
+    if not row:
+        return False
+    state = row["telegram_chat_state"] if hasattr(row, "keys") else row[0]
+    return state == "never_started"
+
+
+async def retire_telegram_bot_start_offer(telegram_id: int) -> bool:
+    """Record historical signed permission without asserting current reachability."""
+    async with db_backend.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """UPDATE users
+               SET telegram_chat_state = 'unavailable', updated_at = CURRENT_TIMESTAMP
+               WHERE telegram_id = ? AND telegram_chat_state = 'never_started'""",
+            (telegram_id,),
+        )
+        await db.commit()
+    return int(getattr(cursor, "rowcount", 0) or 0) > 0
+
+
 async def can_attempt_telegram_delivery(
     telegram_id: int,
     *,
@@ -1515,7 +1546,7 @@ async def can_attempt_telegram_delivery(
     if not row:
         return True
     state = row["telegram_chat_state"] if hasattr(row, "keys") else row[0]
-    if str(state or "").strip().lower() != "unavailable":
+    if str(state or "").strip().lower() not in {"unavailable", "never_started"}:
         return True
     if probe is None:
         return False
@@ -1544,9 +1575,14 @@ async def _mark_telegram_chat_state(telegram_id: int, state: str) -> bool:
     async with db_backend.connect(DATABASE_PATH) as db:
         cursor = await db.execute(
             """UPDATE users
-               SET telegram_chat_state = ?, updated_at = CURRENT_TIMESTAMP
+               SET telegram_chat_state = CASE
+                       WHEN telegram_chat_state = 'never_started' AND ? = 'unavailable'
+                       THEN 'never_started'
+                       ELSE ?
+                   END,
+                   updated_at = CURRENT_TIMESTAMP
                WHERE telegram_id = ?""",
-            (normalized, telegram_id),
+            (normalized, normalized, telegram_id),
         )
         await db.commit()
     return int(getattr(cursor, "rowcount", 0) or 0) > 0
@@ -5496,13 +5532,29 @@ async def mark_task_delivery_status(
         if normalized_status == "unavailable" and task.telegram_id:
             await db.execute(
                 """UPDATE users
-                   SET telegram_chat_state = 'unavailable',
+                   SET telegram_chat_state = CASE
+                           WHEN telegram_chat_state = 'never_started' THEN 'never_started'
+                           ELSE 'unavailable'
+                       END,
                        updated_at = CURRENT_TIMESTAMP
                    WHERE telegram_id = ?""",
                 (int(task.telegram_id),),
             )
         await db.commit()
-        return int(getattr(cursor, "rowcount", 0) or 0) > 0
+        recorded = int(getattr(cursor, "rowcount", 0) or 0) > 0
+
+    if normalized_status in {"delivered", "link_sent"} and task.telegram_id:
+        # The successful delivery receipt is already committed. Historical
+        # chat proof is best-effort and must never roll that receipt back.
+        try:
+            await mark_telegram_chat_available(int(task.telegram_id))
+        except Exception as proof_error:  # noqa: BLE001 - proof bookkeeping must never resend a delivered result
+            logger.warning(
+                "Telegram delivery proof update failed: task_id=%s error=%s",
+                task_id,
+                type(proof_error).__name__,
+            )
+    return recorded
 
 
 async def store_task_result_ready(task_id: str, result_url: str) -> bool:

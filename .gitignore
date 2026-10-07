@@ -112,3 +112,6 @@ data/genjutsu_media/
 # Runtime backfill checkpoints (persistent cursor in /app/data, see docs/environment.md)
 data/*-checkpoint.json
 data/*_checkpoint.json
+
+# Optional bot-start lifecycle regression coverage
+!tests/test_bot_start_eligibility.py
