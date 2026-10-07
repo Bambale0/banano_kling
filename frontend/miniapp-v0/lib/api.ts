@@ -288,7 +288,10 @@ function rewriteBackendUploadUrl(value: string): string {
   try {
     const url = new URL(value)
     const host = url.hostname.toLowerCase()
-    if (host === 'tanyapi.chillcreative.ru' && url.pathname.startsWith('/uploads/feed/thumbs/')) {
+    if (
+      (host === 'tanyapi.chillcreative.ru' || host === 'tanyapp.xn--e1aikcel5c5a.online')
+      && url.pathname.startsWith('/uploads/feed/thumbs/')
+    ) {
       return `${window.location.origin}${url.pathname}${url.search}${url.hash}`
     }
   } catch {
@@ -303,7 +306,9 @@ function restoreProviderUploadUrl(value: string | null | undefined): string {
     const url = new URL(value)
     const host = url.hostname.toLowerCase()
     if (host === 'cdn.chillcreative.ru' && url.pathname.startsWith('/uploads/')) {
-      return `https://tanyapi.chillcreative.ru${url.pathname}${url.search}${url.hash}`
+      if (typeof window !== 'undefined') {
+        return `${window.location.origin}${url.pathname}${url.search}${url.hash}`
+      }
     }
   } catch {
     return value

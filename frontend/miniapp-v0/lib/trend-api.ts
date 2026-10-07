@@ -66,9 +66,10 @@ function providerReferenceUrl(value: string): string {
     const url = new URL(value)
     if (
       url.hostname.toLowerCase() === 'cdn.chillcreative.ru' &&
-      url.pathname.startsWith('/uploads/')
+      url.pathname.startsWith('/uploads/') &&
+      typeof window !== 'undefined'
     ) {
-      return `https://tanyapi.chillcreative.ru${url.pathname}${url.search}${url.hash}`
+      return `${window.location.origin}${url.pathname}${url.search}${url.hash}`
     }
   } catch {
     return value
