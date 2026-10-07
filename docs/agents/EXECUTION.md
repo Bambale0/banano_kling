@@ -1434,3 +1434,16 @@ Reference cleanup reports how many generation snapshot refs are protected.
   Previously failed legacy attempts remain as-is; their past Telegram acceptance is unknown.
 - Acceptance not yet performed: real Telegram delivery/click-through, production logs,
   GitHub publication/CI and release. Tests use synthetic recipients and mocked Bot API only.
+
+
+## 2026-10-07 — canonical public media origin
+
+- Baseline: `6351c208eddf` on `tanyapi`; task branch `fix/media-public-origin-neironych`.
+- User-visible result: all newly generated public media URLs use `https://tanyapp.xn--e1aikcel5c5a.online`; legacy `https://tanyapi.chillcreative.ru/uploads/*` remains readable for backward compatibility.
+- Scope decision: change media origin only. Telegram/payment/provider webhook origins remain on `tanyapi.chillcreative.ru` to avoid breaking external callbacks.
+- Existing infrastructure: `tanyapp.xn--e1aikcel5c5a.online` already has valid TLS and proxies `/uploads/` to backend port 1888.
+- Config: production `STATIC_BASE_URL` and `GENJUTSU_PUBLIC_BASE_URL` moved to the canonical Mini App/media origin.
+- Compatibility: backend local-upload resolver accepts both canonical and legacy hosts; reference ranking prefers configured canonical host while retaining old saved URLs.
+- Frontend: local/provider media rewrites now use the live Mini App origin instead of restoring media to the backend hostname.
+- Tests: add regression coverage for canonical and legacy local upload hosts; update Mini App media contract.
+- Verification pending at time of entry: focused pytest/Jest, diff review, runtime restart/deploy path, HTTPS media smoke.

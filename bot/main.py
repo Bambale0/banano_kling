@@ -1353,8 +1353,12 @@ def _normalize_reference_key(url: str) -> str:
 def _score_reference_url(url: str) -> tuple[int, int]:
     candidate = str(url or "")
     score = 0
-    if "tanyapi.chillcreative.ru/uploads/refs/" in candidate:
+    canonical_media_base = config.static_base_url.rstrip("/")
+    if canonical_media_base and candidate.startswith(f"{canonical_media_base}/uploads/refs/"):
         score += 20
+    elif "tanyapi.chillcreative.ru/uploads/refs/" in candidate:
+        # Keep legacy stored references usable, but prefer the configured origin.
+        score += 15
     if "tempfile.redpandaai.co" in candidate:
         score -= 5
     if candidate.startswith("https://"):

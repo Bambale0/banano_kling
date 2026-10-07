@@ -52,6 +52,7 @@ describe('Mini App media UX contracts', () => {
   it('normalizes old upload hosts onto the live Mini App origin', () => {
     const source = read('lib/media-url.ts')
     expect(source).toContain("'tanyapi.chillcreative.ru'")
+    expect(source).toContain("'tanyapp.xn--e1aikcel5c5a.online'")
     expect(source).toContain("url.pathname.startsWith('/uploads/')")
     expect(source).toContain("url.hash = 't=0.001'")
   })
