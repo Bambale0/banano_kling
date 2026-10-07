@@ -1574,3 +1574,12 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Regression-first frontend verification: both edit-model disabled-button failures and rejected-draft/partial-batch failures reproduced before the repair. Seventeen focused tests across four suites pass, including actual picker correction and manual retry with the original source ID and ordered references. Standard lint and TypeScript pass; final aggregate frontend/build result follows.
 - Production remains on image/frontend 6351c208. Deployment of #269 was explicitly cancelled before SSH cutover; no new paid generations, audience broadcasts or admin tests were launched during this repair.
 - Final frontend aggregate succeeded: 262 tests / 37 suites, TypeScript, standard ESLint and production export (job_232ca31b4063, 43.55 seconds). Independent frontend re-review confirms rejection recovery and partial-batch handling are fixed. Backend source/test inputs remain exactly the reviewed eedd8022 tree. No real provider or Telegram requests were used in these tests.
+
+
+## 2026-10-07 — PR270 review follow-ups
+
+- Baseline: `48766372ab33c1094d3b31eea35b29d2832277ab`; isolated `fix/repeat-review-followups-20261007`. Production remains owned by the release coordinator.
+- Independently reproduced all four review reports with synthetic data: obsolete generic frame alias blocks a valid replacement; explicit complete identity inputs blocked by unused source snapshot; Telegram authorized alias rejected by raw subset checks; identity-keyed map moves an exact selected occurrence to another ImageN slot.
+- Scope: validate only active/inherited video inputs; preserve identity-form explicit lists while validating omitted source-dependent types; exact stored URL wins before unique known-origin alias resolution; reject ambiguous slot aliasing; align central Telegram launch metadata to actual input URLs and preserve private redaction. No new reuse permissions.
+- Before fix: six video regressions failed with five controls passing, four image/Telegram regressions failed with three controls passing. Targeted and full final results recorded in release handoff.
+- No schema, frontend, grant backfill, production metadata/media, paid generation or external messaging changes. All provider/debit tests are mocked.
