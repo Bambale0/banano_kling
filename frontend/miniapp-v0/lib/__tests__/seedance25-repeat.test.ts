@@ -44,3 +44,28 @@ it('leaves missing private inputs empty so identity asks for fresh uploads', asy
   expect(result.initialPhotoReferences).toEqual([])
   expect(result.initialVideoReferences).toEqual([])
 })
+
+
+it('normalizes stale hidden cards before generic repeat hydration', async () => {
+  const stale = { ...preset, prompt: 'SYNTHETIC_PRIVATE_RECIPE' }
+  const result = await hydrateSeedance25IdentityPreset({ ...item, model: 'v3_pro', is_mine: false }, stale)
+  expect(result.prompt).toBe('')
+  expect(result.promptHidden).toBe(true)
+  expect(fetchTaskDetail).not.toHaveBeenCalled()
+})
+
+it('honors a card actions denial even if the preset lost its hidden flag', async () => {
+  const result = await hydrateSeedance25IdentityPreset({ ...item, model: 'v3_pro', prompt_actions_allowed: false }, { ...preset, promptHidden: false, prompt: 'SYNTHETIC_PRIVATE_RECIPE' })
+  expect(result).toMatchObject({ prompt: '', promptHidden: true })
+})
+
+it('does not let owner detail unhide a private recipe', async () => {
+  ;(fetchTaskDetail as jest.Mock).mockResolvedValue({ ...detail, prompt_hidden: true, prompt: 'SYNTHETIC_PRIVATE_RECIPE' })
+  const result = await hydrateSeedance25IdentityPreset(item, { ...preset, promptHidden: false, prompt: 'Stale card text' })
+  expect(result).toMatchObject({ prompt: '', promptHidden: true })
+})
+
+it('preserves visible owner instructions during identity hydration', async () => {
+  const result = await hydrateSeedance25IdentityPreset(item, { ...preset, promptHidden: false })
+  expect(result.prompt).toBe(detail.prompt)
+})

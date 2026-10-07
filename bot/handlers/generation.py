@@ -32,6 +32,7 @@ from bot.database import (
     credit_feed_prompt_repeat,
     deduct_credits,
     delete_saved_reference,
+    generation_has_private_recipe,
     generation_reference_selection,
     generation_repeat_reference_selection,
     get_feed_generation_card,
@@ -78,6 +79,7 @@ from bot.services.gemini_service import gemini_service
 from bot.services.gpt_image_service import gpt_image_service
 from bot.services.grok_service import grok_service
 from bot.services.media_input_utils import (
+    canonicalize_local_upload_url,
     filter_available_image_sources,
     is_reference_contact_sheet_url,
     missing_local_upload_sources,
@@ -184,7 +186,10 @@ def _clean_unique_urls(values) -> list[str]:
     seen: set[str] = set()
     for value in values or []:
         url = str(value or "").strip()
-        if not url or url in seen:
+        if not url:
+            continue
+        url = canonicalize_local_upload_url(url)
+        if url in seen:
             continue
         seen.add(url)
         cleaned.append(url)
@@ -1143,7 +1148,7 @@ def _private_repeat_fingerprint(refs: list[str]) -> str:
 
 def _repeat_source_prompt_hidden(task: Any, viewer_user_id: int | None) -> bool:
     return bool(task and (
-        getattr(task, "source_feed_gen_id", None)
+        generation_has_private_recipe(task)
         or (
             getattr(task, "user_id", None) != viewer_user_id
             and (getattr(task, "is_public_feed", False) or getattr(task, "is_profile_visible", False))

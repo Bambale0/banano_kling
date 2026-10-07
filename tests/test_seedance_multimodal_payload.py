@@ -335,3 +335,54 @@ async def test_seedance_stale_skip_callback_does_not_clear_uploaded_video() -> N
         "Видео-референс уже загружен. Нажмите «К настройкам», чтобы использовать его.",
         show_alert=True,
     )
+
+
+def test_seedance_rebases_legacy_local_video_and_audio_refs(monkeypatch) -> None:
+    from bot.config import config
+
+    service = CaptureSeedanceService()
+    monkeypatch.setattr(
+        config,
+        "STATIC_BASE_URL",
+        "https://tanyapp.xn--e1aikcel5c5a.online",
+    )
+
+    asyncio.run(
+        service.generate_video(
+            prompt="Use @Video1 and @Audio1",
+            reference_video_urls=[
+                "https://tanyapi.chillcreative.ru/uploads/refs/video/123/motion.mp4"
+            ],
+            reference_audio_urls=[
+                "https://tanyapi.chillcreative.ru/uploads/refs/audio/123/music.mp3"
+            ],
+        )
+    )
+
+    payload = service.last_payload["input"]
+    assert payload["reference_video_urls"] == [
+        "https://tanyapp.xn--e1aikcel5c5a.online/uploads/refs/video/123/motion.mp4"
+    ]
+    assert payload["reference_audio_urls"] == [
+        "https://tanyapp.xn--e1aikcel5c5a.online/uploads/refs/audio/123/music.mp3"
+    ]
+
+
+def test_seedance_transport_rebases_legacy_local_video_reference(monkeypatch) -> None:
+    from bot.config import config
+
+    monkeypatch.setattr(
+        config,
+        "STATIC_BASE_URL",
+        "https://tanyapp.xn--e1aikcel5c5a.online",
+    )
+    _first_frame, _images, videos = _seedance_media_inputs(
+        "video",
+        None,
+        [],
+        ["https://tanyapi.chillcreative.ru/uploads/refs/video/123/motion.mp4"],
+    )
+
+    assert videos == [
+        "https://tanyapp.xn--e1aikcel5c5a.online/uploads/refs/video/123/motion.mp4"
+    ]

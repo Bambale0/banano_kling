@@ -1,21 +1,23 @@
 import base64
-from datetime import datetime
-from functools import lru_cache
 import io
 import mimetypes
 import os
 import uuid
-from typing import Iterable
+from collections.abc import Iterable
+from datetime import datetime
+from functools import lru_cache
 from urllib.parse import urlparse
 
 from PIL import Image, ImageOps
 
 from bot.config import config
 
-
 DEFAULT_LOCAL_UPLOAD_HOSTS = {
     "tanyapi.chillcreative.ru",  # legacy public media origin
-    "tanyapp.xn--e1aikcel5c5a.online",  # canonical public media origin
+    "media.chillcreative.ru",  # legacy media host backed by static/uploads
+    "cdn.chillcreative.ru",  # legacy frontend upload URLs
+    "tanyapp.chillcreative.ru",  # legacy Mini App origin
+    "tanyapp.xn--e1aikcel5c5a.online",  # current Mini App origin
 }
 
 
@@ -40,6 +42,34 @@ def _static_upload_hosts() -> set[str]:
         if host:
             hosts.add(host)
     return hosts | DEFAULT_LOCAL_UPLOAD_HOSTS
+
+
+def canonicalize_local_upload_url(source: str) -> str:
+    """Rewrite this app's public /uploads URLs onto the configured media origin."""
+    if not isinstance(source, str) or not source:
+        return source
+
+    parsed = urlparse(source)
+    path = parsed.path or source
+    if not path.startswith("/uploads/"):
+        return source
+
+    is_relative_upload = not parsed.scheme and not parsed.netloc
+    host = (parsed.hostname or "").strip().lower().lstrip(".")
+    is_own_upload = parsed.scheme in {"http", "https"} and host in _static_upload_hosts()
+    if not (is_relative_upload or is_own_upload):
+        return source
+
+    base = config.static_base_url.rstrip("/")
+    if not base:
+        return source
+
+    suffix = path
+    if parsed.query:
+        suffix += f"?{parsed.query}"
+    if parsed.fragment:
+        suffix += f"#{parsed.fragment}"
+    return f"{base}{suffix}"
 
 
 def _local_upload_candidate(source: str) -> str | None:
@@ -105,7 +135,10 @@ def filter_available_image_sources(
             and not _resolve_local_upload_path(source)
         ):
             continue
-        available.append(source)
+        if isinstance(source, str):
+            available.append(canonicalize_local_upload_url(source))
+        else:
+            available.append(source)
     return available
 
 
@@ -209,7 +242,7 @@ def image_source_to_supported_image_url(source: str | bytes | bytearray) -> str:
         with Image.open(local_path) as image:
             image_format = (image.format or "").upper()
             if image_format in {"PNG", "JPEG", "JPG"}:
-                return source
+                return canonicalize_local_upload_url(source)
 
             png_path = os.path.splitext(local_path)[0] + ".png"
             if not os.path.exists(png_path):

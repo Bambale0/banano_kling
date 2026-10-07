@@ -169,6 +169,64 @@ class TestConfig:
             "https://tanyapi.chillcreative.ru/uploads/refs/image/123/example.png"
         )
 
+    def test_local_upload_urls_are_canonicalized_to_media_origin(self, monkeypatch):
+        from bot.config import config
+        from bot.services import media_input_utils
+
+        monkeypatch.setattr(config, "STATIC_BASE_URL", "https://tanyapp.xn--e1aikcel5c5a.online")
+        legacy = (
+            "https://tanyapi.chillcreative.ru/uploads/refs/video/123/example.mp4"
+            "?download=1#frame"
+        )
+        assert media_input_utils.canonicalize_local_upload_url(legacy) == (
+            "https://tanyapp.xn--e1aikcel5c5a.online/uploads/refs/video/123/example.mp4"
+            "?download=1#frame"
+        )
+        assert media_input_utils.canonicalize_local_upload_url(
+            "https://external.example/uploads/example.mp4"
+        ) == "https://external.example/uploads/example.mp4"
+
+    def test_alternate_frontend_uploads_use_configured_media_origin(self, monkeypatch):
+        from bot.config import config
+        from bot.services.media_input_utils import canonicalize_local_upload_url
+
+        monkeypatch.setattr(config, "STATIC_BASE_URL", "https://media.example.test")
+        for host in (
+            "cdn.chillcreative.ru",
+            "tanyapp.chillcreative.ru",
+            "tanyapp.xn--e1aikcel5c5a.online",
+        ):
+            assert canonicalize_local_upload_url(
+                f"https://{host}/uploads/refs/example.png?download=1#frame"
+            ) == "https://media.example.test/uploads/refs/example.png?download=1#frame"
+        for value in (
+            "https://cdn.chillcreative.ru.evil.example/uploads/example.png",
+            "https://external.example/uploads/example.png",
+            "https://cdn.chillcreative.ru/not-uploads/example.png",
+        ):
+            assert canonicalize_local_upload_url(value) == value
+
+    def test_legacy_media_origin_uses_canonical_url_and_local_storage(self, monkeypatch, tmp_path):
+        from pathlib import Path
+
+        from bot.config import config
+        from bot.services import media_input_utils
+
+        monkeypatch.setattr(config, "STATIC_BASE_URL", "https://tanyapp.xn--e1aikcel5c5a.online")
+        monkeypatch.chdir(tmp_path)
+        local = tmp_path / "static/uploads/refs/legacy.png"
+        local.parent.mkdir(parents=True)
+        local.write_bytes(b"synthetic-image-fixture")
+        legacy = "https://media.chillcreative.ru/uploads/refs/legacy.png?download=1#frame"
+        assert media_input_utils.canonicalize_local_upload_url(legacy) == (
+            "https://tanyapp.xn--e1aikcel5c5a.online/uploads/refs/legacy.png?download=1#frame"
+        )
+        assert media_input_utils.is_local_upload_source(legacy)
+        assert Path(media_input_utils.resolve_local_upload_path(legacy)).resolve() == local
+        external = "https://media.chillcreative.ru.evil.example/uploads/refs/legacy.png"
+        assert media_input_utils.canonicalize_local_upload_url(external) == external
+        assert not media_input_utils.is_local_upload_source(external)
+
     def test_regular_banana_models_are_forced_to_kie(self):
         from bot.config import config
         from bot.services import nano_banana_2_service, nano_banana_pro_service

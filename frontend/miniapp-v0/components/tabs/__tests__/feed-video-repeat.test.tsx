@@ -31,7 +31,7 @@ const videoItem = {
   result_url: 'https://example.test/source.mp4',
   preview_url: 'https://example.test/source.mp4',
   result_urls: ['https://example.test/source.mp4'],
-  prompt: null,
+  prompt: 'SYNTHETIC_PRIVATE_FEED_RECIPE',
   likes_count: 0,
   shares_count: 0,
   comments_count: 0,
@@ -104,6 +104,7 @@ describe('FeedTab editable video repeat', () => {
         duration: 12,
         sourceFeedGenId: 42,
         promptHidden: true,
+        prompt: '',
       }))
     })
     expect(setActiveTab).toHaveBeenCalledWith(2)

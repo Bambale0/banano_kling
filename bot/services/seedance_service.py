@@ -9,7 +9,10 @@ from typing import Any, ClassVar
 from bot.config import config
 from bot.services.kie_file_upload_service import kie_file_upload_service
 from bot.services.kling_service import KlingService
-from bot.services.media_input_utils import image_sources_to_provider_safe_png_urls
+from bot.services.media_input_utils import (
+    canonicalize_local_upload_url,
+    image_sources_to_provider_safe_png_urls,
+)
 from bot.services.seedance_reference_binding import (
     canonicalize_seedance_reference_tags,
     missing_seedance_reference_tags,
@@ -24,7 +27,10 @@ def _clean_unique_urls(values: Iterable[str] | None) -> list[str]:
     seen: set[str] = set()
     for value in values or []:
         url = str(value or "").strip()
-        if not url or url in seen:
+        if not url:
+            continue
+        url = canonicalize_local_upload_url(url)
+        if url in seen:
             continue
         seen.add(url)
         cleaned.append(url)

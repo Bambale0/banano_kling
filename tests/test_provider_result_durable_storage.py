@@ -39,6 +39,20 @@ def test_non_durable_image_host_respects_global_persist_flag(monkeypatch):
     persist_mock.assert_not_awaited()
 
 
+def test_legacy_local_result_url_is_rebased_to_canonical_media_origin(monkeypatch):
+    monkeypatch.setattr(
+        main_module.config,
+        "STATIC_BASE_URL",
+        "https://tanyapp.xn--e1aikcel5c5a.online",
+    )
+    for host in ("tanyapi.chillcreative.ru", "media.chillcreative.ru"):
+        legacy_url = f"https://{host}/uploads/feed/legacy.png"
+        result = asyncio.run(
+            main_module._persist_result_url_if_needed(legacy_url, task_type="image")
+        )
+        assert result == "https://tanyapp.xn--e1aikcel5c5a.online/uploads/feed/legacy.png"
+
+
 
 def test_rendergrid_backfill_detects_only_provider_result_host():
     assert backfill._is_rendergrid_result_url(

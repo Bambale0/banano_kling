@@ -229,3 +229,31 @@ If user reports repeat stopped working:
 4. Pinterest contract in `bot/pinterest_trend_flow_contract.py`;
 5. tests covering task/history/feed/share privacy;
 6. this document.
+
+
+## 2026-10-07: repeat privacy boundary
+
+Intrinsic recipe privacy is shared across task APIs, Feed/Profile cards and Telegram
+repeat callbacks: source lineage, trend action and stored `prompt_hidden`,
+`prompt_actions_allowed` or `private_recipe` markers cannot be overridden by owning
+the result or publishing its prompt. Legacy boolean representations are normalized;
+malformed explicit privacy markers fail closed. Ordinary unpublished owner prompts
+remain usable. Existing legacy trend-text matching is retained for task APIs.
+
+Direct Telegram-authenticated bootstrap sanitizes recent tasks at the API return,
+not only in browser authentication middleware. Private serialized request snapshots
+are parsed and redacted, never returned as an opaque string.
+
+Video repeat presets are normalized before Feed/Profile/deep-link hydration and
+again when either video form consumes them. A card/detail privacy denial wins over
+stale nonempty text. The editable field may still accept the user's new instructions;
+it never needs to receive the hidden original. Backend redaction remains the security
+boundary; client masking is additional protection for stale data.
+
+Regression commands (isolated synthetic data only):
+
+- `python -m pytest tests/test_hidden_repeat_prompt_privacy.py -q`
+- `npm test -- --runInBand` in `frontend/miniapp-v0`
+- after static export: `node e2e/hidden-repeat-prompt.mjs`
+
+No historical database rewrite or promise to erase previously downloaded text is made.

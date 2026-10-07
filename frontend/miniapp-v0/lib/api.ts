@@ -381,7 +381,7 @@ async function parseJson<T>(response: Response): Promise<T> {
   return rewriteTemporaryMedia(data) as T
 }
 
-async function postJson<T>(path: string, payload: Record<string, unknown>): Promise<T> {
+async function postJson<T>(path: string, payload: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
   const nextPayload = { ...payload }
   const startParamFallback = getStartParamFallback()
   if (startParamFallback && !nextPayload.start_param_fallback) {
@@ -396,16 +396,17 @@ async function postJson<T>(path: string, payload: Record<string, unknown>): Prom
     body: JSON.stringify(nextPayload),
     cache: 'no-store',
     credentials: 'same-origin',
+    signal,
   })
   return parseJson<T>(response)
 }
 
-export async function bootstrapApp(): Promise<BootstrapResponse> {
+export async function bootstrapApp(signal?: AbortSignal): Promise<BootstrapResponse> {
   const initData = getInitData()
   if (!initData) {
     throw new Error('Откройте mini app из Telegram и попробуйте снова.')
   }
-  return postJson<BootstrapResponse>('bootstrap', { init_data: initData })
+  return postJson<BootstrapResponse>('bootstrap', { init_data: initData }, signal)
 }
 
 export async function confirmTelegramWriteAccess(): Promise<{

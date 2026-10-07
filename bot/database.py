@@ -1253,7 +1253,7 @@ async def get_or_create_user(
     """
     code = (referral_code or "").strip().upper()
     normalized_chat_state = str(initial_telegram_chat_state or "").strip().lower()
-    if normalized_chat_state not in {"", "available", "unavailable"}:
+    if normalized_chat_state not in {"", "available", "unavailable", "never_started"}:
         raise ValueError(
             f"Unsupported initial Telegram chat state: {initial_telegram_chat_state}"
         )
@@ -1495,6 +1495,37 @@ async def get_or_create_user(
         )
 
 
+async def needs_telegram_bot_start(telegram_id: int) -> bool:
+    """Offer Start only to users positively identified as Mini-App-only.
+
+    Legacy/unknown rows and previously reachable chats are not proof that a
+    user never opened the bot. No delivery failure may create this marker.
+    """
+    async with db_backend.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT telegram_chat_state FROM users WHERE telegram_id = ?",
+            (telegram_id,),
+        )
+        row = await cursor.fetchone()
+    if not row:
+        return False
+    state = row["telegram_chat_state"] if hasattr(row, "keys") else row[0]
+    return state == "never_started"
+
+
+async def retire_telegram_bot_start_offer(telegram_id: int) -> bool:
+    """Record historical signed permission without asserting current reachability."""
+    async with db_backend.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """UPDATE users
+               SET telegram_chat_state = 'unavailable', updated_at = CURRENT_TIMESTAMP
+               WHERE telegram_id = ? AND telegram_chat_state = 'never_started'""",
+            (telegram_id,),
+        )
+        await db.commit()
+    return int(getattr(cursor, "rowcount", 0) or 0) > 0
+
+
 async def can_attempt_telegram_delivery(
     telegram_id: int,
     *,
@@ -1515,7 +1546,7 @@ async def can_attempt_telegram_delivery(
     if not row:
         return True
     state = row["telegram_chat_state"] if hasattr(row, "keys") else row[0]
-    if str(state or "").strip().lower() != "unavailable":
+    if str(state or "").strip().lower() not in {"unavailable", "never_started"}:
         return True
     if probe is None:
         return False
@@ -1544,9 +1575,14 @@ async def _mark_telegram_chat_state(telegram_id: int, state: str) -> bool:
     async with db_backend.connect(DATABASE_PATH) as db:
         cursor = await db.execute(
             """UPDATE users
-               SET telegram_chat_state = ?, updated_at = CURRENT_TIMESTAMP
+               SET telegram_chat_state = CASE
+                       WHEN telegram_chat_state = 'never_started' AND ? = 'unavailable'
+                       THEN 'never_started'
+                       ELSE ?
+                   END,
+                   updated_at = CURRENT_TIMESTAMP
                WHERE telegram_id = ?""",
-            (normalized, telegram_id),
+            (normalized, normalized, telegram_id),
         )
         await db.commit()
     return int(getattr(cursor, "rowcount", 0) or 0) > 0
@@ -5496,13 +5532,29 @@ async def mark_task_delivery_status(
         if normalized_status == "unavailable" and task.telegram_id:
             await db.execute(
                 """UPDATE users
-                   SET telegram_chat_state = 'unavailable',
+                   SET telegram_chat_state = CASE
+                           WHEN telegram_chat_state = 'never_started' THEN 'never_started'
+                           ELSE 'unavailable'
+                       END,
                        updated_at = CURRENT_TIMESTAMP
                    WHERE telegram_id = ?""",
                 (int(task.telegram_id),),
             )
         await db.commit()
-        return int(getattr(cursor, "rowcount", 0) or 0) > 0
+        recorded = int(getattr(cursor, "rowcount", 0) or 0) > 0
+
+    if normalized_status in {"delivered", "link_sent"} and task.telegram_id:
+        # The successful delivery receipt is already committed. Historical
+        # chat proof is best-effort and must never roll that receipt back.
+        try:
+            await mark_telegram_chat_available(int(task.telegram_id))
+        except Exception as proof_error:  # noqa: BLE001 - proof bookkeeping must never resend a delivered result
+            logger.warning(
+                "Telegram delivery proof update failed: task_id=%s error=%s",
+                task_id,
+                type(proof_error).__name__,
+            )
+    return recorded
 
 
 async def store_task_result_ready(task_id: str, result_url: str) -> bool:
@@ -6672,10 +6724,51 @@ def generation_publication_scope(
     return "private"
 
 
+def _recipe_privacy_flag(value: Any) -> bool | None:
+    """Read legacy JSON booleans without treating the string 'false' as true."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off", ""}:
+            return False
+    return None
+
+
+def generation_has_private_recipe(
+    generation: GenerationTask | dict[str, Any] | db_backend.Row | None,
+) -> bool:
+    """Intrinsic recipe privacy, independent of ownership/publication settings.
+
+    Publishing a result or owning a derived task never makes its source recipe
+    public. Conversely, an ordinary owner's unpublished prompt stays usable.
+    Explicit malformed privacy markers fail closed.
+    """
+    request_data = _parse_json_dict(_generation_attr(generation, "request_data"))
+    missing = object()
+    for source in (generation, request_data):
+        if _generation_attr(source, "source_feed_gen_id"):
+            return True
+        if str(_generation_attr(source, "action_type", "") or "").strip().lower() == "trend":
+            return True
+        for key in ("prompt_hidden", "private_recipe"):
+            value = _generation_attr(source, key, missing)
+            if value is not missing and _recipe_privacy_flag(value) is not False:
+                return True
+        allowed = _generation_attr(source, "prompt_actions_allowed", missing)
+        if allowed is not missing and _recipe_privacy_flag(allowed) is not True:
+            return True
+    return False
+
+
 def generation_prompt_hidden(
     generation: GenerationTask | dict[str, Any] | db_backend.Row | None,
 ) -> bool:
-    return bool(_generation_attr(generation, "source_feed_gen_id")) or not generation_feed_prompt_visible(generation)
+    return generation_has_private_recipe(generation) or not generation_feed_prompt_visible(generation)
 
 
 def _generation_identifier_clause(identifier: int | str) -> tuple[str, Any]:

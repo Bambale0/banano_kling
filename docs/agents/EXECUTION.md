@@ -1,5 +1,30 @@
 # Execution ledger
 
+## 2026-10-07 — Resume optional bot Start offer
+
+- Latest instruction resumes the optional offer only for explicit never-started users. Current integration baseline is tanyapi ac9365d96459a3932c4a934600cc071a2ccec63b, including durable gate removal, Seedance identity and promo fixes. The historical emergency removal below is preserved as a completed release record.
+- Added lifecycle marker in the existing text state (no schema migration), bootstrap contract and mock-only regression coverage. New/unknown/blocked states remain distinct.
+- Resumed backend tests: 32 focused passed, including delivery-proof bookkeeping failure isolation. On the integrated baseline: 2079 backend passed / 66 skipped (live, credential and PostgreSQL-pool checks excluded locally); 243 frontend tests / 36 suites, TypeScript, lint, export build and changed-line Ruff passed. Four-width (320/375/390/430) offline Start/Skip tests and eight media-target flows passed; screenshots inspected at 320/430. Existing critical E2E and final combined review remain pending. Release coordination belongs to the combined release owner; no independent production writes.
+
+## 2026-10-06 — Direct bot Start gate, bounded return verification
+
+- Baseline: tanyapi `b7c71a51727d4d5953536a50b9c0c2d15ef3dee6`; isolated branch `fix/bot-start-gate`.
+- User outcome (clarified 16:28 UTC): bot delivery is OPTIONAL. Primary button opens bot Start directly, with «Пропустить» to use generation/Studio immediately. Session-only dismissal survives tab/refresh without pretending delivery permission exists; a nonblocking re-entry offer remains. Return verification is bounded and server-confirmed.
+- Audit: old native callback and fetch have no deadlines; pending UI hides fallback. cmd_start marks chat available before routing. Existing refreshTasks unmounts forms via global loader, so return verification must update only the confirmed capability without loading/navigation reset.
+- Scope: frontend gate/API/context and mock-only regression/E2E. No database/schema/config/payment/provider changes, no real bot messages, generations or production writes.
+- Plan: RED regression → direct Start action → abortable capability refresh → timeout/cancel/return tests → 4-width mock browser coverage → lint/types/build/full tests → review → draft PR; release requires separate authorization.
+- Skills: Bambale0/skills diagnosing-bugs and tdd; Bambale0/claw evidence-first workflow; anthropics/skills webapp-testing. Test seams: gate interaction, bootstrap capability update, mocked browser return journey.
+- Progress: original never-callback regression reproduced RED; direct Start and abortable capability-only checks implemented. Prior-bootstrap capability revision guard prevents stale reopening; activated no longer resets a live form.
+- Verification: TypeScript, lint, full frontend 34 suites / 214 tests and production export build passed. New offline browser suite passed twice at 320/375/390/430px with real 12s timeout, denial/error/cancel/return/reappearance and form/reference preservation. 320/430 screenshots visually checked: no clipping or overlap. Independent read-only review found no remaining blocker. Existing full critical E2E passed (132.7s, exit 0) with its prior forced-tab-reset assertion updated to the new preservation contract.
+- Config/schema/provider/payment changes: none. No real Telegram permission request, message, generation or payment executed. Legacy native endpoint remains for older clients; new UI never calls it.
+- Latest optional-flow verification: focused 27 tests and full frontend 34 suites / 216 tests, TypeScript, lint and production build passed. Independent optional-UI/backend review found no blocker. Backend generation admission and Studio retrieval remain independent of delivery capability; result retention precedes message guards. Final optional-generation mobile E2E passed all 320/375/390/430px (84.76s): Skip persists through return/tab/refresh/reload, mock image+video generation succeeds with delivery=false and zero bot calls, draft/reference DOM survives dismissal, pending checks cancel, and offer can reopen. Optional modal/banner screenshots reviewed at 320px. Final existing critical E2E rerun also passed on the optional export (132.79s).
+- CI recovery: PR #262 browser workflow identified high-severity sharp/librsvg advisory GHSA-wq5f-xc86-pv6w. Raised only sharp and its platform binaries/libvips from 0.35.4 to 0.35.5 (libvips package 1.3.4) via registry.npmjs.org; Next dedupes to the same version. npm audit --audit-level=high now passes; remaining moderate dev-tool findings were not force-downgraded. Full 216 tests, lint and production build re-passed. Security gate unchanged.
+- Target-link release review: 7 browser paths preserved exact media IDs/URL/DOM, but photo trend deep links exposed competing modal pointer/focus trapping. Deferred the optional delivery offer while trendToRun owns the active Radix modal; trend generation stays available and offer returns after closing the trend. No Radix protections bypassed. Committed offline media-target regression reproduced RED on original export and passed GREEN on fresh export: 8 prompt/feed/remix/profile/trend target flows in 16.7s, with exact ID/URL/DOM retention. Trend close exposes a clickable optional offer; same trend reopens after Start and Skip. Final 216 tests/types/lint/build passed; independent source review passed.
+- Latest direction 18:01 UTC: user requested the completed OPTIONAL offer now. Temporary no-gate static hotfix remains live until this verified release; removal-only PR #263 is held draft. Resume PR #262 with the trend-modal deferral and media-target regression, without force-push or restoring the defective original gate.
+- Latest audience constraint 18:34 UTC: offer only for known-never-opened/no-private-chat users. Frontend now requires explicit telegram_bot_start_required=true, with missing/false defaulting hidden independently of delivery availability; both values are protected against stale bootstrap responses. New lifecycle state never_started is initialized only on new Mini App users and retired monotonically by private contact/proof; legacy/blocked/unknown states are not classified as new. Backend lifecycle tests and privacy-safe mocked browser coverage are in progress.
+- Remaining: exact PR CI, authorized production rollout and read-only SHA/health/static smoke verification.
+- Rollback: revert this PR; no schema migration. Old Telegram clients may close the WebView when opening Telegram links; this fix preserves live-session forms, not arbitrary reload persistence.
+
 ## 2026-10-06 — Emergency removal of bot write-access UI
 
 - User explicitly requested immediate server hotfix removing the permission window entirely; supersedes optional Start/Skip proposal in unmerged draft PR #262.
@@ -1470,3 +1495,62 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Frontend: local/provider media rewrites now use the live Mini App origin instead of restoring media to the backend hostname.
 - Tests: add regression coverage for canonical and legacy local upload hosts; update Mini App media contract.
 - Verification pending at time of entry: focused pytest/Jest, diff review, runtime restart/deploy path, HTTPS media smoke.
+
+- Follow-up audit after PR #267 merge: production CI/deploy for merge SHA `4c6fab2` failed because Ruff reported `I001` on `bot/services/media_input_utils.py`; Mini App production revision therefore remained on `6351c20`.
+- Additional root causes found: Motion Control uploads still built public URLs from `WEBHOOK_HOST`; legacy local result URLs were recognized only when already on the configured origin; valid legacy references could still be handed to providers with the old hostname.
+- Follow-up branch: `fix/media-public-origin-neironych-followup`. Motion Control now uses `config.static_base_url`; local `/uploads/*` URLs are canonicalized onto the configured media origin while unrelated external URLs remain untouched; legacy local result URLs are rebased instead of leaking the old hostname.
+- Production database read-only audit: legacy `tanyapi.chillcreative.ru/uploads/` strings remain primarily inside historical `generation_tasks.request_data` (283166 rows at audit time) and four prompt rows. No destructive bulk rewrite is used; runtime canonicalization preserves historical compatibility and new writes use the canonical origin.
+- Genjutsu uses one public base for signed media and provider callbacks. Because production `GENJUTSU_PUBLIC_BASE_URL` now points at the Mini App/media origin, Nginx on `tanyapp.xn--e1aikcel5c5a.online` was extended with a signed `/genjutsu/` reverse-proxy path to backend port 1888. `nginx -t` passed and Nginx reloaded; invalid signed-media probe returns the same 403 on old and new domains, and a ranged `/uploads/` probe on the new origin returns HTTP 206 with 1024 bytes.
+- Focused backend verification after follow-up changes: 88 passed, 1 skipped across config, durable-result, Seedream reference transport, saved-reference and trend API suites. Mini App: 216/216 Jest tests passed; ESLint passed; production static build passed.
+- Full safe backend regression suite started after focused verification; final CI/deploy acceptance still pending.
+
+- Follow-up TDD uncovered one more runtime override: `seedance_multimodal_compat` replaces `generation._seedance_media_inputs` at import time, so canonicalization in the generic generation helper alone was insufficient. Its reference cleaner now canonicalizes legacy local image/video URLs before runtime/provider use.
+- Canonicalization is also enforced in ordinary Mini App media lists, Seedance 2.0, Seedance 2.5, first/last frames, and shared video-reference normalization. External non-local URLs remain unchanged.
+- Clean-checkout-equivalent safe suite was run using only Git-tracked tests (local ignored historical tests excluded, matching GitHub CI checkout): `2056 passed, 45 skipped`. Focused media/Seedance/private-repeat tests also passed. The earlier 6-failure local run included ignored historical tests that are not present in the GitHub checkout; only the tracked Seedance regression was relevant and was fixed before the green run.
+
+
+## 2026-10-07 — media migration reconciliation
+
+- Imported the existing follow-up patch into an isolated worktree at `ac9365d`; preserved the original tracked diff and separated runtime `data/price.json`. No production checkout reset, price change, or untracked receipt cleanup was performed.
+- Added a failing regression for alternate frontend upload origins, then canonicalized the already supported CDN and legacy Mini App origins at the backend boundary. Frontend display stays same-origin; provider references are normalized to configured `STATIC_BASE_URL` regardless of the supported frontend entry point. External hosts and non-upload paths remain unchanged.
+- Read-only live checks: Mini App and its public `icon.svg` return HTTPS 200 with successful certificate validation; DNS resolves to 144.76.188.75. The live nginx file already proxies `/genjutsu/`; unsigned synthetic media IDs return 403 on old and new domains. No user media or signed credentials were fetched.
+- Live selected public configuration: static and Genjutsu origins use the new Mini App host; webhook origin stays on the old backend host. These observations do not prove deployment of this isolated source change.
+- Historical database links are retained; canonicalization is applied at runtime rather than destructive bulk rewriting. Production deployment and final exact-SHA smoke remain owned by the coordinated release task.
+- Provisioning drift regression: the repository frontend installer omitted the existing live `/genjutsu/` route. Added the same reverse-proxy location to both generated server variants, with a failing-then-passing contract test and synthetic signed-media/callback URL-builder verification. The installer was not executed and live nginx was not changed.
+
+## 2026-10-07 — hidden repeat prompt boundary
+
+- Baseline: `ac9365d96459a3932c4a934600cc071a2ccec63b` on `tanyapi`; isolated task branch `fix/hidden-repeat-prompt-20261007`.
+- Goal: hidden source recipes must not reappear in repeat fields, even from contradictory stale cards. Preserve ordinary visible owner prompts and user-authored additional instructions.
+- Preflight: generic video and Seedance identity forms ignored `promptHidden`; feed/profile/deep-link callers supplied it. Image repeat already cleared source text. Server task, publication and Telegram predicates diverged.
+- Regression-first: three frontend suites produced 7 failing synthetic privacy cases before the fix; ordinary controls passed. Backend API/card/FSM tests reproduced the separate stored-marker and direct bootstrap gaps. No live account data or actual recipe text was fetched.
+- Frontend implementation: one repeat-preset normalizer combines card/detail privacy denials, then both video forms enforce it again on preset consumption. All three video-repeat entry points share hydration.
+- Backend: shared intrinsic private-recipe classification for task APIs, Feed/Profile cards and both Telegram repeat callbacks; direct bootstrap now sanitizes history. JSON request snapshots and malformed explicit privacy markers fail closed. Focused 147 tests and broader database/trend/Genjutsu compatibility 388 tests passed, including 33 new API/card/FSM cases. compileall passed.
+- Verification completed: static export build, `tsc --noEmit`, full Jest 35 suites / 224 tests; new mocked browser E2E covers Feed/Profile/deep-link, reopening and visible-owner control at 360px and 430px. Full frontend lint and existing critical browser aggregate also passed. Initial aggregate attempt lacked the required `.e2e-server` fixture; rerun after the CI preparation passed. Changed-line Ruff and final commit verification are recorded in the handoff.
+- Existing playbooks used: evidence-first `Bambale0/skills` diagnosing-bugs, architecture/privacy/release discipline from `Bambale0/claw`, and isolated Playwright approach from `anthropics/skills` webapp-testing. No external playbook clones were modified.
+- No schema migration, mutable pricing/provider configuration, generation submission or production checkout mutation. Only synthetic API/media fixtures are used in browser tests; external requests are denied.
+- Release: local commit handoff to the single coordinated release owner; no independent push, merge or deployment. Exact deployed SHA/production smoke remain unverified.
+
+
+## 2026-10-07 — Coordinated Tanya completion release
+
+- Single integration branch starts at ac9365d and preserves the already merged promo
+  database-clock fixes. Production still requires reconciliation of the captured domain
+  patch before any deployment retry; runtime price and untracked receipts are preserved.
+- Integrated domain commits94d28be/9a97ead, private-repeat commit36dec6e, optional Start/Skip
+  packagef43f326. Code merged automatically; append-only ledger conflicts retain both sides.
+- Source verification: domain2054 safe tests plus30 config/routing tests; privacy147 focused
+  backend +388 broader,224 frontend tests and mobile/privacy/critical E2E passed; optional2079
+  safe backend,243 frontend, TypeScript/lint/build, four-width offer flows, eight media
+  targets and final critical E2E passed (job5b0404fa6e50, exit0).
+- Integrated full backend/frontend/build/E2E, PostgreSQL regression and independent
+  integration review remain the next gate before publication and serial release.
+- No new Nginx runtime writes, provider generations, mass broadcasts or extra admin test
+  content are part of this integration. Previously approved synthetic smoke is retained.
+
+- Final integrated backend passed 2,121 tests / 66 skipped on caf53145; 47 isolated PostgreSQL campaign tests passed. All backend source, Python tests, dependency and configuration inputs remained identical after the final frontend-only fix. A redundant repeat full-backend invocation was cancelled and was not retried; the existing complete result remains applicable.
+- Integrated frontend passed all 251 tests, TypeScript, lint and export. Independent review reproduced a Genjutsu/optional-offer modal collision; explicit open-state coordination fixes direct-query, startapp, prompt-linked and no-preview recipe entry without discarding drafts. Four regression scenarios passed after a fresh build. Required CI now runs all five browser suites; redundant extra checks were removed from the separate optional workflow.
+- The task-owned isolated PostgreSQL container was stopped after verification; its data and all source/test artifacts are retained. No production messages, configuration or runtime checkout changes were made during integration.
+- Final aggregate job_4836411f0b73 succeeded (347.6 seconds): 251 Jest tests and all five browser suites, including four Genjutsu entry regressions. Independent review has no remaining source blockers. Changed-line Ruff found zero relevant violations across 18 Python files. Production rollout and the bounded real Telegram test remain the subsequent verification step.
+- PR #269 follow-up review identified the documented historical media.chillcreative.ru upload origin. Added only that exact compatibility alias, canonical/local-path/lookalike-host regressions, durable-result coverage and corrected the remaining current-topology documentation. Final full safe suite on 6858b2d passed 2,122 tests / 66 skipped (112.47 seconds); 82 focused domain tests also passed.
+- Required CI exposed an E2E waiter race: an unrelated prior bootstrap response was selected during the 430px focus case. A deterministic delayed-response fixture reproduced the exact failure before the test-only correction. The waiter now follows the new marked capability request and its own response; server flag, real dialog closure, draft/referral and timeout assertions remain unchanged. All four widths passed (90.9 seconds), with no product-code change. Independent re-review found no remaining concern.

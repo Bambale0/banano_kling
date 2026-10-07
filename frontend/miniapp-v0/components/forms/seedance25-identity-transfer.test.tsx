@@ -72,3 +72,23 @@ it('invalidates a rejected quote and requires another explicit launch at the ref
   expect(quoteSeedance25Identity).toHaveBeenCalledTimes(2)
   expect(generateSeedance25).toHaveBeenCalledTimes(1)
 })
+
+
+it('never restores hidden text from a stale identity preset, including reopening', async () => {
+  const hidden = { ...preset, prompt: 'SYNTHETIC_PRIVATE_IDENTITY_RECIPE' }
+  const view = render(<Seedance25PublicForm credits={1000} isAdmin={false} promptPreset={hidden} />)
+  expect(screen.getByLabelText('Промпт для Seedance 2.5')).toHaveValue('')
+  await waitFor(() => expect(quoteSeedance25Identity).toHaveBeenCalledWith(expect.objectContaining({ prompt: '' })))
+  fireEvent.change(screen.getByLabelText('Промпт для Seedance 2.5'), { target: { value: 'My change' } })
+  view.rerender(<Seedance25PublicForm credits={1000} isAdmin={false} promptPreset={{ ...hidden, sourceFeedGenId: 43 }} />)
+  expect(screen.getByLabelText('Промпт для Seedance 2.5')).toHaveValue('')
+  view.unmount()
+  render(<Seedance25PublicForm credits={1000} isAdmin={false} promptPreset={hidden} />)
+  expect(screen.getByLabelText('Промпт для Seedance 2.5')).toHaveValue('')
+  expect(generateSeedance25).not.toHaveBeenCalled()
+})
+
+it('keeps the visible ordinary owner identity instruction', () => {
+  render(<Seedance25PublicForm credits={1000} isAdmin={false} promptPreset={{ ...preset, promptHidden: false, prompt: 'Owner instruction' }} />)
+  expect(screen.getByLabelText('Промпт для Seedance 2.5')).toHaveValue('Owner instruction')
+})

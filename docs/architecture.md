@@ -8,47 +8,23 @@ Backend работает как единый Python runtime на `aiohttp` и п
 
 ## 2. Production topology
 
+Сверено 2026-10-07; DNS и TLS проверены без изменения инфраструктуры.
+
 ```text
 Пользователь Telegram
-        │
-        ▼
-https://cdn.chillcreative.ru/mini-app/
-Frontend Nginx, сервер 91.200.84.187
-        │
-        ├── HTML/CSS/JS из static export
-        │
-        └── /mini-app/api/*
-                 │ HTTPS + SNI + Host=tanyapi.chillcreative.ru
-                 ▼
-https://tanyapi.chillcreative.ru
-Backend Nginx, сервер 144.76.188.75
-                 │
-                 ▼
-127.0.0.1:1888 aiohttp / banano-kling.service
+  -> https://tanyapp.xn--e1aikcel5c5a.online/mini-app/
+     Nginx на 144.76.188.75
+       /mini-app/       -> /var/www/tanyapp.xn--e1aikcel5c5a.online/mini-app
+       /mini-app/api/*  -> backend 127.0.0.1:1888
+       /uploads/*       -> backend static/uploads
+       /genjutsu/*      -> подписанные media/callback handlers backend
 
-Публичные media URL
-        │
-        ▼
-https://media.chillcreative.ru/uploads/*
-Cloudflare Free
-        │
-        ▼
-Nginx на 144.76.188.75
-        │
-        ▼
-/var/www/media.chillcreative.ru/uploads
-        │ bind mount
-        ▼
-/root/tanya/banano_kling/static/uploads
+https://tanyapi.chillcreative.ru
+  -> тот же backend; Telegram/provider/payment webhooks сохраняют этот origin
+  -> Docker banano-kling-bot, compose service bot
 ```
 
-### Почему API идёт через публичный HTTPS backend
-
-- backend port не нужно открывать frontend-серверу напрямую;
-- TLS и Host/SNI проверяются обычным Nginx;
-- один публичный API-домен используется Telegram webhook и Mini App;
-- firewall backend может оставить runtime привязанным к loopback;
-- проще диагностировать сертификат, маршрутизацию и access logs.
+Новый frontend и публичные media используют общий origin. Локальный backend port не требуется открывать в интернет. `cdn.chillcreative.ru` и `media.chillcreative.ru` относятся к прежней separate-host/Cloudflare схеме; старые upload URL поддерживаются как входы и нормализуются к `STATIC_BASE_URL`. Это не означает удаления старых DNS records или переписывания истории в БД.
 
 ## 3. Backend runtime
 
@@ -280,12 +256,9 @@ bot/services/
 
 Backend уже сохраняет туда файлы и формирует URL `/uploads/...`.
 
-Отдельный каталог с копиями не используется. Для безопасного доступа Nginx применяется bind mount:
+Текущий vhost `tanyapp.xn--e1aikcel5c5a.online` проксирует `/uploads/` в backend, который читает это хранилище. Дополнительный Nginx bind mount не требуется для текущего пути. Исторический `/var/www/media.chillcreative.ru/uploads` и standalone installer сохраняются как legacy инфраструктура.
 
-```text
-/root/tanya/banano_kling/static/uploads
--> /var/www/media.chillcreative.ru/uploads
-```
+Genjutsu использует собственное приватное media storage и подписанные `/genjutsu/media/*` URL; callback routes имеют ту же `GENJUTSU_PUBLIC_BASE_URL`. Они не являются публично кешируемыми upload-файлами.
 
 ### Cache classes
 
@@ -309,53 +282,19 @@ Backend уже сохраняет туда файлы и формирует URL 
 
 По умолчанию `no-store`, если файлы могут быть приватными, временными или пользовательскими референсами.
 
-### Cloudflare
+### Legacy Cloudflare origin
 
-Cloudflare Free используется как reverse proxy/cache для `media.chillcreative.ru`.
-
-- A record указывает на `144.76.188.75`;
-- proxy status включён;
-- HTTP/3 может быть временно отключён для проверки проблемных VPN;
-- Cache Rule ограничена публичным media path;
-- origin certificate — Let’s Encrypt;
-- SSL mode зоны — Full (strict).
+`media.chillcreative.ru` ранее использовал Cloudflare и bind mount к тому же `static/uploads`. Он остаётся совместимым именем для сохранённых ссылок. Текущий canonical origin — `https://tanyapp.xn--e1aikcel5c5a.online`; его DNS был проверен как `144.76.188.75`, без утверждений о Cloudflare proxy/TTL. Старые Cloudflare headers и правила не являются критерием приёмки нового origin.
 
 ## 10. Deployment architecture
 
-### Backend deploy
+Production branch — `tanyapi`. Release проходит CI для точного SHA, затем production deployment и проверку фактически запущенной версии.
 
-- checkout обновляется строго до `origin/tanyapi`;
-- зависимости и миграции выполняются отдельно от frontend deploy;
-- systemd service перезапускается только после проверки конфигурации;
-- health проверяется локально и через публичный Nginx.
-
-### Frontend deploy
-
-Команда на backend/operator host:
-
-```bash
-sudo bash cdn.sh --remote-deploy tanyafrontend
-```
-
-`cdn.sh`:
-
-1. читает root-only remote profile;
-2. подключается по SSH к `91.200.84.187`;
-3. проверяет чистоту checkout;
-4. обновляет ветку `tanyapi`;
-5. запускает domain deploy на frontend host;
-6. собирает static export;
-7. создаёт backup;
-8. выкладывает файлы без опасного удаления предыдущих chunks;
-9. проверяет health и HTML.
-
-### Media deploy
-
-```bash
-sudo -E bash scripts/deploy_media_origin.sh
-```
-
-Скрипт устанавливает Nginx/Certbot, bind mount, TLS, Cloudflare settings при наличии token, preview backfill и smoke tests.
+- Backend: Docker `banano-kling-bot`, compose service `bot`; checkout SHA сам по себе не доказывает running revision
+- Frontend: статический Next.js export на `tanyapp.xn--e1aikcel5c5a.online`; старые hashed chunks сохраняются для Telegram WebView
+- Media: выбранные public config fields `STATIC_BASE_URL` и `GENJUTSU_PUBLIC_BASE_URL` указывают на shared origin; обычные webhook origins не меняются
+- Nginx: `/uploads/` и `/genjutsu/` уже присутствуют в live vhost; installer содержит такие же routes, но его выполнение и изменение сетевой конфигурации требуют отдельной проверки
+- `cdn.sh --remote-deploy tanyafrontend` и `scripts/deploy_media_origin.sh` описывают legacy separate-host workflow, а не текущий обязательный production release step
 
 ## 11. Security boundaries
 
@@ -373,13 +312,12 @@ sudo -E bash scripts/deploy_media_origin.sh
 
 Основные точки диагностики:
 
-- `systemctl status banano-kling.service`;
-- `journalctl -u banano-kling.service`;
+- Docker status/health и OCI revision контейнера `banano-kling-bot`;
 - `logs/bot.log`, если file logging включён;
-- frontend `/frontend-health`;
+- frontend `/mini-app/` и существующий public asset `/mini-app/icon.svg`; `/frontend-health` на текущем vhost не настроен;
 - backend `/health`;
-- Nginx access/error logs обоих серверов;
-- Cloudflare headers: `CF-Cache-Status`, `Age`, `CF-Ray`;
+- Nginx access/error logs активного vhost;
+- legacy Cloudflare headers проверяются только при диагностике legacy host;
 - frontend deploy log `/var/log/banano-miniapp-cdn.log`;
 - npm logs в `/root/.npm/_logs` на frontend host.
 

@@ -306,3 +306,77 @@ async def test_seedance25_overlong_prompt_never_calls_provider(monkeypatch):
     result = await service.generate_video(prompt="я" * 30001)
     assert result["success"] is False
     assert "30000" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_seedance_25_rebases_legacy_local_media_refs(monkeypatch):
+    from bot.config import config
+
+    service = Seedance25Service(kie_key="test-key")
+    captured = {}
+
+    async def fake_kie_post(path, payload):
+        captured["payload"] = payload
+        return {"task_id": "canonical-media"}
+
+    monkeypatch.setattr(service, "_kie_post", fake_kie_post)
+    monkeypatch.setattr(
+        config,
+        "STATIC_BASE_URL",
+        "https://tanyapp.xn--e1aikcel5c5a.online",
+    )
+
+    await service.generate_video(
+        prompt="Use @Image1, @Video1 and @Audio1",
+        reference_image_urls=[
+            "https://tanyapi.chillcreative.ru/uploads/refs/image/123/face.png"
+        ],
+        reference_video_urls=[
+            "https://tanyapi.chillcreative.ru/uploads/refs/video/123/motion.mp4"
+        ],
+        reference_audio_urls=[
+            "https://tanyapi.chillcreative.ru/uploads/refs/audio/123/music.mp3"
+        ],
+    )
+
+    assert captured["payload"]["input"]["reference_image_urls"] == [
+        "https://tanyapp.xn--e1aikcel5c5a.online/uploads/refs/image/123/face.png"
+    ]
+    assert captured["payload"]["input"]["reference_video_urls"] == [
+        "https://tanyapp.xn--e1aikcel5c5a.online/uploads/refs/video/123/motion.mp4"
+    ]
+    assert captured["payload"]["input"]["reference_audio_urls"] == [
+        "https://tanyapp.xn--e1aikcel5c5a.online/uploads/refs/audio/123/music.mp3"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_seedance_25_rebases_legacy_local_first_last_frames(monkeypatch):
+    from bot.config import config
+
+    service = Seedance25Service(kie_key="test-key")
+    captured = {}
+
+    async def fake_kie_post(path, payload):
+        captured["payload"] = payload
+        return {"task_id": "canonical-frames"}
+
+    monkeypatch.setattr(service, "_kie_post", fake_kie_post)
+    monkeypatch.setattr(
+        config,
+        "STATIC_BASE_URL",
+        "https://tanyapp.xn--e1aikcel5c5a.online",
+    )
+
+    await service.generate_video(
+        prompt="Transition between frames",
+        first_frame_url="https://tanyapi.chillcreative.ru/uploads/refs/image/123/first.png",
+        last_frame_url="https://tanyapi.chillcreative.ru/uploads/refs/image/123/last.png",
+    )
+
+    assert captured["payload"]["input"]["first_frame_url"] == (
+        "https://tanyapp.xn--e1aikcel5c5a.online/uploads/refs/image/123/first.png"
+    )
+    assert captured["payload"]["input"]["last_frame_url"] == (
+        "https://tanyapp.xn--e1aikcel5c5a.online/uploads/refs/image/123/last.png"
+    )

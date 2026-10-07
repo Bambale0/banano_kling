@@ -77,10 +77,12 @@ from bot.database import (
     mark_task_delivery_status,
     mark_telegram_chat_available,
     mark_telegram_chat_unavailable,
+    needs_telegram_bot_start,
     reject_prompt,
     remove_from_feed,
     remove_from_library,
     resolve_public_generation_result_urls,
+    retire_telegram_bot_start_offer,
     save_user_channel_url,
     set_feed_blurred,
     share_to_feed,
@@ -142,6 +144,7 @@ from bot.quality_pricing import QUALITY_COSTS, SEEDREAM_5_PRO_QUALITY_COSTS
 from bot.services.ai_assistant_service import ai_assistant_service
 from bot.services.lava_service import lava_service
 from bot.services.media_input_utils import (
+    canonicalize_local_upload_url,
     is_reference_contact_sheet_url,
     missing_local_upload_sources,
     resolve_local_upload_path,
@@ -705,7 +708,10 @@ def _clean_unique_values(values: list[Any] | None) -> list[str]:
     seen: set[str] = set()
     for value in values or []:
         text = str(value or "").strip()
-        if not text or text in seen:
+        if not text:
+            continue
+        text = canonicalize_local_upload_url(text)
+        if text in seen:
             continue
         seen.add(text)
         cleaned.append(text)
@@ -1125,8 +1131,17 @@ async def _get_user_context(app: web.Application, init_data: str, start_param_fa
     user = await get_or_create_user(
         telegram_id,
         referral_code=referral_code,
-        initial_telegram_chat_state="unavailable",
+        # Only a newly inserted Mini App user can acquire this marker.
+        # Signed positive permission is historical evidence, not a fresh
+        # Telegram delivery probe, so never assert current availability here.
+        initial_telegram_chat_state=(
+            "unavailable"
+            if telegram_user.get("allows_write_to_pm") is True
+            else "never_started"
+        ),
     )
+    if telegram_user.get("allows_write_to_pm") is True:
+        await retire_telegram_bot_start_offer(telegram_id)
 
     try:
         profile_updates = {
@@ -1608,6 +1623,16 @@ async def _deliver_miniapp_direct_image_result(
             parse_mode="HTML",
             reply_markup=get_image_result_keyboard(saved_url, task_id=task_id),
         )
+        try:
+            await mark_telegram_chat_available(telegram_id)
+        except Exception as proof_error:  # noqa: BLE001 - proof bookkeeping must never resend a delivered result
+            # Delivery has already succeeded. A bookkeeping failure must not
+            # be mistaken for a Telegram error or cause a duplicate send.
+            logger.warning(
+                "Mini App delivery proof update failed: telegram_id=%s error=%s",
+                telegram_id,
+                type(proof_error).__name__,
+            )
         logger.info(
             "Mini App direct image result delivered to Telegram: telegram_id=%s task_id=%s saved_url=%s",
             telegram_id,
@@ -3034,6 +3059,7 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
             "bot_username": me.username,
             "username": me.username,
             "telegram_chat_available": await can_attempt_telegram_delivery(telegram_id),
+            "telegram_bot_start_required": await needs_telegram_bot_start(telegram_id),
             "mini_app_url": config.mini_app_url,
             "is_admin": config.is_admin(telegram_id),
             "actions": sorted(ACTIONS.keys()),
@@ -3086,7 +3112,11 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
             ],
             "notifications": await get_and_clear_miniapp_notifications(telegram_id),
         }
-        return web.json_response(data)
+        # Telegram-authenticated bootstrap bypasses browser-auth middleware.
+        # Apply the same recipe boundary to its recent task history as detail.
+        from .trend_task_privacy import sanitize_task_api_payload
+
+        return web.json_response(await sanitize_task_api_payload(data))
     except Exception as e:
         return _miniapp_error_response(
             e,

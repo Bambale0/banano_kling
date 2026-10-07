@@ -126,3 +126,31 @@ describe('VideoGeneratorForm repeat photo references', () => {
   })
 
 })
+
+
+describe('private video repeat prompt boundary', () => {
+  it('clears contradictory hidden source text, preserves user edits on rerender, and clears on another repeat', async () => {
+    const onSubmit = jest.fn().mockResolvedValue(undefined)
+    const hidden = { ...preset, prompt: 'SYNTHETIC_PRIVATE_RECIPE', promptHidden: true }
+    const props = { models, onSubmit, isSubmitting: false, credits: 100 }
+    const view = render(<VideoGeneratorForm {...props} promptPreset={hidden} />)
+    const textbox = screen.getByRole('textbox')
+    expect(textbox).toHaveValue('')
+    expect(screen.queryByDisplayValue('SYNTHETIC_PRIVATE_RECIPE')).not.toBeInTheDocument()
+    fireEvent.change(textbox, { target: { value: 'My additional instruction' } })
+    view.rerender(<VideoGeneratorForm {...props} promptPreset={hidden} onPromptPresetConsumed={() => undefined} />)
+    expect(textbox).toHaveValue('My additional instruction')
+    fireEvent.click(screen.getByRole('button', { name: /Запустить видео/i }))
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'My additional instruction', sourceFeedGenId: 42 })))
+    view.rerender(<VideoGeneratorForm {...props} promptPreset={{ ...hidden, sourceFeedGenId: 43 }} />)
+    expect(textbox).toHaveValue('')
+    view.unmount()
+    render(<VideoGeneratorForm {...props} promptPreset={hidden} />)
+    expect(screen.getByRole('textbox')).toHaveValue('')
+  })
+
+  it('preserves an ordinary visible owner prompt', () => {
+    render(<VideoGeneratorForm models={models} onSubmit={jest.fn()} isSubmitting={false} credits={100} promptPreset={{ ...preset, promptHidden: false }} />)
+    expect(screen.getByRole('textbox')).toHaveValue(preset.prompt)
+  })
+})

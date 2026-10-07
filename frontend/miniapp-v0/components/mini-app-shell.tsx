@@ -1,7 +1,7 @@
 'use client'
 
 import dynamic from 'next/dynamic'
-import { type ReactNode, useEffect } from 'react'
+import { type ReactNode, useEffect, useState } from 'react'
 import { ThemeProvider } from '@/components/theme-provider'
 import { AppProvider, useApp } from '@/lib/app-context'
 import { getStartParamFallback } from '@/lib/api'
@@ -14,6 +14,7 @@ import { MiniAppLoader } from './mini-app-loader'
 import { TelegramOpenGate } from './telegram-open-gate'
 import { PartnerApprovalSheet } from './partner-approval-sheet'
 import { GenjutsuEntry } from './genjutsu-entry'
+import { BotWriteAccessGate } from './bot-write-access-gate'
 
 const TaskDetailPanel = dynamic(() =>
   import('./task-detail-panel').then((module) => module.TaskDetailPanel),
@@ -29,20 +30,16 @@ interface MiniAppShellProps {
   children: ReactNode
 }
 
-interface TelegramActivationBridge {
-  onEvent?: (eventType: string, handler: () => void) => void
-  offEvent?: (eventType: string, handler: () => void) => void
-}
 
 function MiniAppBody({ children }: MiniAppShellProps) {
-  const { state, activeWorkspace, setActiveTab } = useApp()
+  const { state, activeWorkspace, trendToRun, setActiveTab, refreshTelegramChatAccess } = useApp()
+  const [genjutsuOpen, setGenjutsuOpen] = useState(false)
   const isBootstrapping = state.isLoading
   const isLocked = state.mode === 'locked'
 
   useEffect(() => {
     if (typeof window === 'undefined' || state.mode !== 'live') return
 
-    const webApp = window.Telegram?.WebApp as unknown as TelegramActivationBridge | undefined
     const openDefaultTrends = () => {
       const start = getStartParamFallback()
       const rawStartParam = genjutsuRecipeStartParam(start, window.location.search) || start
@@ -52,10 +49,7 @@ function MiniAppBody({ children }: MiniAppShellProps) {
     }
 
     openDefaultTrends()
-    if (!webApp?.onEvent) return
-
-    webApp.onEvent('activated', openDefaultTrends)
-    return () => webApp.offEvent?.('activated', openDefaultTrends)
+    // Returning from the bot must preserve the active form and its references.
   }, [setActiveTab, state.mode])
 
   return (
@@ -73,6 +67,13 @@ function MiniAppBody({ children }: MiniAppShellProps) {
         <>
           <div className="relative flex flex-col min-h-screen safe-top min-w-0 overflow-x-hidden">
             <HeroHeader />
+          {/* A deep-linked trend owns the active Radix modal. Delivery is optional,
+              so defer its offer instead of blocking the trend or fighting its focus trap. */}
+          <BotWriteAccessGate
+            required={state.user.telegramBotStartRequired && !trendToRun && !genjutsuOpen}
+            botUsername={state.user.botUsername}
+            onRefresh={refreshTelegramChatAccess}
+          />
             <main className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden pb-[calc(6rem+env(safe-area-inset-bottom))]">
               <div className="mx-auto w-full max-w-[1180px]">
                 {state.error && <p role="alert" className="mx-4 mt-4 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{state.error}</p>}
@@ -83,7 +84,7 @@ function MiniAppBody({ children }: MiniAppShellProps) {
           </div>
 
           <TaskDetailPanel />
-          <GenjutsuEntry />
+          <GenjutsuEntry onOpenChange={setGenjutsuOpen} />
           <BalanceSheet />
           {activeWorkspace === 'partners' ? <PartnerApprovalSheet /> : <WorkspaceSheet />}
         </>

@@ -14,7 +14,7 @@
 | Frontend domain | `cdn.chillcreative.ru` |
 | Frontend public URL | `https://cdn.chillcreative.ru/mini-app/` |
 | Frontend remote profile | `tanyafrontend` |
-| Media domain | `media.chillcreative.ru` |
+| Media domain | `tanyapp.xn--e1aikcel5c5a.online` |
 | Media source | `/root/tanya/banano_kling/static/uploads` |
 
 ## 2. Ежедневная проверка backend
@@ -198,46 +198,33 @@ ssh root@91.200.84.187 '
 
 ## 8. Media checks
 
-Найти реальный публичный файл в `static/uploads/feed` и проверить:
+Найти реальный публичный файл в `static/uploads` и проверить новый canonical origin:
 
 ```bash
-bash scripts/check_media_delivery.sh \
-  https://media.chillcreative.ru/uploads/feed/<real-file.webp>
-```
-
-Либо вручную:
-
-```bash
-curl -sSI https://media.chillcreative.ru/uploads/feed/<real-file.webp>
-curl -sSI https://media.chillcreative.ru/uploads/feed/<real-file.webp>
+curl -sSI https://tanyapp.xn--e1aikcel5c5a.online/uploads/feed/<real-file.webp>
+curl -sS -o /dev/null -H 'Range: bytes=0-1023' \
+  -w '%{http_code}\n' \
+  https://tanyapp.xn--e1aikcel5c5a.online/uploads/<real-video.mp4>
 ```
 
 Проверить:
 
-- status 200;
+- обычный файл возвращает `200`;
+- валидный Range-запрос видео возвращает `206`;
 - `content-type` соответствует файлу;
-- `cache-control` публичный только для feed;
-- `cf-cache-status` становится HIT после прогрева, если rule применима;
-- `age` растёт;
-- `cf-ray` присутствует;
-- `alt-svc` не рекламирует h3, если HTTP/3 временно отключён.
+- новые API/Telegram/Mini App ссылки используют `tanyapp.xn--e1aikcel5c5a.online`;
+- старый `tanyapi.chillcreative.ru/uploads/...` остаётся только backward-compatible входом.
 
-## 9. Проверка bind mount media
+## 9. Проверка media routing
 
-```bash
-findmnt /var/www/media.chillcreative.ru/uploads
-mountpoint /var/www/media.chillcreative.ru/uploads
-ls -la /var/www/media.chillcreative.ru/uploads | head
-```
-
-Проверка записи backend и чтения Nginx:
+Текущий production не требует отдельного bind mount для media: vhost `tanyapp.xn--e1aikcel5c5a.online` проксирует `/uploads/` и `/genjutsu/` на backend `127.0.0.1:1888`.
 
 ```bash
 test -d /root/tanya/banano_kling/static/uploads
-sudo -u www-data test -r /var/www/media.chillcreative.ru/uploads
+sudo nginx -t
+sudo grep -nE 'location .*(/uploads/|/genjutsu/)' \
+  /etc/nginx/sites-available/tanyapp.xn--e1aikcel5c5a.online.conf
 ```
-
-Не менять права `/root` ради Nginx. Использовать bind mount.
 
 ## 10. Nginx checks
 
@@ -268,8 +255,8 @@ openssl s_client \
   -verify_return_error </dev/null
 
 openssl s_client \
-  -connect media.chillcreative.ru:443 \
-  -servername media.chillcreative.ru \
+  -connect tanyapp.xn--e1aikcel5c5a.online:443 \
+  -servername tanyapp.xn--e1aikcel5c5a.online \
   -verify_return_error </dev/null
 ```
 
