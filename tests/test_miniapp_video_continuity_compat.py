@@ -474,6 +474,7 @@ async def test_video_repeat_api_rejects_incomplete_fixed_reference_slots(
     from unittest.mock import AsyncMock
 
     from aiohttp import web
+
     from bot import miniapp
     from bot.handlers import miniapp_video_continuity_compat as continuity
 
@@ -493,9 +494,8 @@ async def test_video_repeat_api_rejects_incomplete_fixed_reference_slots(
     body = {"init_data": "signed", "source_feed_gen_id": 42, target: replacements}
 
     class Request:
-        app = {}
-
         def __init__(self):
+            self.app = {}
             self._read_bytes = json.dumps(body).encode()
 
         async def json(self):
@@ -536,14 +536,15 @@ def video_repeat_entrypoint(monkeypatch):
     import json
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
+
     from aiohttp import web
+
     from bot import miniapp
     from bot.handlers import miniapp_video_continuity_compat as continuity
 
     class Request:
-        app = {}
-
         def __init__(self, body):
+            self.app = {}
             self._read_bytes = json.dumps(body).encode()
 
         async def json(self):

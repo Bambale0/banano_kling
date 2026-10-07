@@ -147,7 +147,8 @@ from bot.services.media_input_utils import (
     canonicalize_local_upload_url,
     is_reference_contact_sheet_url,
     missing_local_upload_sources,
-    reference_source_identity,    resolve_local_upload_path,
+    reference_source_identity,
+    resolve_local_upload_path,
 )
 from bot.services.photo_prompt_billing import (
     PhotoPromptInsufficientBalance,

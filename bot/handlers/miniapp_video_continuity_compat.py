@@ -547,7 +547,7 @@ def install_miniapp_video_continuity_compat() -> None:
                 {"ok": False, "code": "repeat_reference_incomplete", "error": str(exc)},
                 status=400,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - fail closed at the repeat boundary
             # A retry in the original handler might succeed but lose the
             # private recipe. Never launch after partial restoration failure.
             expected = miniapp_module._miniapp_expected_error_response(exc)

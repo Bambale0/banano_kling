@@ -83,7 +83,8 @@ from bot.services.media_input_utils import (
     filter_available_image_sources,
     is_reference_contact_sheet_url,
     missing_local_upload_sources,
-    reference_source_identity,)
+    reference_source_identity,
+)
 from bot.services.nano_banana_2_service import nano_banana_2_service
 from bot.services.nano_banana_pro_service import nano_banana_pro_service
 from bot.services.preset_manager import preset_manager
