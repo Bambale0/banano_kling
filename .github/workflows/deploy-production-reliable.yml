@@ -223,11 +223,16 @@ jobs:
             echo "Production data directory cannot be replaced by deployment" >&2
             exit 1
           fi
-          target_price_type="$(git cat-file -t "$EXPECTED_SHA:$RUNTIME_PRICE_FILE" 2>/dev/null || true)"
-          if [ -n "$target_price_type" ] && [ "$target_price_type" != blob ]; then
-            echo "Versioned runtime price path must be a file or absent" >&2
-            exit 1
-          fi
+          # Symlinks are also Git blobs; inspect the tree entry's file mode.
+          target_price_entry="$(git ls-tree "$EXPECTED_SHA" -- "$RUNTIME_PRICE_FILE")"
+          target_price_mode="${target_price_entry%% *}"
+          case "$target_price_mode" in
+            ''|100644|100755) ;;
+            *)
+              echo "Versioned runtime price path must be a regular file or absent" >&2
+              exit 1
+              ;;
+          esac
 
           if [ -e "$RUNTIME_PRICE_FILE" ] || [ -L "$RUNTIME_PRICE_FILE" ]; then
             validate_runtime_price "$RUNTIME_PRICE_FILE"

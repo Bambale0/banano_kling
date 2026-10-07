@@ -98,6 +98,11 @@ def _deploy(deploy_repo, *, force=False, changed=False, runtime=ADMIN_PRICE, rem
         if target_layout == "price-directory":
             (origin / PRICE).mkdir()
             (origin / PRICE / "child.txt").write_text("not a runtime price file")
+        elif target_layout == "price-symlink":
+            (origin / PRICE).symlink_to("../app.txt")
+        elif target_layout == "price-executable":
+            (origin / PRICE).write_text(json.dumps(default))
+            (origin / PRICE).chmod(0o755)
         else:
             (origin / "data").rmdir()
             if target_layout == "data-file":
@@ -350,3 +355,37 @@ def test_source_update_failure_keeps_concurrent_admin_save_and_backup(deploy_rep
     retained = list(backups.iterdir())
     assert len(retained) == 1
     assert retained[0].read_bytes() == ADMIN_PRICE
+
+
+@pytest.mark.parametrize("runtime", [ADMIN_PRICE, None], ids=["existing-runtime", "missing-runtime"])
+def test_versioned_price_symlink_aborts_before_source_or_index_update(deploy_repo, runtime):
+    _, checkout, backups, _, _ = deploy_repo
+    initial_sha = _git(checkout, "rev-parse", "HEAD")
+    initial_index = _git(checkout, "write-tree")
+    result, _ = _deploy(deploy_repo, target_layout="price-symlink", runtime=runtime)
+    assert result.returncode != 0
+    price = checkout / PRICE
+    assert not price.is_symlink()
+    if runtime is None:
+        assert not price.exists()
+    else:
+        assert price.read_bytes() == runtime
+    assert (checkout / "app.txt").read_text() == "old application"
+    assert (checkout / "obsolete.txt").exists()
+    assert (checkout / "rename-me.txt").exists()
+    assert not (checkout / "renamed.txt").exists()
+    assert not (checkout / "new.txt").exists()
+    assert _git(checkout, "rev-parse", "HEAD") == initial_sha
+    assert _git(checkout, "write-tree") == initial_index
+    assert not list(backups.iterdir())
+
+
+@pytest.mark.parametrize("runtime", [ADMIN_PRICE, None], ids=["existing-runtime", "missing-runtime"])
+def test_versioned_executable_regular_price_file_is_allowed(deploy_repo, runtime):
+    origin, checkout, _, _, _ = deploy_repo
+    result, expected_sha = _deploy(deploy_repo, target_layout="price-executable", runtime=runtime)
+    assert result.returncode == 0, result.stdout + result.stderr
+    expected_price = (origin / PRICE).read_bytes() if runtime is None else runtime
+    assert (checkout / PRICE).read_bytes() == expected_price
+    assert _git(checkout, "rev-parse", "HEAD") == expected_sha
+    assert _git(checkout, "write-tree") == _git(checkout, "rev-parse", "HEAD^{tree}")
