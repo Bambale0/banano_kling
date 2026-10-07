@@ -45,13 +45,12 @@ def test_legacy_local_result_url_is_rebased_to_canonical_media_origin(monkeypatc
         "STATIC_BASE_URL",
         "https://tanyapp.xn--e1aikcel5c5a.online",
     )
-    legacy_url = "https://tanyapi.chillcreative.ru/uploads/feed/legacy.png"
-
-    result = asyncio.run(
-        main_module._persist_result_url_if_needed(legacy_url, task_type="image")
-    )
-
-    assert result == "https://tanyapp.xn--e1aikcel5c5a.online/uploads/feed/legacy.png"
+    for host in ("tanyapi.chillcreative.ru", "media.chillcreative.ru"):
+        legacy_url = f"https://{host}/uploads/feed/legacy.png"
+        result = asyncio.run(
+            main_module._persist_result_url_if_needed(legacy_url, task_type="image")
+        )
+        assert result == "https://tanyapp.xn--e1aikcel5c5a.online/uploads/feed/legacy.png"
 
 
 

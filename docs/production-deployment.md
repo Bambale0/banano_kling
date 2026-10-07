@@ -1,16 +1,16 @@
 # Production deployment NEUROMIX
 
-Документ описывает актуальную схему ветки `tanyapi`.
+Документ описывает схему ветки `tanyapi`, сверенную 2026-10-07. Текущий frontend и media используют один домен; разделы про отдельный `cdn` host ниже обозначены как legacy и не являются текущим release path.
 
 ## 1. Целевая инфраструктура
 
 | Роль | Домен | IP | Путь/сервис |
 | --- | --- | --- | --- |
-| Backend | `tanyapi.chillcreative.ru` | `144.76.188.75` | `/root/tanya/banano_kling`, `banano-kling.service` |
-| Frontend | `cdn.chillcreative.ru` | `91.200.84.187` | `/var/www/cdn.chillcreative.ru` |
+| Backend/webhooks | `tanyapi.chillcreative.ru` | `144.76.188.75` | Docker `banano-kling-bot`, compose service `bot`, `/root/tanya/banano_kling` |
+| Frontend | `tanyapp.xn--e1aikcel5c5a.online` | `144.76.188.75` | `/var/www/tanyapp.xn--e1aikcel5c5a.online/mini-app` |
 | Media | `tanyapp.xn--e1aikcel5c5a.online` | `144.76.188.75` | Nginx `/uploads/` -> backend `static/uploads` |
 
-Обязательная ветка на обоих checkout:
+Production release branch:
 
 ```text
 tanyapi
@@ -29,7 +29,7 @@ tanyapi
 - сертификат для backend-домена;
 - локальный aiohttp runtime на `127.0.0.1:1888` либо другом значении из config.
 
-### Frontend host
+### Legacy separate frontend host (не текущий release path)
 
 - root или sudo без пароля для deploy user;
 - Node.js версии, ожидаемой installer script;
@@ -39,9 +39,9 @@ tanyapi
 - Git checkout `/opt/banano-kling-src`;
 - профиль домена `/etc/banano-miniapp/profiles/cdn.chillcreative.ru.env`.
 
-### Cloudflare
+### Legacy Cloudflare media automation
 
-Для автоматизации media рекомендуется ограниченный API token:
+Текущий shared-origin media path не требует этого legacy workflow. Следующие настройки относятся только к отдельному `media.chillcreative.ru` installer; не создавать токен и не менять DNS для обычного production release. Для отдельно согласованного legacy workflow используются права:
 
 - Zone Read;
 - DNS Edit;
@@ -70,26 +70,22 @@ A  tanyapi  -> 144.76.188.75
 
 Режим proxy определяется текущей схемой backend и должен быть согласован с webhook/Nginx. Не менять его во время deploy без отдельной проверки.
 
-### Frontend
+### Текущий frontend и media
+
+Проверенное публичное разрешение DNS 2026-10-07:
 
 ```text
-A  cdn      -> 91.200.84.187
+tanyapp.xn--e1aikcel5c5a.online -> 144.76.188.75
 ```
 
-### Media
+Один TLS vhost обслуживает `/mini-app/`, проксирует `/mini-app/api/*`, `/uploads/*` и подписанные `/genjutsu/*` на backend. Старые `cdn.chillcreative.ru` и `media.chillcreative.ru` остаются legacy именами в сохранённых ссылках; это не указание менять их DNS или удалять инфраструктуру. Proxy status и TTL нового домена здесь не предполагаются.
 
-```text
-A  media    -> 144.76.188.75
-Proxy status: Proxied
-TTL: Auto
-```
-
-Проверка:
+Read-only проверка:
 
 ```bash
 getent ahostsv4 tanyapi.chillcreative.ru
-getent ahostsv4 cdn.chillcreative.ru
-getent ahostsv4 media.chillcreative.ru
+getent ahostsv4 tanyapp.xn--e1aikcel5c5a.online
+curl -fsSI https://tanyapp.xn--e1aikcel5c5a.online/mini-app/
 ```
 
 ## 4. Подготовка backend checkout
@@ -116,7 +112,7 @@ WEBHOOK_HOST=https://tanyapi.chillcreative.ru
 WEBHOOK_BIND_HOST=127.0.0.1
 WEBHOOK_PORT=1888
 MINI_APP_PATH=/mini-app
-MINI_APP_URL=https://cdn.chillcreative.ru/mini-app/
+MINI_APP_URL=https://tanyapp.xn--e1aikcel5c5a.online/mini-app/
 STATIC_BASE_URL=https://tanyapp.xn--e1aikcel5c5a.online
 ```
 
@@ -207,7 +203,7 @@ Expected: ordinary media returns `200`; a valid ranged video request returns `20
 
 The standalone `media.chillcreative.ru` installer under `ops/media/` is legacy infrastructure and is not the current production deploy path.
 
-## 9. Frontend remote profile
+## 9. Legacy frontend remote profile (не текущий release path)
 
 Профиль `tanyafrontend` хранится на операторском/backend host в root-only каталоге `cdn.sh`.
 
@@ -227,7 +223,7 @@ REMOTE_USE_SUDO=0
 ssh -o BatchMode=yes -o ConnectTimeout=15 root@91.200.84.187 'echo SSH_OK'
 ```
 
-## 10. Frontend deploy
+## 10. Legacy separate frontend deploy
 
 На backend/operator host:
 
@@ -260,7 +256,7 @@ miniapp_http=200
 health={..."ok":true...}
 ```
 
-## 11. Что происходит внутри frontend deploy
+## 11. Что происходит внутри legacy frontend deploy
 
 1. SSH на `91.200.84.187`;
 2. проверка чистого checkout;
@@ -275,18 +271,20 @@ health={..."ok":true...}
 
 Frontend static assets предыдущей сборки не должны удаляться сразу. Telegram WebView может держать старый HTML и запрашивать старые hashed chunks.
 
+Текущий production release выполняется через CI/CD для точного SHA ветки `tanyapi`. Проверяются контейнер backend и static frontend на новом shared origin. Команды legacy remote deploy выше не запускать для текущего релиза без отдельного плана.
+
 ## 12. Post-deploy smoke tests
 
 ### Frontend HTML
 
 ```bash
-curl -fsSI https://cdn.chillcreative.ru/mini-app/
+curl -fsSI https://tanyapp.xn--e1aikcel5c5a.online/mini-app/
 ```
 
 ### Brand metadata
 
 ```bash
-curl -fsS https://cdn.chillcreative.ru/mini-app/ \
+curl -fsS https://tanyapp.xn--e1aikcel5c5a.online/mini-app/ \
   | grep -o '<title>[^<]*</title>'
 ```
 
@@ -299,19 +297,19 @@ curl -fsS https://cdn.chillcreative.ru/mini-app/ \
 ### Asset
 
 ```bash
-ASSET=$(curl -fsS https://cdn.chillcreative.ru/mini-app/ \
+ASSET=$(curl -fsS https://tanyapp.xn--e1aikcel5c5a.online/mini-app/ \
   | grep -oE '/mini-app/_next/static/[^" ]+\.(js|css)' \
   | head -n1)
 
 echo "$ASSET"
-curl -fsSI "https://cdn.chillcreative.ru${ASSET}"
+curl -fsSI "https://tanyapp.xn--e1aikcel5c5a.online${ASSET}"
 ```
 
 ### API proxy
 
 ```bash
 curl -i -X POST \
-  https://cdn.chillcreative.ru/mini-app/api/bootstrap \
+  https://tanyapp.xn--e1aikcel5c5a.online/mini-app/api/bootstrap \
   -H 'Content-Type: application/json' \
   --data '{}'
 ```
@@ -330,11 +328,11 @@ curl -i -X POST \
 - создаётся тестовая задача;
 - готовый результат появляется в карточке;
 - публикация и profile/feed работают;
-- media-превью загружаются через `media.chillcreative.ru`.
+- новые media-превью используют `tanyapp.xn--e1aikcel5c5a.online`; legacy `/uploads/` ссылки нормализуются без массовой перезаписи истории.
 
 ## 13. Rollback frontend
 
-### Через `cdn.sh`
+### Legacy separate frontend через `cdn.sh`
 
 На frontend host/interactive manager выбрать backup для домена и выполнить rollback. Скрипт восстанавливает backup через `rsync --delete`, затем проверяет Nginx и HTML.
 
@@ -342,7 +340,7 @@ curl -i -X POST \
 
 1. Найти последнюю подтверждённую backup-директорию.
 2. Сравнить её содержимое с текущим deployment.
-3. Восстановить в `/var/www/cdn.chillcreative.ru`.
+3. Для текущего frontend восстановить в `/var/www/tanyapp.xn--e1aikcel5c5a.online`; legacy backup нельзя автоматически применять к новому vhost.
 4. Проверить права.
 5. Выполнить `nginx -t`.
 6. Проверить HTML и реальный asset.
@@ -365,14 +363,9 @@ curl -fsS http://127.0.0.1:1888/health
 
 ## 15. Rollback media
 
-Скрипт media создаёт backup Nginx-конфигурации. Для ручного отката:
+Для текущего shared origin сначала определить, что сломано: release кода, выбранная public-base configuration или Nginx routing. Сохранить `/uploads/` и подписанные `/genjutsu/` маршруты; не откатывать их вместе с legacy vhost без отдельного плана. Любое изменение live Nginx или DNS выполняется только после проверки и согласования; затем нужны syntax check и smoke нового origin.
 
-- восстановить предыдущий server block;
-- `nginx -t`;
-- reload Nginx;
-- проверить bind mount;
-- при необходимости временно выключить Cloudflare proxy для origin-диагностики;
-- после восстановления вернуть proxy и проверить cache headers.
+Старый standalone media installer создавал backup server block и использовал bind mount/Cloudflare. Его rollback относится только к legacy `media.chillcreative.ru`; нельзя автоматически применять его к текущему vhost или отключать proxy во время обычного release.
 
 ## 16. Release checklist
 

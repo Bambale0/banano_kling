@@ -62,19 +62,18 @@ feature/* -> PR в dev -> автодеплой DEV-бота -> ручной smok
 ## Production topology
 
 ```text
-cdn.chillcreative.ru (91.200.84.187)
-  ├── /mini-app/             -> статический Next.js export
-  └── /mini-app/api/*        -> HTTPS proxy на tanyapi.chillcreative.ru
+tanyapp.xn--e1aikcel5c5a.online (проверенное DNS: 144.76.188.75)
+  /mini-app/          -> статический Next.js export
+  /mini-app/api/*     -> backend 127.0.0.1:1888
+  /uploads/*          -> backend static/uploads
+  /genjutsu/*         -> подписанные media и provider callbacks
 
 tanyapi.chillcreative.ru (144.76.188.75)
-  ├── Telegram webhook production-бота
-  ├── Mini App API
-  ├── provider/payment webhooks
-  └── aiohttp runtime за локальным Nginx
-
-media.chillcreative.ru (Cloudflare -> 144.76.188.75)
-  └── /uploads/*             -> Nginx -> bind mount -> static/uploads
+  -> Telegram/provider/payment webhooks и backend API
+  -> Docker banano-kling-bot за локальным Nginx
 ```
+
+Сверено 2026-10-07. `cdn.chillcreative.ru` и `media.chillcreative.ru` — legacy origins: сохранённые `/uploads/` ссылки нормализуются к текущему `STATIC_BASE_URL`, без массовой перезаписи истории. Старый Cloudflare/bind-mount workflow не является текущим media deploy path; DNS не меняется автоматически.
 
 Production topology относится только к ветке `tanyapi`. DEV domains, paths и credentials задаются GitHub environment `development` и DEV server `.env`; они не должны использовать production bot token, database или media root.
 
@@ -165,9 +164,9 @@ Production topology относится только к ветке `tanyapi`. DEV
 - DEV и production bot tokens различаются;
 - DEV и production databases/storage различаются;
 - все пользовательские заголовки используют NEUROMIX;
-- production frontend указан как `cdn.chillcreative.ru`;
+- production frontend указан как `tanyapp.xn--e1aikcel5c5a.online`;
 - production backend указан как `tanyapi.chillcreative.ru`;
-- production media указан как `media.chillcreative.ru`;
+- production media указан как `tanyapp.xn--e1aikcel5c5a.online`, legacy origins помечены как совместимость;
 - нет рекомендаций открывать `:1888` в интернет;
 - нет реальных токенов, паролей и содержимого `.env`;
 - deploy и rollback команды проверены на синтаксические ошибки;
