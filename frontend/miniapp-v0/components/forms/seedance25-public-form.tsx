@@ -1,5 +1,7 @@
 'use client'
 
+import { normalizeRepeatPrompt } from '@/lib/repeat-prompt'
+
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { uploadFile } from '@/lib/api'
 import {
@@ -296,7 +298,7 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
     if (!promptPreset?.seedance25IdentityTransfer) return
     setScenario('identity_transfer')
     setVideoEditing(false)
-    setPrompt(promptPreset.prompt || '')
+    setPrompt(normalizeRepeatPrompt(promptPreset).prompt || '')
     setResolution(promptPreset.seedance25Resolution || '720p')
     setImages([...(promptPreset.initialStartImage || []), ...(promptPreset.initialPhotoReferences || [])].map((file) => ({ file })))
     setVideos((promptPreset.initialVideoReferences || []).map((file) => ({ file })))

@@ -1,5 +1,7 @@
 'use client'
 
+import { normalizeRepeatPrompt } from '@/lib/repeat-prompt'
+
 import { useState, useMemo, useEffect, useRef } from 'react'
 import type { VideoModel, UploadedFile, ScenarioType, VideoPromptPreset } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -278,7 +280,7 @@ export function VideoGeneratorForm({
   useEffect(() => {
     if (!promptPreset || appliedPromptPresetRef.current === promptPreset) return
     appliedPromptPresetRef.current = promptPreset
-    setPrompt(promptPreset.prompt)
+    setPrompt(normalizeRepeatPrompt(promptPreset).prompt)
     setSourceFeedGenId(promptPreset.sourceFeedGenId || null)
     setRepeatTitle(promptPreset.sourceFeedGenId ? promptPreset.title : '')
     if (promptPreset.model && models.some((item) => item.id === promptPreset.model)) {

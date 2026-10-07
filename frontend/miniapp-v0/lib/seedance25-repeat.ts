@@ -1,4 +1,5 @@
 import { fetchTaskDetail } from './api'
+import { normalizeRepeatPrompt } from './repeat-prompt'
 import type { FeedItem, UploadedFile, VideoPromptPreset } from './types'
 
 function references(value: unknown, type: 'image' | 'video'): UploadedFile[] {
@@ -15,16 +16,18 @@ export async function hydrateSeedance25IdentityPreset(
   item: FeedItem,
   preset: VideoPromptPreset,
 ): Promise<VideoPromptPreset> {
-  if (item.model !== 'seedance_2_5' || item.is_mine !== true) return preset
+  const safePreset = normalizeRepeatPrompt(preset, item)
+  if (item.model !== 'seedance_2_5' || item.is_mine !== true) return safePreset
   const detail = await fetchTaskDetail(item.task_id || String(item.id))
   const data = detail.request_data
-  if (data?.seedance25_identity_transfer !== true) return preset
+  const safeDetailPreset = normalizeRepeatPrompt(safePreset, detail)
+  if (data?.seedance25_identity_transfer !== true) return safeDetailPreset
   return {
-    ...preset,
+    ...safeDetailPreset,
     seedance25IdentityTransfer: true,
     seedance25Resolution: data.resolution === '480p' ? '480p' : '720p',
     scenario: 'video',
-    prompt: preset.promptHidden ? '' : detail.prompt || preset.prompt,
+    prompt: safeDetailPreset.promptHidden ? '' : detail.prompt || safeDetailPreset.prompt,
     initialStartImage: [],
     initialPhotoReferences: references(data.reference_images, 'image'),
     initialVideoReferences: references(data.v_reference_videos, 'video'),

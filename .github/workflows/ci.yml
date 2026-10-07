@@ -238,7 +238,9 @@ jobs:
 
       - name: Run critical browser E2E flows
         id: browser_e2e
-        run: node e2e/critical-flows.mjs
+        run: |
+          node e2e/critical-flows.mjs
+          node e2e/hidden-repeat-prompt.mjs
 
       - name: Record Mini App E2E result
         id: result

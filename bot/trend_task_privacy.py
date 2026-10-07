@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Mapping
 from typing import Any
 
 from bot import db as db_backend
-from bot.database import DATABASE_PATH
+from bot.database import DATABASE_PATH, generation_has_private_recipe
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,7 @@ async def _protected_task_ids(task_ids: list[str]) -> set[str]:
         db.row_factory = db_backend.Row
         cursor = await db.execute(
             f"""
-            SELECT task_id, source_feed_gen_id, action_type, prompt
+            SELECT task_id, source_feed_gen_id, action_type, prompt, request_data
             FROM generation_tasks
             WHERE task_id IN ({placeholders})
             """,
@@ -75,9 +76,8 @@ async def _protected_task_ids(task_ids: list[str]) -> set[str]:
     legacy_candidates: dict[str, str] = {}
     for row in rows:
         task_id = str(row["task_id"] or "").strip()
-        action_type = str(row["action_type"] or "").strip().lower()
         prompt = str(row["prompt"] or "").strip()
-        if row["source_feed_gen_id"] or action_type == "trend":
+        if generation_has_private_recipe(row):
             protected.add(task_id)
         elif prompt:
             legacy_candidates[task_id] = prompt
@@ -112,8 +112,13 @@ def _task_objects(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 
 def _redact_private_request_data(value: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError):
+            value = {}
     if not isinstance(value, Mapping):
-        return value
+        return None
     clean = dict(value)
     for key in _PRIVATE_REQUEST_FIELDS:
         clean.pop(key, None)
@@ -146,12 +151,9 @@ async def sanitize_task_api_payload(payload: Any) -> Any:
         logger.exception("Unable to resolve protected trend task prompts")
         protected = {task_id for task_id in task_ids if task_id}
 
-    if not protected:
-        return result
-
     def redact(task: dict[str, Any]) -> dict[str, Any]:
         task_id = str(task.get("task_id") or "").strip()
-        if task_id not in protected:
+        if task_id not in protected and not generation_has_private_recipe(task):
             return task
         clean = dict(task)
         clean["prompt"] = ""

@@ -3090,7 +3090,11 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
             ],
             "notifications": await get_and_clear_miniapp_notifications(telegram_id),
         }
-        return web.json_response(data)
+        # Telegram-authenticated bootstrap bypasses browser-auth middleware.
+        # Apply the same recipe boundary to its recent task history as detail.
+        from .trend_task_privacy import sanitize_task_api_payload
+
+        return web.json_response(await sanitize_task_api_payload(data))
     except Exception as e:
         return _miniapp_error_response(
             e,

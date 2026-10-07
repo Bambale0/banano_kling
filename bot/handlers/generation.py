@@ -32,6 +32,7 @@ from bot.database import (
     credit_feed_prompt_repeat,
     deduct_credits,
     delete_saved_reference,
+    generation_has_private_recipe,
     generation_reference_selection,
     generation_repeat_reference_selection,
     get_feed_generation_card,
@@ -1147,7 +1148,7 @@ def _private_repeat_fingerprint(refs: list[str]) -> str:
 
 def _repeat_source_prompt_hidden(task: Any, viewer_user_id: int | None) -> bool:
     return bool(task and (
-        getattr(task, "source_feed_gen_id", None)
+        generation_has_private_recipe(task)
         or (
             getattr(task, "user_id", None) != viewer_user_id
             and (getattr(task, "is_public_feed", False) or getattr(task, "is_profile_visible", False))

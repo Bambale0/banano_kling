@@ -6672,10 +6672,51 @@ def generation_publication_scope(
     return "private"
 
 
+def _recipe_privacy_flag(value: Any) -> bool | None:
+    """Read legacy JSON booleans without treating the string 'false' as true."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off", ""}:
+            return False
+    return None
+
+
+def generation_has_private_recipe(
+    generation: GenerationTask | dict[str, Any] | db_backend.Row | None,
+) -> bool:
+    """Intrinsic recipe privacy, independent of ownership/publication settings.
+
+    Publishing a result or owning a derived task never makes its source recipe
+    public. Conversely, an ordinary owner's unpublished prompt stays usable.
+    Explicit malformed privacy markers fail closed.
+    """
+    request_data = _parse_json_dict(_generation_attr(generation, "request_data"))
+    missing = object()
+    for source in (generation, request_data):
+        if _generation_attr(source, "source_feed_gen_id"):
+            return True
+        if str(_generation_attr(source, "action_type", "") or "").strip().lower() == "trend":
+            return True
+        for key in ("prompt_hidden", "private_recipe"):
+            value = _generation_attr(source, key, missing)
+            if value is not missing and _recipe_privacy_flag(value) is not False:
+                return True
+        allowed = _generation_attr(source, "prompt_actions_allowed", missing)
+        if allowed is not missing and _recipe_privacy_flag(allowed) is not True:
+            return True
+    return False
+
+
 def generation_prompt_hidden(
     generation: GenerationTask | dict[str, Any] | db_backend.Row | None,
 ) -> bool:
-    return bool(_generation_attr(generation, "source_feed_gen_id")) or not generation_feed_prompt_visible(generation)
+    return generation_has_private_recipe(generation) or not generation_feed_prompt_visible(generation)
 
 
 def _generation_identifier_clause(identifier: int | str) -> tuple[str, Any]:
