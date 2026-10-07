@@ -149,6 +149,7 @@ from bot.services.media_input_utils import (
     missing_local_upload_sources,
     reference_source_identity,
     resolve_local_upload_path,
+    resolve_reference_source,
 )
 from bot.services.photo_prompt_billing import (
     PhotoPromptInsufficientBalance,
@@ -1334,15 +1335,14 @@ def _selected_published_image_references(
     if not isinstance(selected_images, list):
         return []
 
-    source_images = {reference_source_identity(url): url
-                     for url in _source_image_references_from_task_payload(task_payload)}
+    source_images = _source_image_references_from_task_payload(task_payload)
     if not viewer_is_owner:
         # The card already enforces remix/transitive and availability policy.
         public_ids = {reference_source_identity(url) for url in source_card.get("reference_images") or []}
-        source_images = {key: url for key, url in source_images.items() if key in public_ids}
+        source_images = [url for url in source_images if reference_source_identity(url) in public_ids]
     retained: list[str] = []
     for item in selected_images:
-        url = source_images.get(reference_source_identity(str(item or "").strip()))
+        url = resolve_reference_source(str(item or "").strip(), source_images)
         if url and url not in retained:
             retained.append(url)
     return retained
@@ -1358,12 +1358,10 @@ def _selected_private_repeat_references(task_payload: dict[str, Any]) -> list[st
         return []
     from bot.database import _is_feed_result_url_available
 
-    sources = {reference_source_identity(url): url
-               for url in _source_image_references_from_task_payload(task_payload)}
-    return [sources[reference_source_identity(url)]
-            for url in generation_repeat_reference_selection(task_payload)
-            if reference_source_identity(url) in sources
-            and _is_feed_result_url_available(task_payload, sources[reference_source_identity(url)])]
+    sources = _source_image_references_from_task_payload(task_payload)
+    resolved = [resolve_reference_source(url, sources)
+                for url in generation_repeat_reference_selection(task_payload)]
+    return [url for url in resolved if url and _is_feed_result_url_available(task_payload, url)]
 
 
 def _merge_private_repeat_references(task_payload: dict[str, Any], references: list[str]) -> list[str]:
@@ -1383,8 +1381,7 @@ def _merge_private_repeat_references(task_payload: dict[str, Any], references: l
 
 def _merge_image_reference_slots(sources: list[str], references: list[str], fixed: list[str]) -> list[str]:
     """Keep ImageN bindings for already-authorized fixed inputs; never infer a grant."""
-    source_by_identity = {reference_source_identity(url): url for url in sources}
-    references = [source_by_identity.get(reference_source_identity(url), url) for url in references]
+    references = [resolve_reference_source(url, sources) or url for url in references]
     retained = set(fixed) | (set(sources) & set(references))
     submitted = iter(url for url in references if url not in retained)
     last_retained = max(index for index, url in enumerate(sources) if url in retained)

@@ -84,6 +84,7 @@ from bot.services.media_input_utils import (
     is_reference_contact_sheet_url,
     missing_local_upload_sources,
     reference_source_identity,
+    resolve_reference_source,
 )
 from bot.services.nano_banana_2_service import nano_banana_2_service
 from bot.services.nano_banana_pro_service import nano_banana_pro_service
@@ -1029,10 +1030,10 @@ def _source_reference_images_from_request(request_data: dict) -> list[str]:
     source_refs = request_data.get("source_reference_images")
     if not isinstance(source_refs, list):
         source_refs = request_data.get("reference_images", [])
-    hidden = set(_private_repeat_reference_images(request_data))
+    hidden = {reference_source_identity(ref) for ref in _private_repeat_reference_images(request_data)}
     return [
         ref for ref in _snapshot_reference_images(source_refs)
-        if ref not in hidden and not is_reference_contact_sheet_url(ref)
+        if reference_source_identity(ref) not in hidden and not is_reference_contact_sheet_url(ref)
     ]
 
 
@@ -1090,9 +1091,11 @@ def _merge_repeat_private_reference_slots(
     sources = _snapshot_reference_images(
         request_data.get("source_reference_images") or request_data.get("reference_images", [])
     )
-    if not set(private_refs).issubset(sources):
+    resolved_private = [resolve_reference_source(ref, sources) for ref in private_refs]
+    if any(ref is None for ref in resolved_private):
         raise ValueError("private_repeat_source_mismatch")
-    retained = set(private_refs) | (set(sources) & set(references))
+    references = [resolve_reference_source(ref, sources) or ref for ref in references]
+    retained = set(resolved_private) | (set(sources) & set(references))
     submitted = iter(ref for ref in references if ref not in retained)
     last_retained = max(index for index, ref in enumerate(sources) if ref in retained)
     merged = []
@@ -1258,18 +1261,25 @@ async def _start_image_generation_task(
     """Launch one image generation task and persist enough data for repeats."""
     runtime_img_service = img_service
     private_refs = _snapshot_reference_images(private_repeat_reference_images or [])
-    if source_feed_gen_id and private_repeat_reference_images is None:
-        # Compatibility for server callers that append grants before launch.
-        # Explicit metadata is preferred and retained for every subsequent repeat.
-        root = await get_generation_task_payload(source_feed_gen_id)
-        grants = set(generation_repeat_reference_selection(root))
-        private_refs = [ref for ref in reference_images if ref in grants]
-    if private_refs and (
+    try:
+        if source_feed_gen_id and private_repeat_reference_images is None:
+            # Compatibility for server callers that append grants before launch.
+            # Explicit metadata is preferred and retained for subsequent repeats.
+            root = await get_generation_task_payload(source_feed_gen_id)
+            grants = generation_repeat_reference_selection(root)
+            private_refs = [ref for ref in reference_images
+                            if resolve_reference_source(ref, grants) is not None]
+        resolved_private = [resolve_reference_source(ref, reference_images) for ref in private_refs]
+    except ValueError:
+        resolved_private = [None]
+    private_resolution_failed = any(ref is None for ref in resolved_private)
+    private_refs = [ref for ref in resolved_private if ref is not None]
+    if private_resolution_failed or (private_refs and (
         not set(private_refs).issubset(reference_images)
         or not await validate_private_repeat_reference_access(
             source_feed_gen_id=source_feed_gen_id, private_reference_images=private_refs
         )
-    ):
+    )):
         return {
             "status": "failed", "task_id": None,
             "runtime_img_service": runtime_img_service,

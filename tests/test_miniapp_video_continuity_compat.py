@@ -796,3 +796,85 @@ async def test_selected_reference_in_shadowed_alias_rejects_before_launch(
     assert json.loads(response.text)["code"] == "repeat_reference_incomplete"
     assert shadowed not in response.text
     entry.delegate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["seedance_2", "seedance_1_5_pro", "grok_imagine_v15"])
+@pytest.mark.parametrize("replace", [False, True])
+async def test_generic_repeat_validates_only_effective_start_frame(
+    video_repeat_entrypoint, model, replace,
+):
+    entry = video_repeat_entrypoint
+    original = "/uploads/removed-start.png"
+    replacement = "/uploads/replacement-start.png"
+    entry.source.return_value.update(
+        model=model, request_data={"v_type": "imgtxt", "v_image_url": original},
+    )
+    entry.availability.side_effect = lambda values: [original] if original in values else []
+    body = {"source_feed_gen_id": 42}
+    if replace:
+        body["reference_images"] = [replacement]
+    request = entry.request(body)
+    response = await entry.call(request)
+    if replace:
+        assert response.status == 200
+        assert original not in entry.availability.call_args.args[0]
+        assert entry.availability.call_args.args[0] == [replacement]
+        assert (await request.json())["v_image_url"] == replacement
+        entry.delegate.assert_awaited_once()
+    else:
+        assert response.status == 400
+        entry.delegate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model,identity", [("seedance_2_5", False), ("seedance_2", True)])
+async def test_source_candidate_guard_is_not_bypassed_outside_explicit_identity(
+    video_repeat_entrypoint, model, identity,
+):
+    entry = video_repeat_entrypoint
+    entry.source.return_value.update(
+        model=model, feed_references_visible=True,
+        feed_reference_selection={"images": ["https://example.test/missing-fixed.png"], "videos": []},
+        request_data={"v_type": "video"},
+    )
+    response = await entry.call(entry.request({
+        "source_feed_gen_id": 42, "seedance25_identity_transfer": identity,
+        "reference_images": ["https://example.test/own-image.png"],
+        "v_reference_videos": ["https://example.test/own-video.mp4"],
+    }))
+    assert response.status == 400
+    entry.delegate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("selected,expected", [
+    ("/uploads/shared-reference.png", ["/uploads/shared-reference.png", "https://example.test/viewer.png"]),
+    ("https://media.chillcreative.ru/uploads/shared-reference.png",
+     ["https://example.test/viewer.png", "https://media.chillcreative.ru/uploads/shared-reference.png"]),
+    ("https://media.chillcreative.ru/uploads/shared-reference.png?alias=1", None),
+])
+async def test_video_repeat_keeps_distinct_alias_slots_unmerged(
+    video_repeat_entrypoint, selected, expected,
+):
+    entry = video_repeat_entrypoint
+    entry.source.return_value.update(
+        feed_references_visible=True,
+        feed_reference_selection={"images": [selected], "videos": []},
+        request_data={
+            "seedance25_scenario": "multimodal",
+            "reference_images": ["/uploads/shared-reference.png",
+                                 "https://media.chillcreative.ru/uploads/shared-reference.png"],
+        },
+    )
+    request = entry.request({
+        "source_feed_gen_id": 42, "reference_images": ["https://example.test/viewer.png"],
+    })
+    response = await entry.call(request)
+    if expected is None:
+        assert response.status == 400
+        entry.delegate.assert_not_awaited()
+    else:
+        assert response.status == 200
+        assert (await request.json())["reference_images"] == expected
+        entry.delegate.assert_awaited_once()

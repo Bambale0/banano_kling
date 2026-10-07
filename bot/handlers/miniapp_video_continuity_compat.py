@@ -19,7 +19,7 @@ from aiohttp import web
 from bot.database import get_generation_task_payload
 from bot.services.media_input_utils import (
     missing_local_upload_sources,
-    reference_source_identity,
+    resolve_reference_source,
 )
 
 logger = logging.getLogger(__name__)
@@ -165,6 +165,15 @@ class VideoRepeatReferenceError(ValueError):
     """An incomplete source recipe must never reach billing or generation."""
 
 
+def _resolve_repeat_source(value: str, candidates: list[str]) -> str | None:
+    try:
+        return resolve_reference_source(value, candidates)
+    except ValueError as exc:
+        raise VideoRepeatReferenceError(
+            "Неоднозначный референс для повтора. Откройте исходную публикацию заново."
+        ) from exc
+
+
 def _validate_selected_reference_candidates(
     request_data: dict[str, Any],
     selection: dict[str, list[str]] | None,
@@ -185,8 +194,7 @@ def _validate_selected_reference_candidates(
             candidates["images"].append(value.strip())
     # The existing publication selection contract covers images/videos only.
     for kind, values in candidates.items():
-        identities = {reference_source_identity(value) for value in values}
-        if any(reference_source_identity(value) not in identities for value in selection[kind]):
+        if any(_resolve_repeat_source(value, values) is None for value in selection[kind]):
             raise VideoRepeatReferenceError(
                 "Исходные референсы для этого повтора сохранены не полностью. "
                 "Откройте другую публикацию или попросите автора обновить её."
@@ -205,24 +213,21 @@ def _merge_selected_reference_slots(
     dropping retained media would run a different recipe and charge the user.
     Never shift ImageN/VideoN bindings or reuse an unselected source reference.
     """
-    selected_set = {reference_source_identity(value) for value in selected_values}
-    retained = [value for value in source_values if reference_source_identity(value) in selected_set]
+    selected_set = {_resolve_repeat_source(value, source_values) for value in selected_values}
+    retained = [value for value in source_values if value in selected_set]
     if not retained:
         return _clean_list(explicit_values), []
 
-    retained_set = {reference_source_identity(value) for value in retained}
+    retained_set = set(retained)
     replacements = [
         value for value in _clean_list(explicit_values)
-        if reference_source_identity(value) not in retained_set
+        if _resolve_repeat_source(value, source_values) not in retained_set
     ]
-    last_retained = max(
-        index for index, value in enumerate(source_values)
-        if reference_source_identity(value) in retained_set
-    )
+    last_retained = max(index for index, value in enumerate(source_values) if value in retained_set)
     replacement_iter = iter(replacements)
     merged: list[str] = []
     for value in source_values[: last_retained + 1]:
-        if reference_source_identity(value) in retained_set:
+        if value in retained_set:
             merged.append(value)
             continue
         replacement = next(replacement_iter, None)
@@ -270,8 +275,6 @@ def enrich_video_repeat_body(
 
     normalized = dict(body)
     request_data = _source_request_data(source_task)
-    explicit_identity = body.get("seedance25_identity_transfer") is True
-
     # Keep the browser's explicit media separate from server-restored private
     # references. For Seedance 2.5 repeats, user-selected media must be able to
     # override/extend the original recipe instead of being silently discarded.
@@ -291,6 +294,10 @@ def enrich_video_repeat_body(
         normalized["v_model"] = str(
             source_task.get("model") or request_data.get("v_model") or ""
         )
+    explicit_identity = (
+        body.get("seedance25_identity_transfer") is True
+        and str(normalized.get("v_model") or "").strip() == "seedance_2_5"
+    )
     if not str(normalized.get("v_type") or "").strip():
         normalized["v_type"] = str(request_data.get("v_type") or _infer_scenario(request_data))
     if _missing(normalized.get("v_duration")):
@@ -312,7 +319,18 @@ def enrich_video_repeat_body(
             normalized["reference_images"] = requested_images[1:]
 
     publication_selection = _publication_repeat_selection(source_task)
-    _validate_selected_reference_candidates(request_data, publication_selection)
+    required_source_selection = publication_selection
+    if explicit_identity and publication_selection is not None:
+        # Explicit identity lists replace their corresponding source inputs,
+        # including an empty-list removal. Omitted media still inherits the
+        # source contract; required own inputs/ownership are validated later.
+        required_source_selection = {
+            kind: [] if target in body else publication_selection[kind]
+            for kind, target in (
+                ("images", "reference_images"), ("videos", "v_reference_videos"),
+            )
+        }
+    _validate_selected_reference_candidates(request_data, required_source_selection)
     private_reference_images: list[str] = []
     private_reference_videos: list[str] = []
     private_reference_audios: list[str] = []
@@ -465,13 +483,17 @@ def _active_video_reference_urls(body: dict[str, Any]) -> list[str]:
                 *_clean_list(body.get("seedance25_reference_audio_urls")),
             ])
 
+    # Generic video providers consume these canonical fields only. Seedance
+    # frame aliases may still hold superseded source media after a replacement.
+    audio_references = _clean_list(body.get("audio_references"))
+    audio_url = body.get("audio_url") or body.get("audio_reference")
+    if not audio_url and audio_references:
+        audio_url = audio_references[0]
     return _clean_list([
-        *[value for target in _REPEAT_LIST_ALIASES for value in _clean_list(body.get(target))],
-        *_clean_list(body.get("audio_references")),
+        *_clean_list(body.get("reference_images")),
+        *_clean_list(body.get("v_reference_videos")),
         body.get("v_image_url"),
-        body.get("seedance25_first_frame_url"),
-        body.get("seedance25_last_frame_url"),
-        body.get("audio_url"),
+        audio_url,
     ])
 
 

@@ -111,6 +111,23 @@ def reference_source_identity(source: str) -> tuple[str, str]:
     return ("url", value)
 
 
+def resolve_reference_source(source: str, candidates: Iterable[str]) -> str | None:
+    """Resolve an exact stored occurrence before a unique known-host alias.
+
+    Identity equivalence does not merge distinct ImageN occurrences. Without an
+    exact match an ambiguous alias fails closed instead of choosing a slot.
+    """
+    value = str(source or "").strip()
+    values = list(dict.fromkeys(candidates))
+    if value in values:
+        return value
+    identity = reference_source_identity(value)
+    matches = [candidate for candidate in values if reference_source_identity(candidate) == identity]
+    if len(matches) > 1:
+        raise ValueError("Неоднозначный референс. Откройте исходную публикацию заново.")
+    return matches[0] if matches else None
+
+
 def is_local_upload_source(source: str) -> bool:
     """Return True when source points to this app's static/uploads storage."""
     return _local_upload_candidate(source) is not None

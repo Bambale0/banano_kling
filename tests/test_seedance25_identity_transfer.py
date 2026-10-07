@@ -409,3 +409,88 @@ async def test_identity_quote_binds_repeat_lineage(public_mocks, monkeypatch):
     assert response.status == 400
     miniapp.deduct_credits.assert_not_awaited()
     public._launch_provider.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("selection", [
+    "complete", "omitted_images", "omitted_videos", "empty_images", "empty_videos", "wrong_owner",
+])
+async def test_explicit_identity_repeat_quotes_only_required_current_media(
+    public_mocks, monkeypatch, selection,
+):
+    import json
+
+    from bot.handlers import miniapp_video_continuity_compat as continuity
+
+    public, miniapp, _request = public_mocks
+    source = {
+        "model": "seedance_2_5", "prompt": "Synthetic original recipe",
+        "feed_references_visible": True,
+        "feed_reference_selection": {
+            "images": ["https://example.test/old-image.png"],
+            "videos": ["https://example.test/old-video.mp4"],
+        },
+        # Deliberately incomplete old snapshot: neither fixed input is needed
+        # when the identity form explicitly replaces both complete media types.
+        "request_data": {"seedance25_scenario": "multimodal"},
+    }
+    if selection == "wrong_owner":
+        def reject_foreign_upload(*_args):
+            raise ValueError("Загрузите своё исходное видео")
+        monkeypatch.setattr(public, "_identity_local_path", reject_foreign_upload)
+    body = identity_body(source_feed_gen_id=42, seedance25_quote_only=True)
+    if selection == "omitted_images":
+        body.pop("reference_images")
+    elif selection == "omitted_videos":
+        body.pop("v_reference_videos")
+    elif selection == "empty_images":
+        body["reference_images"] = []
+    elif selection == "empty_videos":
+        body["v_reference_videos"] = []
+
+    class Request:
+        def __init__(self):
+            self.app = {}
+            self._read_bytes = json.dumps(body).encode()
+
+        async def json(self):
+            return json.loads(self._read_bytes)
+
+    async def quote_delegate(request):
+        return await public._public_miniapp_generate(request, await request.json())
+
+    delegate = AsyncMock(side_effect=quote_delegate)
+    monkeypatch.setattr(miniapp, "miniapp_generate_video", delegate)
+    monkeypatch.setattr(miniapp, "miniapp_feed_share", AsyncMock())
+    monkeypatch.setattr(miniapp, "_video_continuity_compat_installed", False, raising=False)
+    monkeypatch.setattr(miniapp, "_get_repeat_source_card", AsyncMock(return_value={
+        "id": 42, "gen_type": "video", "model": "seedance_2_5",
+        "reference_images": [], "reference_videos": [], "prompt_hidden": True,
+    }))
+    monkeypatch.setattr(continuity, "get_generation_task_payload", AsyncMock(return_value=source))
+    monkeypatch.setattr(continuity, "missing_local_upload_sources", lambda _values: [])
+    continuity.install_miniapp_video_continuity_compat()
+    request = Request()
+    response = await miniapp.miniapp_generate_video(request)
+
+    if selection == "complete":
+        assert response.status == 200
+        result = json.loads(response.body)
+        assert result["quote_only"] is True
+        assert result["cost"] == 104
+        restored = await request.json()
+        assert restored["reference_images"] == body["reference_images"]
+        assert restored["v_reference_videos"] == body["v_reference_videos"]
+        delegate.assert_awaited_once()
+    else:
+        assert response.status == 400
+        if selection.startswith("omitted"):
+            assert json.loads(response.body)["code"] == "repeat_reference_incomplete"
+            delegate.assert_not_awaited()
+        else:
+            # Explicit empties are removals, then the actual identity validator
+            # rejects the missing required media rather than restoring old refs.
+            delegate.assert_awaited_once()
+    miniapp.deduct_credits.assert_not_awaited()
+    public._launch_provider.assert_not_awaited()
+    public.generation_module.add_generation_task.assert_not_awaited()

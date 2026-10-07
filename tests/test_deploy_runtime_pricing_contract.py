@@ -7,10 +7,10 @@ def test_production_deploy_preserves_runtime_price_and_blocks_runtime_drift() ->
     source = _source()
 
     # Both deployment paths (SSH and the nuromix fallback) must preserve the
-    # admin-managed runtime tariff file across the exact-SHA git reset.
+    # admin-managed runtime tariff file without ever rewriting it.
     assert source.count('RUNTIME_PRICE_FILE="data/price.json"') == 2
     assert source.count('echo "Preserving runtime pricing from $RUNTIME_PRICE_FILE"') == 2
-    assert source.count('echo "Restored runtime pricing to $RUNTIME_PRICE_FILE"') == 2
+    assert source.count('echo "Retained runtime pricing at $RUNTIME_PRICE_FILE"') == 2
 
     # Staged edits are never accepted. Unstaged runtime/config/code edits still
     # abort deployment, while test-only drift may be discarded by exact-SHA reset.
@@ -22,16 +22,14 @@ def test_production_deploy_preserves_runtime_price_and_blocks_runtime_drift() ->
     ) == 2
 
 
-def test_runtime_price_is_restored_after_exact_sha_reset() -> None:
+def test_standard_checkout_excludes_runtime_price_from_worktree_writes() -> None:
     source = _source()
 
-    reset_marker = 'git reset --hard "$EXPECTED_SHA"'
-    restore_marker = 'cp -- "$runtime_price_backup" "$RUNTIME_PRICE_FILE"'
-
-    # Verify ordering independently inside both deploy scripts.
-    first_reset = source.index(reset_marker)
-    first_restore = source.index(restore_marker, first_reset)
-    second_reset = source.index(reset_marker, first_restore)
-    second_restore = source.index(restore_marker, second_reset)
-
-    assert first_reset < first_restore < second_reset < second_restore
+    assert source.count(
+        'git restore --source="$EXPECTED_SHA" --worktree -- . ":(top,exclude)$RUNTIME_PRICE_FILE"'
+    ) == 2
+    assert source.count('git reset --mixed --no-refresh "$EXPECTED_SHA"') == 2
+    assert 'git reset --hard "$EXPECTED_SHA"' not in source
+    assert 'git switch tanyapi' not in source
+    assert 'cp -- "$runtime_price_backup" "$RUNTIME_PRICE_FILE"' not in source
+    assert source.count('ln -T -- "$runtime_price_default" "$RUNTIME_PRICE_FILE"') == 2
