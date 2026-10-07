@@ -24,17 +24,17 @@ export function PhotoTab() {
     sourceFeedGenId?: number | null
     prompt: string
     references: string[]
-  }) => {
+  }): Promise<boolean> => {
     if (state.mode !== 'live') {
       setError('Откройте Mini App через Telegram, чтобы запустить генерацию.')
-      return
+      return false
     }
     setIsSubmitting(true)
     setError(null)
+    let lastTask: Task | null = null
+    let latestCredits = state.user.credits
+    let acceptedCount = 0
     try {
-      let lastTask: Task | null = null
-      let latestCredits = state.user.credits
-
       for (let index = 0; index < data.count; index += 1) {
         const result = data.sourceFeedGenId
           ? await remixFeedItem({
@@ -56,24 +56,28 @@ export function PhotoTab() {
               prompt: data.prompt,
               references: data.references,
             })
-        addTask(result.task)
+        acceptedCount += 1
         latestCredits = result.credits
         lastTask = result.task
+        addTask(result.task)
         if (result.detail) {
           setTaskDetail(result.detail)
         }
       }
 
-      setCredits(latestCredits)
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Не удалось запустить фото'
+      setError(acceptedCount > 0 ? `Запущено ${acceptedCount} из ${data.count}. ${message}` : message)
+    } finally {
       if (lastTask) {
+        setCredits(latestCredits)
         setLastРезультат(lastTask)
         selectTask(lastTask)
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Не удалось запустить фото')
-    } finally {
       setIsSubmitting(false)
     }
+    // Preserve a rejected draft, but never replay already accepted batch items.
+    return acceptedCount > 0
   }
 
   const handleUploadReference = async (file: File): Promise<UploadedFile> => {

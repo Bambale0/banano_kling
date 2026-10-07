@@ -13,6 +13,7 @@ import { Banana, Sparkles, Loader2, AlertCircle, Palette, Shirt, Mountain, Spark
 
 interface ImageGeneratorFormProps {
   models: ImageModel[]
+  // True means at least one request was accepted and the draft can be reset.
   onSubmit: (data: {
     model: string
     ratio: string
@@ -24,7 +25,7 @@ interface ImageGeneratorFormProps {
     sourceFeedGenId?: number | null
     prompt: string
     references: string[]
-  }) => Promise<void>
+  }) => Promise<boolean>
   onUploadReference?: (file: File) => Promise<UploadedFile>
   savedReferences?: UploadedFile[]
   promptPreset?: PromptPreset | null
@@ -64,7 +65,9 @@ export function ImageGeneratorForm({
   const cost = unitCost * selectedCount
   const canAfford = credits >= cost
   const isFeedRemix = sourceFeedGenId !== null
-  const needsReference = Boolean(model?.requires_reference) && references.length === 0
+  // Source repeats restore permitted references on the server before validation.
+  const requiresLocalReference = Boolean(model?.requires_reference) && !isFeedRemix
+  const needsReference = requiresLocalReference && references.length === 0
   const referencesUploading = references.some((reference) => reference.uploading)
   const hasPrompt = prompt.trim().length > 0 || isFeedRemix
   const isValid = hasPrompt && canAfford && !needsReference && !referencesUploading
@@ -168,7 +171,7 @@ export function ImageGeneratorForm({
 
   const handleSubmit = useCallback(async () => {
     if (!isValid) return
-    await onSubmit({
+    const accepted = await onSubmit({
       model: selectedModel,
       ratio: selectedRatio,
       quality: selectedQuality,
@@ -180,6 +183,7 @@ export function ImageGeneratorForm({
       prompt,
       references: references.map(r => r.url),
     })
+    if (!accepted) return
     setPrompt('')
     setSelectedPromptId(null)
     setSourceFeedGenId(null)
@@ -340,7 +344,7 @@ export function ImageGeneratorForm({
         <div className="space-y-2">
           <label className="text-sm font-medium text-foreground">
             Референсы
-            {model?.requires_reference && (
+            {requiresLocalReference && (
               <span className="text-destructive ml-1">*</span>
             )}
           </label>
@@ -349,7 +353,7 @@ export function ImageGeneratorForm({
             onFilesChange={handleReferencesChange}
             maxFiles={model?.max_references || 4}
             accept="image/*"
-            required={model?.requires_reference}
+            required={requiresLocalReference}
             onUpload={onUploadReference}
             libraryFiles={savedReferences.filter((item) => item.type === 'image')}
             libraryLabel="Сохранённые фото-референсы"
@@ -358,7 +362,7 @@ export function ImageGeneratorForm({
             {isFeedRemix
               ? references.length > 0
                 ? 'Выбранные файлы заменят или дополнят исходные референсы перед повтором.'
-                : 'Можно запустить без нового файла: исходные приватные референсы восстановятся автоматически.'
+                : 'Для повтора используются доступные исходные референсы. Если чего-то не хватает, добавьте свои фото.'
               : model?.requires_reference
                 ? 'Для этой модели нужен хотя бы один исходник или референс.'
                 : 'Можно добавить референсы для стиля, композиции или сохранения деталей.'}
@@ -454,7 +458,7 @@ export function ImageGeneratorForm({
             <p className="text-muted-foreground mb-1">Файлы</p>
             <p className="text-foreground font-medium">{references.length} / {model?.max_references || 0}</p>
             <p className="text-muted-foreground mt-1">
-              {model?.requires_reference ? 'Минимум 1 обязателен' : 'Опционально'}
+              {isFeedRemix ? 'Свои фото для повтора' : requiresLocalReference ? 'Минимум 1 обязателен' : 'Опционально'}
             </p>
           </div>
         </div>

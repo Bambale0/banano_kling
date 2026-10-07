@@ -38,7 +38,7 @@ const remixPreset: PromptPreset = {
 
 describe('ImageGeneratorForm feed remix', () => {
   it('uses the textarea only for user changes and does not expose the author prompt as editable text', async () => {
-    const onSubmit = jest.fn().mockResolvedValue(undefined)
+    const onSubmit = jest.fn().mockResolvedValue(true)
     const consumed = jest.fn()
 
     render(
@@ -65,6 +65,62 @@ describe('ImageGeneratorForm feed remix', () => {
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
       sourceFeedGenId: 42,
       prompt: 'Сделай волосы блонд',
+    }))
+  })
+})
+
+
+describe.each(['seedream_edit', 'grok_imagine_i2i'])('%s server-owned repeat references', (modelId) => {
+  const editModels: ImageModel[] = [{ ...models[0], id: modelId, requires_reference: true }]
+  const privateRepeat: PromptPreset = {
+    ...remixPreset,
+    model: modelId,
+    promptHidden: true,
+    initialReferences: [],
+  }
+
+  it('submits an all-fixed repeat without exposing or requiring private reference URLs', async () => {
+    const onSubmit = jest.fn().mockResolvedValue(true)
+    render(<ImageGeneratorForm models={editModels} onSubmit={onSubmit} promptPreset={privateRepeat} isSubmitting={false} credits={100} />)
+
+    const repeat = screen.getByRole('button', { name: /Повторить образ/i })
+    expect(repeat).toBeEnabled()
+    expect(screen.queryByText('Загрузите референс для этой модели')).not.toBeInTheDocument()
+    expect(screen.queryByText('Минимум 1 обязателен')).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox')).toHaveValue('')
+    expect(screen.queryByDisplayValue(privateRepeat.prompt)).not.toBeInTheDocument()
+    fireEvent.click(repeat)
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      model: modelId, sourceFeedGenId: 42, prompt: '', references: [],
+    }))
+  })
+
+  it('still requires a local reference for a standalone edit generation', () => {
+    const onSubmit = jest.fn()
+    render(<ImageGeneratorForm models={editModels} onSubmit={onSubmit} isSubmitting={false} credits={100} />)
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'My standalone edit' } })
+
+    const launch = screen.getByRole('button', { name: /Запустить фото/i })
+    expect(launch).toBeDisabled()
+    expect(screen.getByText('Загрузите референс для этой модели')).toBeInTheDocument()
+    fireEvent.click(launch)
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('preserves the ordered replacement references and source ID', async () => {
+    const onSubmit = jest.fn().mockResolvedValue(true)
+    const replacements = ['https://example.test/replacement-a.png', 'https://example.test/replacement-b.png']
+    render(<ImageGeneratorForm models={editModels} onSubmit={onSubmit} promptPreset={{
+      ...privateRepeat,
+      initialReferences: replacements.map((url, index) => ({ id: String(index), name: `Replacement ${index + 1}`, type: 'image', url, size: 0 })),
+    }} isSubmitting={false} credits={100} />)
+    fireEvent.click(screen.getByRole('button', { name: /Повторить образ/i }))
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      sourceFeedGenId: 42, prompt: '', references: replacements,
     }))
   })
 })
