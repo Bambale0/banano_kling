@@ -83,7 +83,7 @@ from bot.services.media_input_utils import (
     filter_available_image_sources,
     is_reference_contact_sheet_url,
     missing_local_upload_sources,
-)
+    reference_source_identity,)
 from bot.services.nano_banana_2_service import nano_banana_2_service
 from bot.services.nano_banana_pro_service import nano_banana_pro_service
 from bot.services.preset_manager import preset_manager
@@ -1065,10 +1065,12 @@ async def validate_private_repeat_reference_access(
             or not (root.get("is_public_feed") or root.get("is_profile_visible"))
         ):
             return False
-        granted = set(generation_repeat_reference_selection(root))
-        candidates = set(_feed_reference_image_candidates(root.get("request_data") or {}))
+        granted = {reference_source_identity(ref) for ref in generation_repeat_reference_selection(root)}
+        candidates = {reference_source_identity(ref)
+                      for ref in _feed_reference_image_candidates(root.get("request_data") or {})}
         return all(
-            ref in granted and ref in candidates and not is_reference_contact_sheet_url(ref)
+            reference_source_identity(ref) in granted
+            and reference_source_identity(ref) in candidates and not is_reference_contact_sheet_url(ref)
             and _is_feed_result_url_available(root, ref)
             for ref in private_reference_images
         )
