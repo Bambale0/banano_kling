@@ -151,6 +151,24 @@ class TestConfig:
         cfg.WEBHOOK_HOST = "https://custom.com"
         assert cfg.static_base_url == "https://custom.com"
 
+    def test_static_base_url_prefers_explicit_media_origin(self):
+        cfg = Config()
+        cfg.STATIC_BASE_URL = "https://tanyapp.xn--e1aikcel5c5a.online/"
+        cfg.WEBHOOK_HOST = "https://tanyapi.chillcreative.ru"
+        assert cfg.static_base_url == "https://tanyapp.xn--e1aikcel5c5a.online"
+
+    def test_media_input_utils_accepts_canonical_and_legacy_origins(self, monkeypatch):
+        from bot.config import config
+        from bot.services import media_input_utils
+
+        monkeypatch.setattr(config, "STATIC_BASE_URL", "https://tanyapp.xn--e1aikcel5c5a.online")
+        assert media_input_utils.is_local_upload_source(
+            "https://tanyapp.xn--e1aikcel5c5a.online/uploads/refs/image/123/example.png"
+        )
+        assert media_input_utils.is_local_upload_source(
+            "https://tanyapi.chillcreative.ru/uploads/refs/image/123/example.png"
+        )
+
     def test_regular_banana_models_are_forced_to_kie(self):
         from bot.config import config
         from bot.services import nano_banana_2_service, nano_banana_pro_service

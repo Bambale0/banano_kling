@@ -13,7 +13,10 @@ from PIL import Image, ImageOps
 from bot.config import config
 
 
-DEFAULT_LOCAL_UPLOAD_HOSTS = {"tanyapi.chillcreative.ru"}
+DEFAULT_LOCAL_UPLOAD_HOSTS = {
+    "tanyapi.chillcreative.ru",  # legacy public media origin
+    "tanyapp.xn--e1aikcel5c5a.online",  # canonical public media origin
+}
 
 
 def _guess_mime_type(source: str) -> str:
