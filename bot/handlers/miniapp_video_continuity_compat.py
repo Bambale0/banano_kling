@@ -646,6 +646,7 @@ def _video_repeat_snapshot(source: dict[str, Any]) -> str:
         "recipe": {key: value for key, value in request_data.items()
                    if key in MEDIA_KEYS or key in {
                        "v_model", "v_type", "scenario", "seedance25_scenario", "veo_generation_type",
+                       "seedance25_resolution", "resolution",
                        "seedance25_identity_transfer", "seedance25_video_editing",
                    }},
     }
@@ -683,6 +684,36 @@ async def verify_video_repeat_before_charge(request: web.Request) -> web.Respons
             status=400,
         )
     return None
+
+def video_repeat_pending_response(task_id: str | None) -> web.Response:
+    return web.json_response(
+        {"ok": False, "code": "video_status_pending", "task_id": task_id,
+         "error": "Для этого повтора уже есть незавершённая задача. Проверьте историю; повторный запуск пока недоступен."},
+        status=409,
+    )
+
+
+async def reserve_video_repeat_launch(request, *, user, telegram_id, model, duration, aspect_ratio):
+    authorization = getattr(request, "_video_repeat_authorization", None)
+    if not authorization:
+        return None, None
+    from bot.database import reserve_private_video_repeat
+    receipt = await reserve_private_video_repeat(
+        user_id=user.id, telegram_id=telegram_id, source_id=authorization["source_id"],
+        model=model, duration=duration, aspect_ratio=aspect_ratio,
+    )
+    if not receipt["created"]:
+        return None, video_repeat_pending_response(receipt["task_id"])
+    return receipt["task_id"], None
+
+
+async def record_video_repeat_launch(receipt_id, user_id, *, phase, cost=None, terminal=False, attempted_cost=None):
+    if not receipt_id:
+        return
+    from bot.database import finish_private_video_repeat
+    if not await finish_private_video_repeat(receipt_id, user_id, phase=phase, cost=cost, terminal=terminal, attempted_cost=attempted_cost):
+        raise RuntimeError("video_repeat_receipt_update_failed")
+
 
 def _replace_cached_json(request: web.Request, body: dict[str, Any]) -> None:
     # aiohttp Request.json() re-reads the cached byte body. Replacing this cache

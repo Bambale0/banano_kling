@@ -51,6 +51,7 @@ async def get_stuck_tasks(minutes: int = STUCK_THRESHOLD_MINUTES) -> list[Dict[s
             FROM generation_tasks
             WHERE (status IN ('pending', 'processing') OR {retryable_result})
               AND task_id NOT LIKE 'img_%'
+              AND task_id NOT LIKE 'video_repeat_receipt_%'
               AND {age_expr} >= ?
             ORDER BY COALESCE(updated_at, created_at) ASC
             LIMIT 50
@@ -201,6 +202,7 @@ async def force_fail_task(
                 completed_at = CURRENT_TIMESTAMP,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ? AND status IN ('pending', 'processing')
+              AND task_id NOT LIKE 'video_repeat_receipt_%'
             """ + provider_guard + " RETURNING request_data",
             parameters,
         )

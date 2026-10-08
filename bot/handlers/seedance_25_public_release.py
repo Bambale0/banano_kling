@@ -683,32 +683,51 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
             status=400,
         )
 
-    from bot.handlers.miniapp_video_continuity_compat import verify_video_repeat_before_charge
-
-    permission_error = await verify_video_repeat_before_charge(request)
-    if permission_error is not None:
-        return permission_error
+    from bot.handlers.miniapp_video_continuity_compat import (
+        record_video_repeat_launch, reserve_video_repeat_launch,
+        verify_video_repeat_before_charge, video_repeat_pending_response,
+    )
     private_repeat = bool(getattr(request, "_video_repeat_authorization", None))
+    receipt_id = None
+    launch_started = debit_attempted = debit_completed = provider_rejected = task_persisted = False
     charged = False
     refund_attempted = False
     accepted_task_id = None
     try:
+        receipt_id, pending_response = await reserve_video_repeat_launch(
+            request, user=user, telegram_id=telegram_id, model=MODEL_KEY,
+            duration=payload["duration"], aspect_ratio=payload["ratio"],
+        )
+        if pending_response is not None:
+            return pending_response
+        permission_error = await verify_video_repeat_before_charge(request)
+        if permission_error is not None:
+            await record_video_repeat_launch(receipt_id, user.id, phase="permission_rejected", terminal=True)
+            return permission_error
         if not is_admin:
+            await record_video_repeat_launch(receipt_id, user.id, phase="debit_pending", attempted_cost=quote)
+            debit_attempted = True
             debited = await miniapp_module.deduct_credits(telegram_id, quote)
+            debit_completed = True
             if private_repeat and quote > 0 and debited is False:
+                await record_video_repeat_launch(receipt_id, user.id, phase="debit_rejected", terminal=True)
                 return web.json_response(
                     {"ok": False, "error": "Не удалось списать бананы. Обновите баланс и попробуйте снова."}, status=400,
                 )
             charged = bool(quote > 0 and debited is not False) if private_repeat else True
 
+        await record_video_repeat_launch(receipt_id, user.id, phase="launching", cost=quote if charged else 0)
+        launch_started = True
         result = await _launch_provider(payload)
         if not result or not result.get("task_id"):
+            provider_rejected = True
             if charged:
                 refund_attempted = True
                 refunded = await miniapp_module.add_credits(telegram_id, quote)
                 if private_repeat and refunded is False:
                     raise RuntimeError("video_refund_unconfirmed")
                 charged = False
+            await record_video_repeat_launch(receipt_id, user.id, phase="rejected", cost=0, terminal=True)
             error = (
                 "провайдер не принял запрос"
                 if getattr(request, "_video_repeat_authorization", None)
@@ -735,7 +754,7 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
                 parent_generation_id=immediate_parent_id,
                 action_type="repeat",
             )
-        await generation_module.add_generation_task(
+        persisted = await generation_module.add_generation_task(
             user.id,
             telegram_id,
             task_id,
@@ -750,7 +769,11 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
             source_feed_gen_id=source_feed_gen_id,
             parent_generation_id=(immediate_parent_id if source_feed_gen_id else None),
             action_type="repeat" if source_feed_gen_id else None,
+            **({"reserved_task_id": receipt_id} if receipt_id else {}),
         )
+        if receipt_id and persisted is not True:
+            raise RuntimeError("video_repeat_receipt_binding_failed")
+        task_persisted = True
         if source_feed_gen_id and not is_admin:
             try:
                 await miniapp_module.credit_feed_prompt_repeat(
@@ -798,7 +821,7 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
                 logger.error("Private Seedance accepted; status reconciliation needed: task_id=%s error_type=%s",
                              accepted_task_id, type(exc).__name__)
                 return web.json_response(
-                    {"ok": False, "code": "video_status_pending", "task_id": accepted_task_id,
+                    {"ok": False, "code": "video_status_pending", "task_id": accepted_task_id if task_persisted or not receipt_id else receipt_id,
                      "error": "Видео принято провайдером, но статус пока не подтверждён. Не повторяйте запуск сразу."},
                     status=500,
                 )
@@ -819,6 +842,19 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
                      "error": "Не удалось подтвердить возврат бананов. Требуется проверка платежа; не повторяйте запуск сразу."},
                     status=500,
                 )
+            if receipt_id:
+                terminal = provider_rejected or (not launch_started and (not debit_attempted or debit_completed))
+                try:
+                    await record_video_repeat_launch(receipt_id, user.id,
+                        phase=("prelaunch_failed" if terminal else "debit_unknown"
+                               if debit_attempted and not debit_completed else "outcome_unknown"),
+                        cost=None if debit_attempted and not debit_completed else 0, terminal=terminal)
+                except Exception as receipt_error:
+                    logger.error("Private Seedance receipt reconciliation needed: task_id=%s error_type=%s",
+                                 receipt_id, type(receipt_error).__name__)
+                    return video_repeat_pending_response(receipt_id)
+                if not terminal:
+                    return video_repeat_pending_response(receipt_id)
             logger.error("Private Seedance video repeat failed: error_type=%s", type(exc).__name__)
             return web.json_response({"ok": False, "error": "Не удалось запустить видео. Попробуйте ещё раз."}, status=500)
         logger.exception("Public Seedance 2.5 Mini App launch failed")

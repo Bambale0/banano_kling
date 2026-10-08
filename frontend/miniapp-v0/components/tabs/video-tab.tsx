@@ -6,7 +6,7 @@ import { VideoGeneratorForm } from '../forms/video-generator-form'
 import { Seedance25PublicForm } from '../forms/seedance25-public-form'
 import { ResultCard } from '../result-card'
 import type { Task, ScenarioType, UploadedFile } from '@/lib/types'
-import type { Seedance25GenerateResponse } from '@/lib/seedance25-api'
+import { uploadSeedance25Video, type Seedance25GenerateResponse } from '@/lib/seedance25-api'
 import { generateVideo, uploadFile } from '@/lib/api'
 import { isVideoStatusPending } from '@/lib/video-repeat-pending'
 import { GenjutsuButton } from '../genjutsu-entry'
@@ -136,11 +136,13 @@ export function VideoTab() {
     return uploaded
   }
 
-  const handleUploadVideoReference = async (file: File): Promise<UploadedFile> => {
+  const handleUploadVideoReference = async (file: File, typedRepeatModel?: string): Promise<UploadedFile> => {
     if (state.mode !== 'live') {
       throw new Error('Откройте Mini App через Telegram, чтобы загрузить видео.')
     }
-    const uploaded = await uploadFile('video_reference', file)
+    const uploaded = typedRepeatModel === 'seedance_2_5'
+      ? await uploadSeedance25Video(file)
+      : await uploadFile('video_reference', file)
     addSavedReference(uploaded)
     return uploaded
   }

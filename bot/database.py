@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from math import isfinite
 from typing import Any, Iterable, List, Optional
 from urllib.parse import urlparse
+from uuid import uuid4
 
 from bot import db as db_backend
 from bot.services.delivery_state import (
@@ -5271,6 +5272,80 @@ def _merge_task_id_aliases(request_data: Optional[dict | str], *task_ids: Any) -
     return payload
 
 
+async def reserve_private_video_repeat(
+    *, user_id: int, telegram_id: int, source_id: int, model: str,
+    duration: int, aspect_ratio: str,
+) -> dict[str, Any]:
+    """Reserve one typed repeat before charge, serialized on its existing user.
+
+    The user-row write locks the empty-set check on PostgreSQL and acquires the
+    SQLite writer lock. A process crash leaves a visible processing receipt;
+    unknown outcomes are never reclaimed by elapsed time.
+    """
+    async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
+        db.row_factory = db_backend.Row
+        locked = await db.execute(
+            "UPDATE users SET updated_at = updated_at WHERE id = ? AND telegram_id = ?",
+            (user_id, telegram_id),
+        )
+        if locked.rowcount != 1:
+            raise ValueError("Не удалось подтвердить владельца задачи.")
+        cursor = await db.execute(
+            "SELECT task_id, request_data FROM generation_tasks "
+            "WHERE user_id = ? AND source_feed_gen_id = ? "
+            "AND status IN ('pending', 'processing') ORDER BY id DESC",
+            (user_id, source_id),
+        )
+        for row in await cursor.fetchall():
+            if _parse_json_dict(row["request_data"]).get("video_repeat_receipt") is True:
+                await db.commit()
+                return {"created": False, "task_id": str(row["task_id"])}
+        task_id = "video_repeat_receipt_" + uuid4().hex
+        metadata = {"video_repeat_contract_version": 1, "video_repeat_receipt": True,
+                    "repeat_receipt_phase": "reserved", "repeat_attempted_cost": 0.0, "task_id_aliases": [task_id]}
+        await db.execute(
+            "INSERT INTO generation_tasks "
+            "(user_id, telegram_id, task_id, type, preset_id, model, duration, aspect_ratio, "
+            "cost, request_data, status, source_feed_gen_id, parent_generation_id, action_type) "
+            "VALUES (?, ?, ?, 'video', 'miniapp_video', ?, ?, ?, 0, ?, 'processing', ?, ?, 'repeat')",
+            (user_id, telegram_id, task_id, model, duration, aspect_ratio,
+             json.dumps(metadata), source_id, source_id),
+        )
+        await db.commit()
+        return {"created": True, "task_id": task_id}
+
+
+async def finish_private_video_repeat(
+    task_id: str, user_id: int, *, phase: str, cost: float | None = None,
+    terminal: bool = False, attempted_cost: float | None = None,
+) -> bool:
+    """Record a local receipt outcome; only confirmed no-job/refund is terminal."""
+    async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
+        db.row_factory = db_backend.Row
+        cursor = await db.execute(
+            "SELECT request_data FROM generation_tasks WHERE task_id = ? AND user_id = ? "
+            "AND status = 'processing'", (task_id, user_id),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return False
+        metadata = _parse_json_dict(row["request_data"])
+        if metadata.get("video_repeat_receipt") is not True:
+            return False
+        metadata["repeat_receipt_phase"] = phase
+        if attempted_cost is not None:
+            metadata["repeat_attempted_cost"] = float(attempted_cost)
+        cursor = await db.execute(
+            "UPDATE generation_tasks SET request_data = ?, status = ?, "
+            "cost = COALESCE(?, cost), updated_at = CURRENT_TIMESTAMP "
+            "WHERE task_id = ? AND user_id = ? AND status = 'processing' AND request_data = ?",
+            (json.dumps(metadata), "failed" if terminal else "processing", cost,
+             task_id, user_id, row["request_data"]),
+        )
+        await db.commit()
+        return cursor.rowcount == 1
+
+
 async def add_generation_task(
     user_id: int,
     telegram_id: int,
@@ -5286,9 +5361,36 @@ async def add_generation_task(
     source_feed_gen_id: Optional[int] = None,
     parent_generation_id: Optional[int] = None,
     action_type: Optional[str] = None,
+    reserved_task_id: str | None = None,
 ) -> bool:
     """Создаёт задачу генерации"""
     async with db_backend.connect(DATABASE_PATH) as db:
+        if reserved_task_id:
+            db.row_factory = db_backend.Row
+            cursor = await db.execute(
+                "SELECT id, request_data FROM generation_tasks WHERE task_id = ? "
+                "AND user_id = ? AND telegram_id = ? AND status = 'processing'",
+                (reserved_task_id, user_id, telegram_id),
+            )
+            receipt = await cursor.fetchone()
+            if not receipt or _parse_json_dict(receipt["request_data"]).get("video_repeat_receipt") is not True:
+                raise ValueError("Не удалось подтвердить запись запуска видео.")
+            metadata = _parse_json_dict(request_data)
+            metadata.update(video_repeat_contract_version=1, video_repeat_receipt=True,
+                            repeat_receipt_phase="accepted")
+            metadata = _merge_task_id_aliases(metadata, reserved_task_id, task_id)
+            result = await db.execute(
+                "UPDATE generation_tasks SET task_id = ?, type = ?, preset_id = ?, model = ?, "
+                "duration = ?, aspect_ratio = ?, prompt = ?, request_data = ?, status = 'pending', "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? "
+                "AND task_id = ? AND status = 'processing'",
+                (task_id, type, preset_id, model, duration, aspect_ratio, prompt,
+                 json.dumps(metadata, ensure_ascii=False), receipt["id"], user_id, reserved_task_id),
+            )
+            if result.rowcount != 1:
+                raise RuntimeError("video_repeat_receipt_binding_failed")
+            await db.commit()
+            return True
         normalized_request = _merge_task_id_aliases(request_data, task_id)
         serialized_request = (
             json.dumps(normalized_request, ensure_ascii=False)

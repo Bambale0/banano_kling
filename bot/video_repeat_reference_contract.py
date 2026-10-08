@@ -17,7 +17,7 @@ from bot.video_reference_policy import apply_video_reference_cost
 
 IMAGE_LIST_KEYS = ("reference_images", "reference_image_urls")
 VIDEO_LIST_KEYS = ("v_reference_videos", "reference_videos", "reference_video_urls", "video_references")
-AUDIO_LIST_KEYS = ("seedance25_reference_audio_urls", "reference_audios", "reference_audio_urls", "audio_references")
+AUDIO_LIST_KEYS = ("seedance25_reference_audio_urls", "v_reference_audio", "reference_audios", "reference_audio_urls", "audio_references")
 FIRST_KEYS = ("seedance25_first_frame_url", "first_frame_url", "v_image_url", "start_image", "image_url")
 START_KEYS = ("v_image_url", "seedance25_first_frame_url", "first_frame_url", "start_image", "image_url")
 LAST_KEYS = ("seedance25_last_frame_url", "last_frame_url", "end_image_url")
@@ -171,6 +171,13 @@ def build_video_repeat_plan(
     if str(data.get("v_type") or data.get("generation_type") or "").lower() in {"motion_control", "motion"}:
         raise VideoRepeatContractError("Для Motion Control нужен специальный сценарий; приватный повтор через эту форму недоступен.")
     recipe = active_video_recipe(task)
+    if model == "seedance_2_5":
+        from bot.model_capabilities import get_video_capability
+        quality = str(data.get("seedance25_resolution") or data.get("resolution") or "720p").strip().lower()
+        capability = get_video_capability(model)
+        if not capability or quality not in capability.resolutions:
+            raise VideoRepeatContractError("Качество исходного видео не поддерживает безопасный повтор.")
+        recipe["pricing_quality"] = quality
     if model.startswith("veo3"):
         mode = str(data.get("veo_generation_type") or (
             "FIRST_AND_LAST_FRAMES_2_VIDEO" if recipe["scenario"] == "imgtxt" else "TEXT_2_VIDEO"
@@ -213,10 +220,26 @@ def video_repeat_descriptors(task: dict[str, Any]) -> dict[str, Any] | None:
         cost_multiplier = float(apply_video_reference_cost(plan["model"], 1, [slot["url"] for slot in plan["videos"]]))
         if not isfinite(cost_multiplier) or cost_multiplier <= 0:
             raise VideoRepeatContractError("Не удалось определить стоимость повтора.")
+        price_metadata = {}
+        if plan["model"] == "seedance_2_5":
+            # Same installed quote helper as the paid Seedance launch, including
+            # video-reference adjustment. These are final totals, not factors.
+            from bot.handlers.seedance_25_preview import _price_quote
+            from bot.model_capabilities import get_video_capability
+            capability = get_video_capability(plan["model"])
+            duration_costs = {
+                str(duration): float(_price_quote({
+                    "v_duration": duration, "seedance25_resolution": plan["pricing_quality"],
+                    "v_reference_videos": [slot["url"] for slot in plan["videos"]],
+                })) for duration in capability.durations
+            }
+            if any(not isfinite(cost) or cost <= 0 for cost in duration_costs.values()):
+                raise VideoRepeatContractError("Не удалось определить стоимость повтора.")
+            price_metadata = {"pricing_quality": plan["pricing_quality"], "duration_costs": duration_costs}
     except VideoRepeatContractError:
         return {"version": 1, "available": False, "images": [], "videos": []}
     return {
-        "version": 1, "available": True, "cost_multiplier": cost_multiplier,
+        "version": 1, "available": True, "cost_multiplier": cost_multiplier, **price_metadata,
         **{kind: [{key: slot[key] for key in ("index", "role", "binding")} for slot in plan[kind]]
            for kind in ("images", "videos")},
     }
@@ -250,6 +273,7 @@ def merge_typed_video_inputs(
         if requested and requested != plan["scenario"]:
             raise VideoRepeatContractError("Для этого повтора используйте сценарий исходной публикации.")
         result["seedance25_scenario"] = plan["scenario"]
+        result["seedance25_resolution"] = plan["pricing_quality"]
         result["v_type"] = "text" if plan["scenario"] == "text" else "imgtxt" if plan["scenario"] in {"first_frame", "first_last"} else "video"
     elif not identity:
         if body.get("v_type") and body["v_type"] != plan["scenario"]:

@@ -158,7 +158,7 @@ describe('private video repeat prompt boundary', () => {
 
 describe('video repeat replacement slots', () => {
   const slots = {
-    version: 1, available: true, cost_multiplier: 2,
+    version: 1, available: true, cost_multiplier: 2, duration_costs: { '5': 10, '10': 20 }, pricing_quality: '720p',
     images: [
       { index: 0, role: 'first_frame', binding: 'upload' },
       { index: 1, role: 'last_frame', binding: 'fixed' },
@@ -195,7 +195,7 @@ describe('video repeat replacement slots', () => {
 
 describe('video repeat slot lifecycle', () => {
   const fixed: VideoPromptPreset = { ...preset, prompt: '', promptHidden: true, scenario: 'video', repeatReferenceSlots: {
-    version: 1, available: true, cost_multiplier: 2, images: [{ index: 0, role: 'first_frame', binding: 'fixed' }],
+    version: 1, available: true, cost_multiplier: 2, duration_costs: { '5': 10, '10': 20 }, pricing_quality: '720p', images: [{ index: 0, role: 'first_frame', binding: 'fixed' }],
     videos: [{ index: 0, role: 'reference', binding: 'fixed' }],
   } }
   it('can repeat all-fixed inputs without extra uploads and prevents duplicate clicks', async () => {
@@ -243,7 +243,7 @@ describe('video repeat slot lifecycle', () => {
     let finish!: (file: UploadedFile) => void
     const upload = jest.fn(() => new Promise<UploadedFile>((resolve) => { finish = resolve }))
     const oneSlot: VideoPromptPreset = { ...fixed, repeatReferenceSlots: {
-      version: 1, available: true, cost_multiplier: 2, images: [{ index: 0, role: 'reference', binding: 'upload' }], videos: [],
+      version: 1, available: true, cost_multiplier: 2, duration_costs: { '5': 10, '10': 20 }, pricing_quality: '720p', images: [{ index: 0, role: 'reference', binding: 'upload' }], videos: [],
     } }
     const props = { models, onSubmit: jest.fn(), isSubmitting: false, credits: 100, onUploadImageReference: upload }
     const view = render(<VideoGeneratorForm {...props} promptPreset={oneSlot} />)

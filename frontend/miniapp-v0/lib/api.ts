@@ -1,7 +1,7 @@
 'use client'
 
 import { forgetPendingPublication } from './feed-events'
-import { getPendingVideoRepeat, isVideoStatusPending, markVideoRepeatPending, reconcilePendingVideoRepeats } from './video-repeat-pending'
+import { getPendingVideoRepeat, getPendingVideoTaskIds, isVideoStatusPending, markVideoRepeatPending, reconcilePendingVideoDetail, reconcilePendingVideoRepeats } from './video-repeat-pending'
 
 import type {
   BootstrapResponse,
@@ -413,13 +413,35 @@ async function postJson<T>(path: string, payload: Record<string, unknown>, signa
   return parseJson<T>(response)
 }
 
+const pendingVideoDetailRequests = new Map<string, Promise<TaskDetail>>()
+
+function resolvePendingVideoTask(taskId: string): Promise<TaskDetail> {
+  const ongoing = pendingVideoDetailRequests.get(taskId)
+  if (ongoing) return ongoing
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 10_000)
+  const request = fetchTaskDetail(taskId, controller.signal).finally(() => {
+    clearTimeout(timeout)
+    pendingVideoDetailRequests.delete(taskId)
+  })
+  pendingVideoDetailRequests.set(taskId, request)
+  return request
+}
+
 export async function bootstrapApp(signal?: AbortSignal): Promise<BootstrapResponse> {
   const initData = getInitData()
   if (!initData) {
     throw new Error('Откройте mini app из Telegram и попробуйте снова.')
   }
   const response = await postJson<BootstrapResponse>('bootstrap', { init_data: initData }, signal)
-  reconcilePendingVideoRepeats(response.recent_tasks || [])
+  const tasks = response.recent_tasks || []
+  reconcilePendingVideoRepeats(tasks)
+  if (!signal?.aborted) {
+    // A promoted receipt no longer appears under its local ID in history.
+    // Resolve only our known missing IDs; failed lookups retain the guard.
+    const missingIds = getPendingVideoTaskIds().filter((taskId) => !tasks.some((task) => task.task_id === taskId))
+    void Promise.allSettled(missingIds.map(resolvePendingVideoTask))
+  }
   return response
 }
 
@@ -456,7 +478,7 @@ export async function createPayment(payload: {
   })
 }
 
-export async function fetchTaskDetail(taskId: string): Promise<TaskDetail> {
+export async function fetchTaskDetail(taskId: string, signal?: AbortSignal): Promise<TaskDetail> {
   const initData = getInitData()
   if (!initData) {
     throw new Error('Откройте mini app из Telegram и попробуйте снова.')
@@ -464,8 +486,11 @@ export async function fetchTaskDetail(taskId: string): Promise<TaskDetail> {
   const response = await postJson<{ ok: true; task: TaskDetail }>('task-detail', {
     init_data: initData,
     task_id: taskId,
-  })
-  reconcilePendingVideoRepeats([response.task])
+  }, signal)
+  if (!response.task || typeof response.task.task_id !== 'string' || !response.task.task_id) {
+    throw new Error('Не удалось подтвердить статус задачи.')
+  }
+  reconcilePendingVideoDetail(taskId, response.task)
   return response.task
 }
 

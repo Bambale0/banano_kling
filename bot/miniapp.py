@@ -1736,6 +1736,13 @@ async def _notify_miniapp_image_task_queued(
         )
 
 
+def _public_task_status(row) -> str:
+    status = str(row["status"] or "pending")
+    if status == "processing" and str(row["task_id"] or "").startswith("video_repeat_receipt_"):
+        return "pending"
+    return status
+
+
 async def _fetch_recent_tasks(telegram_id: int, limit: int = 8) -> list[dict[str, Any]]:
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
@@ -1774,7 +1781,7 @@ async def _fetch_recent_tasks(telegram_id: int, limit: int = 8) -> list[dict[str
                 "model_label": label,
                 "duration": row["duration"],
                 "aspect_ratio": row["aspect_ratio"] or "",
-                "status": row["status"] or "pending",
+                "status": _public_task_status(row),
                 "result_url": result_urls[0] if result_urls else None,
                 "result_urls": result_urls,
                 "media_unavailable": bool((row["status"] or "") == "completed" and not result_urls),
@@ -1905,7 +1912,7 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
         "prompt_hidden": _task_prompt_hidden(row),
         "prompt_actions_allowed": _task_prompt_actions_allowed(row),
         "cost": row["cost"] or 0,
-        "status": row["status"] or "pending",
+        "status": _public_task_status(row),
         "result_url": result_urls[0] if result_urls else None,
         "result_urls": result_urls,
         "media_unavailable": bool((row["status"] or "") == "completed" and not result_urls),
@@ -2000,6 +2007,20 @@ async def _launch_video_generation_task(
     from bot.services.kling_service import kling_service
     from bot.services.seedance_service import seedance_service
     from bot.services.veo_service import veo_service
+
+    reserved_task_id = (_launch_observation or {}).get("receipt_task_id")
+
+    async def persist_generation_task(*args, **kwargs):
+        if reserved_task_id:
+            kwargs["reserved_task_id"] = reserved_task_id
+        persisted = await add_generation_task(*args, **kwargs)
+        if reserved_task_id and persisted is not True:
+            raise RuntimeError("video_repeat_receipt_binding_failed")
+        if _launch_observation is not None:
+            _launch_observation["task_persisted"] = True
+            if not _launch_observation.get("provider_task_id"):
+                _launch_observation["provider_task_id"] = str(args[2])
+        return persisted
 
     normalized_ratio = _normalize_video_ratio(aspect_ratio)
     callback_url = config.kling_notification_url if config.WEBHOOK_HOST else None
@@ -2202,6 +2223,8 @@ async def _launch_video_generation_task(
             accepted=result_status in {"queued", "done"},
             provider_task_id=str(result.get("task_id") or "") if isinstance(result, dict) else "",
         )
+    if reserved_task_id and result_status == "failed":
+        return {"status": "failed", "error": error_message or "Не удалось создать видео задачу"}
     pricing_quality = _video_pricing_quality(model, veo_resolution, omni_resolution)
     cost = preset_manager.get_video_cost_with_quality(model, duration, pricing_quality)
     cost = apply_video_reference_cost(model, cost, video_references)
@@ -2212,7 +2235,7 @@ async def _launch_video_generation_task(
     )
 
     if result_status == "queued":
-        await add_generation_task(
+        await persist_generation_task(
             user.id,
             telegram_id,
             result["task_id"],
@@ -2286,7 +2309,7 @@ async def _launch_video_generation_task(
         and result.get("asset_id")
     ):
         asset_id = str(result["asset_id"])
-        await add_generation_task(
+        await persist_generation_task(
             user.id,
             telegram_id,
             asset_id,
@@ -2339,7 +2362,7 @@ async def _launch_video_generation_task(
         }
 
     local_task_id = f"miniapp_video_{int(time.time() * 1000)}_{telegram_id}"
-    await add_generation_task(
+    await persist_generation_task(
         user.id,
         telegram_id,
         local_task_id,
@@ -4823,6 +4846,13 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
 
 
 async def miniapp_generate_video(request: web.Request) -> web.Response:
+    from bot.handlers.miniapp_video_continuity_compat import (
+        record_video_repeat_launch,
+        reserve_video_repeat_launch,
+        video_repeat_pending_response,
+    )
+    receipt_id = None
+    launch_started = debit_attempted = debit_completed = provider_rejected = False
     private_repeat = bool(getattr(request, "_video_repeat_authorization", None))
     charged = False
     refund_attempted = False
@@ -5195,18 +5225,32 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
             verify_video_repeat_before_charge,
         )
 
+        receipt_id, pending_response = await reserve_video_repeat_launch(
+            request, user=user, telegram_id=telegram_id, model=effective_model,
+            duration=duration, aspect_ratio=aspect_ratio,
+        )
+        if pending_response is not None:
+            return pending_response
         permission_error = await verify_video_repeat_before_charge(request)
         if permission_error is not None:
+            await record_video_repeat_launch(receipt_id, user.id, phase="permission_rejected", terminal=True)
             return permission_error
         if not is_admin:
+            await record_video_repeat_launch(receipt_id, user.id, phase="debit_pending", attempted_cost=cost)
+            debit_attempted = True
             debited = await deduct_credits(telegram_id, cost)
+            debit_completed = True
             if private_repeat and cost > 0 and debited is False:
+                await record_video_repeat_launch(receipt_id, user.id, phase="debit_rejected", terminal=True)
                 return web.json_response(
                     {"ok": False, "error": "Не удалось списать бананы. Обновите баланс и попробуйте снова."},
                     status=400,
                 )
             charged = bool(cost > 0 and debited is not False)
 
+        await record_video_repeat_launch(receipt_id, user.id, phase="launching", cost=cost if charged else 0)
+        launch_observation["receipt_task_id"] = receipt_id
+        launch_started = True
         launch_result = await _launch_video_generation_task(
             **({"_launch_observation": launch_observation} if private_repeat else {}),
             **({"video_repeat_contract_version": 1} if getattr(request, "_video_repeat_authorization", None) else {}),
@@ -5250,12 +5294,14 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
             if not launch_observation.get("provider_task_id"):
                 launch_observation["provider_task_id"] = str(launch_result.get("task_id") or "")
         if launch_result["status"] == "failed":
+            provider_rejected = True
             if not is_admin and (not private_repeat or charged):
                 refund_attempted = True
                 refunded = await add_credits(telegram_id, cost)
                 if private_repeat and refunded is False:
                     raise RuntimeError("video_refund_unconfirmed")
                 charged = False
+            await record_video_repeat_launch(receipt_id, user.id, phase="rejected", cost=0, terminal=True)
             return web.json_response(
                 {
                     "ok": False,
@@ -5305,7 +5351,8 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
                 )
                 return web.json_response(
                     {"ok": False, "code": "video_status_pending",
-                     "task_id": launch_observation.get("provider_task_id") or None,
+                     "task_id": (launch_observation.get("provider_task_id")
+                                 if launch_observation.get("task_persisted") or not receipt_id else receipt_id) or None,
                      "error": "Видео принято провайдером, но статус пока не подтверждён. Не повторяйте запуск сразу."},
                     status=500,
                 )
@@ -5331,6 +5378,19 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
                      "error": "Не удалось подтвердить возврат бананов. Требуется проверка платежа; не повторяйте запуск сразу."},
                     status=500,
                 )
+            if receipt_id:
+                terminal = provider_rejected or (not launch_started and (not debit_attempted or debit_completed))
+                try:
+                    await record_video_repeat_launch(receipt_id, user.id,
+                        phase=("prelaunch_failed" if terminal else "debit_unknown"
+                               if debit_attempted and not debit_completed else "outcome_unknown"),
+                        cost=None if debit_attempted and not debit_completed else 0, terminal=terminal)
+                except Exception as receipt_error:  # noqa: BLE001 - uncertain receipt stays blocked
+                    logger.error("Private video receipt reconciliation needed: task_id=%s error_type=%s",
+                                 receipt_id, type(receipt_error).__name__)
+                    return video_repeat_pending_response(receipt_id)
+                if not terminal:
+                    return video_repeat_pending_response(receipt_id)
             return _private_image_error_response(e, log_message="Private video repeat failed")
         return _miniapp_error_response(e, log_message="Mini App video generation failed")
 

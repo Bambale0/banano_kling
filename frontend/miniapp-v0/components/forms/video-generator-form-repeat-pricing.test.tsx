@@ -12,7 +12,7 @@ const model = (id: string): VideoModel => ({
 const fixedPreset = (id: string, multiplier: unknown = 2): VideoPromptPreset => ({
   title: 'Повторить видео', prompt: '', promptHidden: true, model: id, scenario: 'video',
   ratio: '16:9', duration: 5, sourceFeedGenId: 42,
-  repeatReferenceSlots: { version: 1, available: true, cost_multiplier: multiplier,
+  repeatReferenceSlots: { version: 1, available: true, cost_multiplier: multiplier, ...(id === 'seedance_2_5' ? { duration_costs: { '5': 7, '10': 12 }, pricing_quality: '720p' } : {}),
     images: [], videos: [{ index: 0, role: 'reference', binding: 'fixed' }, { index: 1, role: 'reference', binding: 'fixed' }],
   },
 } as VideoPromptPreset)
@@ -60,6 +60,7 @@ describe('typed repeat authoritative pricing', () => {
   it('keeps a no-video recipe at the authoritative neutral multiplier', () => {
     const preset = fixedPreset('seedance_2_5', 1)
     preset.scenario = 'imgtxt'
+    preset.repeatReferenceSlots!.duration_costs = { '5': 3.5, '10': 6 }
     preset.repeatReferenceSlots!.videos = []
     preset.repeatReferenceSlots!.images = [{ index: 0, role: 'first_frame', binding: 'fixed' }]
     render(<VideoGeneratorForm models={[model('seedance_2_5')]} onSubmit={jest.fn()} promptPreset={preset} isSubmitting={false} credits={4} />)
@@ -67,7 +68,7 @@ describe('typed repeat authoritative pricing', () => {
     expect(screen.getByRole('button', { name: /Запустить видео/i })).toBeEnabled()
   })
   it('uses the supplied multiplier instead of a duplicated client tariff', () => {
-    render(<VideoGeneratorForm models={[model('seedance_2_5')]} onSubmit={jest.fn()} promptPreset={fixedPreset('seedance_2_5', 3)} isSubmitting={false} credits={8} />)
+    render(<VideoGeneratorForm models={[model('seedance_2')]} onSubmit={jest.fn()} promptPreset={fixedPreset('seedance_2', 3)} isSubmitting={false} credits={8} />)
     expect(screen.getByRole('button', { name: /Запустить видео/i })).toBeDisabled()
     expect(screen.getByText('10.5', { exact: true })).toBeInTheDocument()
   })

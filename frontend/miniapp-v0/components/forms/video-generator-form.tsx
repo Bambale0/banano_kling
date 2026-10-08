@@ -86,7 +86,7 @@ interface VideoGeneratorFormProps {
     audioReference: string | null
   }) => Promise<void>
   onUploadImageReference?: (file: File) => Promise<UploadedFile>
-  onUploadVideoReference?: (file: File) => Promise<UploadedFile>
+  onUploadVideoReference?: (file: File, typedRepeatModel?: string) => Promise<UploadedFile>
   onUploadAudioReference?: (file: File) => Promise<UploadedFile>
   savedImageReferences?: UploadedFile[]
   savedVideoReferences?: UploadedFile[]
@@ -203,19 +203,25 @@ export function VideoGeneratorForm({
   const selectedQuality = qualityForModel(model)
   // The descriptor covers the complete server recipe, including retained video
   // inputs that deliberately have no local URL. Never infer a tariff from IDs.
-  const priceAvailable = !repeatSlots || repeatSlots.available
+  const requiresDurationQuote = Boolean(repeatSlots && selectedModel === 'seedance_2_5')
+  const retainedDurationCosts = repeatSlots?.duration_costs
+  const retainedDurationCost = retainedDurationCosts?.[selectedDuration.toString()]
+  const priceAvailable = (!repeatSlots || repeatSlots.available)
+    && (!requiresDurationQuote || (typeof retainedDurationCost === 'number' && Number.isFinite(retainedDurationCost)))
   const repeatCostMultiplier = repeatSlots?.cost_multiplier ?? 1
   const durationCosts = useMemo(
-    () => priceAvailable
+    () => requiresDurationQuote ? retainedDurationCosts || {} : priceAvailable
       ? Object.fromEntries(
         (model?.durations || [selectedDuration]).map((duration) => [
           duration.toString(),
           getVideoModelCost(model, duration, selectedQuality, repeatCostMultiplier),
         ])
       ) : {},
-    [model, selectedDuration, selectedQuality, priceAvailable, repeatCostMultiplier]
+    [model, selectedDuration, selectedQuality, priceAvailable, repeatCostMultiplier, requiresDurationQuote, retainedDurationCosts]
   )
-  const baseCost = getVideoModelCost(model, selectedDuration, selectedQuality, repeatCostMultiplier)
+  const baseCost = requiresDurationQuote
+    ? retainedDurationCost ?? 0
+    : getVideoModelCost(model, selectedDuration, selectedQuality, repeatCostMultiplier)
   const cost = isOmniAudio
     ? model?.omni_audio_cost ?? 3
     : isOmniCharacter
@@ -550,7 +556,9 @@ export function VideoGeneratorForm({
                   ? m.omni_audio_cost ?? 3
                   : m.id === 'gemini_omni' && selectedScenario === 'character'
                     ? m.omni_character_cost ?? 5
-                    : getVideoModelPerSecondCost(m, selectedDuration, qualityForModel(m), m.id === selectedModel ? repeatCostMultiplier : 1),
+                    : requiresDurationQuote && m.id === selectedModel
+                      ? baseCost / Math.max(selectedDuration, 1)
+                      : getVideoModelPerSecondCost(m, selectedDuration, qualityForModel(m), m.id === selectedModel ? repeatCostMultiplier : 1),
             }))}
             value={selectedModel}
             onChange={handleModelChange}
@@ -592,6 +600,7 @@ export function VideoGeneratorForm({
             onChange={setSelectedScenario}
           />
           {repeatSlots ? <p className="text-xs text-muted-foreground">Модель и сценарий сохранены из публикации.</p> : null}
+          {repeatSlots?.pricing_quality ? <p className="text-xs text-muted-foreground">Качество исходного видео: {repeatSlots.pricing_quality}</p> : null}
         </fieldset>
 
         {!isOmniAudio && !isOmniCharacter && selectedScenario !== 'avatar' ? (
@@ -1065,7 +1074,8 @@ export function VideoGeneratorForm({
                           setRepeatUploads((current) => ({ ...current, [slot.key]: files }))
                         }}
                         maxFiles={1} accept={`${slot.type}/*`} required
-                        onUpload={slot.type === 'image' ? onUploadImageReference : onUploadVideoReference}
+                        onUpload={slot.type === 'image' ? onUploadImageReference : onUploadVideoReference
+                          ? (file) => onUploadVideoReference(file, selectedModel) : undefined}
                         libraryFiles={(slot.type === 'image' ? savedImageReferences : savedVideoReferences).filter((file) =>
                           !typedSlots.some((other) => other.key !== slot.key && other.type === slot.type
                             && repeatUploads[other.key]?.some((selected) => selected.url === file.url)))}
@@ -1113,6 +1123,8 @@ export function VideoGeneratorForm({
             <span>
               {repeatPending
                 ? 'Видео принято, статус уточняется'
+                : !priceAvailable
+                  ? 'Стоимость пока недоступна'
                 : repeatBlocked
                 ? !repeatSlots?.available || repeatError ? 'Повтор нужно открыть заново' : 'Заполните референсы для повтора'
                 : sourceFeedGenId

@@ -83,3 +83,31 @@ it('keeps acceptance without a task ID through empty or pending history refreshe
   expect(screen.queryByText(/Откройте публикацию заново/)).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: /Запустить видео/ })).toBeDisabled()
 })
+
+
+it('uses retained-quality server duration quotes from an actual Seedance feed response', async () => {
+  fetchMock.mockResolvedValueOnce(respond({ ok: true, feed_item: { id: 480, task_id: 'source-480p', model: 'seedance_2_5', gen_type: 'video', is_mine: false, scenario: 'video', repeat_reference_slots: {
+    version: 1, available: true, cost_multiplier: 2, pricing_quality: '480p', duration_costs: { '5': 4, '10': 8 },
+    images: [], videos: [{ index: 0, role: 'reference', binding: 'fixed' }],
+  } } }))
+  const item = await fetchFeedItem(480)
+  const hydrated = await hydrateSeedance25IdentityPreset(item, { ...preset, model: 'seedance_2_5', sourceFeedGenId: 480 })
+  const onSubmit = jest.fn()
+  render(<VideoGeneratorForm models={[{ ...videoModel, id: 'seedance_2_5', durations: [5, 10], costs: { '5': 5, '10': 10 } }]} promptPreset={hydrated} onSubmit={onSubmit} isSubmitting={false} credits={4} />)
+  expect(screen.getByRole('button', { name: /Запустить видео/ })).toBeEnabled()
+  expect(screen.getByText('4', { exact: true })).toBeInTheDocument()
+  expect(screen.getByText('5 сек. • 16:9 • 0.8🍌/с')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /10с.*0.8\/с/ })).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: /10с.*0.8\/с/ }))
+  expect(screen.getByText('8', { exact: true })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /Запустить видео/ })).toBeDisabled()
+  expect(onSubmit).not.toHaveBeenCalled()
+})
+
+
+it.each([undefined, {}, { '10': 8 }, { '5': 0 }, { '5': -1 }, { '5': '4' }])('blocks missing or unusable retained-quality quote %s', (duration_costs) => {
+  const unpriced = { ...preset, model: 'seedance_2_5', repeatReferenceSlots: { ...preset.repeatReferenceSlots!, duration_costs } } as VideoPromptPreset
+  render(<VideoGeneratorForm models={[{ ...videoModel, id: 'seedance_2_5' }]} promptPreset={unpriced} onSubmit={jest.fn()} isSubmitting={false} credits={100} />)
+  expect(screen.getByRole('button', { name: /Запустить видео/ })).toBeDisabled()
+  expect(screen.getByText('Стоимость недоступна')).toBeInTheDocument()
+})

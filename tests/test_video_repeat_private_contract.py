@@ -16,6 +16,13 @@ MOTION = "https://example.test/author-motion.mp4"
 STYLE = "https://example.test/fixed-style.mp4"
 
 
+@pytest.fixture(autouse=True)
+def isolated_financial_unit_receipt(monkeypatch):
+    # Financial unit matrices use synthetic users and providers. Actual durable
+    # rows and cross-device behavior are exercised in test_video_repeat_receipts.
+    monkeypatch.setattr(continuity, "reserve_video_repeat_launch", AsyncMock(return_value=(None, None)))
+
+
 async def create_video():
     owner = await database.get_or_create_user(880101)
     await database.add_generation_task(
@@ -43,7 +50,10 @@ async def test_private_video_grant_has_url_free_ordered_consumer_slots(scope):
     assert grant == {"version": 1, "images": [FIXED], "videos": [STYLE]}
     get_card = database.get_feed_generation_card if scope == "feed" else database.get_profile_generation_card
     public = await get_card(card["id"])
-    assert public["repeat_reference_slots"] == {
+    assert public["repeat_reference_slots"]["pricing_quality"] == "720p"
+    assert public["repeat_reference_slots"]["duration_costs"]
+    assert {key: value for key, value in public["repeat_reference_slots"].items()
+            if key not in {"pricing_quality", "duration_costs"}} == {
         "version": 1, "available": True, "cost_multiplier": 2,
         "images": [{"index": 0, "role": "reference", "binding": "upload"},
                    {"index": 1, "role": "reference", "binding": "fixed"}],
@@ -75,7 +85,7 @@ def test_malformed_typed_video_grant_never_falls_back_to_legacy_reuse(grant):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("model", ["seedance_2", "seedance_2_5"])
-@pytest.mark.parametrize("change", ["grant", "withdrawal", "recipe", "availability", "provider_error", "provider_exception", "interread_withdrawal", "legacy_to_typed", "legacy_image_only_to_typed"])
+@pytest.mark.parametrize("change", ["grant", "withdrawal", "recipe", "availability", "provider_error", "provider_exception", "interread_withdrawal", "legacy_to_typed", "legacy_image_only_to_typed", "quality"])
 async def test_video_permission_is_rechecked_immediately_before_debit(monkeypatch, caplog, model, change):
     import inspect
 
@@ -121,6 +131,8 @@ async def test_video_permission_is_rechecked_immediately_before_debit(monkeypatc
             current["feed_repeat_reference_selection"] = {"version": 1, "images": [], "videos": []}
         elif change == "withdrawal":
             card.clear()
+        elif change == "quality":
+            current["request_data"]["seedance25_resolution"] = "480p"
         elif change == "recipe":
             current["request_data"] = {**current["request_data"], "reference_images": [FACE]}
         elif change == "availability":
@@ -938,3 +950,85 @@ def test_typed_veo_text_only_source_remains_available(typed_video_entrypoint):
     descriptor = video_repeat_descriptors(entry.source)
     assert descriptor['available'] is True
     assert descriptor['images'] == [] and descriptor['videos'] == []
+
+
+@pytest.mark.asyncio
+async def test_actual_generic_writer_audio_list_cannot_be_granted_as_image_video_recipe(monkeypatch):
+    from bot.services.seedance_service import seedance_service
+    owner = await database.get_or_create_user(881020)
+    monkeypatch.setattr(seedance_service, 'generate_video', AsyncMock(return_value={'task_id': 'synthetic-audio-source'}))
+    monkeypatch.setattr(miniapp.preset_manager, 'get_video_cost_with_quality', lambda *_: 1)
+    await REAL_VIDEO_LAUNCH(
+        telegram_id=owner.telegram_id, user=owner, model='seedance_2', prompt='Synthetic recipe',
+        duration=5, aspect_ratio='9:16', generation_type='video', image_url=None,
+        image_references=[FIXED], video_references=[], audio_url=None,
+        audio_references=['https://example.test/synthetic-audio.mp3'],
+    )
+    await database.complete_video_task('synthetic-audio-source', 'https://example.test/result.mp4')
+    source = await database.get_generation_task_payload('synthetic-audio-source')
+    data = source['request_data']
+    assert data['v_reference_audio'] == ['https://example.test/synthetic-audio.mp3']
+    assert data['audio_url'] is None
+    with pytest.raises(ValueError, match='аудио'):
+        await database.share_to_feed('synthetic-audio-source', owner.id,
+            repeat_reference_image_indices=[0], repeat_reference_video_indices=[])
+    source['feed_repeat_reference_selection'] = {'version': 1, 'images': [FIXED], 'videos': []}
+    assert video_repeat_descriptors(source)['available'] is False
+
+
+@pytest.mark.asyncio
+async def test_typed_canonical_source_audio_blocks_public_entrypoint(typed_video_entrypoint):
+    entry = typed_video_entrypoint
+    entry.source['request_data']['v_reference_audio'] = ['https://example.test/synthetic-audio.mp3']
+    response = await entry.call(entry.request({'reference_images': ['https://example.test/own.png'],
+        'v_reference_videos': ['https://example.test/own.mp4']}))
+    assert response.status == 400
+    entry.delegate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('quality', ['480p', '720p'])
+async def test_typed_seedance_duration_quote_matches_actual_restored_quality_debit(monkeypatch, typed_video_entrypoint, quality):
+    from bot.handlers import seedance_25_public_release as public
+    entry = typed_video_entrypoint
+    entry.source['is_public_feed'] = True
+    entry.source['request_data']['seedance25_resolution'] = quality
+    miniapp._get_repeat_source_card.return_value.update(model='seedance_2_5')
+    monkeypatch.setattr(miniapp.preset_manager, 'get_video_cost_with_quality',
+        lambda _model, duration, resolution: duration * (2 if resolution == '480p' else 5))
+    descriptor = video_repeat_descriptors(entry.source)
+    assert descriptor['pricing_quality'] == quality
+    assert descriptor['duration_costs']['6'] == (24 if quality == '480p' else 60)
+    assert FIXED not in json.dumps(descriptor) and STYLE not in json.dumps(descriptor)
+    async def delegate(request):
+        return await public._public_miniapp_generate(request, await request.json())
+    entry.delegate.side_effect = delegate
+    monkeypatch.setattr(miniapp.config, 'is_admin', lambda _: False)
+    monkeypatch.setattr(public, '_validate_public_payload', AsyncMock())
+    monkeypatch.setattr(miniapp, 'check_can_afford', AsyncMock(return_value=True))
+    monkeypatch.setattr(miniapp, 'deduct_credits', AsyncMock(return_value=True))
+    monkeypatch.setattr(public.seedance_25_service, 'generate_video', AsyncMock(return_value={'task_id': 'synthetic-quality'}))
+    monkeypatch.setattr(public.generation_module, 'add_generation_task', AsyncMock())
+    monkeypatch.setattr(miniapp, 'credit_feed_prompt_repeat', AsyncMock())
+    monkeypatch.setattr(miniapp, 'get_or_create_user', AsyncMock(return_value=SimpleNamespace(credits=100)))
+    response = await entry.call(entry.request({'v_model': 'seedance_2_5', 'v_type': 'video',
+        'v_duration': 6, 'v_ratio': '9:16', 'seedance25_resolution': '720p',
+        'reference_images': ['https://example.test/own.png'], 'v_reference_videos': ['https://example.test/own.mp4']}))
+    assert response.status == 200, response.text
+    miniapp.deduct_credits.assert_awaited_once_with(880102, descriptor['duration_costs']['6'])
+    assert public.seedance_25_service.generate_video.await_args.kwargs['resolution'] == quality
+
+
+@pytest.mark.asyncio
+async def test_canonical_source_audio_is_replaced_only_by_explicit_viewer_audio(typed_video_entrypoint):
+    entry = typed_video_entrypoint
+    source_audio = 'https://example.test/synthetic-source-audio.mp3'
+    own_audio = 'https://example.test/synthetic-viewer-audio.mp3'
+    entry.source['request_data']['v_reference_audio'] = [source_audio]
+    request = entry.request({'reference_images': ['https://example.test/own.png'],
+        'v_reference_videos': ['https://example.test/own.mp4'], 'audio_references': [own_audio]})
+    assert (await entry.call(request)).status == 200
+    payload = await request.json()
+    assert source_audio not in json.dumps(payload)
+    assert payload['seedance25_reference_audio_urls'] == [own_audio]
+    assert '_private_repeat_reference_audios' not in payload

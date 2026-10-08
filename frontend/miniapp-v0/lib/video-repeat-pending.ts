@@ -57,6 +57,29 @@ export function reconcilePendingVideoRepeats(tasks: Task[]) {
   if (changed) savePendingRepeats()
 }
 
+export function getPendingVideoTaskIds(): string[] {
+  return [...new Set(Object.values(pendingRepeats()).flatMap((item) => item.taskId ? [item.taskId] : []))]
+}
+
+// Only call for a successful authenticated task-detail response to this exact
+// requested ID. The server may resolve an owned local receipt to its provider ID.
+export function reconcilePendingVideoDetail(requestedTaskId: string, task: Task) {
+  if (!task?.task_id || !['pending', 'completed', 'failed'].includes(task.status)) return
+  const pending = pendingRepeats()
+  let changed = false
+  for (const [key, value] of Object.entries(pending)) {
+    if (value.taskId !== requestedTaskId) continue
+    if (task.status === 'completed' || task.status === 'failed') {
+      delete pending[key]
+      changed = true
+    } else if (task.task_id !== value.taskId) {
+      pending[key] = { ...value, taskId: task.task_id }
+      changed = true
+    }
+  }
+  if (changed) savePendingRepeats()
+}
+
 export function isVideoStatusPending(error: unknown): error is Error & { code: string; taskId?: string } {
   return error instanceof Error && 'code' in error && error.code === 'video_status_pending'
 }
