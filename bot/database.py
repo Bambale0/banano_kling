@@ -5280,8 +5280,15 @@ async def reserve_private_video_repeat(
 
     The user-row write locks the empty-set check on PostgreSQL and acquires the
     SQLite writer lock. A process crash leaves a visible processing receipt;
-    unknown outcomes are never reclaimed by elapsed time.
+    Only an expired, never-attempted reservation can be replaced. Unknown debit
+    or provider outcomes are never reclaimed by elapsed time.
     """
+    lease_seconds = max(30, int(os.getenv("VIDEO_REPEAT_RESERVED_LEASE_SECONDS", "300")))
+    age_expr = (
+        "EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - COALESCE(updated_at, created_at)))"
+        if db_backend.is_postgres() else
+        "(julianday(CURRENT_TIMESTAMP) - julianday(COALESCE(updated_at, created_at))) * 86400.0"
+    )
     async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
         db.row_factory = db_backend.Row
         locked = await db.execute(
@@ -5291,15 +5298,35 @@ async def reserve_private_video_repeat(
         if locked.rowcount != 1:
             raise ValueError("Не удалось подтвердить владельца задачи.")
         cursor = await db.execute(
-            "SELECT task_id, request_data FROM generation_tasks "
+            f"SELECT task_id, request_data, status, cost, {age_expr} AS receipt_age_seconds FROM generation_tasks "
             "WHERE user_id = ? AND source_feed_gen_id = ? "
             "AND status IN ('pending', 'processing') ORDER BY id DESC",
             (user_id, source_id),
         )
         for row in await cursor.fetchall():
-            if _parse_json_dict(row["request_data"]).get("video_repeat_receipt") is True:
+            metadata = _parse_json_dict(row["request_data"])
+            if metadata.get("video_repeat_receipt") is True:
+                if (row["status"] == "processing"
+                        and str(row["task_id"]).startswith("video_repeat_receipt_")
+                        and metadata.get("repeat_receipt_phase") == "reserved"
+                        and metadata.get("repeat_attempted_cost") == 0
+                        and not row["cost"]
+                        and float(row["receipt_age_seconds"] or 0) >= lease_seconds):
+                    expired = dict(metadata, repeat_receipt_phase="expired_reserved")
+                    released = await db.execute(
+                        "UPDATE generation_tasks SET status = 'failed', request_data = ?, "
+                        "updated_at = CURRENT_TIMESTAMP WHERE task_id = ? AND user_id = ? "
+                        "AND status = 'processing' AND request_data = ? AND COALESCE(cost, 0) = 0",
+                        (json.dumps(expired), row["task_id"], user_id, row["request_data"]),
+                    )
+                    if released.rowcount == 1:
+                        continue
+                    # A suspended original won its debit_pending CAS first.
+                    # Never create a replacement after losing this CAS.
                 await db.commit()
-                return {"created": False, "task_id": str(row["task_id"])}
+                return {"created": False, "task_id": str(row["task_id"]),
+                        "accepted_provider_task_id": metadata.get("provider_task_id")
+                        if metadata.get("repeat_receipt_phase") == "accepted_unbound" else None}
         task_id = "video_repeat_receipt_" + uuid4().hex
         metadata = {"video_repeat_contract_version": 1, "video_repeat_receipt": True,
                     "repeat_receipt_phase": "reserved", "repeat_attempted_cost": 0.0, "task_id_aliases": [task_id]}
@@ -5344,6 +5371,64 @@ async def finish_private_video_repeat(
         )
         await db.commit()
         return cursor.rowcount == 1
+
+
+async def recover_private_video_repeat_acceptance(
+    task_id: str, user_id: int, provider_task_id: str,
+) -> bool:
+    """Persist known acceptance, then enable existing provider polling.
+
+    The first commit keeps provider identity even if minimal canonical binding
+    fails. No provider submission is made here. An unbound receipt remains held.
+    """
+    if not provider_task_id:
+        return False
+    async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
+        db.row_factory = db_backend.Row
+        cursor = await db.execute(
+            "SELECT request_data, cost FROM generation_tasks WHERE task_id = ? "
+            "AND user_id = ? AND status = 'processing'", (task_id, user_id),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            cursor = await db.execute(
+                "SELECT request_data FROM generation_tasks WHERE task_id = ? AND user_id = ?",
+                (provider_task_id, user_id),
+            )
+            existing = await cursor.fetchone()
+            metadata = _parse_json_dict(existing["request_data"]) if existing else {}
+            return bool(metadata.get("video_repeat_receipt") is True
+                        and task_id in metadata.get("task_id_aliases", []))
+        metadata = _parse_json_dict(row["request_data"])
+        if (metadata.get("video_repeat_receipt") is not True
+                or metadata.get("repeat_receipt_phase") not in {"launching", "accepted_unbound"}
+                or metadata.get("provider_task_id") not in (None, provider_task_id)):
+            return False
+        charged_cost = float(row["cost"] or 0)
+        metadata.update(provider_task_id=provider_task_id, repeat_receipt_phase="accepted_unbound",
+                        source="miniapp", charged_cost=charged_cost, charged=charged_cost > 0,
+                        admin_free=charged_cost <= 0, refund_on_failure=charged_cost > 0,
+                        refund_claimed=False)
+        accepted_json = json.dumps(metadata)
+        updated = await db.execute(
+            "UPDATE generation_tasks SET request_data = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE task_id = ? AND user_id = ? AND status = 'processing' AND request_data = ?",
+            (accepted_json, task_id, user_id, row["request_data"]),
+        )
+        if updated.rowcount != 1:
+            await db.rollback()
+            return False
+        await db.commit()
+        metadata["repeat_receipt_phase"] = "accepted_recovered"
+        metadata = _merge_task_id_aliases(metadata, task_id, provider_task_id)
+        updated = await db.execute(
+            "UPDATE generation_tasks SET task_id = ?, status = 'pending', request_data = ?, "
+            "updated_at = CURRENT_TIMESTAMP WHERE task_id = ? AND user_id = ? "
+            "AND status = 'processing' AND request_data = ?",
+            (provider_task_id, json.dumps(metadata), task_id, user_id, accepted_json),
+        )
+        await db.commit()
+        return updated.rowcount == 1
 
 
 async def add_generation_task(

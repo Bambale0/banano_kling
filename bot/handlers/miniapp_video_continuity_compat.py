@@ -703,6 +703,9 @@ async def reserve_video_repeat_launch(request, *, user, telegram_id, model, dura
         model=model, duration=duration, aspect_ratio=aspect_ratio,
     )
     if not receipt["created"]:
+        provider_id = receipt.get("accepted_provider_task_id")
+        if provider_id and await recover_video_repeat_launch(receipt["task_id"], user.id, provider_id):
+            return None, video_repeat_pending_response(provider_id)
         return None, video_repeat_pending_response(receipt["task_id"])
     return receipt["task_id"], None
 
@@ -713,6 +716,18 @@ async def record_video_repeat_launch(receipt_id, user_id, *, phase, cost=None, t
     from bot.database import finish_private_video_repeat
     if not await finish_private_video_repeat(receipt_id, user_id, phase=phase, cost=cost, terminal=terminal, attempted_cost=attempted_cost):
         raise RuntimeError("video_repeat_receipt_update_failed")
+
+
+async def recover_video_repeat_launch(receipt_id, user_id, provider_task_id):
+    if not receipt_id or not provider_task_id:
+        return False
+    from bot.database import recover_private_video_repeat_acceptance
+    try:
+        return await recover_private_video_repeat_acceptance(receipt_id, user_id, provider_task_id)
+    except Exception as exc:  # noqa: BLE001 - DB outage must not refund or resubmit an accepted job
+        logger.error("Accepted video receipt recovery pending: receipt_id=%s provider_task_id=%s error_type=%s",
+                     receipt_id, provider_task_id, type(exc).__name__)
+        return False
 
 
 def _replace_cached_json(request: web.Request, body: dict[str, Any]) -> None:

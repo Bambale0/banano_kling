@@ -199,7 +199,8 @@ async def test_unknown_receipt_survives_new_session_without_second_charge(monkey
     payload = json.loads(second.text)
     assert payload['code'] == 'video_status_pending'
     task = await database.get_task_by_id(payload['task_id'])
-    assert task.user_id == viewer.id and task.status == 'processing'
+    assert task.user_id == viewer.id
+    assert task.status == ('pending' if case.startswith('binding_') else 'processing')
     debit.assert_awaited_once()
     assert provider.await_count == (0 if case.startswith('debit_') else 1)
     assert refund.await_count == (1 if case in {'provider_exception', 'refund_uncertain'} else 0)
@@ -208,7 +209,8 @@ async def test_unknown_receipt_survives_new_session_without_second_charge(monkey
     if case.startswith('debit_'):
         assert json.loads(task.request_data)['repeat_attempted_cost'] == 2
         assert json.loads(task.request_data)['repeat_receipt_phase'] == ('debit_pending' if 'cancelled' in case else 'debit_unknown')
-    assert not await force_fail_task(task.id, viewer.id, task.cost)
+    if not case.startswith("binding_"):
+        assert not await force_fail_task(task.id, viewer.id, task.cost)
 
 
 @pytest.mark.asyncio
@@ -338,3 +340,196 @@ async def test_completed_bytes_save_failure_returns_bound_canonical_receipt_id(m
     debit.assert_awaited_once_with(viewer.telegram_id, 2)
     provider.assert_awaited_once()
     refund.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('model', ['seedance_2', 'seedance_2_5'])
+async def test_accepted_binding_failure_becomes_provider_reconcilable(monkeypatch, typed_video_entrypoint, model):
+    entry = typed_video_entrypoint
+    viewer, debit, refund, provider, request = await configure_actual_entry(monkeypatch, entry, model)
+    target = public.generation_module if model == 'seedance_2_5' else miniapp
+    monkeypatch.setattr(target, 'add_generation_task', AsyncMock(side_effect=RuntimeError('synthetic primary bind failure')))
+    response = await entry.call(request())
+    assert response.status == 500
+    payload = json.loads(response.text)
+    assert payload['task_id'] == 'synthetic-receipt-provider'
+    task = await database.get_task_by_id(payload['task_id'])
+    assert task.status == 'pending' and task.cost == 2
+    metadata = json.loads(task.request_data)
+    assert metadata['provider_task_id'] == 'synthetic-receipt-provider'
+    assert metadata['repeat_receipt_phase'] == 'accepted_recovered'
+    assert any(item['task_id'] == task.task_id for item in await get_stuck_tasks(minutes=0))
+    debit.assert_awaited_once()
+    refund.assert_not_awaited()
+    provider.assert_awaited_once()
+    if model == 'seedance_2_5':
+        # The real callback processing path must refund exactly once and finish
+        # the recovered task; no provider or Telegram network call is needed.
+        app = {'bot': SimpleNamespace(send_message=AsyncMock())}
+        failure = {'code': 500, 'data': {'taskId': task.task_id, 'state': 'failed', 'failMsg': 'synthetic rejected'}}
+        assert await public._public_process_payload(app, dict(failure))
+        assert await public._public_process_payload(app, dict(failure))
+        assert (await database.get_or_create_user(viewer.telegram_id)).credits == 100
+        assert (await database.get_task_by_id(task.task_id)).status == 'failed'
+    else:
+        await database.complete_video_task(task.task_id, 'https://example.test/result.mp4')
+    assert (await reserve(viewer))['created']
+
+
+@pytest.mark.asyncio
+async def test_only_stale_reserved_without_debit_can_be_reclaimed():
+    user = await database.get_or_create_user(882040)
+    original = await reserve(user)
+    assert not (await reserve(user))['created']
+    async with db_backend.connect(database.DATABASE_PATH) as db:
+        await db.execute("UPDATE generation_tasks SET created_at = '2000-01-01', updated_at = NULL WHERE task_id = ?", (original['task_id'],))
+        await db.commit()
+    replacements = await asyncio.gather(*(reserve(user) for _ in range(4)))
+    assert sum(item['created'] for item in replacements) == 1
+    assert len({item['task_id'] for item in replacements}) == 1
+    assert replacements[0]['task_id'] != original['task_id']
+    assert (await database.get_task_by_id(original['task_id'])).status == 'failed'
+    assert not await database.finish_private_video_repeat(original['task_id'], user.id,
+        phase='debit_pending', attempted_cost=2)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('phase', ['debit_pending', 'debit_unknown', 'launching', 'outcome_unknown'])
+async def test_stale_post_reservation_phase_never_expires(phase):
+    user = await database.get_or_create_user(882041)
+    receipt = await reserve(user)
+    await database.finish_private_video_repeat(receipt['task_id'], user.id, phase=phase, attempted_cost=2)
+    async with db_backend.connect(database.DATABASE_PATH) as db:
+        await db.execute("UPDATE generation_tasks SET created_at = '2000-01-01', updated_at = '2000-01-01' WHERE task_id = ?", (receipt['task_id'],))
+        await db.commit()
+    assert not (await reserve(user))['created']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('model', ['seedance_2', 'seedance_2_5'])
+async def test_reclaimed_suspended_request_cannot_later_debit(monkeypatch, typed_video_entrypoint, model):
+    from bot.handlers import miniapp_video_continuity_compat as continuity
+    entry = typed_video_entrypoint
+    viewer, debit, refund, provider, request = await configure_actual_entry(monkeypatch, entry, model)
+    suspended = request()
+    entered, release = asyncio.Event(), asyncio.Event()
+    original_verify = continuity.verify_video_repeat_before_charge
+    async def verify(current):
+        if current is suspended:
+            entered.set()
+            await release.wait()
+        return await original_verify(current)
+    monkeypatch.setattr(continuity, 'verify_video_repeat_before_charge', verify)
+    first = asyncio.create_task(entry.call(suspended))
+    await asyncio.wait_for(entered.wait(), timeout=5)
+    try:
+        async with db_backend.connect(database.DATABASE_PATH) as db:
+            await db.execute("UPDATE generation_tasks SET created_at = '2000-01-01', updated_at = NULL WHERE user_id = ?", (viewer.id,))
+            await db.commit()
+        replacement = await entry.call(request())
+        assert replacement.status == 200
+    finally:
+        release.set()
+        resumed = await first
+    assert resumed.status >= 400
+    debit.assert_awaited_once()
+    provider.assert_awaited_once()
+    refund.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('model', ['seedance_2', 'seedance_2_5'])
+async def test_recovery_second_write_failure_keeps_identity_and_retries_binding_only(monkeypatch, typed_video_entrypoint, model):
+    from contextlib import asynccontextmanager
+    entry = typed_video_entrypoint
+    _viewer, debit, refund, provider, request = await configure_actual_entry(monkeypatch, entry, model)
+    target = public.generation_module if model == 'seedance_2_5' else miniapp
+    monkeypatch.setattr(target, 'add_generation_task', AsyncMock(side_effect=RuntimeError('synthetic primary bind failure')))
+    original_connect = db_backend.connect
+    failures = []
+    @asynccontextmanager
+    async def fail_one_binding(*args, **kwargs):
+        async with original_connect(*args, **kwargs) as db:
+            execute = db.execute
+            async def execute_with_fault(sql, *params):
+                if sql.startswith("UPDATE generation_tasks SET task_id = ?, status = 'pending', request_data") and not failures:
+                    failures.append(True)
+                    raise RuntimeError('synthetic recovery binding failure')
+                return await execute(sql, *params)
+            db.execute = execute_with_fault
+            yield db
+    monkeypatch.setattr(db_backend, 'connect', fail_one_binding)
+    first = await entry.call(request())
+    first_id = json.loads(first.text)['task_id']
+    assert first_id.startswith('video_repeat_receipt_')
+    local = await database.get_task_by_id(first_id)
+    metadata = json.loads(local.request_data)
+    assert local.status == 'processing'
+    assert metadata['provider_task_id'] == 'synthetic-receipt-provider'
+    assert metadata['repeat_receipt_phase'] == 'accepted_unbound'
+    second = await entry.call(request())
+    assert second.status == 409
+    assert json.loads(second.text)['task_id'] == 'synthetic-receipt-provider'
+    current = await database.get_task_by_id(first_id)
+    assert current.task_id == 'synthetic-receipt-provider' and current.status == 'pending'
+    debit.assert_awaited_once()
+    provider.assert_awaited_once()
+    refund.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('model', ['seedance_2', 'seedance_2_5'])
+async def test_recovery_total_storage_failure_remains_honest_pending(monkeypatch, typed_video_entrypoint, model):
+    entry = typed_video_entrypoint
+    _viewer, debit, refund, provider, request = await configure_actual_entry(monkeypatch, entry, model)
+    target = public.generation_module if model == 'seedance_2_5' else miniapp
+    monkeypatch.setattr(target, 'add_generation_task', AsyncMock(side_effect=RuntimeError('synthetic primary bind failure')))
+    monkeypatch.setattr(database, 'recover_private_video_repeat_acceptance', AsyncMock(side_effect=RuntimeError('synthetic full storage failure')))
+    first = await entry.call(request())
+    payload = json.loads(first.text)
+    assert payload['code'] == 'video_status_pending'
+    local = await database.get_task_by_id(payload['task_id'])
+    assert local.status == 'processing'
+    assert not json.loads(local.request_data).get('provider_task_id')
+    assert (await entry.call(request())).status == 409
+    provider.assert_awaited_once()
+    debit.assert_awaited_once()
+    refund.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_recovery_never_takes_over_other_owner_provider_id():
+    owner = await database.get_or_create_user(882050)
+    foreign = await database.get_or_create_user(882051)
+    receipt = await reserve(owner)
+    await database.finish_private_video_repeat(receipt['task_id'], owner.id, phase='launching', cost=2)
+    await database.add_generation_task(foreign.id, foreign.telegram_id, 'synthetic-foreign-provider', 'video', 'miniapp_video')
+    assert not await database.recover_private_video_repeat_acceptance(receipt['task_id'], foreign.id, 'synthetic-new-provider')
+    with pytest.raises(db_backend.IntegrityError):
+        await database.recover_private_video_repeat_acceptance(receipt['task_id'], owner.id, 'synthetic-foreign-provider')
+    assert (await database.get_task_by_id('synthetic-foreign-provider')).user_id == foreign.id
+    local = await database.get_task_by_id(receipt['task_id'])
+    assert local.status == 'processing'
+    assert json.loads(local.request_data)['provider_task_id'] == 'synthetic-foreign-provider'
+
+
+@pytest.mark.asyncio
+async def test_recovered_seedance_success_uses_existing_result_callback(monkeypatch, typed_video_entrypoint):
+    entry = typed_video_entrypoint
+    viewer, debit, refund, provider, request = await configure_actual_entry(monkeypatch, entry, 'seedance_2_5')
+    monkeypatch.setattr(public.generation_module, 'add_generation_task', AsyncMock(side_effect=RuntimeError('synthetic primary bind failure')))
+    response = await entry.call(request())
+    task_id = json.loads(response.text)['task_id']
+    monkeypatch.setattr(public.fullstack, '_persist_seedance25_ephemeral_results',
+        AsyncMock(side_effect=lambda video, urls: (video, urls)))
+    monkeypatch.setattr(public.fullstack, '_can_attempt_seedance25_result_delivery', AsyncMock(return_value=False))
+    success = {'code': 200, 'data': {'taskId': task_id, 'state': 'success',
+        'resultJson': json.dumps({'resultUrls': ['https://example.test/result.mp4']})}}
+    assert await public._public_process_payload({}, success)
+    completed = await database.get_task_by_id(task_id)
+    assert completed.status == 'completed'
+    assert completed.result_url == 'https://example.test/result.mp4'
+    debit.assert_awaited_once()
+    provider.assert_awaited_once()
+    refund.assert_not_awaited()
+    assert (await database.get_or_create_user(viewer.telegram_id)).credits == 98

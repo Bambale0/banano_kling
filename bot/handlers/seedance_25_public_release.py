@@ -684,7 +684,7 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
         )
 
     from bot.handlers.miniapp_video_continuity_compat import (
-        record_video_repeat_launch, reserve_video_repeat_launch,
+        record_video_repeat_launch, recover_video_repeat_launch, reserve_video_repeat_launch,
         verify_video_repeat_before_charge, video_repeat_pending_response,
     )
     private_repeat = bool(getattr(request, "_video_repeat_authorization", None))
@@ -818,6 +818,8 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
     except Exception as exc:
         if private_repeat:
             if accepted_task_id:
+                if not task_persisted and receipt_id:
+                    task_persisted = await recover_video_repeat_launch(receipt_id, user.id, accepted_task_id)
                 logger.error("Private Seedance accepted; status reconciliation needed: task_id=%s error_type=%s",
                              accepted_task_id, type(exc).__name__)
                 return web.json_response(

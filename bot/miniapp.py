@@ -4848,6 +4848,7 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
 async def miniapp_generate_video(request: web.Request) -> web.Response:
     from bot.handlers.miniapp_video_continuity_compat import (
         record_video_repeat_launch,
+        recover_video_repeat_launch,
         reserve_video_repeat_launch,
         video_repeat_pending_response,
     )
@@ -5345,6 +5346,9 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
     except Exception as e:
         if private_repeat:
             if launch_observation.get("accepted"):
+                if (not launch_observation.get("task_persisted") and receipt_id
+                        and await recover_video_repeat_launch(receipt_id, user.id, launch_observation.get("provider_task_id"))):
+                    launch_observation["task_persisted"] = True
                 logger.error(
                     "Private video accepted; status reconciliation needed: telegram_id=%s provider_task_id=%s error_type=%s",
                     telegram_id, launch_observation.get("provider_task_id"), type(e).__name__,
