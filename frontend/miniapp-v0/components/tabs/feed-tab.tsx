@@ -214,6 +214,14 @@ export function FeedTab() {
   const repeatRequest = useRef(0)
   useEffect(() => () => { repeatRequest.current += 1 }, [])
   const [error, setError] = useState<string | null>(null)
+  const [shareLink, setShareLink] = useState<string | null>(null)
+  const [copyStatus, setCopyStatus] = useState<'copying' | 'copied' | 'manual' | null>(null)
+  const shareRecovery = useRef<HTMLElement | null>(null)
+  useEffect(() => {
+    if (copyStatus === 'manual') shareRecovery.current?.scrollIntoView?.({ block: 'center' })
+  }, [copyStatus])
+  const shareRequest = useRef(0)
+  useEffect(() => () => { shareRequest.current += 1 }, [])
   const [previewItem, setPreviewItem] = useState<FeedItem | null>(null)
   const dismissPreview = useCallback(() => {
     repeatRequest.current += 1
@@ -405,17 +413,36 @@ export function FeedTab() {
     }
   }
 
+  const copyShareLink = async (link: string, request: number) => {
+    setCopyStatus('copying')
+    try {
+      // Invoked directly by the retry button: no network await before clipboard.
+      await copyTextToClipboard(link)
+      if (request === shareRequest.current) setCopyStatus('copied')
+    } catch {
+      if (request === shareRequest.current) setCopyStatus('manual')
+    }
+  }
+
   const handleShare = async (item: FeedItem) => {
     if (!isLive || typeof navigator === 'undefined') return
+    const request = ++shareRequest.current
+    setError(null)
+    setShareLink(null)
+    setCopyStatus(null)
     setBusyId(item.id)
     try {
       const { item: updated, link } = await shareFeedItem(item.id)
+      if (request !== shareRequest.current) return
+      if (!link?.trim()) throw new Error('Ссылка пока недоступна')
       setItems((prev) => prev.map((feedItem) => (feedItem.id === updated.id ? updated : feedItem)))
-      await copyTextToClipboard(link)
+      // Keep the server-owned deep/referral URL unchanged for manual recovery.
+      setShareLink(link)
+      await copyShareLink(link, request)
     } catch (e) {
-      setError(getErrorMessage(e, 'Не удалось создать ссылку'))
+      if (request === shareRequest.current) setError(getErrorMessage(e, 'Не удалось создать ссылку'))
     } finally {
-      setBusyId(null)
+      if (request === shareRequest.current) setBusyId(null)
     }
   }
 
@@ -613,6 +640,35 @@ export function FeedTab() {
         <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
           {error}
         </div>
+      )}
+
+      {shareLink && (
+        <section ref={shareRecovery} aria-label="Ссылка на публикацию" className="min-w-0 space-y-2 rounded-xl border border-gold/30 bg-secondary/50 p-3">
+          <p role="status" className="text-sm">
+            {copyStatus === 'copied'
+              ? 'Ссылка скопирована'
+              : copyStatus === 'manual'
+                ? 'Автоматическое копирование недоступно. Нажмите «Скопировать ссылку» ещё раз или выделите ссылку ниже и скопируйте вручную.'
+                : 'Копируем ссылку…'}
+          </p>
+          <input
+            aria-label="Ссылка на публикацию"
+            readOnly
+            value={shareLink}
+            onFocus={(event) => event.currentTarget.select()}
+            className="block w-full min-w-0 select-text rounded-lg border border-border bg-background p-2 text-base"
+          />
+          <Button
+            type="button"
+            disabled={copyStatus === 'copying'}
+            onClick={() => {
+              setError(null)
+              void copyShareLink(shareLink, shareRequest.current)
+            }}
+          >
+            Скопировать ссылку
+          </Button>
+        </section>
       )}
 
       {loading ? (

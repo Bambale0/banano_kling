@@ -57,6 +57,7 @@ _AUDIO_MAX_BYTES = 15_000_000
 
 
 class SeedanceAdminTestStates(StatesGroup):
+    dashboard = State()
     prompt = State()
     references = State()
     frames = State()
@@ -275,6 +276,7 @@ async def _show_dashboard(
     *,
     edit: bool,
 ) -> None:
+    await state.set_state(SeedanceAdminTestStates.dashboard)
     data = await _normalize_state(state)
     text = _dashboard_text(data)
     markup = _dashboard_keyboard(data)
@@ -546,7 +548,7 @@ async def _poll_and_deliver(bot: Any, chat_id: int, request_id: str, model: str)
 async def open_seedance_lab(callback: types.CallbackQuery, state: FSMContext) -> None:
     if not await _require_admin(callback):
         return
-    await state.set_state(None)
+    await state.set_state(SeedanceAdminTestStates.dashboard)
     await _refresh_enabled_models(state)
     if callback.message is not None:
         await _show_dashboard(callback.message, state, edit=True)
@@ -601,6 +603,26 @@ async def choose_mode(callback: types.CallbackQuery, state: FSMContext) -> None:
     await callback.answer(_MODE_LABELS[mode])
 
 
+@router.message(SeedanceAdminTestStates.dashboard, ~F.text.startswith("/"))
+async def receive_dashboard_media(message: types.Message, state: FSMContext) -> None:
+    """Keep uploads in the selected Seedance test flow, never the idle shortcut."""
+    if message.from_user is None or not _is_admin(message.from_user.id):
+        await state.clear()
+        return
+    data = await _normalize_state(state)
+    mode = str(data["seedance_admin_mode"])
+    if mode in {"reference", "edit"}:
+        await receive_reference(message, state)
+    elif mode == "frames":
+        await receive_frame(message, state)
+    else:
+        await message.answer(
+            "Выберите режим «Референсы» или «Первый/последний кадр» для загрузки "
+            "медиа. Для текста нажмите «Промпт».",
+            reply_markup=_dashboard_keyboard(data),
+        )
+
+
 @router.callback_query(F.data == "admin_seedance_prompt")
 async def start_prompt(callback: types.CallbackQuery, state: FSMContext) -> None:
     if not await _require_admin(callback):
@@ -640,7 +662,7 @@ async def receive_prompt(message: types.Message, state: FSMContext) -> None:
 async def finish_prompt(callback: types.CallbackQuery, state: FSMContext) -> None:
     if not await _require_admin(callback):
         return
-    await state.set_state(None)
+    await state.set_state(SeedanceAdminTestStates.dashboard)
     if callback.message is not None:
         await _show_dashboard(callback.message, state, edit=True)
     await callback.answer()
@@ -755,7 +777,7 @@ async def receive_reference(message: types.Message, state: FSMContext) -> None:
 async def finish_refs(callback: types.CallbackQuery, state: FSMContext) -> None:
     if not await _require_admin(callback):
         return
-    await state.set_state(None)
+    await state.set_state(SeedanceAdminTestStates.dashboard)
     if callback.message is not None:
         await _show_dashboard(callback.message, state, edit=True)
     await callback.answer()
@@ -849,7 +871,7 @@ async def receive_frame(message: types.Message, state: FSMContext) -> None:
 async def finish_frames(callback: types.CallbackQuery, state: FSMContext) -> None:
     if not await _require_admin(callback):
         return
-    await state.set_state(None)
+    await state.set_state(SeedanceAdminTestStates.dashboard)
     if callback.message is not None:
         await _show_dashboard(callback.message, state, edit=True)
     await callback.answer()
@@ -1132,13 +1154,9 @@ async def new_seedance_request(callback: types.CallbackQuery, state: FSMContext)
         seedance_admin_pending_key="",
         seedance_admin_pending_payload_hash="",
     )
+    await state.set_state(SeedanceAdminTestStates.dashboard)
     if callback.message is not None:
-        data = await _normalize_state(state)
-        await callback.message.edit_text(
-            _dashboard_text(data),
-            reply_markup=_dashboard_keyboard(data),
-            parse_mode="HTML",
-        )
+        await _show_dashboard(callback.message, state, edit=True)
     await callback.answer("Готово к новому запуску")
 
 

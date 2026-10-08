@@ -268,3 +268,15 @@ Repeat восстанавливает request_data из generation_tasks в FSM.
 «Пропустить» не меняет серверную доступность чата: предложение скрывается на текущую сессию (sessionStorage), а фото/видео/Студия остаются доступны. После refresh, смены вкладки и повторного bootstrap модалка не открывается сама. Ненавязчивая кнопка «Получать в боте» под заголовком позволяет вернуться к настройке. Ошибки и таймауты проверки также можно пропустить.
 
 Условие показа отдельно от текущей доставки: telegram_chat_available=false само по себе не открывает предложение. Для старых, заблокировавших бота, неизвестных пользователей, отсутствующего флага и ошибок связи окно не появляется. Положительная история личного взаимодействия, успешной доставки или проверенного подписанного разрешения навсегда снимает классификацию never_started; последующий delivery failure не возвращает её. Старые неоднозначные записи не переопределяются как новые.
+
+
+## Seedance admin test dashboard upload isolation (2026-10-08)
+
+The Seedance API test dashboard owns `SeedanceAdminTestStates.dashboard`.
+Opening the lab, returning from prompt/reference/frame entry, or redrawing the
+dashboard keeps this state active. Selecting Reference/Edit or Frames on the
+dashboard allows incoming media to reach the existing Seedance reference or
+frame handler directly. Text mode asks the administrator to select a media mode
+or open Prompt. The generic NanoBanana idle-photo shortcut cannot consume these
+uploads. Leaving through Back to tests returns to the existing admin test menu;
+the ordinary idle-photo shortcut remains unchanged outside the Seedance lab.

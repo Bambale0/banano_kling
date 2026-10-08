@@ -1628,3 +1628,29 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Final verification: full safe backend suite passed 2,371 tests / 66 skipped in 137.32 seconds (379 existing warnings), with all 12 frozen backend source/test hashes verified afterward. Changed-line Ruff reports zero violations; changed-file syntax and diff checks pass. Frontend remains the exact verified 272-test/export/browser manifest.
 - Independent review found and reproduced an inter-read withdrawal race plus a legacy-to-typed transition gap; both are closed by checking current authoritative source publication/status and consent snapshots before charging. Public typed scenario now uses the same stored-recipe inference as reconstruction. Canonical duplicate list slots that downstream providers would collapse are rejected; equal first/last scalar frames remain supported. Typed-context provider failures are sanitized before returning errors. Final focused suite: 280 passed.
 - Release status: tested candidate prepared for a draft PR to `tanyapi`; merge/deployment await the user's release decision. No production checkout, prices, database records, media, generation or external message changed during this task.
+
+
+## 2026-10-08 — Seedance admin dashboard reference routing
+
+- Baseline: b07ab430de2b354a134ea4ef451be30dfcb2ba8d, branch fix/seedance-admin-routing-20261008
+- Symptom: photo after choosing Seedance Reference mode opens NanoBanana quick creation.
+- Evidence: open/Done callbacks set None; mode selector changes data only. Generation router runs first and its idle StateFilter correctly accepts None, clearing the Seedance data.
+- Regression: offline extraction executes real callbacks and real aiogram filters without application/config/database imports. Baseline fails on the actual idle interception; fix passes eight tests, including ordered router propagation, repeat dashboard returns, mode switching, non-admin guard and unchanged idle shortcut.
+- Changes: dedicated dashboard state; dashboard media delegates to existing refs/edit/frames validation; text mode gives instructions; admin test access allowlist includes dashboard. No provider/billing/data model/config/migration changes. Mini App uses separate HTTP routes and is unaffected.
+- Checks: eight isolated routing tests PASS; six existing source-contract tests PASS; syntax compilation of changed Python PASS; focused Ruff PASS; diff whitespace PASS.
+- Constraints: no paid generation, real Telegram sends, database access, credentials reads, or production edits. Full application tests and deployed smoke not run in this isolated diagnosis; coordinated release owner handles aggregate CI and deployment verification.
+- Rollout/rollback: ordinary reviewed task PR to tanyapi under release owner; revert the scoped commit if needed. No runtime data migration.
+- Playbooks: Bambale0/skills diagnosing-bugs (red-first evidence), Bambale0/claw architecture/FSM consistency, anthropics webapp-testing reviewed (browser-only workflow not applicable to Telegram handler regression).
+
+## 2026-10-08 — Feed clipboard recovery
+
+- Baseline: tanyapi b07ab430de2b354a134ea4ef451be30dfcb2ba8d. Isolated fix/feed-copy-fallback-20261008 worktree; production dirty data remains untouched.
+- Audit: Feed awaits share API before Clipboard API and execCommand fallback. Both failures previously discarded the usable server URL and showed a generic red banner. Success did not clear stale errors.
+- Outcome: retain the exact server link in a selectable mobile-width field; fresh-gesture copy retry without another share request, one-tap success feedback and separate API/clipboard failure handling. Request sequence protects against stale completions and unmount.
+- No API/schema/configuration/pricing changes; no private prompt/reference exposure or URL reconstruction. No paid generation or external messaging.
+- Regression: all four new component tests failed against baseline, then passed after implementation. Full frontend suite: 311 tests passed. Typecheck, lint, static export, mobile-width browser fixture and independent review pending.
+- Browser coverage adds clipboard rejection plus failed execCommand, exact deep/referral link preservation, successful fresh click, single API request and 320/360/390/430 width constraints.
+- Guidance: Bambale0/skills diagnosing-bugs, Bambale0/claw debugger, anthropics/skills webapp-testing. Real Telegram/iOS device behavior remains unverified.
+- Rollout: parent coordinates one release after combined checks; no deployment performed by this branch.
+- Final verified revision: 42 Jest suites / 311 tests, TypeScript, ESLint and production static export passed; synthetic Chromium mobile E2E passed at 320/360/390/430px. The lower-card test confirms recovery enters the viewport without locator auto-scrolling. Full check chain job_838ca54a2078 succeeded.
+- Independent review identified off-screen recovery after sharing a lower card; failure-only scroll into view plus a lower-card regression addressed it. Reviewer independently verified final hashes and found no remaining code blocker. Clipboard refusal is simulated; no physical iOS device was tested.

@@ -23,6 +23,11 @@ _original_image_prices_keyboard = None
 _original_update_price_value = None
 
 
+def _is_price_admin(user_id: int) -> bool:
+    """Use the same authority as the parent price menu; fail closed before install."""
+    return _admin_module is not None and _admin_module.is_admin(user_id)
+
+
 def _quality_costs() -> dict[str, float]:
     config = preset_manager.get_price_config()
     raw = config.get("costs_reference", {}).get("image_quality_costs", {})
@@ -169,7 +174,7 @@ def _patched_update_price_value(target: str, key: str, field: str, value):
 async def admin_banana_quality_prices(
     callback: types.CallbackQuery, state: FSMContext
 ) -> None:
-    if not preset_manager.is_admin(callback.from_user.id):
+    if not _is_price_admin(callback.from_user.id):
         await callback.answer("⛔ Нет доступа")
         return
     await state.clear()
@@ -192,7 +197,7 @@ async def admin_banana_quality_prices(
 async def admin_banana_quality_value(
     callback: types.CallbackQuery, state: FSMContext
 ) -> None:
-    if not preset_manager.is_admin(callback.from_user.id):
+    if not _is_price_admin(callback.from_user.id):
         await callback.answer("⛔ Нет доступа")
         return
 

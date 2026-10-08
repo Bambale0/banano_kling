@@ -508,6 +508,7 @@ class AccessGuardMiddleware(BaseMiddleware):
             "PromoAdminStates:trend_query",
             "AdminTestLabStates:gpt25_prompt",
             "AdminTestLabStates:gpt25_references",
+            "SeedanceAdminTestStates:dashboard",
             "SeedanceAdminTestStates:prompt",
             "SeedanceAdminTestStates:references",
             "SeedanceAdminTestStates:frames",
