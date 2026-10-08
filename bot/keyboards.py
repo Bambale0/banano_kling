@@ -8,11 +8,12 @@ from aiogram.types import CopyTextButton, InlineKeyboardButton, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.config import config
+from bot.quality_pricing import SEEDREAM_5_PRO_QUALITY_COSTS
+from bot.services.preset_manager import preset_manager
 from bot.services.subscription_service import (
     REQUIRED_CHANNEL_URL,
     SUBSCRIPTION_CHECK_CALLBACK,
 )
-from bot.services.preset_manager import preset_manager
 
 logger = logging.getLogger(__name__)
 
@@ -715,7 +716,7 @@ def get_image_model_selection_keyboard(current_service: str = "banana_pro"):
     builder = InlineKeyboardBuilder()
     model_rows = [
         ("nano-banana-2-lite", "model_nano_banana_2_lite", "🍌 Nano Banana 2 Lite 🔥 НОВИНКА", preset_manager.get_generation_cost("nano-banana-2-lite")),
-        ("seedream_5_pro", "model_seedream_5_pro", "🌟 Seedream 5 Pro 🔥 НОВИНКА", 2),
+        ("seedream_5_pro", "model_seedream_5_pro", "🌟 Seedream 5 Pro 🔥 НОВИНКА", SEEDREAM_5_PRO_QUALITY_COSTS["basic"]),
         ("banana_pro", "model_banana_pro", "💎 Nano Banana Pro", preset_manager.get_generation_cost("nano-banana-pro")),
         ("banana_2", "model_banana_2", "🍌 Nano Banana 2", preset_manager.get_generation_cost("banana_2")),
         ("seedream_edit", "model_seedream_edit", "🖌 Seedream 4.5", preset_manager.get_generation_cost("seedream_edit")),
@@ -726,7 +727,11 @@ def get_image_model_selection_keyboard(current_service: str = "banana_pro"):
     for model_row in model_rows:
         model_key, callback_data, label, cost = model_row[:4]
         check = "✅ " if current_service == model_key else ""
-        builder.row(InlineKeyboardButton(text=f"{check}{label} • {cost}🍌", callback_data=callback_data))
+        price_text = (
+            f"Basic {SEEDREAM_5_PRO_QUALITY_COSTS['basic']:g}🍌 / High {SEEDREAM_5_PRO_QUALITY_COSTS['high']:g}🍌"
+            if model_key == "seedream_5_pro" else f"{cost}🍌"
+        )
+        builder.row(InlineKeyboardButton(text=f"{check}{label} • {price_text}", callback_data=callback_data))
     builder.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_main"))
     return builder.as_markup()
 

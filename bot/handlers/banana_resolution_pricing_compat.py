@@ -66,6 +66,12 @@ def _refresh_loaded_miniapp_catalog() -> None:
         model["quality_costs"] = dict(quality_costs)
 
 
+def refresh_live_image_pricing() -> None:
+    """Refresh live tariff mappings and already-loaded catalog after a successful reload."""
+    refresh_quality_pricing(preset_manager.get_price_config())
+    _refresh_loaded_miniapp_catalog()
+
+
 def _banana_quality_keyboard() -> types.InlineKeyboardMarkup:
     costs = _quality_costs()
     return types.InlineKeyboardMarkup(

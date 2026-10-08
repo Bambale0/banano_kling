@@ -51,6 +51,7 @@ from bot.database import (
     set_user_banned,
 )
 from bot.handlers import promo_admin
+from bot.handlers.banana_resolution_pricing_compat import refresh_live_image_pricing
 from bot.keyboards import (
     _mini_app_url_with_start_param,
     get_admin_keyboard,
@@ -2824,6 +2825,8 @@ async def admin_reload_presets(callback: types.CallbackQuery):
         return
 
     success = preset_manager.reload()
+    if success:
+        refresh_live_image_pricing()
     await callback.answer(
         (
             "✅ Прайс и конфиг перезагружены"

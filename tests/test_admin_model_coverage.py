@@ -269,3 +269,96 @@ def test_photo_menu_has_reachable_seedream_tiers_without_price_file_entry():
     callbacks = {b.get("callback_data") for row in ns["_patched_image_prices_keyboard"]()["inline_keyboard"] for b in row}
     assert "admin_seedream_quality_prices" in callbacks
     assert "admin_price_image_seedream_edit" in callbacks
+
+
+def image_model_labels():
+    class Builder:
+        def __init__(self):
+            self.buttons = []
+
+        def row(self, *buttons):
+            self.buttons.extend(buttons)
+
+        def as_markup(self):
+            return self.buttons
+    ns = functions(ROOT / "bot/keyboards.py", {"get_image_model_selection_keyboard"}, {
+        "InlineKeyboardBuilder": Builder, "InlineKeyboardButton": lambda **kw: kw,
+        "preset_manager": SimpleNamespace(get_generation_cost=lambda model: 17),
+        "SEEDREAM_5_PRO_QUALITY_COSTS": SEEDREAM_5_PRO_QUALITY_COSTS,
+    })
+    return {b["callback_data"]: b["text"] for b in ns["get_image_model_selection_keyboard"]()}
+
+
+def assistant_price_text():
+    tree = ast.parse((ROOT / "bot/services/ai_assistant_service.py").read_text())
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "AIAssistantService")
+    method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "get_pricing_info")
+    constants = [n for n in tree.body if isinstance(n, ast.Assign) and isinstance(n.targets[0], ast.Name)
+                 and n.targets[0].id in {"FALLBACK_IMAGE_COSTS", "FALLBACK_VIDEO_COSTS"}]
+    unit = ast.Module(body=[*constants, method], type_ignores=[])
+    ns = {"_load_json": lambda _: {"costs_reference": {"image_models": {"seedream_edit": 17}}},
+          "PRICE_FILE": "unused", "SEEDREAM_5_PRO_QUALITY_COSTS": SEEDREAM_5_PRO_QUALITY_COSTS}
+    exec(compile(ast.fix_missing_locations(unit), "<assistant-pricing>", "exec"), ns)  # noqa: S102 - isolated repository pricing method with synthetic inputs
+    return ns["get_pricing_info"](None)
+
+
+def test_saved_seedream_tiers_reach_telegram_and_assistant():
+    written = []
+    ns = functions(COMPAT, {"_patched_update_price_value"}, {
+        "_admin_module": SimpleNamespace(_read_price_config=dict),
+        "_original_update_price_value": lambda *args: None,
+        "preset_manager": SimpleNamespace(update_price_config=lambda value: written.append(value) or True),
+        "SEEDREAM_5_PRO_QUALITY_COSTS": SEEDREAM_5_PRO_QUALITY_COSTS,
+        "refresh_quality_pricing": refresh_quality_pricing,
+        "_refresh_loaded_miniapp_catalog": lambda: None,
+    })
+    try:
+        refresh_quality_pricing({})
+        ns["_patched_update_price_value"]("seedream_quality", "seedream_5_pro", "high", 6.5)
+        labels = image_model_labels()
+        assert "Basic 2" in labels["model_seedream_5_pro"]
+        assert "High 6.5" in labels["model_seedream_5_pro"]
+        assert "17🍌" in labels["model_seedream_edit"]
+        text = assistant_price_text()
+        assert "Seedream 5 Pro: Basic 2🍌 / High 6.5🍌" in text
+        assert "Seedream 4.5: 17🍌" in text
+    finally:
+        refresh_quality_pricing()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("success", [False, True])
+async def test_admin_reload_updates_quality_caches_only_on_success(success):
+    from bot.quality_pricing import QUALITY_COSTS
+    new_config = {"costs_reference": {"seedream_5_pro_quality_costs": {"basic": 4, "high": 6.5},
+                                      "image_quality_costs": {"1K": 1.5, "2K": 4, "4K": 8}}}
+    catalog = SimpleNamespace(IMAGE_MODELS=[{"id": "seedream_5_pro", "quality_costs": {"basic": 2, "high": 2.5}},
+                                          {"id": "banana_pro", "quality_costs": {"1K": 1.5, "2K": 1.5, "4K": 2}}])
+    reads = []
+    manager = SimpleNamespace(reload=lambda: success, get_price_config=lambda: reads.append(True) or new_config)
+    compat = functions(COMPAT, {"refresh_live_image_pricing", "_refresh_loaded_miniapp_catalog"}, {
+        "refresh_quality_pricing": refresh_quality_pricing, "preset_manager": manager,
+        "sys": SimpleNamespace(modules={"bot.miniapp": catalog}), "QUALITY_COSTS": QUALITY_COSTS,
+        "SEEDREAM_5_PRO_QUALITY_COSTS": SEEDREAM_5_PRO_QUALITY_COSTS,
+    })
+    ns = functions(ROOT / "bot/handlers/admin.py", {"admin_reload_presets"}, {
+        "is_admin": lambda uid: True, "preset_manager": manager,
+        "refresh_live_image_pricing": compat.get("refresh_live_image_pricing", lambda: None),
+    })
+    callback = SimpleNamespace(from_user=SimpleNamespace(id=123), answer=AsyncMock())
+    try:
+        refresh_quality_pricing({})
+        before = deepcopy(catalog.IMAGE_MODELS)
+        await ns["admin_reload_presets"](callback)
+        if success:
+            assert SEEDREAM_5_PRO_QUALITY_COSTS["high"] == 6.5
+            assert QUALITY_COSTS["4K"] == 8
+            assert catalog.IMAGE_MODELS[0]["quality_costs"] == {"basic": 4, "high": 6.5}
+            assert catalog.IMAGE_MODELS[1]["quality_costs"]["4K"] == 8
+            assert reads == [True]
+        else:
+            assert SEEDREAM_5_PRO_QUALITY_COSTS["high"] == 2.5
+            assert catalog.IMAGE_MODELS == before and reads == []
+            assert "Не удалось" in callback.answer.await_args.args[0]
+    finally:
+        refresh_quality_pricing()

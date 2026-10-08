@@ -9,6 +9,7 @@ from typing import Any, Optional
 import aiohttp
 
 from bot.config import config
+from bot.quality_pricing import SEEDREAM_5_PRO_QUALITY_COSTS
 from bot.services.openrouter_qwen38_service import openrouter_qwen38_service
 
 logger = logging.getLogger(__name__)
@@ -388,7 +389,6 @@ class AIAssistantService:
             fallback=FALLBACK_IMAGE_COSTS["banana_2"],
         )
         seedream_cost = _resolve_image_cost(
-            "seedream_5_pro",
             "seedream_edit",
             "seedream_45",
             "seedream",
@@ -429,7 +429,8 @@ class AIAssistantService:
 🖼 Генерация изображений:
 - Banana Pro: {banana_pro_cost}🍌
 - Banana 2: {banana_2_cost}🍌
-- Seedream 5 Pro / Seedream 4.5: {seedream_cost}🍌
+- Seedream 5 Pro: Basic {SEEDREAM_5_PRO_QUALITY_COSTS['basic']:g}🍌 / High {SEEDREAM_5_PRO_QUALITY_COSTS['high']:g}🍌
+- Seedream 4.5: {seedream_cost}🍌
 - Grok Imagine i2i: {grok_i2i_cost}🍌
 
 🎬 Генерация видео:
