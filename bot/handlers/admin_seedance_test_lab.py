@@ -603,7 +603,7 @@ async def choose_mode(callback: types.CallbackQuery, state: FSMContext) -> None:
     await callback.answer(_MODE_LABELS[mode])
 
 
-@router.message(SeedanceAdminTestStates.dashboard)
+@router.message(SeedanceAdminTestStates.dashboard, ~F.text.startswith("/"))
 async def receive_dashboard_media(message: types.Message, state: FSMContext) -> None:
     """Keep uploads in the selected Seedance test flow, never the idle shortcut."""
     if message.from_user is None or not _is_admin(message.from_user.id):
@@ -1154,13 +1154,9 @@ async def new_seedance_request(callback: types.CallbackQuery, state: FSMContext)
         seedance_admin_pending_key="",
         seedance_admin_pending_payload_hash="",
     )
+    await state.set_state(SeedanceAdminTestStates.dashboard)
     if callback.message is not None:
-        data = await _normalize_state(state)
-        await callback.message.edit_text(
-            _dashboard_text(data),
-            reply_markup=_dashboard_keyboard(data),
-            parse_mode="HTML",
-        )
+        await _show_dashboard(callback.message, state, edit=True)
     await callback.answer("Готово к новому запуску")
 
 

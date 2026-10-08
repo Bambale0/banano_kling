@@ -19,7 +19,7 @@ def load_handlers():
     names = {
         "SeedanceAdminTestStates", "_show_dashboard", "open_seedance_lab",
         "choose_mode", "finish_prompt", "finish_refs", "finish_frames",
-        "receive_dashboard_media",
+        "receive_dashboard_media", "new_seedance_request",
     }
     nodes = [node for node in source.body if getattr(node, "name", "") in names]
     namespace = {
@@ -149,6 +149,39 @@ class SeedanceRoutingTests(unittest.IsolatedAsyncioTestCase):
             update_type="message", event=self.message, state=self.state, raw_state=None,
         )
         quick_hit.assert_awaited_once_with(self.message)
+
+    async def test_dashboard_commands_reach_later_admin_router(self):
+        root = Router()
+        root.include_router(self.lab["router"])
+        admin = Router()
+        reached = AsyncMock()
+
+        @admin.message(F.text.in_({"/admin", "/admin_ai", "/start"}))
+        async def admin_command(message):
+            await reached(message)
+
+        root.include_router(admin)
+        await self.lab["open_seedance_lab"](self.callback, self.state)
+        for text in ("/admin", "/admin_ai", "/start"):
+            with self.subTest(command=text):
+                self.message.text = text
+                await root.propagate_event(
+                    update_type="message", event=self.message, state=self.state,
+                    raw_state=await self.state.get_state(),
+                )
+                self.assertEqual(reached.await_count, ("/admin", "/admin_ai", "/start").index(text) + 1)
+        self.message.answer.assert_not_awaited()
+
+    async def test_stale_new_request_button_restores_dashboard_ownership(self):
+        for previous in (None, "SeedanceAdminTestStates:prompt", "SeedanceAdminTestStates:frames"):
+            with self.subTest(previous=previous):
+                await self.state.set_state(previous)
+                self.state.data["seedance_admin_mode"] = "reference"
+                self.state.data["seedance_admin_last_request_id"] = "old-request"
+                await self.lab["new_seedance_request"](self.callback, self.state)
+                self.assertEqual(await self.state.get_state(), "SeedanceAdminTestStates:dashboard")
+                self.assertEqual(self.state.data["seedance_admin_last_request_id"], "")
+                await self.assert_not_idle()
 
     async def test_non_admin_dashboard_does_not_route_media(self):
         self.assertIn("receive_dashboard_media", self.lab)
