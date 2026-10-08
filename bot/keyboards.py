@@ -193,7 +193,7 @@ def get_admin_keyboard(subscription_required: bool | None = None):
         subscription_label = "🔐 Подписка: ВКЛ" if subscription_required else "🔓 Подписка: ВЫКЛ"
     if config.mini_app_url:
         builder.button(
-            text="🌀 Genjutsu — управление",
+            text="🌀 Higgsfield Genjutsu — управление",
             web_app=WebAppInfo(url=_mini_app_url_with_start_param("genjutsu_admin")),
         )
     builder.button(text="🔄 Перезагрузить пресеты", callback_data="admin_reload")
