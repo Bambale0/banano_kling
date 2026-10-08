@@ -1628,3 +1628,16 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Final verification: full safe backend suite passed 2,371 tests / 66 skipped in 137.32 seconds (379 existing warnings), with all 12 frozen backend source/test hashes verified afterward. Changed-line Ruff reports zero violations; changed-file syntax and diff checks pass. Frontend remains the exact verified 272-test/export/browser manifest.
 - Independent review found and reproduced an inter-read withdrawal race plus a legacy-to-typed transition gap; both are closed by checking current authoritative source publication/status and consent snapshots before charging. Public typed scenario now uses the same stored-recipe inference as reconstruction. Canonical duplicate list slots that downstream providers would collapse are rejected; equal first/last scalar frames remain supported. Typed-context provider failures are sanitized before returning errors. Final focused suite: 280 passed.
 - Release status: tested candidate prepared for a draft PR to `tanyapi`; merge/deployment await the user's release decision. No production checkout, prices, database records, media, generation or external message changed during this task.
+
+
+## 2026-10-08 — Seedance admin dashboard reference routing
+
+- Baseline: b07ab430de2b354a134ea4ef451be30dfcb2ba8d, branch fix/seedance-admin-routing-20261008
+- Symptom: photo after choosing Seedance Reference mode opens NanoBanana quick creation.
+- Evidence: open/Done callbacks set None; mode selector changes data only. Generation router runs first and its idle StateFilter correctly accepts None, clearing the Seedance data.
+- Regression: offline extraction executes real callbacks and real aiogram filters without application/config/database imports. Baseline fails on the actual idle interception; fix passes eight tests, including ordered router propagation, repeat dashboard returns, mode switching, non-admin guard and unchanged idle shortcut.
+- Changes: dedicated dashboard state; dashboard media delegates to existing refs/edit/frames validation; text mode gives instructions; admin test access allowlist includes dashboard. No provider/billing/data model/config/migration changes. Mini App uses separate HTTP routes and is unaffected.
+- Checks: eight isolated routing tests PASS; six existing source-contract tests PASS; syntax compilation of changed Python PASS; focused Ruff PASS; diff whitespace PASS.
+- Constraints: no paid generation, real Telegram sends, database access, credentials reads, or production edits. Full application tests and deployed smoke not run in this isolated diagnosis; coordinated release owner handles aggregate CI and deployment verification.
+- Rollout/rollback: ordinary reviewed task PR to tanyapi under release owner; revert the scoped commit if needed. No runtime data migration.
+- Playbooks: Bambale0/skills diagnosing-bugs (red-first evidence), Bambale0/claw architecture/FSM consistency, anthropics webapp-testing reviewed (browser-only workflow not applicable to Telegram handler regression).
