@@ -8,6 +8,7 @@ import { ResultCard } from '../result-card'
 import type { Task, ScenarioType, UploadedFile } from '@/lib/types'
 import type { Seedance25GenerateResponse } from '@/lib/seedance25-api'
 import { generateVideo, uploadFile } from '@/lib/api'
+import { isVideoStatusPending } from '@/lib/video-repeat-pending'
 import { GenjutsuButton } from '../genjutsu-entry'
 
 export function VideoTab() {
@@ -21,6 +22,7 @@ export function VideoTab() {
     videoPromptPreset,
     setVideoPromptPreset,
     refreshTasks,
+    setActiveTab,
   } = useApp()
   const presetTargetsSeedance25 = videoPromptPreset?.model === 'seedance_2_5'
   const presetIsIdentityTransfer = presetTargetsSeedance25 && videoPromptPreset?.seedance25IdentityTransfer === true
@@ -112,7 +114,13 @@ export function VideoTab() {
       }
       selectTask(result.task)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Не удалось запустить видео')
+      if (isVideoStatusPending(e)) {
+        // Existing background history polling reconciles the accepted task.
+        // Keep the composer mounted so its accepted status remains visible.
+        setError(null)
+      } else {
+        setError(e instanceof Error ? e.message : 'Не удалось запустить видео')
+      }
       throw e
     } finally {
       setIsSubmitting(false)
@@ -233,6 +241,7 @@ export function VideoTab() {
           <VideoGeneratorForm
             models={formVideoModels}
             onSubmit={handleSubmit}
+            onCheckPendingVideo={() => { void refreshTasks(); setActiveTab(0) }}
             onUploadImageReference={handleUploadImageReference}
             onUploadVideoReference={handleUploadVideoReference}
             onUploadAudioReference={handleUploadAudioReference}

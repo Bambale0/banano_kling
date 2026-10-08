@@ -2,6 +2,7 @@
 
 import { normalizeRepeatPrompt } from '@/lib/repeat-prompt'
 import { normalizeVideoRepeatSlots } from '@/lib/video-repeat-references'
+import { getPendingVideoRepeat, isVideoStatusPending, VIDEO_REPEAT_PENDING_CHANGED, type PendingVideoRepeat } from '@/lib/video-repeat-pending'
 
 import { useState, useMemo, useEffect, useRef } from 'react'
 import type { VideoModel, UploadedFile, ScenarioType, VideoPromptPreset, VideoRepeatReferenceSlots } from '@/lib/types'
@@ -95,6 +96,7 @@ interface VideoGeneratorFormProps {
   isSubmitting: boolean
   credits: number
   onModelSelected?: (modelId: string) => void
+  onCheckPendingVideo?: () => void
 }
 
 export function VideoGeneratorForm({ 
@@ -111,6 +113,7 @@ export function VideoGeneratorForm({
   isSubmitting,
   credits,
   onModelSelected,
+  onCheckPendingVideo,
 }: VideoGeneratorFormProps) {
   const formatPerSecondCost = (raw: number) => Number(raw.toFixed(2)).toString()
   const [selectedModel, setSelectedModel] = useState(models.find((item) => !['motion_control', 'motion_control_v26', 'motion_control_v30'].includes(item.id))?.id || models[0]?.id || '')
@@ -143,6 +146,7 @@ export function VideoGeneratorForm({
   const [repeatSlots, setRepeatSlots] = useState<VideoRepeatReferenceSlots | undefined>()
   const [repeatUploads, setRepeatUploads] = useState<Record<string, UploadedFile[]>>({})
   const [repeatError, setRepeatError] = useState(false)
+  const [repeatPending, setRepeatPending] = useState<PendingVideoRepeat | null>(null)
   const repeatSession = useRef(0)
   const submittingRef = useRef(false)
   const slotSession = repeatSession.current
@@ -152,7 +156,7 @@ export function VideoGeneratorForm({
   ] : []
   const missingRepeatUploads = typedSlots.some((slot) => slot.binding === 'upload'
     && (!repeatUploads[slot.key]?.[0]?.url || repeatUploads[slot.key][0].uploading))
-  const repeatBlocked = Boolean(repeatSlots && (!repeatSlots.available || missingRepeatUploads || repeatError))
+  const repeatBlocked = Boolean(repeatPending) || Boolean(repeatSlots && (!repeatSlots.available || missingRepeatUploads || repeatError))
   const [startImage, setStartImage] = useState<UploadedFile[]>([])
   const [photoReferences, setPhotoReferences] = useState<UploadedFile[]>([])
   const [videoReferences, setVideoReferences] = useState<UploadedFile[]>([])
@@ -309,6 +313,7 @@ export function VideoGeneratorForm({
       ? { version: 1, available: false, images: [], videos: [] } : slots)
     setRepeatUploads({})
     setRepeatError(false)
+    setRepeatPending(getPendingVideoRepeat(promptPreset.sourceFeedGenId))
     if (promptPreset.model && models.some((item) => item.id === promptPreset.model)) {
       setSelectedModel(promptPreset.model)
     }
@@ -343,6 +348,13 @@ export function VideoGeneratorForm({
     setAudioReference([])
     onPromptPresetConsumed?.()
   }, [models, onPromptPresetConsumed, promptPreset])
+
+  useEffect(() => {
+    const syncPending = () => setRepeatPending(getPendingVideoRepeat(sourceFeedGenId))
+    syncPending()
+    window.addEventListener(VIDEO_REPEAT_PENDING_CHANGED, syncPending)
+    return () => window.removeEventListener(VIDEO_REPEAT_PENDING_CHANGED, syncPending)
+  }, [sourceFeedGenId])
 
   // selected model is hidden motion: switch to first visible video model
   useEffect(() => {
@@ -501,8 +513,11 @@ export function VideoGeneratorForm({
       videoReferences: repeatSlots ? typedSlots.filter((slot) => slot.type === 'video' && slot.binding === 'upload').map((slot) => repeatUploads[slot.key][0].url) : isOmniVideo || (model?.max_video_references ?? 0) > 0 ? videoReferences.map(r => r.url) : [],
       audioReference: selectedScenario === 'avatar' ? audioReference[0]?.url || null : null,
     })
-    } catch {
-      if (repeatSlots && submittedSession === repeatSession.current) setRepeatError(true)
+    } catch (error) {
+      if (submittedSession === repeatSession.current) {
+        if (isVideoStatusPending(error)) setRepeatPending(getPendingVideoRepeat(sourceFeedGenId))
+        else if (repeatSlots) setRepeatError(true)
+      }
       return
     } finally {
       submittingRef.current = false
@@ -1020,7 +1035,15 @@ export function VideoGeneratorForm({
           </div>
         ) : null}
 
-        {repeatSlots ? (
+        {repeatPending ? (
+          <div role="status" className="space-y-2 rounded-2xl border border-gold/30 bg-gold/10 p-4">
+            <p className="text-sm font-medium">Видео принято, ожидаем подтверждения статуса</p>
+            <p className="text-xs text-muted-foreground">Повторный запуск заблокирован, пока история не подтвердит результат этой задачи.</p>
+            {onCheckPendingVideo ? <Button type="button" variant="outline" onClick={onCheckPendingVideo}>Проверить в истории</Button> : null}
+          </div>
+        ) : null}
+
+        {repeatSlots && !repeatPending ? (
           <div role="group" aria-label="Референсы повтора" className="min-w-0 space-y-3 rounded-2xl border border-cyan/25 p-3">
             <p className="text-sm font-medium">Референсы повтора</p>
             {!repeatSlots.available || repeatError ? (
@@ -1088,7 +1111,9 @@ export function VideoGeneratorForm({
           />
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span>
-              {repeatBlocked
+              {repeatPending
+                ? 'Видео принято, статус уточняется'
+                : repeatBlocked
                 ? !repeatSlots?.available || repeatError ? 'Повтор нужно открыть заново' : 'Заполните референсы для повтора'
                 : sourceFeedGenId
                 ? prompt.trim().length > 0

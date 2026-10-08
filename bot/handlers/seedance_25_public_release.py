@@ -688,16 +688,26 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
     permission_error = await verify_video_repeat_before_charge(request)
     if permission_error is not None:
         return permission_error
+    private_repeat = bool(getattr(request, "_video_repeat_authorization", None))
     charged = False
+    refund_attempted = False
+    accepted_task_id = None
     try:
         if not is_admin:
-            await miniapp_module.deduct_credits(telegram_id, quote)
-            charged = True
+            debited = await miniapp_module.deduct_credits(telegram_id, quote)
+            if private_repeat and quote > 0 and debited is False:
+                return web.json_response(
+                    {"ok": False, "error": "Не удалось списать бананы. Обновите баланс и попробуйте снова."}, status=400,
+                )
+            charged = bool(quote > 0 and debited is not False) if private_repeat else True
 
         result = await _launch_provider(payload)
         if not result or not result.get("task_id"):
             if charged:
-                await miniapp_module.add_credits(telegram_id, quote)
+                refund_attempted = True
+                refunded = await miniapp_module.add_credits(telegram_id, quote)
+                if private_repeat and refunded is False:
+                    raise RuntimeError("video_refund_unconfirmed")
                 charged = False
             error = (
                 "провайдер не принял запрос"
@@ -710,6 +720,7 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
             )
 
         task_id = str(result["task_id"])
+        accepted_task_id = task_id
         request_data = _request_data(
             payload,
             is_admin=is_admin,
@@ -748,12 +759,15 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
                     repeat_task_id=task_id,
                     credits_spent=quote,
                 )
-            except Exception:
-                logger.exception(
-                    "Seedance 2.5 repeat reward failed for source=%s task=%s",
-                    source_feed_gen_id,
-                    task_id,
-                )
+            except Exception as reward_error:
+                if private_repeat:
+                    logger.error("Private Seedance repeat reward failed: task_id=%s error_type=%s",
+                                 task_id, type(reward_error).__name__)
+                else:
+                    logger.exception(
+                        "Seedance 2.5 repeat reward failed for source=%s task=%s",
+                        source_feed_gen_id, task_id,
+                    )
         fresh_user = await miniapp_module.get_or_create_user(telegram_id)
         return web.json_response(
             {
@@ -779,18 +793,41 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
             }
         )
     except Exception as exc:
-        private_repeat = bool(getattr(request, "_video_repeat_authorization", None))
         if private_repeat:
+            if accepted_task_id:
+                logger.error("Private Seedance accepted; status reconciliation needed: task_id=%s error_type=%s",
+                             accepted_task_id, type(exc).__name__)
+                return web.json_response(
+                    {"ok": False, "code": "video_status_pending", "task_id": accepted_task_id,
+                     "error": "Видео принято провайдером, но статус пока не подтверждён. Не повторяйте запуск сразу."},
+                    status=500,
+                )
+            if charged and not refund_attempted:
+                refund_attempted = True
+                try:
+                    refunded = await miniapp_module.add_credits(telegram_id, quote)
+                    if refunded is not False:
+                        charged = False
+                except Exception as refund_error:
+                    logger.error("Private Seedance refund unconfirmed: telegram_id=%s error_type=%s",
+                                 telegram_id, type(refund_error).__name__)
+                logger.warning("Private Seedance launch outcome unknown: telegram_id=%s refunded=%s error_type=%s",
+                               telegram_id, not charged, type(exc).__name__)
+            if charged:
+                return web.json_response(
+                    {"ok": False, "code": "video_refund_pending",
+                     "error": "Не удалось подтвердить возврат бананов. Требуется проверка платежа; не повторяйте запуск сразу."},
+                    status=500,
+                )
             logger.error("Private Seedance video repeat failed: error_type=%s", type(exc).__name__)
-        else:
-            logger.exception("Public Seedance 2.5 Mini App launch failed")
+            return web.json_response({"ok": False, "error": "Не удалось запустить видео. Попробуйте ещё раз."}, status=500)
+        logger.exception("Public Seedance 2.5 Mini App launch failed")
         if charged:
             try:
                 await miniapp_module.add_credits(telegram_id, quote)
             except Exception:
                 logger.exception("Seedance 2.5 Mini App immediate refund failed for %s", telegram_id)
-        error = "Не удалось запустить видео. Попробуйте ещё раз." if private_repeat else str(exc)
-        return web.json_response({"ok": False, "error": error}, status=500)
+        return web.json_response({"ok": False, "error": str(exc)}, status=500)
 
 
 async def _claim_async_refund(task_id: str) -> tuple[int, float] | None:

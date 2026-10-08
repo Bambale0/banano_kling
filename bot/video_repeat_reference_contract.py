@@ -168,7 +168,20 @@ def build_video_repeat_plan(
             raise VideoRepeatContractError("Режим исходной Seedance 2.5 задачи противоречив.")
         if identity or editing:
             raise VideoRepeatContractError("Для переноса персонажа и редактирования видео нужен специальный сценарий; приватный повтор через эту форму недоступен.")
+    if str(data.get("v_type") or data.get("generation_type") or "").lower() in {"motion_control", "motion"}:
+        raise VideoRepeatContractError("Для Motion Control нужен специальный сценарий; приватный повтор через эту форму недоступен.")
     recipe = active_video_recipe(task)
+    if model.startswith("veo3"):
+        mode = str(data.get("veo_generation_type") or (
+            "FIRST_AND_LAST_FRAMES_2_VIDEO" if recipe["scenario"] == "imgtxt" else "TEXT_2_VIDEO"
+        ))
+        # Match the existing generic Veo adapter: only I2V forwards images,
+        # capped at two; text mode cannot promise retained image inputs.
+        if (mode not in {"TEXT_2_VIDEO", "FIRST_AND_LAST_FRAMES_2_VIDEO", "REFERENCE_2_VIDEO"}
+                or recipe["videos"] or len(recipe["images"]) > 2
+                or (recipe["images"] and (recipe["scenario"] != "imgtxt" or mode == "TEXT_2_VIDEO"))):
+            raise VideoRepeatContractError("Режим Veo исходной задачи не поддерживает сохранённые референсы через эту форму.")
+        recipe["veo_generation_type"] = mode
     if recipe["audio"] and not allow_audio_replacement:
         raise VideoRepeatContractError("Приватные аудиореференсы пока не поддерживаются. Загрузите своё аудио для повтора.")
     replaced = replaced_kinds or set()
@@ -228,7 +241,9 @@ def merge_typed_video_inputs(
     result.update(reference_images=[], v_reference_videos=[], v_image_url=None,
                   seedance25_first_frame_url=None, seedance25_last_frame_url=None,
                   seedance25_reference_audio_urls=[], audio_references=[], audio_url=None)
-    if result.get("v_model") != plan["model"]:
+    # The public Omni video selector and its stored provider model are aliases.
+    public_aliases = {"gemini_omni_video": "gemini_omni"}
+    if public_aliases.get(result.get("v_model"), result.get("v_model")) != public_aliases.get(plan["model"], plan["model"]):
         raise VideoRepeatContractError("Для этого повтора используйте модель исходной публикации.")
     if result.get("v_model") == "seedance_2_5" and not identity:
         requested = body.get("seedance25_scenario")
@@ -240,6 +255,10 @@ def merge_typed_video_inputs(
         if body.get("v_type") and body["v_type"] != plan["scenario"]:
             raise VideoRepeatContractError("Для этого повтора используйте сценарий исходной публикации.")
         result["v_type"] = plan["scenario"]
+    if plan["model"].startswith("veo3"):
+        # Public forms send their default advanced mode even for hidden recipes.
+        # It cannot override the author's provider input contract.
+        result["veo_generation_type"] = plan["veo_generation_type"]
     for kind, field in (("images", "reference_images"), ("videos", "v_reference_videos")):
         values = body.get(field, [])
         if not isinstance(values, list) or any(not isinstance(value, str) or not value.strip() for value in values):

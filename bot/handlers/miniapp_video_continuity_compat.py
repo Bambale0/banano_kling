@@ -645,7 +645,7 @@ def _video_repeat_snapshot(source: dict[str, Any]) -> str:
         "duration": source.get("duration"), "aspect_ratio": source.get("aspect_ratio"),
         "recipe": {key: value for key, value in request_data.items()
                    if key in MEDIA_KEYS or key in {
-                       "v_model", "v_type", "scenario", "seedance25_scenario",
+                       "v_model", "v_type", "scenario", "seedance25_scenario", "veo_generation_type",
                        "seedance25_identity_transfer", "seedance25_video_editing",
                    }},
     }

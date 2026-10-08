@@ -71,7 +71,10 @@ try {
       let response = { ok: true }
       if (path.endsWith('/bootstrap')) response = { ...bootstrap, credits: bootstrap.credits + ++bootstrapVersion, recent_tasks: [ownerTask] }
       else if (path.endsWith('/task-detail')) response = { ok: true, task: ownerTask }
-      else if (path.endsWith('/generations/share')) {
+      else if (path.endsWith('/generations/share') && route.request().postDataJSON().publication_scope === 'private') {
+        Object.assign(ownerTask, { is_public_feed: false, is_profile_visible: false, publication_scope: 'private', feed_repeat_reference_selection: { images: [] } })
+        response = { ok: true, removed: true, publication_scope: 'private' }
+      } else if (path.endsWith('/generations/share')) {
         const payload = JSON.parse(route.request().postData())
         requests.push(payload)
         Object.assign(ownerTask, {

@@ -433,11 +433,12 @@ async def test_typed_first_and_last_can_intentionally_use_same_file_identity(typ
 
 
 REAL_GENERIC = inspect.unwrap(miniapp.miniapp_generate_video)
+REAL_VIDEO_LAUNCH = inspect.unwrap(miniapp._launch_video_generation_task)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case", [
-    "provider_exception", "failed_result", "post_accept_bookkeeping",
+    "provider_exception", "failed_result", "post_accept_bookkeeping", "done_accept_bookkeeping",
     "accepted_then_persistence", "predebit_error", "admin_error",
     "refund_uncertain", "debit_rejected",
 ])
@@ -484,6 +485,11 @@ async def test_typed_generic_failure_has_single_correct_financial_outcome(monkey
         launch.side_effect = accepted_then_raise
     elif case == "post_accept_bookkeeping":
         launch.return_value = {"status": "queued", "task_id": "synthetic-accepted"}
+    elif case == "done_accept_bookkeeping":
+        async def completed_result(**kwargs):
+            kwargs["_launch_observation"].update(accepted=True, provider_task_id="")
+            return {"status": "done", "task_id": "synthetic-accepted"}
+        launch.side_effect = completed_result
     monkeypatch.setattr(miniapp, "_launch_video_generation_task", launch)
     monkeypatch.setattr(miniapp, "credit_feed_prompt_repeat", AsyncMock(side_effect=RuntimeError("synthetic bookkeeping failure")))
     request = entry.request({
@@ -496,10 +502,11 @@ async def test_typed_generic_failure_has_single_correct_financial_outcome(monkey
     if case in {"provider_exception", "failed_result", "refund_uncertain"}:
         refund.assert_awaited_once_with(880102, 2)
         assert balance["value"] == 100
-    elif case in {"post_accept_bookkeeping", "accepted_then_persistence"}:
+    elif case in {"post_accept_bookkeeping", "done_accept_bookkeeping", "accepted_then_persistence"}:
         refund.assert_not_awaited()
         assert balance["value"] == 98
         assert json.loads(response.text)["code"] == "video_status_pending"
+        assert json.loads(response.text)["task_id"] == "synthetic-accepted"
     else:
         refund.assert_not_awaited()
         assert balance["value"] == 100
@@ -640,6 +647,7 @@ async def test_ordinary_owner_and_legacy_omni_keep_existing_provider_assets(type
 @pytest.mark.parametrize("model,extra", [
     ("seedance_2_5", {"seedance25_identity_transfer": True}),
     ("gemini_omni_video", {"omni_audio_ids": ["synthetic-owner-provider-audio"]}),
+    ("motion_control_v26", {"v_type": "motion_control", "motion_image_url": FACE, "motion_video_url": MOTION}),
 ])
 async def test_unsupported_private_recipe_can_publish_result_with_empty_consent(model, extra):
     owner = await database.get_or_create_user(881004)
@@ -656,3 +664,277 @@ async def test_unsupported_private_recipe_can_publish_result_with_empty_consent(
     assert public["repeat_reference_slots"]["available"] is False
     own = await database.get_feed_generation_card(card["id"], viewer_user_id=owner.id)
     assert "repeat_reference_slots" not in own
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('case', ['persistence', 'refresh', 'reward', 'rejected', 'exception', 'refund_uncertain', 'debit_rejected', 'admin_accepted'])
+async def test_typed_seedance_actual_provider_acceptance_financial_boundary(monkeypatch, typed_video_entrypoint, case):
+    from bot.handlers import seedance_25_public_release as public
+    entry = typed_video_entrypoint
+    entry.source['is_public_feed'] = True
+    miniapp._get_repeat_source_card.return_value.update(model='seedance_2_5')
+
+    async def delegate(request):
+        return await public._public_miniapp_generate(request, await request.json())
+
+    entry.delegate.side_effect = delegate
+    monkeypatch.setattr(miniapp.config, 'is_admin', lambda _: case == 'admin_accepted')
+    monkeypatch.setattr(public, '_validate_public_payload', AsyncMock())
+    monkeypatch.setattr(public.preview_module, '_price_quote', lambda _: 2)
+    monkeypatch.setattr(miniapp, 'check_can_afford', AsyncMock(return_value=True))
+    balance = {'value': 100}
+
+    async def debit(_user, amount):
+        if case == 'debit_rejected':
+            return False
+        balance['value'] -= amount
+        return True
+
+    async def refund(_user, amount):
+        balance['value'] += amount
+        if case == 'refund_uncertain':
+            raise RuntimeError('synthetic uncertain refund')
+        return True
+
+    monkeypatch.setattr(miniapp, 'deduct_credits', AsyncMock(side_effect=debit))
+    monkeypatch.setattr(miniapp, 'add_credits', AsyncMock(side_effect=refund))
+    provider = AsyncMock(return_value={'task_id': 'synthetic-seedance-accepted'})
+    if case in {'rejected', 'refund_uncertain'}:
+        provider.return_value = {'error': 'synthetic rejected'}
+    elif case == 'exception':
+        provider.side_effect = RuntimeError('synthetic transport failure')
+    monkeypatch.setattr(public.seedance_25_service, 'generate_video', provider)
+    persist = AsyncMock()
+    if case in {'persistence', 'admin_accepted'}:
+        persist.side_effect = RuntimeError('synthetic persistence failure')
+    monkeypatch.setattr(public.generation_module, 'add_generation_task', persist)
+    reward = AsyncMock()
+    if case == 'reward':
+        reward.side_effect = RuntimeError('synthetic reward failure')
+    monkeypatch.setattr(miniapp, 'credit_feed_prompt_repeat', reward)
+    refresh = AsyncMock(return_value=SimpleNamespace(credits=98))
+    if case == 'refresh':
+        refresh.side_effect = RuntimeError('synthetic refresh failure')
+    monkeypatch.setattr(miniapp, 'get_or_create_user', refresh)
+    response = await entry.call(entry.request({
+        'v_model': 'seedance_2_5', 'v_type': 'video', 'v_duration': 5, 'v_ratio': '9:16',
+        'reference_images': ['https://example.test/own.png'],
+        'v_reference_videos': ['https://example.test/own.mp4'],
+    }))
+    data = json.loads(response.text)
+    if case in {'persistence', 'refresh', 'admin_accepted'}:
+        assert data['code'] == 'video_status_pending'
+        assert data['task_id'] == 'synthetic-seedance-accepted'
+        miniapp.add_credits.assert_not_awaited()
+        assert balance['value'] == (100 if case == 'admin_accepted' else 98)
+    elif case == 'reward':
+        assert response.status == 200
+        miniapp.add_credits.assert_not_awaited()
+        assert balance['value'] == 98
+    elif case == 'debit_rejected':
+        assert response.status == 400
+        provider.assert_not_awaited()
+        miniapp.add_credits.assert_not_awaited()
+    else:
+        miniapp.add_credits.assert_awaited_once_with(880102, 2)
+        assert balance['value'] == 100
+        if case == 'refund_uncertain':
+            assert data['code'] == 'video_refund_pending'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('model,mode', [
+    ('veo3_fast', 'FIRST_AND_LAST_FRAMES_2_VIDEO'),
+    ('veo3_fast', 'REFERENCE_2_VIDEO'),
+    ('veo3_fast', None),
+    ('gemini_omni_video', None),
+])
+async def test_typed_provider_mode_survives_public_form_defaults_before_debit(monkeypatch, typed_video_entrypoint, model, mode):
+    entry = typed_video_entrypoint
+    entry.source.update(model=model, is_public_feed=True,
+                        feed_repeat_reference_selection={'version': 1, 'images': [FACE, FIXED], 'videos': []},
+                        request_data={'v_type': 'imgtxt', 'reference_images': [FACE, FIXED],
+                                      **({'veo_generation_type': mode} if mode else {})})
+    entry.delegate.side_effect = REAL_GENERIC
+    monkeypatch.setattr(miniapp, 'get_generation_task_payload', AsyncMock(side_effect=lambda *_: dict(entry.source)))
+    monkeypatch.setattr(miniapp.config, 'is_admin', lambda _: False)
+    monkeypatch.setattr(miniapp, 'missing_local_upload_sources', lambda _: [])
+    monkeypatch.setattr(miniapp, 'touch_saved_references', AsyncMock())
+    monkeypatch.setattr(miniapp.preset_manager, 'get_video_cost_with_quality', lambda *_: 1)
+    monkeypatch.setattr(miniapp, 'check_can_afford', AsyncMock(return_value=True))
+    monkeypatch.setattr(miniapp, 'deduct_credits', AsyncMock(return_value=True))
+    monkeypatch.setattr(miniapp, 'credit_feed_prompt_repeat', AsyncMock())
+    monkeypatch.setattr(miniapp, 'get_or_create_user', AsyncMock(return_value=SimpleNamespace(credits=99)))
+    launch = AsyncMock(return_value={'status': 'queued', 'task_id': 'synthetic-mode'})
+    monkeypatch.setattr(miniapp, '_launch_video_generation_task', launch)
+    response = await entry.call(entry.request({
+        'v_model': 'gemini_omni' if model == 'gemini_omni_video' else model, 'v_type': 'imgtxt',
+        'v_duration': 6, 'v_ratio': '9:16', 'veo_generation_type': 'TEXT_2_VIDEO',
+        'reference_images': [], 'v_reference_videos': [],
+    }))
+    assert response.status == 200, response.text
+    miniapp.deduct_credits.assert_awaited_once()
+    payload = launch.await_args.kwargs
+    assert payload['model'] == model
+    if model.startswith('veo3'):
+        expected_mode = mode or 'FIRST_AND_LAST_FRAMES_2_VIDEO'
+        assert payload['veo_generation_type'] == expected_mode
+        assert [payload['image_url'], *payload['image_references']] == [FACE, FIXED]
+        # Continue through the actual launch helper up to the mocked provider.
+        from bot.services.veo_service import veo_service
+        provider = AsyncMock(return_value={'task_id': 'synthetic-veo-accepted'})
+        monkeypatch.setattr(veo_service, 'generate_video', provider)
+        monkeypatch.setattr(miniapp, 'add_generation_task', AsyncMock(side_effect=RuntimeError('synthetic persistence stop')))
+        with pytest.raises(RuntimeError, match='persistence stop'):
+            await REAL_VIDEO_LAUNCH(**payload)
+        assert provider.await_args.kwargs['generation_type'] == expected_mode
+        assert provider.await_args.kwargs['image_urls'] == [FACE, FIXED]
+    else:
+        assert payload['image_references'] == [FACE, FIXED]
+
+
+@pytest.mark.asyncio
+async def test_motion_control_typed_recipe_is_unavailable_before_delegate(typed_video_entrypoint):
+    entry = typed_video_entrypoint
+    entry.source.update(model='motion_control_v26',
+        feed_repeat_reference_selection={'version': 1, 'images': [], 'videos': []},
+        request_data={'v_type': 'motion_control', 'motion_image_url': FACE, 'motion_video_url': MOTION})
+    assert video_repeat_descriptors(entry.source)['available'] is False
+    response = await entry.call(entry.request({'v_type': 'motion', 'reference_images': [], 'v_reference_videos': []}))
+    assert response.status == 400
+    entry.delegate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_full_unpublish_installed_http_revokes_grant_and_deeplink_repeat(monkeypatch):
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from bot.handlers import publication_scope_compat as publication
+    owner = await create_video()
+    viewer = await database.get_or_create_user(880102)
+    card = await database.share_to_feed('typed-private-video', owner.id,
+        repeat_reference_image_indices=[1], repeat_reference_video_indices=[1])
+    current_user = {'user': owner}
+    async def context(*_args):
+        actor = current_user['user']
+        return actor.telegram_id, {'user': actor}
+    monkeypatch.setattr(miniapp, '_get_user_context', context)
+    monkeypatch.setattr(miniapp, 'deduct_credits', AsyncMock())
+    monkeypatch.setattr(miniapp, '_launch_video_generation_task', AsyncMock())
+    monkeypatch.setattr(miniapp, 'miniapp_generation_share', miniapp.miniapp_generation_share)
+    publication._patch_miniapp_module(miniapp)
+    app = web.Application()
+    miniapp.setup_miniapp_routes(app)
+    # Route integration only: do not start background provider reconciliation.
+    app.on_startup.clear()
+    root = '/' + (miniapp.config.MINI_APP_PATH or '/mini-app').strip('/') + '/api'
+    async with TestClient(TestServer(app)) as client:
+        current_user['user'] = viewer
+        denied = await client.post(root + '/generations/share', json={
+            'init_data': 'signed', 'task_id': 'typed-private-video', 'publication_scope': 'private'})
+        assert not (await denied.json()).get('removed')
+        current = await database.get_generation_task_payload(card['id'])
+        assert current['is_public_feed']
+        current_user['user'] = owner
+        response = await client.post(root + '/generations/share', json={
+            'init_data': 'signed', 'task_id': 'typed-private-video', 'publication_scope': 'private'})
+        assert response.status == 200
+        assert (await response.json())['removed'] is True
+        current = await database.get_generation_task_payload(card['id'])
+        assert not current['is_public_feed'] and not current['is_profile_visible']
+        assert json.loads(current['feed_repeat_reference_selection']) == {'version': 1, 'images': [], 'videos': []}
+        current_user['user'] = viewer
+        repeat = await client.post(root + '/generate-video', json={
+            'init_data': 'signed', 'source_feed_gen_id': card['id'], 'v_model': 'seedance_2_5',
+            'v_type': 'video', 'reference_images': ['https://example.test/own.png'],
+            'v_reference_videos': ['https://example.test/own.mp4']})
+        assert repeat.status in (403, 404)
+        miniapp.deduct_credits.assert_not_awaited()
+        miniapp._launch_video_generation_task.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('mode', ['owner', 'legacy'])
+async def test_motion_control_original_owner_and_legacy_continuity_unchanged(typed_video_entrypoint, mode):
+    entry = typed_video_entrypoint
+    entry.source.update(model='motion_control_v26',
+        request_data={'v_type': 'motion_control', 'motion_image_url': FACE, 'motion_video_url': MOTION})
+    if mode == 'owner':
+        entry.source['user_id'] = 2
+    else:
+        entry.source['feed_repeat_reference_selection'] = None
+    assert (await entry.call(entry.request({}))).status == 200
+    entry.delegate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_author_motion_control_selection_rejected_without_publication_mutation():
+    owner = await database.get_or_create_user(881011)
+    await database.add_generation_task(owner.id, owner.telegram_id, 'typed-motion', 'video', 'motion_control_v26',
+        model='motion_control_v26', request_data={'v_type': 'motion_control',
+            'motion_image_url': FACE, 'motion_video_url': MOTION, 'reference_images': [FACE]})
+    await database.complete_video_task('typed-motion', 'https://example.test/result.mp4')
+    with pytest.raises(ValueError, match='Motion Control'):
+        await database.share_to_feed('typed-motion', owner.id,
+            repeat_reference_image_indices=[0], repeat_reference_video_indices=[])
+    source = await database.get_generation_task_payload('typed-motion')
+    assert not source['is_public_feed']
+    assert source['feed_repeat_reference_selection'] is None
+
+
+@pytest.mark.asyncio
+async def test_veo_source_mode_change_during_affordability_blocks_before_debit(monkeypatch, typed_video_entrypoint):
+    entry = typed_video_entrypoint
+    entry.source.update(model='veo3_fast', is_public_feed=True,
+        feed_repeat_reference_selection={'version': 1, 'images': [FACE, FIXED], 'videos': []},
+        request_data={'v_type': 'imgtxt', 'reference_images': [FACE, FIXED], 'veo_generation_type': 'REFERENCE_2_VIDEO'})
+    entry.delegate.side_effect = REAL_GENERIC
+    monkeypatch.setattr(miniapp, 'get_generation_task_payload', AsyncMock(side_effect=lambda *_: dict(entry.source)))
+    monkeypatch.setattr(miniapp.config, 'is_admin', lambda _: False)
+    monkeypatch.setattr(miniapp, 'missing_local_upload_sources', lambda _: [])
+    monkeypatch.setattr(miniapp, 'touch_saved_references', AsyncMock())
+    monkeypatch.setattr(miniapp.preset_manager, 'get_video_cost_with_quality', lambda *_: 1)
+    async def change_mode(*_args):
+        entry.source['request_data']['veo_generation_type'] = 'TEXT_2_VIDEO'
+        return True
+    monkeypatch.setattr(miniapp, 'check_can_afford', AsyncMock(side_effect=change_mode))
+    debit = AsyncMock(return_value=True)
+    launch = AsyncMock(return_value={'status': 'queued', 'task_id': 'synthetic-mode'})
+    monkeypatch.setattr(miniapp, 'deduct_credits', debit)
+    monkeypatch.setattr(miniapp, '_launch_video_generation_task', launch)
+    monkeypatch.setattr(miniapp, 'credit_feed_prompt_repeat', AsyncMock())
+    monkeypatch.setattr(miniapp, 'get_or_create_user', AsyncMock(return_value=SimpleNamespace(credits=99)))
+    response = await entry.call(entry.request({'v_model': 'veo3_fast', 'v_type': 'imgtxt', 'v_duration': 6,
+        'v_ratio': '9:16', 'veo_generation_type': 'TEXT_2_VIDEO', 'reference_images': [], 'v_reference_videos': []}))
+    assert response.status == 400
+    debit.assert_not_awaited()
+    launch.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('scenario,mode,images', [
+    ('imgtxt', 'TEXT_2_VIDEO', [FACE, FIXED]),
+    ('text', 'REFERENCE_2_VIDEO', [FACE, FIXED]),
+    ('imgtxt', 'REFERENCE_2_VIDEO', [FACE, FIXED, 'https://example.test/third.png']),
+])
+async def test_typed_veo_never_offers_inputs_ignored_by_existing_provider_adapter(typed_video_entrypoint, scenario, mode, images):
+    entry = typed_video_entrypoint
+    entry.source.update(model='veo3_fast',
+        feed_repeat_reference_selection={'version': 1, 'images': images, 'videos': []},
+        request_data={'v_type': scenario, 'reference_images': images, 'veo_generation_type': mode})
+    assert video_repeat_descriptors(entry.source)['available'] is False
+    response = await entry.call(entry.request({'v_model': 'veo3_fast', 'v_type': scenario,
+        'reference_images': [], 'v_reference_videos': [], 'veo_generation_type': 'TEXT_2_VIDEO'}))
+    assert response.status == 400
+    entry.delegate.assert_not_awaited()
+
+
+def test_typed_veo_text_only_source_remains_available(typed_video_entrypoint):
+    entry = typed_video_entrypoint
+    entry.source.update(model='veo3_fast',
+        feed_repeat_reference_selection={'version': 1, 'images': [], 'videos': []},
+        request_data={'v_type': 'text', 'veo_generation_type': 'TEXT_2_VIDEO'})
+    descriptor = video_repeat_descriptors(entry.source)
+    assert descriptor['available'] is True
+    assert descriptor['images'] == [] and descriptor['videos'] == []

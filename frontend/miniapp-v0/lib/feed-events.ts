@@ -76,6 +76,14 @@ function pendingPublication(): FeedItem | null {
   }
 }
 
+export function forgetPendingPublication(taskId: string): void {
+  if (pendingPublication()?.task_id !== taskId) return
+  latestPublication = null
+  if (typeof window === 'undefined') return
+  window.__BANANO_PENDING_PUBLICATION__ = null
+  try { window.sessionStorage.removeItem(STORAGE_KEY) } catch {}
+}
+
 export function mergePublication(
   items: FeedItem[],
   item: FeedItem | null | undefined,

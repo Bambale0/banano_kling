@@ -5247,7 +5247,8 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
 
         if launch_result.get("status") in {"queued", "done"}:
             launch_observation["accepted"] = True
-            launch_observation.setdefault("provider_task_id", str(launch_result.get("task_id") or ""))
+            if not launch_observation.get("provider_task_id"):
+                launch_observation["provider_task_id"] = str(launch_result.get("task_id") or "")
         if launch_result["status"] == "failed":
             if not is_admin and (not private_repeat or charged):
                 refund_attempted = True
@@ -5297,13 +5298,14 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
         )
     except Exception as e:
         if private_repeat:
-            if charged and launch_observation.get("accepted"):
+            if launch_observation.get("accepted"):
                 logger.error(
                     "Private video accepted; status reconciliation needed: telegram_id=%s provider_task_id=%s error_type=%s",
                     telegram_id, launch_observation.get("provider_task_id"), type(e).__name__,
                 )
                 return web.json_response(
                     {"ok": False, "code": "video_status_pending",
+                     "task_id": launch_observation.get("provider_task_id") or None,
                      "error": "Видео принято провайдером, но статус пока не подтверждён. Не повторяйте запуск сразу."},
                     status=500,
                 )

@@ -19,7 +19,7 @@ export async function hydrateSeedance25IdentityPreset(
 ): Promise<VideoPromptPreset> {
   const promptPreset = normalizeRepeatPrompt(preset, item)
   const safePreset = item.is_mine !== true && item.repeat_reference_slots !== undefined
-    ? { ...promptPreset, model: item.model, repeatReferenceSlots: normalizeVideoRepeatSlots(item.repeat_reference_slots),
+    ? { ...promptPreset, model: item.model === 'gemini_omni_video' ? 'gemini_omni' : item.model, repeatReferenceSlots: normalizeVideoRepeatSlots(item.repeat_reference_slots),
       initialStartImage: [], initialPhotoReferences: [], initialVideoReferences: [] }
     : promptPreset
   if (item.model !== 'seedance_2_5' || item.is_mine !== true) return safePreset

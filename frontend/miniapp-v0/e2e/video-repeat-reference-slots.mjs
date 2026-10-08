@@ -54,6 +54,9 @@ try {
     let currentCard = card
     let currentTask = { ...task }
     let credits = bootstrap.credits
+    let withdrawalAllowed = false
+    let generationPending = false
+    let pendingTask = null
     page.on('pageerror', error => errors.push(error.message))
     page.on('dialog', dialog => dialog.accept())
     await page.addInitScript(() => {
@@ -69,9 +72,15 @@ try {
       }
       if (url.pathname.includes('/mini-app/api/')) {
         let response = { ok: true }, status = 200
-        if (url.pathname.endsWith('/bootstrap')) response = { ...bootstrap, credits, recent_tasks: [currentTask] }
+        if (url.pathname.endsWith('/bootstrap')) response = { ...bootstrap, credits, recent_tasks: [currentTask, ...(pendingTask ? [pendingTask] : [])] }
         else if (url.pathname.endsWith('/task-detail')) response = { ok: true, task: currentTask }
-        else if (url.pathname.endsWith('/generations/share')) {
+        else if (url.pathname.endsWith('/generations/share') && route.request().postDataJSON().publication_scope === 'private') {
+          if (!withdrawalAllowed) { status = 503; response = { ok: false, error: 'Synthetic withdrawal unavailable' } }
+          else {
+            currentTask = { ...currentTask, is_public_feed: false, is_profile_visible: false, publication_scope: 'private', feed_repeat_reference_selection: { images: [], videos: [] } }
+            response = { ok: true, removed: true, publication_scope: 'private' }
+          }
+        } else if (url.pathname.endsWith('/generations/share')) {
           const data = route.request().postDataJSON()
           publications.push(data)
           currentTask = { ...currentTask, is_public_feed: true, is_profile_visible: true, publication_scope: 'feed',
@@ -85,7 +94,9 @@ try {
         else if (url.pathname.endsWith('/generate-video')) {
           generations.push(route.request().postDataJSON())
           status = 409
-          response = { ok: false, error: 'Разрешения автора изменились. Откройте публикацию заново.' }
+          response = generationPending
+            ? { ok: false, code: 'video_status_pending', task_id: 'accepted-provider-task', error: 'Видео принято провайдером. Ожидаем подтверждения.' }
+            : { ok: false, error: 'Разрешения автора изменились. Откройте публикацию заново.' }
         } else if (/generate|repeat|remix|start/.test(url.pathname)) throw new Error('Unexpected generation request: ' + url.pathname)
         return route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(response) })
       }
@@ -117,6 +128,28 @@ try {
     await page.getByRole('group', { name: 'Референсы для повторов' }).waitFor({ state: 'hidden' })
     assert.deepEqual(publications[1].repeat_reference_image_indices, [])
     assert.deepEqual(publications[1].repeat_reference_video_indices, [])
+
+    // Full withdrawal uses the scoped publication route; a failure preserves grants.
+    await page.getByRole('button', { name: 'Настроить публикацию', exact: true }).click()
+    await imageConsent.click(); await videoConsent.click()
+    await page.getByRole('button', { name: 'Сохранить публикацию', exact: true }).click()
+    await page.getByRole('group', { name: 'Референсы для повторов' }).waitFor({ state: 'hidden' })
+    await page.getByRole('button', { name: 'Настроить публикацию', exact: true }).click()
+    await page.getByRole('button', { name: 'Убрать публикацию', exact: true }).click()
+    await page.getByText('Synthetic withdrawal unavailable', { exact: true }).waitFor()
+    assert.equal(await videoConsent.getAttribute('aria-checked'), 'true')
+    assert.equal(currentTask.is_profile_visible, true)
+    assert.deepEqual(currentTask.feed_repeat_reference_selection, { images: [2], videos: [5] })
+    withdrawalAllowed = true
+    await page.getByRole('button', { name: 'Убрать публикацию', exact: true }).click()
+    await page.getByRole('button', { name: 'Опубликовать', exact: true }).waitFor()
+    assert.equal(currentTask.is_public_feed, false)
+    assert.equal(currentTask.is_profile_visible, false)
+    assert.deepEqual(currentTask.feed_repeat_reference_selection, { images: [], videos: [] })
+    assert.equal(await page.evaluate(() => sessionStorage.getItem('banano:pending-publication')), null)
+    await page.getByRole('button', { name: 'Опубликовать', exact: true }).click()
+    assert.equal(await imageConsent.getAttribute('aria-checked'), 'false')
+    assert.equal(await videoConsent.getAttribute('aria-checked'), 'false')
 
     await page.evaluate(() => sessionStorage.clear())
     // Every consumer entry point receives the same URL-free contract.
@@ -187,9 +220,43 @@ try {
     await page.goto(baseUrl + '?startapp=remix_777')
     await page.getByRole('alert').filter({ hasText: 'Повтор недоступен' }).waitFor()
     assert.equal(await page.getByRole('button', { name: /Запустить видео/ }).isDisabled(), true)
+    // Accepted/pending goes through real HTTP parsing, the tab, and the form.
+    currentCard = { ...card, repeat_reference_slots: { ...slots,
+      images: slots.images.map(slot => ({ ...slot, binding: 'fixed' })), videos: slots.videos.map(slot => ({ ...slot, binding: 'fixed' })),
+    } }
+    credits = 100
+    generationPending = true
+    const beforePending = generations.length
+    await page.goto(baseUrl + '?startapp=remix_777')
+    await page.getByRole('button', { name: /Запустить видео/ }).click()
+    await page.getByText('Видео принято, ожидаем подтверждения статуса', { exact: true }).waitFor()
+    assert.equal(await page.getByRole('button', { name: /Запустить видео/ }).isDisabled(), true)
+    assert.equal(generations.length, beforePending + 1)
+    await page.getByRole('button', { name: 'Проверить в истории', exact: true }).click()
+    for (const surface of ['Лента', 'Профиль', 'deep-link']) {
+      await page.goto(baseUrl + (surface === 'deep-link' ? '?startapp=remix_777' : ''))
+      await page.waitForLoadState('networkidle')
+      if (surface !== 'deep-link') {
+        await page.getByRole('button', { name: surface, exact: true }).click()
+        await page.getByRole('button', { name: surface === 'Лента' ? 'Открыть видео' : 'Открыть публикацию' }).first().click()
+        await page.getByRole('button', { name: /^Повторить(?: · [0-9]+)?$/ }).click()
+      }
+      await page.getByText('Видео принято, ожидаем подтверждения статуса', { exact: true }).waitFor()
+      assert.equal(await page.getByRole('button', { name: /Запустить видео/ }).isDisabled(), true)
+      assert.equal(await page.getByRole('alert').filter({ hasText: 'Откройте публикацию заново' }).count(), 0)
+      assert.equal(generations.length, beforePending + 1)
+    }
+    pendingTask = { ...task, task_id: 'accepted-provider-task', status: 'completed', prompt_preview: '', prompt: '' }
+    const reconciled = page.waitForResponse(response => response.url().endsWith('/bootstrap'))
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    await reconciled
+    await page.getByText('Видео принято, ожидаем подтверждения статуса', { exact: true }).waitFor({ state: 'hidden' })
+    assert.equal(await page.getByRole('button', { name: /Запустить видео/ }).isEnabled(), true)
+    assert.equal(generations.length, beforePending + 1)
+
     assert.equal(sourceRequests.some(path => path.includes('private')), false)
     assert.deepEqual(errors, [])
-    console.log(`PASS ${width}px: typed owner consent/revoke; Feed/Profile/deep-link slots; ordered payload; full retained/upload price and affordability; rejected stale recipe; unavailable recipe`)
+    console.log(`PASS ${width}px: typed owner consent/full withdrawal with failure preservation; accepted pending survives Feed/Profile/deep-link reopen and reconciles from history; Feed/Profile/deep-link slots; ordered payload; full retained/upload price and affordability; rejected stale recipe; unavailable recipe`)
     await context.close()
   }
 } finally {
