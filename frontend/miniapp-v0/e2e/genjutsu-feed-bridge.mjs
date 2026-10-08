@@ -61,6 +61,15 @@ try {
     let delayQuote = false
     page.on('pageerror', error => errors.push(error.message))
     await page.addInitScript(() => {
+      window.__allowCopy = false
+      window.__copied = null
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+        writeText: async text => {
+          if (!window.__allowCopy) throw new DOMException('Fixture denied', 'NotAllowedError')
+          window.__copied = text
+        },
+      } })
+      document.execCommand = () => false
       window.Telegram = { WebApp: { initData: 'query_id=genjutsu-feed-e2e', initDataUnsafe: {}, ready() {}, expand() {},
         onEvent(name, handler) { window.addEventListener('fixture:telegram:' + name, handler) },
         offEvent(name, handler) { window.removeEventListener('fixture:telegram:' + name, handler) } } }
@@ -101,9 +110,10 @@ try {
           }
           else { forbidden.push(body.action); response = { ok: false, error: 'Unexpected action' } }
         } else if (url.pathname.endsWith('/bootstrap')) response = bootstrap
+        else if (url.pathname.endsWith('/feed/share')) response = { ok: true, feed_item: card, link: 'https://t.me/test_bot?start=feed_777_ref_E2E%2BOWNER' }
         else if (url.pathname.endsWith('/feed/item')) response = { ok: true, feed_item: previewCard }
         else if (url.pathname.endsWith('/feed/profile')) response = { ok: true, feed: published ? [card] : [], profile: { name: 'E2E Owner', first_name: 'E2E', referral_code: 'E2EOWNER', posts_count: 1 } }
-        else if (url.pathname.endsWith('/feed') || url.pathname.endsWith('/feed/my')) response = { ok: true, feed: published ? [card] : [], models: [{ id: 'genjutsu', label: 'Higgsfield Genjutsu' }] }
+        else if (url.pathname.endsWith('/feed') || url.pathname.endsWith('/feed/my')) response = { ok: true, feed: published ? Array.from({ length: 12 }, (_, index) => ({ ...card, id: card.id + index })) : [], models: [{ id: 'genjutsu', label: 'Higgsfield Genjutsu' }] }
         else if (url.pathname.endsWith('/prompts')) response = { ok: true, prompts: [] }
         else if (/generate|repeat|remix|start/.test(url.pathname)) { forbidden.push(url.pathname); response = { ok: false } }
         return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(response) })
@@ -150,6 +160,27 @@ try {
     await region.waitFor({ state: 'hidden' })
     for (const surface of ['Лента', 'Профиль']) {
       await page.getByRole('button', { name: surface, exact: true }).click()
+      if (surface === 'Лента') {
+        const lastShare = page.getByRole('button', { name: 'Ссылка', exact: true }).last()
+        await lastShare.scrollIntoViewIfNeeded()
+        const beforeBounds = await page.getByRole('button', { name: 'Ссылка', exact: true }).first().boundingBox()
+        assert.ok(beforeBounds && beforeBounds.y < 0, 'Test really starts down the feed')
+        await lastShare.click()
+        const fallback = page.getByRole('region', { name: 'Ссылка на публикацию' })
+        await fallback.getByText(/Автоматическое копирование недоступно/).waitFor()
+        // No locator click/scroll on recovery: the application must reveal it.
+        const recoveryBounds = await fallback.boundingBox()
+        assert.ok(recoveryBounds && recoveryBounds.y >= 0 && recoveryBounds.y + recoveryBounds.height <= 820, 'Copy recovery visible without test auto-scroll')
+        const field = fallback.getByRole('textbox')
+        assert.equal(await field.inputValue(), 'https://t.me/test_bot?start=feed_777_ref_E2E%2BOWNER')
+        const bounds = await field.boundingBox()
+        assert.ok(bounds && bounds.x >= 0 && bounds.x + bounds.width <= width + 1, 'Copy field fits phone width')
+        await page.evaluate(() => { window.__allowCopy = true })
+        await fallback.getByRole('button', { name: 'Скопировать ссылку', exact: true }).click()
+        await fallback.getByText('Ссылка скопирована', { exact: true }).waitFor()
+        assert.equal(await page.evaluate(() => window.__copied), await field.inputValue())
+        assert.equal(requests.filter(item => item.path.endsWith('/feed/share')).length, 1)
+      }
       try {
         await page.getByRole('button', { name: surface === 'Лента' ? 'Открыть видео' : 'Открыть публикацию' }).first().click({ timeout: 10000 })
       } catch (error) {

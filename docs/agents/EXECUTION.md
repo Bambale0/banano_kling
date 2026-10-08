@@ -1641,3 +1641,16 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Constraints: no paid generation, real Telegram sends, database access, credentials reads, or production edits. Full application tests and deployed smoke not run in this isolated diagnosis; coordinated release owner handles aggregate CI and deployment verification.
 - Rollout/rollback: ordinary reviewed task PR to tanyapi under release owner; revert the scoped commit if needed. No runtime data migration.
 - Playbooks: Bambale0/skills diagnosing-bugs (red-first evidence), Bambale0/claw architecture/FSM consistency, anthropics webapp-testing reviewed (browser-only workflow not applicable to Telegram handler regression).
+
+## 2026-10-08 — Feed clipboard recovery
+
+- Baseline: tanyapi b07ab430de2b354a134ea4ef451be30dfcb2ba8d. Isolated fix/feed-copy-fallback-20261008 worktree; production dirty data remains untouched.
+- Audit: Feed awaits share API before Clipboard API and execCommand fallback. Both failures previously discarded the usable server URL and showed a generic red banner. Success did not clear stale errors.
+- Outcome: retain the exact server link in a selectable mobile-width field; fresh-gesture copy retry without another share request, one-tap success feedback and separate API/clipboard failure handling. Request sequence protects against stale completions and unmount.
+- No API/schema/configuration/pricing changes; no private prompt/reference exposure or URL reconstruction. No paid generation or external messaging.
+- Regression: all four new component tests failed against baseline, then passed after implementation. Full frontend suite: 311 tests passed. Typecheck, lint, static export, mobile-width browser fixture and independent review pending.
+- Browser coverage adds clipboard rejection plus failed execCommand, exact deep/referral link preservation, successful fresh click, single API request and 320/360/390/430 width constraints.
+- Guidance: Bambale0/skills diagnosing-bugs, Bambale0/claw debugger, anthropics/skills webapp-testing. Real Telegram/iOS device behavior remains unverified.
+- Rollout: parent coordinates one release after combined checks; no deployment performed by this branch.
+- Final verified revision: 42 Jest suites / 311 tests, TypeScript, ESLint and production static export passed; synthetic Chromium mobile E2E passed at 320/360/390/430px. The lower-card test confirms recovery enters the viewport without locator auto-scrolling. Full check chain job_838ca54a2078 succeeded.
+- Independent review identified off-screen recovery after sharing a lower card; failure-only scroll into view plus a lower-card regression addressed it. Reviewer independently verified final hashes and found no remaining code blocker. Clipboard refusal is simulated; no physical iOS device was tested.
