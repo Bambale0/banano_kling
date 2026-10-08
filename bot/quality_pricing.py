@@ -10,12 +10,9 @@ DEFAULT_QUALITY = "2K"
 _LEGACY_FALLBACK_COSTS = {"1K": 1.5, "2K": 1.5, "4K": 2.0}
 QUALITY_COSTS: dict[str, float] = {}
 QUALITY_LABELS: dict[str, str] = {}
-SEEDREAM_5_PRO_QUALITY_COSTS = {
-    "basic": 2,
-    "BASIC": 2,
-    "high": 2.5,
-    "HIGH": 2.5,
-}
+_SEEDREAM_FALLBACK_COSTS = {"basic": 2.0, "high": 2.5}
+SEEDREAM_5_PRO_QUALITY_COSTS: dict[str, float] = {}
+
 
 
 def _price_path() -> Path:
@@ -58,6 +55,18 @@ def refresh_quality_pricing(
 ) -> dict[str, float]:
     """Reload Banana resolution tariffs while preserving imported dict references."""
     normalized = _normalized_quality_costs(price_config)
+
+    config = price_config if isinstance(price_config, dict) else _read_price_config()
+    raw_seedream = config.get("costs_reference", {}).get("seedream_5_pro_quality_costs", {})
+    if not isinstance(raw_seedream, dict):
+        raw_seedream = {}
+    SEEDREAM_5_PRO_QUALITY_COSTS.clear()
+    for quality, fallback in _SEEDREAM_FALLBACK_COSTS.items():
+        value = raw_seedream.get(quality, fallback)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value < float("inf"):
+            value = fallback
+        SEEDREAM_5_PRO_QUALITY_COSTS[quality] = float(value)
+        SEEDREAM_5_PRO_QUALITY_COSTS[quality.upper()] = float(value)
 
     QUALITY_COSTS.clear()
     for quality, cost in normalized.items():

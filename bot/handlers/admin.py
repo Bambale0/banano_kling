@@ -51,7 +51,9 @@ from bot.database import (
     set_user_banned,
 )
 from bot.handlers import promo_admin
+from bot.handlers.banana_resolution_pricing_compat import refresh_live_image_pricing
 from bot.keyboards import (
+    _mini_app_url_with_start_param,
     get_admin_keyboard,
     get_back_keyboard,
     get_main_menu_button_keyboard,
@@ -384,8 +386,12 @@ def _admin_ai_confirm_keyboard() -> types.InlineKeyboardMarkup:
 
 
 def _admin_price_menu_keyboard() -> types.InlineKeyboardMarkup:
+    higgs_rows = [[types.InlineKeyboardButton(
+        text="🌀 Higgsfield Genjutsu — тарифы и настройки",
+        web_app=types.WebAppInfo(url=_mini_app_url_with_start_param("genjutsu_admin")),
+    )]] if config.mini_app_url else []
     return types.InlineKeyboardMarkup(
-        inline_keyboard=[
+        inline_keyboard=higgs_rows + [
             [
                 types.InlineKeyboardButton(
                     text="📦 Пакеты пополнения", callback_data="admin_prices_packages"
@@ -1045,6 +1051,8 @@ def _admin_image_prices_keyboard() -> types.InlineKeyboardMarkup:
 
 
 VIDEO_MODEL_LABELS = {
+    "avatar_std": "Kling Avatar Standard",
+    "avatar_pro": "Kling Avatar Pro",
     "v3_std": "Kling v3 Std",
     "v3_pro": "Kling 3.0 Pro",
     "v26_pro": "Kling 2.5 Turbo",
@@ -1115,13 +1123,26 @@ def _model_per_sec(model_cfg: dict) -> str:
     return str(base) if base is not None else "?"
 
 
+AVATAR_ADMIN_PRICE_MODELS = {"avatar_std", "avatar_pro"}
+
+
+def _admin_video_price_models() -> dict:
+    """Display effective Avatar fallback without seeding or changing live prices."""
+    models = dict(preset_manager.get_price_config().get("costs_reference", {}).get("video_models", {}))
+    for key in AVATAR_ADMIN_PRICE_MODELS:
+        # The catalog exposes only the existing 5-second billing slot. Audio
+        # determines provider output length; this is not a new duration control.
+        existing = models.get(key, {})
+        models[key] = {**existing, "duration_costs": {
+            **existing.get("duration_costs", {}),
+            "5": preset_manager.get_video_cost(key, 5),
+        }}
+    return models
+
+
 def _admin_video_prices_keyboard() -> types.InlineKeyboardMarkup:
     """Одна кнопка на модель; Seedance видны даже до настройки розничной цены."""
-    video_models = (
-        preset_manager.get_price_config()
-        .get("costs_reference", {})
-        .get("video_models", {})
-    )
+    video_models = _admin_video_price_models()
     model_keys = list(video_models)
     for model_key in SEEDANCE_ADMIN_PRICE_MODELS:
         if model_key not in model_keys:
@@ -1131,8 +1152,9 @@ def _admin_video_prices_keyboard() -> types.InlineKeyboardMarkup:
     for model_key in model_keys:
         model_cfg = video_models.get(model_key)
         price_text = (
-            f"{_model_per_sec(model_cfg)}🍌/с"
-            if model_cfg
+            f"{model_cfg['duration_costs']['5']}🍌 за расчётный слот 5с"
+            if model_key in AVATAR_ADMIN_PRICE_MODELS
+            else f"{_model_per_sec(model_cfg)}🍌/с" if model_cfg
             else "цена не настроена"
         )
         label = VIDEO_MODEL_LABELS.get(model_key, model_key)
@@ -1150,11 +1172,7 @@ def _admin_video_prices_keyboard() -> types.InlineKeyboardMarkup:
 
 def _admin_video_model_keyboard(model_key: str) -> types.InlineKeyboardMarkup:
     """Детальный экран модели, включая ещё не настроенные Seedance quality prices."""
-    video_models = (
-        preset_manager.get_price_config()
-        .get("costs_reference", {})
-        .get("video_models", {})
-    )
+    video_models = _admin_video_price_models()
     model_cfg = video_models.get(model_key, {})
     quality_costs = model_cfg.get("quality_costs", {})
     duration_costs = model_cfg.get("duration_costs", {})
@@ -1162,7 +1180,12 @@ def _admin_video_model_keyboard(model_key: str) -> types.InlineKeyboardMarkup:
     seedance_spec = SEEDANCE_ADMIN_PRICE_MODELS.get(model_key)
 
     buttons = []
-    if seedance_spec:
+    if model_key in AVATAR_ADMIN_PRICE_MODELS:
+        buttons.append(types.InlineKeyboardButton(
+            text=f"Тариф расчётного слота 5с → {duration_costs['5']}🍌",
+            callback_data=f"admin_price_video_{model_key}_5",
+        ))
+    elif seedance_spec:
         for quality in sorted(
             seedance_spec["resolutions"],
             key=lambda q: (quality_order.get(str(q).lower(), 99), str(q)),
@@ -1285,6 +1308,17 @@ def _update_price_value(target: str, key: str, field: str, value):
         video_models = price_config["costs_reference"]["video_models"]
         model = video_models.get(key)
         seedance_spec = SEEDANCE_ADMIN_PRICE_MODELS.get(key)
+        if key in AVATAR_ADMIN_PRICE_MODELS:
+            if field != "5":
+                raise KeyError("avatar_duration")
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value < float("inf"):
+                raise ValueError("Avatar price must be finite and positive")
+            old_value = preset_manager.get_video_cost(key, 5)
+            model = video_models.setdefault(key, {})
+            model.setdefault("duration_costs", {})["5"] = value
+            if not preset_manager.update_price_config(price_config):
+                raise RuntimeError("price config reload failed")
+            return old_value
         if not model and seedance_spec:
             model = {
                 "default_duration": 5,
@@ -2791,6 +2825,8 @@ async def admin_reload_presets(callback: types.CallbackQuery):
         return
 
     success = preset_manager.reload()
+    if success:
+        refresh_live_image_pricing()
     await callback.answer(
         (
             "✅ Прайс и конфиг перезагружены"
@@ -2954,11 +2990,7 @@ async def admin_video_model(callback: types.CallbackQuery):
         return
 
     model_key = callback.data.replace("admin_video_model_", "", 1)
-    video_models = (
-        preset_manager.get_price_config()
-        .get("costs_reference", {})
-        .get("video_models", {})
-    )
+    video_models = _admin_video_price_models()
     model_cfg = video_models.get(model_key)
     seedance_spec = SEEDANCE_ADMIN_PRICE_MODELS.get(model_key)
     if not model_cfg and not seedance_spec:
@@ -2972,7 +3004,12 @@ async def admin_video_model(callback: types.CallbackQuery):
     duration_costs = model_cfg.get("duration_costs", {})
     quality_order = {"480p": 0, "720p": 1, "1080p": 2, "4k": 3}
 
-    if seedance_spec:
+    if model_key in AVATAR_ADMIN_PRICE_MODELS:
+        detail = (
+            f"Расчётный слот 5с → <code>{duration_costs['5']}</code>🍌"
+            "\nДлительность результата задаётся аудио. Это не тариф за секунду."
+        )
+    elif seedance_spec:
         lines = "\n".join(
             (
                 f"• {quality} → <code>{quality_costs[quality]}</code>🍌/с"
@@ -3127,11 +3164,7 @@ async def admin_price_video(callback: types.CallbackQuery, state: FSMContext):
 
     payload = callback.data.replace("admin_price_video_", "", 1)
     model_key, field = payload.rsplit("_", 1)
-    video_models = (
-        preset_manager.get_price_config()
-        .get("costs_reference", {})
-        .get("video_models", {})
-    )
+    video_models = _admin_video_price_models()
     model = video_models.get(model_key)
     seedance_spec = SEEDANCE_ADMIN_PRICE_MODELS.get(model_key)
     if not model and not seedance_spec:
@@ -3142,6 +3175,9 @@ async def admin_price_video(callback: types.CallbackQuery, state: FSMContext):
     model_label = VIDEO_MODEL_LABELS.get(model_key, model_key)
     return_to = f"admin_video_model_{model_key}"
 
+    if model_key in AVATAR_ADMIN_PRICE_MODELS and field != "5":
+        await callback.answer("Этот тарифный слот не поддерживается", show_alert=True)
+        return
     if field == "persec":
         current_value = float(_model_per_sec(model))
         hint_text = (
@@ -3197,6 +3233,10 @@ async def admin_price_video(callback: types.CallbackQuery, state: FSMContext):
 @router.message(AdminStates.waiting_price_value)
 async def admin_process_price_value(message: types.Message, state: FSMContext):
     """Сохраняет новое значение цены."""
+    if not is_admin(message.from_user.id):
+        await state.clear()
+        await message.answer("⛔ Нет доступа")
+        return
     data = await state.get_data()
     target = data.get("price_target")
     key = data.get("price_key")

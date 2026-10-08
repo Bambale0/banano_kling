@@ -151,7 +151,7 @@ def test_get_admin_keyboard():
     assert kb.inline_keyboard
     buttons = [btn for row in kb.inline_keyboard for btn in row]
     assert any(btn.callback_data == "admin_reload" for btn in buttons)
-    genjutsu = next(btn for btn in buttons if btn.text == "🌀 Genjutsu — управление")
+    genjutsu = next(btn for btn in buttons if btn.text == "🌀 Higgsfield Genjutsu — управление")
     assert genjutsu.web_app is not None
     assert "startapp=genjutsu_admin" in str(genjutsu.web_app.url)
     assert any(btn.callback_data == "admin_finance" for btn in buttons)

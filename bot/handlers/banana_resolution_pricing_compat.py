@@ -6,7 +6,11 @@ from types import ModuleType
 from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
 
-from bot.quality_pricing import QUALITY_COSTS, refresh_quality_pricing
+from bot.quality_pricing import (
+    QUALITY_COSTS,
+    SEEDREAM_5_PRO_QUALITY_COSTS,
+    refresh_quality_pricing,
+)
 from bot.services.preset_manager import preset_manager
 from bot.states import AdminStates
 
@@ -53,10 +57,19 @@ def _refresh_loaded_miniapp_catalog() -> None:
     for model in models:
         if not isinstance(model, dict):
             continue
+        if model.get("id") == "seedream_5_pro":
+            model["cost"] = SEEDREAM_5_PRO_QUALITY_COSTS["basic"]
+            model["quality_costs"] = {q: SEEDREAM_5_PRO_QUALITY_COSTS[q] for q in ("basic", "high")}
         if model.get("id") not in {"banana_pro", "banana_2"}:
             continue
         model["cost"] = QUALITY_COSTS["2K"]
         model["quality_costs"] = dict(quality_costs)
+
+
+def refresh_live_image_pricing() -> None:
+    """Refresh live tariff mappings and already-loaded catalog after a successful reload."""
+    refresh_quality_pricing(preset_manager.get_price_config())
+    _refresh_loaded_miniapp_catalog()
 
 
 def _banana_quality_keyboard() -> types.InlineKeyboardMarkup:
@@ -113,8 +126,12 @@ def _patched_image_prices_keyboard() -> types.InlineKeyboardMarkup:
             callback_data="admin_banana_quality_prices",
         )
     ]
+    buttons.append(types.InlineKeyboardButton(
+        text="Seedream 5 Pro • Basic / High",
+        callback_data="admin_seedream_quality_prices",
+    ))
     for key, value in image_models.items():
-        if key in _BANANA_MODEL_KEYS:
+        if key in (*_BANANA_MODEL_KEYS, "seedream_5_pro"):
             continue
         buttons.append(
             types.InlineKeyboardButton(
@@ -131,6 +148,21 @@ def _patched_image_prices_keyboard() -> types.InlineKeyboardMarkup:
 def _patched_update_price_value(target: str, key: str, field: str, value):
     assert _admin_module is not None
     assert _original_update_price_value is not None
+    if target == "seedream_quality":
+        quality = str(field or "").lower()
+        if quality not in {"basic", "high"}:
+            raise KeyError("seedream_quality")
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value < float("inf"):
+            raise ValueError("Seedream quality price must be finite and positive")
+        price_config = _admin_module._read_price_config()
+        costs = price_config.setdefault("costs_reference", {}).setdefault("seedream_5_pro_quality_costs", {})
+        old_value = costs.get(quality, SEEDREAM_5_PRO_QUALITY_COSTS[quality])
+        costs[quality] = value
+        if not preset_manager.update_price_config(price_config):
+            raise RuntimeError("price config reload failed")
+        refresh_quality_pricing(price_config)
+        _refresh_loaded_miniapp_catalog()
+        return old_value
     if target != "image_quality":
         return _original_update_price_value(target, key, field, value)
 
@@ -229,6 +261,49 @@ async def admin_banana_quality_value(
             ]
         ),
         parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_seedream_quality_prices")
+async def admin_seedream_quality_prices(callback: types.CallbackQuery, state: FSMContext) -> None:
+    if not _is_price_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+    await state.clear()
+    await callback.message.edit_text(
+        "Seedream 5 Pro — цены за изображение. Выберите качество:",
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
+            [types.InlineKeyboardButton(
+                text=f"{q.title()} → {_format_cost(SEEDREAM_5_PRO_QUALITY_COSTS[q])}🍌",
+                callback_data=f"admin_seedream_quality_{q}",
+            ) for q in ("basic", "high")],
+            [types.InlineKeyboardButton(text="🔙 К фото-моделям", callback_data="admin_prices_images")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.regexp(r"^admin_seedream_quality_(basic|high)$"))
+async def admin_seedream_quality_value(callback: types.CallbackQuery, state: FSMContext) -> None:
+    if not _is_price_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+    quality = str(callback.data).removeprefix("admin_seedream_quality_")
+    if quality not in {"basic", "high"}:
+        await callback.answer("Неизвестное качество", show_alert=True)
+        return
+    current = SEEDREAM_5_PRO_QUALITY_COSTS[quality]
+    await state.set_state(AdminStates.waiting_price_value)
+    await state.update_data(price_target="seedream_quality", price_key="seedream_5_pro",
+                            price_field=quality, current_price_value=current,
+                            return_to="admin_seedream_quality_prices")
+    await callback.message.edit_text(
+        f"Seedream 5 Pro — {quality.title()}. Текущая цена: {_format_cost(current)} 🍌."
+        "\nОтправьте новую стоимость одним сообщением.",
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[[
+            types.InlineKeyboardButton(text="🔙 К качествам", callback_data="admin_seedream_quality_prices"),
+        ]]),
     )
     await callback.answer()
 
