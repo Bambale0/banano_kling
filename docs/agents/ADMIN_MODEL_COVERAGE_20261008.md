@@ -69,3 +69,12 @@ writes. Python compile and diff checks are required before handoff.
 
 No paid generations, production price changes or deployment were performed.
 Full CI and post-release verification remain the release owner's responsibility.
+
+Review follow-up: Avatar updates reject non-finite/nonpositive values and report
+reload failure instead of success. Seven targeted regressions failed before the
+correction and passed afterward. List/detail labels consistently describe the
+existing billing slot, and custom quality keys cannot shadow the Avatar edit
+button. Actual menu-to-detail-to-edit callbacks and Seedream entry reachability
+are now exercised. Final focused suite: 54 passed. Focused Ruff on the isolated
+new tests, pricing module and compatibility handler passes; changed-line lint is
+also run for legacy files before handoff.

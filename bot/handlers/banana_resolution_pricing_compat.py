@@ -6,7 +6,11 @@ from types import ModuleType
 from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
 
-from bot.quality_pricing import QUALITY_COSTS, SEEDREAM_5_PRO_QUALITY_COSTS, refresh_quality_pricing
+from bot.quality_pricing import (
+    QUALITY_COSTS,
+    SEEDREAM_5_PRO_QUALITY_COSTS,
+    refresh_quality_pricing,
+)
 from bot.services.preset_manager import preset_manager
 from bot.states import AdminStates
 

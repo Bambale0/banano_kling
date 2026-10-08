@@ -1151,8 +1151,9 @@ def _admin_video_prices_keyboard() -> types.InlineKeyboardMarkup:
     for model_key in model_keys:
         model_cfg = video_models.get(model_key)
         price_text = (
-            f"{_model_per_sec(model_cfg)}🍌/с"
-            if model_cfg
+            f"{model_cfg['duration_costs']['5']}🍌 за расчётный слот 5с"
+            if model_key in AVATAR_ADMIN_PRICE_MODELS
+            else f"{_model_per_sec(model_cfg)}🍌/с" if model_cfg
             else "цена не настроена"
         )
         label = VIDEO_MODEL_LABELS.get(model_key, model_key)
@@ -1178,7 +1179,12 @@ def _admin_video_model_keyboard(model_key: str) -> types.InlineKeyboardMarkup:
     seedance_spec = SEEDANCE_ADMIN_PRICE_MODELS.get(model_key)
 
     buttons = []
-    if seedance_spec:
+    if model_key in AVATAR_ADMIN_PRICE_MODELS:
+        buttons.append(types.InlineKeyboardButton(
+            text=f"Тариф расчётного слота 5с → {duration_costs['5']}🍌",
+            callback_data=f"admin_price_video_{model_key}_5",
+        ))
+    elif seedance_spec:
         for quality in sorted(
             seedance_spec["resolutions"],
             key=lambda q: (quality_order.get(str(q).lower(), 99), str(q)),
@@ -1203,11 +1209,6 @@ def _admin_video_model_keyboard(model_key: str) -> types.InlineKeyboardMarkup:
                     callback_data=f"admin_price_video_{model_key}_q{quality}",
                 )
             )
-    elif model_key in AVATAR_ADMIN_PRICE_MODELS:
-        buttons.append(types.InlineKeyboardButton(
-            text=f"Тариф расчётного слота 5с → {duration_costs['5']}🍌",
-            callback_data=f"admin_price_video_{model_key}_5",
-        ))
     elif duration_costs:
         for dur_str, cost in sorted(duration_costs.items(), key=lambda x: int(x[0])):
             buttons.append(
@@ -1309,10 +1310,13 @@ def _update_price_value(target: str, key: str, field: str, value):
         if key in AVATAR_ADMIN_PRICE_MODELS:
             if field != "5":
                 raise KeyError("avatar_duration")
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value < float("inf"):
+                raise ValueError("Avatar price must be finite and positive")
             old_value = preset_manager.get_video_cost(key, 5)
             model = video_models.setdefault(key, {})
             model.setdefault("duration_costs", {})["5"] = value
-            preset_manager.update_price_config(price_config)
+            if not preset_manager.update_price_config(price_config):
+                raise RuntimeError("price config reload failed")
             return old_value
         if not model and seedance_spec:
             model = {
@@ -2997,7 +3001,12 @@ async def admin_video_model(callback: types.CallbackQuery):
     duration_costs = model_cfg.get("duration_costs", {})
     quality_order = {"480p": 0, "720p": 1, "1080p": 2, "4k": 3}
 
-    if seedance_spec:
+    if model_key in AVATAR_ADMIN_PRICE_MODELS:
+        detail = (
+            f"Расчётный слот 5с → <code>{duration_costs['5']}</code>🍌"
+            "\nДлительность результата задаётся аудио. Это не тариф за секунду."
+        )
+    elif seedance_spec:
         lines = "\n".join(
             (
                 f"• {quality} → <code>{quality_costs[quality]}</code>🍌/с"

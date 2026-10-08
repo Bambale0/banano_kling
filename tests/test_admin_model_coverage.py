@@ -20,7 +20,7 @@ def functions(path, names, namespace):
             node.decorator_list = []
             nodes.append(node)
     tree = ast.Module(body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), *nodes], type_ignores=[])
-    exec(compile(ast.fix_missing_locations(tree), str(path), "exec"), namespace)
+    exec(compile(ast.fix_missing_locations(tree), str(path), "exec"), namespace)  # noqa: S102 - execute repository AST with isolated fake dependencies
     return namespace
 
 
@@ -142,7 +142,7 @@ def test_avatar_view_does_not_write_and_save_preserves_other_durations(model):
                                 "normalize_video_model_key", "_clamp_video_duration", "_format_cost", "get_video_cost"]])],
                       type_ignores=[])
     price_ns = {"CANONICAL_VIDEO_ALIASES": {}, "DEFAULT_VIDEO_COST": 8}
-    exec(compile(ast.fix_missing_locations(tree), "<pure-pricing>", "exec"), price_ns)
+    exec(compile(ast.fix_missing_locations(tree), "<pure-pricing>", "exec"), price_ns)  # noqa: S102 - isolated repository pricing methods, no external input
     manager = price_ns["Pricing"]()
     manager._price_config = config
     manager.get_price_config = lambda: deepcopy(config)
@@ -201,3 +201,71 @@ def test_base_catalog_models_have_an_admin_tariff_destination():
         assert model == "seedream_5_pro" or aliases["CANONICAL_IMAGE_ALIASES"].get(model, model) in config["image_models"]
     for model in catalog["VIDEO_MODELS"]:
         assert model in {"avatar_std", "avatar_pro"} or aliases["CANONICAL_VIDEO_ALIASES"].get(model, model) in config["video_models"]
+
+
+@pytest.mark.parametrize("value", [True, 0, -1, "3", float("nan"), float("inf")])
+def test_avatar_save_rejects_invalid_values_before_write(value):
+    calls = []
+    ns = functions(ROOT / "bot/handlers/admin.py", {"_update_price_value"}, {
+        "AVATAR_ADMIN_PRICE_MODELS": {"avatar_std", "avatar_pro"}, "SEEDANCE_ADMIN_PRICE_MODELS": {},
+        "_read_price_config": lambda: {"costs_reference": {"video_models": {}}},
+        "preset_manager": SimpleNamespace(get_video_cost=lambda *args: 15, update_price_config=lambda value: calls.append(value)),
+    })
+    with pytest.raises(ValueError):
+        ns["_update_price_value"]("video", "avatar_std", "5", value)
+    assert not calls
+
+
+def test_avatar_save_reports_reload_failure():
+    ns = functions(ROOT / "bot/handlers/admin.py", {"_update_price_value"}, {
+        "AVATAR_ADMIN_PRICE_MODELS": {"avatar_std", "avatar_pro"}, "SEEDANCE_ADMIN_PRICE_MODELS": {},
+        "_read_price_config": lambda: {"costs_reference": {"video_models": {}}},
+        "preset_manager": SimpleNamespace(get_video_cost=lambda *args: 15, update_price_config=lambda value: False),
+    })
+    with pytest.raises(RuntimeError, match="reload failed"):
+        ns["_update_price_value"]("video", "avatar_std", "5", 20)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["avatar_std", "avatar_pro"])
+async def test_avatar_menu_detail_and_edit_prompt_reachable(model):
+    ns = functions(ROOT / "bot/handlers/admin.py", {
+        "_admin_video_prices_keyboard", "_admin_video_model_keyboard", "admin_video_model", "admin_price_video",
+    }, {
+        "AVATAR_ADMIN_PRICE_MODELS": {"avatar_std", "avatar_pro"}, "SEEDANCE_ADMIN_PRICE_MODELS": {},
+        "VIDEO_MODEL_LABELS": {}, "is_admin": lambda uid: True,
+        "_admin_video_price_models": lambda: {model: {"duration_costs": {"5": 15}, "quality_costs": {"720p": 90}}},
+        "_model_per_sec": lambda value: "DO_NOT_DISPLAY",
+        "_chunk_buttons": lambda buttons, *args: [[button] for button in buttons],
+        "types": SimpleNamespace(InlineKeyboardMarkup=lambda **kw: kw, InlineKeyboardButton=lambda **kw: kw),
+        "AdminStates": SimpleNamespace(waiting_price_value="waiting"), "get_back_keyboard": lambda target: target,
+    })
+    menu = ns["_admin_video_prices_keyboard"]()["inline_keyboard"]
+    button = next(b for row in menu for b in row if b.get("callback_data") == f"admin_video_model_{model}")
+    assert "слот 5с" in button["text"] and "🍌/с" not in button["text"]
+    callback = SimpleNamespace(from_user=SimpleNamespace(id=123), data=button["callback_data"],
+        answer=AsyncMock(), message=SimpleNamespace(edit_text=AsyncMock()))
+    await ns["admin_video_model"](callback)
+    detail = callback.message.edit_text.await_args.args[0]
+    assert "Расчётный слот 5с" in detail and "Цена за 1с" not in detail
+    keyboard = callback.message.edit_text.await_args.kwargs["reply_markup"]["inline_keyboard"]
+    edit = next(b for row in keyboard for b in row if b.get("callback_data", "").startswith("admin_price_video_"))
+    assert edit["callback_data"] == f"admin_price_video_{model}_5"
+    callback.data = edit["callback_data"]
+    state = SimpleNamespace(set_state=AsyncMock(), update_data=AsyncMock())
+    await ns["admin_price_video"](callback, state)
+    assert state.update_data.await_args.kwargs["price_key"] == model
+    assert state.update_data.await_args.kwargs["price_field"] == "5"
+
+
+def test_photo_menu_has_reachable_seedream_tiers_without_price_file_entry():
+    ns = functions(COMPAT, {"_patched_image_prices_keyboard", "_format_cost"}, {
+        "_admin_module": SimpleNamespace(_chunk_buttons=lambda buttons: [[b] for b in buttons]),
+        "preset_manager": SimpleNamespace(get_price_config=lambda: {"costs_reference": {"image_models": {"seedream_edit": 17}}}),
+        "_quality_costs": lambda: {"1K": 1.5, "2K": 1.5, "4K": 2},
+        "_BANANA_MODEL_KEYS": ("nano-banana-pro", "banana_2"),
+        "types": SimpleNamespace(InlineKeyboardMarkup=lambda **kw: kw, InlineKeyboardButton=lambda **kw: kw),
+    })
+    callbacks = {b.get("callback_data") for row in ns["_patched_image_prices_keyboard"]()["inline_keyboard"] for b in row}
+    assert "admin_seedream_quality_prices" in callbacks
+    assert "admin_price_image_seedream_edit" in callbacks
