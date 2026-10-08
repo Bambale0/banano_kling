@@ -8,6 +8,7 @@ rather than the text-bot post link.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from collections.abc import Iterable
@@ -21,6 +22,14 @@ from bot.services.media_input_utils import (
     missing_local_upload_sources,
     resolve_reference_source,
 )
+from bot.video_repeat_reference_contract import (
+    MEDIA_KEYS,
+    VideoRepeatContractError,
+    merge_typed_video_inputs,
+    parse_video_repeat_grant,
+    source_request,
+    video_repeat_descriptors,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +39,7 @@ _REPEAT_LIST_ALIASES: dict[str, tuple[str, ...]] = {
         "v_reference_videos",
         "reference_videos",
         "reference_video_urls",
+        "video_references",
     ),
     "seedance25_reference_audio_urls": (
         "seedance25_reference_audio_urls",
@@ -136,13 +146,7 @@ def _missing(value: Any) -> bool:
 
 
 def _publication_repeat_selection(source_task: dict[str, Any]) -> dict[str, list[str]] | None:
-    """Return the author's explicit visible ref selection for server-side reuse.
-
-    Presence of ``feed_reference_selection`` switches modern publications to
-    fail-closed semantics: only refs the author explicitly opened in the
-    publication may be retained in another user's repeat. Older publications
-    without that field keep the legacy exact-repeat behavior.
-    """
+    """Legacy video-repeat grant derived from publicly displayed references."""
     raw = source_task.get("feed_reference_selection")
     if raw is None:
         return None
@@ -159,6 +163,14 @@ def _publication_repeat_selection(source_task: dict[str, Any]) -> dict[str, list
         values = raw.get(kind)
         result[kind] = _clean_list(values) if isinstance(values, (list, tuple, set)) else []
     return result
+
+
+def _video_repeat_selection(source_task: dict[str, Any]) -> dict[str, list[str]] | None:
+    try:
+        grant = parse_video_repeat_grant(source_task.get("feed_repeat_reference_selection"))
+    except VideoRepeatContractError as exc:
+        raise VideoRepeatReferenceError(str(exc)) from exc
+    return grant if grant is not None else _publication_repeat_selection(source_task)
 
 
 class VideoRepeatReferenceError(ValueError):
@@ -267,7 +279,29 @@ def _infer_scenario(request_data: dict[str, Any]) -> str:
     return "text"
 
 
-def enrich_video_repeat_body(
+def enrich_video_repeat_body(body: dict[str, Any], source_task: dict[str, Any]) -> dict[str, Any]:
+    owner = bool(source_task.get("_repeat_is_owner"))
+    if owner:
+        # Ownership authorizes editing/reusing the original source independently
+        # of permissions granted to other users.
+        source_task = {**source_task, "feed_repeat_reference_selection": None, "feed_reference_selection": None}
+        return _enrich_legacy_video_repeat_body(body, source_task)
+    try:
+        grant = parse_video_repeat_grant(source_task.get("feed_repeat_reference_selection"))
+        if grant is None:
+            return _enrich_legacy_video_repeat_body(body, source_task)
+        metadata = {key: value for key, value in source_request(source_task).items() if key not in MEDIA_KEYS}
+        source_metadata = {
+            **source_task, "request_data": metadata,
+            "feed_repeat_reference_selection": None, "feed_reference_selection": None,
+        }
+        normalized = _enrich_legacy_video_repeat_body(body, source_metadata)
+        return merge_typed_video_inputs(source_task, body, normalized)
+    except VideoRepeatContractError as exc:
+        raise VideoRepeatReferenceError(str(exc)) from exc
+
+
+def _enrich_legacy_video_repeat_body(
     body: dict[str, Any],
     source_task: dict[str, Any],
 ) -> dict[str, Any]:
@@ -318,7 +352,7 @@ def enrich_video_repeat_body(
             normalized["v_image_url"] = requested_images[0]
             normalized["reference_images"] = requested_images[1:]
 
-    publication_selection = _publication_repeat_selection(source_task)
+    publication_selection = _video_repeat_selection(source_task)
     required_source_selection = publication_selection
     if explicit_identity and publication_selection is not None:
         # Explicit identity lists replace their corresponding source inputs,
@@ -518,13 +552,182 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
     source_task = await get_generation_task_payload(source_id)
     if not source_task:
         raise web.HTTPNotFound(reason="Видео для повтора не найдено")
+    if source_task.get("source_feed_gen_id") and source_request(source_task).get("video_repeat_contract_version") == 1:
+        raise VideoRepeatReferenceError("Для этого повтора откройте исходную публикацию автора.")
+    source_task = {**source_task, "_repeat_is_owner": (
+        source_task.get("user_id") == context["user"].id and not source_task.get("source_feed_gen_id")
+    )}
     enriched = enrich_video_repeat_body(body, source_task)
-    if missing_local_upload_sources(_active_video_reference_urls(enriched)):
+    active_media = _active_video_reference_urls(enriched)
+    if missing_local_upload_sources(active_media):
         raise VideoRepeatReferenceError(
             "Один или несколько референсов для повтора больше недоступны. "
             "Загрузите недостающие файлы или откройте другую публикацию."
         )
+    if not source_task["_repeat_is_owner"]:
+        # Guard legacy-to-typed transitions too, without changing the stored
+        # provenance or unchanged legacy contract. Attributes are server-only.
+        authorization = {
+            "source_id": source_id, "viewer_user_id": context["user"].id,
+            "snapshot": _video_repeat_snapshot(source_task), "active_media": active_media,
+        }
+        request._video_repeat_guard = authorization
+        if parse_video_repeat_grant(source_task.get("feed_repeat_reference_selection")) is not None:
+            request._video_repeat_authorization = authorization
     return enriched
+
+
+
+
+async def redirect_typed_video_repeat(callback, task) -> bool:
+    """Keep new typed/derived recipes out of legacy Telegram billing/FSM paths."""
+    parent_id = getattr(task, "source_feed_gen_id", None)
+    request_data = source_request({"request_data": getattr(task, "request_data", None)})
+    tagged_child = request_data.get("video_repeat_contract_version") == 1
+    raw = getattr(task, "feed_repeat_reference_selection", None)
+    if not parent_id:
+        try:
+            if parse_video_repeat_grant(raw) is None:
+                return False
+        except VideoRepeatContractError:
+            pass
+    source_id = parent_id or getattr(task, "id", None)
+    try:
+        source = await get_generation_task_payload(source_id)
+        if not source:
+            if not tagged_child and parent_id:
+                return False
+            raise VideoRepeatReferenceError("Исходная публикация недоступна.")
+        typed = parse_video_repeat_grant(source.get("feed_repeat_reference_selection"))
+        if typed is None:
+            if not tagged_child:
+                return False
+            raise VideoRepeatReferenceError("Разрешение на повтор изменилось.")
+        import bot.miniapp as miniapp_module
+        from bot.database import get_or_create_user
+
+        user = await get_or_create_user(callback.from_user.id)
+        if not parent_id and source.get("user_id") == user.id:
+            return False
+        card = await miniapp_module._get_repeat_source_card(source_id, viewer_user_id=user.id)
+        descriptors = video_repeat_descriptors(source)
+        if not card or not descriptors or not descriptors["available"]:
+            raise VideoRepeatReferenceError("Исходная публикация недоступна.")
+    except Exception as exc:  # noqa: BLE001 - fail closed without disclosing source details
+        logger.warning("Typed video callback rejected: source_generation_id=%s error_type=%s",
+                       source_id, type(exc).__name__)
+        await callback.answer("Этот повтор сейчас недоступен. Откройте исходную публикацию заново.", show_alert=True)
+        return True
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+
+    from bot.keyboards import _mini_app_url_with_start_param
+    from bot.miniapp_links import remix_start_param
+
+    await callback.answer()
+    await callback.message.answer(
+        "Откройте повтор в Mini App: закреплённые референсы сохранятся, а заменяемые файлы можно загрузить заново.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+            text="Открыть повтор",
+            web_app=WebAppInfo(url=_mini_app_url_with_start_param(remix_start_param(source_id))),
+        )]]),
+    )
+    return True
+
+def _video_repeat_snapshot(source: dict[str, Any]) -> str:
+    request_data = source_request(source)
+    grant = parse_video_repeat_grant(source.get("feed_repeat_reference_selection"))
+    payload = {
+        "grant": grant,
+        "legacy_selection": source.get("feed_reference_selection") if grant is None else None,
+        "legacy_visible": source.get("feed_references_visible") if grant is None else None,
+        "user_id": source.get("user_id"), "source_feed_gen_id": source.get("source_feed_gen_id"),
+        "model": source.get("model"), "prompt": source.get("prompt"),
+        "duration": source.get("duration"), "aspect_ratio": source.get("aspect_ratio"),
+        "recipe": {key: value for key, value in request_data.items()
+                   if key in MEDIA_KEYS or key in {
+                       "v_model", "v_type", "scenario", "seedance25_scenario", "veo_generation_type",
+                       "seedance25_resolution", "resolution",
+                       "seedance25_identity_transfer", "seedance25_video_editing",
+                   }},
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+async def verify_video_repeat_before_charge(request: web.Request) -> web.Response | None:
+    """Re-read typed consent after pricing/validation awaits and before debit."""
+    authorization = getattr(request, "_video_repeat_guard", None)
+    if not authorization:
+        return None
+    import bot.miniapp as miniapp_module
+
+    try:
+        card = await miniapp_module._get_repeat_source_card(
+            authorization["source_id"], viewer_user_id=authorization["viewer_user_id"],
+        )
+        current = await get_generation_task_payload(authorization["source_id"]) if card else None
+        if (
+            not current or current.get("type") != "video" or current.get("status") != "completed"
+            or not (current.get("is_public_feed") or current.get("is_profile_visible"))
+            or _video_repeat_snapshot(current) != authorization["snapshot"]
+        ):
+            raise VideoRepeatReferenceError("Разрешение на повтор изменилось. Откройте публикацию заново.")
+        if missing_local_upload_sources(authorization["active_media"]):
+            raise VideoRepeatReferenceError("Референсы для повтора больше недоступны.")
+    except Exception as exc:  # noqa: BLE001 - fail closed without disclosing source details
+        logger.warning(
+            "Video repeat consent recheck rejected: source_generation_id=%s error_type=%s",
+            authorization["source_id"], type(exc).__name__,
+        )
+        return web.json_response(
+            {"ok": False, "code": "repeat_permission_changed",
+             "error": "Разрешение или исходные файлы изменились. Откройте публикацию заново."},
+            status=400,
+        )
+    return None
+
+def video_repeat_pending_response(task_id: str | None) -> web.Response:
+    return web.json_response(
+        {"ok": False, "code": "video_status_pending", "task_id": task_id,
+         "error": "Для этого повтора уже есть незавершённая задача. Проверьте историю; повторный запуск пока недоступен."},
+        status=409,
+    )
+
+
+async def reserve_video_repeat_launch(request, *, user, telegram_id, model, duration, aspect_ratio):
+    authorization = getattr(request, "_video_repeat_authorization", None)
+    if not authorization:
+        return None, None
+    from bot.database import reserve_private_video_repeat
+    receipt = await reserve_private_video_repeat(
+        user_id=user.id, telegram_id=telegram_id, source_id=authorization["source_id"],
+        model=model, duration=duration, aspect_ratio=aspect_ratio,
+    )
+    if not receipt["created"]:
+        provider_id = receipt.get("accepted_provider_task_id")
+        if provider_id and await recover_video_repeat_launch(receipt["task_id"], user.id, provider_id):
+            return None, video_repeat_pending_response(provider_id)
+        return None, video_repeat_pending_response(receipt["task_id"])
+    return receipt["task_id"], None
+
+
+async def record_video_repeat_launch(receipt_id, user_id, *, phase, cost=None, terminal=False, attempted_cost=None):
+    if not receipt_id:
+        return
+    from bot.database import finish_private_video_repeat
+    if not await finish_private_video_repeat(receipt_id, user_id, phase=phase, cost=cost, terminal=terminal, attempted_cost=attempted_cost):
+        raise RuntimeError("video_repeat_receipt_update_failed")
+
+
+async def recover_video_repeat_launch(receipt_id, user_id, provider_task_id):
+    if not receipt_id or not provider_task_id:
+        return False
+    from bot.database import recover_private_video_repeat_acceptance
+    try:
+        return await recover_private_video_repeat_acceptance(receipt_id, user_id, provider_task_id)
+    except Exception as exc:  # noqa: BLE001 - DB outage must not refund or resubmit an accepted job
+        logger.error("Accepted video receipt recovery pending: receipt_id=%s provider_task_id=%s error_type=%s",
+                     receipt_id, provider_task_id, type(exc).__name__)
+        return False
 
 
 def _replace_cached_json(request: web.Request, body: dict[str, Any]) -> None:

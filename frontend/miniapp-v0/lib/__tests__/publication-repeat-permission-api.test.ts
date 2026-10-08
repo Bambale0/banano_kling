@@ -43,6 +43,13 @@ describe('publishGeneration private repeat consent transport', () => {
     })
   })
 
+  it('sends separate typed video consent indices without source URLs', async () => {
+    await publishGeneration('video-task', { repeatReferenceImageIndices: [2], repeatReferenceVideoIndices: [5] })
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1].body))
+    expect(body.repeat_reference_image_indices).toEqual([2])
+    expect(body.repeat_reference_video_indices).toEqual([5])
+  })
+
   it('sends an explicit empty array to revoke consent', async () => {
     await publishGeneration('image-task', { repeatReferenceImageIndices: [] })
     expect(JSON.parse(String(fetchMock.mock.calls[0][1].body)).repeat_reference_image_indices).toEqual([])

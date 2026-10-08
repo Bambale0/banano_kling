@@ -21,7 +21,21 @@ export interface PromptPreset {
   initialReferences?: UploadedFile[]
 }
 
+export interface VideoRepeatReferenceSlots {
+  version: 1
+  available: boolean
+  /** Required for available recipes; derived by the server pricing policy. */
+  cost_multiplier?: number
+  /** Final server quotes for the retained Seedance quality, including video references. */
+  duration_costs?: Record<string, number>
+  pricing_quality?: '480p' | '720p'
+  images: Array<{ index: number; role: 'reference' | 'first_frame' | 'last_frame'; binding: 'fixed' | 'upload' }>
+  videos: Array<{ index: number; role: 'reference'; binding: 'fixed' | 'upload' }>
+}
+
 export interface VideoPromptPreset {
+  repeatReferenceSlots?: VideoRepeatReferenceSlots
+
   seedance25IdentityTransfer?: boolean
   seedance25Resolution?: '480p' | '720p'
   title: string
@@ -158,6 +172,7 @@ export interface Task {
   /** Owner-only permission; omitted or null never authorizes private repeat use. */
   feed_repeat_reference_selection?: {
     images: number[]
+    videos?: number[]
   } | null
   feed_blurred?: boolean
   is_adult_content?: boolean
@@ -285,6 +300,9 @@ export interface PromptItem {
 }
 
 export interface FeedItem {
+  /** URL-free replacement contract for explicitly authorized foreign video repeats. */
+  repeat_reference_slots?: VideoRepeatReferenceSlots
+
   genjutsu_recipe_id?: string | null
   id: number
   task_id: string

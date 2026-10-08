@@ -48,6 +48,7 @@ from bot.database import (
     generation_publication_references,
     generation_publication_scope,
     generation_reference_selection,
+    generation_repeat_reference_indices,
     generation_repeat_reference_selection,
     get_and_clear_miniapp_notifications,
     get_approved_prompts,
@@ -1735,6 +1736,13 @@ async def _notify_miniapp_image_task_queued(
         )
 
 
+def _public_task_status(row) -> str:
+    status = str(row["status"] or "pending")
+    if status == "processing" and str(row["task_id"] or "").startswith("video_repeat_receipt_"):
+        return "pending"
+    return status
+
+
 async def _fetch_recent_tasks(telegram_id: int, limit: int = 8) -> list[dict[str, Any]]:
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
@@ -1773,7 +1781,7 @@ async def _fetch_recent_tasks(telegram_id: int, limit: int = 8) -> list[dict[str
                 "model_label": label,
                 "duration": row["duration"],
                 "aspect_ratio": row["aspect_ratio"] or "",
-                "status": row["status"] or "pending",
+                "status": _public_task_status(row),
                 "result_url": result_urls[0] if result_urls else None,
                 "result_urls": result_urls,
                 "media_unavailable": bool((row["status"] or "") == "completed" and not result_urls),
@@ -1904,7 +1912,7 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
         "prompt_hidden": _task_prompt_hidden(row),
         "prompt_actions_allowed": _task_prompt_actions_allowed(row),
         "cost": row["cost"] or 0,
-        "status": row["status"] or "pending",
+        "status": _public_task_status(row),
         "result_url": result_urls[0] if result_urls else None,
         "result_urls": result_urls,
         "media_unavailable": bool((row["status"] or "") == "completed" and not result_urls),
@@ -1913,10 +1921,7 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
         "feed_prompt_visible": bool(row["feed_prompt_visible"]) if "feed_prompt_visible" in row.keys() else False,
         "feed_references_visible": bool(row["feed_references_visible"]) if "feed_references_visible" in row.keys() else False,
         "feed_reference_selection": reference_selection,
-        "feed_repeat_reference_selection": {"images": [
-            index for index, url in zip(publication_references["image_indices"], publication_references["images"])
-            if url in generation_repeat_reference_selection(row)
-        ]},
+        "feed_repeat_reference_selection": generation_repeat_reference_indices(row, publication_references),
         "publication_reference_images": publication_references["images"],
         "publication_reference_videos": publication_references["videos"],
         "publication_reference_image_indices": publication_references["image_indices"],
@@ -1994,12 +1999,28 @@ async def _launch_video_generation_task(
     prompt_source_id: int | None = None,
     reference_contract: str | None = None,
     fixed_asset_counts: dict[str, int] | None = None,
+    video_repeat_contract_version: int | None = None,
+    _launch_observation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     from bot.services.gemini_omni_service import gemini_omni_service
     from bot.services.grok_service import grok_service
     from bot.services.kling_service import kling_service
     from bot.services.seedance_service import seedance_service
     from bot.services.veo_service import veo_service
+
+    reserved_task_id = (_launch_observation or {}).get("receipt_task_id")
+
+    async def persist_generation_task(*args, **kwargs):
+        if reserved_task_id:
+            kwargs["reserved_task_id"] = reserved_task_id
+        persisted = await add_generation_task(*args, **kwargs)
+        if reserved_task_id and persisted is not True:
+            raise RuntimeError("video_repeat_receipt_binding_failed")
+        if _launch_observation is not None:
+            _launch_observation["task_persisted"] = True
+            if not _launch_observation.get("provider_task_id"):
+                _launch_observation["provider_task_id"] = str(args[2])
+        return persisted
 
     normalized_ratio = _normalize_video_ratio(aspect_ratio)
     callback_url = config.kling_notification_url if config.WEBHOOK_HOST else None
@@ -2195,6 +2216,15 @@ async def _launch_video_generation_task(
         )
 
     result_status, error_message = _classify_video_generation_result(result)
+    if _launch_observation is not None:
+        # Record acknowledgement before any pricing/persistence can fail.
+        # This is local bookkeeping, never an argument sent to a provider.
+        _launch_observation.update(
+            accepted=result_status in {"queued", "done"},
+            provider_task_id=str(result.get("task_id") or "") if isinstance(result, dict) else "",
+        )
+    if reserved_task_id and result_status == "failed":
+        return {"status": "failed", "error": error_message or "Не удалось создать видео задачу"}
     pricing_quality = _video_pricing_quality(model, veo_resolution, omni_resolution)
     cost = preset_manager.get_video_cost_with_quality(model, duration, pricing_quality)
     cost = apply_video_reference_cost(model, cost, video_references)
@@ -2205,7 +2235,7 @@ async def _launch_video_generation_task(
     )
 
     if result_status == "queued":
-        await add_generation_task(
+        await persist_generation_task(
             user.id,
             telegram_id,
             result["task_id"],
@@ -2217,6 +2247,7 @@ async def _launch_video_generation_task(
             prompt=prompt,
             cost=cost,
             request_data={
+                **({"video_repeat_contract_version": 1} if video_repeat_contract_version == 1 else {}),
                 "source": "miniapp",
                 "v_type": generation_type,
                 "v_model": model,
@@ -2278,7 +2309,7 @@ async def _launch_video_generation_task(
         and result.get("asset_id")
     ):
         asset_id = str(result["asset_id"])
-        await add_generation_task(
+        await persist_generation_task(
             user.id,
             telegram_id,
             asset_id,
@@ -2290,6 +2321,7 @@ async def _launch_video_generation_task(
             prompt=prompt,
             cost=cost,
             request_data={
+                **({"video_repeat_contract_version": 1} if video_repeat_contract_version == 1 else {}),
                 "source": "miniapp",
                 "v_type": generation_type,
                 "v_model": model,
@@ -2330,7 +2362,7 @@ async def _launch_video_generation_task(
         }
 
     local_task_id = f"miniapp_video_{int(time.time() * 1000)}_{telegram_id}"
-    await add_generation_task(
+    await persist_generation_task(
         user.id,
         telegram_id,
         local_task_id,
@@ -2342,6 +2374,7 @@ async def _launch_video_generation_task(
         prompt=prompt,
         cost=cost,
         request_data={
+                **({"video_repeat_contract_version": 1} if video_repeat_contract_version == 1 else {}),
             "source": "miniapp",
             "v_type": generation_type,
             "v_model": model,
@@ -4074,6 +4107,7 @@ async def miniapp_generation_share(request: web.Request) -> web.Response:
         reference_image_indices = _optional_reference_indices(body, "reference_image_indices")
         reference_video_indices = _optional_reference_indices(body, "reference_video_indices")
         repeat_reference_image_indices = _optional_reference_indices(body, "repeat_reference_image_indices")
+        repeat_reference_video_indices = _optional_reference_indices(body, "repeat_reference_video_indices")
         blurred = None
         if "blurred" in body or "feed_blurred" in body:
             blurred = _payload_bool(
@@ -4096,6 +4130,7 @@ async def miniapp_generation_share(request: web.Request) -> web.Response:
             reference_image_indices=reference_image_indices,
             reference_video_indices=reference_video_indices,
             repeat_reference_image_indices=repeat_reference_image_indices,
+            repeat_reference_video_indices=repeat_reference_video_indices,
             blurred=blurred,
             publication_scope=publication_scope,
             adult_content=adult_content,
@@ -4811,6 +4846,18 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
 
 
 async def miniapp_generate_video(request: web.Request) -> web.Response:
+    from bot.handlers.miniapp_video_continuity_compat import (
+        record_video_repeat_launch,
+        recover_video_repeat_launch,
+        reserve_video_repeat_launch,
+        video_repeat_pending_response,
+    )
+    receipt_id = None
+    launch_started = debit_attempted = debit_completed = provider_rejected = False
+    private_repeat = bool(getattr(request, "_video_repeat_authorization", None))
+    charged = False
+    refund_attempted = False
+    launch_observation: dict[str, Any] = {}
     try:
         body = await request.json()
         init_data = body.get("init_data", "")
@@ -5175,10 +5222,39 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
                 },
                 status=400,
             )
-        if not is_admin:
-            await deduct_credits(telegram_id, cost)
+        from bot.handlers.miniapp_video_continuity_compat import (
+            verify_video_repeat_before_charge,
+        )
 
+        receipt_id, pending_response = await reserve_video_repeat_launch(
+            request, user=user, telegram_id=telegram_id, model=effective_model,
+            duration=duration, aspect_ratio=aspect_ratio,
+        )
+        if pending_response is not None:
+            return pending_response
+        permission_error = await verify_video_repeat_before_charge(request)
+        if permission_error is not None:
+            await record_video_repeat_launch(receipt_id, user.id, phase="permission_rejected", terminal=True)
+            return permission_error
+        if not is_admin:
+            await record_video_repeat_launch(receipt_id, user.id, phase="debit_pending", attempted_cost=cost)
+            debit_attempted = True
+            debited = await deduct_credits(telegram_id, cost)
+            debit_completed = True
+            if private_repeat and cost > 0 and debited is False:
+                await record_video_repeat_launch(receipt_id, user.id, phase="debit_rejected", terminal=True)
+                return web.json_response(
+                    {"ok": False, "error": "Не удалось списать бананы. Обновите баланс и попробуйте снова."},
+                    status=400,
+                )
+            charged = bool(cost > 0 and debited is not False)
+
+        await record_video_repeat_launch(receipt_id, user.id, phase="launching", cost=cost if charged else 0)
+        launch_observation["receipt_task_id"] = receipt_id
+        launch_started = True
         launch_result = await _launch_video_generation_task(
+            **({"_launch_observation": launch_observation} if private_repeat else {}),
+            **({"video_repeat_contract_version": 1} if getattr(request, "_video_repeat_authorization", None) else {}),
             telegram_id=telegram_id,
             user=user,
             model=effective_model,
@@ -5214,13 +5290,27 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
             action_type=("repeat" if source_feed_gen_id else None),
         )
 
+        if launch_result.get("status") in {"queued", "done"}:
+            launch_observation["accepted"] = True
+            if not launch_observation.get("provider_task_id"):
+                launch_observation["provider_task_id"] = str(launch_result.get("task_id") or "")
         if launch_result["status"] == "failed":
-            if not is_admin:
-                await add_credits(telegram_id, cost)
+            provider_rejected = True
+            if not is_admin and (not private_repeat or charged):
+                refund_attempted = True
+                refunded = await add_credits(telegram_id, cost)
+                if private_repeat and refunded is False:
+                    raise RuntimeError("video_refund_unconfirmed")
+                charged = False
+            await record_video_repeat_launch(receipt_id, user.id, phase="rejected", cost=0, terminal=True)
             return web.json_response(
                 {
                     "ok": False,
-                    "error": launch_result.get("error") or "Не удалось запустить видео",
+                    "error": (
+                        "Не удалось запустить видео. Попробуйте ещё раз."
+                        if getattr(request, "_video_repeat_authorization", None)
+                        else launch_result.get("error") or "Не удалось запустить видео"
+                    ),
                 },
                 status=500,
             )
@@ -5254,6 +5344,58 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
             }
         )
     except Exception as e:
+        if private_repeat:
+            if launch_observation.get("accepted"):
+                if (not launch_observation.get("task_persisted") and receipt_id
+                        and await recover_video_repeat_launch(receipt_id, user.id, launch_observation.get("provider_task_id"))):
+                    launch_observation["task_persisted"] = True
+                logger.error(
+                    "Private video accepted; status reconciliation needed: telegram_id=%s provider_task_id=%s error_type=%s",
+                    telegram_id, launch_observation.get("provider_task_id"), type(e).__name__,
+                )
+                return web.json_response(
+                    {"ok": False, "code": "video_status_pending",
+                     "task_id": (launch_observation.get("provider_task_id")
+                                 if launch_observation.get("task_persisted") or not receipt_id else receipt_id) or None,
+                     "error": "Видео принято провайдером, но статус пока не подтверждён. Не повторяйте запуск сразу."},
+                    status=500,
+                )
+            if charged and not refund_attempted:
+                # A transport/helper exception does not prove that no remote
+                # job exists. Restore the user's charge once and retain only
+                # safe reconciliation metadata; never retry an uncertain refund.
+                refund_attempted = True
+                try:
+                    refunded = await add_credits(telegram_id, cost)
+                    if refunded is not False:
+                        charged = False
+                except Exception as refund_error:  # noqa: BLE001 - uncertain commit must not be retried
+                    logger.error("Private video refund unconfirmed: telegram_id=%s error_type=%s",
+                                 telegram_id, type(refund_error).__name__)
+                logger.warning("Private video launch outcome unknown: telegram_id=%s refunded=%s error_type=%s",
+                               telegram_id, not charged, type(e).__name__)
+            if charged:
+                logger.error("Private video refund reconciliation needed: telegram_id=%s amount=%s",
+                             telegram_id, cost)
+                return web.json_response(
+                    {"ok": False, "code": "video_refund_pending",
+                     "error": "Не удалось подтвердить возврат бананов. Требуется проверка платежа; не повторяйте запуск сразу."},
+                    status=500,
+                )
+            if receipt_id:
+                terminal = provider_rejected or (not launch_started and (not debit_attempted or debit_completed))
+                try:
+                    await record_video_repeat_launch(receipt_id, user.id,
+                        phase=("prelaunch_failed" if terminal else "debit_unknown"
+                               if debit_attempted and not debit_completed else "outcome_unknown"),
+                        cost=None if debit_attempted and not debit_completed else 0, terminal=terminal)
+                except Exception as receipt_error:  # noqa: BLE001 - uncertain receipt stays blocked
+                    logger.error("Private video receipt reconciliation needed: task_id=%s error_type=%s",
+                                 receipt_id, type(receipt_error).__name__)
+                    return video_repeat_pending_response(receipt_id)
+                if not terminal:
+                    return video_repeat_pending_response(receipt_id)
+            return _private_image_error_response(e, log_message="Private video repeat failed")
         return _miniapp_error_response(e, log_message="Mini App video generation failed")
 
 

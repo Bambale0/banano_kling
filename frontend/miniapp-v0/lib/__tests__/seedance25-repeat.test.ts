@@ -69,3 +69,17 @@ it('preserves visible owner instructions during identity hydration', async () =>
   const result = await hydrateSeedance25IdentityPreset(item, { ...preset, promptHidden: false })
   expect(result.prompt).toBe(detail.prompt)
 })
+
+
+it('passes only URL-free replacement descriptors and clears prefilled public references for foreign typed repeats', async () => {
+  const foreign = { ...item, is_mine: false, repeat_reference_slots: {
+    version: 1 as const, available: true, cost_multiplier: 1,
+    images: [{ index: 1, role: 'reference' as const, binding: 'fixed' as const, url: 'https://example.test/private.jpg' }, { index: 0, role: 'first_frame' as const, binding: 'upload' as const }], videos: [],
+  } }
+  const result = await hydrateSeedance25IdentityPreset(foreign, { ...preset, initialPhotoReferences: [{ id: 'public', name: 'public', type: 'image', size: 0, url: 'https://example.test/public.jpg' }] })
+  expect(result.repeatReferenceSlots).toEqual({ version: 1, available: true, cost_multiplier: 1, images: [
+    { index: 0, role: 'first_frame', binding: 'upload' }, { index: 1, role: 'reference', binding: 'fixed' },
+  ], videos: [] })
+  expect(result.initialPhotoReferences).toEqual([])
+  expect(JSON.stringify(result)).not.toContain('https://example.test/private.jpg')
+})

@@ -1,5 +1,8 @@
 'use client'
 
+import { forgetPendingPublication } from './feed-events'
+import { getPendingVideoRepeat, getPendingVideoTaskIds, isVideoStatusPending, markVideoRepeatPending, reconcilePendingVideoDetail, reconcilePendingVideoRepeats } from './video-repeat-pending'
+
 import type {
   BootstrapResponse,
   CreatePaymentResponse,
@@ -353,6 +356,13 @@ function rewriteTemporaryMedia(value: unknown): unknown {
   return rewritten
 }
 
+export class MiniAppApiError extends Error {
+  constructor(message: string, readonly code?: string, readonly taskId?: string) {
+    super(message)
+    this.name = 'MiniAppApiError'
+  }
+}
+
 async function parseJson<T>(response: Response): Promise<T> {
   const contentType = response.headers.get('content-type') || ''
   const text = await response.text()
@@ -374,9 +384,11 @@ async function parseJson<T>(response: Response): Promise<T> {
     throw new Error('Не удалось загрузить данные. Обновите mini app и попробуйте снова.')
   }
 
-  const payload = data as { ok?: boolean; error?: string }
+  const payload = data as { ok?: boolean; error?: string; code?: unknown; task_id?: unknown }
   if (!response.ok || payload.ok === false) {
-    throw new Error(payload.error || 'Не удалось выполнить действие')
+    throw new MiniAppApiError(payload.error || 'Не удалось выполнить действие',
+      typeof payload.code === 'string' ? payload.code : undefined,
+      typeof payload.task_id === 'string' && payload.task_id ? payload.task_id : undefined)
   }
   return rewriteTemporaryMedia(data) as T
 }
@@ -401,12 +413,36 @@ async function postJson<T>(path: string, payload: Record<string, unknown>, signa
   return parseJson<T>(response)
 }
 
+const pendingVideoDetailRequests = new Map<string, Promise<TaskDetail>>()
+
+function resolvePendingVideoTask(taskId: string): Promise<TaskDetail> {
+  const ongoing = pendingVideoDetailRequests.get(taskId)
+  if (ongoing) return ongoing
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 10_000)
+  const request = fetchTaskDetail(taskId, controller.signal).finally(() => {
+    clearTimeout(timeout)
+    pendingVideoDetailRequests.delete(taskId)
+  })
+  pendingVideoDetailRequests.set(taskId, request)
+  return request
+}
+
 export async function bootstrapApp(signal?: AbortSignal): Promise<BootstrapResponse> {
   const initData = getInitData()
   if (!initData) {
     throw new Error('Откройте mini app из Telegram и попробуйте снова.')
   }
-  return postJson<BootstrapResponse>('bootstrap', { init_data: initData }, signal)
+  const response = await postJson<BootstrapResponse>('bootstrap', { init_data: initData }, signal)
+  const tasks = response.recent_tasks || []
+  reconcilePendingVideoRepeats(tasks)
+  if (!signal?.aborted) {
+    // A promoted receipt no longer appears under its local ID in history.
+    // Resolve only our known missing IDs; failed lookups retain the guard.
+    const missingIds = getPendingVideoTaskIds().filter((taskId) => !tasks.some((task) => task.task_id === taskId))
+    void Promise.allSettled(missingIds.map(resolvePendingVideoTask))
+  }
+  return response
 }
 
 export async function confirmTelegramWriteAccess(): Promise<{
@@ -442,7 +478,7 @@ export async function createPayment(payload: {
   })
 }
 
-export async function fetchTaskDetail(taskId: string): Promise<TaskDetail> {
+export async function fetchTaskDetail(taskId: string, signal?: AbortSignal): Promise<TaskDetail> {
   const initData = getInitData()
   if (!initData) {
     throw new Error('Откройте mini app из Telegram и попробуйте снова.')
@@ -450,7 +486,11 @@ export async function fetchTaskDetail(taskId: string): Promise<TaskDetail> {
   const response = await postJson<{ ok: true; task: TaskDetail }>('task-detail', {
     init_data: initData,
     task_id: taskId,
-  })
+  }, signal)
+  if (!response.task || typeof response.task.task_id !== 'string' || !response.task.task_id) {
+    throw new Error('Не удалось подтвердить статус задачи.')
+  }
+  reconcilePendingVideoDetail(taskId, response.task)
   return response.task
 }
 
@@ -1162,6 +1202,7 @@ export async function publishGeneration(
     referenceImageIndices?: number[]
     referenceVideoIndices?: number[]
     repeatReferenceImageIndices?: number[]
+    repeatReferenceVideoIndices?: number[]
     blurred?: boolean
     publicationScope?: 'profile' | 'feed'
     adultContent?: boolean
@@ -1179,6 +1220,7 @@ export async function publishGeneration(
     reference_image_indices: options.referenceImageIndices,
     reference_video_indices: options.referenceVideoIndices,
     repeat_reference_image_indices: options.repeatReferenceImageIndices,
+    repeat_reference_video_indices: options.repeatReferenceVideoIndices,
     feed_blurred: Boolean(options.blurred),
     publication_scope: options.publicationScope || 'feed',
     adult_content: Boolean(options.adultContent),
@@ -1204,13 +1246,15 @@ export async function unpublishGeneration(taskId: string): Promise<void> {
   if (!initData) {
     throw new Error('Откройте mini app из Telegram и попробуйте снова.')
   }
-  const response = await postJson<{ ok: true; removed: boolean }>('feed/remove', {
+  const response = await postJson<{ ok: true; removed: boolean }>('generations/share', {
     init_data: initData,
     task_id: taskId,
+    publication_scope: 'private',
   })
   if (!response.removed) {
     throw new Error('Не удалось убрать пост')
   }
+  forgetPendingPublication(taskId)
 }
 
 export async function saveGenerationPrompt(taskId: string): Promise<void> {
@@ -1355,6 +1399,8 @@ export async function generateVideo(payload: {
   if (!initData) {
     throw new Error('Откройте mini app из Telegram и попробуйте снова.')
   }
+  const pending = getPendingVideoRepeat(payload.sourceFeedGenId)
+  if (pending) throw new MiniAppApiError('Видео уже принято. Ожидаем подтверждения статуса.', 'video_status_pending', pending.taskId)
   const startImage = restoreProviderUploadUrl(payload.startImage)
   const imageReferences = restoreProviderUploadUrls(payload.references)
   const videoReferences = restoreProviderUploadUrls(payload.videoReferences)
@@ -1404,6 +1450,11 @@ export async function generateVideo(payload: {
     v_reference_videos: videoReferences,
     audio_url: audioReference,
     audio_references: audioReference ? [audioReference] : [],
+  }).catch((error: unknown) => {
+    if (payload.sourceFeedGenId && isVideoStatusPending(error)) {
+      markVideoRepeatPending(payload.sourceFeedGenId, error.taskId)
+    }
+    throw error
   })
 
   const task: Task = {

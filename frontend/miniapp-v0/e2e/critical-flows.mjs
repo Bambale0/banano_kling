@@ -360,6 +360,22 @@ try {
       return
     }
 
+    if (path.endsWith('/task-detail')) {
+      const { task_id } = JSON.parse(request.postData() || '{}')
+      const details = {
+        'trend-e2e-task': { type: 'video', model: 'v3_pro', model_label: 'Kling 3 Pro',
+          aspect_ratio: '16:9', duration: 5, cost: 10, result_url: 'https://cdn.example/trend-result.mp4' },
+        'pinterest-e2e-task': { type: 'image', model: 'banana_pro', model_label: 'Nano Banana Pro',
+          aspect_ratio: '9:16', duration: null, cost: 12, result_url: 'https://cdn.example/pinterest-result.jpg' },
+      }[task_id]
+      assert.ok(details, `Unexpected task detail request: ${task_id}`)
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        ok: true, task: { ...details, task_id, status: 'completed', created_at: '2026-10-08T00:00:00Z',
+          prompt: '', prompt_preview: '', prompt_hidden: true, prompt_actions_allowed: false },
+      }) })
+      return
+    }
+
     if (path.endsWith('/generate-video')) {
       seedanceGenerationPayload = JSON.parse(request.postData() || '{}')
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
@@ -621,6 +637,9 @@ try {
   }
 
   const taskDetailTitle = page.getByText('Детали задачи', { exact: true })
+  // The task drawer can enter while the runner's exiting overlay still captures clicks.
+  await trendRunner.waitFor({ state: 'hidden' })
+  await page.locator('[data-slot="dialog-overlay"]').waitFor({ state: 'detached' })
   await taskDetailTitle.waitFor()
   await page.mouse.click(10, 10)
   await taskDetailTitle.waitFor({ state: 'hidden' })
@@ -706,6 +725,8 @@ try {
     )
   }
 
+  await pinterestRunner.waitFor({ state: 'hidden' })
+  await page.locator('[data-slot="dialog-overlay"]').waitFor({ state: 'detached' })
   await taskDetailTitle.waitFor()
   await page.mouse.click(10, 10)
   await taskDetailTitle.waitFor({ state: 'hidden' })

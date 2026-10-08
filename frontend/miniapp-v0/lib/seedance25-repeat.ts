@@ -1,4 +1,5 @@
 import { fetchTaskDetail } from './api'
+import { normalizeVideoRepeatSlots } from './video-repeat-references'
 import { normalizeRepeatPrompt } from './repeat-prompt'
 import type { FeedItem, UploadedFile, VideoPromptPreset } from './types'
 
@@ -16,7 +17,11 @@ export async function hydrateSeedance25IdentityPreset(
   item: FeedItem,
   preset: VideoPromptPreset,
 ): Promise<VideoPromptPreset> {
-  const safePreset = normalizeRepeatPrompt(preset, item)
+  const promptPreset = normalizeRepeatPrompt(preset, item)
+  const safePreset = item.is_mine !== true && item.repeat_reference_slots !== undefined
+    ? { ...promptPreset, model: item.model === 'gemini_omni_video' ? 'gemini_omni' : item.model, repeatReferenceSlots: normalizeVideoRepeatSlots(item.repeat_reference_slots),
+      initialStartImage: [], initialPhotoReferences: [], initialVideoReferences: [] }
+    : promptPreset
   if (item.model !== 'seedance_2_5' || item.is_mine !== true) return safePreset
   const detail = await fetchTaskDetail(item.task_id || String(item.id))
   const data = detail.request_data

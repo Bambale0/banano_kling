@@ -10,12 +10,20 @@ from datetime import UTC, datetime, timedelta
 from math import isfinite
 from typing import Any, Iterable, List, Optional
 from urllib.parse import urlparse
+from uuid import uuid4
 
 from bot import db as db_backend
 from bot.services.delivery_state import (
     TASK_DELIVERY_STATUSES,
     TERMINAL_TASK_DELIVERY_STATUSES,
     terminal_telegram_delivery_reason,
+)
+from bot.video_repeat_reference_contract import (
+    VideoRepeatContractError,
+    active_video_recipe,
+    build_video_repeat_plan,
+    parse_video_repeat_grant,
+    video_repeat_descriptors,
 )
 
 logger = logging.getLogger(__name__)
@@ -5264,6 +5272,165 @@ def _merge_task_id_aliases(request_data: Optional[dict | str], *task_ids: Any) -
     return payload
 
 
+async def reserve_private_video_repeat(
+    *, user_id: int, telegram_id: int, source_id: int, model: str,
+    duration: int, aspect_ratio: str,
+) -> dict[str, Any]:
+    """Reserve one typed repeat before charge, serialized on its existing user.
+
+    The user-row write locks the empty-set check on PostgreSQL and acquires the
+    SQLite writer lock. A process crash leaves a visible processing receipt;
+    Only an expired, never-attempted reservation can be replaced. Unknown debit
+    or provider outcomes are never reclaimed by elapsed time.
+    """
+    lease_seconds = max(30, int(os.getenv("VIDEO_REPEAT_RESERVED_LEASE_SECONDS", "300")))
+    age_expr = (
+        "EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - COALESCE(updated_at, created_at)))"
+        if db_backend.is_postgres() else
+        "(julianday(CURRENT_TIMESTAMP) - julianday(COALESCE(updated_at, created_at))) * 86400.0"
+    )
+    async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
+        db.row_factory = db_backend.Row
+        locked = await db.execute(
+            "UPDATE users SET updated_at = updated_at WHERE id = ? AND telegram_id = ?",
+            (user_id, telegram_id),
+        )
+        if locked.rowcount != 1:
+            raise ValueError("Не удалось подтвердить владельца задачи.")
+        cursor = await db.execute(
+            f"SELECT task_id, request_data, status, cost, {age_expr} AS receipt_age_seconds FROM generation_tasks "
+            "WHERE user_id = ? AND source_feed_gen_id = ? "
+            "AND status IN ('pending', 'processing') ORDER BY id DESC",
+            (user_id, source_id),
+        )
+        for row in await cursor.fetchall():
+            metadata = _parse_json_dict(row["request_data"])
+            if metadata.get("video_repeat_receipt") is True:
+                if (row["status"] == "processing"
+                        and str(row["task_id"]).startswith("video_repeat_receipt_")
+                        and metadata.get("repeat_receipt_phase") == "reserved"
+                        and metadata.get("repeat_attempted_cost") == 0
+                        and not row["cost"]
+                        and float(row["receipt_age_seconds"] or 0) >= lease_seconds):
+                    expired = dict(metadata, repeat_receipt_phase="expired_reserved")
+                    released = await db.execute(
+                        "UPDATE generation_tasks SET status = 'failed', request_data = ?, "
+                        "updated_at = CURRENT_TIMESTAMP WHERE task_id = ? AND user_id = ? "
+                        "AND status = 'processing' AND request_data = ? AND COALESCE(cost, 0) = 0",
+                        (json.dumps(expired), row["task_id"], user_id, row["request_data"]),
+                    )
+                    if released.rowcount == 1:
+                        continue
+                    # A suspended original won its debit_pending CAS first.
+                    # Never create a replacement after losing this CAS.
+                await db.commit()
+                return {"created": False, "task_id": str(row["task_id"]),
+                        "accepted_provider_task_id": metadata.get("provider_task_id")
+                        if metadata.get("repeat_receipt_phase") == "accepted_unbound" else None}
+        task_id = "video_repeat_receipt_" + uuid4().hex
+        metadata = {"video_repeat_contract_version": 1, "video_repeat_receipt": True,
+                    "repeat_receipt_phase": "reserved", "repeat_attempted_cost": 0.0, "task_id_aliases": [task_id]}
+        await db.execute(
+            "INSERT INTO generation_tasks "
+            "(user_id, telegram_id, task_id, type, preset_id, model, duration, aspect_ratio, "
+            "cost, request_data, status, source_feed_gen_id, parent_generation_id, action_type) "
+            "VALUES (?, ?, ?, 'video', 'miniapp_video', ?, ?, ?, 0, ?, 'processing', ?, ?, 'repeat')",
+            (user_id, telegram_id, task_id, model, duration, aspect_ratio,
+             json.dumps(metadata), source_id, source_id),
+        )
+        await db.commit()
+        return {"created": True, "task_id": task_id}
+
+
+async def finish_private_video_repeat(
+    task_id: str, user_id: int, *, phase: str, cost: float | None = None,
+    terminal: bool = False, attempted_cost: float | None = None,
+) -> bool:
+    """Record a local receipt outcome; only confirmed no-job/refund is terminal."""
+    async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
+        db.row_factory = db_backend.Row
+        cursor = await db.execute(
+            "SELECT request_data FROM generation_tasks WHERE task_id = ? AND user_id = ? "
+            "AND status = 'processing'", (task_id, user_id),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return False
+        metadata = _parse_json_dict(row["request_data"])
+        if metadata.get("video_repeat_receipt") is not True:
+            return False
+        metadata["repeat_receipt_phase"] = phase
+        if attempted_cost is not None:
+            metadata["repeat_attempted_cost"] = float(attempted_cost)
+        cursor = await db.execute(
+            "UPDATE generation_tasks SET request_data = ?, status = ?, "
+            "cost = COALESCE(?, cost), updated_at = CURRENT_TIMESTAMP "
+            "WHERE task_id = ? AND user_id = ? AND status = 'processing' AND request_data = ?",
+            (json.dumps(metadata), "failed" if terminal else "processing", cost,
+             task_id, user_id, row["request_data"]),
+        )
+        await db.commit()
+        return cursor.rowcount == 1
+
+
+async def recover_private_video_repeat_acceptance(
+    task_id: str, user_id: int, provider_task_id: str,
+) -> bool:
+    """Persist known acceptance, then enable existing provider polling.
+
+    The first commit keeps provider identity even if minimal canonical binding
+    fails. No provider submission is made here. An unbound receipt remains held.
+    """
+    if not provider_task_id:
+        return False
+    async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
+        db.row_factory = db_backend.Row
+        cursor = await db.execute(
+            "SELECT request_data, cost FROM generation_tasks WHERE task_id = ? "
+            "AND user_id = ? AND status = 'processing'", (task_id, user_id),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            cursor = await db.execute(
+                "SELECT request_data FROM generation_tasks WHERE task_id = ? AND user_id = ?",
+                (provider_task_id, user_id),
+            )
+            existing = await cursor.fetchone()
+            metadata = _parse_json_dict(existing["request_data"]) if existing else {}
+            return bool(metadata.get("video_repeat_receipt") is True
+                        and task_id in metadata.get("task_id_aliases", []))
+        metadata = _parse_json_dict(row["request_data"])
+        if (metadata.get("video_repeat_receipt") is not True
+                or metadata.get("repeat_receipt_phase") not in {"launching", "accepted_unbound"}
+                or metadata.get("provider_task_id") not in (None, provider_task_id)):
+            return False
+        charged_cost = float(row["cost"] or 0)
+        metadata.update(provider_task_id=provider_task_id, repeat_receipt_phase="accepted_unbound",
+                        source="miniapp", charged_cost=charged_cost, charged=charged_cost > 0,
+                        admin_free=charged_cost <= 0, refund_on_failure=charged_cost > 0,
+                        refund_claimed=False)
+        accepted_json = json.dumps(metadata)
+        updated = await db.execute(
+            "UPDATE generation_tasks SET request_data = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE task_id = ? AND user_id = ? AND status = 'processing' AND request_data = ?",
+            (accepted_json, task_id, user_id, row["request_data"]),
+        )
+        if updated.rowcount != 1:
+            await db.rollback()
+            return False
+        await db.commit()
+        metadata["repeat_receipt_phase"] = "accepted_recovered"
+        metadata = _merge_task_id_aliases(metadata, task_id, provider_task_id)
+        updated = await db.execute(
+            "UPDATE generation_tasks SET task_id = ?, status = 'pending', request_data = ?, "
+            "updated_at = CURRENT_TIMESTAMP WHERE task_id = ? AND user_id = ? "
+            "AND status = 'processing' AND request_data = ?",
+            (provider_task_id, json.dumps(metadata), task_id, user_id, accepted_json),
+        )
+        await db.commit()
+        return updated.rowcount == 1
+
+
 async def add_generation_task(
     user_id: int,
     telegram_id: int,
@@ -5279,9 +5446,36 @@ async def add_generation_task(
     source_feed_gen_id: Optional[int] = None,
     parent_generation_id: Optional[int] = None,
     action_type: Optional[str] = None,
+    reserved_task_id: str | None = None,
 ) -> bool:
     """Создаёт задачу генерации"""
     async with db_backend.connect(DATABASE_PATH) as db:
+        if reserved_task_id:
+            db.row_factory = db_backend.Row
+            cursor = await db.execute(
+                "SELECT id, request_data FROM generation_tasks WHERE task_id = ? "
+                "AND user_id = ? AND telegram_id = ? AND status = 'processing'",
+                (reserved_task_id, user_id, telegram_id),
+            )
+            receipt = await cursor.fetchone()
+            if not receipt or _parse_json_dict(receipt["request_data"]).get("video_repeat_receipt") is not True:
+                raise ValueError("Не удалось подтвердить запись запуска видео.")
+            metadata = _parse_json_dict(request_data)
+            metadata.update(video_repeat_contract_version=1, video_repeat_receipt=True,
+                            repeat_receipt_phase="accepted")
+            metadata = _merge_task_id_aliases(metadata, reserved_task_id, task_id)
+            result = await db.execute(
+                "UPDATE generation_tasks SET task_id = ?, type = ?, preset_id = ?, model = ?, "
+                "duration = ?, aspect_ratio = ?, prompt = ?, request_data = ?, status = 'pending', "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? "
+                "AND task_id = ? AND status = 'processing'",
+                (task_id, type, preset_id, model, duration, aspect_ratio, prompt,
+                 json.dumps(metadata, ensure_ascii=False), receipt["id"], user_id, reserved_task_id),
+            )
+            if result.rowcount != 1:
+                raise RuntimeError("video_repeat_receipt_binding_failed")
+            await db.commit()
+            return True
         normalized_request = _merge_task_id_aliases(request_data, task_id)
         serialized_request = (
             json.dumps(normalized_request, ensure_ascii=False)
@@ -6648,29 +6842,97 @@ def generation_reference_selection(
     return selection
 
 
-def generation_repeat_reference_selection(generation: Any) -> list[str]:
-    """Explicit owner grants only; legacy publication selections are not grants."""
+def generation_repeat_reference_selection_by_kind(generation: Any) -> dict[str, list[str]]:
+    """Return explicit owner grants for server-side repeats, split by media kind."""
     raw = _generation_attr(generation, "feed_repeat_reference_selection")
+    if _generation_attr(generation, "type") == "video":
+        try:
+            grant = parse_video_repeat_grant(raw)
+        except VideoRepeatContractError:
+            grant = None
+        return {kind: grant[kind] if grant is not None else [] for kind in ("images", "videos")}
     try:
         payload = json.loads(raw) if isinstance(raw, str) else raw
     except (TypeError, ValueError):
-        return []
-    if not isinstance(payload, dict) or not isinstance(payload.get("images"), list):
-        return []
-    values = payload["images"]
-    if any(not isinstance(url, str) or not url.strip() for url in values):
-        return []
-    return list(dict.fromkeys(url.strip() for url in values))
+        return {"images": [], "videos": []}
+    if not isinstance(payload, dict):
+        return {"images": [], "videos": []}
+
+    result: dict[str, list[str]] = {}
+    for kind in ("images", "videos"):
+        values = payload.get(kind, [])
+        if not isinstance(values, list) or any(
+            not isinstance(url, str) or not url.strip() for url in values
+        ):
+            return {"images": [], "videos": []}
+        result[kind] = list(dict.fromkeys(url.strip() for url in values))
+    return result
 
 
-def _repeat_reference_selection_for_publication(row: Any, indices: list[int] | None) -> str:
-    # Omission is deliberately fail-closed, including older clients re-publishing.
-    candidates = _feed_reference_image_candidates(_parse_json_dict(row["request_data"]))
-    selected = sorted(_validated_reference_indices(indices or [], len(candidates)))
-    if selected and row["type"] != "image":
-        raise ValueError("Скрытые референсы для повторов доступны только для изображений")
-    return json.dumps({"images": [candidates[index] for index in selected
-        if _is_feed_result_url_available(row, candidates[index])]}, ensure_ascii=False, separators=(",", ":"))
+def generation_repeat_reference_selection(generation: Any) -> list[str]:
+    """Backward-compatible image-only view of the explicit repeat grant."""
+    return generation_repeat_reference_selection_by_kind(generation)["images"]
+
+
+def _repeat_reference_selection_for_publication(
+    row: Any,
+    image_indices: list[int] | None,
+    video_indices: list[int] | None = None,
+) -> str:
+    task_type = str(row["type"] or "")
+    if task_type not in {"image", "video"}:
+        raise ValueError("Этот тип работы не поддерживает разрешения на повтор.")
+    if task_type == "image" and video_indices:
+        raise ValueError("Для фото можно разрешить только фото-референсы.")
+    request_data = _parse_json_dict(row["request_data"])
+    image_candidates = _feed_reference_image_candidates(request_data)
+    video_candidates = _feed_reference_video_candidates(request_data)
+    selected_images = sorted(_validated_reference_indices(image_indices or [], len(image_candidates)))
+    selected_videos = sorted(_validated_reference_indices(video_indices or [], len(video_candidates)))
+    images = [image_candidates[index] for index in selected_images]
+    videos = [video_candidates[index] for index in selected_videos]
+    if any(not _is_feed_result_url_available(row, value) for value in [*images, *videos]):
+        raise ValueError("Выбранные референсы больше недоступны. Обновите исходные файлы.")
+    if task_type == "image":
+        return json.dumps({"images": images}, ensure_ascii=False, separators=(",", ":"))
+    existing = _generation_attr(row, "feed_repeat_reference_selection")
+    try:
+        old_grant = parse_video_repeat_grant(existing)
+    except VideoRepeatContractError:
+        old_grant = {}
+    if image_indices is None and video_indices is None and old_grant is None:
+        # Historical clients never selected typed private video consent.
+        return json.dumps({"images": []}, separators=(",", ":"))
+    if (images or videos) and generation_has_private_recipe(row):
+        raise ValueError("Нельзя передать разрешение на чужие исходные референсы.")
+    grant = {"version": 1, "images": images, "videos": videos}
+    if images or videos:
+        # Verify active slot membership and reject unsupported private audio
+        # before mutating publication, instead of silently dropping selection.
+        build_video_repeat_plan({**dict(row), "feed_repeat_reference_selection": grant})
+    return json.dumps(grant, ensure_ascii=False, separators=(",", ":"))
+
+
+def generation_repeat_reference_indices(generation: Any, references: dict[str, Any]) -> dict[str, list[int]]:
+    """Owner-facing indices; canonical aliases never select multiple occurrences."""
+    from bot.services.media_input_utils import resolve_reference_source
+
+    grant = generation_repeat_reference_selection_by_kind(generation)
+    result: dict[str, list[int]] = {}
+    kinds = ("images", "videos") if _generation_attr(generation, "type") == "video" else ("images",)
+    for kind in kinds:
+        values = references[kind]
+        selected: set[str] = set()
+        for value in grant[kind]:
+            try:
+                resolved = resolve_reference_source(value, values)
+            except ValueError:
+                continue
+            if resolved is not None:
+                selected.add(resolved)
+        index_key = "image_indices" if kind == "images" else "video_indices"
+        result[kind] = [index for index, value in zip(references[index_key], values) if value in selected]
+    return result
 
 
 def _validated_reference_indices(
@@ -7159,7 +7421,12 @@ def _generation_row_to_card(
             preview_url = feed_thumbnail_url_for(preview_url) or preview_url
         except Exception:
             logger.exception("Failed to resolve feed thumbnail url")
+    repeat_slots = (
+        video_repeat_descriptors(dict(row))
+        if str(row["type"]) == "video" and not viewer_is_owner else None
+    )
     return {
+        **({"repeat_reference_slots": repeat_slots} if repeat_slots is not None else {}),
         "id": row["id"],
         "user_id": row["user_id"],
         "task_id": row["task_id"],
@@ -7175,11 +7442,15 @@ def _generation_row_to_card(
         "comments_count": comments_count,
         "aspect_ratio": row["aspect_ratio"] or "",
         "duration": row["duration"] if "duration" in row.keys() else None,
-        "scenario": _feed_repeat_scenario(
-            str(row["model"] or row["preset_id"] or ""),
-            request_data,
-            has_image_references=bool(all_reference_images),
-            has_video_references=bool(all_reference_videos),
+        "scenario": (
+            active_video_recipe(dict(row))["public_scenario"]
+            if repeat_slots is not None and repeat_slots["available"]
+            else _feed_repeat_scenario(
+                str(row["model"] or row["preset_id"] or ""),
+                request_data,
+                has_image_references=bool(all_reference_images),
+                has_video_references=bool(all_reference_videos),
+            )
         ),
         "genjutsu_title": (
             request_data.get("genjutsu_title") if str(row["model"] or "") == "genjutsu" else None
@@ -7664,6 +7935,7 @@ async def share_to_feed(
     reference_image_indices: list[int] | None = None,
     reference_video_indices: list[int] | None = None,
     repeat_reference_image_indices: list[int] | None = None,
+    repeat_reference_video_indices: list[int] | None = None,
     blurred: Optional[bool] = None,
     publication_scope: str = "feed",
     adult_content: bool = False,
@@ -7718,7 +7990,11 @@ async def share_to_feed(
             ensure_ascii=False,
             separators=(",", ":"),
         )
-        repeat_reference_selection = _repeat_reference_selection_for_publication(row, repeat_reference_image_indices)
+        repeat_reference_selection = _repeat_reference_selection_for_publication(
+            row,
+            repeat_reference_image_indices,
+            repeat_reference_video_indices,
+        )
         references_visible = bool(references_visible and (selected_images or selected_videos))
 
         result_urls = _generation_result_urls(row)
