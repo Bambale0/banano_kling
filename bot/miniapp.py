@@ -1993,6 +1993,7 @@ async def _launch_video_generation_task(
     reference_contract: str | None = None,
     fixed_asset_counts: dict[str, int] | None = None,
     video_repeat_contract_version: int | None = None,
+    _launch_observation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     from bot.services.gemini_omni_service import gemini_omni_service
     from bot.services.grok_service import grok_service
@@ -2194,6 +2195,13 @@ async def _launch_video_generation_task(
         )
 
     result_status, error_message = _classify_video_generation_result(result)
+    if _launch_observation is not None:
+        # Record acknowledgement before any pricing/persistence can fail.
+        # This is local bookkeeping, never an argument sent to a provider.
+        _launch_observation.update(
+            accepted=result_status in {"queued", "done"},
+            provider_task_id=str(result.get("task_id") or "") if isinstance(result, dict) else "",
+        )
     pricing_quality = _video_pricing_quality(model, veo_resolution, omni_resolution)
     cost = preset_manager.get_video_cost_with_quality(model, duration, pricing_quality)
     cost = apply_video_reference_cost(model, cost, video_references)
@@ -4815,6 +4823,10 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
 
 
 async def miniapp_generate_video(request: web.Request) -> web.Response:
+    private_repeat = bool(getattr(request, "_video_repeat_authorization", None))
+    charged = False
+    refund_attempted = False
+    launch_observation: dict[str, Any] = {}
     try:
         body = await request.json()
         init_data = body.get("init_data", "")
@@ -5187,9 +5199,16 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
         if permission_error is not None:
             return permission_error
         if not is_admin:
-            await deduct_credits(telegram_id, cost)
+            debited = await deduct_credits(telegram_id, cost)
+            if private_repeat and cost > 0 and debited is False:
+                return web.json_response(
+                    {"ok": False, "error": "Не удалось списать бананы. Обновите баланс и попробуйте снова."},
+                    status=400,
+                )
+            charged = bool(cost > 0 and debited is not False)
 
         launch_result = await _launch_video_generation_task(
+            **({"_launch_observation": launch_observation} if private_repeat else {}),
             **({"video_repeat_contract_version": 1} if getattr(request, "_video_repeat_authorization", None) else {}),
             telegram_id=telegram_id,
             user=user,
@@ -5226,9 +5245,16 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
             action_type=("repeat" if source_feed_gen_id else None),
         )
 
+        if launch_result.get("status") in {"queued", "done"}:
+            launch_observation["accepted"] = True
+            launch_observation.setdefault("provider_task_id", str(launch_result.get("task_id") or ""))
         if launch_result["status"] == "failed":
-            if not is_admin:
-                await add_credits(telegram_id, cost)
+            if not is_admin and (not private_repeat or charged):
+                refund_attempted = True
+                refunded = await add_credits(telegram_id, cost)
+                if private_repeat and refunded is False:
+                    raise RuntimeError("video_refund_unconfirmed")
+                charged = False
             return web.json_response(
                 {
                     "ok": False,
@@ -5270,7 +5296,39 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
             }
         )
     except Exception as e:
-        if getattr(request, "_video_repeat_authorization", None):
+        if private_repeat:
+            if charged and launch_observation.get("accepted"):
+                logger.error(
+                    "Private video accepted; status reconciliation needed: telegram_id=%s provider_task_id=%s error_type=%s",
+                    telegram_id, launch_observation.get("provider_task_id"), type(e).__name__,
+                )
+                return web.json_response(
+                    {"ok": False, "code": "video_status_pending",
+                     "error": "Видео принято провайдером, но статус пока не подтверждён. Не повторяйте запуск сразу."},
+                    status=500,
+                )
+            if charged and not refund_attempted:
+                # A transport/helper exception does not prove that no remote
+                # job exists. Restore the user's charge once and retain only
+                # safe reconciliation metadata; never retry an uncertain refund.
+                refund_attempted = True
+                try:
+                    refunded = await add_credits(telegram_id, cost)
+                    if refunded is not False:
+                        charged = False
+                except Exception as refund_error:  # noqa: BLE001 - uncertain commit must not be retried
+                    logger.error("Private video refund unconfirmed: telegram_id=%s error_type=%s",
+                                 telegram_id, type(refund_error).__name__)
+                logger.warning("Private video launch outcome unknown: telegram_id=%s refunded=%s error_type=%s",
+                               telegram_id, not charged, type(e).__name__)
+            if charged:
+                logger.error("Private video refund reconciliation needed: telegram_id=%s amount=%s",
+                             telegram_id, cost)
+                return web.json_response(
+                    {"ok": False, "code": "video_refund_pending",
+                     "error": "Не удалось подтвердить возврат бананов. Требуется проверка платежа; не повторяйте запуск сразу."},
+                    status=500,
+                )
             return _private_image_error_response(e, log_message="Private video repeat failed")
         return _miniapp_error_response(e, log_message="Mini App video generation failed")
 

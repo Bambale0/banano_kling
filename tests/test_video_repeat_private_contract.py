@@ -1,12 +1,14 @@
 """Typed private video-repeat consent and URL-free consumer contracts."""
+import inspect
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
-from bot import database, miniapp
+from bot import database, miniapp, trend_task_privacy
 from bot.handlers import miniapp_video_continuity_compat as continuity
+from bot.video_repeat_reference_contract import video_repeat_descriptors
 
 FACE = "https://example.test/author-face.png"
 FIXED = "https://example.test/fixed-cake.png"
@@ -42,7 +44,7 @@ async def test_private_video_grant_has_url_free_ordered_consumer_slots(scope):
     get_card = database.get_feed_generation_card if scope == "feed" else database.get_profile_generation_card
     public = await get_card(card["id"])
     assert public["repeat_reference_slots"] == {
-        "version": 1, "available": True,
+        "version": 1, "available": True, "cost_multiplier": 2,
         "images": [{"index": 0, "role": "reference", "binding": "upload"},
                    {"index": 1, "role": "reference", "binding": "fixed"}],
         "videos": [{"index": 0, "role": "reference", "binding": "upload"},
@@ -428,3 +430,229 @@ async def test_typed_first_and_last_can_intentionally_use_same_file_identity(typ
     assert response.status == 200
     assert (await request.json())["seedance25_first_frame_url"] == first
     assert (await request.json())["seedance25_last_frame_url"] == last
+
+
+REAL_GENERIC = inspect.unwrap(miniapp.miniapp_generate_video)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", [
+    "provider_exception", "failed_result", "post_accept_bookkeeping",
+    "accepted_then_persistence", "predebit_error", "admin_error",
+    "refund_uncertain", "debit_rejected",
+])
+async def test_typed_generic_failure_has_single_correct_financial_outcome(monkeypatch, typed_video_entrypoint, case):
+    entry = typed_video_entrypoint
+    entry.source.update(model="seedance_2", is_public_feed=True)
+    entry.delegate.side_effect = REAL_GENERIC
+    monkeypatch.setattr(miniapp, "get_generation_task_payload", AsyncMock(side_effect=lambda *_: dict(entry.source)))
+    monkeypatch.setattr(miniapp.config, "is_admin", lambda _: case == "admin_error")
+    monkeypatch.setattr(miniapp, "missing_local_upload_sources", lambda _: [])
+    monkeypatch.setattr(miniapp, "touch_saved_references", AsyncMock())
+    monkeypatch.setattr(miniapp.preset_manager, "get_video_cost_with_quality", lambda *_: 1)
+    afford = AsyncMock(return_value=True)
+    if case == "predebit_error":
+        afford.side_effect = RuntimeError("synthetic balance-read failure")
+    monkeypatch.setattr(miniapp, "check_can_afford", afford)
+    balance = {"value": 100}
+
+    async def debit_balance(_user, amount):
+        if case == "debit_rejected":
+            return False
+        balance["value"] -= amount
+        return True
+
+    async def refund_balance(_user, amount):
+        balance["value"] += amount
+        if case == "refund_uncertain":
+            raise RuntimeError("synthetic refund acknowledgement lost")
+        return True
+
+    debit = AsyncMock(side_effect=debit_balance)
+    refund = AsyncMock(side_effect=refund_balance)
+    monkeypatch.setattr(miniapp, "deduct_credits", debit)
+    monkeypatch.setattr(miniapp, "add_credits", refund)
+    launch = AsyncMock(return_value={"status": "failed", "error": "synthetic rejected"})
+    if case in {"provider_exception", "admin_error"}:
+        launch.side_effect = RuntimeError("synthetic launch failure")
+    elif case == "accepted_then_persistence":
+        async def accepted_then_raise(**kwargs):
+            observer = kwargs.get("_launch_observation")
+            if observer is not None:
+                observer.update(accepted=True, provider_task_id="synthetic-accepted")
+            raise RuntimeError("synthetic task persistence failure")
+        launch.side_effect = accepted_then_raise
+    elif case == "post_accept_bookkeeping":
+        launch.return_value = {"status": "queued", "task_id": "synthetic-accepted"}
+    monkeypatch.setattr(miniapp, "_launch_video_generation_task", launch)
+    monkeypatch.setattr(miniapp, "credit_feed_prompt_repeat", AsyncMock(side_effect=RuntimeError("synthetic bookkeeping failure")))
+    request = entry.request({
+        "v_model": "seedance_2", "v_type": "video", "v_duration": 5, "v_ratio": "9:16",
+        "reference_images": ["https://example.test/own.png"],
+        "v_reference_videos": ["https://example.test/own.mp4"],
+    })
+    response = await entry.call(request)
+    assert response.status >= 400
+    if case in {"provider_exception", "failed_result", "refund_uncertain"}:
+        refund.assert_awaited_once_with(880102, 2)
+        assert balance["value"] == 100
+    elif case in {"post_accept_bookkeeping", "accepted_then_persistence"}:
+        refund.assert_not_awaited()
+        assert balance["value"] == 98
+        assert json.loads(response.text)["code"] == "video_status_pending"
+    else:
+        refund.assert_not_awaited()
+        assert balance["value"] == 100
+    if case in {"predebit_error", "debit_rejected"}:
+        launch.assert_not_awaited()
+    if case == "refund_uncertain":
+        assert json.loads(response.text)["code"] == "video_refund_pending"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("flag", ["seedance25_identity_transfer", "seedance25_video_editing"])
+async def test_specialized_seedance_source_is_not_advertised_as_generic_typed_repeat(typed_video_entrypoint, flag):
+    entry = typed_video_entrypoint
+    entry.source["request_data"][flag] = True
+    assert video_repeat_descriptors(entry.source)["available"] is False
+    response = await entry.call(entry.request({
+        "reference_images": ["https://example.test/own.png"], "v_reference_videos": ["https://example.test/own.mp4"],
+    }))
+    assert response.status == 400
+    entry.delegate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asset_key", ["omni_audio_ids", "omni_character_ids", "omni_character_audio_ids"])
+@pytest.mark.parametrize("origin", ["source", "client"])
+async def test_typed_video_contract_cannot_reuse_ungranted_provider_assets(typed_video_entrypoint, asset_key, origin):
+    entry = typed_video_entrypoint
+    entry.source["model"] = "gemini_omni_video"
+    body = {"reference_images": ["https://example.test/own.png"], "v_reference_videos": ["https://example.test/own.mp4"]}
+    if origin == "source":
+        entry.source["request_data"][asset_key] = ["synthetic-private-provider-asset"]
+    else:
+        body[asset_key] = ["synthetic-private-provider-asset"]
+    response = await entry.call(entry.request(body))
+    assert response.status == 400
+    assert "synthetic-private-provider-asset" not in response.text
+    entry.delegate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_protected_child_detail_never_returns_private_provider_asset_ids(monkeypatch):
+    viewer = await database.get_or_create_user(881001)
+    secret = "synthetic-private-provider-asset"
+    await database.add_generation_task(
+        viewer.id, viewer.telegram_id, "omni-private-child", "video", "gemini_omni_video",
+        model="gemini_omni_video", source_feed_gen_id=42, action_type="repeat",
+        request_data={key: [secret] for key in ("omni_audio_ids", "omni_character_ids", "omni_character_audio_ids")},
+    )
+    monkeypatch.setattr(miniapp, "DATABASE_PATH", database.DATABASE_PATH)
+    monkeypatch.setattr(trend_task_privacy, "DATABASE_PATH", database.DATABASE_PATH)
+    monkeypatch.setattr(miniapp, "_get_user_context", AsyncMock(return_value=(viewer.telegram_id, {"user": viewer})))
+    request = SimpleNamespace(app={}, json=AsyncMock(return_value={"init_data": "signed", "task_id": "omni-private-child"}))
+    response = await miniapp.miniapp_task_detail(request)
+    assert response.status == 200
+    assert secret not in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider_result", [{"task_id": "synthetic-provider-accepted"}, b"synthetic-completed-result"])
+async def test_actual_video_launch_records_acceptance_before_task_persistence(monkeypatch, provider_result):
+    from bot.services.seedance_service import seedance_service
+
+    provider = AsyncMock(return_value=provider_result)
+    monkeypatch.setattr(seedance_service, "generate_video", provider)
+    monkeypatch.setattr(miniapp.preset_manager, "get_video_cost_with_quality", lambda *_: 1)
+    persistence = AsyncMock(side_effect=RuntimeError("synthetic persistence failure"))
+    monkeypatch.setattr(miniapp, "add_generation_task", persistence)
+    observer = {}
+    with pytest.raises(RuntimeError, match="persistence"):
+        await inspect.unwrap(miniapp._launch_video_generation_task)(
+            telegram_id=881002, user=SimpleNamespace(id=12), model="seedance_2",
+            prompt="Synthetic recipe", duration=5, aspect_ratio="9:16",
+            generation_type="video", image_url=None, image_references=[], video_references=[],
+            _launch_observation=observer,
+        )
+    assert observer["accepted"] is True
+    persistence.assert_awaited_once()
+    assert "_launch_observation" not in provider.await_args.kwargs
+
+
+@pytest.mark.parametrize("count,fixed", [(0, False), (1, False), (2, False), (1, True), (2, True)])
+def test_typed_price_factor_uses_active_video_presence_once(typed_video_entrypoint, count, fixed):
+    from bot import video_reference_policy
+
+    source = typed_video_entrypoint.source
+    urls = [f"https://example.test/video-{index}.mp4" for index in range(count)]
+    source["request_data"]["v_reference_videos"] = urls
+    source["feed_repeat_reference_selection"]["videos"] = urls if fixed else []
+    descriptor = video_repeat_descriptors(source)
+    assert descriptor["available"] is True
+    assert descriptor["cost_multiplier"] == (video_reference_policy.SEEDANCE_VIDEO_REFERENCE_PRICE_MULTIPLIER if count else 1)
+
+
+def test_typed_price_factor_reads_authoritative_policy(monkeypatch, typed_video_entrypoint):
+    from bot import video_reference_policy
+
+    monkeypatch.setattr(video_reference_policy, "SEEDANCE_VIDEO_REFERENCE_PRICE_MULTIPLIER", 3.5)
+    assert video_repeat_descriptors(typed_video_entrypoint.source)["cost_multiplier"] == 3.5
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("flag", ["seedance25_identity_transfer", "seedance25_video_editing"])
+async def test_author_cannot_save_generic_private_grant_for_specialized_seedance_mode(flag):
+    owner = await database.get_or_create_user(881003)
+    await database.add_generation_task(
+        owner.id, owner.telegram_id, "specialized-private-source", "video", "seedance_2_5",
+        model="seedance_2_5", request_data={"seedance25_scenario": "multimodal", flag: True,
+                                         "reference_images": [FIXED], "v_reference_videos": [STYLE]},
+    )
+    await database.complete_video_task("specialized-private-source", "https://example.test/result.mp4")
+    with pytest.raises(ValueError, match="специальный"):
+        await database.share_to_feed("specialized-private-source", owner.id,
+                                    repeat_reference_image_indices=[0], repeat_reference_video_indices=[0])
+    source = await database.get_generation_task_payload("specialized-private-source")
+    assert not source["is_public_feed"]
+    assert source["feed_repeat_reference_selection"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["owner", "legacy"])
+async def test_ordinary_owner_and_legacy_omni_keep_existing_provider_assets(typed_video_entrypoint, mode):
+    entry = typed_video_entrypoint
+    entry.source["model"] = "gemini_omni_video"
+    entry.source["request_data"]["omni_audio_ids"] = ["synthetic-owner-audio"]
+    if mode == "owner":
+        entry.context.return_value = (880101, {"user": SimpleNamespace(id=1)})
+    else:
+        entry.source["feed_repeat_reference_selection"] = {"images": []}
+    request = entry.request({
+        "reference_images": ["https://example.test/own.png"],
+        "v_reference_videos": ["https://example.test/own.mp4"],
+    })
+    assert (await entry.call(request)).status == 200
+    assert (await request.json())["omni_audio_ids"] == ["synthetic-owner-audio"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model,extra", [
+    ("seedance_2_5", {"seedance25_identity_transfer": True}),
+    ("gemini_omni_video", {"omni_audio_ids": ["synthetic-owner-provider-audio"]}),
+])
+async def test_unsupported_private_recipe_can_publish_result_with_empty_consent(model, extra):
+    owner = await database.get_or_create_user(881004)
+    await database.add_generation_task(
+        owner.id, owner.telegram_id, "unsupported-empty-consent", "video", model, model=model,
+        request_data={"v_type": "video", "seedance25_scenario": "multimodal",
+                      "reference_images": [FIXED], "v_reference_videos": [STYLE], **extra},
+    )
+    await database.complete_video_task("unsupported-empty-consent", "https://example.test/result.mp4")
+    card = await database.share_to_feed("unsupported-empty-consent", owner.id,
+                                     repeat_reference_image_indices=[], repeat_reference_video_indices=[])
+    assert card is not None
+    public = await database.get_feed_generation_card(card["id"])
+    assert public["repeat_reference_slots"]["available"] is False
+    own = await database.get_feed_generation_card(card["id"], viewer_user_id=owner.id)
+    assert "repeat_reference_slots" not in own

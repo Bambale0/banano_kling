@@ -30,17 +30,17 @@ function roundVideoCost(raw: number) {
   return Math.round(raw * 2) / 2
 }
 
-function getVideoModelCost(model: VideoModel | undefined, duration: number, quality?: string) {
+function getVideoModelCost(model: VideoModel | undefined, duration: number, quality?: string, multiplier = 1) {
   if (!model) return 5
   const qualityCost = quality ? model.quality_costs?.[quality] : undefined
   if (typeof qualityCost === 'number') {
-    return roundVideoCost(qualityCost * duration)
+    return roundVideoCost(qualityCost * duration) * multiplier
   }
-  return model.costs[duration.toString()] ?? Object.values(model.costs)[0] ?? 5
+  return (model.costs[duration.toString()] ?? Object.values(model.costs)[0] ?? 5) * multiplier
 }
 
-function getVideoModelPerSecondCost(model: VideoModel | undefined, duration: number, quality?: string) {
-  return getVideoModelCost(model, duration, quality) / Math.max(duration, 1)
+function getVideoModelPerSecondCost(model: VideoModel | undefined, duration: number, quality?: string, multiplier = 1) {
+  return getVideoModelCost(model, duration, quality, multiplier) / Math.max(duration, 1)
 }
 
 const HIDDEN_FROM_COMMON_VIDEO_LIST = new Set([
@@ -197,24 +197,28 @@ export function VideoGeneratorForm({
     return undefined
   }
   const selectedQuality = qualityForModel(model)
+  // The descriptor covers the complete server recipe, including retained video
+  // inputs that deliberately have no local URL. Never infer a tariff from IDs.
+  const priceAvailable = !repeatSlots || repeatSlots.available
+  const repeatCostMultiplier = repeatSlots?.cost_multiplier ?? 1
   const durationCosts = useMemo(
-    () =>
-      Object.fromEntries(
+    () => priceAvailable
+      ? Object.fromEntries(
         (model?.durations || [selectedDuration]).map((duration) => [
           duration.toString(),
-          getVideoModelCost(model, duration, selectedQuality),
+          getVideoModelCost(model, duration, selectedQuality, repeatCostMultiplier),
         ])
-      ),
-    [model, selectedDuration, selectedQuality]
+      ) : {},
+    [model, selectedDuration, selectedQuality, priceAvailable, repeatCostMultiplier]
   )
-  const baseCost = getVideoModelCost(model, selectedDuration, selectedQuality)
+  const baseCost = getVideoModelCost(model, selectedDuration, selectedQuality, repeatCostMultiplier)
   const cost = isOmniAudio
     ? model?.omni_audio_cost ?? 3
     : isOmniCharacter
       ? model?.omni_character_cost ?? 5
       : baseCost
   const perSecondCost = cost / Math.max(selectedDuration, 1)
-  const canAfford = credits >= cost
+  const canAfford = priceAvailable && credits >= cost
   const parseAssetIds = (value: string) =>
     value
       .split(/[\s,;]+/)
@@ -521,7 +525,7 @@ export function VideoGeneratorForm({
       <div className="glass min-w-0 space-y-4 overflow-hidden rounded-2xl border border-cyan/20 p-3 sm:p-4">
         <fieldset disabled={Boolean(repeatSlots)} aria-label="Модель" className="space-y-2">
           <label className="text-sm font-medium text-foreground">Модель</label>
-          <ModelSelect
+          {!priceAvailable ? <p className="text-sm text-foreground">{model?.label}</p> : <ModelSelect
             models={visibleModels.map(m => ({
               id: m.id,
               label: m.label,
@@ -531,11 +535,11 @@ export function VideoGeneratorForm({
                   ? m.omni_audio_cost ?? 3
                   : m.id === 'gemini_omni' && selectedScenario === 'character'
                     ? m.omni_character_cost ?? 5
-                    : getVideoModelPerSecondCost(m, selectedDuration, qualityForModel(m)),
+                    : getVideoModelPerSecondCost(m, selectedDuration, qualityForModel(m), m.id === selectedModel ? repeatCostMultiplier : 1),
             }))}
             value={selectedModel}
             onChange={handleModelChange}
-          />
+          />}
         </fieldset>
 
         {isGeminiOmni ? (
@@ -705,7 +709,7 @@ export function VideoGeneratorForm({
                 <label className="text-sm font-medium text-foreground">Качество</label>
                 <div className="flex gap-2">
                   {(model.veo_resolutions || ['720p']).map((resolution) => {
-                    const resolutionCost = getVideoModelCost(model, selectedDuration, resolution)
+                    const resolutionCost = getVideoModelCost(model, selectedDuration, resolution, repeatCostMultiplier)
                     return (
                       <button
                         key={resolution}
@@ -781,7 +785,7 @@ export function VideoGeneratorForm({
                 <label className="text-sm font-medium text-foreground">Качество</label>
                 <div className="flex gap-2">
                   {(model?.omni_resolutions || ['720p', '1080p', '4k']).map((resolution) => {
-                    const resolutionCost = getVideoModelCost(model, selectedDuration, resolution)
+                    const resolutionCost = getVideoModelCost(model, selectedDuration, resolution, repeatCostMultiplier)
                     return (
                       <button
                         key={resolution}
@@ -1151,7 +1155,7 @@ export function VideoGeneratorForm({
           </div>
         </div>
 
-        <div className="flex items-center justify-between">
+        {!priceAvailable ? <p className="text-sm text-muted-foreground">Стоимость недоступна</p> : <div className="flex items-center justify-between">
           <div>
             <span className="text-sm text-muted-foreground">Стоимость</span>
             <p className="text-xs text-muted-foreground/70">
@@ -1166,9 +1170,9 @@ export function VideoGeneratorForm({
             <Banana className="w-4 h-4 text-gold" />
             <span className="text-lg font-semibold text-gold">{cost}</span>
           </div>
-        </div>
+        </div>}
 
-        {!canAfford && (
+        {priceAvailable && !canAfford && (
           <div className="flex items-center gap-2 p-3 rounded-xl bg-destructive/10 border border-destructive/30">
             <AlertCircle className="w-4 h-4 text-destructive flex-shrink-0" />
             <p className="text-xs text-destructive">

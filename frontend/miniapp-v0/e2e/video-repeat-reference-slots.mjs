@@ -14,7 +14,7 @@ symlinkSync(resolve('out'), join(root, 'mini-app'), 'dir')
 const server = spawn('python3', ['-m', 'http.server', String(port), '--bind', '127.0.0.1', '--directory', root], { stdio: 'ignore' })
 const media = readFileSync(new URL('./fixtures/genjutsu-result.mp4', import.meta.url))
 const secret = 'SYNTHETIC_PRIVATE_VIDEO_RECIPE'
-const slots = { version: 1, available: true, images: [
+const slots = { version: 1, available: true, cost_multiplier: 2, images: [
   { index: 0, role: 'first_frame', binding: 'upload' },
   { index: 1, role: 'last_frame', binding: 'fixed' },
   { index: 2, role: 'reference', binding: 'upload' },
@@ -53,6 +53,7 @@ try {
     const errors = [], publications = [], generations = [], sourceRequests = []
     let currentCard = card
     let currentTask = { ...task }
+    let credits = bootstrap.credits
     page.on('pageerror', error => errors.push(error.message))
     page.on('dialog', dialog => dialog.accept())
     await page.addInitScript(() => {
@@ -68,7 +69,7 @@ try {
       }
       if (url.pathname.includes('/mini-app/api/')) {
         let response = { ok: true }, status = 200
-        if (url.pathname.endsWith('/bootstrap')) response = { ...bootstrap, recent_tasks: [currentTask] }
+        if (url.pathname.endsWith('/bootstrap')) response = { ...bootstrap, credits, recent_tasks: [currentTask] }
         else if (url.pathname.endsWith('/task-detail')) response = { ok: true, task: currentTask }
         else if (url.pathname.endsWith('/generations/share')) {
           const data = route.request().postDataJSON()
@@ -145,6 +146,10 @@ try {
       assert.equal(await launch.isDisabled(), true)
       await page.getByRole('group', { name: 'Первый кадр · Фото 1', exact: true }).getByRole('button', { name: 'first.jpg', exact: true }).click()
       assert.equal(await launch.isEnabled(), true)
+      const costSummary = page.getByText('Стоимость', { exact: true }).locator('..').locator('..')
+      assert.equal(await costSummary.getByText('10', { exact: true }).count(), 1)
+      assert.equal(await page.getByRole('button', { name: /5с.*2\/с/ }).count(), 1)
+      assert.equal(await page.getByText('5 сек. • 16:9 • 2🍌/с', { exact: true }).count(), 1)
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
       if (width === 390 && surface === 'deep-link') {
         mkdirSync('test-results', { recursive: true })
@@ -164,9 +169,19 @@ try {
     currentCard = { ...card, repeat_reference_slots: { ...slots,
       images: slots.images.map(slot => ({ ...slot, binding: 'fixed' })), videos: slots.videos.map(slot => ({ ...slot, binding: 'fixed' })),
     } }
+    credits = 7
     await page.goto(baseUrl + '?startapp=remix_777')
     await page.getByRole('group', { name: 'Референсы повтора', exact: true }).waitFor()
     assert.equal(await page.getByRole('group', { name: 'Референсы повтора', exact: true }).locator('input[type=file]').count(), 0)
+    assert.equal(await page.getByRole('button', { name: /Запустить видео/ }).isDisabled(), true)
+    await page.getByText('Недостаточно бананов. Пополните баланс.', { exact: true }).waitFor()
+    const fixedCost = page.getByText('Стоимость', { exact: true }).locator('..').locator('..')
+    assert.equal(await fixedCost.getByText('10', { exact: true }).count(), 1)
+    credits = 10
+    const repriced = page.waitForResponse(response => response.url().endsWith('/bootstrap'))
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    await repriced
+    await page.getByText('Недостаточно бананов. Пополните баланс.', { exact: true }).waitFor({ state: 'hidden' })
     assert.equal(await page.getByRole('button', { name: /Запустить видео/ }).isEnabled(), true)
     currentCard = { ...card, repeat_reference_slots: { version: 1, available: false, images: [], videos: [] } }
     await page.goto(baseUrl + '?startapp=remix_777')
@@ -174,7 +189,7 @@ try {
     assert.equal(await page.getByRole('button', { name: /Запустить видео/ }).isDisabled(), true)
     assert.equal(sourceRequests.some(path => path.includes('private')), false)
     assert.deepEqual(errors, [])
-    console.log(`PASS ${width}px: typed owner consent/revoke; Feed/Profile/deep-link slots; ordered payload; rejected stale recipe; unavailable recipe`)
+    console.log(`PASS ${width}px: typed owner consent/revoke; Feed/Profile/deep-link slots; ordered payload; full retained/upload price and affordability; rejected stale recipe; unavailable recipe`)
     await context.close()
   }
 } finally {

@@ -24,6 +24,8 @@ export interface PromptPreset {
 export interface VideoRepeatReferenceSlots {
   version: 1
   available: boolean
+  /** Required for available recipes; derived by the server pricing policy. */
+  cost_multiplier?: number
   images: Array<{ index: number; role: 'reference' | 'first_frame' | 'last_frame'; binding: 'fixed' | 'upload' }>
   videos: Array<{ index: number; role: 'reference'; binding: 'fixed' | 'upload' }>
 }

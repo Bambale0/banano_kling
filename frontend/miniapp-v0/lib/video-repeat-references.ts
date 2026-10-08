@@ -5,6 +5,7 @@ import type { VideoRepeatReferenceSlots } from './types'
 export function normalizeVideoRepeatSlots(value: VideoRepeatReferenceSlots): VideoRepeatReferenceSlots {
   const unavailable: VideoRepeatReferenceSlots = { version: 1, available: false, images: [], videos: [] }
   if (!value || value.version !== 1 || value.available !== true) return unavailable
+  if (typeof value.cost_multiplier !== 'number' || !Number.isFinite(value.cost_multiplier) || value.cost_multiplier <= 0) return unavailable
   const valid = (slots: VideoRepeatReferenceSlots['images'], roles: string[]) => Array.isArray(slots)
     && slots.every((slot) => slot && Number.isInteger(slot.index) && slot.index >= 0
       && roles.includes(slot.role) && ['fixed', 'upload'].includes(slot.binding))
@@ -13,5 +14,5 @@ export function normalizeVideoRepeatSlots(value: VideoRepeatReferenceSlots): Vid
   const clean = <T extends VideoRepeatReferenceSlots['images'][number]>(slots: T[]) => slots
     .map(({ index, role, binding }) => ({ index, role, binding }) as T)
     .sort((left, right) => left.index - right.index)
-  return { version: 1, available: true, images: clean(value.images), videos: clean(value.videos) }
+  return { version: 1, available: true, cost_multiplier: value.cost_multiplier, images: clean(value.images), videos: clean(value.videos) }
 }

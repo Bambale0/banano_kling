@@ -6,12 +6,14 @@ slot positions, structural roles and bindings; source URLs stay in the plan.
 from __future__ import annotations
 
 import json
+from math import isfinite
 from typing import Any
 
 from bot.services.media_input_utils import (
     canonicalize_local_upload_url,
     resolve_reference_source,
 )
+from bot.video_reference_policy import apply_video_reference_cost
 
 IMAGE_LIST_KEYS = ("reference_images", "reference_image_urls")
 VIDEO_LIST_KEYS = ("v_reference_videos", "reference_videos", "reference_video_urls", "video_references")
@@ -20,7 +22,8 @@ FIRST_KEYS = ("seedance25_first_frame_url", "first_frame_url", "v_image_url", "s
 START_KEYS = ("v_image_url", "seedance25_first_frame_url", "first_frame_url", "start_image", "image_url")
 LAST_KEYS = ("seedance25_last_frame_url", "last_frame_url", "end_image_url")
 AUDIO_KEYS = ("audio_url", "audio_reference", "avatar_audio_url")
-MEDIA_KEYS = set(IMAGE_LIST_KEYS + VIDEO_LIST_KEYS + AUDIO_LIST_KEYS + FIRST_KEYS + LAST_KEYS + AUDIO_KEYS)
+PROVIDER_ASSET_KEYS = ("omni_audio_ids", "omni_character_ids", "omni_character_audio_ids")
+MEDIA_KEYS = set(IMAGE_LIST_KEYS + VIDEO_LIST_KEYS + AUDIO_LIST_KEYS + FIRST_KEYS + LAST_KEYS + AUDIO_KEYS + PROVIDER_ASSET_KEYS)
 
 
 class VideoRepeatContractError(ValueError):
@@ -152,6 +155,19 @@ def build_video_repeat_plan(
         return None
     if task.get("source_feed_gen_id") or str(task.get("action_type") or "").lower() in {"remix", "repeat"}:
         raise VideoRepeatContractError("Повтор по чужим исходным материалам нельзя передать как новый рецепт.")
+    data = source_request(task)
+    if any(data.get(key) for key in PROVIDER_ASSET_KEYS):
+        raise VideoRepeatContractError("Этот рецепт использует сохранённые аудио или персонажей провайдера, не входящие в разрешение на фото и видео.")
+    model = str(task.get("model") or data.get("v_model") or "")
+    if model == "seedance_2_5":
+        identity = data.get("seedance25_identity_transfer", data.get("identityTransfer", False))
+        editing = data.get("seedance25_video_editing", False)
+        if not isinstance(identity, bool) or not isinstance(editing, bool):
+            raise VideoRepeatContractError("Режим исходной Seedance 2.5 задачи повреждён.")
+        if "identityTransfer" in data and data["identityTransfer"] is not identity:
+            raise VideoRepeatContractError("Режим исходной Seedance 2.5 задачи противоречив.")
+        if identity or editing:
+            raise VideoRepeatContractError("Для переноса персонажа и редактирования видео нужен специальный сценарий; приватный повтор через эту форму недоступен.")
     recipe = active_video_recipe(task)
     if recipe["audio"] and not allow_audio_replacement:
         raise VideoRepeatContractError("Приватные аудиореференсы пока не поддерживаются. Загрузите своё аудио для повтора.")
@@ -179,12 +195,15 @@ def build_video_repeat_plan(
 def video_repeat_descriptors(task: dict[str, Any]) -> dict[str, Any] | None:
     try:
         plan = build_video_repeat_plan(task)
+        if plan is None:
+            return None
+        cost_multiplier = float(apply_video_reference_cost(plan["model"], 1, [slot["url"] for slot in plan["videos"]]))
+        if not isfinite(cost_multiplier) or cost_multiplier <= 0:
+            raise VideoRepeatContractError("Не удалось определить стоимость повтора.")
     except VideoRepeatContractError:
         return {"version": 1, "available": False, "images": [], "videos": []}
-    if plan is None:
-        return None
     return {
-        "version": 1, "available": True,
+        "version": 1, "available": True, "cost_multiplier": cost_multiplier,
         **{kind: [{key: slot[key] for key in ("index", "role", "binding")} for slot in plan[kind]]
            for kind in ("images", "videos")},
     }
@@ -193,6 +212,8 @@ def video_repeat_descriptors(task: dict[str, Any]) -> dict[str, Any] | None:
 def merge_typed_video_inputs(
     task: dict[str, Any], body: dict[str, Any], normalized: dict[str, Any],
 ) -> dict[str, Any]:
+    if any(body.get(key) for key in PROVIDER_ASSET_KEYS):
+        raise VideoRepeatContractError("Сохранённые аудио и персонажи провайдера не входят в этот договор повтора.")
     identity = body.get("seedance25_identity_transfer") is True and normalized.get("v_model") == "seedance_2_5"
     replaced = {kind for kind, field in (("images", "reference_images"), ("videos", "v_reference_videos"))
                 if identity and field in body}
