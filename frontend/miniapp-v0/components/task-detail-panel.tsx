@@ -38,7 +38,12 @@ export function TaskDetailPanel() {
   const [selectedReferenceImages, setSelectedReferenceImages] = useState<Set<number>>(new Set())
   const [selectedReferenceVideos, setSelectedReferenceVideos] = useState<Set<number>>(new Set())
   const [selectedRepeatReferenceImages, setSelectedRepeatReferenceImages] = useState<Set<number>>(new Set())
-  const publicationSourceRef = useRef<{ taskId?: string; repeatImages: number[] }>({ repeatImages: [] })
+  const [selectedRepeatReferenceVideos, setSelectedRepeatReferenceVideos] = useState<Set<number>>(new Set())
+  const publicationSourceRef = useRef<{
+    taskId?: string
+    repeatImages: number[]
+    repeatVideos: number[]
+  }>({ repeatImages: [], repeatVideos: [] })
 
   const publicationReferenceImages = taskDetail?.publication_reference_images
     ?? taskDetail?.request_data?.source_reference_images
@@ -64,9 +69,11 @@ export function TaskDetailPanel() {
     const previousSource = publicationSourceRef.current
     const taskChanged = previousSource.taskId !== taskDetail?.task_id
     const savedRepeatImages = taskDetail?.feed_repeat_reference_selection?.images ?? []
+    const savedRepeatVideos = taskDetail?.feed_repeat_reference_selection?.videos ?? []
     publicationSourceRef.current = {
       taskId: taskDetail?.task_id,
       repeatImages: [...savedRepeatImages],
+      repeatVideos: [...savedRepeatVideos],
     }
 
     if (!taskChanged && isTaskDetailOpen && publicationEditorOpen) {
@@ -75,12 +82,19 @@ export function TaskDetailPanel() {
       const revokedImages = new Set(
         previousSource.repeatImages.filter((index) => !savedRepeatImages.includes(index)),
       )
+      const revokedVideos = new Set(
+        previousSource.repeatVideos.filter((index) => !savedRepeatVideos.includes(index)),
+      )
       setSelectedRepeatReferenceImages((current) => {
-        const retained = new Set(taskDetail?.type === 'image'
-          ? [...current].filter((index) =>
-            publicationReferenceImageIndices.includes(index) && !revokedImages.has(index),
-          )
-          : [])
+        const retained = new Set([...current].filter((index) =>
+          publicationReferenceImageIndices.includes(index) && !revokedImages.has(index),
+        ))
+        return retained.size === current.size ? current : retained
+      })
+      setSelectedRepeatReferenceVideos((current) => {
+        const retained = new Set([...current].filter((index) =>
+          publicationReferenceVideoIndices.includes(index) && !revokedVideos.has(index),
+        ))
         return retained.size === current.size ? current : retained
       })
       return
@@ -96,9 +110,10 @@ export function TaskDetailPanel() {
     setSelectedReferenceVideos(new Set(savedSelection?.videos ?? publicationReferenceVideoIndices))
     // Public visibility and legacy display selections never imply repeat consent.
     setSelectedRepeatReferenceImages(new Set(
-      taskDetail?.type === 'image'
-        ? savedRepeatImages.filter((index) => publicationReferenceImageIndices.includes(index))
-        : [],
+      savedRepeatImages.filter((index) => publicationReferenceImageIndices.includes(index)),
+    ))
+    setSelectedRepeatReferenceVideos(new Set(
+      savedRepeatVideos.filter((index) => publicationReferenceVideoIndices.includes(index)),
     ))
     if (taskChanged || !isTaskDetailOpen) {
       setPublicationEditorOpen(false)
@@ -174,8 +189,9 @@ export function TaskDetailPanel() {
           referencesVisible: feedReferencesVisible,
           referenceImageIndices: [...selectedReferenceImages].sort((left, right) => left - right),
           referenceVideoIndices: [...selectedReferenceVideos].sort((left, right) => left - right),
-          ...(taskDetail.type === 'image' ? {
-            repeatReferenceImageIndices: [...selectedRepeatReferenceImages].sort((left, right) => left - right),
+          repeatReferenceImageIndices: [...selectedRepeatReferenceImages].sort((left, right) => left - right),
+          ...(taskDetail.type === 'video' ? {
+            repeatReferenceVideoIndices: [...selectedRepeatReferenceVideos].sort((left, right) => left - right),
           } : {}),
           blurred: feedBlurred,
           publicationScope,
@@ -193,11 +209,12 @@ export function TaskDetailPanel() {
             images: [...selectedReferenceImages].sort((left, right) => left - right),
             videos: [...selectedReferenceVideos].sort((left, right) => left - right),
           },
-          ...(taskDetail.type === 'image' ? {
-            feed_repeat_reference_selection: {
-              images: [...selectedRepeatReferenceImages].sort((left, right) => left - right),
-            },
-          } : {}),
+          feed_repeat_reference_selection: {
+            images: [...selectedRepeatReferenceImages].sort((left, right) => left - right),
+            ...(taskDetail.type === 'video' ? {
+              videos: [...selectedRepeatReferenceVideos].sort((left, right) => left - right),
+            } : {}),
+          },
           feed_blurred: Boolean(published.feed_blurred),
         })
         notifyFeedChanged(published)
@@ -225,11 +242,10 @@ export function TaskDetailPanel() {
         is_profile_visible: false,
         publication_scope: 'private',
         is_adult_content: false,
-        ...(taskDetail.type === 'image' ? {
-          feed_repeat_reference_selection: { images: [] },
-        } : {}),
+        feed_repeat_reference_selection: { images: [], ...(taskDetail.type === 'video' ? { videos: [] } : {}) },
       })
       setSelectedRepeatReferenceImages(new Set())
+      setSelectedRepeatReferenceVideos(new Set())
       setPublicationLink(null)
       setPublicationEditorOpen(false)
       notifyFeedChanged()
@@ -698,7 +714,7 @@ export function TaskDetailPanel() {
                       </div>
                     </div>
                   ) : null}
-                  {taskDetail.type === 'image' ? (
+                  {(taskDetail.type === 'image' || taskDetail.type === 'video') ? (
                     <div
                       role="group"
                       aria-labelledby="repeat-reference-permission-heading"
@@ -708,11 +724,11 @@ export function TaskDetailPanel() {
                         Референсы для повторов
                       </h3>
                       <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-                        Выберите фото, которые разрешаете использовать при чужих повторах.
+                        Выберите {taskDetail.type === 'video' ? 'фото и видео' : 'фото'}, которые разрешаете использовать при чужих повторах.
                         Для повтора они используются только на сервере: их превью и ссылки не передаются другим пользователям.
                         Показ референсов в публикации настраивается отдельно выше.
                       </p>
-                      {publicationReferenceImages.length > 0 ? (
+                      {referenceCount > 0 ? (
                         <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
                           {publicationReferenceImages.map((url, index) => {
                             const sourceIndex = publicationReferenceImageIndices[index]
@@ -742,21 +758,54 @@ export function TaskDetailPanel() {
                               </button>
                             )
                           })}
+                          {(taskDetail.type === 'video' ? publicationReferenceVideos : []).map((url, index) => {
+                            const sourceIndex = publicationReferenceVideoIndices[index]
+                            const selected = selectedRepeatReferenceVideos.has(sourceIndex)
+                            const mediaUrl = normalizeMiniAppMediaUrl(url)
+                            return (
+                              <button
+                                key={`repeat-video-${sourceIndex}`}
+                                type="button"
+                                role="checkbox"
+                                aria-label={`Видео-референс ${index + 1} для повторов`}
+                                aria-checked={selected}
+                                disabled={publishBusy}
+                                onClick={() => toggleReference(sourceIndex, setSelectedRepeatReferenceVideos)}
+                                className={cn(
+                                  'relative h-20 w-28 shrink-0 overflow-hidden rounded-lg border-2 bg-secondary/60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan disabled:cursor-not-allowed disabled:opacity-50',
+                                  selected ? 'border-cyan' : 'border-border/50',
+                                )}
+                              >
+                                <video src={videoPreviewFrameUrl(mediaUrl)} muted playsInline preload="metadata" className="h-full w-full object-cover" />
+                                <span className={cn(
+                                  'absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full border bg-background/90',
+                                  selected ? 'border-cyan text-cyan' : 'border-border text-muted-foreground',
+                                )}>
+                                  {selected ? <Check className="h-4 w-4" /> : null}
+                                </span>
+                              </button>
+                            )
+                          })}
                         </div>
                       ) : (
-                        <p className="mt-2 text-[11px] text-muted-foreground">Нет доступных фото-референсов.</p>
+                        <p className="mt-2 text-[11px] text-muted-foreground">
+                          {taskDetail.type === 'image' ? 'Нет доступных фото-референсов.' : 'Нет доступных референсов.'}
+                        </p>
                       )}
                       <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px]">
                         <span className="text-muted-foreground" aria-live="polite">
-                          {selectedRepeatReferenceImages.size > 0
-                            ? `Для повторов выбрано: ${selectedRepeatReferenceImages.size}`
+                          {selectedRepeatReferenceImages.size + selectedRepeatReferenceVideos.size > 0
+                            ? `Для повторов выбрано: ${selectedRepeatReferenceImages.size + selectedRepeatReferenceVideos.size}`
                             : 'Приватные референсы для повторов не разрешены'}
                         </span>
-                        {selectedRepeatReferenceImages.size > 0 ? (
+                        {selectedRepeatReferenceImages.size + selectedRepeatReferenceVideos.size > 0 ? (
                           <button
                             type="button"
                             disabled={publishBusy}
-                            onClick={() => setSelectedRepeatReferenceImages(new Set())}
+                            onClick={() => {
+                              setSelectedRepeatReferenceImages(new Set())
+                              setSelectedRepeatReferenceVideos(new Set())
+                            }}
                             className="min-h-9 rounded-md px-2 text-cyan disabled:opacity-50"
                           >
                             Снять выбор

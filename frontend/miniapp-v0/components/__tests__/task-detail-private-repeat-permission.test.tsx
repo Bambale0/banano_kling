@@ -1,3 +1,4 @@
+import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { TaskDetailPanel } from '@/components/task-detail-panel'
@@ -42,6 +43,32 @@ function imageTask(overrides: Partial<TaskDetail> = {}): TaskDetail {
   }
 }
 
+function videoTask(overrides: Partial<TaskDetail> = {}): TaskDetail {
+  return {
+    task_id: 'video-task',
+    type: 'video',
+    model: 'seedance_2_5',
+    model_label: 'Seedance 2.5',
+    aspect_ratio: '9:16',
+    duration: 10,
+    status: 'completed',
+    result_url: 'https://example.test/result.mp4',
+    created_at: '2026-10-08T00:00:00Z',
+    prompt_preview: 'video',
+    prompt: 'video',
+    cost: 10,
+    publication_reference_images: [
+      'https://example.test/person.jpg',
+    ],
+    publication_reference_videos: [
+      'https://example.test/motion.mp4',
+    ],
+    publication_reference_image_indices: [2],
+    publication_reference_video_indices: [5],
+    ...overrides,
+  }
+}
+
 function useTask(taskDetail: TaskDetail, isTaskDetailOpen = true) {
   mockedUseApp.mockReturnValue({
     state: { user: { isAdmin: false } },
@@ -75,6 +102,50 @@ describe('TaskDetailPanel private image-repeat permission', () => {
   })
 
   afterEach(() => jest.restoreAllMocks())
+
+  it('lets a video owner privately authorize image and video references for repeats', async () => {
+    mockedPublish.mockResolvedValueOnce({
+      task_id: 'video-task',
+      publication_scope: 'feed',
+      feed_references_visible: false,
+      feed_interactions_enabled: true,
+    } as FeedItem)
+    useTask(videoTask())
+    render(<TaskDetailPanel />)
+    openPublicationEditor()
+
+    const repeatGroup = screen.getByRole('group', { name: 'Референсы для повторов' })
+    expect(repeatGroup.textContent).toContain('фото и видео')
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Фото-референс 1 для повторов' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Видео-референс 1 для повторов' }))
+    savePublication()
+
+    await waitFor(() => expect(mockedPublish).toHaveBeenCalledTimes(1))
+    expect(mockedPublish).toHaveBeenCalledWith('video-task', expect.objectContaining({
+      referencesVisible: false,
+      repeatReferenceImageIndices: [2],
+      repeatReferenceVideoIndices: [5],
+    }))
+    expect(updateTask).toHaveBeenCalledWith('video-task', expect.objectContaining({
+      feed_repeat_reference_selection: { images: [2], videos: [5] },
+    }))
+  })
+
+  it('removes revoked video consent during refresh and resets drafts on task navigation', () => {
+    const task = videoTask({ feed_repeat_reference_selection: { images: [2], videos: [5] } })
+    useTask(task)
+    const view = render(<TaskDetailPanel />)
+    openPublicationEditor()
+    expect(screen.getByRole('checkbox', { name: 'Видео-референс 1 для повторов' })).toHaveAttribute('aria-checked', 'true')
+    useTask({ ...task, feed_repeat_reference_selection: { images: [2], videos: [] } })
+    view.rerender(<TaskDetailPanel />)
+    expect(screen.getByRole('checkbox', { name: 'Видео-референс 1 для повторов' })).toHaveAttribute('aria-checked', 'false')
+    useTask(videoTask({ task_id: 'another-video' }))
+    view.rerender(<TaskDetailPanel />)
+    openPublicationEditor()
+    expect(screen.getByRole('checkbox', { name: 'Фото-референс 1 для повторов' })).toHaveAttribute('aria-checked', 'false')
+    expect(screen.getByRole('checkbox', { name: 'Видео-референс 1 для повторов' })).toHaveAttribute('aria-checked', 'false')
+  })
 
   it('defaults legacy tasks to no repeat permission even when references are public', async () => {
     useTask(imageTask({
@@ -259,17 +330,22 @@ describe('TaskDetailPanel private image-repeat permission', () => {
     }))
   })
 
-  it('leaves video and Seedance publication UI and permission payload unchanged', async () => {
-    useTask(imageTask({ type: 'video', model: 'seedance_2_5', model_label: 'Seedance 2.5' }))
+  it('does not treat legacy public video references as private repeat consent', async () => {
+    useTask(videoTask({
+      feed_references_visible: true,
+      feed_reference_selection: { images: [2], videos: [5] },
+    }))
     render(<TaskDetailPanel />)
     openPublicationEditor()
 
-    expect(screen.queryByRole('group', { name: 'Референсы для повторов' })).toBeNull()
+    expect(screen.getByRole('checkbox', { name: 'Фото-референс 1 для повторов' }).getAttribute('aria-checked')).toBe('false')
+    expect(screen.getByRole('checkbox', { name: 'Видео-референс 1 для повторов' }).getAttribute('aria-checked')).toBe('false')
     savePublication()
     await waitFor(() => expect(mockedPublish).toHaveBeenCalledTimes(1))
-    expect(mockedPublish.mock.calls[0][1]).not.toHaveProperty('repeatReferenceImageIndices')
-    await waitFor(() => expect(updateTask).toHaveBeenCalledTimes(1))
-    expect(updateTask.mock.calls[0][1]).not.toHaveProperty('feed_repeat_reference_selection')
+    expect(mockedPublish).toHaveBeenCalledWith('video-task', expect.objectContaining({
+      repeatReferenceImageIndices: [],
+      repeatReferenceVideoIndices: [],
+    }))
   })
 
   it('clears saved and draft consent on unpublish so republishing requires explicit reselection', async () => {

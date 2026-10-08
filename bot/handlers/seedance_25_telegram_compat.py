@@ -326,6 +326,10 @@ async def seedance25_repeat_video_result(callback: types.CallbackQuery, state: F
     if model != MODEL_KEY:
         raise SkipHandler
 
+    from bot.handlers.miniapp_video_continuity_compat import redirect_typed_video_repeat
+
+    if await redirect_typed_video_repeat(callback, task):
+        return
     user = await generation_module.get_or_create_user(callback.from_user.id)
     if getattr(task, "user_id", None) != user.id:
         await callback.answer(

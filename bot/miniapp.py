@@ -48,6 +48,7 @@ from bot.database import (
     generation_publication_references,
     generation_publication_scope,
     generation_reference_selection,
+    generation_repeat_reference_indices,
     generation_repeat_reference_selection,
     get_and_clear_miniapp_notifications,
     get_approved_prompts,
@@ -1913,10 +1914,7 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
         "feed_prompt_visible": bool(row["feed_prompt_visible"]) if "feed_prompt_visible" in row.keys() else False,
         "feed_references_visible": bool(row["feed_references_visible"]) if "feed_references_visible" in row.keys() else False,
         "feed_reference_selection": reference_selection,
-        "feed_repeat_reference_selection": {"images": [
-            index for index, url in zip(publication_references["image_indices"], publication_references["images"])
-            if url in generation_repeat_reference_selection(row)
-        ]},
+        "feed_repeat_reference_selection": generation_repeat_reference_indices(row, publication_references),
         "publication_reference_images": publication_references["images"],
         "publication_reference_videos": publication_references["videos"],
         "publication_reference_image_indices": publication_references["image_indices"],
@@ -1994,6 +1992,7 @@ async def _launch_video_generation_task(
     prompt_source_id: int | None = None,
     reference_contract: str | None = None,
     fixed_asset_counts: dict[str, int] | None = None,
+    video_repeat_contract_version: int | None = None,
 ) -> dict[str, Any]:
     from bot.services.gemini_omni_service import gemini_omni_service
     from bot.services.grok_service import grok_service
@@ -2217,6 +2216,7 @@ async def _launch_video_generation_task(
             prompt=prompt,
             cost=cost,
             request_data={
+                **({"video_repeat_contract_version": 1} if video_repeat_contract_version == 1 else {}),
                 "source": "miniapp",
                 "v_type": generation_type,
                 "v_model": model,
@@ -2290,6 +2290,7 @@ async def _launch_video_generation_task(
             prompt=prompt,
             cost=cost,
             request_data={
+                **({"video_repeat_contract_version": 1} if video_repeat_contract_version == 1 else {}),
                 "source": "miniapp",
                 "v_type": generation_type,
                 "v_model": model,
@@ -2342,6 +2343,7 @@ async def _launch_video_generation_task(
         prompt=prompt,
         cost=cost,
         request_data={
+                **({"video_repeat_contract_version": 1} if video_repeat_contract_version == 1 else {}),
             "source": "miniapp",
             "v_type": generation_type,
             "v_model": model,
@@ -4074,6 +4076,7 @@ async def miniapp_generation_share(request: web.Request) -> web.Response:
         reference_image_indices = _optional_reference_indices(body, "reference_image_indices")
         reference_video_indices = _optional_reference_indices(body, "reference_video_indices")
         repeat_reference_image_indices = _optional_reference_indices(body, "repeat_reference_image_indices")
+        repeat_reference_video_indices = _optional_reference_indices(body, "repeat_reference_video_indices")
         blurred = None
         if "blurred" in body or "feed_blurred" in body:
             blurred = _payload_bool(
@@ -4096,6 +4099,7 @@ async def miniapp_generation_share(request: web.Request) -> web.Response:
             reference_image_indices=reference_image_indices,
             reference_video_indices=reference_video_indices,
             repeat_reference_image_indices=repeat_reference_image_indices,
+            repeat_reference_video_indices=repeat_reference_video_indices,
             blurred=blurred,
             publication_scope=publication_scope,
             adult_content=adult_content,
@@ -5175,10 +5179,18 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
                 },
                 status=400,
             )
+        from bot.handlers.miniapp_video_continuity_compat import (
+            verify_video_repeat_before_charge,
+        )
+
+        permission_error = await verify_video_repeat_before_charge(request)
+        if permission_error is not None:
+            return permission_error
         if not is_admin:
             await deduct_credits(telegram_id, cost)
 
         launch_result = await _launch_video_generation_task(
+            **({"video_repeat_contract_version": 1} if getattr(request, "_video_repeat_authorization", None) else {}),
             telegram_id=telegram_id,
             user=user,
             model=effective_model,
@@ -5220,7 +5232,11 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
             return web.json_response(
                 {
                     "ok": False,
-                    "error": launch_result.get("error") or "Не удалось запустить видео",
+                    "error": (
+                        "Не удалось запустить видео. Попробуйте ещё раз."
+                        if getattr(request, "_video_repeat_authorization", None)
+                        else launch_result.get("error") or "Не удалось запустить видео"
+                    ),
                 },
                 status=500,
             )
@@ -5254,6 +5270,8 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
             }
         )
     except Exception as e:
+        if getattr(request, "_video_repeat_authorization", None):
+            return _private_image_error_response(e, log_message="Private video repeat failed")
         return _miniapp_error_response(e, log_message="Mini App video generation failed")
 
 

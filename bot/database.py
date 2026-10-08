@@ -17,6 +17,13 @@ from bot.services.delivery_state import (
     TERMINAL_TASK_DELIVERY_STATUSES,
     terminal_telegram_delivery_reason,
 )
+from bot.video_repeat_reference_contract import (
+    VideoRepeatContractError,
+    active_video_recipe,
+    build_video_repeat_plan,
+    parse_video_repeat_grant,
+    video_repeat_descriptors,
+)
 
 logger = logging.getLogger(__name__)
 _LOGGED_REFERRAL_CYCLES: set[tuple[int, int, int]] = set()
@@ -6648,29 +6655,97 @@ def generation_reference_selection(
     return selection
 
 
-def generation_repeat_reference_selection(generation: Any) -> list[str]:
-    """Explicit owner grants only; legacy publication selections are not grants."""
+def generation_repeat_reference_selection_by_kind(generation: Any) -> dict[str, list[str]]:
+    """Return explicit owner grants for server-side repeats, split by media kind."""
     raw = _generation_attr(generation, "feed_repeat_reference_selection")
+    if _generation_attr(generation, "type") == "video":
+        try:
+            grant = parse_video_repeat_grant(raw)
+        except VideoRepeatContractError:
+            grant = None
+        return {kind: grant[kind] if grant is not None else [] for kind in ("images", "videos")}
     try:
         payload = json.loads(raw) if isinstance(raw, str) else raw
     except (TypeError, ValueError):
-        return []
-    if not isinstance(payload, dict) or not isinstance(payload.get("images"), list):
-        return []
-    values = payload["images"]
-    if any(not isinstance(url, str) or not url.strip() for url in values):
-        return []
-    return list(dict.fromkeys(url.strip() for url in values))
+        return {"images": [], "videos": []}
+    if not isinstance(payload, dict):
+        return {"images": [], "videos": []}
+
+    result: dict[str, list[str]] = {}
+    for kind in ("images", "videos"):
+        values = payload.get(kind, [])
+        if not isinstance(values, list) or any(
+            not isinstance(url, str) or not url.strip() for url in values
+        ):
+            return {"images": [], "videos": []}
+        result[kind] = list(dict.fromkeys(url.strip() for url in values))
+    return result
 
 
-def _repeat_reference_selection_for_publication(row: Any, indices: list[int] | None) -> str:
-    # Omission is deliberately fail-closed, including older clients re-publishing.
-    candidates = _feed_reference_image_candidates(_parse_json_dict(row["request_data"]))
-    selected = sorted(_validated_reference_indices(indices or [], len(candidates)))
-    if selected and row["type"] != "image":
-        raise ValueError("Скрытые референсы для повторов доступны только для изображений")
-    return json.dumps({"images": [candidates[index] for index in selected
-        if _is_feed_result_url_available(row, candidates[index])]}, ensure_ascii=False, separators=(",", ":"))
+def generation_repeat_reference_selection(generation: Any) -> list[str]:
+    """Backward-compatible image-only view of the explicit repeat grant."""
+    return generation_repeat_reference_selection_by_kind(generation)["images"]
+
+
+def _repeat_reference_selection_for_publication(
+    row: Any,
+    image_indices: list[int] | None,
+    video_indices: list[int] | None = None,
+) -> str:
+    task_type = str(row["type"] or "")
+    if task_type not in {"image", "video"}:
+        raise ValueError("Этот тип работы не поддерживает разрешения на повтор.")
+    if task_type == "image" and video_indices:
+        raise ValueError("Для фото можно разрешить только фото-референсы.")
+    request_data = _parse_json_dict(row["request_data"])
+    image_candidates = _feed_reference_image_candidates(request_data)
+    video_candidates = _feed_reference_video_candidates(request_data)
+    selected_images = sorted(_validated_reference_indices(image_indices or [], len(image_candidates)))
+    selected_videos = sorted(_validated_reference_indices(video_indices or [], len(video_candidates)))
+    images = [image_candidates[index] for index in selected_images]
+    videos = [video_candidates[index] for index in selected_videos]
+    if any(not _is_feed_result_url_available(row, value) for value in [*images, *videos]):
+        raise ValueError("Выбранные референсы больше недоступны. Обновите исходные файлы.")
+    if task_type == "image":
+        return json.dumps({"images": images}, ensure_ascii=False, separators=(",", ":"))
+    existing = _generation_attr(row, "feed_repeat_reference_selection")
+    try:
+        old_grant = parse_video_repeat_grant(existing)
+    except VideoRepeatContractError:
+        old_grant = {}
+    if image_indices is None and video_indices is None and old_grant is None:
+        # Historical clients never selected typed private video consent.
+        return json.dumps({"images": []}, separators=(",", ":"))
+    if (images or videos) and generation_has_private_recipe(row):
+        raise ValueError("Нельзя передать разрешение на чужие исходные референсы.")
+    grant = {"version": 1, "images": images, "videos": videos}
+    if images or videos:
+        # Verify active slot membership and reject unsupported private audio
+        # before mutating publication, instead of silently dropping selection.
+        build_video_repeat_plan({**dict(row), "feed_repeat_reference_selection": grant})
+    return json.dumps(grant, ensure_ascii=False, separators=(",", ":"))
+
+
+def generation_repeat_reference_indices(generation: Any, references: dict[str, Any]) -> dict[str, list[int]]:
+    """Owner-facing indices; canonical aliases never select multiple occurrences."""
+    from bot.services.media_input_utils import resolve_reference_source
+
+    grant = generation_repeat_reference_selection_by_kind(generation)
+    result: dict[str, list[int]] = {}
+    kinds = ("images", "videos") if _generation_attr(generation, "type") == "video" else ("images",)
+    for kind in kinds:
+        values = references[kind]
+        selected: set[str] = set()
+        for value in grant[kind]:
+            try:
+                resolved = resolve_reference_source(value, values)
+            except ValueError:
+                continue
+            if resolved is not None:
+                selected.add(resolved)
+        index_key = "image_indices" if kind == "images" else "video_indices"
+        result[kind] = [index for index, value in zip(references[index_key], values) if value in selected]
+    return result
 
 
 def _validated_reference_indices(
@@ -7159,7 +7234,12 @@ def _generation_row_to_card(
             preview_url = feed_thumbnail_url_for(preview_url) or preview_url
         except Exception:
             logger.exception("Failed to resolve feed thumbnail url")
+    repeat_slots = (
+        video_repeat_descriptors(dict(row))
+        if str(row["type"]) == "video" and not viewer_is_owner else None
+    )
     return {
+        **({"repeat_reference_slots": repeat_slots} if repeat_slots is not None else {}),
         "id": row["id"],
         "user_id": row["user_id"],
         "task_id": row["task_id"],
@@ -7175,11 +7255,15 @@ def _generation_row_to_card(
         "comments_count": comments_count,
         "aspect_ratio": row["aspect_ratio"] or "",
         "duration": row["duration"] if "duration" in row.keys() else None,
-        "scenario": _feed_repeat_scenario(
-            str(row["model"] or row["preset_id"] or ""),
-            request_data,
-            has_image_references=bool(all_reference_images),
-            has_video_references=bool(all_reference_videos),
+        "scenario": (
+            active_video_recipe(dict(row))["public_scenario"]
+            if repeat_slots is not None and repeat_slots["available"]
+            else _feed_repeat_scenario(
+                str(row["model"] or row["preset_id"] or ""),
+                request_data,
+                has_image_references=bool(all_reference_images),
+                has_video_references=bool(all_reference_videos),
+            )
         ),
         "genjutsu_title": (
             request_data.get("genjutsu_title") if str(row["model"] or "") == "genjutsu" else None
@@ -7664,6 +7748,7 @@ async def share_to_feed(
     reference_image_indices: list[int] | None = None,
     reference_video_indices: list[int] | None = None,
     repeat_reference_image_indices: list[int] | None = None,
+    repeat_reference_video_indices: list[int] | None = None,
     blurred: Optional[bool] = None,
     publication_scope: str = "feed",
     adult_content: bool = False,
@@ -7718,7 +7803,11 @@ async def share_to_feed(
             ensure_ascii=False,
             separators=(",", ":"),
         )
-        repeat_reference_selection = _repeat_reference_selection_for_publication(row, repeat_reference_image_indices)
+        repeat_reference_selection = _repeat_reference_selection_for_publication(
+            row,
+            repeat_reference_image_indices,
+            repeat_reference_video_indices,
+        )
         references_visible = bool(references_visible and (selected_images or selected_videos))
 
         result_urls = _generation_result_urls(row)

@@ -389,6 +389,7 @@ async def test_generic_video_repeat_keeps_private_author_refs_out_of_viewer_libr
     )
     source_task = {
         "prompt": "repeat", "model": "seedance_2",
+        "user_id": 1, "type": "video", "status": "completed", "is_public_feed": True,
         "feed_references_visible": True,
         "feed_reference_selection": {"images": [private_outfit], "videos": []},
         "request_data": {"reference_images": [
@@ -457,6 +458,99 @@ def test_video_repeat_preserves_selected_video_reference_slots() -> None:
     assert restored["v_reference_videos"] == [viewer_motion, author_style]
     assert source_motion not in restored["v_reference_videos"]
     assert restored["_private_repeat_reference_videos"] == [author_style]
+
+
+
+def test_video_repeat_uses_private_grant_when_public_references_are_hidden() -> None:
+    author_face = "https://example.test/author-face.png"
+    fixed_outfit = "https://example.test/fixed-outfit.png"
+    author_motion = "https://example.test/author-motion.mp4"
+    fixed_motion = "https://example.test/fixed-motion.mp4"
+    viewer_face = "https://example.test/viewer-face.png"
+    viewer_motion = "https://example.test/viewer-motion.mp4"
+    source_task = {
+        "type": "video",
+        "status": "completed",
+        "prompt": "Image1 person Image2 outfit Video1 motion Video2 style",
+        "model": "seedance_2_5",
+        "duration": 10,
+        "aspect_ratio": "9:16",
+        "is_public_feed": True,
+        "feed_references_visible": False,
+        "feed_reference_selection": {"images": [], "videos": []},
+        "feed_repeat_reference_selection": {
+            "version": 1,
+            "images": [fixed_outfit],
+            "videos": [fixed_motion],
+        },
+        "request_data": {
+            "seedance25_scenario": "multimodal",
+            "reference_images": [author_face, fixed_outfit],
+            "v_reference_videos": [author_motion, fixed_motion],
+        },
+    }
+
+    restored = enrich_video_repeat_body(
+        {
+            "source_feed_gen_id": 44,
+            "reference_images": [viewer_face],
+            "v_reference_videos": [viewer_motion],
+        },
+        source_task,
+    )
+
+    assert restored["reference_images"] == [viewer_face, fixed_outfit]
+    assert restored["v_reference_videos"] == [viewer_motion, fixed_motion]
+    assert restored["_private_repeat_reference_images"] == [fixed_outfit]
+    assert restored["_private_repeat_reference_videos"] == [fixed_motion]
+
+
+def test_video_repeat_private_revocation_overrides_public_reference_selection() -> None:
+    fixed_image = "https://example.test/fixed-image.png"
+    fixed_video = "https://example.test/fixed-video.mp4"
+    source_task = {
+        "type": "video",
+        "status": "completed",
+        "prompt": "repeat",
+        "model": "seedance_2_5",
+        "feed_references_visible": True,
+        "feed_reference_selection": {
+            "images": [fixed_image],
+            "videos": [fixed_video],
+        },
+        "feed_repeat_reference_selection": {"version": 1, "images": [], "videos": []},
+        "request_data": {
+            "seedance25_scenario": "multimodal",
+            "reference_images": [fixed_image],
+            "v_reference_videos": [fixed_video],
+        },
+    }
+
+    with pytest.raises(VideoRepeatReferenceError):
+        enrich_video_repeat_body({"source_feed_gen_id": 45}, source_task)
+
+
+def test_legacy_video_repeat_without_video_private_key_keeps_public_selection_fallback() -> None:
+    fixed = "https://example.test/legacy-fixed.png"
+    source_task = {
+        "type": "video",
+        "status": "completed",
+        "prompt": "repeat",
+        "model": "seedance_2",
+        "feed_references_visible": True,
+        "feed_reference_selection": {"images": [fixed], "videos": []},
+        # Old image-only releases wrote this shape for video publications.
+        "feed_repeat_reference_selection": {"images": []},
+        "request_data": {
+            "v_type": "video",
+            "reference_images": [fixed],
+        },
+    }
+
+    restored = enrich_video_repeat_body({"source_feed_gen_id": 46}, source_task)
+
+    assert restored["reference_images"] == [fixed]
+    assert restored["_private_repeat_reference_images"] == [fixed]
 
 
 @pytest.mark.asyncio

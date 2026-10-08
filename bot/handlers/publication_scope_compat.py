@@ -264,6 +264,7 @@ async def share_to_feed_scoped(
     reference_image_indices: list[int] | None = None,
     reference_video_indices: list[int] | None = None,
     repeat_reference_image_indices: list[int] | None = None,
+    repeat_reference_video_indices: list[int] | None = None,
     blurred: bool | None = None,
     publication_scope: str = "feed",
     adult_content: bool = False,
@@ -277,6 +278,7 @@ async def share_to_feed_scoped(
         reference_image_indices=reference_image_indices,
         reference_video_indices=reference_video_indices,
         repeat_reference_image_indices=repeat_reference_image_indices,
+        repeat_reference_video_indices=repeat_reference_video_indices,
         blurred=blurred,
         publication_scope=publication_scope,
         adult_content=adult_content,
@@ -305,6 +307,7 @@ async def share_to_profile(
     reference_image_indices: list[int] | None = None,
     reference_video_indices: list[int] | None = None,
     repeat_reference_image_indices: list[int] | None = None,
+    repeat_reference_video_indices: list[int] | None = None,
     blurred: bool | None = None,
 ) -> dict[str, Any] | None:
     await _ensure_publication_scope_schema()
@@ -347,7 +350,11 @@ async def share_to_profile(
             ensure_ascii=False,
             separators=(",", ":"),
         )
-        repeat_reference_selection = database._repeat_reference_selection_for_publication(row, repeat_reference_image_indices)
+        repeat_reference_selection = database._repeat_reference_selection_for_publication(
+            row,
+            repeat_reference_image_indices,
+            repeat_reference_video_indices,
+        )
         references_visible = bool(references_visible and (selected_images or selected_videos))
 
         result_urls = database._generation_result_urls(row)
@@ -455,18 +462,26 @@ async def remove_publication(gen_id: int | str, user_id: int) -> bool:
         row = await database._fetch_generation_row(db, gen_id, user_id=user_id)
         if not row:
             return False
+        revoked_grant = None
+        if row["type"] == "video" and row["feed_repeat_reference_selection"] is not None:
+            try:
+                typed_grant = database.parse_video_repeat_grant(row["feed_repeat_reference_selection"])
+            except ValueError:
+                typed_grant = {}
+            if typed_grant is not None:
+                revoked_grant = json.dumps({"version": 1, "images": [], "videos": []})
         await db.execute(
             """
             UPDATE generation_tasks
             SET is_public_feed = 0,
                 is_profile_visible = 0,
-                feed_repeat_reference_selection = NULL,
+                feed_repeat_reference_selection = ?,
                 feed_published_at = NULL,
                 profile_published_at = NULL,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
-            (row["id"],),
+            (revoked_grant, row["id"]),
         )
         await db.commit()
         return True
@@ -841,6 +856,9 @@ async def _miniapp_generation_share_scoped(module, request):
         repeat_reference_image_indices = module._optional_reference_indices(
             body, "repeat_reference_image_indices",
         )
+        repeat_reference_video_indices = module._optional_reference_indices(
+            body, "repeat_reference_video_indices",
+        )
         blurred = None
         if "blurred" in body or "feed_blurred" in body:
             blurred = module._payload_bool(
@@ -874,6 +892,7 @@ async def _miniapp_generation_share_scoped(module, request):
                 reference_image_indices=reference_image_indices,
                 reference_video_indices=reference_video_indices,
                 repeat_reference_image_indices=repeat_reference_image_indices,
+                repeat_reference_video_indices=repeat_reference_video_indices,
                 blurred=blurred,
             )
             if not card:
@@ -902,6 +921,7 @@ async def _miniapp_generation_share_scoped(module, request):
             reference_image_indices=reference_image_indices,
             reference_video_indices=reference_video_indices,
             repeat_reference_image_indices=repeat_reference_image_indices,
+            repeat_reference_video_indices=repeat_reference_video_indices,
             blurred=blurred,
         )
         if not card:

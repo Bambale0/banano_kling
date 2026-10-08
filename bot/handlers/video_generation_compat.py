@@ -173,6 +173,11 @@ async def repeat_advanced_video_result(callback: types.CallbackQuery, state: FSM
     if await redirect_legacy_repeat(callback, task):
         return
 
+    from bot.handlers.miniapp_video_continuity_compat import redirect_typed_video_repeat
+
+    if await redirect_typed_video_repeat(callback, task):
+        return
+
     try:
         request_data = json.loads(task.request_data) if task.request_data else {}
     except (TypeError, ValueError, json.JSONDecodeError):

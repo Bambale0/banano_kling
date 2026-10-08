@@ -624,7 +624,11 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
             data["identityTransfer"] = body["identityTransfer"]
         _identity_intent(data)
     except ValueError as exc:
-        return web.json_response({"ok": False, "error": str(exc)}, status=400)
+        error = (
+            "Не удалось проверить входные данные повтора. Проверьте свои файлы."
+            if getattr(request, "_video_repeat_authorization", None) else str(exc)
+        )
+        return web.json_response({"ok": False, "error": error}, status=400)
     scenario = data["seedance25_scenario"]
     if scenario not in {"text", "first_frame", "first_last", "multimodal"}:
         return web.json_response({"ok": False, "error": "Некорректный сценарий Seedance 2.5"}, status=400)
@@ -653,7 +657,11 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
         payload = _scenario_payload(data, str(body.get("prompt") or ""))
         await _validate_public_payload(payload, is_admin=is_admin, telegram_id=telegram_id)
     except ValueError as exc:
-        return web.json_response({"ok": False, "error": str(exc)}, status=400)
+        error = (
+            "Не удалось проверить входные данные повтора. Проверьте свои файлы."
+            if getattr(request, "_video_repeat_authorization", None) else str(exc)
+        )
+        return web.json_response({"ok": False, "error": error}, status=400)
 
     payload.update(source_feed_gen_id=source_feed_gen_id, parent_generation_id=immediate_parent_id)
     quote = _identity_quote(payload)["cost"] if payload.get("seedance25_identity_transfer") else float(preview_module._price_quote(dict(data, v_duration=payload["duration"], v_ratio=payload["ratio"])))
@@ -675,6 +683,11 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
             status=400,
         )
 
+    from bot.handlers.miniapp_video_continuity_compat import verify_video_repeat_before_charge
+
+    permission_error = await verify_video_repeat_before_charge(request)
+    if permission_error is not None:
+        return permission_error
     charged = False
     try:
         if not is_admin:
@@ -686,7 +699,11 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
             if charged:
                 await miniapp_module.add_credits(telegram_id, quote)
                 charged = False
-            error = result.get("error") if isinstance(result, dict) else "provider response has no task_id"
+            error = (
+                "провайдер не принял запрос"
+                if getattr(request, "_video_repeat_authorization", None)
+                else result.get("error") if isinstance(result, dict) else "provider response has no task_id"
+            )
             return web.json_response(
                 {"ok": False, "error": f"Seedance 2.5 не запустилась: {error}. Списание возвращено."},
                 status=502,
@@ -699,6 +716,8 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
             quote=quote,
             source="miniapp",
         )
+        if getattr(request, "_video_repeat_authorization", None):
+            request_data["video_repeat_contract_version"] = 1
         if source_feed_gen_id:
             request_data.update(
                 source_feed_gen_id=source_feed_gen_id,
@@ -760,13 +779,18 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
             }
         )
     except Exception as exc:
-        logger.exception("Public Seedance 2.5 Mini App launch failed")
+        private_repeat = bool(getattr(request, "_video_repeat_authorization", None))
+        if private_repeat:
+            logger.error("Private Seedance video repeat failed: error_type=%s", type(exc).__name__)
+        else:
+            logger.exception("Public Seedance 2.5 Mini App launch failed")
         if charged:
             try:
                 await miniapp_module.add_credits(telegram_id, quote)
             except Exception:
                 logger.exception("Seedance 2.5 Mini App immediate refund failed for %s", telegram_id)
-        return web.json_response({"ok": False, "error": str(exc)}, status=500)
+        error = "Не удалось запустить видео. Попробуйте ещё раз." if private_repeat else str(exc)
+        return web.json_response({"ok": False, "error": error}, status=500)
 
 
 async def _claim_async_refund(task_id: str) -> tuple[int, float] | None:

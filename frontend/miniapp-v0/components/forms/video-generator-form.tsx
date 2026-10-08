@@ -1,9 +1,10 @@
 'use client'
 
 import { normalizeRepeatPrompt } from '@/lib/repeat-prompt'
+import { normalizeVideoRepeatSlots } from '@/lib/video-repeat-references'
 
 import { useState, useMemo, useEffect, useRef } from 'react'
-import type { VideoModel, UploadedFile, ScenarioType, VideoPromptPreset } from '@/lib/types'
+import type { VideoModel, UploadedFile, ScenarioType, VideoPromptPreset, VideoRepeatReferenceSlots } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -139,6 +140,19 @@ export function VideoGeneratorForm({
   const [sourceFeedGenId, setSourceFeedGenId] = useState<number | null>(null)
   const appliedPromptPresetRef = useRef<VideoPromptPreset | null>(null)
   const [repeatTitle, setRepeatTitle] = useState('')
+  const [repeatSlots, setRepeatSlots] = useState<VideoRepeatReferenceSlots | undefined>()
+  const [repeatUploads, setRepeatUploads] = useState<Record<string, UploadedFile[]>>({})
+  const [repeatError, setRepeatError] = useState(false)
+  const repeatSession = useRef(0)
+  const submittingRef = useRef(false)
+  const slotSession = repeatSession.current
+  const typedSlots = repeatSlots ? [
+    ...repeatSlots.images.map((slot) => ({ ...slot, type: 'image' as const, key: `image-${slot.index}` })),
+    ...repeatSlots.videos.map((slot) => ({ ...slot, type: 'video' as const, key: `video-${slot.index}` })),
+  ] : []
+  const missingRepeatUploads = typedSlots.some((slot) => slot.binding === 'upload'
+    && (!repeatUploads[slot.key]?.[0]?.url || repeatUploads[slot.key][0].uploading))
+  const repeatBlocked = Boolean(repeatSlots && (!repeatSlots.available || missingRepeatUploads || repeatError))
   const [startImage, setStartImage] = useState<UploadedFile[]>([])
   const [photoReferences, setPhotoReferences] = useState<UploadedFile[]>([])
   const [videoReferences, setVideoReferences] = useState<UploadedFile[]>([])
@@ -225,15 +239,16 @@ export function VideoGeneratorForm({
   // Image-to-video uses the same photo-reference picker as every other photo input.
   // The backend promotes the first selected reference to the provider's primary image slot.
   const needsPhotoReference = selectedScenario === 'imgtxt' && !isOmniVideo && !sourceFeedGenId && photoReferences.length === 0
-  const needsCharacterImage = selectedScenario === 'character' && startImage.length === 0
+  const needsCharacterImage = !repeatSlots && selectedScenario === 'character' && startImage.length === 0
   const needsVideoRef = selectedScenario === 'video' && !isOmniVideo && !sourceFeedGenId && videoReferences.length === 0
-  const needsAvatarImage = selectedScenario === 'avatar' && startImage.length === 0
-  const needsAvatarAudio = selectedScenario === 'avatar' && audioReference.length === 0
+  const needsAvatarImage = !repeatSlots && selectedScenario === 'avatar' && startImage.length === 0
+  const needsAvatarAudio = !repeatSlots && selectedScenario === 'avatar' && audioReference.length === 0
   const needsOmniVoiceName = isOmniAudio && omniVoiceName.trim().length === 0
 
   const hasPrompt = prompt.trim().length > 0 || Boolean(sourceFeedGenId)
   const isValid = hasPrompt &&
     canAfford &&
+    !repeatBlocked &&
     scenarioSupported &&
     !needsPhotoReference &&
     !needsCharacterImage &&
@@ -283,6 +298,13 @@ export function VideoGeneratorForm({
     setPrompt(normalizeRepeatPrompt(promptPreset).prompt)
     setSourceFeedGenId(promptPreset.sourceFeedGenId || null)
     setRepeatTitle(promptPreset.sourceFeedGenId ? promptPreset.title : '')
+    const slots = promptPreset.sourceFeedGenId && promptPreset.repeatReferenceSlots
+      ? normalizeVideoRepeatSlots(promptPreset.repeatReferenceSlots) : undefined
+    repeatSession.current += 1
+    setRepeatSlots(slots && !models.some((item) => item.id === promptPreset.model)
+      ? { version: 1, available: false, images: [], videos: [] } : slots)
+    setRepeatUploads({})
+    setRepeatError(false)
     if (promptPreset.model && models.some((item) => item.id === promptPreset.model)) {
       setSelectedModel(promptPreset.model)
     }
@@ -295,7 +317,10 @@ export function VideoGeneratorForm({
     if (promptPreset.duration) {
       setSelectedDuration(promptPreset.duration)
     }
-    if (promptPreset.scenario === 'character' || promptPreset.scenario === 'avatar') {
+    if (slots) {
+      setStartImage([])
+      setPhotoReferences([])
+    } else if (promptPreset.scenario === 'character' || promptPreset.scenario === 'avatar') {
       setStartImage(promptPreset.initialStartImage || [])
       setPhotoReferences(promptPreset.initialPhotoReferences || [])
     } else {
@@ -310,7 +335,7 @@ export function VideoGeneratorForm({
         )
       )
     }
-    setVideoReferences(promptPreset.initialVideoReferences || [])
+    setVideoReferences(slots ? [] : promptPreset.initialVideoReferences || [])
     setAudioReference([])
     onPromptPresetConsumed?.()
   }, [models, onPromptPresetConsumed, promptPreset])
@@ -428,8 +453,11 @@ export function VideoGeneratorForm({
   }
 
   const handleSubmit = async () => {
-    if (!isValid) return
+    if (!isValid || isSubmitting || submittingRef.current) return
+    submittingRef.current = true
+    const submittedSession = repeatSession.current
     const submitDuration = isOmniAudio || isOmniCharacter ? 6 : selectedDuration
+    try {
     await onSubmit({
       model: selectedModel,
       scenario: selectedScenario,
@@ -457,18 +485,27 @@ export function VideoGeneratorForm({
       omniCharacterAudioIds: parsedOmniCharacterAudioIds,
       prompt,
       startImage:
-        isOmniAudio || !['character', 'avatar'].includes(selectedScenario)
+        repeatSlots ? null : isOmniAudio || !['character', 'avatar'].includes(selectedScenario)
           ? null
           : startImage[0]?.url || null,
       references:
-        isOmniAudio || isOmniCharacter
+        repeatSlots ? typedSlots.filter((slot) => slot.type === 'image' && slot.binding === 'upload').map((slot) => repeatUploads[slot.key][0].url) : isOmniAudio || isOmniCharacter
           ? []
           : selectedScenario === 'imgtxt' || (model?.max_image_references ?? 8) > 0
             ? photoReferences.map((item) => item.url)
             : [],
-      videoReferences: isOmniVideo || (model?.max_video_references ?? 0) > 0 ? videoReferences.map(r => r.url) : [],
+      videoReferences: repeatSlots ? typedSlots.filter((slot) => slot.type === 'video' && slot.binding === 'upload').map((slot) => repeatUploads[slot.key][0].url) : isOmniVideo || (model?.max_video_references ?? 0) > 0 ? videoReferences.map(r => r.url) : [],
       audioReference: selectedScenario === 'avatar' ? audioReference[0]?.url || null : null,
     })
+    } catch {
+      if (repeatSlots && submittedSession === repeatSession.current) setRepeatError(true)
+      return
+    } finally {
+      submittingRef.current = false
+    }
+    if (submittedSession !== repeatSession.current) return
+    setRepeatSlots(undefined)
+    setRepeatUploads({})
     setPrompt('')
     setSourceFeedGenId(null)
     setRepeatTitle('')
@@ -482,7 +519,7 @@ export function VideoGeneratorForm({
   return (
     <div className="min-w-0 space-y-4 overflow-x-hidden">
       <div className="glass min-w-0 space-y-4 overflow-hidden rounded-2xl border border-cyan/20 p-3 sm:p-4">
-        <div className="space-y-2">
+        <fieldset disabled={Boolean(repeatSlots)} aria-label="Модель" className="space-y-2">
           <label className="text-sm font-medium text-foreground">Модель</label>
           <ModelSelect
             models={visibleModels.map(m => ({
@@ -499,7 +536,7 @@ export function VideoGeneratorForm({
             value={selectedModel}
             onChange={handleModelChange}
           />
-        </div>
+        </fieldset>
 
         {isGeminiOmni ? (
             <div className="space-y-3 rounded-2xl border border-cyan/20 bg-cyan/5 p-3 text-xs leading-relaxed text-muted-foreground sm:p-4">
@@ -528,14 +565,15 @@ export function VideoGeneratorForm({
             </div>
         ) : null}
 
-        <div className="space-y-2">
+        <fieldset disabled={Boolean(repeatSlots)} aria-label="Сценарий" className="space-y-2">
           <label className="text-sm font-medium text-foreground">Сценарий</label>
           <ScenarioSelect
             scenarios={model?.supports || ['text']}
             value={selectedScenario}
             onChange={setSelectedScenario}
           />
-        </div>
+          {repeatSlots ? <p className="text-xs text-muted-foreground">Модель и сценарий сохранены из публикации.</p> : null}
+        </fieldset>
 
         {!isOmniAudio && !isOmniCharacter && selectedScenario !== 'avatar' ? (
           <div className="grid gap-3 lg:grid-cols-2">
@@ -892,7 +930,7 @@ export function VideoGeneratorForm({
           </div>
         ) : null}
 
-        {(selectedScenario === 'character' || selectedScenario === 'avatar') && (
+        {!repeatSlots && (selectedScenario === 'character' || selectedScenario === 'avatar') && (
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground">
               {selectedScenario === 'character' ? 'Изображение персонажа' : 'Фото аватара'}
@@ -911,7 +949,7 @@ export function VideoGeneratorForm({
           </div>
         )}
 
-        {(selectedScenario === 'video' || isOmniVideo) && (
+        {!repeatSlots && (selectedScenario === 'video' || isOmniVideo) && (
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground">
               {isOmniVideo ? 'Видео-референс' : 'Видео-референсы'}
@@ -951,7 +989,7 @@ export function VideoGeneratorForm({
           </div>
         ) : null}
 
-        {!isOmniAudio && !isOmniCharacter && ((model?.max_image_references ?? 8) > 0 || selectedScenario === 'imgtxt') ? (
+        {!repeatSlots && !isOmniAudio && !isOmniCharacter && ((model?.max_image_references ?? 8) > 0 || selectedScenario === 'imgtxt') ? (
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground">
               Фото-референсы
@@ -978,6 +1016,41 @@ export function VideoGeneratorForm({
           </div>
         ) : null}
 
+        {repeatSlots ? (
+          <div role="group" aria-label="Референсы повтора" className="min-w-0 space-y-3 rounded-2xl border border-cyan/25 p-3">
+            <p className="text-sm font-medium">Референсы повтора</p>
+            {!repeatSlots.available || repeatError ? (
+              <p role="alert" className="text-sm text-destructive">Повтор недоступен. Откройте публикацию заново, чтобы проверить разрешения автора.</p>
+            ) : (
+              <>
+                <p className="text-xs text-muted-foreground">Сохранено автором: {typedSlots.filter((slot) => slot.binding === 'fixed').length}</p>
+                <p className="text-xs text-muted-foreground">Сохранённые референсы используются скрыто. Загрузите свои файлы для остальных позиций.</p>
+                {typedSlots.map((slot) => {
+                  const label = `${slot.role === 'first_frame' ? 'Первый кадр · ' : slot.role === 'last_frame' ? 'Последний кадр · ' : ''}${slot.type === 'image' ? 'Фото' : 'Видео'} ${slot.index + 1}`
+                  return slot.binding === 'fixed' ? (
+                    <p key={slot.key} className="text-xs text-muted-foreground">{label} · Сохранён автором</p>
+                  ) : (
+                    <fieldset key={`${slotSession}-${slot.key}`} aria-label={label} className="min-w-0 space-y-2" disabled={isSubmitting}>
+                      <legend className="text-sm font-medium">{label} · Ваш файл</legend>
+                      <UploadArea files={repeatUploads[slot.key] || []}
+                        onFilesChange={(files) => {
+                          if (slotSession !== repeatSession.current) return
+                          setRepeatUploads((current) => ({ ...current, [slot.key]: files }))
+                        }}
+                        maxFiles={1} accept={`${slot.type}/*`} required
+                        onUpload={slot.type === 'image' ? onUploadImageReference : onUploadVideoReference}
+                        libraryFiles={(slot.type === 'image' ? savedImageReferences : savedVideoReferences).filter((file) =>
+                          !typedSlots.some((other) => other.key !== slot.key && other.type === slot.type
+                            && repeatUploads[other.key]?.some((selected) => selected.url === file.url)))}
+                        libraryLabel={slot.type === 'image' ? 'Сохранённые фото' : 'Сохранённые видео'} />
+                    </fieldset>
+                  )
+                })}
+              </>
+            )}
+          </div>
+        ) : null}
+
         <div className="space-y-2">
           {sourceFeedGenId ? (
             <div className="rounded-2xl border border-cyan/25 bg-cyan/10 p-4">
@@ -985,7 +1058,7 @@ export function VideoGeneratorForm({
                 {repeatTitle || 'Повторить видео из ленты'}
               </p>
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                Настройки и промпт подставлены. Можно поменять длительность, формат или добавить свои референсы.
+                {repeatSlots ? 'Промпт и сохранённые референсы подставляются на сервере. Заполните позиции своими файлами.' : 'Настройки и промпт подставлены. Можно поменять длительность, формат или добавить свои референсы.'}
               </p>
             </div>
           ) : null}
@@ -1011,7 +1084,9 @@ export function VideoGeneratorForm({
           />
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span>
-              {sourceFeedGenId
+              {repeatBlocked
+                ? !repeatSlots?.available || repeatError ? 'Повтор нужно открыть заново' : 'Заполните референсы для повтора'
+                : sourceFeedGenId
                 ? prompt.trim().length > 0
                   ? 'Промпт из ленты готов к запуску'
                   : 'Промпт скрыт автором, запуск доступен'
@@ -1052,7 +1127,7 @@ export function VideoGeneratorForm({
           <div className="rounded-xl bg-secondary/40 p-3">
             <p className="text-muted-foreground mb-1">Референсы</p>
             <p className="text-foreground font-medium">
-              {startImage.length + photoReferences.length + videoReferences.length + audioReference.length}
+              {repeatSlots ? typedSlots.length : startImage.length + photoReferences.length + videoReferences.length + audioReference.length}
             </p>
             <p className="text-muted-foreground mt-1">
               {model?.grok_modes?.length

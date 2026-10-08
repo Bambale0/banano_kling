@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
 jest.mock('@/components/forms/model-select', () => ({
   ModelSelect: ({ value }: { value: string }) => <div data-testid="model">{value}</div>,
@@ -152,5 +152,108 @@ describe('private video repeat prompt boundary', () => {
   it('preserves an ordinary visible owner prompt', () => {
     render(<VideoGeneratorForm models={models} onSubmit={jest.fn()} isSubmitting={false} credits={100} promptPreset={{ ...preset, promptHidden: false }} />)
     expect(screen.getByRole('textbox')).toHaveValue(preset.prompt)
+  })
+})
+
+
+describe('video repeat replacement slots', () => {
+  const slots = {
+    version: 1, available: true,
+    images: [
+      { index: 0, role: 'first_frame', binding: 'upload' },
+      { index: 1, role: 'last_frame', binding: 'fixed' },
+      { index: 2, role: 'reference', binding: 'upload' },
+    ],
+    videos: [{ index: 0, role: 'reference', binding: 'fixed' }, { index: 1, role: 'reference', binding: 'upload' }],
+  }
+  const secondFrame: UploadedFile = { ...savedFrame, id: 'second', name: 'second.jpg', url: 'https://example.test/second.jpg' }
+  const savedVideo: UploadedFile = { ...savedFrame, id: 'clip', name: 'clip.mp4', url: 'https://example.test/clip.mp4', type: 'video' }
+  const descriptorPreset = { ...preset, prompt: '', promptHidden: true, scenario: 'video', repeatReferenceSlots: slots } as VideoPromptPreset
+
+  it('requires typed replacements and submits them in slot order, never the hidden source refs', async () => {
+    const onSubmit = jest.fn().mockResolvedValue(undefined)
+    const { container } = render(<VideoGeneratorForm models={models} onSubmit={onSubmit} isSubmitting={false} credits={100}
+      promptPreset={{ ...descriptorPreset, initialPhotoReferences: [{ ...savedFrame, url: 'https://example.test/private-source.jpg' }] }}
+      savedImageReferences={[savedFrame, secondFrame]} savedVideoReferences={[savedVideo]} />)
+    const launch = screen.getByRole('button', { name: /Запустить видео/i })
+    expect(launch).toBeDisabled()
+    expect(screen.getByText('Сохранено автором: 2')).toBeInTheDocument()
+    expect(container.innerHTML).not.toContain('private-source.jpg')
+    fireEvent.click(within(screen.getByRole('group', { name: 'Фото 3' })).getByRole('button', { name: 'second.jpg' }))
+    fireEvent.click(within(screen.getByRole('group', { name: 'Видео 2' })).getByRole('button', { name: 'clip.mp4' }))
+    expect(launch).toBeDisabled()
+    fireEvent.click(within(screen.getByRole('group', { name: 'Первый кадр · Фото 1' })).getByRole('button', { name: 'saved-frame.jpg' }))
+    expect(launch).toBeEnabled()
+    fireEvent.click(launch)
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      sourceFeedGenId: 42, prompt: '', startImage: null,
+      references: [savedFrame.url, secondFrame.url], videoReferences: [savedVideo.url],
+    })))
+  })
+})
+
+
+describe('video repeat slot lifecycle', () => {
+  const fixed: VideoPromptPreset = { ...preset, prompt: '', promptHidden: true, scenario: 'video', repeatReferenceSlots: {
+    version: 1, available: true, images: [{ index: 0, role: 'first_frame', binding: 'fixed' }],
+    videos: [{ index: 0, role: 'reference', binding: 'fixed' }],
+  } }
+  it('can repeat all-fixed inputs without extra uploads and prevents duplicate clicks', async () => {
+    let finish!: () => void
+    const onSubmit = jest.fn(() => new Promise<void>((resolve) => { finish = resolve }))
+    render(<VideoGeneratorForm models={models} onSubmit={onSubmit} isSubmitting={false} credits={100} promptPreset={fixed} />)
+    const launch = screen.getByRole('button', { name: /Запустить видео/i })
+    expect(launch).toBeEnabled()
+    fireEvent.click(launch)
+    fireEvent.click(launch)
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ references: [], videoReferences: [] }))
+    finish()
+    await waitFor(() => expect(screen.queryByRole('group', { name: 'Референсы повтора' })).not.toBeInTheDocument())
+  })
+  it('blocks unavailable or unknown descriptors and resets for a fresh publication', () => {
+    const props = { models, onSubmit: jest.fn(), isSubmitting: false, credits: 100 }
+    const view = render(<VideoGeneratorForm {...props} promptPreset={{ ...fixed, repeatReferenceSlots: { ...fixed.repeatReferenceSlots!, available: false } }} />)
+    expect(screen.getByRole('alert')).toHaveTextContent('Откройте публикацию заново')
+    expect(screen.getByRole('button', { name: /Запустить видео/i })).toBeDisabled()
+    view.rerender(<VideoGeneratorForm {...props} promptPreset={fixed} />)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Запустить видео/i })).toBeEnabled()
+    view.rerender(<VideoGeneratorForm {...props} promptPreset={{ ...fixed, repeatReferenceSlots: { ...fixed.repeatReferenceSlots!, version: 2 } as never }} />)
+    expect(screen.getByRole('button', { name: /Запустить видео/i })).toBeDisabled()
+  })
+  it('blocks a typed repeat when its source model is unavailable', () => {
+    render(<VideoGeneratorForm models={models} onSubmit={jest.fn()} isSubmitting={false} credits={100} promptPreset={{ ...fixed, model: 'missing-model' }} />)
+    expect(screen.getByRole('alert')).toHaveTextContent('Откройте публикацию заново')
+    expect(screen.getByRole('button', { name: /Запустить видео/i })).toBeDisabled()
+  })
+  it('blocks a rejected stale recipe until it is reopened and keeps user prompt edits', async () => {
+    const props = { models, onSubmit: jest.fn().mockRejectedValue(new Error('Permission changed')), isSubmitting: false, credits: 100 }
+    const view = render(<VideoGeneratorForm {...props} promptPreset={fixed} />)
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'My adjustment' } })
+    fireEvent.click(screen.getByRole('button', { name: /Запустить видео/i }))
+    await screen.findByRole('alert')
+    expect(screen.getByRole('textbox')).toHaveValue('My adjustment')
+    expect(screen.getByRole('button', { name: /Запустить видео/i })).toBeDisabled()
+    view.rerender(<VideoGeneratorForm {...props} promptPreset={{ ...fixed }} />)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Запустить видео/i })).toBeEnabled()
+  })
+  it('ignores an upload finishing after a newer repeat opens', async () => {
+    let finish!: (file: UploadedFile) => void
+    const upload = jest.fn(() => new Promise<UploadedFile>((resolve) => { finish = resolve }))
+    const oneSlot: VideoPromptPreset = { ...fixed, repeatReferenceSlots: {
+      version: 1, available: true, images: [{ index: 0, role: 'reference', binding: 'upload' }], videos: [],
+    } }
+    const props = { models, onSubmit: jest.fn(), isSubmitting: false, credits: 100, onUploadImageReference: upload }
+    const view = render(<VideoGeneratorForm {...props} promptPreset={oneSlot} />)
+    const input = view.container.querySelector('input[type="file"]')!
+    fireEvent.change(input, { target: { files: [new File(['image'], 'old.jpg', { type: 'image/jpeg' })] } })
+    expect(upload).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button', { name: /Запустить видео/i })).toBeDisabled()
+    view.rerender(<VideoGeneratorForm {...props} promptPreset={{ ...oneSlot, sourceFeedGenId: 43 }} />)
+    finish({ ...savedFrame, name: 'old.jpg' })
+    await waitFor(() => expect(screen.queryByText('old.jpg')).not.toBeInTheDocument())
+    expect(screen.getByRole('button', { name: /Запустить видео/i })).toBeDisabled()
   })
 })
