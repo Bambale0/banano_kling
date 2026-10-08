@@ -31,7 +31,7 @@ def callback_handler(name, authorized):
             InlineKeyboardButton=lambda **kwargs: kwargs,
         ),
     }
-    exec(compile(ast.fix_missing_locations(code), str(SOURCE), "exec"), namespace)
+    exec(compile(ast.fix_missing_locations(code), str(SOURCE), "exec"), namespace)  # noqa: S102 - trusted repository AST isolates production config
     return namespace[name], namespace
 
 
