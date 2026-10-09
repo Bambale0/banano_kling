@@ -31,3 +31,5 @@ Startup adds the two tables, audit index and append-only audit guards idempotent
 Deploy only after normal repository CI and release approval. Preserve the runtime price volume/file using the existing deployment procedure; do not replace it with repository defaults. Initially the profile remains inactive. Tanya must set rates and explicitly enable/assign it in admin.
 
 Rollback can disable the profile through admin immediately. A code rollback may leave the additive membership/audit tables in place; do not delete audit records. In-flight task quote metadata is retained. No production migration, activation, assignment, paid generation or deployment was performed during this implementation.
+
+Release verification adds `creator-tariff-postgres.yml` with a disposable loopback-only PostgreSQL16 database and randomized schemas. Creator browser fixtures run in the required main CI browser gate; all requests are intercepted and no paid generation is made. Baseline Handlebars critical advisories are fixed by the compatible4.7.10 lockfile update;20 moderate test-dependency advisories remain below the unchanged high-severity audit threshold.
