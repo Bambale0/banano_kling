@@ -537,3 +537,18 @@ async def test_invalid_configured_direct_template_stops_before_debit(public_mock
     miniapp.deduct_credits.assert_not_awaited()
     public._launch_provider.assert_not_awaited()
     public.generation_module.add_generation_task.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("quote_only", [True, False])
+async def test_direct_edit_expanded_alias_rejected_before_quote_or_debit(public_mocks, quote_only):
+    public, miniapp, request = public_mocks
+    prefix = "Video edit: replace @Video1 with @img1. "
+    prompt = prefix + "x" * (20480 - len(prefix))
+    response = await public._public_miniapp_generate(request,
+        identity_body(prompt=prompt, seedance25_quote_only=quote_only))
+    assert response.status == 400
+    assert b"20480" in response.body
+    miniapp.deduct_credits.assert_not_awaited()
+    public._launch_provider.assert_not_awaited()
+    public.generation_module.add_generation_task.assert_not_awaited()

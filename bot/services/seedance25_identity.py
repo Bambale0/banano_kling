@@ -13,7 +13,8 @@ SEEDANCE_25_PROMPT_MAX_CHARS = 20_480
 IDENTITY_ROLE_VERSION = "direct-edit-v1"
 MAX_IDENTITY_IMAGES = 3
 IDENTITY_TEMPLATE_SETTING = "seedance25_direct_edit_template"
-MAX_TEMPLATE_CHARS = 8_000
+# The admin setter accepts a full Telegram text message via reply.
+MAX_TEMPLATE_CHARS = 4_096
 DEFAULT_IDENTITY_TEMPLATE = (
     "Video edit: replace the main person's facial features and hair in @Video1 "
     "with the person shown in {identity_images}. All photos show the same person. "

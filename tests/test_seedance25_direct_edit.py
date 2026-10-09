@@ -157,3 +157,55 @@ def test_complete_unicode_prompt_uses_kie_limit_without_hidden_expansion(count):
     assert build_identity_transfer_prompt(valid, image_count=count) == valid
     with pytest.raises(ValueError):
         build_identity_transfer_prompt(valid + "x", image_count=count)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw_length,accepted", [(20478, True), (20480, False)])
+async def test_direct_edit_limit_applies_after_compact_alias_normalization(raw_length, accepted):
+    prefix = "Video edit: replace @Video1 with @img1. "
+    prompt = prefix + "x" * (raw_length - len(prefix))
+    service = Seedance25Service(kie_key="test-key")
+    service._kie_post = AsyncMock(return_value={"task_id": "alias-boundary"})
+    result = await service.generate_video(prompt, identity_transfer=True,
+        reference_image_urls=["https://example.test/person.png"],
+        reference_video_urls=["https://example.test/source.mp4"])
+    assert result["success"] is accepted
+    if accepted:
+        service._kie_post.assert_awaited_once()
+        outgoing = service._kie_post.call_args.args[1]["input"]["prompt"]
+        assert len(outgoing) == 20480
+        assert "@Image1" in outgoing and "@img1" not in outgoing
+    else:
+        assert "20480" in result["error"]
+        service._kie_post.assert_not_awaited()
+
+
+@pytest.mark.parametrize("length,accepted", [(4096, True), (4097, False)])
+def test_admin_template_limit_matches_supported_reply_text(length, accepted):
+    from bot.services.seedance25_identity import validate_identity_template
+    prefix = "Video edit: replace @Video1 with {identity_images}. "
+    template = prefix + "x" * (length - len(prefix))
+    if accepted:
+        assert validate_identity_template(template) == template
+    else:
+        with pytest.raises(ValueError):
+            validate_identity_template(template)
+
+
+@pytest.mark.asyncio
+async def test_admin_can_set_largest_template_by_reply(monkeypatch):
+    from types import SimpleNamespace
+
+    from bot import database
+    from bot.handlers import admin
+    from bot.services.seedance25_identity import IDENTITY_TEMPLATE_SETTING
+    monkeypatch.setattr(admin, "is_admin", lambda _: True)
+    setter = AsyncMock(return_value=True)
+    monkeypatch.setattr(database, "set_bot_setting", setter)
+    prefix = "Video edit: replace @Video1 with {identity_images}. "
+    template = prefix + "x" * (4096 - len(prefix))
+    message = SimpleNamespace(from_user=SimpleNamespace(id=123),
+        text="/seedance25_edit_prompt set", answer=AsyncMock(),
+        reply_to_message=SimpleNamespace(text=template, caption=None))
+    await admin.cmd_seedance25_edit_prompt(message)
+    setter.assert_awaited_once_with(IDENTITY_TEMPLATE_SETTING, template, updated_by_telegram_id=123)

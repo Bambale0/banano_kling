@@ -21,6 +21,7 @@ from bot.services.kling_service import KlingService
 from bot.services.media_input_utils import canonicalize_local_upload_url
 from bot.services.seedance25_identity import (
     IDENTITY_ROLE_VERSION,
+    SEEDANCE_25_PROMPT_MAX_CHARS,
     build_identity_transfer_prompt,
     resolve_identity_transfer_prompt,
     validate_identity_transfer_refs,
@@ -187,8 +188,11 @@ class Seedance25Service(KlingService):
         )
         if missing:
             raise ValueError("Prompt references missing Seedance media: " + ", ".join(missing))
-        if len(normalized) > cls.MAX_PROMPT_LENGTH:
-            raise ValueError(f"Seedance 2.5 prompt exceeds {cls.MAX_PROMPT_LENGTH} characters after reference-role instructions")
+        # Compact aliases can grow during canonicalization (e.g. @img1).
+        # Validate the exact provider text, including the direct-edit cap.
+        limit = SEEDANCE_25_PROMPT_MAX_CHARS if identity_transfer else cls.MAX_PROMPT_LENGTH
+        if len(normalized) > limit:
+            raise ValueError(f"Seedance 2.5 prompt exceeds {limit} characters after reference-role instructions")
         return normalized
 
     async def generate_video(

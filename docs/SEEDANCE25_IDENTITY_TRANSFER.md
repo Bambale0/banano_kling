@@ -38,7 +38,7 @@ Telegram admin command:
 /seedance25_edit_prompt reset
 ```
 
-The first command downloads the current template. `set` also works as a reply to a text/caption containing the template. Only authenticated configured administrators can read/change it via this command; writes record the actor using the existing settings audit columns. Placeholders, length and media aliases are validated before saving. Only `{identity_images}` is allowed; Python attribute/index/conversion/format expressions are rejected. Additional image indices must be generated from that placeholder, never fixed `@Image2` tags that would break a one-photo request.
+The first command downloads the current template. `set` also works as a reply to a text/caption containing the template. Templates are limited to 4,096 characters so every accepted template can be set through the admin surface; use a reply for the maximum length, without adding the command prefix to the template message. Only authenticated configured administrators can read/change it via this command; writes record the actor using the existing settings audit columns. Placeholders, length and media aliases are validated before saving. Only `{identity_images}` is allowed; Python attribute/index/conversion/format expressions are rejected. Additional image indices must be generated from that placeholder, never fixed `@Image2` tags that would break a one-photo request.
 
 ## Paid launch safety and repeats
 
