@@ -210,7 +210,11 @@ export function VideoGeneratorForm({
   const retainedDurationCost = retainedDurationCosts?.[selectedDuration.toString()]
   const priceAvailable = (!repeatSlots || repeatSlots.available)
     && (!requiresDurationQuote || (typeof retainedDurationCost === 'number' && Number.isFinite(retainedDurationCost)))
-  const repeatCostMultiplier = repeatSlots?.cost_multiplier ?? 1
+  // Normal Seedance 2 submits retained video refs even after switching scenario.
+  // Repeat descriptors already include all retained/replacement source inputs.
+  const repeatCostMultiplier = repeatSlots?.cost_multiplier ?? (
+    selectedModel === 'seedance_2' && (model?.max_video_references ?? 0) > 0 && videoReferences.length > 0 ? 2 : 1
+  )
   const durationCosts = useMemo(
     () => requiresDurationQuote ? retainedDurationCosts || {} : priceAvailable
       ? Object.fromEntries(
