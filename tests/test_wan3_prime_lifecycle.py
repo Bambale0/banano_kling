@@ -312,8 +312,10 @@ async def test_delivery_unavailable_preserves_result_without_regeneration():
     await lifecycle.reconcile_once(provider_task_id="provider_1")
 
     class BlockedBot:
-        async def send_message(self, *_args, **_kwargs):
-            raise Exception("bot was blocked by the user")
+        async def send_video(self, *_args, **_kwargs):
+            raise RuntimeError("bot was blocked by the user")
+
+        send_message = send_video
 
     assert await lifecycle.deliver_ready_once(BlockedBot()) == 0
     status = await lifecycle.status(actor, launched["task_id"])

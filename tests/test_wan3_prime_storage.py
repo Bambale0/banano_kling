@@ -7,6 +7,7 @@ from PIL import Image
 
 from bot import database
 from bot.services.wan3_prime_lifecycle import Wan3PrimeActor
+from bot.services.wan3_prime_media import Wan3PrimeValidationError
 from bot.services.wan3_prime_storage import (
     CHUNK_SIZE,
     wan3_prime_probe,
@@ -64,5 +65,5 @@ async def test_chunk_retry_same_hash_ok_changed_hash_conflict():
     )
     await wan3_prime_storage.save_chunk(a, upload_id=init["upload_id"], index=0, total=1, chunk=raw)
     await wan3_prime_storage.save_chunk(a, upload_id=init["upload_id"], index=0, total=1, chunk=raw)
-    with pytest.raises(Exception):
+    with pytest.raises(Wan3PrimeValidationError, match="different"):
         await wan3_prime_storage.save_chunk(a, upload_id=init["upload_id"], index=0, total=1, chunk=b"different")

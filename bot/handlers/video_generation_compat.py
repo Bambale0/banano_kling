@@ -115,7 +115,7 @@ def _advanced_video_models_keyboard(
 
 
 async def _render_video_model_page(callback, state, *, family="all", page=0, current_model=None):
-    family, page, pages, _models = _video_model_page(family, page)
+    family, page, _pages, _models = _video_model_page(family, page)
     await state.update_data(video_model_family=family, video_model_page=page, video_flow_step="select_model")
     text = (
         "🎬 <b>Создание видео</b>\n<b>Шаг 1. Выберите модель</b>\n\n"

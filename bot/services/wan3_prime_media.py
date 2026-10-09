@@ -178,8 +178,6 @@ def normalize_wan3_body(body: dict[str, Any]) -> dict[str, Any]:
         "audio_references": "reference_audio_urls",
         "wan_reference_file_urls": "reference_file_urls",
         "wan_reference_link_urls": "reference_link_urls",
-        "v_duration": "duration",
-        "v_ratio": "aspect_ratio",
     }
     out = dict(body)
     if "v_model" in out and "model" not in out:
@@ -383,11 +381,11 @@ async def validate_wan3_recipe(body: dict[str, Any], probe: MediaProbe | None = 
         media.setdefault(field, []).append(info)
         return info
 
-    for field, url in (("first_frame_url", first_frame), ("last_frame_url", last_frame)):
+    for field_name, url in (("first_frame_url", first_frame), ("last_frame_url", last_frame)):
         if url:
-            info = await add_url(field, url, "image")
+            info = await add_url(field_name, url, "image")
             if (info.extension or "").lower() not in IMAGE_EXTENSIONS:
-                raise Wan3PrimeValidationError(f"{field} must be JPEG/PNG/BMP/WEBP")
+                raise Wan3PrimeValidationError(f"{field_name} must be JPEG/PNG/BMP/WEBP")
             if info.has_alpha:
                 raise Wan3PrimeValidationError("PNG transparency is not supported")
             _check_size(info, max_bytes=20 * 1024 * 1024)

@@ -204,7 +204,7 @@ def _managed_public_url(local_path: str) -> str:
         from bot.config import config
 
         base = str(getattr(config, "static_base_url", "") or "").rstrip("/")
-    except Exception:
+    except (ImportError, AttributeError, ValueError):
         base = ""
     if not base:
         return f"/uploads/{rel.as_posix()}"
@@ -216,7 +216,7 @@ def _public_callback_base(miniapp_root: str = "") -> str | None:
         from bot.config import config
 
         configured_host = getattr(config, "WEBHOOK_HOST", "")
-    except Exception:
+    except (ImportError, AttributeError, ValueError):
         configured_host = ""
     for value in (
         os.getenv("WAN3_CALLBACK_BASE_URL"),
@@ -224,7 +224,7 @@ def _public_callback_base(miniapp_root: str = "") -> str | None:
         os.getenv("WEBHOOK_HOST"),
     ):
         base = str(value or "").rstrip("/")
-        if base.startswith("http://") or base.startswith("https://"):
+        if base.startswith(("http://", "https://")):
             return f"{base}{miniapp_root.rstrip('/')}/api/wan3/callback"
     return None
 
@@ -323,7 +323,7 @@ class Wan3PrimeLifecycle:
                 await self.reconcile_once()
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - isolate transport/storage failures with durable outcome state
                 logger.error('Wan3 recovery iteration failed: error_type=%s', type(exc).__name__)
             await asyncio.sleep(30)
 
@@ -346,7 +346,7 @@ class Wan3PrimeLifecycle:
         configured = raw is not None
         try:
             if isinstance(raw, bool):
-                raise ValueError
+                raise TypeError("Boolean is not a generation rate")
             rate = float(raw)
         except (TypeError, ValueError):
             rate = 0.0
@@ -553,7 +553,7 @@ class Wan3PrimeLifecycle:
         except TimeoutError:
             await self._mark_unknown(internal_task_id, "network_error", "Provider createTask timed out")
             return await self.status(actor, internal_task_id)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - isolate transport/storage failures with durable outcome state
             await self._mark_unknown(internal_task_id, "network_error", type(exc).__name__)
             return await self.status(actor, internal_task_id)
 
@@ -561,7 +561,7 @@ class Wan3PrimeLifecycle:
         if classification == "accepted" and provider_task_id:
             try:
                 await self._bind_provider_id(internal_task_id, provider_task_id)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - isolate transport/storage failures with durable outcome state
                 logger.error('Wan3 acceptance persistence pending: task_id=%s provider_task_id=%s error_type=%s', internal_task_id, provider_task_id, type(exc).__name__)
                 with contextlib.suppress(Exception):
                     await self._mark_unknown(internal_task_id, 'acceptance_persistence_pending', 'Accepted task needs reconciliation')
@@ -708,7 +708,7 @@ class Wan3PrimeLifecycle:
                 continue
             try:
                 status = await self.transport.get_task_status(row["provider_task_id"])
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - isolate transport/storage failures with durable outcome state
                 logger.info('Wan3 poll failed: task_id=%s error_type=%s', row['internal_task_id'], type(exc).__name__)
                 await self._mark_checked(row['internal_task_id'], retry_seconds=60)
                 continue
@@ -832,7 +832,7 @@ class Wan3PrimeLifecycle:
             try:
                 allowed = await asyncio.wait_for(database.can_attempt_telegram_delivery(
                     int(row["telegram_id"]), probe=getattr(bot, "get_chat", None)), timeout=15)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - isolate transport/storage failures with durable outcome state
                 outcome = DeliveryOutcome("pending", error=f"chat_check_{type(exc).__name__}")
             else:
                 outcome = (await deliver_wan_result(bot, dict(row))) if allowed else DeliveryOutcome("unavailable", error="chat_not_started")
@@ -888,7 +888,7 @@ class Wan3PrimeLifecycle:
         try:
             stored_path = dict(row).get('result_path')
             local_path = stored_path if stored_path and os.path.isfile(stored_path) else await downloader.download(urls[0], task_id=row["internal_task_id"])
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - isolate transport/storage failures with durable outcome state
             logger.warning("Wan3 result download failed: task=%s reason=%s", row["internal_task_id"], type(exc).__name__)
             return False
         if not local_path or not os.path.exists(local_path):
@@ -902,7 +902,7 @@ class Wan3PrimeLifecycle:
             try:
                 info = await self.probe.probe_file(local_path, kind="video")
                 result_seconds = info.duration_seconds
-            except Exception:
+            except (ImportError, AttributeError, ValueError):
                 result_seconds = None
         if result_seconds is None or not math.isfinite(float(result_seconds)) or float(result_seconds) <= 0:
             async with db_backend.connect(_database_path()) as db:

@@ -74,7 +74,7 @@ async def deliver_wan_result(bot: Any, record: dict[str, Any]) -> DeliveryOutcom
             sent = await asyncio.wait_for(bot.send_message(telegram_id, text, parse_mode="HTML",
                 reply_markup=_markup(task_id, None)), timeout=timeout)
             return _receipt(sent)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - classify uncertain Telegram outcomes without replay
             return _failure(exc)
 
     caption = ("✅ <b>Wan 3.0 Video Prime — готово</b>\n"
@@ -93,7 +93,7 @@ async def deliver_wan_result(bot: Any, record: dict[str, Any]) -> DeliveryOutcom
             sent = await asyncio.wait_for(bot.send_video(telegram_id, video=url,
                 supports_streaming=True, **kwargs), timeout=timeout)
             return _receipt(sent)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - classify uncertain Telegram outcomes without replay
             outcome = _failure(exc)
             if not isinstance(exc, TelegramBadRequest):
                 return outcome
@@ -112,7 +112,7 @@ async def deliver_wan_result(bot: Any, record: dict[str, Any]) -> DeliveryOutcom
             sent = await asyncio.wait_for(bot.send_video(telegram_id,
                 video=FSInputFile(local), supports_streaming=True, **kwargs), timeout=timeout)
             return _receipt(sent)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - classify uncertain Telegram outcomes without replay
             outcome = _failure(exc)
             if not isinstance(exc, TelegramBadRequest) or outcome.status == "unavailable":
                 return outcome
@@ -121,7 +121,7 @@ async def deliver_wan_result(bot: Any, record: dict[str, Any]) -> DeliveryOutcom
             sent = await asyncio.wait_for(bot.send_document(telegram_id,
                 document=FSInputFile(local), **kwargs), timeout=timeout)
             return _receipt(sent)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - classify uncertain Telegram outcomes without replay
             outcome = _failure(exc)
             if not isinstance(exc, TelegramBadRequest) or outcome.status == "unavailable":
                 return outcome
@@ -135,5 +135,5 @@ async def deliver_wan_result(bot: Any, record: dict[str, Any]) -> DeliveryOutcom
             caption + "\n\nВидео готово. Пока файл не удалось отправить в чат — оригинал доступен по кнопке ниже.",
             parse_mode="HTML", reply_markup=markup), timeout=timeout)
         return _receipt(sent, "link_sent")
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - classify uncertain Telegram outcomes without replay
         return _failure(exc)

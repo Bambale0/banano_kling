@@ -569,7 +569,7 @@ async def receive_wan3_media(message: types.Message, state: FSMContext):
     except ValueError as exc:
         await message.answer(str(exc), reply_markup=remove_keyboard(draft), parse_mode=None)
         return
-    except Exception:
+    except Exception:  # noqa: BLE001 - FSM boundary preserves draft and reports safe failure
         await message.answer("Не удалось сохранить медиа. Черновик и ключ запуска сохранены; повторите загрузку.", reply_markup=remove_keyboard(draft), parse_mode=None)
         return
     await _show_dashboard(message, state, draft)
@@ -715,7 +715,7 @@ async def quote_wan3_prime(callback: types.CallbackQuery, state: FSMContext):
             client_request_id=draft.client_request_id,
             recipe=build_wan3_payload(draft),
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - FSM boundary preserves draft and reports safe failure
         await callback.answer("Не удалось получить расчёт. Черновик сохранён.", show_alert=True)
         return
     draft.quote_hash = str(quote.get("quote_hash") or "") or None
@@ -751,7 +751,7 @@ async def confirm_wan3_prime(callback: types.CallbackQuery, state: FSMContext):
                 quote_hash=draft.quote_hash,
                 recipe=build_wan3_payload(draft),
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - FSM boundary preserves draft and reports safe failure
             await callback.answer("Сеть оборвалась. Ключ запуска сохранён; повторите подтверждение.", show_alert=True)
             return
     status = str(result.get("status") or "unknown")
@@ -778,7 +778,7 @@ async def restore_wan3_owner_recipe(callback: types.CallbackQuery, state: FSMCon
     try:
         response = await runtime.owner_telegram_wan3_prime_recipe(telegram_id=callback.from_user.id, task_id=task_id)
         recipe = response.get("recipe") or {}
-    except Exception:
+    except Exception:  # noqa: BLE001 - FSM boundary preserves draft and reports safe failure
         await callback.answer("Не удалось восстановить рецепт.", show_alert=True)
         return
     draft = Wan3PrimeDraft(

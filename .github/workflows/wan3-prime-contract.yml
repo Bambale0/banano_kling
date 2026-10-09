@@ -1,0 +1,100 @@
+name: Wan Prime Release Contract
+
+on:
+  pull_request:
+    branches: [tanyapi]
+    paths:
+      - 'bot/**'
+      - 'tests/**'
+      - 'frontend/miniapp-v0/**'
+      - 'requirements.txt'
+      - '.github/workflows/wan3-prime-contract.yml'
+  push:
+    branches: [tanyapi]
+    paths:
+      - 'bot/**'
+      - 'tests/**'
+      - 'frontend/miniapp-v0/**'
+      - 'requirements.txt'
+      - '.github/workflows/wan3-prime-contract.yml'
+
+permissions:
+  contents: read
+concurrency:
+  group: wan-prime-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Wan Prime - provider, media and lifecycle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      BANANO_SKIP_PROJECT_ENV: '1'
+      BANANO_DISABLE_FILE_LOGGING: '1'
+      BOT_TOKEN: '123456:TEST_TOKEN_FOR_CI_ONLY'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt pytest pytest-asyncio
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - run: python -m pytest tests/test_wan3*.py tests/test_advanced_video_contract.py tests/test_admin_model_coverage.py -q --tb=short
+
+  postgres:
+    name: Wan Prime - PostgreSQL atomicity and schema
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: banano_runtime_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d banano_runtime_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      BANANO_SKIP_PROJECT_ENV: '1'
+      BANANO_DISABLE_FILE_LOGGING: '1'
+      BOT_TOKEN: '123456:TEST_TOKEN_FOR_CI_ONLY'
+      PARTNER_POSTGRES_TEST: '1'
+      RUNTIME_POSTGRES_TEST: '1'
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/banano_runtime_test
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt pytest pytest-asyncio
+      - run: python -m pytest tests/test_wan3_prime_postgres.py -q --tb=short
+
+  browser:
+    name: Wan Prime - all modes mobile browser
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend/miniapp-v0
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/miniapp-v0/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: node e2e/wan3-prime.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wan-prime-browser
+          path: frontend/miniapp-v0/.artifacts/wan3-prime
+          if-no-files-found: ignore

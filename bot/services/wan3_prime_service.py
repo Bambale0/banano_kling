@@ -67,8 +67,8 @@ class Wan3PrimeService(KlingService):
     MODEL_NAME = "wan/3-0-video-prime"
     INTERNAL_MODEL_KEY = "wan_3_prime"
 
-    ALLOWED_RESOLUTIONS = {"480P", "720P", "1080P"}
-    ALLOWED_RATIOS = {"adaptive", "16:9", "4:3", "1:1", "3:4", "9:16"}
+    ALLOWED_RESOLUTIONS = frozenset({"480P", "720P", "1080P"})
+    ALLOWED_RATIOS = frozenset({"adaptive", "16:9", "4:3", "1:1", "3:4", "9:16"})
     MIN_DURATION = 2
     MAX_DURATION = 30
     AUTO_DURATION = -1
