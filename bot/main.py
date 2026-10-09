@@ -2806,6 +2806,9 @@ async def on_startup(bot: Bot, dispatcher: Dispatcher | None = None):
         asyncio.create_task(_db_backup_loop())
         ensure_notification_campaign_worker(bot)
         ensure_support_outbox_worker(bot)
+        from bot.referral_notifications import ensure_referral_notification_worker
+
+        ensure_referral_notification_worker(bot)
         ensure_feed_cache_warmup()
         logger.info(
             "Scheduled cleanup task for static/uploads/logs, payment reconciliation, memory dumps, DB backups, support outbox, and notification campaigns"
@@ -2816,6 +2819,9 @@ async def on_startup(bot: Bot, dispatcher: Dispatcher | None = None):
 async def on_shutdown(bot: Bot):
     """Действия при остановке"""
     logger.info("Bot shutting down...")
+    from bot.referral_notifications import stop_referral_notification_worker
+
+    await stop_referral_notification_worker()
     try:
         from bot.services.cryptobot_service import cryptobot_service
 

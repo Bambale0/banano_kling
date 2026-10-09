@@ -6,6 +6,8 @@ on:
     paths:
       - 'bot/services/partner_approval_service.py'
       - 'bot/partner_policy.py'
+      - 'bot/referral_notifications.py'
+      - 'tests/test_referral_notifications_postgres.py'
       - 'bot/partner_commission_settings.py'
       - 'bot/database.py'
       - 'schema_postgres.sql'
@@ -78,4 +80,4 @@ jobs:
 
       - name: Run focused PostgreSQL regression tests
         run: |
-          pytest tests/test_partner_approval_postgres.py tests/test_partner_policy_postgres.py -vv --tb=short
+          pytest tests/test_partner_approval_postgres.py tests/test_partner_policy_postgres.py tests/test_referral_notifications_postgres.py -vv --tb=short
