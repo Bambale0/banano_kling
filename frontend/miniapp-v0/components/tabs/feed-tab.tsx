@@ -13,6 +13,7 @@ import {
   videoPreviewFrameUrl,
 } from '@/lib/media-url'
 import { copyTextToClipboard } from '@/lib/clipboard'
+import { isNavigableShareLink, tryOpenTelegramShareLink } from '@/lib/share-link-navigation'
 import { mergePendingPublication } from '@/lib/feed-events'
 import { Button } from '@/components/ui/button'
 import {
@@ -658,16 +659,34 @@ export function FeedTab() {
             onFocus={(event) => event.currentTarget.select()}
             className="block w-full min-w-0 select-text rounded-lg border border-border bg-background p-2 text-base"
           />
-          <Button
-            type="button"
-            disabled={copyStatus === 'copying'}
-            onClick={() => {
-              setError(null)
-              void copyShareLink(shareLink, shareRequest.current)
-            }}
-          >
-            Скопировать ссылку
-          </Button>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            {isNavigableShareLink(shareLink) && (
+              <Button asChild variant="outline" className="min-h-11 w-full sm:w-auto">
+                <a
+                  href={shareLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(event) => {
+                    if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey
+                      && tryOpenTelegramShareLink(shareLink)) event.preventDefault()
+                  }}
+                >
+                  Открыть ссылку
+                </a>
+              </Button>
+            )}
+            <Button
+              type="button"
+              className="min-h-11 w-full sm:w-auto"
+              disabled={copyStatus === 'copying'}
+              onClick={() => {
+                setError(null)
+                void copyShareLink(shareLink, shareRequest.current)
+              }}
+            >
+              Скопировать ссылку
+            </Button>
+          </div>
         </section>
       )}
 

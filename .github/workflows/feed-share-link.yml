@@ -1,0 +1,52 @@
+name: Feed Share Link Mobile Regression
+
+on:
+  pull_request:
+    branches: [tanyapi]
+    paths:
+      - 'frontend/miniapp-v0/components/tabs/feed-tab.tsx'
+      - 'frontend/miniapp-v0/components/tabs/__tests__/feed-copy-link.test.tsx'
+      - 'frontend/miniapp-v0/lib/share-link-navigation.ts'
+      - 'frontend/miniapp-v0/e2e/feed-share-link.mjs'
+      - '.github/workflows/feed-share-link.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  feed_share_mobile:
+    name: Feed links — Android Chromium and iOS WebKit emulation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend/miniapp-v0
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/miniapp-v0/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Unit regression, type and lint
+        run: |
+          npm test -- --runInBand components/tabs/__tests__/feed-copy-link.test.tsx
+          npx tsc --noEmit
+          npm run lint
+      - name: Build production Mini App
+        run: npm run build
+      - name: Install mobile-emulation browser engines
+        run: npx playwright install --with-deps chromium webkit
+      - name: Run intercepted share-link journeys
+        run: node e2e/feed-share-link.mjs
+      - name: Upload mobile screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: feed-share-mobile
+          path: frontend/miniapp-v0/test-results/feed-share/
+          if-no-files-found: ignore

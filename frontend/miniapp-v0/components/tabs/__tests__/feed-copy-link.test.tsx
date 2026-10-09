@@ -20,6 +20,7 @@ const execCopy = jest.fn()
 const scrollRecovery = jest.fn()
 beforeEach(() => {
  jest.clearAllMocks()
+ window.Telegram!.WebApp!.openTelegramLink = jest.fn()
  Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: scrollRecovery })
  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
  Object.defineProperty(document, 'execCommand', { configurable: true, value: execCopy })
@@ -82,4 +83,47 @@ it('leaves manual selection available after repeated denied copy attempts', asyn
  fireEvent.focus(field)
  expect((field as HTMLInputElement).selectionStart).toBe(0)
  expect((field as HTMLInputElement).selectionEnd).toBe(link.length)
+})
+
+it.each([
+ 'https://t.me/fixture_bot?start=remix_55_ref_EXACT%2Bcode',
+ 'https://t.me/fixture_bot/app?startapp=remix_55_ref_EXACT%2Bcode&mode=compact',
+])('opens the unchanged server URL through Telegram on an explicit click: %s', async (exactLink) => {
+ const openTelegramLink = jest.fn()
+ window.Telegram!.WebApp!.openTelegramLink = openTelegramLink
+ ;(shareFeedItem as jest.Mock).mockResolvedValueOnce({ item, link: exactLink })
+ await share()
+ const open = await screen.findByRole('link', { name: 'Открыть ссылку' })
+ expect(open).toHaveAttribute('href', exactLink)
+ expect(open).toHaveAttribute('target', '_blank')
+ expect(open).toHaveAttribute('rel', 'noopener noreferrer')
+ expect(openTelegramLink).not.toHaveBeenCalled()
+ const copyCalls = writeText.mock.calls.length
+ expect(fireEvent.click(open)).toBe(false)
+ expect(openTelegramLink).toHaveBeenCalledWith(exactLink)
+ expect(fireEvent.click(open)).toBe(false)
+ expect(openTelegramLink).toHaveBeenCalledTimes(2)
+ expect(shareFeedItem).toHaveBeenCalledTimes(1)
+ expect(writeText).toHaveBeenCalledTimes(copyCalls)
+ expect(screen.getByRole('textbox', { name: 'Ссылка на публикацию' })).toHaveValue(exactLink)
+})
+
+it.each(['absent', 'throws', 'web-url', 'modified-click'])('keeps normal secure browser navigation for %s', async (mode) => {
+ const openTelegramLink = jest.fn(() => { if (mode === 'throws') throw new Error('SDK unavailable') })
+ window.Telegram!.WebApp!.openTelegramLink = mode === 'absent' ? undefined : openTelegramLink
+ const exactLink = mode === 'web-url' ? 'https://example.test/post?startapp=feed_55_ref_EXACT%2Bcode' : link
+ ;(shareFeedItem as jest.Mock).mockResolvedValueOnce({ item, link: exactLink })
+ await share()
+ const open = await screen.findByRole('link', { name: 'Открыть ссылку' })
+ expect(open).toHaveAttribute('href', exactLink)
+ expect(fireEvent.click(open, mode === 'modified-click' ? { ctrlKey: true } : {})).toBe(true)
+ expect(openTelegramLink).toHaveBeenCalledTimes(mode === 'throws' ? 1 : 0)
+ expect(shareFeedItem).toHaveBeenCalledTimes(1)
+})
+
+it.each(['javascript:alert(1)', 'data:text/html,unsafe', '//t.me/fixture_bot', 'https://user:password@t.me/fixture_bot', 'https://t.me/fixture_bot\n?start=unsafe'])('keeps an unsafe URL non-executable: %s', async (unsafe) => {
+ ;(shareFeedItem as jest.Mock).mockResolvedValueOnce({ item, link: unsafe })
+ await share()
+ expect(screen.queryByRole('link', { name: 'Открыть ссылку' })).not.toBeInTheDocument()
+ expect(screen.getByRole('textbox', { name: 'Ссылка на публикацию' })).toHaveValue(unsafe.replace(/\n/g, ''))
 })
