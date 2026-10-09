@@ -1763,3 +1763,17 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Regression-first reproduction: 3 failures / 4 passes on the new boundary tests before fixes. Final provider text is now checked against the 20480 direct cap after canonicalization; oversized requests fail before quote/debit/submission. Ordinary prompt behavior is unchanged.
 - Restricted editable templates to 4096 characters and verified the full-size reply-to-message admin setter. This avoids adding an unnecessary document-upload surface.
 - Focused combined direct/identity/private-repeat tests after review fixes: 199 passed. Identity/template module and new tests are Ruff-clean; diff whitespace check passed. Full exact-head CI must run again before release. No new paid provider task or production mutation in this follow-up.
+
+
+## 2026-10-09 — Durable referral notifications and guarded delivery
+
+- Initial diagnosis used deployed PR280 `23b52ad9c20ef3d78434d4da9322ea9f8e66cb29`; PR282 publication was based on PR281 `31d02d43dd0d2bb18904eea588ac90ea40e2fe1f`. Follow-up baseline is merged `482c424c971e86404666bc7dfc04010ba7923bc9`.
+- PR279 suppressed both attachment notices and omitted the accepted-generation bonus receipt. PR282 adds a transactional, unique per-event outbox and reuses the existing safe snapshot sender. Financial terms, one-time qualification, prices and historical claims remain unchanged.
+- PR282 passed all four required CI gates plus real PostgreSQL and independent review. Its exact-SHA deploy was cancelled before SSH after later review identified Mini-App-only recipient deferral and retry-claim budget gaps; no production success is claimed.
+- Follow-up preserves queued receipts for known never_started recipients until private-chat lifecycle permits delivery, and counts durable send attempts rather than unstarted leases. Explicitly blocked/uncertain historical outcomes are not replayed.
+- Retry policy and both templates use typed, validated existing bot_settings plus an authenticated admin read/set/reset command. Templates freeze at enqueue; lease/attempt policy freezes per claim. Invalid stored configuration falls back safely without raw payload/error logging.
+- Existing registry stores last-editor/time metadata, not a new immutable audit history. No new schema beyond the original empty outbox, no live configuration changes, no paid generations, no real test messages and no historical backfill.
+- New functional regressions reproduced 5 failures before correction; 114 offline notification tests now pass. Full current-base backend, real PostgreSQL, changed-line lint, independent review and exact-head GitHub gates remain mandatory before the corrected release.
+- Detailed test evidence: [referral notification verification](REFERRAL_NOTIFICATIONS_20261009.md). Preserve all earlier ledger history; this is an appended entry only.
+
+- PR283 review follow-up: six reproduced edge cases now pass. Editable templates reject code/pre overlaps after placeholder expansion. Existing schema startup adds nullable missing bot_settings audit columns idempotently, preserving legacy values without inventing historical audit metadata. Unit suite: 120 passed; new real PostgreSQL legacy-table test is required in updated-head CI. Repeated code/security reviews and exact-head CI remain release gates.

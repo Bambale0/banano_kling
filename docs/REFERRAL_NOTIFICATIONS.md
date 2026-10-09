@@ -35,3 +35,40 @@ include `Referral notification sent/failed/blocked/terminal/uncertain` and event
 Regression coverage uses mocked Bot API calls, SQLite transaction tests, and the
 dedicated disposable PostgreSQL partner CI job. No live test recipients or paid
 provider jobs are used.
+
+## Managed runtime settings
+
+Administrators can use `/referral_notifications_config` to download the current
+JSON, `set JSON` (also via reply text or a JSON document) to save it, or `reset` to restore defaults.
+The existing `bot_settings` registry records the last editor and update time;
+it is not a separate immutable audit history. No live settings are changed by
+this release. Startup additively upgrades legacy two-column registries with nullable audit columns, preserving values and unknown historical metadata. The key is `referral_notifications.config`.
+
+Validated fields are `poll_seconds` (0.1–60), `batch_delay_seconds` (0.01–5),
+`lease_seconds` (integer 61–900, strictly above the sender timeout), `max_attempts`
+(integer 1–20), `attached_template`, and `bonus_template` (1–2000 characters).
+Each template must contain `{identity}` and `{bonus}` only; attribute/index
+access, conversion/spec syntax, invalid HTML and oversized rendered text are
+rejected. Only formatting tags without attributes are supported; links are not
+accepted in these receipt templates. Code/pre tags cannot overlap other formatting entities, including the formatted identity placeholder. Identity values are escaped, and saved text is immutable per event.
+Unknown fields and nonfinite/bool numeric values are rejected. Malformed stored
+configuration logs a sanitized warning and falls back to defaults instead of
+rolling back referral accounting. Partial JSON uses defaults for omitted fields.
+
+Future claims use current settings (worker reads use the existing five-second
+cache); in-flight claims retain their captured lease and attempt limit. A known
+`never_started` recipient remains queued without consuming attempts until the
+existing private-chat lifecycle clears that state. Actual Telegram rejection
+remains terminal: `/start` does not replay historical blocked/uncertain notices.
+Recovery restores attempts from durable send intent rather than counting a
+claim that crashed before starting a retry. No campaign audience or billing
+behavior changes.
+
+Lowering the retry limit terminalizes queued/failed records that already reached
+the new budget before releasing dependent bonus notices. Raising the limit later
+does not revive them or reverse attachment-before-bonus ordering.
+
+The admin setter accepts a replied UTF-8 JSON document with verified declared
+size and a streamed hard limit of 48000 bytes, a 10-second download deadline,
+and a 12000-character decoded JSON cap. This permits reapplying full-size
+templates that cannot fit in a single Telegram text message.

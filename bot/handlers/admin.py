@@ -2516,6 +2516,103 @@ def _build_admin_partner_xls(report: dict) -> tuple[bytes, str]:
     return "".join(parts).encode("utf-8"), filename
 
 
+@router.message(Command("referral_notifications_config"))
+async def cmd_referral_notifications_config(message: types.Message) -> None:
+    """Manage validated referral notification settings through the admin router."""
+    if not message.from_user or not is_admin(message.from_user.id):
+        await message.answer("⛔ Только для администратора.")
+        return
+    from dataclasses import asdict
+    from io import BytesIO
+
+    from bot.referral_notifications import (
+        get_referral_notification_settings,
+        reset_referral_notification_settings,
+        save_referral_notification_settings,
+    )
+
+    usage = (
+        "/referral_notifications_config — скачать текущие настройки JSON\n"
+        "/referral_notifications_config set JSON — сохранить настройки\n"
+        "Или ответьте командой с set на текст или JSON-файл (до 12000 символов).\n"
+        "/referral_notifications_config reset — вернуть стандартные настройки.\n"
+        "Поля: poll_seconds, batch_delay_seconds, lease_seconds, max_attempts, "
+        "attached_template, bonus_template.\n"
+        "В шаблонах разрешены только {identity} и {bonus}. "
+        "Тексты уже поставленных в очередь уведомлений не изменятся."
+    )
+    parts = str(message.text or "").split(maxsplit=2)
+    action = parts[1].lower() if len(parts) > 1 else ""
+    try:
+        if not action:
+            current = await get_referral_notification_settings()
+            payload = json.dumps(asdict(current), ensure_ascii=False, indent=2, allow_nan=False)
+            await message.answer_document(
+                document=BufferedInputFile(
+                    payload.encode("utf-8"), filename="referral-notifications-config.json"
+                ),
+                caption="Текущие настройки реферальных уведомлений.",
+            )
+            await message.answer(usage, parse_mode=None)
+            return
+        if action == "reset" and len(parts) == 2:
+            await reset_referral_notification_settings(admin_id=message.from_user.id)
+        elif action == "set":
+            reply = message.reply_to_message
+            if len(parts) == 3:
+                payload = parts[2]
+            elif reply and getattr(reply, "document", None):
+                payload = ""  # Documents use the bounded streaming branch below.
+            else:
+                payload = str(reply.text or reply.caption or "") if reply else ""
+            document = getattr(reply, "document", None) if reply else None
+            if not payload and document is not None:
+                size = getattr(document, "file_size", None)
+                if type(size) is not int or not 0 < size <= 48_000:
+                    raise ValueError("JSON document is too large or has no bounded size")
+
+                class BoundedConfigBuffer(BytesIO):
+                    def write(self, data):
+                        if self.tell() + len(data) > 48_000:
+                            raise ValueError("JSON document exceeds its byte limit")
+                        return super().write(data)
+
+                with BoundedConfigBuffer() as destination:
+                    await message.bot.download(document, destination=destination, timeout=10)
+                    payload = destination.getvalue().decode("utf-8")
+            if not payload.strip() or len(payload) > 12_000:
+                await message.answer(
+                    "Передайте JSON настроек длиной от 1 до 12000 символов.\n\n" + usage,
+                    parse_mode=None,
+                )
+                return
+            await save_referral_notification_settings(payload, admin_id=message.from_user.id)
+        else:
+            await message.answer(usage, parse_mode=None)
+            return
+    except ValueError:
+        await message.answer(
+            "Некорректные настройки: проверьте JSON, поля, диапазоны значений "
+            "и шаблоны уведомлений.\n\n" + usage,
+            parse_mode=None,
+        )
+        return
+    except Exception as exc:  # noqa: BLE001 - admin boundary logs sanitized error types only
+        logger.error(
+            "Referral notification settings command failed: admin_id=%s action=%s error_type=%s",
+            message.from_user.id,
+            action if action in {"set", "reset"} else "read" if not action else "usage",
+            type(exc).__name__,
+        )
+        await message.answer("Не удалось обработать настройки. Попробуйте позже.")
+        return
+    logger.info(
+        "Referral notification settings updated: admin_id=%s action=%s",
+        message.from_user.id, action,
+    )
+    await message.answer("Настройки реферальных уведомлений сохранены.")
+
+
 @router.message(Command("seedance25_edit_prompt"))
 async def cmd_seedance25_edit_prompt(message: types.Message) -> None:
     """Manage the direct-edit default through the existing audited settings store."""
