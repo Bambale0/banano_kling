@@ -2516,6 +2516,54 @@ def _build_admin_partner_xls(report: dict) -> tuple[bytes, str]:
     return "".join(parts).encode("utf-8"), filename
 
 
+@router.message(Command("seedance25_edit_prompt"))
+async def cmd_seedance25_edit_prompt(message: types.Message) -> None:
+    """Manage the direct-edit default through the existing audited settings store."""
+    if not message.from_user or not is_admin(message.from_user.id):
+        await message.answer("⛔ Только для администратора.")
+        return
+    from bot.services.seedance25_identity import (
+        get_identity_edit_template,
+        reset_identity_edit_template,
+        save_identity_edit_template,
+    )
+
+    usage = (
+        "/seedance25_edit_prompt — скачать шаблон прямой замены\n"
+        "/seedance25_edit_prompt set ТЕКСТ — сохранить шаблон\n"
+        "Можно ответить этой командой с set на сообщение с шаблоном.\n"
+        "/seedance25_edit_prompt reset — вернуть стандартный шаблон.\n"
+        "В шаблоне нужны @Video1 и {identity_images}. Полные промпты пользователей не оборачиваются."
+    )
+    parts = str(message.text or "").split(maxsplit=2)
+    action = parts[1].lower() if len(parts) > 1 else ""
+    try:
+        if not action:
+            current = await get_identity_edit_template()
+            await message.answer_document(
+                document=BufferedInputFile(current.encode("utf-8"), filename="seedance25-direct-edit.txt"),
+                caption="Прямая замена: фото + исходное видео. Без генерации промежуточных кадров.",
+            )
+            await message.answer(usage)
+            return
+        if action == "reset" and len(parts) == 2:
+            await reset_identity_edit_template(admin_id=message.from_user.id)
+        elif action == "set":
+            reply = message.reply_to_message
+            content = parts[2] if len(parts) == 3 else (
+                str(reply.text or reply.caption or "") if reply else ""
+            )
+            await save_identity_edit_template(content, admin_id=message.from_user.id)
+        else:
+            await message.answer(usage)
+            return
+    except ValueError as exc:
+        await message.answer(str(exc) + "\n\n" + usage, parse_mode=None)
+        return
+    logger.info("Seedance direct edit template updated: admin_id=%s action=%s", message.from_user.id, action)
+    await message.answer("Шаблон сохранён. Применится к следующим запускам прямой замены.")
+
+
 @router.message(Command("gemini_photo_prompt"))
 async def cmd_gemini_photo_prompt(message: types.Message) -> None:
     """Inspect or edit Gemini-only photo instructions with an audited setting."""

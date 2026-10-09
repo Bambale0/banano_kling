@@ -10,6 +10,7 @@ import {
   type Seedance25GeneratePayload,
   type Seedance25QuoteResponse,
   SEEDANCE25_MAX_PROMPT_LENGTH,
+  SEEDANCE25_IDENTITY_MAX_PROMPT_LENGTH,
   uploadSeedance25Video,
   type Seedance25GenerateResponse,
   type Seedance25OutputFormat,
@@ -275,6 +276,7 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
   const [nsfwChecker, setNsfwChecker] = useState(false)
   const [prompt, setPrompt] = useState('')
   const promptLength = Array.from(prompt.trim()).length
+  const promptLimit = identityTransfer ? SEEDANCE25_IDENTITY_MAX_PROMPT_LENGTH : SEEDANCE25_MAX_PROMPT_LENGTH
 
   const [firstFrame, setFirstFrame] = useState<RefItem | null>(null)
   const [lastFrame, setLastFrame] = useState<RefItem | null>(null)
@@ -465,7 +467,7 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
     setError(null)
     setQueued(null)
     try {
-      if (promptLength > SEEDANCE25_MAX_PROMPT_LENGTH) throw new Error(`Промпт — максимум ${SEEDANCE25_MAX_PROMPT_LENGTH} символов`)
+      if (promptLength > promptLimit) throw new Error(`Промпт — максимум ${promptLimit} символов`)
       if (!identityTransfer && duration === -1 && !isAdmin) throw new Error('Автоматическая длительность доступна только администратору')
 
       const first = firstSource.trim() || firstFrame?.file.url || null
@@ -641,7 +643,7 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
           <SectionTitle
             eyebrow="Шаг 2"
             title={identityTransfer ? 'Фото человека + исходное видео' : 'Добавьте референсы'}
-            hint={identityTransfer ? '1–3 фото одного человека задают внешность. Одно видео задаёт движения, камеру и сцену. Модель заменит главного персонажа.' : 'Можно сочетать фото, видео и аудио — модель использует их как ориентиры'}
+            hint={identityTransfer ? 'Прямая замена: 1–3 фото одного человека и одно исходное видео. Без промежуточных кадров; длительность и формат берутся из видео. Точность внешности зависит от результата модели.' : 'Можно сочетать фото, видео и аудио — модель использует их как ориентиры'}
           />
 
           {identityTransfer ? (
@@ -762,8 +764,8 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
       <section className="space-y-3">
         <SectionTitle
           eyebrow={`Шаг ${promptStep}`}
-          title={identityTransfer ? 'Дополнительные пожелания' : 'Опишите результат'}
-          hint={identityTransfer ? 'Можно оставить пустым: роли фото и видео уже заданы. Ваш текст дополнит сценарий замены персонажа.' : scenario === 'text'
+          title={identityTransfer ? 'Инструкция прямой замены' : 'Опишите результат'}
+          hint={identityTransfer ? 'Можно оставить пустым. Полный промпт с @Image1 и @Video1 отправится без шаблона; короткие пожелания дополнят команду замены. Фото и исходное видео идут прямо в Seedance.' : scenario === 'text'
             ? 'Что происходит в кадре, как движется камера, какой свет и настроение'
             : 'Референсы задают основу, а текст объясняет, что именно с ними сделать'}
         />
@@ -778,7 +780,7 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
           />
           <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
             <span>Совет: движение камеры пишите прямо здесь — например, «плавный наезд, без зума»</span>
-            <span className={promptLength > SEEDANCE25_MAX_PROMPT_LENGTH ? 'text-destructive' : ''}>{promptLength}/{SEEDANCE25_MAX_PROMPT_LENGTH}</span>
+            <span className={promptLength > promptLimit ? 'text-destructive' : ''}>{promptLength}/{promptLimit}</span>
           </div>
         </div>
       </section>
@@ -915,7 +917,7 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
 
       <button
         type="button"
-        disabled={submitting || uploading || (identityTransfer && (!!identityRefs.issue || !identityQuote)) || !canAfford || promptLength > SEEDANCE25_MAX_PROMPT_LENGTH}
+        disabled={submitting || uploading || (identityTransfer && (!!identityRefs.issue || !identityQuote)) || !canAfford || promptLength > promptLimit}
         onClick={() => void submit()}
         className="w-full rounded-2xl border border-cyan/50 bg-cyan/15 px-4 py-3.5 text-sm font-semibold text-cyan transition hover:bg-cyan/20 disabled:cursor-not-allowed disabled:opacity-50"
       >

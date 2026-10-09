@@ -30,9 +30,12 @@ async def test_explicit_identity_assigns_roles_and_preserves_order(count):
     assert payload["input"]["reference_image_urls"] == images
     assert payload["input"]["duration"] == -1
     assert payload["input"]["aspect_ratio"] == "adaptive"
-    assert ("@Image1 is the sole authoritative identity" if count == 1 else "@Image1 is the primary identity") in payload["input"]["prompt"]
-    assert "@Video1 is only the reference for motion" in payload["input"]["prompt"]
-    assert "Do not inherit, preserve, average, morph or blend" in payload["input"]["prompt"]
+    assert payload["input"]["prompt"].startswith("Video edit:")
+    assert "@Video1" in payload["input"]["prompt"]
+    for index in range(1, count + 1):
+        assert f"@Image{index}" in payload["input"]["prompt"]
+    assert "sole authoritative" not in payload["input"]["prompt"]
+    assert payload["input"]["omni_reference_task_type"] == "edit"
     assert payload["input"]["prompt"].endswith("Keep the dance")
     assert "identity_transfer" not in payload["input"]
 
@@ -128,7 +131,7 @@ async def test_paid_identity_quote_debit_and_persistence_match(public_mocks):
     record = public.generation_module.add_generation_task.call_args.kwargs
     assert record["prompt"] == "Keep the dance"
     assert record["cost"] == record["request_data"]["charged_cost"] == 104
-    assert record["request_data"]["seedance25_identity_role_version"] == "apix-v1"
+    assert record["request_data"]["seedance25_identity_role_version"] == "direct-edit-v1"
     assert record["request_data"]["seedance25_video_editing"] is True
     assert record["request_data"]["seedance25_identity_transfer"] is True
     assert "authoritative" not in str(record)
@@ -327,7 +330,9 @@ async def test_paid_launch_captures_exact_kie_contract(public_mocks, monkeypatch
     assert payload["input"]["aspect_ratio"] == "adaptive"
     assert payload["input"]["reference_image_urls"] == body["reference_images"]
     assert payload["input"]["reference_video_urls"] == body["v_reference_videos"]
-    assert "@Video1 is only the reference for motion" in payload["input"]["prompt"]
+    assert payload["input"]["prompt"].startswith("Video edit:")
+    assert "@Video1" in payload["input"]["prompt"]
+    assert payload["input"]["omni_reference_task_type"] == "edit"
     assert "identity_transfer" not in payload["input"] and "video_editing" not in payload["input"]
     assert "billing_duration" not in payload["input"]
     miniapp.deduct_credits.assert_awaited_once_with(123, 104)
@@ -491,6 +496,44 @@ async def test_explicit_identity_repeat_quotes_only_required_current_media(
             # Explicit empties are removals, then the actual identity validator
             # rejects the missing required media rather than restoring old refs.
             delegate.assert_awaited_once()
+    miniapp.deduct_credits.assert_not_awaited()
+    public._launch_provider.assert_not_awaited()
+    public.generation_module.add_generation_task.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_direct_edit_freezes_configured_prompt_before_paid_launch(public_mocks, monkeypatch):
+    from bot import database
+    public, miniapp, _request = public_mocks
+    template = "Video edit: replace the person in @Video1 using {identity_images}. Keep the coat."
+    getter = AsyncMock(return_value=template)
+    monkeypatch.setattr(database, "get_bot_setting", getter)
+    payload = public._scenario_payload(identity_body(prompt=""), "")
+    await public._validate_public_payload(payload, is_admin=False, telegram_id=123)
+    frozen = template.replace("{identity_images}", "@Image1")
+    assert payload["provider_prompt"] == frozen
+    assert payload["prompt"] == ""
+    getter.assert_awaited_once()
+    monkeypatch.setattr(database, "get_bot_setting", AsyncMock(side_effect=AssertionError("configuration reread after validation")))
+    monkeypatch.setattr(public.seedance_25_service, "kie_key", "mock-key")
+    post = AsyncMock(return_value={"task_id": "frozen-direct-edit"})
+    monkeypatch.setattr(public.seedance_25_service, "_kie_post", post)
+    result = await real_launch_provider(payload)
+    assert result["success"] is True
+    post.assert_awaited_once()
+    assert post.call_args.args[1]["input"]["prompt"] == frozen
+    metadata = public._request_data(payload, is_admin=False, quote=104, source="miniapp")
+    assert metadata["seedance25_provider_prompt_sha256"] == result["provider_prompt_sha256"]
+    miniapp.deduct_credits.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_invalid_configured_direct_template_stops_before_debit(public_mocks, monkeypatch):
+    from bot import database
+    public, miniapp, request = public_mocks
+    monkeypatch.setattr(database, "get_bot_setting", AsyncMock(return_value="missing roles"))
+    response = await public._public_miniapp_generate(request, identity_body(prompt=""))
+    assert response.status == 400
     miniapp.deduct_credits.assert_not_awaited()
     public._launch_provider.assert_not_awaited()
     public.generation_module.add_generation_task.assert_not_awaited()

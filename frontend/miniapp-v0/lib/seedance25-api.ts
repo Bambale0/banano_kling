@@ -9,6 +9,8 @@ export type Seedance25OutputFormat = 'mp4' | 'mov'
 
 // KIE technical contract; keep aligned with Seedance25Service.MAX_PROMPT_LENGTH.
 export const SEEDANCE25_MAX_PROMPT_LENGTH = 30_000
+// Direct edit uses the currently published KIE limit; ordinary mode is unchanged.
+export const SEEDANCE25_IDENTITY_MAX_PROMPT_LENGTH = 20_480
 
 const DIRECT_VIDEO_UPLOAD_BYTES = 45 * 1024 * 1024
 const VIDEO_CHUNK_BYTES = 7 * 1024 * 1024
@@ -165,6 +167,9 @@ async function requestSeedance25<T>(
   payload: Seedance25GeneratePayload,
   quoteOnly = false,
 ): Promise<T> {
+  if (payload.identityTransfer && Array.from(payload.prompt.trim()).length > SEEDANCE25_IDENTITY_MAX_PROMPT_LENGTH) {
+    throw new Error(`Прямая замена — максимум ${SEEDANCE25_IDENTITY_MAX_PROMPT_LENGTH} символов`)
+  }
   const initData = getInitData()
   if (!initData) throw new Error('Откройте Mini App из Telegram и попробуйте снова.')
 

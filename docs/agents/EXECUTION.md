@@ -1727,3 +1727,28 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Verified: 21 new attribution cases; 203 focused backend tests; 324 frontend tests across 43 suites (including 21 clipboard/API tests); Python syntax and diff whitespace; changed-line Ruff 0 new violations (100 legacy diagnostics ignored by the normal gate). Independent review has no remaining blocker.
 - All five modified pre-existing files have base blob hashes identical to real `90e39dd7`; the two remaining files are new. Full safe collection is blocked by seven PostgreSQL/runtime modules importing excluded `bot/postgres_pool.py`; no attempt to retrieve or recreate it. Broad run excluding those seven collection blockers: 2,687 passed, 18 skipped, 12 subtests passed; one failure is the absent unchanged legal/public-offer.pdf asset, and three fixture errors are additional PostgreSQL tests importing the same excluded module. No changed-feature failure was observed; this is not a full-suite pass. These missing sources were not retrieved or reconstructed.
 - Publication/merge/deploy require separate approval; rollback would revert this isolated change, without data repair. Previously issued links/static Telegram CopyText buttons retain their embedded code; reopen/navigate to obtain rebuilt buttons.
+
+
+## 2026-10-09: direct Seedance 2.5 character edit
+
+- Baseline: `05199e7357a221e34c6afd5ab17e3b48f36ed4a6`; task branch `fix/seedance25-direct-edit`, isolated worktree. Production has unrelated runtime price changes; do not touch them.
+- User approved the direct image + original video -> Seedance route, not LAS/Seedream/keyframe preprocessing or a provider migration.
+- Current route already submits image/video arrays but prepends the long `apix-v1` prompt to all user instructions. Pure payload regression is reproducible; the cause of model-quality failure is NOT established.
+- Preflight: AGENTS, README/current production layout, identity/service/public handlers, tests, APIX comparison from preceding audit, admin editable-instruction pattern and current KIE schema. Use diagnosing-bugs, Claw release discipline and webapp-testing guidance. No general refactor.
+- Existing seams to preserve: owned local media validation, measured source duration, quote-before-debit, ordinary references, owner-only repeats, one provider submit/no identity auto-retry, callback reconciliation and delivery.
+- New contract: direct-edit-v1; complete non-empty edit prompt is not wrapped; an empty instruction uses an admin-editable direct template. One to three same-person photos, exactly one original video. duration=-1/aspect_ratio=adaptive. Explicit edit field only for this route; KIE accepted/saved it in the earlier experiment, but upstream semantics remain unproven.
+- Configuration: use audited bot_settings for the default edit template, with server-side admin command and validation. Freeze resolved provider prompt at pre-debit validation; do not read a different template after charge. Record revision/hash, not raw private prompts in logs. No DB migration, tariff/provider switch or new fees.
+- Compatibility: keep public identity flags and original user prompt in task metadata/repeat data. Update UI/TG wording from additional wishes to a full optional edit instruction. Default still permits an empty instruction.
+- Verification: provider contract, invalid/missing references, 1/2/3 order, full/empty prompt, admin settings, quote/launch snapshot, ordinary behavior, API/TG/repeats and frontend tests. Model quality requires separate visual acceptance and is not proven by mocked tests.
+- RED: `python -m pytest -q tests/test_seedance25_direct_edit.py --disable-warnings --tb=short`: 4 failed / 1 passed. Existing prompt wrapper causes exact-prompt and direct-default assertions to fail.
+- Rollout: focused tests -> appropriate regressions/frontend build/browser checks -> review -> PR to tanyapi with guarded native auto-merge -> exact SHA CI/deploy/health verification. Do not manually deploy or change production settings during implementation.
+- Status: implementing; no production fix claimed, no new paid generation yet.
+
+### Direct-edit implementation evidence
+
+- Completed direct prompt composition, one-call KIE edit payload, frozen pre-debit prompt and hash, audited editable default/admin command, and aligned Telegram/Mini App wording. Short legacy wishes keep a concise replacement command; complete prompts naming both references are not wrapped.
+- New regression file is explicitly unignored so CI receives it; no runtime diagnostics, media, secrets, build caches or unrelated production price files are part of the change.
+- Focused backend: 197 passed before the final template-token edge case; original red provider assertions now pass. Full safe suite: 2,976 passed / 89 skipped / 12 subtests passed (174.10s). Final new token-boundary regression is included in the subsequent focused rerun.
+- Frontend: 338 tests / 44 suites passed; ESLint, TypeScript no-emit and static production build passed. Browser aggregate is running separately.
+- Review (self-review; no independent sub-agent available): standards axis uses existing audited bot_settings and admin authorization, no new billing/provider route; spec axis keeps direct image+original-video flow and ordinary behavior unchanged. Tightened template video-role token matching to reject suffix lookalikes. Existing PR #280 was inspected for overlap; no changes from it were copied or merged.
+- Known limitation: these checks prove direct request composition, not model identity fidelity. The earlier KIE edit-field experiment succeeded but its visual result was not accepted by the user. No quality fix is claimed from HTTP status or unit tests.
