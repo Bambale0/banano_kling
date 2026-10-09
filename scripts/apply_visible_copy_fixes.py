@@ -50,6 +50,12 @@ NEW_PARTNER_BONUS_COPY = (
     '        f"• Каждый, кто перейдёт по вашей реферальной ссылке, получает '
     '🍌 <code>{PARTNER_NEW_USER_BONUS}</code> бананов для тестирования бота\\n"\n'
 )
+CURRENT_PARTNER_BONUS_COPY = (
+    '        f"• Новый пользователь получает 🍌 <code>{stats[\'new_user_bonus\']}</code> '
+    'бананов при регистрации\\n"\n'
+    '        f"• За реферала вам начисляется 🍌 <code>{stats[\'inviter_bonus\']}</code> '
+    'банана после его первой генерации, принятой сервисом в работу\\n\\n"\n'
+)
 
 MINIAPP_PREVIEW_IMPORT_ANCHOR = "from bot.services.preset_manager import preset_manager\n"
 MINIAPP_PREVIEW_IMPORT = (
@@ -184,7 +190,10 @@ def normalize_runtime_bonus_copy() -> None:
             NEW_PARTNER_BONUS_COPY,
             1,
         )
-    elif NEW_PARTNER_BONUS_COPY not in handler_text:
+    elif (
+        NEW_PARTNER_BONUS_COPY not in handler_text
+        and CURRENT_PARTNER_BONUS_COPY not in handler_text
+    ):
         raise RuntimeError("Telegram partner cabinet bonus copy was not found")
 
     stale_fragments = (

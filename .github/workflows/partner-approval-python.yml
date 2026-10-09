@@ -14,6 +14,8 @@ on:
       - 'tests/test_partner_policy.py'
       - 'tests/test_partner_creator_compatibility.py'
       - 'tests/test_partner_share_compatibility.py'
+      - 'tests/test_partner_build_copy.py'
+      - 'scripts/apply_visible_copy_fixes.py'
       - 'bot/handlers/partner_approval.py'
       - 'bot/handlers/miniapp_regression_safety.py'
       - 'bot/handlers/__init__.py'
@@ -63,6 +65,7 @@ jobs:
             tests/test_partner_rate_admin.py \
             tests/test_partner_creator_compatibility.py \
             tests/test_partner_share_compatibility.py \
+            tests/test_partner_build_copy.py \
             tests/test_partner_finance_history.py \
             tests/test_partner_admin_eligibility.py \
             tests/test_partner_motion_acceptance.py \

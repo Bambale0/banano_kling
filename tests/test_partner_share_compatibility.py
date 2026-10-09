@@ -7,11 +7,11 @@ from bot import database
 from bot.partner_commission_settings import set_partner_commission_percent
 from bot.partner_policy import mark_generation_accepted
 from bot.services import referral_service
-from tests.test_feed_share_attribution import (
-    published_card,
-    sharing_client,  # noqa: F401 -- shared public HTTP fixture
-    signed_init_data,
-)
+from tests import test_feed_share_attribution as share_fixtures
+
+sharing_client = share_fixtures.sharing_client
+published_card = share_fixtures.published_card
+signed_init_data = share_fixtures.signed_init_data
 
 
 @pytest.mark.parametrize("first_line,expected_rub", [(0, 0), (30, 300), (40, 400)])
