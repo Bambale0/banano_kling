@@ -26,6 +26,7 @@ class GeminiOmniService(KlingService):
     ASPECT_RATIOS = {"16:9", "9:16"}
     RESOLUTIONS = {"720p", "1080p", "4k"}
     MAX_IMAGE_SLOTS = 7
+    MAX_VIDEO_PROMPT_LENGTH = 4000
     MAX_VIDEO_INPUTS = 1
     MAX_AUDIO_IDS = 1
     MAX_CHARACTER_IDS = 3
@@ -100,11 +101,10 @@ class GeminiOmniService(KlingService):
                 min(attempt, len(self.CREATE_RETRY_DELAYS) - 1)
             ]
             logger.warning(
-                "Gemini Omni transient provider error, retrying in %ss: endpoint=%s status=%s message=%s attempt=%s",
+                "Gemini Omni transient provider error, retrying in %ss: endpoint=%s status=%s attempt=%s",
                 delay,
                 endpoint,
-                data.get("status_code") or data.get("code"),
-                self._extract_api_message(data) or data.get("error"),
+                self._status_code_value(data.get("status_code")) or self._status_code_value(data.get("code")),
                 attempt + 1,
             )
             await asyncio.sleep(delay)
@@ -147,8 +147,8 @@ class GeminiOmniService(KlingService):
                     text = await resp.text()
                     try:
                         data = json.loads(text)
-                    except json.JSONDecodeError as exc:
-                        logger.error("Gemini Omni invalid JSON: %s", text[:500])
+                    except json.JSONDecodeError:
+                        logger.error("Gemini Omni invalid JSON: status=%s", resp.status)
                         return {
                             "error": "invalid_json",
                             "message": "Сервис генерации вернул неожиданный ответ. Попробуйте ещё раз.",
@@ -161,9 +161,8 @@ class GeminiOmniService(KlingService):
                             else logger.error
                         )
                         log_method(
-                            "Gemini Omni HTTP error status=%s response=%s",
+                            "Gemini Omni HTTP error status=%s",
                             resp.status,
-                            data,
                         )
                         return {
                             "error": "api_error",
@@ -177,7 +176,7 @@ class GeminiOmniService(KlingService):
                         return data
                     return {"raw": data, "status_code": resp.status}
             except Exception as exc:
-                logger.exception("Gemini Omni request error: %s", exc)
+                logger.error("Gemini Omni request error: error_type=%s", type(exc).__name__)
                 return {
                     "error": "network_error",
                     "message": "Сервис генерации временно недоступен. Попробуйте ещё раз через минуту.",
@@ -494,7 +493,7 @@ class GeminiOmniService(KlingService):
             )
 
         input_data: Dict[str, Any] = {
-            "prompt": prompt[:4000],
+            "prompt": prompt[: self.MAX_VIDEO_PROMPT_LENGTH],
             "duration": str(self._safe_duration(duration)),
             "aspect_ratio": (
                 aspect_ratio if aspect_ratio in self.ASPECT_RATIOS else "16:9"

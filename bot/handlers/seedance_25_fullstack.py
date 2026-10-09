@@ -1714,6 +1714,10 @@ def install_seedance_25_fullstack() -> None:
         try:
             return await _miniapp_seedance25_generate(request, body)
         except Exception as exc:
+            if body.get("source_feed_gen_id") or body.get("sourceFeedGenId"):
+                return miniapp_module._private_image_error_response(
+                    exc, log_message="Mini App Seedance video repeat failed",
+                )
             logger.exception("Mini App Seedance 2.5 generation failed")
             return web.json_response({"ok": False, "error": str(exc)}, status=500)
 

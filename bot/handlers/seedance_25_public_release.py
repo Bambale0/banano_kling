@@ -688,7 +688,7 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
     except ValueError as exc:
         error = (
             "Не удалось проверить входные данные повтора. Проверьте свои файлы."
-            if getattr(request, "_video_repeat_authorization", None) else str(exc)
+            if source_feed_gen_id else str(exc)
         )
         return web.json_response({"ok": False, "error": error}, status=400)
     scenario = data["seedance25_scenario"]
@@ -717,11 +717,13 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
 
     try:
         payload = _scenario_payload(data, str(body.get("prompt") or ""))
+        if source_feed_gen_id and len(payload["prompt"]) > seedance_25_service.MAX_PROMPT_LENGTH:
+            return miniapp_module._video_repeat_prompt_too_long_response()
         await _validate_public_payload(payload, is_admin=is_admin, telegram_id=telegram_id)
     except ValueError as exc:
         error = (
             "Не удалось проверить входные данные повтора. Проверьте свои файлы."
-            if getattr(request, "_video_repeat_authorization", None) else str(exc)
+            if source_feed_gen_id else str(exc)
         )
         return web.json_response({"ok": False, "error": error}, status=400)
 
@@ -793,7 +795,7 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
             await record_video_repeat_launch(receipt_id, user.id, phase="rejected", cost=0, terminal=True)
             error = (
                 "провайдер не принял запрос"
-                if getattr(request, "_video_repeat_authorization", None)
+                if source_feed_gen_id
                 else result.get("error") if isinstance(result, dict) else "provider response has no task_id"
             )
             return web.json_response(
@@ -849,7 +851,7 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
                     credits_spent=charge_cost,
                 )
             except Exception as reward_error:
-                if private_repeat:
+                if source_feed_gen_id:
                     logger.error("Private Seedance repeat reward failed: task_id=%s error_type=%s",
                                  task_id, type(reward_error).__name__)
                 else:
@@ -925,22 +927,30 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
                     return video_repeat_pending_response(receipt_id)
             logger.error("Private Seedance video repeat failed: error_type=%s", type(exc).__name__)
             return web.json_response({"ok": False, "error": "Не удалось запустить видео. Попробуйте ещё раз."}, status=500)
-        logger.exception("Public Seedance 2.5 Mini App launch failed")
+        if source_feed_gen_id:
+            logger.error("Seedance video repeat failed: error_type=%s", type(exc).__name__)
+        else:
+            logger.exception("Public Seedance 2.5 Mini App launch failed")
         if charged and not refund_attempted:
             refund_attempted = True
             try:
                 refunded = await miniapp_module.add_credits(telegram_id, charge_cost)
                 if refunded is not False:
                     charged = False
-            except Exception:
-                logger.exception("Seedance 2.5 Mini App immediate refund unconfirmed for %s", telegram_id)
+            except Exception as refund_error:
+                if source_feed_gen_id:
+                    logger.error("Seedance video repeat refund unconfirmed: telegram_id=%s error_type=%s",
+                                 telegram_id, type(refund_error).__name__)
+                else:
+                    logger.exception("Seedance 2.5 Mini App immediate refund unconfirmed for %s", telegram_id)
         if charged:
             return web.json_response(
                 {"ok": False, "code": "video_refund_pending",
                  "error": "Не удалось подтвердить возврат бананов. Требуется проверка платежа; не повторяйте запуск сразу."},
                 status=500,
             )
-        return web.json_response({"ok": False, "error": str(exc)}, status=500)
+        error = "Не удалось запустить видео. Попробуйте ещё раз." if source_feed_gen_id else str(exc)
+        return web.json_response({"ok": False, "error": error}, status=500)
 
 
 async def _claim_async_refund(task_id: str) -> tuple[int, float] | None:

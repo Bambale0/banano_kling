@@ -22,6 +22,7 @@ from bot.services.media_input_utils import (
     missing_local_upload_sources,
     resolve_reference_source,
 )
+from bot.services.remix_prompt import compose_feed_remix_prompt
 from bot.video_repeat_reference_contract import (
     MEDIA_KEYS,
     VideoRepeatContractError,
@@ -549,15 +550,25 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
     )
     if not card or str(card.get("gen_type") or "").lower() != "video":
         raise web.HTTPNotFound(reason="Видео для повтора не найдено")
+    if card.get("genjutsu_recipe_id"):
+        # Recipe-backed videos keep their dedicated redirect and structured edits.
+        return body
     source_task = await get_generation_task_payload(source_id)
     if not source_task:
         raise web.HTTPNotFound(reason="Видео для повтора не найдено")
+    source_prompt = str(source_task.get("prompt") or "").strip()
+    if not source_prompt:
+        raise web.HTTPBadRequest(reason="Исходное описание видео недоступно")
     if source_task.get("source_feed_gen_id") and source_request(source_task).get("video_repeat_contract_version") == 1:
         raise VideoRepeatReferenceError("Для этого повтора откройте исходную публикацию автора.")
     source_task = {**source_task, "_repeat_is_owner": (
         source_task.get("user_id") == context["user"].id and not source_task.get("source_feed_gen_id")
     )}
     enriched = enrich_video_repeat_body(body, source_task)
+    # This authenticated boundary wraps both legacy video handlers and the
+    # separate Seedance 2.5 endpoint. Compose once from the original client
+    # changes, keeping the author's base server-side just like photo remixes.
+    enriched["prompt"] = compose_feed_remix_prompt(source_prompt, body.get("prompt"))
     active_media = _active_video_reference_urls(enriched)
     if missing_local_upload_sources(active_media):
         raise VideoRepeatReferenceError(
