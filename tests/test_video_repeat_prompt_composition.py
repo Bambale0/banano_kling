@@ -258,3 +258,19 @@ async def test_repeat_prelaunch_exception_is_redacted_by_installed_dispatch(
     entry.transport.assert_not_awaited()
     entry.debit.assert_not_awaited()
     assert BASE not in response.text and BASE not in caplog.text
+
+
+@pytest.mark.parametrize("typed", [False, True])
+async def test_repeat_validation_errors_cannot_echo_private_base(
+    repeat_endpoint, typed, monkeypatch, caplog,
+):
+    entry = repeat_endpoint
+    entry.source["model"] = entry.card["model"] = "seedance_2_5"
+    if not typed:
+        entry.source["feed_repeat_reference_selection"] = None
+    monkeypatch.setattr(public, "_validate_public_payload", AsyncMock(side_effect=ValueError(BASE)))
+    response = await entry.call(Request({"source_feed_gen_id": 42, "v_model": "seedance_2_5", "prompt": "12345"}))
+    assert response.status == 400
+    entry.transport.assert_not_awaited()
+    entry.debit.assert_not_awaited()
+    assert BASE not in response.text and BASE not in caplog.text

@@ -50,6 +50,11 @@ from . import seedance_25_preview as preview_module
 logger = logging.getLogger(__name__)
 MODEL_KEY = "seedance_2_5"
 
+
+class _PublicVideoAccessError(ValueError):
+    """Fixed permission messages are safe to show without revealing recipe data."""
+
+
 _NEW_MARKERS_RE = re.compile(
     r"(?:\s+NEW(?:🔥+)?|\s+🔥\s*НОВИНКА|\s+НОВИНКА|\s+🆕)",
     flags=re.IGNORECASE,
@@ -398,7 +403,7 @@ async def _validate_public_payload(
         raise ValueError("Некорректный режим редактирования видео")  # noqa: TRY004 - user-input validation maps to HTTP 400
     if editing and not identity:
         if not is_admin and not trusted_trend:
-            raise ValueError("Редактирование видео пока доступно только администратору: длительность определяется исходником")
+            raise _PublicVideoAccessError("Редактирование видео пока доступно только администратору: длительность определяется исходником")
         if scenario != "multimodal" or len(payload["video_urls"]) != 1:
             raise ValueError("Для редактирования выберите режим по референсам и одно исходное видео 4–30 секунд")
         duration = await fullstack._validate_local_source(payload["video_urls"][0], "video")
@@ -417,7 +422,7 @@ async def _validate_public_payload(
     ):
         raise ValueError("Добавьте хотя бы один мультимодальный референс")
     if payload["duration"] == -1 and not is_admin and not trusted_trend and not identity:
-        raise ValueError("Auto-длительность пока доступна только администратору; выберите 4–30 секунд")
+        raise _PublicVideoAccessError("Auto-длительность пока доступна только администратору; выберите 4–30 секунд")
     await fullstack._validate_seedance_sources(
         first_frame_url=payload["first_frame"],
         last_frame_url=payload["last_frame"],
@@ -720,6 +725,8 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
         if source_feed_gen_id and len(payload["prompt"]) > seedance_25_service.MAX_PROMPT_LENGTH:
             return miniapp_module._video_repeat_prompt_too_long_response()
         await _validate_public_payload(payload, is_admin=is_admin, telegram_id=telegram_id)
+    except _PublicVideoAccessError as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=400)
     except ValueError as exc:
         error = (
             "Не удалось проверить входные данные повтора. Проверьте свои файлы."
