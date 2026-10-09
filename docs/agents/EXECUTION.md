@@ -1,5 +1,18 @@
 # Execution ledger
 
+## 2026-10-09 — Seedance 2 ordinary price editor/quote alignment
+
+- Baseline: fresh `tanyapi` `d766b0eeb6693de1ea84f79734efc66a3ad93789`. Isolated task branch `fix/seedance2-ordinary-quality-price-20261009`; source blobs verified against the remote tree. No unrelated referral changes are included.
+- Confirmed root cause: the ordinary admin editor saves `quality_costs`, but normal Seedance 2 calls omit pricing quality while sending 720p to the provider. Quotes consequently preferred historical duration prices over the configured 720p rate.
+- Fix: normalize an omitted Seedance 2 quote quality to actual provider 720p in the shared immutable quote service. Existing explicit quality, legacy fallback when the rate is absent, creator/admin precedence, reference multiplier, accepted task quote and refund contracts remain intact.
+- No price file, migration, credential, membership, live generation or provider capability change. The already configured ordinary rate of 5 credits/second now produces 25/50/75 for 5/10/15 seconds instead of stale duration totals 20/40/60. Creator rate values are preserved. These are consequences of honoring saved rates, not a price migration.
+- Playbooks: Bambale0/skills diagnosing-bugs and tdd, Bambale0/claw safe incremental engineering, anthropics/skills webapp-testing. Public seams: Telegram admin save, shared quote, Mini App/Telegram launch and refund, repeat/trend metadata, authenticated bootstrap and visible client refresh.
+- RED: ordinary quote/admin-save/metadata suite had 9 failures and 8 passes; public launch suite had 6 failures, reproducing 20 instead of 25 and the missing frozen 720p resolution. Synthetic data, SQLite and mocked providers only.
+- GREEN: 20 ordinary editor/quote regressions; 53 new public-surface tests; independent review reran 90 focused cases and approved the application fix. Existing creator coverage passed (168 passed / 15 skipped). Full frontend: 44 suites / 326 tests; ESLint, TypeScript and production static export passed. Ruff on all three changed Python files and diff whitespace checks passed. Repository price file SHA256 was identical before/after.
+- Broad local backend: 2747 passed / 1 skipped / 12 subtests passed; one unrelated asset-presence test failed because this safe source materialization omits the unchanged bundled public-offer PDF/text. PostgreSQL/pool-dependent files and live provider tests were deliberately excluded. No application failure occurred in the executed pricing or payment suites. Required full remote CI remains the final release gate.
+- Local browser E2E could not launch installed Chromium because the execution sandbox disallows its process socket, including the approved escalation attempt. The two new React tests verify visible focus and five-second price refresh; browser E2E must be verified by the required GitHub gate. No workaround around the sandbox restriction was used.
+- Review documentation clarification applied: editing/enabling the creator overlay preserves ordinary rates, while this ordinary quote correction honors the already configured rate. Publication, exact-head CI and release are coordinated with the parent; no independent merge or deployment.
+
 ## 2026-10-07 — Resume optional bot Start offer
 
 - Latest instruction resumes the optional offer only for explicit never-started users. Current integration baseline is tanyapi ac9365d96459a3932c4a934600cc071a2ccec63b, including durable gate removal, Seedance identity and promo fixes. The historical emergency removal below is preserved as a completed release record.
