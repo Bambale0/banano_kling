@@ -6,6 +6,7 @@ on:
     paths:
       - 'bot/services/partner_approval_service.py'
       - 'bot/partner_policy.py'
+      - 'bot/partner_commission_settings.py'
       - 'bot/database.py'
       - 'schema_postgres.sql'
       - 'tests/test_partner_policy_postgres.py'

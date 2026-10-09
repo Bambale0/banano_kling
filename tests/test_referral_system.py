@@ -434,9 +434,9 @@ def test_commission_awarded_every_payment(tmp_path, monkeypatch):
         referred = await db.get_or_create_user(4004)
         await db.process_referral(referred.telegram_id, referrer.referral_code)
 
-        # First payment: 100 credits, no rub amount → 40% of 100 credits = 40
+        # First payment: 100 credits, no rub amount → 30% of 100 credits = 30
         bonus1 = await db.credit_first_payment_referral_bonus(referred.telegram_id, 100)
-        # Second payment: 200 credits → 40% of 200 = 80
+        # Second payment: 200 credits → 30% of 200 = 60
         bonus2 = await db.credit_first_payment_referral_bonus(referred.telegram_id, 200)
 
         updated_referred = await db.get_or_create_user(referred.telegram_id)
@@ -491,7 +491,7 @@ async def test_complete_transaction_notifies_referrer_about_purchase():
     assert "@buyer_user" in text
     assert "Buyer User" in text
     assert "<code>50</code>🍌" in text
-    assert "<code>64</code> ₽" in text
+    assert "<code>48</code> ₽" in text
 
 
 @pytest.mark.asyncio
@@ -523,7 +523,7 @@ async def test_complete_transaction_respects_disabled_referrer_purchase_notifica
     assert result["ok"] is True
     bot.send_message.assert_not_awaited()
     updated_referrer = await database.get_or_create_user(referrer.telegram_id)
-    assert updated_referrer.partner_balance_rub == 40
+    assert updated_referrer.partner_balance_rub == 30
 
 
 @pytest.mark.asyncio
@@ -712,9 +712,9 @@ def test_commission_awarded_to_level1_and_level2(tmp_path, monkeypatch):
         updated_level2 = await db.get_or_create_user(level2_partner.telegram_id)
 
         assert result["mode"] == "partner"
-        assert result["value"] == 400
+        assert result["value"] == 300
         assert result["level2_value"] == 70
-        assert updated_level1.partner_balance_rub == 400
+        assert updated_level1.partner_balance_rub == 300
         assert updated_level1.partner_total_revenue_rub == 1000
         assert updated_level2.partner_balance_rub == 70
         assert updated_level2.partner_total_revenue_rub == 1000
@@ -767,10 +767,10 @@ def test_level2_commission_skipped_when_level1_is_admin(tmp_path, monkeypatch):
         updated_level2 = await db.get_or_create_user(level2_partner.telegram_id)
 
         assert result["mode"] == "partner"
-        assert result["value"] == 400
+        assert result["value"] == 300
         assert result["level2_value"] == 0.0
         assert result["level2_referrer_user_id"] is None
-        assert updated_admin.partner_balance_rub == 400
+        assert updated_admin.partner_balance_rub == 300
         assert updated_level2.partner_balance_rub == 0
 
     asyncio.run(run())
@@ -802,9 +802,9 @@ def test_partner_commission_does_not_increase_for_legacy_gold_or_silver(tmp_path
 
         assert result["mode"] == "partner"
         assert result["percent"] == db.PARTNER_LEVEL1_PERCENT
-        assert result["value"] == 400
+        assert result["value"] == 300
         assert result["referrer_tier"] == "basic"
-        assert updated_referrer.partner_balance_rub == 400
+        assert updated_referrer.partner_balance_rub == 300
         assert updated_referrer.partner_tier == "basic"
 
     asyncio.run(run())
@@ -979,7 +979,7 @@ def test_partner_withdrawal_creates_request(tmp_path, monkeypatch):
         await db.credit_first_payment_referral_bonus(
             referred.telegram_id, 100, transaction_amount_rub=1000
         )
-        # master gets 40% of 1000 = 400 rub
+        # master gets 30% of 1000 = 300 rub
         expected_balance = round(1000 * db.PARTNER_LEVEL1_PERCENT / 100, 2)
 
         # Pass min_amount_rub=0 to bypass the config minimum in tests

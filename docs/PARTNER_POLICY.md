@@ -2,7 +2,7 @@
 
 ## Economics and eligibility
 
-New payment invoices snapshot the first-line 40% and second-line 7% rates. The first-line reward recipient with Telegram ID 1608435230 receives 30%; their second-line income remains 7%. The paid calculation base remains the stored transaction.amount_rub, with the existing rounding and commission ledger. Tier labels do not increase these rates.
+The first-line default remains30%. An authorized administrator assigns each existing partner a personal0–100% rate with at most two decimal places by Telegram ID, with quick0/30/40 choices and explicit confirmation. No account is automatically promoted to40%, and there is no hardcoded recipient exception. A0% assignment disables only first-line purchase commission; second-line7%, repeat5 RUB and inviter3 bananas remain independent. New invoices freeze the explicit per-partner rates, so later administrative changes do not alter accepted terms. The paid calculation base remains the stored transaction.amount_rub, with the existing rounding and commission ledger. Tier labels do not increase these rates.
 
 New repeat tasks snapshot 5 RUB for the original author in the existing prompt_repeat_events ledger. This is a ruble partner balance reward, not five generation credits. New-user registration still grants 5 bananas. The inviter's 3 bananas are deferred until the invited account's first server-accepted generation (image, video, motion, audio or character) after attachment, including a launch funded by starter bananas.
 
@@ -10,18 +10,19 @@ Partner access no longer requires submitting or approving an activation applicat
 
 ## Configuration
 
-Generation prices remain owned by the existing admin price system; this feature never writes data/price.json. Future partner terms are typed, validated environment configuration:
+Generation prices remain owned by the existing admin price system; this feature never writes data/price.json. First-line rates are database-backed and managed in the Telegram admin partner section. Settings are revision-checked, atomic with an append-only audit (actor, target, before/after), and require backend administrator authorization. Unknown users, stale confirmations, invalid numbers and failed audit writes cannot mutate a rate or balance. Other future partner terms retain typed configuration:
 
-- PARTNER_LEVEL1_PERCENT: 40 by default, finite 0–100
+- PARTNER_LEVEL1_PERCENT is retired for future invoices; the unassigned baseline is30%, never an automatic global40%
 - PARTNER_LEVEL2_PERCENT: 7 by default, finite 0–100
-- PARTNER_LEVEL1_OVERRIDES_JSON: {"1608435230":30} by default; map of recipient Telegram IDs to finite 0–100 rates
+- PARTNER_LEVEL1_OVERRIDES_JSON defaults to{}; existing explicit per-ID configuration is preserved as a fallback, below a saved administrator assignment
 - PARTNER_REPEAT_REWARD_RUB: 5 by default, finite non-negative rubles
 
 The previous PROMPT_REPEAT_REWARD_RUB variable does not override the new versioned policy. Deployment preparation must verify the intended new policy settings without copying or replacing live generation prices. No runtime settings were changed while preparing this branch.
 
 ## New additive tables and historical compatibility
 
-- partner_payment_terms snapshots the rates and recipient override map when an invoice is created
+- partner_commission_settings stores explicit per-recipient rates as exact integer hundredths of a percent and revision numbers; partner_commission_audit is append-only
+- partner_payment_terms snapshots the rates and all explicit recipient overrides when an invoice is created, including a partner who is attached after that invoice was created
 - Canonical generation_tasks.request_data snapshots versioned repeat economics and eligibility; provider acceptance is persisted atomically with the task/provider-ID binding, with no ancillary generation-policy table
 - referral_activation_bonuses stores pending and granted one-time invite claims; only a newly attached referral creates a row
 
@@ -37,6 +38,8 @@ Only newly attached referrals can qualify. A generation made before attachment i
 
 ## Verification and release limits
 
-Run the focused tests/test_partner_policy.py plus referral, payment, generation, private-repeat, partner API/bot/UI and auth suites. A dedicated disposable PostgreSQL test and CI hook are included but cannot run in this local environment. Browser E2E is blocked before launch by Chromium socket permissions. Both remain release gates. The branch is explicitly unmerged; do not enable auto-merge or deploy it without new authorization.
+Run the focused tests/test_partner_policy.py plus referral, payment, generation, private-repeat, partner API/bot/UI and auth suites. A dedicated disposable PostgreSQL test and CI hook are included but cannot run in this local environment. Browser E2E is blocked before launch by Chromium socket permissions. Both remain release gates and must pass for the exact published candidate in GitHub. The requested release order is the ordinary Seedance 2 pricing correction first, then this policy after complete publication, CI and independent review. The release candidate must include the manual per-partner editor; the earlier global-rate draft is superseded.
+
+The combined share-link regression uses the authenticated sharer's referral code while keeping the original author's repeat reward. It verifies starter-funded acceptance grants the sharer 3 bananas once, the author receives 5 RUB once, and manual 0/30/40% purchase terms remain frozen after a later rate change. Upstream share-link and attribution fixes are retained.
 
 Prompt/trend reward callers now pass the accepted task identity. Repeat ledger claims use a stable numeric generation identity, recognize pre-existing alias-based events, and read the frozen reward across provider-ID retries. Completed commission exports read actual ledger values, then invoice terms, then documented legacy rates. No historical amount is recalculated using the current default.

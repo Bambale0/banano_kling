@@ -611,3 +611,36 @@ CREATE TABLE IF NOT EXISTS referral_activation_bonuses (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CHECK (referred_id != referrer_id)
 );
+
+-- Administrator-managed recipient percentages; no historical rates are backfilled.
+CREATE TABLE IF NOT EXISTS partner_commission_settings (
+        telegram_id BIGINT PRIMARY KEY REFERENCES users(telegram_id),
+        first_line_basis_points INTEGER NOT NULL CHECK(first_line_basis_points >= 0 AND first_line_basis_points <= 10000 AND first_line_basis_points = CAST(first_line_basis_points AS INTEGER)),
+        revision BIGINT NOT NULL CHECK(revision > 0),
+        updated_by_telegram_id BIGINT NOT NULL,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+CREATE TABLE IF NOT EXISTS partner_commission_audit (
+        id TEXT PRIMARY KEY,
+        actor_telegram_id BIGINT NOT NULL,
+        target_telegram_id BIGINT NOT NULL,
+        before_state TEXT NOT NULL,
+        after_state TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+CREATE INDEX IF NOT EXISTS idx_partner_commission_audit_target
+       ON partner_commission_audit(target_telegram_id, created_at);
+
+CREATE OR REPLACE FUNCTION partner_commission_audit_append_only()
+       RETURNS trigger LANGUAGE plpgsql AS $$
+       BEGIN RAISE EXCEPTION 'partner commission audit is append-only'; END;
+       $$;
+DO $$ BEGIN
+       IF NOT EXISTS (SELECT 1 FROM pg_trigger
+           WHERE tgname = 'partner_commission_audit_append_only_guard'
+           AND tgrelid = 'partner_commission_audit'::regclass) THEN
+           CREATE TRIGGER partner_commission_audit_append_only_guard
+           BEFORE UPDATE OR DELETE OR TRUNCATE ON partner_commission_audit
+           FOR EACH STATEMENT EXECUTE FUNCTION partner_commission_audit_append_only();
+       END IF;
+       END $$;

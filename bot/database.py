@@ -13,6 +13,10 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 from bot import db as db_backend
+from bot.partner_commission_settings import (
+    effective_first_level_percent,
+    snapshot_first_line_overrides,
+)
 from bot.partner_policy import (
     LEGACY_LEVEL1_PERCENT,
     LEGACY_LEVEL2_PERCENT,
@@ -106,7 +110,7 @@ PROMPT_CATEGORIES = {"art", "business", "marketing", "photo", "video", "other"}
 PROMPT_STATUSES = {"pending", "approved", "rejected", "deactivated"}
 
 # Партнёрская программа — единственный источник констант
-PARTNER_LEVEL1_PERCENT: int = 40   # % с покупок рефералов 1-го уровня
+PARTNER_LEVEL1_PERCENT: int = 30   # % с покупок рефералов 1-го уровня
 PARTNER_LEVEL2_PERCENT: int = 7    # % с покупок рефералов 2-го уровня
 PARTNER_NEW_USER_BONUS: int = 5    # бананы новому пользователю при регистрации
 PARTNER_INVITER_BONUS: int = 3     # бананы пригласившему после первого принятого запуска
@@ -2507,8 +2511,8 @@ async def credit_referral_commission(
         )
         ref1_row = await ref1_cursor.fetchone()
         ref1_tier = get_partner_tier_by_total(0.0)
-        ref1_percent = get_partner_policy().first_level_percent(
-            int(ref1_row["telegram_id"]) if ref1_row else None
+        ref1_percent = await effective_first_level_percent(
+            db, int(ref1_row["telegram_id"]) if ref1_row else None
         )
         level1_bonus = round(base_value * ref1_percent / 100.0, 2)
 
@@ -2708,7 +2712,7 @@ async def get_partner_overview(telegram_id: int) -> dict:
         )
 
         tier = get_partner_tier_by_total(target_user.partner_total_revenue_rub or 0)
-        percent = get_partner_policy().first_level_percent(telegram_id)
+        percent = await effective_first_level_percent(db, telegram_id)
 
         return {
             "is_partner": True,
@@ -5198,9 +5202,10 @@ async def create_transaction(
                 ),
             )
             policy = get_partner_policy()
+            overrides = await snapshot_first_line_overrides(db, user_id, policy.level1_overrides)
             await db.execute(
                 "INSERT INTO partner_payment_terms (order_id, level1_percent, level2_percent, level1_overrides_json) VALUES (?, ?, ?, ?)",
-                (order_id, policy.level1_percent, policy.level2_percent, json.dumps(policy.level1_overrides, sort_keys=True)),
+                (order_id, policy.level1_percent, policy.level2_percent, json.dumps(overrides, sort_keys=True)),
             )
             await db.commit()
             return True

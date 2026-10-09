@@ -67,6 +67,7 @@ from bot.handlers import (
 )
 from bot.handlers.common import ensure_feed_cache_warmup
 from bot.handlers.creator_tariff_admin import router as creator_tariff_admin_router
+from bot.handlers.partner_rate_admin import router as partner_rate_admin_router
 from bot.handlers.payments import (
     cleanup_stale_cryptobot_pending,
     handle_cryptobot_webhook,
@@ -503,6 +504,8 @@ class AccessGuardMiddleware(BaseMiddleware):
             if callable(get_state):
                 raw_state = str(await get_state() or "")
         return raw_state in {
+            "PartnerRateAdminStates:user_id",
+            "PartnerRateAdminStates:percent",
             "PromoAdminStates:text",
             "PromoAdminStates:media",
             "PromoAdminStates:button_label",
@@ -2882,6 +2885,7 @@ def setup_dispatcher() -> Dispatcher:
     dp.include_router(generation_router)  # FSM состояния - ПЕРВЫЙ!
     dp.include_router(image_analyzer_router)  # Анализ фото в промпт
     dp.include_router(creator_tariff_admin_router)  # Отдельный тариф креатора
+    dp.include_router(partner_rate_admin_router)  # Индивидуальная ставка первой линии
     dp.include_router(admin_router)  # Админ-команды
     dp.include_router(payments_router)  # Платежи
     dp.include_router(batch_generation_router)  # Пакетная генерация

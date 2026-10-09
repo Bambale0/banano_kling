@@ -2,6 +2,7 @@ import pytest
 
 from bot import database
 from bot import db as db_backend
+from bot.partner_commission_settings import set_partner_commission_percent
 
 
 async def _payment(order, payer, *, legacy=False):
@@ -34,6 +35,8 @@ async def _chain(partner_id=881001, root_id=881002, payer_id=881003):
 @pytest.mark.parametrize("keep_ledger", [True, False])
 async def test_finance_export_preserves_legacy_new_and_exception_commissions(monkeypatch, legacy, partner_id, expected, keep_ledger):
     _root, partner, payer = await _chain(partner_id=partner_id)
+    if not legacy and expected == 400:
+        await set_partner_commission_percent(999999999, partner_id, 40, expected_revision=0)
     await _payment("history", payer, legacy=legacy)
     if not keep_ledger:
         async with db_backend.connect() as conn:

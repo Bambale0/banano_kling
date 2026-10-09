@@ -118,7 +118,7 @@ async def test_command_opens_partner_cabinet(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("percent", [40, 30])
+@pytest.mark.parametrize("percent", [0, 30, 40])
 async def test_partner_dashboard_uses_individual_rate_and_earned_bonus_wording(monkeypatch, percent):
     from unittest.mock import AsyncMock
 

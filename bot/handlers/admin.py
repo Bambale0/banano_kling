@@ -707,6 +707,12 @@ def _admin_partners_keyboard(top_partners: list[dict]) -> types.InlineKeyboardMa
     rows: list[list[types.InlineKeyboardButton]] = [
         [
             types.InlineKeyboardButton(
+                text="💯 Проценты партнёров",
+                callback_data="admin_partner_rates",
+            )
+        ],
+        [
+            types.InlineKeyboardButton(
                 text="🗂 История заявок",
                 callback_data="admin_partner_applications",
             )

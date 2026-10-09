@@ -1,6 +1,6 @@
 """Versioned partner economics, separate from admin-managed generation prices.
 
-Environment settings configure future transactions only. Historical ledger entries
+Administrative settings configure future transactions only. Historical ledger entries
 and accepted generation/payment terms are never rewritten.
 """
 from __future__ import annotations
@@ -38,7 +38,7 @@ class PartnerPolicy:
 
 
 def get_partner_policy() -> PartnerPolicy:
-    overrides = json.loads(os.getenv("PARTNER_LEVEL1_OVERRIDES_JSON", '{"1608435230":30}'))
+    overrides = json.loads(os.getenv("PARTNER_LEVEL1_OVERRIDES_JSON", '{}'))
     if not isinstance(overrides, dict):
         raise ValueError("PARTNER_LEVEL1_OVERRIDES_JSON must be an object")  # noqa: TRY004 - configuration validation
     parsed: dict[int, float] = {}
@@ -48,7 +48,7 @@ def get_partner_policy() -> PartnerPolicy:
             raise ValueError("Invalid partner first-level override")
         parsed[int(recipient)] = value
     return PartnerPolicy(
-        level1_percent=_number("PARTNER_LEVEL1_PERCENT", 40, maximum=100),
+        level1_percent=LEGACY_LEVEL1_PERCENT,
         level2_percent=_number("PARTNER_LEVEL2_PERCENT", 7, maximum=100),
         repeat_reward_rub=_number("PARTNER_REPEAT_REWARD_RUB", 5),
         level1_overrides=parsed,
@@ -79,6 +79,10 @@ async def init_partner_policy_tables(db) -> None:
     ):
         ddl = getattr(db, "execute_native_ddl", db.execute)
         await ddl(statement)
+
+    from bot.partner_commission_settings import ensure_partner_commission_schema
+
+    await ensure_partner_commission_schema(db)
 
 
 async def record_pending_invite_bonus(db, referrer_id: int, referred_id: int, bonus: float) -> None:

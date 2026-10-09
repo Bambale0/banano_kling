@@ -3,7 +3,7 @@ import { chromium } from 'playwright'
 const baseUrl = process.env.PARTNER_BROWSER_URL || 'http://127.0.0.1:4173/mini-app/'
 const referralLink = 'https://t.me/example_bot?start=ref_BROWSERTEST'
 let partnerStatus = 'partner'
-let firstLinePercent = 40
+let firstLinePercent = 30
 let applyCalls = 0
 let overviewCalls = 0
 
@@ -118,7 +118,7 @@ try {
   await page.getByText('Ваш партнёрский кабинет', { exact: true }).waitFor()
   await page.getByText(referralLink, { exact: true }).waitFor()
   await page.getByRole('button', { name: /Скопировать ссылку/i }).waitFor()
-  await page.getByText(/1 уровня: 40%/).waitFor()
+  await page.getByText(/1 уровня: 30%/).waitFor()
   assert((await page.getByRole('button', { name: /Активировать ссылку|Подать заявку/i }).count()) === 0, 'Obsolete activation UI is still visible')
 
   for (const historicalStatus of ['pending', 'rejected', 'available']) {
@@ -127,9 +127,11 @@ try {
     await page.getByText(referralLink, { exact: true }).waitFor()
     await page.waitForFunction(() => !document.querySelector('button[disabled] .animate-spin'))
   }
-  firstLinePercent = 30
-  await page.getByRole('button', { name: 'Обновить', exact: true }).click()
-  await page.getByText(/1 уровня: 30%/).waitFor()
+  for (const assignedPercent of [40, 0]) {
+    firstLinePercent = assignedPercent
+    await page.getByRole('button', { name: 'Обновить', exact: true }).click()
+    await page.getByText(new RegExp(`1 уровня: ${assignedPercent}%`)).waitFor()
+  }
   await page.getByText(/2 уровня: 7%/).waitFor()
   for (const width of [320, 390, 430]) {
     await page.setViewportSize({ width, height: 900 })

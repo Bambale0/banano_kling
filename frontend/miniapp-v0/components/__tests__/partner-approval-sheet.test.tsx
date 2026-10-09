@@ -49,7 +49,7 @@ const overview = (status = 'partner') => ({
   is_partner: status === 'partner', referrals_count: 12, balance_rub: 345.5,
   prompt_repeat_balance_rub: 0, prompt_repeat_total_rub: 0, channel_url: '',
   referral_link: 'https://t.me/example_bot?start=ref_TESTCODE',
-  percent: 40, level2_percent: 7, status,
+  percent: 30, level2_percent: 7, status,
 })
 
 describe('PartnerApprovalSheet', () => {
@@ -64,18 +64,18 @@ describe('PartnerApprovalSheet', () => {
       render(<PartnerApprovalSheet />)
       expect(await screen.findByText('Ваш партнёрский кабинет')).toBeTruthy()
       expect(screen.getByText(overview().referral_link)).toBeTruthy()
-      expect(screen.getByText(/1 уровня: 40%/)).toBeTruthy()
+      expect(screen.getByText(/1 уровня: 30%/)).toBeTruthy()
       expect(screen.getByRole('button', { name: /скопировать ссылку/i })).toBeTruthy()
       expect(screen.queryByRole('button', { name: /активировать|подать заявку/i })).toBeNull()
       expect(mockedExecuteMiniAppAction).not.toHaveBeenCalled()
     },
   )
 
-  it('uses the server-provided individual commission', async () => {
-    mockedFetchPartnerOverview.mockResolvedValue({ ...overview(), percent: 30 })
+  it.each([0, 30, 40])('uses the server-provided individual commission %s without fallback', async (percent) => {
+    mockedFetchPartnerOverview.mockResolvedValue({ ...overview(), percent })
     render(<PartnerApprovalSheet />)
-    expect(await screen.findByText(/1 уровня: 30%/)).toBeTruthy()
-    expect(screen.queryByText(/1 уровня: 40%/)).toBeNull()
+    expect(await screen.findByText(new RegExp(`1 уровня: ${percent}%`))).toBeTruthy()
+    expect(screen.getByText(/2 уровня: 7%/)).toBeTruthy()
   })
 
   it('shows an error and retries without offering activation', async () => {

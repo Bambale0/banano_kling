@@ -13,8 +13,10 @@ from bot.partner_policy import (
 )
 from bot.services import task_watchdog
 from tests import test_creator_tariff_seedance2 as fixtures
+from tests import test_seedance2_ordinary_pricing_surfaces as ordinary_fixtures
 
 actor = fixtures.actor
+ordinary_actor = ordinary_fixtures.ordinary_actor
 
 
 @pytest.mark.parametrize('model,expected', [('seedance_2', 5), ('seedance_2_5', 10)])
@@ -55,3 +57,50 @@ async def test_creator_referral_acceptance_and_original_refund_once(actor, monke
     assert not await task_watchdog.force_fail_task(task.id, actor.user.id, 999)
     assert (await database.get_or_create_user(123)).credits == actor.initial
     assert (await database.get_or_create_user(456)).referral_earned == 3
+
+
+@pytest.mark.parametrize('surface', ['telegram', 'miniapp'])
+async def test_ordinary_price_fix_keeps_invite_once_and_original_refund(ordinary_actor, surface):
+    actor = ordinary_actor
+    inviter = await database.get_or_create_user(456)
+    assert await database.process_referral(123, inviter.referral_code)
+    assert (await database.get_or_create_user(456)).referral_earned == 0
+
+    async def accepted(**_kwargs):
+        assert (await database.get_or_create_user(123)).credits == actor.initial - 25
+        actor.prices['costs_reference']['video_models']['seedance_2']['quality_costs']['720p'] = 90
+        actor.role.member = True
+        return {'task_id': 'ordinary-seedance2-test'}
+
+    actor.provider.side_effect = accepted
+    await ordinary_fixtures.launch(surface, fixtures.data())
+    task = await database.get_task_by_id('ordinary-seedance2-test')
+    quote = json.loads(task.request_data)['billing_quote']
+    assert quote['quality'] == '720p'
+    assert quote['profile'] == 'standard'
+    assert quote['charge_cost'] == task.cost == 25
+    assert (await database.get_or_create_user(456)).referral_earned == 3
+    assert not await mark_generation_accepted(task.task_id)
+    assert await reconcile_pending_invite_bonuses() == 0
+    assert await task_watchdog.force_fail_task(task.id, actor.user.id, 999)
+    assert not await task_watchdog.force_fail_task(task.id, actor.user.id, 999)
+    assert (await database.get_or_create_user(123)).credits == actor.initial
+    assert (await database.get_or_create_user(456)).referral_earned == 3
+
+
+@pytest.mark.parametrize('surface', ['telegram', 'miniapp'])
+async def test_rejected_ordinary_launch_does_not_award_inviter(ordinary_actor, surface):
+    actor = ordinary_actor
+    inviter = await database.get_or_create_user(456)
+    assert await database.process_referral(123, inviter.referral_code)
+    actor.provider.return_value = {'error': 'synthetic provider rejection'}
+    if surface == 'miniapp':
+        response = await miniapp.miniapp_generate_video(fixtures.request(fixtures.data()))
+        assert response.status == 500
+    else:
+        message, state, _ = fixtures.telegram(fixtures.data())
+        await generation.run_no_preset_video_from_message(message, state, 'Camera moves')
+    assert (await database.get_or_create_user(123)).credits == actor.initial
+    assert (await database.get_or_create_user(456)).referral_earned == 0
+    assert await database.get_task_by_id('ordinary-seedance2-test') is None
+    assert await reconcile_pending_invite_bonuses() == 0

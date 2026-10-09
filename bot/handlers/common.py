@@ -2597,13 +2597,16 @@ async def _build_feed_keyboard(
         if admin_buttons:
             rows.append(admin_buttons)
 
-    if username and gen_id:
+    if username and gen_id and viewer_telegram_id and viewer_telegram_id > 0:
+        # Shared cards may be cached; resolve invitation attribution per viewer.
+        sharer = await get_or_create_user(viewer_telegram_id)
+        sharer_referral_code = getattr(sharer, "referral_code", None)
         rows.append(
             [
                 types.InlineKeyboardButton(
                     text="🔗 Ссылка на пост в боте",
                     copy_text=types.CopyTextButton(
-                        text=_feed_share_link(username, gen_id, author_referral_code)
+                        text=_feed_share_link(username, gen_id, sharer_referral_code)
                     ),
                 ),
             ]
@@ -2740,7 +2743,11 @@ async def _render_feed_carousel(
         photos_count=len(photos),
         source_code=source_code,
         profile_code=profile_code,
-        viewer_telegram_id=message.chat.id if message.chat else None,
+        # In a shared chat, resolve the clicker through bfs instead of embedding
+        # one viewer's referral into a CopyText button visible to everybody.
+        viewer_telegram_id=(
+            message.chat.id if message.chat and message.chat.type == "private" else None
+        ),
     )
 
     if not replace_message and (getattr(message, "photo", None) or getattr(message, "video", None)):
@@ -3603,14 +3610,17 @@ async def like_profile_feed_card(callback: types.CallbackQuery):
 @router.callback_query(F.data.startswith("bfs:"))
 async def share_feed_card(callback: types.CallbackQuery):
     gen_id = _parse_int((callback.data or "").replace("bfs:", "", 1), 0)
-    card = await increment_feed_share(gen_id)
+    # Profile-only publications are also link-shareable; hidden cards are not.
+    card = await increment_feed_share(gen_id, allow_profile=True)
     if not card:
         await _safe_callback_answer(callback, "Пост не найден", show_alert=True)
         return
 
+    sharer = await get_or_create_user(callback.from_user.id)
+    sharer_referral_code = getattr(sharer, "referral_code", None)
     username = await _bot_username(callback.bot)
-    bot_link = _feed_share_link(username, card["id"], card.get("author_referral_code"))
-    miniapp_link = _feed_miniapp_link(username, card["id"], card.get("author_referral_code"))
+    bot_link = _feed_share_link(username, card["id"], sharer_referral_code)
+    miniapp_link = _feed_miniapp_link(username, card["id"], sharer_referral_code)
     await _safe_callback_answer(
         callback,
         f"Бот: {bot_link}\nMini App: {miniapp_link}",

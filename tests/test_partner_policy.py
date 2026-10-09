@@ -4,6 +4,7 @@ import pytest
 
 from bot import database
 from bot import db as db_backend
+from bot.partner_commission_settings import set_partner_commission_percent
 
 
 @pytest.mark.asyncio
@@ -12,6 +13,8 @@ async def test_new_purchase_rates_and_recipient_exception():
         parent = await database.get_or_create_user(70200 + index)
         partner = await database.get_or_create_user(recipient)
         buyer = await database.get_or_create_user(70300 + index)
+        if index == 0:
+            await set_partner_commission_percent(999999999, recipient, 40, expected_revision=0)
         async with db_backend.connect() as conn:
             await conn.execute('UPDATE users SET referred_by = ? WHERE id = ?', (parent.id, partner.id))
             await conn.execute('UPDATE users SET referred_by = ? WHERE id = ?', (partner.id, buyer.id))
@@ -185,8 +188,9 @@ async def test_payment_terms_are_frozen_when_invoice_created(monkeypatch):
     async with db_backend.connect() as conn:
         await conn.execute('UPDATE users SET referred_by = ? WHERE id = ?', (partner.id, buyer.id))
         await conn.commit()
+    await set_partner_commission_percent(999999999, partner.telegram_id, 40, expected_revision=0)
     await database.create_transaction('frozen', buyer.id, 'frozen', 'test', 25, 1000)
-    monkeypatch.setenv('PARTNER_LEVEL1_PERCENT', '20')
+    await set_partner_commission_percent(999999999, partner.telegram_id, 20, expected_revision=1)
     result = await database.complete_payment_atomic('frozen')
     assert result['referral_bonus']['value'] == 400
 
@@ -210,7 +214,7 @@ async def test_bonus_failure_never_fails_generation_and_reconciles_durable_accep
 
 
 @pytest.mark.asyncio
-async def test_exception_applies_when_referral_attaches_after_invoice_creation(monkeypatch):
+async def test_default_terms_survive_referral_attaching_after_invoice_creation(monkeypatch):
     partner = await database.get_or_create_user(1608435230)
     buyer = await database.get_or_create_user(71602)
     await database.create_transaction('later-referral', buyer.id, 'later-referral', 'test', 25, 1000)
@@ -232,7 +236,7 @@ async def test_legacy_attachment_defers_bonus_and_current_schema_init_is_idempot
     assert (await database.get_or_create_user(partner.telegram_id)).referral_earned == 3
 
 
-@pytest.mark.parametrize('name,value', [('PARTNER_LEVEL1_PERCENT', 'nan'), ('PARTNER_LEVEL1_PERCENT', '101'), ('PARTNER_LEVEL2_PERCENT', '-1'), ('PARTNER_REPEAT_REWARD_RUB', 'inf'), ('PARTNER_LEVEL1_OVERRIDES_JSON', '[]'), ('PARTNER_LEVEL1_OVERRIDES_JSON', '{"1608435230":101}')])
+@pytest.mark.parametrize('name,value', [('PARTNER_LEVEL2_PERCENT', '-1'), ('PARTNER_REPEAT_REWARD_RUB', 'inf'), ('PARTNER_LEVEL1_OVERRIDES_JSON', '[]'), ('PARTNER_LEVEL1_OVERRIDES_JSON', '{"1608435230":101}')])
 def test_invalid_policy_fails_closed(monkeypatch, name, value):
     from bot.partner_policy import get_partner_policy
     monkeypatch.setenv(name, value)
@@ -260,8 +264,10 @@ async def test_schema_uses_native_ddl_when_adapter_requires_it():
         async def execute(self, sql):
             raise AssertionError('translated DDL must not silently disappear')
     await init_partner_policy_tables(NativeConnection())
-    assert len(statements) == 2
-    assert all(translate_sql(sql) is None for sql in statements)
+    assert len(statements) >= 7
+    assert all(translate_sql(sql) is None for sql in statements if sql.strip().startswith(('CREATE TABLE', 'CREATE INDEX')))
+    assert any('partner_commission_settings' in sql for sql in statements)
+    assert any('append-only' in sql for sql in statements)
     assert 'last_checked_at' in statements[1]
 
 
