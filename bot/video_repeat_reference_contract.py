@@ -212,7 +212,9 @@ def build_video_repeat_plan(
     return {"version": 1, "grant": grant, **recipe}
 
 
-def video_repeat_descriptors(task: dict[str, Any]) -> dict[str, Any] | None:
+def video_repeat_descriptors(
+    task: dict[str, Any], *, tariff: str = "standard",
+) -> dict[str, Any] | None:
     try:
         plan = build_video_repeat_plan(task)
         if plan is None:
@@ -222,20 +224,14 @@ def video_repeat_descriptors(task: dict[str, Any]) -> dict[str, Any] | None:
             raise VideoRepeatContractError("Не удалось определить стоимость повтора.")
         price_metadata = {}
         if plan["model"] == "seedance_2_5":
-            # Same installed quote helper as the paid Seedance launch, including
-            # video-reference adjustment. These are final totals, not factors.
-            from bot.handlers.seedance_25_preview import _price_quote
-            from bot.model_capabilities import get_video_capability
-            capability = get_video_capability(plan["model"])
-            duration_costs = {
-                str(duration): float(_price_quote({
-                    "v_duration": duration, "seedance25_resolution": plan["pricing_quality"],
-                    "v_reference_videos": [slot["url"] for slot in plan["videos"]],
-                })) for duration in capability.durations
-            }
-            if any(not isfinite(cost) or cost <= 0 for cost in duration_costs.values()):
+            from bot.creator_tariff_display import video_repeat_price_metadata
+
+            price_metadata = video_repeat_price_metadata(
+                plan["model"], plan["pricing_quality"],
+                has_video_reference=bool(plan["videos"]), tariff=tariff,
+            )
+            if any(not isfinite(cost) or cost <= 0 for cost in price_metadata["duration_costs"].values()):
                 raise VideoRepeatContractError("Не удалось определить стоимость повтора.")
-            price_metadata = {"pricing_quality": plan["pricing_quality"], "duration_costs": duration_costs}
     except VideoRepeatContractError:
         return {"version": 1, "available": False, "images": [], "videos": []}
     return {

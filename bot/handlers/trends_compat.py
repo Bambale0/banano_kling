@@ -307,20 +307,23 @@ def _install_miniapp_trends(miniapp_module: Any) -> None:
             body = await miniapp_module._miniapp_payload(request)
             init_data = body.get("init_data", "")
             limit = miniapp_module._bounded_int(body.get("limit"), default=80, maximum=120)
-            await miniapp_module._get_user_context(
+            telegram_id, _ctx = await miniapp_module._get_user_context(
                 request.app,
                 init_data,
                 body.get("start_param_fallback"),
             )
             trends = await database.get_prompts_by_tag(TREND_TAG, limit)
             from bot import trend_api
+            from bot.creator_tariff import get_actor_tariff
 
+            tariff = await get_actor_tariff(telegram_id)
             priced_trends = [
-                trend_api.with_trend_repeat_cost(trend)
+                trend_api.with_trend_repeat_cost(trend, tariff=tariff)
                 for trend in trends
             ]
             return miniapp_module.web.json_response(
-                {"ok": True, "prompts": priced_trends}
+                {"ok": True, "prompts": priced_trends},
+                headers={"Cache-Control": "no-store"},
             )
         except Exception as error:
             return miniapp_module._miniapp_error_response(
@@ -346,12 +349,15 @@ def _install_miniapp_trends(miniapp_module: Any) -> None:
                     status=404,
                 )
             from bot import trend_api
+            from bot.creator_tariff import get_actor_tariff
 
+            tariff = await get_actor_tariff(telegram_id)
             return miniapp_module.web.json_response(
                 {
                     "ok": True,
-                    "prompt": trend_api.with_trend_repeat_cost(prompt),
-                }
+                    "prompt": trend_api.with_trend_repeat_cost(prompt, tariff=tariff),
+                },
+                headers={"Cache-Control": "no-store"},
             )
         except Exception as error:
             return miniapp_module._miniapp_error_response(
@@ -426,14 +432,17 @@ def _install_miniapp_trends(miniapp_module: Any) -> None:
             if prompt:
                 prompt = await database.approve_prompt(prompt["id"])
             from bot import trend_api
+            from bot.creator_tariff import get_actor_tariff
 
+            tariff = await get_actor_tariff(telegram_id)
             priced_prompt = (
-                trend_api.with_trend_repeat_cost(prompt)
+                trend_api.with_trend_repeat_cost(prompt, tariff=tariff)
                 if prompt
                 else None
             )
             return miniapp_module.web.json_response(
-                {"ok": True, "prompt": priced_prompt}
+                {"ok": True, "prompt": priced_prompt},
+                headers={"Cache-Control": "no-store"},
             )
         except Exception as error:
             return miniapp_module._miniapp_error_response(

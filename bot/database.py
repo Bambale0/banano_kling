@@ -1225,6 +1225,8 @@ async def init_db():
 
         await _ensure_saved_references_schema(db)
         await _ensure_prompt_feed_schema(db)
+        from bot.creator_tariff_membership import ensure_creator_tariff_schema
+        await ensure_creator_tariff_schema(db)
 
         await db.commit()
         logger.info("Database initialized successfully")

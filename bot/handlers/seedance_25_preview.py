@@ -17,6 +17,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from PIL import Image
 
 from bot.config import config
+from bot.creator_tariff import get_actor_tariff
 from bot.services.preset_manager import preset_manager
 from bot.services.seedance_25_service import seedance_25_service
 
@@ -299,6 +300,7 @@ def install_seedance_25_preview() -> None:
         keyboard = generation_module.get_video_model_selection_keyboard(
             current_model,
             user_id=user_id,
+            tariff=await get_actor_tariff(user_id),
         )
         try:
             if isinstance(message_or_callback, types.CallbackQuery):
@@ -341,10 +343,10 @@ def install_seedance_25_preview() -> None:
         return await _run_seedance_25_message(message, state, prompt)
 
     @wraps(original_callback_launch)
-    async def callback_launch_with_seedance_25(callback, state, prompt, cost, is_admin):
+    async def callback_launch_with_seedance_25(callback, state, prompt, cost, is_admin, **kwargs):
         data = await state.get_data()
         if data.get("v_model") != MODEL_KEY:
-            return await original_callback_launch(callback, state, prompt, cost, is_admin)
+            return await original_callback_launch(callback, state, prompt, cost, is_admin, **kwargs)
         if not _is_admin(callback.from_user.id):
             await callback.message.answer("❌ Seedance 2.5 сейчас доступна только администраторам.")
             await state.clear()

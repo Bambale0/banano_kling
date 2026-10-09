@@ -355,9 +355,11 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
   const hasVideoReference = referenceScenario && (videos.length > 0 || videoSources.trim().length > 0)
   const basePrice = useMemo(() => {
     const seconds = videoEditing || duration === -1 ? 5 : duration
+    const quotedCost = model?.quality_duration_costs?.[resolution]?.[seconds.toString()]
+    if (typeof quotedCost === 'number' && Number.isFinite(quotedCost)) return quotedCost
     const perSecond = Number(model?.quality_costs?.[resolution] || 0)
     return perSecond ? Math.round(perSecond * seconds * 2) / 2 : 0
-  }, [duration, videoEditing, model?.quality_costs, resolution])
+  }, [duration, videoEditing, model?.quality_costs, model?.quality_duration_costs, resolution])
   const price = identityTransfer ? identityQuote?.cost ?? 0 : hasVideoReference ? basePrice * 2 : basePrice
   const canAfford = isAdmin || !price || credits >= price
   const promptStep = scenario === 'text' ? 2 : 3

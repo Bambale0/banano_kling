@@ -11,6 +11,7 @@ from typing import Any
 from aiohttp import web
 
 from bot.config import config
+from bot.creator_tariff import quote_video_for_actor, resolve_video_quote
 from bot.database import (
     add_credits,
     check_can_afford,
@@ -36,14 +37,12 @@ from bot.services.media_input_utils import (
     is_local_upload_source,
     missing_local_upload_sources,
 )
-from bot.services.preset_manager import preset_manager
 from bot.trend_user_fields import (
     TrendUserFieldsError,
     clean_submitted_user_values,
     render_trend_prompt,
 )
 from bot.video_reference_policy import (
-    apply_video_reference_cost,
     get_max_audio_references,
     get_max_video_image_references,
     get_max_video_references,
@@ -453,6 +452,7 @@ def _string_list(settings: Mapping[str, Any], key: str) -> list[str]:
 
 def estimate_trend_repeat_cost(
     trend: Mapping[str, Any] | TrustedTrendRun,
+    *, tariff: str = "standard",
 ) -> float | None:
     """Return the current retail cost for repeating a saved trend.
 
@@ -518,14 +518,9 @@ def estimate_trend_repeat_cost(
             resolution = str(
                 settings.get("seedance25_resolution") or "720p"
             ).strip().lower()
-            base_cost = preset_manager.get_video_cost_with_quality(
-                model,
-                pricing_duration,
-                resolution,
-            )
-            return float(
-                apply_video_reference_cost(model, base_cost, pricing_video_refs)
-            )
+            return resolve_video_quote(
+                model, pricing_duration, resolution, pricing_video_refs, tariff=tariff,
+            ).cost
 
         scenario = str(settings.get("scenario") or "imgtxt")
         effective_model = miniapp_module._resolve_gemini_omni_model(
@@ -537,12 +532,9 @@ def estimate_trend_repeat_cost(
             str(settings.get("veo_resolution") or "720p"),
             str(settings.get("omni_resolution") or "720p"),
         )
-        base_cost = preset_manager.get_video_cost_with_quality(
-            effective_model,
-            duration,
-            pricing_quality,
-        )
-        return float(apply_video_reference_cost(effective_model, base_cost, pricing_video_refs))
+        return resolve_video_quote(
+            effective_model, duration, pricing_quality, pricing_video_refs, tariff=tariff,
+        ).cost
     except Exception:
         trend_id = getattr(trend, "trend_id", None)
         if trend_id is None and isinstance(trend, Mapping):
@@ -555,9 +547,9 @@ def estimate_trend_repeat_cost(
         return None
 
 
-def with_trend_repeat_cost(trend: Mapping[str, Any]) -> dict[str, Any]:
+def with_trend_repeat_cost(trend: Mapping[str, Any], *, tariff: str = "standard") -> dict[str, Any]:
     enriched = dict(trend)
-    enriched["repeat_cost"] = estimate_trend_repeat_cost(trend)
+    enriched["repeat_cost"] = estimate_trend_repeat_cost(trend, tariff=tariff)
     return enriched
 
 
@@ -821,20 +813,27 @@ async def _run_video_trend(
     )
     veo_resolution = str(trend.settings.get("veo_resolution") or "720p")
     omni_resolution = str(trend.settings.get("omni_resolution") or "720p")
-    cost = estimate_trend_repeat_cost(trend)
-    if cost is None:
-        raise TrendRunValidationError("Не удалось определить стоимость видео-тренда")
+    billing_quote = await quote_video_for_actor(
+        telegram_id, effective_model, duration,
+        miniapp_module._video_pricing_quality(effective_model, veo_resolution, omni_resolution),
+        trend.provider_video_urls,
+    )
+    cost = billing_quote.cost
 
     debited, debit_error = await _debit_for_generation(telegram_id, user, cost)
     if debit_error is not None:
         return debit_error
 
     launched = False
+    launch_observation = {}
+    refund_attempted = False
     try:
         launch_result = await miniapp_module._launch_video_generation_task(
             telegram_id=telegram_id,
             user=user,
             model=effective_model,
+            billing_quote=billing_quote,
+            _launch_observation=launch_observation,
             prompt=trend.prompt,
             duration=duration,
             aspect_ratio=trend.ratio,
@@ -901,6 +900,7 @@ async def _run_video_trend(
         )
         if launch_result["status"] == "failed":
             if debited:
+                refund_attempted = True
                 await add_credits(telegram_id, cost)
             return web.json_response(
                 {
@@ -939,7 +939,7 @@ async def _run_video_trend(
             }
         )
     except Exception:
-        if debited and not launched:
+        if debited and not launched and not launch_observation.get("accepted") and not refund_attempted:
             await add_credits(telegram_id, cost)
         raise
 

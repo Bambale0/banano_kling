@@ -154,7 +154,9 @@ async def test_seedance25_miniapp_repeat_keeps_source_lineage_and_rewards_author
     add_task = AsyncMock(return_value=True)
     monkeypatch.setattr(public_release.generation_module, 'add_generation_task', add_task)
     monkeypatch.setattr(public_release, '_validate_public_payload', AsyncMock(return_value=None))
-    monkeypatch.setattr(public_release.preview_module, '_price_quote', lambda _data: 12.0)
+    monkeypatch.setattr(public_release.preset_manager, '_price_config', {
+        'costs_reference': {'video_models': {'seedance_2_5': {'quality_costs': {'720p': 1.2}}}},
+    })
     monkeypatch.setattr(
         public_release,
         '_launch_provider',
@@ -225,7 +227,9 @@ async def test_seedance25_admin_repeat_is_free_and_does_not_reward_author(monkey
     add_task = AsyncMock(return_value=True)
     monkeypatch.setattr(public_release.generation_module, "add_generation_task", add_task)
     monkeypatch.setattr(public_release, "_validate_public_payload", AsyncMock(return_value=None))
-    monkeypatch.setattr(public_release.preview_module, "_price_quote", lambda _data: 12.0)
+    monkeypatch.setattr(public_release.preset_manager, "_price_config", {
+        "costs_reference": {"video_models": {"seedance_2_5": {"quality_costs": {"720p": 1.2}}}},
+    })
     monkeypatch.setattr(
         public_release,
         "_launch_provider",

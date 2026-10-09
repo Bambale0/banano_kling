@@ -350,18 +350,12 @@ def test_repeat_cost_uses_saved_video_duration_and_quality(monkeypatch):
 
 
 def test_catalog_cost_includes_replaceable_video_reference_multiplier(monkeypatch):
-    from bot import trend_api as trend_api_module
     from bot.services.preset_manager import preset_manager
 
     monkeypatch.setattr(
         preset_manager,
         "get_video_cost_with_quality",
         lambda _model, _duration, _quality: 10.0,
-    )
-    monkeypatch.setattr(
-        trend_api_module,
-        "apply_video_reference_cost",
-        lambda _model, base, refs: base * (2 if refs else 1),
     )
     trend = _private_seedance_trend()
     trend["model"] = "seedance_2_5"

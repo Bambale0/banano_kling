@@ -84,3 +84,15 @@ it('quotes video-reference multiplier in the legacy admin editing form', () => {
   fireEvent.click(screen.getByLabelText('Редактировать видео'))
   expect(screen.getByText('40🍌')).toBeInTheDocument()
 })
+
+it('uses authenticated server-rounded creator totals and doubles video references once', () => {
+  const model = {
+    id: 'seedance_2_5', quality_costs: { '720p': 1.25 },
+    quality_duration_costs: { '720p': { '5': 6 } },
+  } as any
+  render(<Seedance25PublicForm model={model} credits={12} isAdmin={false} />)
+  fireEvent.change(screen.getByLabelText('Длительность видео'), { target: { value: '5' } })
+  fireEvent.change(screen.getByLabelText(/Видео — по одному/), { target: { value: 'https://example.com/source.mp4' } })
+  expect(screen.getByText(/базовая цена 6🍌 × 2 = 12🍌/)).toBeInTheDocument()
+  expect(screen.queryByLabelText('Редактировать видео')).not.toBeInTheDocument()
+})

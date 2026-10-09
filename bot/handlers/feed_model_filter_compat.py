@@ -411,7 +411,7 @@ def install_feed_model_filter_compat(common_module: Any) -> None:
                     item["can_remove"] = True
                 if is_admin or is_mine:
                     item["can_blur"] = True
-            response = miniapp_module.web.json_response(
+            response = await miniapp_module.creator_tariff_display.priced_feed_response(
                 {
                     "ok": True,
                     "feed": feed,
@@ -420,7 +420,8 @@ def install_feed_model_filter_compat(common_module: Any) -> None:
                         {"id": item, "label": _model_label(item)}
                         for item in await _published_model_ids()
                     ],
-                }
+                },
+                telegram_id,
             )
             response.headers["Cache-Control"] = (
                 "no-store, no-cache, must-revalidate, max-age=0"

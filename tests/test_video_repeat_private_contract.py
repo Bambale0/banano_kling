@@ -692,7 +692,9 @@ async def test_typed_seedance_actual_provider_acceptance_financial_boundary(monk
     entry.delegate.side_effect = delegate
     monkeypatch.setattr(miniapp.config, 'is_admin', lambda _: case == 'admin_accepted')
     monkeypatch.setattr(public, '_validate_public_payload', AsyncMock())
-    monkeypatch.setattr(public.preview_module, '_price_quote', lambda _: 2)
+    monkeypatch.setattr(public.preset_manager, '_price_config', {
+        'costs_reference': {'video_models': {'seedance_2_5': {'quality_costs': {'720p': 0.2}}}},
+    })
     monkeypatch.setattr(miniapp, 'check_can_afford', AsyncMock(return_value=True))
     balance = {'value': 100}
 

@@ -219,9 +219,11 @@ export function Seedance25AdminForm({ model: rawModel, onQueued, onSavedReferenc
   const hasVideoReference = scenario === 'multimodal' && (videos.length > 0 || videoAssets.trim().length > 0)
   const basePrice = useMemo(() => {
     const seconds = videoEditing || duration === -1 ? 5 : duration
+    const quotedCost = model?.quality_duration_costs?.[resolution]?.[seconds.toString()]
+    if (typeof quotedCost === 'number' && Number.isFinite(quotedCost)) return quotedCost
     const perSecond = Number(model?.quality_costs?.[resolution] ?? 0)
     return perSecond ? Math.round(perSecond * seconds * 2) / 2 : 0
-  }, [duration, videoEditing, model?.quality_costs, resolution])
+  }, [duration, videoEditing, model?.quality_costs, model?.quality_duration_costs, resolution])
   const priceQuote = hasVideoReference ? basePrice * 2 : basePrice
 
   const uploadImage = async (file: File, target: 'first' | 'last' | 'refs') => {

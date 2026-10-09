@@ -10,6 +10,7 @@
 import asyncio
 import json
 import logging
+import math
 from typing import Any, Dict, Optional
 
 from bot import db as db_backend
@@ -230,7 +231,19 @@ async def force_fail_task(
             or request_data.get("refund_on_failure") is False
         )
         admin_user = False
-        if cost and cost > 0 and not already_refunded and not refund_disabled:
+        locked_quote = request_data.get("billing_quote")
+        has_locked_quote = (
+            isinstance(locked_quote, dict)
+            and locked_quote.get("version") == 1
+            and isinstance(locked_quote.get("charge_cost"), (int, float))
+            and not isinstance(locked_quote.get("charge_cost"), bool)
+            and math.isfinite(locked_quote["charge_cost"])
+            and locked_quote["charge_cost"] >= 0
+        )
+        if has_locked_quote:
+            # A later role/profile/price change cannot alter an accepted debit.
+            cost = float(locked_quote["charge_cost"])
+        if cost and cost > 0 and not already_refunded and not refund_disabled and not has_locked_quote:
             admin_user = await _is_admin_user(db, user_id)
             refund_disabled = admin_user
         should_refund = bool(

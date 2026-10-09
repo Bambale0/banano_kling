@@ -66,6 +66,7 @@ from bot.handlers import (
     payments_router,
 )
 from bot.handlers.common import ensure_feed_cache_warmup
+from bot.handlers.creator_tariff_admin import router as creator_tariff_admin_router
 from bot.handlers.payments import (
     cleanup_stale_cryptobot_pending,
     handle_cryptobot_webhook,
@@ -2880,6 +2881,7 @@ def setup_dispatcher() -> Dispatcher:
 
     dp.include_router(generation_router)  # FSM состояния - ПЕРВЫЙ!
     dp.include_router(image_analyzer_router)  # Анализ фото в промпт
+    dp.include_router(creator_tariff_admin_router)  # Отдельный тариф креатора
     dp.include_router(admin_router)  # Админ-команды
     dp.include_router(payments_router)  # Платежи
     dp.include_router(batch_generation_router)  # Пакетная генерация

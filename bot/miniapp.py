@@ -17,8 +17,10 @@ import aiohttp
 from aiogram.types import BufferedInputFile, LabeledPrice
 from aiohttp import web
 
+from bot import creator_tariff_display
 from bot import db as db_backend
 from bot.config import config
+from bot.creator_tariff import VideoQuote, quote_video_for_actor
 from bot.trend_user_fields import (
     TrendUserFieldsError,
     normalize_user_fields_settings,
@@ -169,7 +171,6 @@ from bot.services.yookassa_service import yookassa_service
 from bot.utils.user_facing_errors import make_user_friendly_generation_error
 from bot.utils.validators import detect_explicit_prompt_policy_violation
 from bot.video_reference_policy import (
-    apply_video_reference_cost,
     get_max_audio_references,
     get_max_video_image_references,
     get_max_video_references,
@@ -2001,6 +2002,7 @@ async def _launch_video_generation_task(
     fixed_asset_counts: dict[str, int] | None = None,
     video_repeat_contract_version: int | None = None,
     _launch_observation: dict[str, Any] | None = None,
+    billing_quote: VideoQuote | None = None,
 ) -> dict[str, Any]:
     from bot.services.gemini_omni_service import gemini_omni_service
     from bot.services.grok_service import grok_service
@@ -2008,6 +2010,13 @@ async def _launch_video_generation_task(
     from bot.services.seedance_service import seedance_service
     from bot.services.veo_service import veo_service
 
+    if billing_quote is None:
+        billing_quote = await quote_video_for_actor(
+            telegram_id, model, duration,
+            _video_pricing_quality(model, veo_resolution, omni_resolution),
+            video_references,
+        )
+    cost = billing_quote.cost
     reserved_task_id = (_launch_observation or {}).get("receipt_task_id")
 
     async def persist_generation_task(*args, **kwargs):
@@ -2225,9 +2234,6 @@ async def _launch_video_generation_task(
         )
     if reserved_task_id and result_status == "failed":
         return {"status": "failed", "error": error_message or "Не удалось создать видео задачу"}
-    pricing_quality = _video_pricing_quality(model, veo_resolution, omni_resolution)
-    cost = preset_manager.get_video_cost_with_quality(model, duration, pricing_quality)
-    cost = apply_video_reference_cost(model, cost, video_references)
     task_type = (
         "audio"
         if model == "gemini_omni_audio"
@@ -2245,10 +2251,14 @@ async def _launch_video_generation_task(
             duration=duration,
             aspect_ratio=normalized_ratio,
             prompt=prompt,
-            cost=cost,
+            cost=billing_quote.charge_cost,
             request_data={
                 **({"video_repeat_contract_version": 1} if video_repeat_contract_version == 1 else {}),
                 "source": "miniapp",
+                "billing_quote": billing_quote.to_dict(),
+                "charged": billing_quote.charge_cost > 0,
+                "admin_free": billing_quote.charge_cost == 0,
+                "refund_on_failure": billing_quote.charge_cost > 0,
                 "v_type": generation_type,
                 "v_model": model,
                 "v_image_url": image_url,
@@ -2319,10 +2329,14 @@ async def _launch_video_generation_task(
             duration=duration,
             aspect_ratio=normalized_ratio,
             prompt=prompt,
-            cost=cost,
+            cost=billing_quote.charge_cost,
             request_data={
                 **({"video_repeat_contract_version": 1} if video_repeat_contract_version == 1 else {}),
                 "source": "miniapp",
+                "billing_quote": billing_quote.to_dict(),
+                "charged": billing_quote.charge_cost > 0,
+                "admin_free": billing_quote.charge_cost == 0,
+                "refund_on_failure": billing_quote.charge_cost > 0,
                 "v_type": generation_type,
                 "v_model": model,
                 "asset_kind": result.get("asset_kind"),
@@ -2372,10 +2386,14 @@ async def _launch_video_generation_task(
         duration=duration,
         aspect_ratio=normalized_ratio,
         prompt=prompt,
-        cost=cost,
+        cost=billing_quote.charge_cost,
         request_data={
                 **({"video_repeat_contract_version": 1} if video_repeat_contract_version == 1 else {}),
             "source": "miniapp",
+                "billing_quote": billing_quote.to_dict(),
+                "charged": billing_quote.charge_cost > 0,
+                "admin_free": billing_quote.charge_cost == 0,
+                "refund_on_failure": billing_quote.charge_cost > 0,
             "v_type": generation_type,
             "v_model": model,
             "v_image_url": image_url,
@@ -3069,6 +3087,10 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
+        # Private request state comes only from the authenticated actor. Later
+        # model metadata wrappers reuse it without a shared per-user cache.
+        tariff = await creator_tariff_display.get_actor_tariff(telegram_id)
+        request._creator_tariff = tariff
         user = ctx["user"]
         telegram_user = ctx["payload"]["user"]
         me = await _cached_bot_me(request.app)
@@ -3125,7 +3147,7 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
                 for item in IMAGE_MODELS
             ],
             "video_models": [
-                {
+                creator_tariff_display.price_video_model_metadata({
                     **item,
                     "costs": {
                         str(duration): preset_manager.get_video_cost(
@@ -3148,7 +3170,7 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
                         if item["id"] == "gemini_omni"
                         else {}
                     ),
-                }
+                }, tariff=tariff)
                 for item in VIDEO_MODELS
             ],
             "recent_tasks": recent_tasks,
@@ -3162,7 +3184,7 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
         # Apply the same recipe boundary to its recent task history as detail.
         from .trend_task_privacy import sanitize_task_api_payload
 
-        return web.json_response(await sanitize_task_api_payload(data))
+        return web.json_response(await sanitize_task_api_payload(data), headers={"Cache-Control": "no-store"})
     except Exception as e:
         return _miniapp_error_response(
             e,
@@ -3929,7 +3951,7 @@ async def miniapp_feed(request: web.Request) -> web.Response:
                 item["can_remove"] = True
             if is_admin or is_mine:
                 item["can_blur"] = True
-        return web.json_response({"ok": True, "feed": feed})
+        return await creator_tariff_display.priced_feed_response({"ok": True, "feed": feed}, telegram_id)
     except Exception as e:
         return _miniapp_error_response(e, log_message="Mini App feed list failed")
 
@@ -3960,7 +3982,7 @@ async def miniapp_feed_item(request: web.Request) -> web.Response:
             card["can_remove"] = True
         if is_admin or is_mine:
             card["can_blur"] = True
-        return web.json_response({"ok": True, "feed_item": card})
+        return await creator_tariff_display.priced_feed_response({"ok": True, "feed_item": card}, telegram_id)
     except Exception as e:
         return _miniapp_error_response(e, log_message="Mini App feed item failed")
 
@@ -3984,7 +4006,7 @@ async def miniapp_my_feed(request: web.Request) -> web.Response:
             item["can_blur"] = True
             if is_admin:
                 item["can_remove"] = True
-        return web.json_response({"ok": True, "feed": feed})
+        return await creator_tariff_display.priced_feed_response({"ok": True, "feed": feed}, telegram_id)
     except Exception as e:
         return _miniapp_error_response(e, log_message="Mini App my feed failed")
 
@@ -4072,7 +4094,7 @@ async def miniapp_profile_feed(request: web.Request) -> web.Response:
             viewer_user_id=ctx["user"].id,
             feed_summary=feed_summary,
         )
-        return web.json_response({"ok": True, "profile": profile, "feed": feed})
+        return await creator_tariff_display.priced_feed_response({"ok": True, "profile": profile, "feed": feed}, telegram_id)
     except Exception as e:
         return _miniapp_error_response(e, log_message="Mini App profile feed failed")
 
@@ -4161,7 +4183,7 @@ async def miniapp_generation_share(request: web.Request) -> web.Response:
             else config.mini_app_url
         )
         card["publication_link"] = publication_link
-        return web.json_response({"ok": True, "feed_item": card})
+        return await creator_tariff_display.priced_feed_response({"ok": True, "feed_item": card}, telegram_id)
     except ValueError as e:
         return web.json_response({"ok": False, "error": str(e)}, status=400)
     except Exception as e:
@@ -4199,7 +4221,7 @@ async def miniapp_feed_blur(request: web.Request) -> web.Response:
             gen_id,
             blurred,
         )
-        return web.json_response({"ok": True, "feed_item": card})
+        return await creator_tariff_display.priced_feed_response({"ok": True, "feed_item": card}, telegram_id)
     except Exception as e:
         return _miniapp_error_response(e, log_message="Mini App feed blur failed")
 
@@ -4236,7 +4258,7 @@ async def miniapp_feed_like(request: web.Request) -> web.Response:
         init_data = body.get("init_data", "")
         gen_id = body.get("gen_id") or body.get("task_id")
         allow_profile = str(body.get("surface", "feed") or "feed").strip().lower() == "profile"
-        _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
+        telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         card = await like_feed_generation(
             gen_id,
             ctx["user"].id,
@@ -4244,7 +4266,7 @@ async def miniapp_feed_like(request: web.Request) -> web.Response:
         )
         if not card:
             return web.json_response({"ok": False, "error": "Публикация не найдена"}, status=404)
-        return web.json_response({"ok": True, "feed_item": card})
+        return await creator_tariff_display.priced_feed_response({"ok": True, "feed_item": card}, telegram_id)
     except Exception as e:
         return _miniapp_error_response(e, log_message="Mini App feed like failed")
 
@@ -4284,7 +4306,7 @@ async def miniapp_feed_share(request: web.Request) -> web.Response:
         )
         logger.info("Feed share link issued by %s for feed %s", telegram_id, card["id"])
         preferred_link = repeat_link if is_image_feed_item else post_link
-        return web.json_response(
+        return await creator_tariff_display.priced_feed_response(
             {
                 "ok": True,
                 "feed_item": card,
@@ -4295,7 +4317,8 @@ async def miniapp_feed_share(request: web.Request) -> web.Response:
                 "miniapp_link": miniapp_post_link,
                 "miniapp_post_link": miniapp_post_link,
                 "miniapp_repeat_link": miniapp_repeat_link,
-            }
+            },
+            telegram_id,
         )
     except Exception as e:
         return _miniapp_error_response(e, log_message="Mini App feed share failed")
@@ -5204,15 +5227,11 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
         pricing_quality = _video_pricing_quality(
             effective_model, veo_resolution, omni_resolution
         )
-        cost = preset_manager.get_video_cost_with_quality(
-            effective_model, duration, pricing_quality
+        billing_quote = await quote_video_for_actor(
+            telegram_id, effective_model, duration, pricing_quality, video_references,
         )
-        cost = apply_video_reference_cost(
-            effective_model,
-            cost,
-            video_references,
-        )
-        is_admin = config.is_admin(telegram_id)
+        cost = billing_quote.cost
+        is_admin = billing_quote.charge_cost == 0
         if not is_admin and not await check_can_afford(telegram_id, cost):
             return web.json_response(
                 {
@@ -5241,7 +5260,7 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
             debit_attempted = True
             debited = await deduct_credits(telegram_id, cost)
             debit_completed = True
-            if private_repeat and cost > 0 and debited is False:
+            if cost > 0 and debited is False:
                 await record_video_repeat_launch(receipt_id, user.id, phase="debit_rejected", terminal=True)
                 return web.json_response(
                     {"ok": False, "error": "Не удалось списать бананы. Обновите баланс и попробуйте снова."},
@@ -5253,11 +5272,12 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
         launch_observation["receipt_task_id"] = receipt_id
         launch_started = True
         launch_result = await _launch_video_generation_task(
-            **({"_launch_observation": launch_observation} if private_repeat else {}),
+            _launch_observation=launch_observation,
             **({"video_repeat_contract_version": 1} if getattr(request, "_video_repeat_authorization", None) else {}),
             telegram_id=telegram_id,
             user=user,
             model=effective_model,
+            billing_quote=billing_quote,
             prompt=prompt,
             duration=duration,
             aspect_ratio=aspect_ratio,
@@ -5296,7 +5316,7 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
                 launch_observation["provider_task_id"] = str(launch_result.get("task_id") or "")
         if launch_result["status"] == "failed":
             provider_rejected = True
-            if not is_admin and (not private_repeat or charged):
+            if charged:
                 refund_attempted = True
                 refunded = await add_credits(telegram_id, cost)
                 if private_repeat and refunded is False:
@@ -5396,6 +5416,9 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
                 if not terminal:
                     return video_repeat_pending_response(receipt_id)
             return _private_image_error_response(e, log_message="Private video repeat failed")
+        if charged and not refund_attempted and not launch_observation.get("accepted"):
+            refund_attempted = True
+            await add_credits(telegram_id, cost)
         return _miniapp_error_response(e, log_message="Mini App video generation failed")
 
 

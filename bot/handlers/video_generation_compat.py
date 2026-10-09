@@ -9,6 +9,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.config import config
+from bot.creator_tariff import quote_video_for_actor
 from bot.database import (
     add_credits,
     check_can_afford,
@@ -194,8 +195,16 @@ async def repeat_advanced_video_result(callback: types.CallbackQuery, state: FSM
         restored["user_prompt"] = str(task.prompt or "")
     restored["repeat_source_task_id"] = task_id
 
-    unit_cost = int(task.cost or 0)
-    is_admin = config.is_admin(callback.from_user.id)
+    model = restored["v_model"]
+    billing_quote = None
+    if normalize_video_model_key(model) in {"seedance_2", "seedance_2_5"}:
+        quality = restored.get("seedance25_resolution", "720p") if model == "seedance_2_5" else None
+        billing_quote = await quote_video_for_actor(
+            callback.from_user.id, model, restored['v_duration'], quality,
+            restored['v_reference_videos'],
+        )
+    unit_cost = billing_quote.cost if billing_quote else int(task.cost or 0)
+    is_admin = billing_quote.charge_cost == 0 if billing_quote else config.is_admin(callback.from_user.id)
     if unit_cost > 0 and not is_admin:
         if not await check_can_afford(callback.from_user.id, unit_cost):
             await callback.answer("Недостаточно бананов для повтора.", show_alert=True)
@@ -204,19 +213,20 @@ async def repeat_advanced_video_result(callback: types.CallbackQuery, state: FSM
             await callback.answer("Не удалось списать бананы.", show_alert=True)
             return
 
-    await state.clear()
-    await state.update_data(**restored)
-    model_label = get_video_model_label(restored["v_model"])
-    progress = await callback.message.answer(
-        "🔁 <b>Повторяю генерацию видео</b>\n"
-        f"• Модель: <code>{model_label}</code>\n"
-        f"• Длительность: <code>{restored['v_duration']}с</code>\n"
-        f"• Фото-референсы: <code>{len(restored['reference_images'])}</code>\n"
-        f"• Видео-референсы: <code>{len(restored['v_reference_videos'])}</code>",
-        parse_mode="HTML",
-    )
-
+    launch_observation = {}
     try:
+        await state.clear()
+        await state.update_data(**restored)
+        model_label = get_video_model_label(restored["v_model"])
+        progress = await callback.message.answer(
+            "🔁 <b>Повторяю генерацию видео</b>\n"
+            f"• Модель: <code>{model_label}</code>\n"
+            f"• Длительность: <code>{restored['v_duration']}с</code>\n"
+            f"• Фото-референсы: <code>{len(restored['reference_images'])}</code>\n"
+            f"• Видео-референсы: <code>{len(restored['v_reference_videos'])}</code>",
+            parse_mode="HTML",
+        )
+
         await progress.delete()
         await run_no_preset_video_from_callback(
             callback,
@@ -224,14 +234,17 @@ async def repeat_advanced_video_result(callback: types.CallbackQuery, state: FSM
             restored["user_prompt"],
             unit_cost,
             is_admin,
+            billing_quote=billing_quote,
+            _launch_observation=launch_observation,
         )
     except Exception:
         logger.exception("Advanced video repeat failed for task_id=%s", task_id)
-        if unit_cost > 0 and not is_admin:
+        if unit_cost > 0 and not is_admin and not launch_observation.get("accepted") and not launch_observation.get("refund_attempted"):
+            launch_observation["refund_attempted"] = True
             await add_credits(callback.from_user.id, unit_cost)
         try:
             await callback.answer(
-                "Не удалось повторить видео. Бананы возвращены.",
+                "Не удалось подтвердить запуск повтора. Не запускайте повторно до проверки статуса.",
                 show_alert=True,
             )
         except TelegramBadRequest:

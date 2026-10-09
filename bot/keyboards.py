@@ -8,6 +8,7 @@ from aiogram.types import CopyTextButton, InlineKeyboardButton, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.config import config
+from bot.creator_tariff import resolve_video_quote
 from bot.quality_pricing import SEEDREAM_5_PRO_QUALITY_COSTS
 from bot.services.preset_manager import preset_manager
 from bot.services.subscription_service import (
@@ -322,6 +323,7 @@ def _video_pricing_quality(
 def get_video_model_selection_keyboard(
     current_model: str = "v3_pro",
     user_id: int | None = None,
+    *, tariff: str = "standard",
 ):
     """Первый шаг: отдельный выбор модели видео.
 
@@ -369,6 +371,8 @@ def get_video_model_selection_keyboard(
             default_duration = 5
         pricing_quality = "720p" if model_key.startswith("veo3") or model_key == "gemini_omni" else None
         per_second = preset_manager.get_video_cost_per_second(model_key, default_duration, pricing_quality)
+        if model_key in {"seedance_2", "seedance_2_5"}:
+            per_second = resolve_video_quote(model_key, default_duration, pricing_quality, tariff=tariff).cost / default_duration
         if model_key == "gemini_omni":
             price_label = f"от {preset_manager.get_video_cost('gemini_omni_audio', 6)}🍌"
         elif model_key in {"gemini_omni_audio", "gemini_omni_character"}:
@@ -506,6 +510,8 @@ def get_create_video_keyboard(
     current_omni_voice_name: str = "",
     current_omni_character_name: str = "",
     current_omni_character_audio_ids: list | None = None,
+    tariff: str = "standard",
+    current_video_references: list | None = None,
 ):
     if current_video_model is not None:
         current_model = current_video_model
@@ -622,6 +628,9 @@ def get_create_video_keyboard(
     pricing_quality = _video_pricing_quality(current_model, current_veo_resolution, current_omni_resolution, current_mode, current_grok_resolution)
     total_cost = preset_manager.get_video_cost_with_quality(current_model, current_duration, pricing_quality)
     per_second_cost = preset_manager.get_video_cost_per_second(current_model, current_duration, pricing_quality)
+    if current_model in {"seedance_2", "seedance_2_5"}:
+        total_cost = resolve_video_quote(current_model, current_duration, pricing_quality, current_video_references, tariff=tariff).cost
+        per_second_cost = total_cost / max(1, current_duration)
     builder.button(text=f"Цена: {per_second_cost}🍌/с", callback_data="ignore")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
     widths = [2]

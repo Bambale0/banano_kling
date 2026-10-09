@@ -23,6 +23,7 @@ from PIL import Image, ImageOps
 
 from bot import db as db_backend
 from bot.config import config
+from bot.creator_tariff import VideoQuote, get_actor_tariff, quote_video_for_actor
 from bot.database import (
     _merge_task_id_aliases,
     add_credits,
@@ -103,7 +104,6 @@ from bot.utils.help_texts import (
 from bot.utils.user_facing_errors import make_user_friendly_generation_error
 from bot.utils.validators import detect_explicit_prompt_policy_violation
 from bot.video_reference_policy import (
-    apply_video_reference_cost,
     choose_video_reference_model,
     get_max_video_image_references,
     get_max_video_references,
@@ -3171,8 +3171,14 @@ async def quick_repeat_video_result(callback: types.CallbackQuery, state: FSMCon
 
     reference_images, _ = _available_reference_images(reference_images)
 
-    unit_cost = task.cost or 0
-    is_admin = config.is_admin(callback.from_user.id)
+    billing_quote = None
+    if preset_manager.normalize_video_model_key(v_model) in {"seedance_2", "seedance_2_5"}:
+        pricing_quality = request_data.get("seedance25_resolution", "720p") if v_model == "seedance_2_5" else None
+        billing_quote = await quote_video_for_actor(
+            callback.from_user.id, v_model, v_duration, pricing_quality, reference_videos,
+        )
+    unit_cost = billing_quote.cost if billing_quote else (task.cost or 0)
+    is_admin = billing_quote.charge_cost == 0 if billing_quote else config.is_admin(callback.from_user.id)
     if unit_cost > 0 and not is_admin:
         can_afford = await check_can_afford(callback.from_user.id, unit_cost)
         if not can_afford:
@@ -3182,16 +3188,17 @@ async def quick_repeat_video_result(callback: types.CallbackQuery, state: FSMCon
             await callback.answer("Не удалось списать бананы.", show_alert=True)
             return
 
+    launch_observation = {}
     model_label = get_video_model_label(v_model)
-    progress_message = await callback.message.answer(
-        "🔁 <b>Повторяю генерацию видео</b>\n"
-        f"• Модель: <code>{model_label}</code>\n"
-        f"• Длительность: <code>{v_duration}с</code>\n"
-        f"• Формат: <code>{v_ratio.replace(':', '∶')}</code>",
-        parse_mode="HTML",
-    )
-
     try:
+        progress_message = await callback.message.answer(
+            "🔁 <b>Повторяю генерацию видео</b>\n"
+            f"• Модель: <code>{model_label}</code>\n"
+            f"• Длительность: <code>{v_duration}с</code>\n"
+            f"• Формат: <code>{v_ratio.replace(':', '∶')}</code>",
+            parse_mode="HTML",
+        )
+
         # Перенаправляем в общую логику запуска видео через state
         await state.update_data(
             generation_type="video",
@@ -3225,10 +3232,14 @@ async def quick_repeat_video_result(callback: types.CallbackQuery, state: FSMCon
         )
 
         await progress_message.delete()
-        await run_no_preset_video_from_callback(callback, state, prompt, unit_cost, is_admin)
+        await run_no_preset_video_from_callback(
+            callback, state, prompt, unit_cost, is_admin, billing_quote=billing_quote,
+            _launch_observation=launch_observation,
+        )
     except Exception:
         logger.exception("Quick repeat video generation failed")
-        if unit_cost > 0 and not is_admin:
+        if unit_cost > 0 and not is_admin and not launch_observation.get("accepted") and not launch_observation.get("refund_attempted"):
+            launch_observation["refund_attempted"] = True
             await add_credits(callback.from_user.id, unit_cost)
         try:
             await progress_message.delete()
@@ -3915,7 +3926,8 @@ async def _show_video_creation_screen(
             "финальную длину ролика.</i>"
         )
 
-    keyboard = _build_video_creation_keyboard(data)
+    actor_id = getattr(getattr(message_or_callback, "from_user", None), "id", None)
+    keyboard = _build_video_creation_keyboard(data, tariff=await get_actor_tariff(actor_id))
 
     # Используем edit для callback, send для message
     try:
@@ -3970,8 +3982,10 @@ async def _show_video_creation_screen(
     )
 
 
-def _build_video_creation_keyboard(data: dict):
+def _build_video_creation_keyboard(data: dict, *, tariff: str = "standard"):
     return get_create_video_keyboard(
+        tariff=tariff,
+        current_video_references=data.get("v_reference_videos", []),
         current_v_type=data.get("v_type", "text"),
         current_model=data.get("v_model", "v3_std"),
         current_duration=data.get("v_duration", 5),
@@ -4419,7 +4433,8 @@ async def _show_video_model_selection_screen(
         "Сначала выберите модель видео.\n"
         "После этого бот покажет следующий шаг именно для неё."
     )
-    keyboard = get_video_model_selection_keyboard(current_model)
+    actor_id = getattr(getattr(message_or_callback, "from_user", None), "id", None)
+    keyboard = get_video_model_selection_keyboard(current_model, user_id=actor_id, tariff=await get_actor_tariff(actor_id))
 
     try:
         if isinstance(message_or_callback, types.CallbackQuery):
@@ -4714,7 +4729,7 @@ async def handle_img_ref_continue_new(callback: types.CallbackQuery, state: FSMC
 
     if generation_type == "video":
         # Сразу показываем единый экран с параметрами и промптом (без подтверждения)
-        await _show_video_creation_screen(callback.message, state)
+        await _show_video_creation_screen(callback, state)
         await callback.answer()
         return
     else:
@@ -5192,7 +5207,7 @@ async def handle_v_type_video(callback: types.CallbackQuery, state: FSMContext):
 async def handle_vid_ref_continue_new(callback: types.CallbackQuery, state: FSMContext):
     """Продолжает после загрузки видео референсов"""
     await state.update_data(video_flow_step="configure")
-    await _show_video_creation_screen(callback.message, state)
+    await _show_video_creation_screen(callback, state)
     await callback.answer()
 
 
@@ -6627,7 +6642,7 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
                 return
         skip_data = await state.get_data()
         if skip_data.get("generation_type") == "video":
-            await _show_video_creation_screen(callback.message, state)
+            await _show_video_creation_screen(callback, state)
         else:
             await _show_image_creation_screen(callback, state)
 
@@ -6642,7 +6657,7 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
         if preset_id == "new":
             accept_gen_type = data.get("generation_type", "")
             if accept_gen_type == "video":
-                await _show_video_creation_screen(callback.message, state)
+                await _show_video_creation_screen(callback, state)
             else:
                 await _show_image_creation_screen(callback, state)
             await callback.answer()
@@ -7317,7 +7332,9 @@ async def process_avatar_audio_upload(message: types.Message, state: FSMContext)
 
 
 async def run_no_preset_video_from_callback(
-    callback: types.CallbackQuery, state: FSMContext, prompt: str, cost: int, is_admin: bool
+    callback: types.CallbackQuery, state: FSMContext, prompt: str, cost: int, is_admin: bool,
+    *, billing_quote: VideoQuote | None = None,
+    _launch_observation: dict | None = None
 ):
     """Запускает видео-повтор из callback-кнопки «🔁 Повторить». 
     Делегирует в общую логику run_no_preset_video_from_message."""
@@ -7333,6 +7350,17 @@ async def run_no_preset_video_from_callback(
     avatar_audio_url = data.get("avatar_audio_url")
 
     user = await get_or_create_user(callback.from_user.id)
+    provider_accepted = False
+    refund_attempted = False
+    observation = _launch_observation if _launch_observation is not None else {}
+
+    async def refund_original_charge():
+        nonlocal refund_attempted
+        if is_admin or provider_accepted or refund_attempted:
+            return
+        refund_attempted = True
+        observation["refund_attempted"] = True
+        await add_credits(callback.from_user.id, cost)
     
     try:
         from bot.services.kling_service import kling_service
@@ -7356,7 +7384,7 @@ async def run_no_preset_video_from_callback(
             if validation_error:
                 await callback.message.answer(f"❌ {validation_error}")
                 if not is_admin:
-                    await add_credits(callback.from_user.id, cost)
+                    await refund_original_charge()
                 return
 
             result = await gemini_omni_service.generate_video(
@@ -7408,7 +7436,7 @@ async def run_no_preset_video_from_callback(
             if not v_image_url:
                 await callback.message.answer("❌ Grok Imagine требует стартовое изображение.")
                 if not is_admin:
-                    await add_credits(callback.from_user.id, cost)
+                    await refund_original_charge()
                 return
             result = await grok_service.generate_image_to_video(
                 image_urls=[v_image_url] + (reference_images or [])[:6],
@@ -7423,7 +7451,7 @@ async def run_no_preset_video_from_callback(
             if not v_image_url:
                 await callback.message.answer("❌ Grok Imagine 1.5 требует стартовое изображение.")
                 if not is_admin:
-                    await add_credits(callback.from_user.id, cost)
+                    await refund_original_charge()
                 return
             result = await grok_service.generate_image_to_video_v15(
                 image_urls=[v_image_url],
@@ -7459,12 +7487,12 @@ async def run_no_preset_video_from_callback(
             if not v_image_url:
                 await callback.message.answer("❌ Для Kling AI Avatar нужно фото аватара.")
                 if not is_admin:
-                    await add_credits(callback.from_user.id, cost)
+                    await refund_original_charge()
                 return
             if not avatar_audio_url:
                 await callback.message.answer("❌ Для Kling AI Avatar нужно аудио.")
                 if not is_admin:
-                    await add_credits(callback.from_user.id, cost)
+                    await refund_original_charge()
                 return
             result = await kling_service.generate_video(
                 prompt=prompt,
@@ -7489,6 +7517,8 @@ async def run_no_preset_video_from_callback(
                 webhook_url=config.kling_notification_url if config.WEBHOOK_HOST else None,
             )
 
+        provider_accepted = bool(isinstance(result, dict) and (result.get("task_id") or result.get("status") == "done"))
+        observation["accepted"] = provider_accepted
         if result and "task_id" in result:
             await add_generation_task(
                 user.id,
@@ -7500,9 +7530,13 @@ async def run_no_preset_video_from_callback(
                 duration=v_duration,
                 aspect_ratio=v_ratio,
                 prompt=prompt,
-                cost=cost,
+                cost=billing_quote.charge_cost if billing_quote else (0 if is_admin else cost),
                 request_data={
                     "source": "telegram",
+                    **({"billing_quote": billing_quote.to_dict()} if billing_quote else {}),
+                    "charged": not is_admin and cost > 0,
+                    "admin_free": is_admin,
+                    "refund_on_failure": not is_admin and cost > 0,
                     "v_type": v_type,
                     "v_model": v_model,
                     "user_prompt": prompt,
@@ -7558,7 +7592,7 @@ async def run_no_preset_video_from_callback(
                     result.get("message") or result.get("error") or ""
                 ) or ""
             if not is_admin:
-                await add_credits(callback.from_user.id, cost)
+                await refund_original_charge()
             await callback.message.answer(
                 f"❌ Не получилось повторить видео. Бананы за попытку уже возвращены."
                 + (f"\nПричина: <code>{html.escape(error_info[:300])}</code>" if error_info else ""),
@@ -7566,10 +7600,12 @@ async def run_no_preset_video_from_callback(
             )
     except Exception:
         logger.exception("Video repeat from callback failed")
-        if not is_admin:
-            await add_credits(callback.from_user.id, cost)
+        if not is_admin and not provider_accepted and not refund_attempted:
+            await refund_original_charge()
         await callback.message.answer(
-            "❌ Не получилось повторить видео. Бананы за попытку уже возвращены."
+            "Видео принято провайдером. Проверяем сохранение результата; повторно не запускайте."
+            if provider_accepted else
+            "❌ Не получилось повторить видео. Проверьте баланс перед новым запуском."
         )
     
     await state.clear()
@@ -7703,13 +7739,14 @@ async def run_no_preset_video_from_message(
         pricing_quality = omni_resolution
     elif v_type == "motion" or v_model.startswith("motion_control"):
         pricing_quality = motion_mode
-    cost = preset_manager.get_video_cost_with_quality(
-        v_model, v_duration, pricing_quality
+    billing_quote = await quote_video_for_actor(
+        message.from_user.id, v_model, v_duration, pricing_quality, video_urls,
     )
-    cost = apply_video_reference_cost(v_model, cost, video_urls)
-
+    cost = billing_quote.cost
     user = await get_or_create_user(message.from_user.id)
-    is_admin = config.is_admin(message.from_user.id)
+    is_admin = billing_quote.charge_cost == 0
+    charged = False
+    provider_accepted = False
 
     # Admin free access
     if is_admin:
@@ -7727,19 +7764,22 @@ async def run_no_preset_video_from_message(
             )
             await state.clear()
             return
-        await deduct_credits(message.from_user.id, cost)
+        if not await deduct_credits(message.from_user.id, cost):
+            await message.answer("Не удалось списать бананы. Обновите баланс и попробуйте снова.")
+            return
+        charged = True
 
     run_summary = _build_video_run_summary(v_model, v_type, v_ratio, v_duration, data)
 
-    processing_msg = await message.answer(
-        f"🎬 <b>Видео генерируется...</b>"
-        f"{run_summary}\n"
-        f"💰 Стоимость: <code>{cost}</code>🍌"
-        f"<i>Ожидайте 1-5 минут</i>",
-        parse_mode="HTML",
-    )
-
     try:
+        processing_msg = await message.answer(
+            f"🎬 <b>Видео генерируется...</b>"
+            f"{run_summary}\n"
+            f"💰 Стоимость: <code>{cost}</code>🍌"
+            f"<i>Ожидайте 1-5 минут</i>",
+            parse_mode="HTML",
+        )
+
         from bot.services.kling_service import kling_service
         from bot.services.seedance_service import seedance_service
 
@@ -7980,8 +8020,11 @@ async def run_no_preset_video_from_message(
                 ),
             )
 
-        await processing_msg.delete()
-
+        provider_accepted = bool(isinstance(result, dict) and (result.get("task_id") or result.get("asset_id")))
+        try:
+            await processing_msg.delete()
+        except Exception:  # noqa: BLE001 - Telegram cleanup cannot discard an accepted job
+            logger.warning("Could not remove video progress message")
         if result and result.get("status") == "done" and result.get("asset_id"):
             asset_kind = result.get("asset_kind") or "asset"
             task_type = "audio" if asset_kind == "audio" else "character"
@@ -7996,9 +8039,13 @@ async def run_no_preset_video_from_message(
                 duration=v_duration,
                 aspect_ratio=v_ratio,
                 prompt=prompt,
-                cost=cost,
+                cost=billing_quote.charge_cost,
                 request_data={
                     "source": "telegram",
+                    "billing_quote": billing_quote.to_dict(),
+                    "charged": charged,
+                    "admin_free": is_admin,
+                    "refund_on_failure": charged,
                     "v_type": v_type,
                     "v_model": v_model,
                     "asset_kind": asset_kind,
@@ -8047,9 +8094,13 @@ async def run_no_preset_video_from_message(
                 duration=v_duration,
                 aspect_ratio=v_ratio,
                 prompt=prompt,
-                cost=cost,
+                cost=billing_quote.charge_cost,
                 request_data={
                     "source": "telegram",
+                    "billing_quote": billing_quote.to_dict(),
+                    "charged": charged,
+                    "admin_free": is_admin,
+                    "refund_on_failure": charged,
                     "v_type": v_type,
                     "v_model": v_model,
                     "v_image_url": image_url,
@@ -8104,7 +8155,8 @@ async def run_no_preset_video_from_message(
                 parse_mode="HTML",
             )
         else:
-            if not is_admin:
+            if charged:
+                charged = False
                 await add_credits(message.from_user.id, cost)
             error_text = ""
             if isinstance(result, dict):
@@ -8123,9 +8175,12 @@ async def run_no_preset_video_from_message(
             )
     except Exception as e:
         logger.exception(f"Video generation error: {e}")
-        if not is_admin:
+        if charged and not provider_accepted:
+            charged = False
             await add_credits(message.from_user.id, cost)
         await message.answer(
+            "Задача принята провайдером. Проверяем сохранение результата; повторно не запускайте."
+            if provider_accepted else
             "❌ Не получилось завершить запуск генерации. Бананы за попытку уже возвращены."
         )
 
