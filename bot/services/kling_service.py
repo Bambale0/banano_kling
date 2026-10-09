@@ -114,8 +114,8 @@ class KlingService:
                 ) as response:
                     return self._parse_kie_create_response(await response.text())
         except Exception as exc:  # noqa: BLE001 - provider boundary returns sanitized failure
-            logger.error("Kie.ai request error: %s", sanitize_provider_log_payload(exc))
-            return self._build_error("network_error", f"Network error: {sanitize_provider_log_payload(exc)}")
+            logger.error("Kie.ai request error: error_type=%s", type(exc).__name__)
+            return self._build_error("network_error", "Provider request failed")
 
     async def _kie_get(
         self, endpoint: str, params: Optional[Dict[str, Any]] = None

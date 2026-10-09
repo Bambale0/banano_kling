@@ -268,6 +268,15 @@ def _private_image_error_response(error: Exception, *, log_message: str) -> web.
     return web.json_response({"ok": False, "error": message}, status=status)
 
 
+def _video_repeat_prompt_too_long_response() -> web.Response:
+    return web.json_response(
+        {"ok": False, "code": "repeat_prompt_too_long",
+         "error": "Описание автора вместе с правками не помещается в запрос. "
+                  "Сократите свои правки или выберите другую публикацию."},
+        status=400,
+    )
+
+
 def _miniapp_error_response(
     error: Exception,
     *,
@@ -4890,6 +4899,7 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
     charged = False
     refund_attempted = False
     launch_observation: dict[str, Any] = {}
+    source_feed_gen_id: int | None = None
     try:
         body = await request.json()
         init_data = body.get("init_data", "")
@@ -5206,6 +5216,31 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
                 status=400,
             )
 
+        if source_feed_gen_id and effective_model == "seedance_2":
+            from bot.services.seedance_reference_binding import (
+                canonicalize_seedance_reference_tags,
+            )
+            from bot.services.seedance_service import seedance_service
+
+            # Match the adapter's character-based cap after reference aliases
+            # are normalized, before any debit can occur.
+            provider_prompt = canonicalize_seedance_reference_tags(
+                prompt,
+                image_count=len(normalize_reference_urls(
+                    [image_url, *image_references], max_count=seedance_service.MAX_REFERENCE_IMAGES,
+                )),
+                video_count=len(normalize_reference_urls(
+                    video_references, max_count=seedance_service.MAX_REFERENCE_VIDEOS,
+                )),
+            )
+            if len(provider_prompt) > seedance_service.MAX_PROMPT_LENGTH:
+                return _video_repeat_prompt_too_long_response()
+        elif source_feed_gen_id and effective_model == "gemini_omni_video":
+            from bot.services.gemini_omni_service import gemini_omni_service
+
+            if len(prompt) > gemini_omni_service.MAX_VIDEO_PROMPT_LENGTH:
+                return _video_repeat_prompt_too_long_response()
+
         missing_video_images = missing_local_upload_sources(
             _clean_unique_values([image_url, *image_references])
         )
@@ -5337,7 +5372,7 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
                     "ok": False,
                     "error": (
                         "Не удалось запустить видео. Попробуйте ещё раз."
-                        if getattr(request, "_video_repeat_authorization", None)
+                        if source_feed_gen_id
                         else launch_result.get("error") or "Не удалось запустить видео"
                     ),
                 },
@@ -5428,6 +5463,8 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
         if charged and not refund_attempted and not launch_observation.get("accepted"):
             refund_attempted = True
             await add_credits(telegram_id, cost)
+        if source_feed_gen_id:
+            return _private_image_error_response(e, log_message="Video repeat failed")
         return _miniapp_error_response(e, log_message="Mini App video generation failed")
 
 
