@@ -379,19 +379,13 @@ async def _partner_overview_with_approval(
     from bot.services.partner_approval_service import get_partner_application_state
 
     approval = await get_partner_application_state(telegram_id)
-    approval_status = str(approval.get("status") or "available")
-    is_approved = bool(approval.get("is_partner"))
-
-    payload["application_status"] = approval_status
+    # The legacy status field describes current access, never historical consent.
+    payload["application_status"] = "approved"
     payload["application_id"] = approval.get("application_id")
-    payload["can_apply"] = bool(approval.get("can_apply"))
-    payload["is_partner"] = is_approved
-    payload["status"] = "partner" if is_approved else approval_status
-    if not is_approved:
-        # The user's profile code still exists for profile/feed addressing, but
-        # it must not be exposed as an active partner link before approval.
-        payload["referral_link"] = ""
-        payload["referral_bot_link"] = ""
+    payload["historical_application_status"] = approval.get("application_status")
+    payload["can_apply"] = False
+    payload["is_partner"] = True
+    payload["status"] = "partner"
 
     headers = {
         key: value
@@ -422,21 +416,13 @@ async def _partner_action_with_approval(
             status=401,
         )
 
-    from bot.services.partner_approval_service import (
-        notify_admins_about_partner_application,
-        submit_partner_application,
-    )
+    from bot.services.partner_approval_service import submit_partner_application
 
     result = await submit_partner_application(
         telegram_id,
         source="miniapp",
     )
     application_id = result.get("application_id")
-    if result.get("created") and application_id:
-        await notify_admins_about_partner_application(
-            request.app.get("bot"),
-            int(application_id),
-        )
 
     return web.json_response(
         {

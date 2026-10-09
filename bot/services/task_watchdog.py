@@ -296,6 +296,9 @@ async def run_watchdog_cycle(on_completed=None, on_failed=None) -> int:
 
     Returns: количество переведённых в failed задач.
     """
+    from bot.partner_policy import reconcile_pending_invite_bonuses
+
+    await reconcile_pending_invite_bonuses()
     orphan_stats = await cleanup_stale_local_generation_tasks(
         max_age_seconds=LOCAL_ORPHAN_MAX_AGE_SECONDS
     )

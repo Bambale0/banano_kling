@@ -9,7 +9,7 @@ from bot.services import partner_approval_service as approval_service
 
 
 @pytest.mark.asyncio
-async def test_partner_overview_pending_strips_links_server_side(monkeypatch):
+async def test_partner_overview_historical_pending_preserves_links_and_open_access(monkeypatch):
     async def payload(_request):
         return {"init_data": "signed-init-data"}
 
@@ -39,8 +39,8 @@ async def test_partner_overview_pending_strips_links_server_side(monkeypatch):
                 "ok": True,
                 "is_partner": False,
                 "status": "basic",
-                "referral_link": "https://example.test/ref/SHOULD_NOT_LEAK",
-                "referral_bot_link": "https://t.me/example?start=SHOULD_NOT_LEAK",
+                "referral_link": "https://example.test/ref/OPEN_PARTNER",
+                "referral_bot_link": "https://t.me/example?start=OPEN_PARTNER",
             }
         )
 
@@ -51,13 +51,13 @@ async def test_partner_overview_pending_strips_links_server_side(monkeypatch):
     body = json.loads(response.text)
 
     assert response.status == 200
-    assert body["status"] == "pending"
-    assert body["application_status"] == "pending"
+    assert body["status"] == "partner"
+    assert body["application_status"] == "approved"
     assert body["application_id"] == 42
     assert body["can_apply"] is False
-    assert body["is_partner"] is False
-    assert body["referral_link"] == ""
-    assert body["referral_bot_link"] == ""
+    assert body["is_partner"] is True
+    assert body["referral_link"].endswith("/OPEN_PARTNER")
+    assert body["referral_bot_link"].endswith("=OPEN_PARTNER")
 
 
 @pytest.mark.asyncio
@@ -109,7 +109,7 @@ async def test_partner_overview_approved_preserves_legacy_links(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_partner_apply_action_creates_application_without_legacy_dispatch(monkeypatch):
+async def test_stale_partner_apply_returns_open_access_without_notifications(monkeypatch):
     original_calls = 0
     notifications: list[tuple[object, int]] = []
 
@@ -130,9 +130,9 @@ async def test_partner_apply_action_creates_application_without_legacy_dispatch(
         assert source == "miniapp"
         return {
             "ok": True,
-            "status": "pending",
+            "status": "approved",
             "application_id": 77,
-            "created": True,
+            "created": False,
         }
 
     async def notify(bot, application_id):
@@ -160,12 +160,12 @@ async def test_partner_apply_action_creates_application_without_legacy_dispatch(
     assert response.status == 200
     assert body == {
         "ok": True,
-        "status": "pending",
+        "status": "approved",
         "application_id": 77,
-        "created": True,
+        "created": False,
     }
     assert original_calls == 0
-    assert notifications == [(bot, 77)]
+    assert notifications == []
 
 
 @pytest.mark.asyncio
@@ -184,3 +184,47 @@ async def test_non_partner_action_keeps_legacy_miniapp_behavior(monkeypatch):
         SimpleNamespace(app={}),
     )
     assert json.loads(response.text) == {"ok": True, "legacy": "preserved"}
+
+
+@pytest.mark.asyncio
+async def test_stale_partner_apply_still_requires_telegram_auth(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    async def payload(_request):
+        return {"init_data": "invalid", "action": "partner_apply"}
+
+    async def denied_context(*_args):
+        raise ValueError("Invalid signature")
+
+    fake_miniapp = SimpleNamespace(_miniapp_payload=payload, _get_user_context=denied_context)
+    monkeypatch.setattr(safety, "_get_miniapp_module", lambda: fake_miniapp)
+    submit = AsyncMock()
+    monkeypatch.setattr(approval_service, "submit_partner_application", submit)
+    response = await safety._partner_action_with_approval(AsyncMock(), SimpleNamespace(app={}))
+    assert response.status == 401
+    submit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [401, 403, 500])
+async def test_partner_overview_keeps_original_auth_ban_and_error_responses(status):
+    original_response = web.json_response({"ok": False}, status=status)
+
+    async def original(_request):
+        return original_response
+
+    response = await safety._partner_overview_with_approval(original, SimpleNamespace(app={}))
+    assert response is original_response
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/mini-app/api/partner-overview", "/mini-app/api/action"])
+async def test_partner_routes_keep_outer_ban_guard(monkeypatch, path):
+    from unittest.mock import AsyncMock
+
+    denied = web.json_response({"ok": False, "code": "user_banned"}, status=403)
+    monkeypatch.setattr(safety, "_banned_miniapp_response", AsyncMock(return_value=denied))
+    original = AsyncMock()
+    response = await safety._wrap_post_handler(path, original)(SimpleNamespace(app={}))
+    assert response is denied
+    original.assert_not_awaited()

@@ -262,6 +262,7 @@ async def _run_seedance25_trend(
             cost=billing_quote.charge_cost,
             request_data=request_data,
             action_type="trend",
+            provider_accepted=True,
         )
         launched = True
 
@@ -269,6 +270,7 @@ async def _run_seedance25_trend(
             int(trend.trend_id),
             user.id,
             credits_spent=cost,
+            repeat_task_id=task_id,
         )
         fresh_user = await generation_module.get_or_create_user(telegram_id)
         return web.json_response(

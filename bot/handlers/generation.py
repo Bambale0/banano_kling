@@ -74,6 +74,7 @@ from bot.keyboards import (
     get_video_type_label,
 )
 from bot.miniapp_links import feed_bot_link, feed_link
+from bot.partner_policy import generation_partner_snapshot, mark_generation_accepted
 from bot.quality_pricing import QUALITY_COSTS, SEEDREAM_5_PRO_QUALITY_COSTS
 from bot.services.gemini_omni_service import gemini_omni_service
 from bot.services.gemini_service import gemini_service
@@ -1527,11 +1528,13 @@ async def _start_image_generation_task(
                 request_data["provider_model"] = provider_model_name
             if provider_task_id:
                 request_data["provider_task_id"] = provider_task_id
+            request_data = generation_partner_snapshot(request_data, accepted=True, previous=request_data)
             await db.execute(
                 "UPDATE generation_tasks SET task_id = ?, request_data = ? WHERE task_id = ? AND user_id = ?",
                 (api_task_id, json.dumps(request_data, ensure_ascii=False), local_task_id, user.id),
             )
             await db.commit()
+        await mark_generation_accepted(api_task_id)
         logger.info(
             "Image route confirmed: local_task_id=%s api_task_id=%s selected_model=%s runtime_model=%s provider_model=%s",
             local_task_id,
@@ -7547,6 +7550,7 @@ async def run_no_preset_video_from_callback(
                     "v_reference_videos": v_reference_videos,
                     "v_mode": data.get("v_mode", "720p"),
                 },
+                provider_accepted=True,
             )
             model_label = get_video_model_label(v_model)
             await callback.message.answer(
@@ -8136,6 +8140,7 @@ async def run_no_preset_video_from_message(
                     "omni_character_name": omni_character_name,
                     "omni_character_audio_ids": omni_character_audio_ids,
                 },
+                provider_accepted=True,
             )
             queued_title = (
                 "Audio ID создается"
@@ -8776,7 +8781,9 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
         )
         return
 
-    await deduct_credits(message.from_user.id, total_cost)
+    if not await deduct_credits(message.from_user.id, total_cost):
+        await message.answer("❌ Недостаточно бананов. Пополните баланс и попробуйте снова.")
+        return
 
     model_label = get_image_model_label(img_service)
     ratio_label = img_ratio.replace(":", "∶")
@@ -9513,7 +9520,9 @@ async def handle_veo_extend_prompt(message: types.Message, state: FSMContext):
         )
         return
 
-    await deduct_credits(message.from_user.id, cost)
+    if not await deduct_credits(message.from_user.id, cost):
+        await message.answer("❌ Недостаточно бананов. Пополните баланс и попробуйте снова.")
+        return
     await message.answer("🎬 Продлеваю Veo-видео...")
 
     result = await veo_service.extend_video(
@@ -9541,6 +9550,7 @@ async def handle_veo_extend_prompt(message: types.Message, state: FSMContext):
         model=source_model,
         prompt=prompt,
         cost=cost,
+        provider_accepted=True,
     )
     await message.answer(
         f"✅ Продление Veo запущено!\n🆔 <code>{result['task_id']}</code>\n💰 <code>{cost}</code>🍌",

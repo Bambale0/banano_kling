@@ -13,6 +13,16 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 from bot import db as db_backend
+from bot.partner_policy import (
+    LEGACY_LEVEL1_PERCENT,
+    LEGACY_LEVEL2_PERCENT,
+    LEGACY_REPEAT_REWARD_RUB,
+    generation_partner_snapshot,
+    get_partner_policy,
+    init_partner_policy_tables,
+    mark_generation_accepted,
+    record_pending_invite_bonus,
+)
 from bot.services.delivery_state import (
     TASK_DELIVERY_STATUSES,
     TERMINAL_TASK_DELIVERY_STATUSES,
@@ -96,11 +106,12 @@ PROMPT_CATEGORIES = {"art", "business", "marketing", "photo", "video", "other"}
 PROMPT_STATUSES = {"pending", "approved", "rejected", "deactivated"}
 
 # Партнёрская программа — единственный источник констант
-PARTNER_LEVEL1_PERCENT: int = 30   # % с покупок рефералов 1-го уровня
+PARTNER_LEVEL1_PERCENT: int = 40   # % с покупок рефералов 1-го уровня
 PARTNER_LEVEL2_PERCENT: int = 7    # % с покупок рефералов 2-го уровня
 PARTNER_NEW_USER_BONUS: int = 5    # бананы новому пользователю при регистрации
-PARTNER_INVITER_BONUS: int = 3     # бананы пригласившему за каждую регистрацию
-PROMPT_REPEAT_REWARD_RUB: float = float(os.getenv("PROMPT_REPEAT_REWARD_RUB", "10"))
+PARTNER_INVITER_BONUS: int = 3     # бананы пригласившему после первого принятого запуска
+PROMPT_REPEAT_REWARD_RUB: float = get_partner_policy().repeat_reward_rub
+_USE_REPEAT_POLICY = object()
 PROMO_BONUS_BY_CREDITS: dict[int, int] = {
     25: 5,
     50: 10,
@@ -1243,9 +1254,12 @@ async def init_db():
             """)
         await db.commit()
 
+        await init_partner_policy_tables(db)
+        await db.commit()
+
         # Referral service tables (referral_events, partner_commissions)
         from bot.services.referral_service import init_referral_tables_if_needed
-        await init_referral_tables_if_needed()
+        await init_referral_tables_if_needed(DATABASE_PATH)
 
 
 async def get_or_create_user(
@@ -2167,10 +2181,7 @@ async def process_referral(
                 referred["id"],
             )
             return False
-        await db.execute(
-            "UPDATE users SET credits = credits + ?, referral_earned = referral_earned + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (inviter_bonus, inviter_bonus, referrer["id"]),
-        )
+        await record_pending_invite_bonus(db, referrer["id"], referred["id"], inviter_bonus)
         await db.commit()
         logger.info(
             "Referral processed: referred_telegram_id=%s code=%s referrer_id=%s referred_id=%s signup_bonus=%s inviter_bonus=%s",
@@ -2303,7 +2314,16 @@ async def complete_payment_atomic(
                 ref1_row = await ref1_cursor.fetchone()
                 ref1_revenue = float(ref1_row["partner_total_revenue_rub"] or 0) if ref1_row else 0.0
                 ref1_tier = get_partner_tier_by_total(ref1_revenue)
-                ref1_percent = get_partner_percent_by_tier(ref1_tier)
+                terms_cursor = await db.execute(
+                    "SELECT level1_percent, level2_percent, level1_overrides_json FROM partner_payment_terms WHERE order_id = ?",
+                    (order_id,),
+                )
+                terms = await terms_cursor.fetchone()
+                ref1_percent = float(terms["level1_percent"]) if terms else LEGACY_LEVEL1_PERCENT
+                if terms and ref1_row:
+                    overrides = json.loads(terms["level1_overrides_json"] or "{}")
+                    ref1_percent = float(overrides.get(str(ref1_row["telegram_id"]), ref1_percent))
+                payment_level2_percent = float(terms["level2_percent"]) if terms else LEGACY_LEVEL2_PERCENT
                 level1_bonus = round(base_value * ref1_percent / 100.0, 2)
 
                 # Начисление ref1
@@ -2346,7 +2366,7 @@ async def complete_payment_atomic(
                         )
                 if ref1_row and ref1_row["referred_by"] and not ref1_is_admin:
                     ref2_id = int(ref1_row["referred_by"])
-                    level2_bonus = round(base_value * PARTNER_LEVEL2_PERCENT / 100.0, 2)
+                    level2_bonus = round(base_value * payment_level2_percent / 100.0, 2)
                     ref2_cursor = await db.execute(
                         "SELECT telegram_id, partner_total_revenue_rub, partner_tier FROM users WHERE id = ?",
                         (ref2_id,),
@@ -2371,7 +2391,7 @@ async def complete_payment_atomic(
                             VALUES (?, ?, ?, ?, 2, ?, ?, ?)
                             ON CONFLICT(transaction_id, referrer_id, level) DO NOTHING
                             """,
-                            (txn_row["id"], order_id, ref2_id, txn_row["user_id"], base_value, float(PARTNER_LEVEL2_PERCENT), level2_bonus),
+                            (txn_row["id"], order_id, ref2_id, txn_row["user_id"], base_value, float(payment_level2_percent), level2_bonus),
                         )
                     except db_backend.OperationalError:
                         pass
@@ -2386,7 +2406,7 @@ async def complete_payment_atomic(
                     "referrer_user_id": ref1_id,
                     "referrer_telegram_id": int(ref1_row["telegram_id"]) if ref1_row and ref1_row["telegram_id"] else None,
                     "level2_value": ref2_bonus,
-                    "level2_percent": PARTNER_LEVEL2_PERCENT,
+                    "level2_percent": payment_level2_percent,
                     "level2_referrer_user_id": ref2_id if ref2_bonus > 0 else None,
                     "level2_referrer_telegram_id": ref2_telegram_id,
                 }
@@ -2453,7 +2473,7 @@ async def credit_referral_commission(
 ) -> dict:
     """Начисляет партнёру 1 уровня и 2 уровня с каждой оплаты.
 
-    По актуальным условиям 1 уровень всегда получает фиксированные 30%,
+    По актуальным условиям 1 уровень получает персональную ставку получателя,
     а 2 уровень — фиксированные 7% без tier-based надбавок.
     """
     async with db_backend.connect(DATABASE_PATH) as db:
@@ -2487,7 +2507,9 @@ async def credit_referral_commission(
         )
         ref1_row = await ref1_cursor.fetchone()
         ref1_tier = get_partner_tier_by_total(0.0)
-        ref1_percent = bonus_percent
+        ref1_percent = get_partner_policy().first_level_percent(
+            int(ref1_row["telegram_id"]) if ref1_row else None
+        )
         level1_bonus = round(base_value * ref1_percent / 100.0, 2)
 
         await db.execute(
@@ -2576,7 +2598,7 @@ def get_partner_tier_by_total(total_revenue_rub: float) -> str:
 
 def get_partner_percent_by_tier(tier: str) -> int:
     _ = tier
-    return PARTNER_LEVEL1_PERCENT
+    return get_partner_policy().level1_percent
 
 
 async def accept_partner_agreement(telegram_id: int) -> bool:
@@ -2686,10 +2708,10 @@ async def get_partner_overview(telegram_id: int) -> dict:
         )
 
         tier = get_partner_tier_by_total(target_user.partner_total_revenue_rub or 0)
-        percent = get_partner_percent_by_tier(tier)
+        percent = get_partner_policy().first_level_percent(telegram_id)
 
         return {
-            "is_partner": bool(target_user.partner_agreed_at),
+            "is_partner": True,
             "partner_agreed_at": (
                 target_user.partner_agreed_at.isoformat()
                 if target_user.partner_agreed_at
@@ -2709,6 +2731,10 @@ async def get_partner_overview(telegram_id: int) -> dict:
             "withdrawn_rub": round(target_user.partner_withdrawn_rub or 0, 2),
             "tier": tier,
             "percent": percent,
+            "level2_percent": get_partner_policy().level2_percent,
+            "repeat_reward_rub": get_partner_policy().repeat_reward_rub,
+            "inviter_bonus": PARTNER_INVITER_BONUS,
+            "new_user_bonus": PARTNER_NEW_USER_BONUS,
             "active_7d": pay_row["active_7d"] or 0,
             "total_payments": pay_row["count"] or 0,
             "monthly_revenue": round(pay_row["monthly_revenue"] or 0, 2),
@@ -2730,14 +2756,6 @@ async def get_admin_partner_stats(limit: int = 10) -> dict:
                 COALESCE(SUM(partner_balance_rub), 0) AS total_balance_rub,
                 COALESCE(SUM(partner_total_revenue_rub), 0) AS total_partner_revenue_rub
             FROM users
-            WHERE partner_agreed_at IS NOT NULL
-               OR partner_balance_rub > 0
-               OR partner_total_revenue_rub > 0
-               OR EXISTS (
-                   SELECT 1
-                   FROM users referrals
-                   WHERE referrals.referred_by = users.id
-               )
             """
         )
         summary_row = await cursor.fetchone()
@@ -2746,8 +2764,7 @@ async def get_admin_partner_stats(limit: int = 10) -> dict:
             """
             SELECT COUNT(*) AS count
             FROM users
-            WHERE partner_agreed_at IS NOT NULL
-              AND EXISTS (
+            WHERE EXISTS (
                   SELECT 1
                   FROM users referrals
                   WHERE referrals.referred_by = users.id
@@ -3026,7 +3043,7 @@ async def get_admin_partner_details(
             "created_at": user.created_at.strftime("%d.%m.%Y %H:%M"),
             "credits": Credits(user.credits),
             "referral_code": user.referral_code or "",
-            "is_partner": bool(user.partner_agreed_at),
+            "is_partner": True,
             "partner_agreed_at": (
                 user.partner_agreed_at.strftime("%d.%m.%Y %H:%M")
                 if user.partner_agreed_at
@@ -3164,6 +3181,8 @@ def _safe_report_limit(limit: int) -> int:
 
 async def get_admin_finance_report(limit: int = 100) -> dict:
     """Детальный финансово-реферальный отчёт для админки."""
+    from bot.config import config
+
     safe_limit = _safe_report_limit(limit)
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
@@ -3480,11 +3499,23 @@ async def get_admin_finance_report(limit: int = 100) -> dict:
                 l2.id AS level2_partner_user_id,
                 l2.telegram_id AS level2_partner_telegram_id,
                 l2.referral_code AS level2_partner_code,
-                l2.partner_tier AS level2_partner_tier
+                l2.partner_tier AS level2_partner_tier,
+                pc1.percent AS recorded_level1_percent,
+                pc1.amount_rub AS recorded_level1_amount,
+                pc2.percent AS recorded_level2_percent,
+                pc2.amount_rub AS recorded_level2_amount,
+                terms.level1_percent AS frozen_level1_percent,
+                terms.level2_percent AS frozen_level2_percent,
+                terms.level1_overrides_json AS frozen_level1_overrides
             FROM transactions t
             JOIN users payer ON payer.id = t.user_id
             JOIN users l1 ON l1.id = payer.referred_by
             LEFT JOIN users l2 ON l2.id = l1.referred_by
+            LEFT JOIN partner_commissions pc1
+                ON pc1.transaction_id = t.id AND pc1.referrer_id = l1.id AND pc1.level = 1
+            LEFT JOIN partner_commissions pc2
+                ON pc2.transaction_id = t.id AND pc2.referrer_id = l2.id AND pc2.level = 2
+            LEFT JOIN partner_payment_terms terms ON terms.order_id = t.order_id
             WHERE t.status = 'completed'
             ORDER BY datetime(t.created_at) DESC, t.id DESC
             LIMIT ?
@@ -3497,18 +3528,60 @@ async def get_admin_finance_report(limit: int = 100) -> dict:
         total_level2_commission_rub = 0.0
         for row in commission_rows:
             amount_rub = float(row.get("amount_rub") or 0)
-            level1_commission = round(amount_rub * PARTNER_LEVEL1_PERCENT / 100, 2)
-            level2_commission = (
-                round(amount_rub * PARTNER_LEVEL2_PERCENT / 100, 2)
-                if row.get("level2_partner_telegram_id")
-                else 0.0
-            )
-            row["level1_percent"] = PARTNER_LEVEL1_PERCENT
+            recorded_level1_percent = row.pop("recorded_level1_percent")
+            recorded_level1_amount = row.pop("recorded_level1_amount")
+            recorded_level2_percent = row.pop("recorded_level2_percent")
+            recorded_level2_amount = row.pop("recorded_level2_amount")
+            frozen_level1_percent = row.pop("frozen_level1_percent")
+            frozen_level2_percent = row.pop("frozen_level2_percent")
+            frozen_overrides = row.pop("frozen_level1_overrides")
+
+            # The ledger is authoritative, including a recorded zero amount.
+            # Missing ledger rows use the invoice snapshot or historical terms,
+            # never the currently configured percentages.
+            if recorded_level1_amount is not None:
+                level1_percent = float(recorded_level1_percent)
+                level1_commission = float(recorded_level1_amount)
+                level1_source = "ledger"
+            else:
+                level1_percent = (
+                    float(frozen_level1_percent)
+                    if frozen_level1_percent is not None
+                    else LEGACY_LEVEL1_PERCENT
+                )
+                if frozen_level1_percent is not None:
+                    overrides = json.loads(frozen_overrides or "{}")
+                    level1_percent = float(
+                        overrides.get(str(row["level1_partner_telegram_id"]), level1_percent)
+                    )
+                level1_commission = round(amount_rub * level1_percent / 100, 2)
+                level1_source = "frozen_terms" if frozen_level1_percent is not None else "legacy_terms"
+
+            if recorded_level2_amount is not None:
+                level2_percent = float(recorded_level2_percent)
+                level2_commission = float(recorded_level2_amount)
+                level2_source = "ledger"
+            elif row.get("level2_partner_telegram_id") and not config.is_admin(
+                int(row["level1_partner_telegram_id"])
+            ):
+                level2_percent = (
+                    float(frozen_level2_percent)
+                    if frozen_level2_percent is not None
+                    else LEGACY_LEVEL2_PERCENT
+                )
+                level2_commission = round(amount_rub * level2_percent / 100, 2)
+                level2_source = "frozen_terms" if frozen_level2_percent is not None else "legacy_terms"
+            else:
+                level2_percent = 0.0
+                level2_commission = 0.0
+                level2_source = "not_eligible"
+
+            row["level1_percent"] = level1_percent
             row["level1_commission_rub"] = level1_commission
-            row["level2_percent"] = (
-                PARTNER_LEVEL2_PERCENT if row.get("level2_partner_telegram_id") else 0
-            )
+            row["level1_commission_source"] = level1_source
+            row["level2_percent"] = level2_percent
             row["level2_commission_rub"] = level2_commission
+            row["level2_commission_source"] = level2_source
             partner_commissions.append(row)
             total_level1_commission_rub += level1_commission
             total_level2_commission_rub += level2_commission
@@ -3626,7 +3699,7 @@ async def get_admin_finance_report(limit: int = 100) -> dict:
             "partner_commissions": partner_commissions,
             "withdrawals": withdrawals,
             "notes": [
-                "Партнёрские начисления восстановлены расчётно по завершённым платежам и текущим процентам программы.",
+                "Партнёрские начисления взяты из журнала; при отсутствии записи использованы условия платежа или прежние 30%/7%.",
                 "Списания собраны из generation_tasks, generation_history и batch_jobs.",
             ],
         }
@@ -3699,10 +3772,6 @@ async def exchange_partner_balance_to_credits(
         available_rub = round(max(0.0, current_partner_balance - pending_sum), 2)
         credits_to_add = int(requested_amount_rub / rub_per_credit)
         debit_amount_rub = round(credits_to_add * rub_per_credit, 2)
-
-        if not user_row["partner_agreed_at"]:
-            await db.rollback()
-            return {"ok": False, "reason": "not_partner"}
 
         if credits_to_add < 1:
             await db.rollback()
@@ -3777,7 +3846,7 @@ async def create_partner_withdrawal(
                 (telegram_id,),
             )
             user_row = await user_cur.fetchone()
-            if not user_row or not user_row["partner_agreed_at"]:
+            if not user_row:
                 await db.rollback()
                 return None
 
@@ -5128,6 +5197,11 @@ async def create_transaction(
                     int(promo_bonus_credits or 0),
                 ),
             )
+            policy = get_partner_policy()
+            await db.execute(
+                "INSERT INTO partner_payment_terms (order_id, level1_percent, level2_percent, level1_overrides_json) VALUES (?, ?, ?, ?)",
+                (order_id, policy.level1_percent, policy.level2_percent, json.dumps(policy.level1_overrides, sort_keys=True)),
+            )
             await db.commit()
             return True
         except db_backend.IntegrityError:
@@ -5330,8 +5404,8 @@ async def reserve_private_video_repeat(
                         "accepted_provider_task_id": metadata.get("provider_task_id")
                         if metadata.get("repeat_receipt_phase") == "accepted_unbound" else None}
         task_id = "video_repeat_receipt_" + uuid4().hex
-        metadata = {"video_repeat_contract_version": 1, "video_repeat_receipt": True,
-                    "repeat_receipt_phase": "reserved", "repeat_attempted_cost": 0.0, "task_id_aliases": [task_id]}
+        metadata = generation_partner_snapshot({"video_repeat_contract_version": 1, "video_repeat_receipt": True,
+                    "repeat_receipt_phase": "reserved", "repeat_attempted_cost": 0.0, "task_id_aliases": [task_id]})
         await db.execute(
             "INSERT INTO generation_tasks "
             "(user_id, telegram_id, task_id, type, preset_id, model, duration, aspect_ratio, "
@@ -5411,6 +5485,7 @@ async def recover_private_video_repeat_acceptance(
                         source="miniapp", charged_cost=charged_cost, charged=charged_cost > 0,
                         admin_free=charged_cost <= 0, refund_on_failure=charged_cost > 0,
                         refund_claimed=False)
+        metadata = generation_partner_snapshot(metadata, accepted=True, previous=row["request_data"])
         accepted_json = json.dumps(metadata)
         updated = await db.execute(
             "UPDATE generation_tasks SET request_data = ?, updated_at = CURRENT_TIMESTAMP "
@@ -5430,6 +5505,8 @@ async def recover_private_video_repeat_acceptance(
             (provider_task_id, json.dumps(metadata), task_id, user_id, accepted_json),
         )
         await db.commit()
+        if updated.rowcount == 1:
+            await mark_generation_accepted(provider_task_id)
         return updated.rowcount == 1
 
 
@@ -5449,8 +5526,14 @@ async def add_generation_task(
     parent_generation_id: Optional[int] = None,
     action_type: Optional[str] = None,
     reserved_task_id: str | None = None,
+    provider_accepted: bool = False,
 ) -> bool:
     """Создаёт задачу генерации"""
+    from bot.config import config
+
+    invite_eligible = (type in {"image", "video", "motion_control", "audio", "character"}
+                       and float(cost or 0) > 0 and not config.is_admin(telegram_id)
+                       and action_type != "admin_replay")
     async with db_backend.connect(DATABASE_PATH) as db:
         if reserved_task_id:
             db.row_factory = db_backend.Row
@@ -5462,7 +5545,7 @@ async def add_generation_task(
             receipt = await cursor.fetchone()
             if not receipt or _parse_json_dict(receipt["request_data"]).get("video_repeat_receipt") is not True:
                 raise ValueError("Не удалось подтвердить запись запуска видео.")
-            metadata = _parse_json_dict(request_data)
+            metadata = generation_partner_snapshot(request_data, accepted=provider_accepted, previous=receipt["request_data"], invite_eligible=invite_eligible)
             metadata.update(video_repeat_contract_version=1, video_repeat_receipt=True,
                             repeat_receipt_phase="accepted")
             metadata = _merge_task_id_aliases(metadata, reserved_task_id, task_id)
@@ -5477,8 +5560,12 @@ async def add_generation_task(
             if result.rowcount != 1:
                 raise RuntimeError("video_repeat_receipt_binding_failed")
             await db.commit()
+            if provider_accepted:
+                await mark_generation_accepted(task_id)
             return True
-        normalized_request = _merge_task_id_aliases(request_data, task_id)
+        normalized_request = _merge_task_id_aliases(
+            generation_partner_snapshot(request_data, accepted=provider_accepted, invite_eligible=invite_eligible), task_id
+        )
         serialized_request = (
             json.dumps(normalized_request, ensure_ascii=False)
             if isinstance(normalized_request, dict)
@@ -5507,6 +5594,8 @@ async def add_generation_task(
             ),
         )
         await db.commit()
+        if provider_accepted:
+            await mark_generation_accepted(task_id)
         if result.rowcount > 0:
             logger.info(
                 f"Added new generation task: {task_id} for telegram_id {telegram_id}"
@@ -5909,6 +5998,7 @@ async def complete_video_task(task_id: str, result_url: str) -> bool:
             final_status,
         )
         if final_status == "completed":
+            await mark_generation_accepted(lookup_value)
             await _credit_feed_repeat_on_webhook_completion(lookup_value)
         return True
 
@@ -6480,7 +6570,7 @@ async def _credit_prompt_repeat_reward_in_db(
     source_id: int,
     repeat_task_id: Optional[str] = None,
     credits_spent: Optional[float] = None,
-    amount_rub: float = PROMPT_REPEAT_REWARD_RUB,
+    amount_rub: Any = _USE_REPEAT_POLICY,
 ) -> bool:
     if not author_id or not repeater_id or author_id == repeater_id:
         return False
@@ -6490,6 +6580,52 @@ async def _credit_prompt_repeat_reward_in_db(
         return False
     if not isfinite(spent) or spent <= 0:
         return False
+    if amount_rub is not _USE_REPEAT_POLICY:
+        try:
+            explicit_reward = round(float(amount_rub or 0), 2)
+        except (TypeError, ValueError):
+            return False
+        if not isfinite(explicit_reward) or explicit_reward <= 0:
+            return False
+    normalized_repeat_task_id = str(repeat_task_id or "").strip() or None
+    repeat_task = None
+    metadata = {}
+    if normalized_repeat_task_id:
+        cursor = await db.execute(
+            "SELECT id, task_id, user_id, request_data FROM generation_tasks WHERE task_id = ?",
+            (normalized_repeat_task_id,),
+        )
+        repeat_task = await cursor.fetchone()
+        if not repeat_task:
+            cursor = await db.execute(
+                """SELECT id, task_id, user_id, request_data FROM generation_tasks
+                   WHERE EXISTS (
+                       SELECT 1 FROM json_each(
+                           CASE WHEN json_valid(request_data) THEN request_data ELSE '{}' END,
+                           '$.task_id_aliases'
+                       ) WHERE CAST(value AS TEXT) = ?
+                   ) LIMIT 1""", (normalized_repeat_task_id,),
+            )
+            repeat_task = await cursor.fetchone()
+        if repeat_task:
+            if int(repeat_task["user_id"]) != int(repeater_id):
+                return False
+            metadata = _parse_json_dict(repeat_task["request_data"])
+            aliases = {normalized_repeat_task_id, str(repeat_task["task_id"])}
+            aliases.update(str(value) for value in metadata.get("task_id_aliases", []) if value)
+            normalized_repeat_task_id = f"generation:{int(repeat_task['id'])}"
+            aliases.add(normalized_repeat_task_id)
+            placeholders = ",".join("?" for _ in aliases)
+            cursor = await db.execute(
+                f"SELECT 1 FROM prompt_repeat_events WHERE repeat_task_id IN ({placeholders}) LIMIT 1",
+                tuple(sorted(aliases)),
+            )
+            if await cursor.fetchone():
+                return False
+    if amount_rub is _USE_REPEAT_POLICY:
+        amount_rub = get_partner_policy().repeat_reward_rub
+        if repeat_task:
+            amount_rub = metadata.get("partner_repeat_reward_rub", LEGACY_REPEAT_REWARD_RUB) if metadata.get("partner_policy_version") == 2 else LEGACY_REPEAT_REWARD_RUB
     try:
         reward = round(float(amount_rub or 0), 2)
     except (TypeError, ValueError):
@@ -6522,7 +6658,6 @@ async def _credit_prompt_repeat_reward_in_db(
         )
         return False
 
-    normalized_repeat_task_id = str(repeat_task_id or "").strip() or None
     # Schema-backed idempotency: launch and webhook completion may race in
     # different processes. The unique partial index is the source of truth;
     # INSERT OR IGNORE maps to ON CONFLICT DO NOTHING on PostgreSQL.
@@ -6611,6 +6746,8 @@ async def use_prompt(
     prompt_id: int,
     user_id: int,
     credits_spent: Optional[float] = None,
+    *,
+    repeat_task_id: str | None = None,
 ) -> Optional[dict[str, Any]]:
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
@@ -6625,13 +6762,14 @@ async def use_prompt(
             "UPDATE user_prompts SET uses_count = uses_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (prompt_id,),
         )
-        if credits_spent is not None and float(credits_spent or 0) > 0:
+        if repeat_task_id and credits_spent is not None and float(credits_spent or 0) > 0:
             await _credit_prompt_repeat_reward_in_db(
                 db,
                 author_id=int(row["author_id"]),
                 repeater_id=int(user_id),
                 source_type="prompt",
                 source_id=int(prompt_id),
+                repeat_task_id=repeat_task_id,
                 credits_spent=credits_spent,
             )
         await db.commit()

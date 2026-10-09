@@ -5,6 +5,10 @@ on:
     branches: [tanyapi]
     paths:
       - 'bot/services/partner_approval_service.py'
+      - 'bot/partner_policy.py'
+      - 'bot/database.py'
+      - 'tests/test_partner_policy.py'
+      - 'tests/test_partner_creator_compatibility.py'
       - 'bot/handlers/partner_approval.py'
       - 'bot/handlers/miniapp_regression_safety.py'
       - 'bot/handlers/__init__.py'
@@ -49,6 +53,12 @@ jobs:
       - name: Run partner and legacy referral regression suite
         run: |
           pytest -vv --tb=short \
+            tests/test_partner_policy.py \
+            tests/test_partner_creator_compatibility.py \
+            tests/test_partner_finance_history.py \
+            tests/test_partner_admin_eligibility.py \
+            tests/test_partner_motion_acceptance.py \
+            tests/test_partner_debit_guards.py \
             tests/test_partner_approval_workflow.py \
             tests/test_partner_approval_miniapp.py \
             tests/test_partner_approval_handlers.py \

@@ -2305,6 +2305,7 @@ async def _launch_video_generation_task(
             source_feed_gen_id=source_feed_gen_id,
             parent_generation_id=parent_generation_id,
             action_type=action_type,
+            provider_accepted=True,
         )
         return {
             "status": "queued",
@@ -4546,8 +4547,11 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
                 {"ok": False, "error": f"Недостаточно бананов. Нужно {unit_cost}🍌", "credits": user.credits},
                 status=400,
             )
-        if not is_admin:
-            await deduct_credits(telegram_id, unit_cost)
+        if not is_admin and not await deduct_credits(telegram_id, unit_cost):
+            return web.json_response(
+                {"ok": False, "error": "Недостаточно бананов. Пополните баланс и попробуйте снова."},
+                status=400,
+            )
 
         launch_result = await _start_image_generation_task_lazy(
             user=user,
@@ -4783,8 +4787,11 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
                 status=400,
             )
 
-        if not is_admin:
-            await deduct_credits(telegram_id, unit_cost)
+        if not is_admin and not await deduct_credits(telegram_id, unit_cost):
+            return web.json_response(
+                {"ok": False, "error": "Недостаточно бананов. Пополните баланс и попробуйте снова."},
+                status=400,
+            )
 
         launch_result = await _start_image_generation_task_lazy(
             user=user,
@@ -4845,7 +4852,7 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
                 credits_spent=unit_cost,
             )
         elif prompt_id:
-            await use_prompt(prompt_id, user.id, credits_spent=unit_cost)
+            await use_prompt(prompt_id, user.id, credits_spent=unit_cost, repeat_task_id=str(launch_result["task_id"]))
 
         fresh_user = await get_or_create_user(telegram_id)
         return web.json_response(
@@ -5494,8 +5501,11 @@ async def miniapp_generate_motion(request: web.Request) -> web.Response:
                 status=400,
             )
 
-        if not is_admin:
-            await deduct_credits(telegram_id, cost)
+        if not is_admin and not await deduct_credits(telegram_id, cost):
+            return web.json_response(
+                {"ok": False, "error": "Недостаточно бананов. Пополните баланс и попробуйте снова."},
+                status=400,
+            )
 
         callback_url = config.kie_notification_url if config.WEBHOOK_HOST else None
         api_motion_model = (
@@ -5541,6 +5551,7 @@ async def miniapp_generate_motion(request: web.Request) -> web.Response:
                     "motion_mode": mode,
                     "motion_direction": motion_direction,
                 },
+                provider_accepted=True,
             )
             fresh_user = await get_or_create_user(telegram_id)
             return web.json_response(
@@ -5640,6 +5651,8 @@ async def miniapp_partner_overview(request: web.Request) -> web.Response:
             {
                 "ok": True,
                 "is_partner": bool(stats.get("is_partner")),
+                "percent": stats["percent"],
+                "level2_percent": stats["level2_percent"],
                 "referrals_count": int(stats.get("referrals_count", 0) or 0),
                 "balance_rub": float(stats.get("balance_rub", 0) or 0),
                 "prompt_repeat_balance_rub": float(

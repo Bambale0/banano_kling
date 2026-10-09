@@ -224,6 +224,7 @@ async def test_claim_task_delivery_respects_active_lease(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_complete_video_task_marks_completed_with_result_url(monkeypatch):
+    monkeypatch.setattr(database, "mark_generation_accepted", AsyncMock())
     conn = FakeConnection()
     monkeypatch.setattr(database.db_backend, "connect", lambda *_args, **_kwargs: conn)
     credit = AsyncMock()
@@ -331,8 +332,8 @@ async def test_prompt_repeat_reward_atomic_conflict_does_not_credit_author(monke
         repeater_id=20100,
         source_type="feed",
         source_id=186039,
-        repeat_task_id="61b1d7f5b6e8abba98d3219eb0bbf8b5",
         credits_spent=2.5,
+        amount_rub=5,
     )
 
     assert result is False
@@ -1355,9 +1356,9 @@ async def test_profile_only_publication_repeat_credits_author(tmp_path, monkeypa
 
     assert credited is True
     overview = await database.get_partner_overview(author.telegram_id)
-    assert overview["balance_rub"] == 10
-    assert overview["prompt_repeat_balance_rub"] == 10
-    assert overview["prompt_repeat_total_rub"] == 10
+    assert overview["balance_rub"] == 5
+    assert overview["prompt_repeat_balance_rub"] == 5
+    assert overview["prompt_repeat_total_rub"] == 5
 
 
 @pytest.mark.asyncio
@@ -1489,30 +1490,19 @@ async def test_pending_partner_applications_returns_pending_oldest_first(monkeyp
     await database.get_or_create_user(1002)
     await database.get_or_create_user(1003)
 
-    first = await service.submit_partner_application(1001, source="telegram_bot")
-    second = await service.submit_partner_application(1002, source="miniapp")
-    third = await service.submit_partner_application(1003, source="telegram_bot")
-
+    await service.ensure_partner_approval_schema()
     async with db_backend.connect(database.DATABASE_PATH) as db:
-        await db.execute(
-            "UPDATE partner_applications SET requested_at = ? WHERE id = ?",
-            ("2026-09-19 10:00:00", first["application_id"]),
-        )
-        await db.execute(
-            "UPDATE partner_applications SET requested_at = ? WHERE id = ?",
-            ("2026-09-19 09:00:00", second["application_id"]),
-        )
-        await db.execute(
-            "UPDATE partner_applications SET requested_at = ? WHERE id = ?",
-            ("2026-09-19 11:00:00", third["application_id"]),
-        )
+        for telegram_id, status, requested_at, source in (
+            (1001, "pending", "2026-09-19 10:00:00", "telegram_bot"),
+            (1002, "pending", "2026-09-19 09:00:00", "miniapp"),
+            (1003, "approved", "2026-09-19 11:00:00", "telegram_bot"),
+        ):
+            await db.execute(
+                """INSERT INTO partner_applications (user_id, status, requested_at, source)
+                   SELECT id, ?, ?, ? FROM users WHERE telegram_id = ?""",
+                (status, requested_at, source, telegram_id),
+            )
         await db.commit()
-
-    await service.review_partner_application(
-        int(third["application_id"]),
-        approve=True,
-        admin_telegram_id=999999999,
-    )
 
     total_pending = await service.count_pending_partner_applications()
     pending = await service.get_pending_partner_applications(limit=10)
@@ -1556,15 +1546,19 @@ def test_admin_partner_applications_text_and_keyboard():
     )
     rows = keyboard.inline_keyboard
 
-    assert "Заявки на активацию партнёрских ссылок" in text
-    assert "Ожидают решения всего: <code>25</code>" in text
+    assert "История заявок в партнёрскую программу" in text
+    assert "Сохранено необработанных заявок: <code>25</code>" in text
+    assert "Активация больше не требуется" in text
     assert "показаны <code>1-1</code>" in text
     assert "https://t.me/creator" in text
     assert "ID: <code>555777</code>" in text
     assert "заявка <code>#42</code>" in text
 
-    assert rows[0][0].callback_data == "partner_app_approve_42"
-    assert rows[0][1].callback_data == "partner_app_reject_42"
+    assert rows[0][0].url == "https://t.me/creator"
+    assert all(
+        not (button.callback_data or "").startswith(("partner_app_approve_", "partner_app_reject_"))
+        for row in rows for button in row
+    )
     assert rows[-3][0].callback_data == "admin_partner_applications:1"
     assert rows[-2][0].callback_data == "admin_partner_applications:0"
     assert rows[-1][0].callback_data == "admin_partners"
@@ -1861,8 +1855,8 @@ async def test_concurrent_prompt_repeat_reward_credits_once_on_sqlite(
     assert results.count(True) == 1
     assert results.count(False) == 3
     overview = await database.get_partner_overview(author.telegram_id)
-    assert overview["prompt_repeat_balance_rub"] == 10
-    assert overview["prompt_repeat_total_rub"] == 10
+    assert overview["prompt_repeat_balance_rub"] == 5
+    assert overview["prompt_repeat_total_rub"] == 5
     async with database.db_backend.connect(database.DATABASE_PATH) as db:
         cursor = await db.execute(
             "SELECT COUNT(*) FROM prompt_repeat_events WHERE repeat_task_id = ?",

@@ -590,3 +590,24 @@ CREATE TABLE IF NOT EXISTS genjutsu_feed_publications (
 );
 
 COMMIT;
+
+-- Partner policy v2: additive snapshots and exactly-once invitation qualification.
+-- Historical payments/referrals/generations are intentionally not backfilled.
+CREATE TABLE IF NOT EXISTS partner_payment_terms (
+    order_id TEXT PRIMARY KEY,
+    level1_percent REAL NOT NULL,
+    level2_percent REAL NOT NULL,
+    level1_overrides_json TEXT NOT NULL DEFAULT '{}',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS referral_activation_bonuses (
+    referred_id BIGINT PRIMARY KEY REFERENCES users(id),
+    referrer_id BIGINT NOT NULL REFERENCES users(id),
+    bonus_credits REAL NOT NULL,
+    after_generation_id BIGINT NOT NULL DEFAULT 0,
+    qualifying_generation_id BIGINT,
+    granted_at TIMESTAMP,
+    last_checked_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (referred_id != referrer_id)
+);
