@@ -2,7 +2,8 @@ import { chromium } from 'playwright'
 
 const baseUrl = process.env.PARTNER_BROWSER_URL || 'http://127.0.0.1:4173/mini-app/'
 const referralLink = 'https://t.me/example_bot?start=ref_BROWSERTEST'
-let partnerStatus = 'available'
+let partnerStatus = 'partner'
+let firstLinePercent = 30
 let applyCalls = 0
 let overviewCalls = 0
 
@@ -68,19 +69,20 @@ try {
 
     if (path.endsWith('/api/partner-overview')) {
       overviewCalls += 1
-      const approved = partnerStatus === 'partner'
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
           ok: true,
-          is_partner: approved,
-          referrals_count: approved ? 12 : 0,
-          balance_rub: approved ? 345.5 : 0,
+          is_partner: true,
+          percent: firstLinePercent,
+          level2_percent: 7,
+          referrals_count: 12,
+          balance_rub: 345.5,
           prompt_repeat_balance_rub: 0,
           prompt_repeat_total_rub: 0,
           channel_url: '',
-          referral_link: approved ? referralLink : '',
+          referral_link: referralLink,
           status: partnerStatus,
         }),
       })
@@ -91,11 +93,11 @@ try {
       const body = JSON.parse(route.request().postData() || '{}')
       if (body.action === 'partner_apply') {
         applyCalls += 1
-        partnerStatus = 'pending'
+        partnerStatus = 'partner'
         await route.fulfill({
           status: 200,
           contentType: 'application/json',
-          body: JSON.stringify({ ok: true, status: 'pending', application_id: 77, created: true }),
+          body: JSON.stringify({ ok: true, status: 'approved', application_id: null, created: false }),
         })
         return
       }
@@ -113,22 +115,32 @@ try {
   await page.getByRole('button', { name: /Сервисы/i }).click()
   await page.getByRole('button', { name: /Партнёрам/i }).click()
 
-  await page.getByText('Активируйте партнёрскую ссылку', { exact: true }).waitFor()
-  assert((await page.getByText(referralLink, { exact: true }).count()) === 0, 'Referral link leaked before approval')
-
-  await page.getByRole('button', { name: /Активировать ссылку/i }).click()
-  await page.getByText('Заявка на рассмотрении', { exact: true }).waitFor()
-  assert(applyCalls === 1, `Expected one partner_apply call, got ${applyCalls}`)
-  assert((await page.getByText(referralLink, { exact: true }).count()) === 0, 'Referral link leaked while pending')
-
-  partnerStatus = 'partner'
-  await page.getByRole('button', { name: /Проверить статус/i }).click()
-  await page.getByText('Партнёрский кабинет активирован', { exact: true }).waitFor()
+  await page.getByText('Ваш партнёрский кабинет', { exact: true }).waitFor()
   await page.getByText(referralLink, { exact: true }).waitFor()
   await page.getByRole('button', { name: /Скопировать ссылку/i }).waitFor()
+  await page.getByText(/1 уровня: 30%/).waitFor()
+  assert((await page.getByRole('button', { name: /Активировать ссылку|Подать заявку/i }).count()) === 0, 'Obsolete activation UI is still visible')
 
-  assert(overviewCalls >= 3, `Expected overview refreshes across workflow, got ${overviewCalls}`)
-  console.log(`partner approval browser smoke: ok; overviewCalls=${overviewCalls}; applyCalls=${applyCalls}`)
+  for (const historicalStatus of ['pending', 'rejected', 'available']) {
+    partnerStatus = historicalStatus
+    await page.getByRole('button', { name: 'Обновить', exact: true }).click()
+    await page.getByText(referralLink, { exact: true }).waitFor()
+    await page.waitForFunction(() => !document.querySelector('button[disabled] .animate-spin'))
+  }
+  for (const assignedPercent of [40, 0]) {
+    firstLinePercent = assignedPercent
+    await page.getByRole('button', { name: 'Обновить', exact: true }).click()
+    await page.getByText(new RegExp(`1 уровня: ${assignedPercent}%`)).waitFor()
+  }
+  await page.getByText(/2 уровня: 7%/).waitFor()
+  for (const width of [320, 390, 430]) {
+    await page.setViewportSize({ width, height: 900 })
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `Partner cabinet overflows at ${width}px`)
+  }
+  assert(applyCalls === 0, `Unexpected partner_apply calls: ${applyCalls}`)
+  assert(overviewCalls >= 4, `Expected initial overview and refreshes, got ${overviewCalls}`)
+  console.log(`open partner cabinet browser smoke: ok; overviewCalls=${overviewCalls}; applyCalls=${applyCalls}`)
+
 } finally {
   await browser.close()
 }

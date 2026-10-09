@@ -137,14 +137,6 @@ async def test_combined_trend_link_attaches_once_and_preserves_first_referrer(sh
     trend = await public_trend()
     sharer = await database.get_or_create_user(81002)
     other = await database.get_or_create_user(81003)
-    for partner in (sharer, other):
-        application = await partner_approval_service.submit_partner_application(
-            partner.telegram_id, source="telegram_bot",
-        )
-        approved = await partner_approval_service.review_partner_application(
-            application["application_id"], approve=True, admin_telegram_id=999999999,
-        )
-        assert approved["ok"] is True
     start = f"prompt_{trend['id']}_ref_{sharer.referral_code}"
     for code in [start, start, f"prompt_{trend['id']}_ref_{other.referral_code}"]:
         response = await sharing_client.post("/mini-app/api/prompts/link", json={
@@ -156,19 +148,13 @@ async def test_combined_trend_link_attaches_once_and_preserves_first_referrer(sh
     stats = await database.get_referral_stats(sharer.telegram_id)
     assert stats["referrals_count"] == 1
     updated = await database.get_or_create_user(sharer.telegram_id)
-    assert updated.referral_earned - sharer.referral_earned == database.PARTNER_INVITER_BONUS
+    assert updated.referral_earned - sharer.referral_earned == 0
 
 
 @pytest.mark.asyncio
 async def test_self_and_legacy_trend_links_do_not_attach(sharing_client):
     trend = await public_trend()
     sharer = await database.get_or_create_user(81002)
-    application = await partner_approval_service.submit_partner_application(
-        sharer.telegram_id, source="telegram_bot",
-    )
-    await partner_approval_service.review_partner_application(
-        application["application_id"], approve=True, admin_telegram_id=999999999,
-    )
     for start in [f"prompt_{trend['id']}", f"prompt_{trend['id']}_ref_{sharer.referral_code}"]:
         response = await sharing_client.post("/mini-app/api/prompts/link", json={
             "init_data": signed_init_data(sharer.telegram_id, start), "prompt_id": trend["id"],
@@ -186,7 +172,7 @@ def test_link_builder_preserves_plain_link_without_referral_code():
 
 
 @pytest.mark.asyncio
-async def test_unapproved_sharer_link_does_not_bypass_partner_approval(sharing_client):
+async def test_sharer_link_attaches_without_activation_but_does_not_credit_on_click(sharing_client):
     trend = await public_trend()
     sharer = await database.get_or_create_user(81002)
     response = await sharing_client.post("/mini-app/api/prompts/link", json={
@@ -195,6 +181,6 @@ async def test_unapproved_sharer_link_does_not_bypass_partner_approval(sharing_c
     })
     assert response.status == 200
     visitor = await database.get_or_create_user(81004)
-    assert visitor.referred_by is None
+    assert visitor.referred_by == sharer.id
     updated = await database.get_or_create_user(sharer.telegram_id)
     assert updated.referral_earned == sharer.referral_earned

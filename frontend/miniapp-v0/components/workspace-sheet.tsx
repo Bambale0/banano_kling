@@ -668,7 +668,7 @@ function PartnersPanel() {
   }, [])
 
   const referralLink = partner?.referral_link || ''
-  const statusLabel = partner?.status === 'partner' ? 'Партнёр' : 'Базовый'
+  const statusLabel = partner ? 'Партнёр' : '—'
 
   return (
     <div className="space-y-4 pb-8">

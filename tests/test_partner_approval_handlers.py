@@ -38,121 +38,129 @@ class FakeState:
 
 
 @pytest.mark.asyncio
-async def test_telegram_partner_apply_notifies_admin_only_for_new_pending_request(monkeypatch):
-    callback = FakeCallback()
+@pytest.mark.parametrize("route", ["menu_partner", "menu_referrals", "partner_accept"])
+async def test_partner_buttons_open_cabinet_without_application(monkeypatch, route):
+    from unittest.mock import AsyncMock
+
+    from bot.handlers import common
+
+    callback = FakeCallback(data=route)
     state = FakeState()
-    notifications = []
-
-    results = iter(
-        [
-            {
-                "ok": True,
-                "created": True,
-                "status": handlers.PARTNER_APPLICATION_PENDING,
-                "application_id": 101,
-            },
-            {
-                "ok": True,
-                "created": False,
-                "status": handlers.PARTNER_APPLICATION_PENDING,
-                "application_id": 101,
-            },
-        ]
-    )
-
-    async def submit(_telegram_id, *, source):
-        assert source == "telegram_bot"
-        return next(results)
-
-    async def notify(_bot, application_id):
-        notifications.append(application_id)
-
-    monkeypatch.setattr(handlers, "submit_partner_application", submit)
-    monkeypatch.setattr(handlers, "notify_admins_about_partner_application", notify)
-
-    await handlers.partner_application_submit(callback, state)
-    await handlers.partner_application_submit(callback, state)
-
+    render = AsyncMock()
+    monkeypatch.setattr(common, "render_partner_program", render)
+    handler = handlers.partner_application_submit if route == "partner_accept" else handlers.partner_menu
+    await handler(callback, state)
+    await handler(callback, state)
     assert state.clear_calls == 2
-    assert notifications == [101]
-    assert len(callback.message.edits) == 2
-    assert "рассматривается" in callback.message.edits[-1][0]
-    assert callback.answers[0][0] == "Заявка отправлена администратору"
-    assert callback.answers[1][0] == "Заявка уже рассматривается"
+    assert render.await_count == 2
+    render.assert_awaited_with(callback.message, user_id=callback.from_user.id)
+    assert not callback.message.edits
 
 
 @pytest.mark.asyncio
-async def test_stale_partner_stats_callback_is_gated_before_approval(monkeypatch):
+async def test_stale_stats_callback_delegates_without_gate(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from bot.handlers import common
+
     callback = FakeCallback(data="partner_stats")
-
-    async def pending(_telegram_id):
-        return {
-            "status": handlers.PARTNER_APPLICATION_PENDING,
-            "is_partner": False,
-            "can_apply": False,
-            "application_id": 202,
-        }
-
-    monkeypatch.setattr(handlers, "get_partner_application_state", pending)
-
+    stats = AsyncMock()
+    monkeypatch.setattr(common, "partner_stats", stats)
     await handlers.partner_stats_gate(callback)
-
-    assert len(callback.message.edits) == 1
-    text, _kwargs = callback.message.edits[0]
-    assert "рассматривается" in text
-    assert "реферальная ссылка" not in text.lower() or "не привязывает" in text.lower()
-    assert callback.answers[-1][0] == "Партнёрский кабинет ещё не активирован"
+    stats.assert_awaited_once_with(callback)
 
 
 @pytest.mark.asyncio
-async def test_non_admin_cannot_review_partner_application(monkeypatch):
-    callback = FakeCallback(telegram_id=710102, data="partner_app_approve_303")
-    review_calls = 0
+@pytest.mark.parametrize("approve", [True, False])
+async def test_non_admin_cannot_review_partner_application(monkeypatch, approve):
+    from unittest.mock import AsyncMock
 
-    async def review(*_args, **_kwargs):
-        nonlocal review_calls
-        review_calls += 1
-        return {"ok": True}
-
+    callback = FakeCallback(data="partner_app_approve_303" if approve else "partner_app_reject_303")
+    review = AsyncMock()
     monkeypatch.setattr(handlers, "review_partner_application", review)
     monkeypatch.setattr(handlers.config, "is_admin", lambda _telegram_id: False)
-
-    await handlers.approve_partner_application_callback(callback)
-
-    assert review_calls == 0
-    assert callback.answers[-1][0] == "⛔ Нет доступа"
-    assert callback.answers[-1][1].get("show_alert") is True
+    handler = handlers.approve_partner_application_callback if approve else handlers.reject_partner_application_callback
+    await handler(callback)
+    review.assert_not_awaited()
+    assert callback.answers[-1] == ("⛔ Нет доступа", {"show_alert": True})
 
 
 @pytest.mark.asyncio
-async def test_admin_approve_updates_review_card_and_notifies_user(monkeypatch):
-    admin_id = 999999999
-    callback = FakeCallback(telegram_id=admin_id, data="partner_app_approve_404")
-    notified = []
+@pytest.mark.parametrize("approve", [True, False])
+async def test_admin_stale_review_reports_retired_activation(monkeypatch, approve):
+    from unittest.mock import AsyncMock
 
-    async def review(application_id, *, approve, admin_telegram_id):
-        assert application_id == 404
-        assert approve is True
-        assert admin_telegram_id == admin_id
-        return {
-            "ok": True,
-            "status": handlers.PARTNER_APPLICATION_APPROVED,
-            "application": {
-                "telegram_id": 710104,
-                "username": "approved_user",
-            },
-        }
-
-    async def notify(_bot, application, *, approved):
-        notified.append((application, approved))
-
+    callback = FakeCallback(telegram_id=999999999, data="partner_app_approve_404" if approve else "partner_app_reject_404")
+    review = AsyncMock(return_value={"ok": False, "reason": "activation_not_required"})
     monkeypatch.setattr(handlers, "review_partner_application", review)
-    monkeypatch.setattr(handlers, "notify_user_about_partner_review", notify)
-    monkeypatch.setattr(handlers.config, "is_admin", lambda telegram_id: telegram_id == admin_id)
+    monkeypatch.setattr(handlers.config, "is_admin", lambda _telegram_id: True)
+    handler = handlers.approve_partner_application_callback if approve else handlers.reject_partner_application_callback
+    await handler(callback)
+    review.assert_awaited_once_with(404, approve=approve, admin_telegram_id=999999999)
+    assert "Активация больше не требуется" in callback.answers[-1][0]
+    assert not callback.message.edits
 
-    await handlers.approve_partner_application_callback(callback)
 
-    assert len(callback.message.edits) == 1
-    assert "Одобрено" in callback.message.edits[0][0]
-    assert notified == [({"telegram_id": 710104, "username": "approved_user"}, True)]
-    assert callback.answers[-1][0] == "Кабинет активирован"
+@pytest.mark.asyncio
+async def test_command_opens_partner_cabinet(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from bot.handlers import common
+
+    message = FakeMessage()
+    message.from_user = SimpleNamespace(id=710105)
+    state = FakeState()
+    render = AsyncMock()
+    monkeypatch.setattr(common, "render_partner_program", render)
+    await handlers.partner_command(message, state)
+    render.assert_awaited_once_with(message, user_id=710105)
+    assert state.clear_calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("percent", [0, 30, 40])
+async def test_partner_dashboard_uses_individual_rate_and_earned_bonus_wording(monkeypatch, percent):
+    from unittest.mock import AsyncMock
+
+    from bot.handlers import common
+
+    target = FakeMessage()
+    target.bot = SimpleNamespace(get_me=AsyncMock(return_value=SimpleNamespace(username="test_bot")))
+    monkeypatch.setattr(common, "get_or_create_user", AsyncMock(return_value=SimpleNamespace(referral_code="OPENPARTNER")))
+    monkeypatch.setattr(common, "get_partner_overview", AsyncMock(return_value={
+        "is_partner": True, "percent": percent, "level2_percent": 7,
+        "new_user_bonus": 5, "inviter_bonus": 3,
+    }))
+    await common.render_partner_program(target, user_id=710100)
+    text, kwargs = target.edits[-1]
+    assert f"<code>{percent}%</code>" in text
+    assert "<code>5</code>" in text
+    assert "после его первой генерации" in text
+    assert "<code>15</code>" not in text
+    buttons = [button for row in kwargs["reply_markup"].inline_keyboard for button in row]
+    assert not any(button.callback_data == "partner_accept" for button in buttons)
+    assert any(button.callback_data == "partner_withdraw" for button in buttons)
+
+
+def test_partner_keyboards_do_not_offer_activation_or_synthetic_consent():
+    from bot.keyboards import get_partner_consent_keyboard, get_partner_program_keyboard
+
+    for markup in (get_partner_consent_keyboard(), get_partner_program_keyboard("", is_partner=False)):
+        assert not any(button.callback_data == "partner_accept" for row in markup.inline_keyboard for button in row)
+
+
+@pytest.mark.asyncio
+async def test_direct_legacy_accept_opens_cabinet_without_writing_agreement(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from bot import database
+    from bot.handlers import common
+
+    callback = FakeCallback(data="partner_accept")
+    agreement = AsyncMock()
+    render = AsyncMock()
+    monkeypatch.setattr(database, "accept_partner_agreement", agreement)
+    monkeypatch.setattr(common, "render_partner_program", render)
+    await common.accept_partner(callback)
+    agreement.assert_not_awaited()
+    render.assert_awaited_once_with(callback.message, user_id=callback.from_user.id)

@@ -83,6 +83,7 @@ async def _bootstrap_production_like_partner_schema() -> None:
                 CREATE TABLE IF NOT EXISTS generation_tasks (
                     id BIGSERIAL PRIMARY KEY,
                     cost DOUBLE PRECISION DEFAULT 0,
+                    user_id BIGINT REFERENCES users(id),
                     is_public_feed BOOLEAN DEFAULT FALSE,
                     status TEXT DEFAULT 'pending',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -114,11 +115,14 @@ async def _bootstrap_production_like_partner_schema() -> None:
                 )
                 """
             )
+        from bot.partner_policy import init_partner_policy_tables
+
+        await init_partner_policy_tables(conn)
         await conn.commit()
 
 
 @pytest.mark.asyncio
-async def test_partner_approval_state_machine_on_postgres():
+async def test_open_partner_eligibility_and_history_on_postgres():
     from bot import database
     from bot import db as db_backend
     from bot.services import partner_approval_service as approval
@@ -127,88 +131,43 @@ async def test_partner_approval_state_machine_on_postgres():
     assert db_backend.is_postgres() is True
     await _bootstrap_production_like_partner_schema()
     await approval.ensure_partner_approval_schema()
-    async with db_backend.connect() as db:
-        cursor = await db.execute(
-            """SELECT column_name
-               FROM information_schema.columns
-               WHERE table_name = 'users' AND column_name = 'telegram_chat_state'"""
-        )
-        assert await cursor.fetchone() is not None
-
     referrer = await database.get_or_create_user(98100001)
     visitor = await database.get_or_create_user(98100002)
 
-    # Two simultaneous application attempts must produce one durable pending row
-    # and only one caller may report that it created/re-submitted the request.
     submissions = await asyncio.gather(
         approval.submit_partner_application(referrer.telegram_id, source="miniapp"),
         approval.submit_partner_application(referrer.telegram_id, source="telegram_bot"),
     )
-    assert {item["status"] for item in submissions} == {approval.PARTNER_APPLICATION_PENDING}
-    assert sum(bool(item["created"]) for item in submissions) == 1
-    application_ids = {int(item["application_id"]) for item in submissions}
-    assert len(application_ids) == 1
-    application_id = application_ids.pop()
+    assert all(result["is_partner"] and not result["created"] for result in submissions)
+    assert all(result["application_id"] is None for result in submissions)
+    assert (await database.get_or_create_user(referrer.telegram_id)).partner_agreed_at is None
+
+    # Simulate an untouched application that predates the open-access policy.
+    async with db_backend.connect() as db:
+        await db.execute(
+            """INSERT INTO partner_applications (user_id, status, source)
+               VALUES (?, 'rejected', 'legacy')""",
+            (referrer.id,),
+        )
+        await db.commit()
+        cursor = await db.execute("SELECT id FROM partner_applications WHERE user_id = ?", (referrer.id,))
+        application_id = int((await cursor.fetchone())[0])
+    original = await approval.get_partner_application(application_id)
+    state = await approval.get_partner_application_state(referrer.telegram_id)
+    assert state["is_partner"] is True
+    assert state["application_status"] == "rejected"
+    results = await asyncio.gather(
+        approval.review_partner_application(application_id, approve=True, admin_telegram_id=999999999),
+        approval.submit_partner_application(referrer.telegram_id, source="miniapp"),
+    )
+    assert results[0]["reason"] == "activation_not_required"
+    assert results[1]["created"] is False
+    assert await approval.get_partner_application(application_id) == original
+    assert (await database.get_or_create_user(referrer.telegram_id)).partner_agreed_at is None
 
     approval.install_partner_referral_approval_guard()
-    blocked = await referral_service.process_referral_click(
-        visitor.telegram_id,
-        referrer.referral_code,
-        source="postgres-test",
-        start_param=f"ref_{referrer.referral_code}",
-    )
-    assert blocked.attached is False
-    assert blocked.reason == "blocked_referrer"
-
-    # Competing terminal decisions must have a single winner. PostgreSQL
-    # re-evaluates the conditional UPDATE after a concurrent updater commits.
-    decisions = await asyncio.gather(
-        approval.review_partner_application(
-            application_id,
-            approve=True,
-            admin_telegram_id=99000001,
-        ),
-        approval.review_partner_application(
-            application_id,
-            approve=False,
-            admin_telegram_id=99000002,
-        ),
-    )
-    winners = [item for item in decisions if item.get("ok")]
-    losers = [item for item in decisions if not item.get("ok")]
-    assert len(winners) == 1
-    assert len(losers) == 1
-    assert losers[0].get("reason") in {"already_processed", "race_lost"}
-
-    final_state = await approval.get_partner_application_state(referrer.telegram_id)
-    assert final_state["status"] in {
-        approval.PARTNER_APPLICATION_APPROVED,
-        approval.PARTNER_APPLICATION_REJECTED,
-    }
-
-    # If rejection won, re-submit and approve so we can verify the legacy
-    # financial activation flag and the referral path after approval.
-    if final_state["status"] == approval.PARTNER_APPLICATION_REJECTED:
-        resubmitted = await approval.submit_partner_application(
-            referrer.telegram_id,
-            source="postgres-test",
-        )
-        assert resubmitted["created"] is True
-        reviewed = await approval.review_partner_application(
-            resubmitted["application_id"],
-            approve=True,
-            admin_telegram_id=99000001,
-        )
-        assert reviewed["ok"] is True
-
-    referrer_after = await database.get_or_create_user(referrer.telegram_id)
-    assert referrer_after.partner_agreed_at is not None
-
     attached = await referral_service.process_referral_click(
-        visitor.telegram_id,
-        referrer.referral_code,
-        source="postgres-test",
-        start_param=f"ref_{referrer.referral_code}",
+        visitor.telegram_id, referrer.referral_code, source="postgres-test",
     )
     assert attached.attached is True
     assert attached.reason == "attached"

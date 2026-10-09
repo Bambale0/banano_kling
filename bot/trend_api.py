@@ -558,9 +558,10 @@ async def _record_trend_use(
     user_id: int,
     *,
     credits_spent: float,
+    repeat_task_id: str,
 ) -> None:
     try:
-        await use_prompt(trend_id, user_id, credits_spent=credits_spent)
+        await use_prompt(trend_id, user_id, credits_spent=credits_spent, repeat_task_id=repeat_task_id)
     except Exception:
         logger.exception("Failed to record trend use: trend_id=%s", trend_id)
 
@@ -703,6 +704,7 @@ async def _run_image_trend(
             trend.trend_id,
             user.id,
             credits_spent=float(cost),
+            repeat_task_id=str(launch_result["task_id"]),
         )
 
         fresh_user = await get_or_create_user(telegram_id)
@@ -916,6 +918,7 @@ async def _run_video_trend(
             trend.trend_id,
             user.id,
             credits_spent=float(cost),
+            repeat_task_id=str(launch_result["task_id"]),
         )
         fresh_user = await get_or_create_user(telegram_id)
         return web.json_response(

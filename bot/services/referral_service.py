@@ -5,8 +5,8 @@
 должны вызывать функции отсюда, а не дублировать логику.
 """
 
-import logging
 import html
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -15,6 +15,7 @@ import aiohttp
 
 from bot import db as db_backend
 from bot.config import config
+from bot.partner_policy import record_pending_invite_bonus
 
 
 # ---------------------------------------------------------------------------
@@ -63,8 +64,8 @@ from bot.database import (
     REFERRAL_ANTIFRAUD_BLOCK_REFERRER_IDS,
     REFERRAL_ANTIFRAUD_BURST_MAX,
     REFERRAL_ANTIFRAUD_BURST_WINDOW_SECONDS,
-    REFERRAL_ANTIFRAUD_MAX_PER_HOUR,
     REFERRAL_ANTIFRAUD_MAX_PER_DAY,
+    REFERRAL_ANTIFRAUD_MAX_PER_HOUR,
 )
 
 logger = logging.getLogger(__name__)
@@ -342,9 +343,9 @@ async def _ensure_partner_commissions_table(db: db_backend.Connection) -> None:
             pass
 
 
-async def init_referral_tables_if_needed() -> None:
+async def init_referral_tables_if_needed(database_path: str | None = None) -> None:
     """Вызывается из init_db() для гарантии, что таблицы есть."""
-    async with db_backend.connect(DATABASE_PATH) as db:
+    async with db_backend.connect(database_path) as db:
         await _ensure_referral_events_table(db)
         await _ensure_partner_commissions_table(db)
         await db.commit()
@@ -766,7 +767,7 @@ async def process_referral_click(
             return await _record_and_commit(result, visitor_user_id)
 
         insert_cursor = await db.execute(
-            "INSERT OR IGNORE INTO referrals (referrer_id, referred_id, bonus_credits) VALUES (?, ?, 3)",
+            "INSERT OR IGNORE INTO referrals (referrer_id, referred_id, bonus_credits) VALUES (?, ?, 0)",
             (referrer_id, visitor_user_id),
         )
         if insert_cursor.rowcount != 1:
@@ -782,11 +783,7 @@ async def process_referral_click(
             )
             return await _record_and_commit(result, visitor_user_id)
 
-        # Начисляем бонус рефереру
-        await db.execute(
-            "UPDATE users SET credits = credits + ?, referral_earned = referral_earned + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (PARTNER_INVITER_BONUS, PARTNER_INVITER_BONUS, referrer_id),
-        )
+        await record_pending_invite_bonus(db, referrer_id, visitor_user_id, PARTNER_INVITER_BONUS)
 
         result = ReferralResult(
             clicked_code=code,
@@ -795,7 +792,7 @@ async def process_referral_click(
             referred_user_id=visitor_user_id,
             attached=True,
             reason="attached",
-            notify_partner=True,
+            notify_partner=False,
             referrer_telegram_id=referrer_telegram_id,
             source=source,
             start_param=start_param,
@@ -1012,7 +1009,7 @@ async def attach_referral_in_transaction(
         return result
 
     insert_cursor = await db.execute(
-        "INSERT OR IGNORE INTO referrals (referrer_id, referred_id, bonus_credits) VALUES (?, ?, 3)",
+        "INSERT OR IGNORE INTO referrals (referrer_id, referred_id, bonus_credits) VALUES (?, ?, 0)",
         (referrer_id, visitor_user_id),
     )
 
@@ -1028,11 +1025,7 @@ async def attach_referral_in_transaction(
         await record_referral_event(result, visitor_telegram_id, visitor_user_id, db=db)
         return result
 
-    # Начисляем бонус рефереру
-    await db.execute(
-        "UPDATE users SET credits = credits + ?, referral_earned = referral_earned + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-        (PARTNER_INVITER_BONUS, PARTNER_INVITER_BONUS, referrer_id),
-    )
+    await record_pending_invite_bonus(db, referrer_id, visitor_user_id, PARTNER_INVITER_BONUS)
 
     result = ReferralResult(
         clicked_code=code,
@@ -1040,7 +1033,7 @@ async def attach_referral_in_transaction(
         referred_user_id=visitor_user_id,
         attached=True,
         reason="attached",
-        notify_partner=True,
+        notify_partner=False,
         referrer_telegram_id=referrer_telegram_id,
         source=source,
         start_param=start_param,

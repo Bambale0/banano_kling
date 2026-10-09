@@ -1,4 +1,4 @@
-name: Partner Approval Browser Smoke
+name: Partner Cabinet Browser Smoke
 
 on:
   pull_request:
@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   browser_partner_approval:
-    name: Chromium — partner approval available → pending → approved
+    name: Chromium — open partner cabinet and legacy states
     runs-on: ubuntu-24.04
     timeout-minutes: 25
 
@@ -65,7 +65,7 @@ jobs:
           cat /tmp/partner-browser-http.log
           exit 1
 
-      - name: Run partner approval Chromium flow
+      - name: Run partner cabinet Chromium flow
         env:
           PARTNER_BROWSER_URL: http://127.0.0.1:4173/mini-app/
         run: node scripts/partner-approval-browser-smoke.mjs

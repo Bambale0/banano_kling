@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-import html
 import logging
 import os
 from datetime import datetime, timezone
 from typing import Any
 
-from aiogram import Bot, types
+from aiogram import Bot
 
 from bot import db as db_backend
 from bot.config import config
@@ -26,7 +25,6 @@ PARTNER_MANUAL_APPROVAL_CUTOFF = os.getenv(
 
 _SCHEMA_READY = False
 _SCHEMA_LOCK: asyncio.Lock | None = None
-_REFERRAL_GUARD_INSTALLED = False
 
 
 def _as_utc_naive_datetime(value: Any) -> datetime | None:
@@ -69,7 +67,7 @@ def _postgres_dsn() -> str:
 
 
 async def ensure_partner_approval_schema() -> None:
-    """Create the partner application state machine storage once per process."""
+    """Keep legacy application storage available for read-only history."""
 
     global _SCHEMA_READY
     if _SCHEMA_READY:
@@ -157,27 +155,19 @@ def _application_payload(row: Any | None) -> dict[str, Any] | None:
 
 
 async def get_partner_application_state(telegram_id: int) -> dict[str, Any]:
-    """Return server-side partner access state for one Telegram account."""
+    """Return open partner eligibility and read-only historical application data.
+
+    ``approved`` remains the legacy API value for an accessible cabinet. It is
+    not a moderation decision or evidence that an agreement was accepted.
+    """
 
     await ensure_partner_approval_schema()
     user = await get_or_create_user(int(telegram_id))
-
-    legacy_registration = is_legacy_partner_registration(user.created_at)
-    if user.partner_agreed_at or legacy_registration:
-        return {
-            "status": PARTNER_APPLICATION_APPROVED,
-            "is_partner": True,
-            "is_legacy": legacy_registration and not bool(user.partner_agreed_at),
-            "application_id": None,
-            "can_apply": False,
-        }
-
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
         cursor = await db.execute(
             """
-            SELECT id, user_id, status, source, requested_at, reviewed_at,
-                   reviewed_by_telegram_id
+            SELECT id, status, requested_at, reviewed_at
             FROM partner_applications
             WHERE user_id = ?
             LIMIT 1
@@ -186,32 +176,16 @@ async def get_partner_application_state(telegram_id: int) -> dict[str, Any]:
         )
         row = await cursor.fetchone()
 
-    if not row:
-        return {
-            "status": PARTNER_APPLICATION_AVAILABLE,
-            "is_partner": False,
-            "application_id": None,
-            "can_apply": True,
-        }
-
-    status = str(row["status"] or PARTNER_APPLICATION_AVAILABLE)
-    if status not in {
-        PARTNER_APPLICATION_PENDING,
-        PARTNER_APPLICATION_APPROVED,
-        PARTNER_APPLICATION_REJECTED,
-    }:
-        status = PARTNER_APPLICATION_AVAILABLE
-
     return {
-        "status": status,
-        "is_partner": status == PARTNER_APPLICATION_APPROVED,
-        "application_id": int(row["id"]),
-        "can_apply": status in {
-            PARTNER_APPLICATION_AVAILABLE,
-            PARTNER_APPLICATION_REJECTED,
-        },
-        "requested_at": row["requested_at"],
-        "reviewed_at": row["reviewed_at"],
+        "status": PARTNER_APPLICATION_APPROVED,
+        "is_partner": True,
+        "is_legacy": is_legacy_partner_registration(user.created_at)
+        and not bool(user.partner_agreed_at),
+        "application_id": int(row["id"]) if row else None,
+        "application_status": str(row["status"]) if row else None,
+        "can_apply": False,
+        "requested_at": row["requested_at"] if row else None,
+        "reviewed_at": row["reviewed_at"] if row else None,
     }
 
 
@@ -286,77 +260,14 @@ async def submit_partner_application(
     *,
     source: str,
 ) -> dict[str, Any]:
-    """Create or re-submit a partner application idempotently and race-safely."""
+    """Compatibility entry point for old clients; no application is required.
 
-    await ensure_partner_approval_schema()
-    user = await get_or_create_user(int(telegram_id))
-    legacy_registration = is_legacy_partner_registration(user.created_at)
-    if user.partner_agreed_at or legacy_registration:
-        return {
-            "ok": True,
-            "created": False,
-            "status": PARTNER_APPLICATION_APPROVED,
-            "is_partner": True,
-            "is_legacy": legacy_registration and not bool(user.partner_agreed_at),
-            "application_id": None,
-        }
+    Never insert applications or synthesize consent when a stale activation
+    button is pressed. Existing application and agreement records stay intact.
+    """
 
-    clean_source = str(source or "unknown").strip()[:32] or "unknown"
-    created = False
-    async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
-        db.row_factory = db_backend.Row
-        await db.execute("BEGIN IMMEDIATE")
-        try:
-            # Re-submission is allowed only from rejected -> pending. The
-            # conditional update makes concurrent re-submits single-winner.
-            update_cursor = await db.execute(
-                """
-                UPDATE partner_applications
-                SET status = 'pending', source = ?, requested_at = CURRENT_TIMESTAMP,
-                    reviewed_at = NULL, reviewed_by_telegram_id = NULL,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE user_id = ? AND status = 'rejected'
-                """,
-                (clean_source, user.id),
-            )
-            if update_cursor.rowcount == 1:
-                created = True
-            else:
-                # Initial submission: only one concurrent request can insert.
-                insert_cursor = await db.execute(
-                    """
-                    INSERT INTO partner_applications (
-                        user_id, status, source, requested_at, reviewed_at,
-                        reviewed_by_telegram_id, updated_at
-                    )
-                    VALUES (?, 'pending', ?, CURRENT_TIMESTAMP, NULL, NULL, CURRENT_TIMESTAMP)
-                    ON CONFLICT(user_id) DO NOTHING
-                    """,
-                    (user.id, clean_source),
-                )
-                created = insert_cursor.rowcount == 1
-
-            cursor = await db.execute(
-                "SELECT id, status FROM partner_applications WHERE user_id = ? LIMIT 1",
-                (user.id,),
-            )
-            row = await cursor.fetchone()
-            if not row:
-                await db.rollback()
-                raise RuntimeError("Partner application row was not created")
-            await db.commit()
-        except Exception:
-            await db.rollback()
-            raise
-
-    status = str(row["status"] or PARTNER_APPLICATION_PENDING)
-    return {
-        "ok": True,
-        "created": created,
-        "status": status,
-        "is_partner": status == PARTNER_APPLICATION_APPROVED,
-        "application_id": int(row["id"]),
-    }
+    state = await get_partner_application_state(telegram_id)
+    return {"ok": True, "created": False, **state}
 
 
 async def review_partner_application(
@@ -365,161 +276,26 @@ async def review_partner_application(
     approve: bool,
     admin_telegram_id: int,
 ) -> dict[str, Any]:
-    """Atomically approve/reject a pending application exactly once."""
+    """Keep old admin review calls authorized and historical records read-only."""
 
-    await ensure_partner_approval_schema()
-    target_status = (
-        PARTNER_APPLICATION_APPROVED if approve else PARTNER_APPLICATION_REJECTED
-    )
-
-    async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
-        db.row_factory = db_backend.Row
-        await db.execute("BEGIN IMMEDIATE")
-        try:
-            cursor = await db.execute(
-                """
-                SELECT pa.id, pa.user_id, pa.status, pa.source, pa.requested_at,
-                       pa.reviewed_at, pa.reviewed_by_telegram_id,
-                       u.telegram_id, u.username, u.first_name, u.last_name,
-                       u.referral_code
-                FROM partner_applications pa
-                JOIN users u ON u.id = pa.user_id
-                WHERE pa.id = ?
-                LIMIT 1
-                """,
-                (int(application_id),),
-            )
-            row = await cursor.fetchone()
-            if not row:
-                await db.rollback()
-                return {"ok": False, "reason": "not_found"}
-
-            current_status = str(row["status"] or "")
-            if current_status != PARTNER_APPLICATION_PENDING:
-                await db.rollback()
-                payload = _application_payload(row) or {}
-                return {
-                    "ok": False,
-                    "reason": "already_processed",
-                    "status": current_status,
-                    "application": payload,
-                }
-
-            update_cursor = await db.execute(
-                """
-                UPDATE partner_applications
-                SET status = ?, reviewed_at = CURRENT_TIMESTAMP,
-                    reviewed_by_telegram_id = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND status = 'pending'
-                """,
-                (target_status, int(admin_telegram_id), int(application_id)),
-            )
-            if update_cursor.rowcount != 1:
-                await db.rollback()
-                return {"ok": False, "reason": "race_lost"}
-
-            if approve:
-                await db.execute(
-                    """
-                    UPDATE users
-                    SET partner_agreed_at = COALESCE(partner_agreed_at, CURRENT_TIMESTAMP),
-                        partner_tier = 'basic',
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                    """,
-                    (int(row["user_id"]),),
-                )
-
-            await db.commit()
-        except Exception:
-            await db.rollback()
-            raise
-
+    if not config.is_admin(int(admin_telegram_id)):
+        return {"ok": False, "reason": "forbidden"}
     application = await get_partner_application(int(application_id))
+    if application is None:
+        return {"ok": False, "reason": "not_found"}
     return {
-        "ok": True,
-        "status": target_status,
+        "ok": False,
+        "reason": "activation_not_required",
+        "status": application["status"],
         "application": application,
     }
-
-
-def _account_url(application: dict[str, Any]) -> str:
-    username = str(application.get("username") or "").strip().lstrip("@")
-    if username:
-        return f"https://t.me/{username}"
-    return f"tg://user?id={int(application['telegram_id'])}"
 
 
 async def notify_admins_about_partner_application(
     bot: Bot | None,
     application_id: int,
 ) -> None:
-    """Send the review card to every configured administrator."""
-
-    if bot is None:
-        logger.warning("Partner application %s created without bot instance", application_id)
-        return
-
-    application = await get_partner_application(application_id)
-    if not application:
-        return
-
-    telegram_id = int(application["telegram_id"])
-    username = str(application.get("username") or "").strip().lstrip("@")
-    full_name = " ".join(
-        value
-        for value in (
-            str(application.get("first_name") or "").strip(),
-            str(application.get("last_name") or "").strip(),
-        )
-        if value
-    )
-    display_name = full_name or (f"@{username}" if username else "—")
-    account_url = _account_url(application)
-
-    text = (
-        "🤝 <b>Новая заявка в партнёрскую программу</b>\n\n"
-        f"Заявка: <code>#{application_id}</code>\n"
-        f"Пользователь: <b>{html.escape(display_name)}</b>\n"
-        f"Telegram ID: <code>{telegram_id}</code>\n"
-        f"Username: <code>{html.escape('@' + username if username else '—')}</code>\n"
-        f"Источник: <code>{html.escape(str(application.get('source') or '—'))}</code>\n"
-        f"Аккаунт: <a href=\"{html.escape(account_url, quote=True)}\">открыть профиль</a>\n\n"
-        "До решения администратора реферальная ссылка не активна."
-    )
-    keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                types.InlineKeyboardButton(text="👤 Открыть аккаунт", url=account_url),
-            ],
-            [
-                types.InlineKeyboardButton(
-                    text="✅ Активировать кабинет",
-                    callback_data=f"partner_app_approve_{application_id}",
-                ),
-                types.InlineKeyboardButton(
-                    text="❌ Отклонить",
-                    callback_data=f"partner_app_reject_{application_id}",
-                ),
-            ],
-        ]
-    )
-
-    for admin_id in config.admin_ids:
-        try:
-            await bot.send_message(
-                admin_id,
-                text,
-                parse_mode="HTML",
-                reply_markup=keyboard,
-                disable_web_page_preview=True,
-            )
-        except Exception:
-            logger.exception(
-                "Failed to send partner application %s to admin %s",
-                application_id,
-                admin_id,
-            )
+    """Retired compatibility hook: never send new activation requests."""
 
 
 async def notify_user_about_partner_review(
@@ -528,173 +304,12 @@ async def notify_user_about_partner_review(
     *,
     approved: bool,
 ) -> None:
-    if bot is None or not application or not application.get("telegram_id"):
-        return
-
-    telegram_id = int(application["telegram_id"])
-    if approved:
-        text = (
-            "✅ <b>Партнёрский кабинет активирован</b>\n\n"
-            "Администратор одобрил заявку. Теперь вам доступны полноценный "
-            "партнёрский кабинет, статистика и реферальная ссылка."
-        )
-    else:
-        text = (
-            "❌ <b>Заявка в партнёрскую программу отклонена</b>\n\n"
-            "Партнёрская ссылка не активирована. При необходимости вы сможете "
-            "подать заявку повторно из раздела «Партнёрам»."
-        )
-
-    keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                types.InlineKeyboardButton(
-                    text="🤝 Открыть партнёрский раздел",
-                    callback_data="menu_partner",
-                )
-            ]
-        ]
-    )
-    try:
-        await bot.send_message(
-            telegram_id,
-            text,
-            parse_mode="HTML",
-            reply_markup=keyboard,
-        )
-    except Exception:
-        logger.exception("Failed to notify user %s about partner review", telegram_id)
-
-
-async def _query_referrer_approval(connection: Any, code: str) -> bool:
-    connection.row_factory = db_backend.Row
-    cursor = await connection.execute(
-        """
-        SELECT telegram_id, partner_agreed_at, created_at
-        FROM users
-        WHERE referral_code = ?
-        LIMIT 1
-        """,
-        (code,),
-    )
-    row = await cursor.fetchone()
-    if not row:
-        return True  # let the canonical referral service report code_not_found
-    telegram_id = int(row["telegram_id"])
-    return (
-        bool(row["partner_agreed_at"])
-        or config.is_admin(telegram_id)
-        or is_legacy_partner_registration(row["created_at"])
-    )
-
-
-async def _referrer_is_approved_by_code(
-    referral_code: str,
-    *,
-    db: Any | None = None,
-) -> bool:
-    code = str(referral_code or "").strip().upper()
-    if not code:
-        return False
-    if db is not None:
-        return await _query_referrer_approval(db, code)
-    async with db_backend.connect(DATABASE_PATH) as connection:
-        return await _query_referrer_approval(connection, code)
-
-
-async def _blocked_referral_result(
-    referral_service: Any,
-    *,
-    visitor_telegram_id: int,
-    code: str,
-    source: str | None,
-    start_param: str | None,
-    visitor_user_id: int | None = None,
-    db: Any | None = None,
-):
-    result = referral_service.ReferralResult(
-        clicked_code=code,
-        referred_user_id=int(visitor_user_id or 0),
-        reason="blocked_referrer",
-        source=source,
-        start_param=start_param,
-    )
-    await referral_service.record_referral_event(
-        result,
-        int(visitor_telegram_id),
-        visitor_user_id,
-        db=db,
-    )
-    return result
+    """Retired compatibility hook: historical verdicts do not alter access."""
 
 
 def install_partner_referral_approval_guard() -> None:
-    """Require admin-approved partner status before a referral code can attach."""
+    """Compatibility no-op; the canonical referral service owns all safeguards.
 
-    global _REFERRAL_GUARD_INSTALLED
-
-    from bot.services import referral_service
-
-    original_process_referral_click = referral_service.process_referral_click
-    original_attach_referral = referral_service.attach_referral_in_transaction
-    if getattr(original_process_referral_click, "_partner_approval_guard", False):
-        _REFERRAL_GUARD_INSTALLED = True
-        return
-
-    async def guarded_process_referral_click(
-        visitor_telegram_id: int,
-        referral_code: str | None,
-        *,
-        source: str | None = None,
-        start_param: str | None = None,
-    ):
-        code = str(referral_code or "").strip().upper()
-        if code and not await _referrer_is_approved_by_code(code):
-            return await _blocked_referral_result(
-                referral_service,
-                visitor_telegram_id=visitor_telegram_id,
-                code=code,
-                source=source,
-                start_param=start_param,
-            )
-        return await original_process_referral_click(
-            visitor_telegram_id,
-            referral_code,
-            source=source,
-            start_param=start_param,
-        )
-
-    async def guarded_attach_referral_in_transaction(
-        db: Any,
-        visitor_telegram_id: int,
-        visitor_user_id: int,
-        referral_code: str | None,
-        *,
-        source: str | None = None,
-        start_param: str | None = None,
-    ):
-        code = str(referral_code or "").strip().upper()
-        if code and not await _referrer_is_approved_by_code(code, db=db):
-            return await _blocked_referral_result(
-                referral_service,
-                visitor_telegram_id=visitor_telegram_id,
-                visitor_user_id=visitor_user_id,
-                code=code,
-                source=source,
-                start_param=start_param,
-                db=db,
-            )
-        return await original_attach_referral(
-            db,
-            visitor_telegram_id,
-            visitor_user_id,
-            referral_code,
-            source=source,
-            start_param=start_param,
-        )
-
-    guarded_process_referral_click._partner_approval_guard = True
-    guarded_attach_referral_in_transaction._partner_approval_guard = True
-    referral_service.process_referral_click = guarded_process_referral_click
-    referral_service.attach_referral_in_transaction = guarded_attach_referral_in_transaction
-    _REFERRAL_GUARD_INSTALLED = True
+    Partner activation no longer restricts attribution. Do not wrap or replace
+    referral handlers: their ban, self-referral, cycle and replay checks remain.
+    """

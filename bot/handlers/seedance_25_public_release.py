@@ -571,6 +571,7 @@ async def _public_message_launch(message: types.Message, state: FSMContext, prom
             prompt=payload["prompt"],
             cost=charge_cost,
             request_data=_request_data(payload, is_admin=is_admin, quote=quote, source="telegram", billing_quote=billing_quote),
+            provider_accepted=True,
         )
         await processing.delete()
         billing = "администратору бесплатно" if is_admin else f"списано {quote:g}🍌"
@@ -834,6 +835,7 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
             parent_generation_id=(immediate_parent_id if source_feed_gen_id else None),
             action_type="repeat" if source_feed_gen_id else None,
             **({"reserved_task_id": receipt_id} if receipt_id else {}),
+            provider_accepted=True,
         )
         if receipt_id and persisted is not True:
             raise RuntimeError("video_repeat_receipt_binding_failed")

@@ -1,81 +1,48 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
-import { BriefcaseBusiness, CheckCircle2, Copy, Loader2, RefreshCw, Send, ShieldCheck, XCircle } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { BriefcaseBusiness, CheckCircle2, Copy, Loader2, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { useApp } from '@/lib/app-context'
-import { executeMiniAppAction, fetchPartnerOverview } from '@/lib/api'
+import { fetchPartnerOverview } from '@/lib/api'
 
-type PartnerStatus = 'available' | 'pending' | 'rejected' | 'partner' | 'approved' | string
+type PartnerOverview = Awaited<ReturnType<typeof fetchPartnerOverview>>
 
-type PartnerOverview = {
-  is_partner: boolean
-  referrals_count: number
-  balance_rub: number
-  referral_link: string
-  status: PartnerStatus
-}
-
-function statusLabel(status: PartnerStatus, isPartner: boolean) {
-  if (isPartner || status === 'partner' || status === 'approved') return 'Партнёр'
-  if (status === 'pending') return 'На проверке'
-  if (status === 'rejected') return 'Отклонено'
-  return 'Не активирован'
-}
-
+// Keep the exported component name for clients importing the old approval sheet.
 export function PartnerApprovalSheet() {
   const { activeWorkspace, closeWorkspace } = useApp()
   const [partner, setPartner] = useState<PartnerOverview | null>(null)
   const [isLoading, setIsLoading] = useState(false)
-  const [isSubmitting, setIsSubmitting] = useState(false)
-
+  const [error, setError] = useState<string | null>(null)
+  const requestId = useRef(0)
   const isOpen = activeWorkspace === 'partners'
-  const status = partner?.status || 'available'
-  const isApproved = Boolean(
-    partner?.is_partner || status === 'partner' || status === 'approved'
-  )
-  const isPending = status === 'pending'
-  const isRejected = status === 'rejected'
 
-  const loadPartnerData = useCallback(async () => {
+  const loadPartnerData = useCallback(async (reset = false) => {
+    const currentRequest = ++requestId.current
+    if (reset) setPartner(null)
     setIsLoading(true)
+    setError(null)
     try {
       const data = await fetchPartnerOverview()
-      setPartner(data)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Не удалось загрузить партнёрский кабинет'
+      if (currentRequest === requestId.current) setPartner(data)
+    } catch (cause) {
+      if (currentRequest !== requestId.current) return
+      const message = cause instanceof Error ? cause.message : 'Не удалось загрузить партнёрский кабинет'
+      setError(message)
       toast.error('Партнёрская программа недоступна', { description: message })
     } finally {
-      setIsLoading(false)
+      if (currentRequest === requestId.current) setIsLoading(false)
     }
   }, [])
 
-  async function submitApplication() {
-    if (isSubmitting) return
-    setIsSubmitting(true)
-    try {
-      await executeMiniAppAction('partner_apply')
-      toast.success('Заявка отправлена', {
-        description: 'Администратор получил заявку и ссылку на ваш Telegram-аккаунт.',
-      })
-      await loadPartnerData()
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Не удалось отправить заявку'
-      toast.error('Заявка не отправлена', { description: message })
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
   useEffect(() => {
     if (!isOpen) return
-    void loadPartnerData()
+    void loadPartnerData(true)
+    return () => { requestId.current += 1 }
   }, [isOpen, loadPartnerData])
-
-  const referralLink = isApproved ? partner?.referral_link || '' : ''
 
   return (
     <Sheet open={isOpen} onOpenChange={(open) => !open && closeWorkspace()}>
@@ -92,7 +59,7 @@ export function PartnerApprovalSheet() {
                   Партнёрская программа
                 </SheetTitle>
                 <SheetDescription className="mt-1 max-w-xl text-sm leading-5 text-muted-foreground">
-                  Кабинет, реферальная ссылка, статистика и выплаты после одобрения администратора.
+                  Кабинет, реферальная ссылка и статистика доступны всем пользователям.
                 </SheetDescription>
               </div>
             </div>
@@ -100,30 +67,27 @@ export function PartnerApprovalSheet() {
         </SheetHeader>
 
         <div className="h-[calc(86vh-92px)] overflow-auto px-5 pb-8">
-          {isLoading && !partner ? (
+          {partner ? (
+            <PartnerCabinet
+              partner={partner}
+              referralLink={partner.referral_link || ''}
+              isLoading={isLoading}
+              onRefresh={loadPartnerData}
+            />
+          ) : error ? (
             <div className="rounded-2xl border border-border/50 bg-secondary/20 p-4">
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <p role="alert" className="text-sm text-muted-foreground">{error}</p>
+              <Button className="mt-4" onClick={() => void loadPartnerData()} disabled={isLoading}>
+                Повторить загрузку
+              </Button>
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-border/50 bg-secondary/20 p-4">
+              <div role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin text-gold" />
-                Загружаю статус партнёрского кабинета…
+                Загружаю партнёрский кабинет…
               </div>
             </div>
-          ) : isApproved ? (
-            <ApprovedPartnerCabinet
-              partner={partner}
-              referralLink={referralLink}
-              isLoading={isLoading}
-              onRefresh={loadPartnerData}
-            />
-          ) : (
-            <PartnerApplicationGate
-              status={status}
-              isPending={isPending}
-              isRejected={isRejected}
-              isLoading={isLoading}
-              isSubmitting={isSubmitting}
-              onApply={submitApplication}
-              onRefresh={loadPartnerData}
-            />
           )}
         </div>
       </SheetContent>
@@ -131,105 +95,13 @@ export function PartnerApprovalSheet() {
   )
 }
 
-function PartnerApplicationGate({
-  status,
-  isPending,
-  isRejected,
-  isLoading,
-  isSubmitting,
-  onApply,
-  onRefresh,
-}: {
-  status: PartnerStatus
-  isPending: boolean
-  isRejected: boolean
-  isLoading: boolean
-  isSubmitting: boolean
-  onApply: () => Promise<void>
-  onRefresh: () => Promise<void>
-}) {
-  const Icon = isPending ? ShieldCheck : isRejected ? XCircle : Send
-  const title = isPending
-    ? 'Заявка на рассмотрении'
-    : isRejected
-      ? 'Заявка отклонена'
-      : 'Активируйте партнёрскую ссылку'
-  const description = isPending
-    ? 'Администратор уже получил заявку и ссылку на ваш Telegram-аккаунт. До решения реферальная ссылка не активна.'
-    : isRejected
-      ? 'Партнёрский кабинет пока не активирован. Вы можете отправить заявку повторно — администратор рассмотрит её заново.'
-      : 'Для новых партнёров доступ включается после ручной проверки. Нажмите кнопку — администратору придёт заявка с вашим Telegram-профилем.'
-
-  return (
-    <div className="space-y-4">
-      <div className="rounded-[1.75rem] border border-gold/20 bg-gradient-to-br from-gold/[0.12] via-card/70 to-cyan/[0.08] p-5">
-        <div className="flex items-start gap-3">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-gold/20 bg-gold/10">
-            <Icon className="h-5 w-5 text-gold" />
-          </div>
-          <div>
-            <p className="text-[11px] uppercase tracking-[0.18em] text-gold">
-              {statusLabel(status, false)}
-            </p>
-            <h3 className="mt-1 font-serif text-2xl text-foreground">{title}</h3>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">{description}</p>
-          </div>
-        </div>
-
-        {isPending ? (
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => void onRefresh()}
-            disabled={isLoading}
-            className="mt-5 h-12 w-full rounded-2xl border-border/50 bg-background/40 hover:bg-background/60"
-          >
-            {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-            Проверить статус
-          </Button>
-        ) : (
-          <Button
-            type="button"
-            onClick={() => void onApply()}
-            disabled={isSubmitting}
-            className="mt-5 h-12 w-full rounded-2xl bg-gold text-primary-foreground hover:bg-gold/90 disabled:opacity-50"
-          >
-            {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
-            {isRejected ? 'Подать заявку повторно' : 'Активировать ссылку'}
-          </Button>
-        )}
-      </div>
-
-      <div className="rounded-2xl border border-border/50 bg-secondary/20 p-4">
-        <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
-          Как проходит активация
-        </p>
-        <div className="mt-3 space-y-2">
-          {[
-            'Вы отправляете заявку из партнёрского кабинета.',
-            'Администратор получает уведомление и открывает ваш Telegram-аккаунт.',
-            'После одобрения открываются кабинет, статистика и активная реферальная ссылка.',
-          ].map((item, index) => (
-            <div key={item} className="flex gap-3 rounded-xl bg-background/35 px-3 py-3">
-              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gold/10 text-xs text-gold">
-                {index + 1}
-              </span>
-              <p className="text-sm leading-5 text-foreground">{item}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function ApprovedPartnerCabinet({
+function PartnerCabinet({
   partner,
   referralLink,
   isLoading,
   onRefresh,
 }: {
-  partner: PartnerOverview | null
+  partner: PartnerOverview
   referralLink: string
   isLoading: boolean
   onRefresh: () => Promise<void>
@@ -240,7 +112,7 @@ function ApprovedPartnerCabinet({
         <div className="flex items-center gap-3">
           <CheckCircle2 className="h-5 w-5 text-emerald-400" />
           <div>
-            <p className="font-medium text-foreground">Партнёрский кабинет активирован</p>
+            <p className="font-medium text-foreground">Ваш партнёрский кабинет</p>
             <p className="mt-1 text-xs text-muted-foreground">
               Реферальная ссылка активна и может закреплять новых пользователей.
             </p>
@@ -264,6 +136,15 @@ function ApprovedPartnerCabinet({
           </p>
         </div>
       </div>
+
+      {typeof partner.percent === 'number' && (
+        <div className="rounded-2xl border border-border/50 bg-secondary/20 p-4 text-sm">
+          <p>Ваш процент с покупок рефералов 1 уровня: {partner.percent}%</p>
+          {typeof partner.level2_percent === 'number' && (
+            <p className="mt-1 text-muted-foreground">С покупок рефералов 2 уровня: {partner.level2_percent}%</p>
+          )}
+        </div>
+      )}
 
       <div className="rounded-[1.5rem] border border-gold/20 bg-gold/10 p-4">
         <div className="flex items-center justify-between gap-3">
@@ -293,8 +174,10 @@ function ApprovedPartnerCabinet({
         <Button
           disabled={!referralLink}
           onClick={() => {
-            void navigator.clipboard.writeText(referralLink)
-            toast.success('Реферальная ссылка скопирована')
+            void navigator.clipboard.writeText(referralLink).then(
+              () => toast.success('Реферальная ссылка скопирована'),
+              () => toast.error('Не удалось скопировать ссылку'),
+            )
           }}
           className="mt-4 h-12 w-full rounded-2xl bg-gold text-primary-foreground hover:bg-gold/90 disabled:opacity-50"
         >

@@ -299,12 +299,14 @@ ADMIN_FINANCE_COLUMNS = {
         ("level1_partner_tier", "Тир партнёра L1"),
         ("level1_percent", "Процент L1"),
         ("level1_commission_rub", "Начисление L1, ₽"),
+        ("level1_commission_source", "Источник начисления L1"),
         ("level2_partner_telegram_id", "Партнёр L2 Telegram ID"),
         ("level2_partner_user_id", "Партнёр L2 DB ID"),
         ("level2_partner_code", "Код партнёра L2"),
         ("level2_partner_tier", "Тир партнёра L2"),
         ("level2_percent", "Процент L2"),
         ("level2_commission_rub", "Начисление L2, ₽"),
+        ("level2_commission_source", "Источник начисления L2"),
     ],
     "withdrawals": [
         ("id", "ID заявки"),
@@ -705,7 +707,13 @@ def _admin_partners_keyboard(top_partners: list[dict]) -> types.InlineKeyboardMa
     rows: list[list[types.InlineKeyboardButton]] = [
         [
             types.InlineKeyboardButton(
-                text="✅ Заявки на активацию",
+                text="💯 Проценты партнёров",
+                callback_data="admin_partner_rates",
+            )
+        ],
+        [
+            types.InlineKeyboardButton(
+                text="🗂 История заявок",
                 callback_data="admin_partner_applications",
             )
         ],
@@ -896,18 +904,19 @@ def _format_admin_partner_applications_text(
     start_number = page * page_size + 1
     end_number = min(page * page_size + len(applications), total_count)
     lines = [
-        "✅ <b>Заявки на активацию партнёрских ссылок</b>",
+        "🗂 <b>История заявок в партнёрскую программу</b>",
         "",
-        f"Ожидают решения всего: <code>{total_count}</code>",
+        f"Сохранено необработанных заявок: <code>{total_count}</code>",
+        "Активация больше не требуется. Партнёрская программа доступна всем.",
         "",
     ]
 
     if not applications:
-        lines.append("Сейчас нет заявок в ожидании.")
+        lines.append("Необработанных исторических заявок нет.")
         return "\n".join(lines)
 
     lines.append(
-        f"<b>Очередь:</b> показаны <code>{start_number}-{end_number}</code>"
+        f"<b>История:</b> показаны <code>{start_number}-{end_number}</code>"
     )
     for index, application in enumerate(applications, start=1):
         display = html_utils.escape(_format_partner_application_display(application))
@@ -936,18 +945,13 @@ def _admin_partner_applications_keyboard(
     page_size: int = ADMIN_PARTNER_APPLICATIONS_PAGE_SIZE,
 ) -> types.InlineKeyboardMarkup:
     rows: list[list[types.InlineKeyboardButton]] = []
+    # Keep historical profiles accessible without obsolete approve/reject actions.
     for application in applications[:page_size]:
-        application_id = int(application["id"])
-        telegram_id = application.get("telegram_id") or "—"
         rows.append(
             [
                 types.InlineKeyboardButton(
-                    text=f"✅ #{application_id} • ID {telegram_id}",
-                    callback_data=f"partner_app_approve_{application_id}",
-                ),
-                types.InlineKeyboardButton(
-                    text="❌",
-                    callback_data=f"partner_app_reject_{application_id}",
+                    text=f"👤 #{int(application['id'])} • ID {application.get('telegram_id') or '—'}",
+                    url=_partner_application_account_url(application),
                 ),
             ]
         )
@@ -1469,8 +1473,8 @@ def _format_admin_partner_details_text(details: dict) -> str:
         f"📅 Дата регистрации: <code>{details.get('created_at') or '—'}</code>",
         f"🔗 Рефкод: <code>{details.get('referral_code') or '—'}</code>",
         f"🍌 Баланс пользователя: <code>{details['credits']}</code>",
-        f"🤝 Активировал партнёрку: <code>{'да' if details['is_partner'] else 'нет'}</code>",
-        f"📅 Активирована: <code>{details.get('partner_agreed_at') or '—'}</code>",
+        f"🤝 Партнёрский доступ: <code>{'открыт' if details['is_partner'] else 'недоступен'}</code>",
+        f"📅 Прежняя активация: <code>{details.get('partner_agreed_at') or '—'}</code>",
         "",
         "<b>Показатели:</b>",
         f"• 1 уровень: <code>{overview.get('level1_count', 0)}</code>",
@@ -2328,8 +2332,8 @@ def _format_admin_finance_section_text(section: str, report: dict) -> str:
     if section == "partner_commissions":
         lines.extend(
             [
-                "Начисления восстановлены расчётно по завершённым платежам "
-                "и текущим процентам программы.",
+                ("Начисления взяты из журнала; при отсутствии записи использованы "
+                 "условия платежа или прежние 30%/7%."),
                 "",
             ]
         )

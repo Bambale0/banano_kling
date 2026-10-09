@@ -1710,6 +1710,8 @@ export async function photoToPrompt(payload: {
 
 export async function fetchPartnerOverview(): Promise<{
   is_partner: boolean
+  percent?: number
+  level2_percent?: number
   referrals_count: number
   balance_rub: number
   prompt_repeat_balance_rub: number
@@ -1726,6 +1728,8 @@ export async function fetchPartnerOverview(): Promise<{
   const response = await postJson<{
     ok: true
     is_partner: boolean
+  percent?: number
+  level2_percent?: number
     referrals_count: number
     balance_rub: number
     prompt_repeat_balance_rub: number
@@ -1739,6 +1743,8 @@ export async function fetchPartnerOverview(): Promise<{
 
   return {
     is_partner: response.is_partner,
+    percent: response.percent,
+    level2_percent: response.level2_percent,
     referrals_count: response.referrals_count,
     balance_rub: response.balance_rub,
     prompt_repeat_balance_rub: response.prompt_repeat_balance_rub || 0,

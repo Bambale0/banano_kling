@@ -419,7 +419,7 @@ async def test_prompt_repeat_reward_requires_positive_spend_on_postgres(monkeypa
             """,
             ("postgres-paid-repeat",),
         )
-        assert tuple(await cursor.fetchone()) == (2.5, 10)
+        assert tuple(await cursor.fetchone()) == (2.5, 5)
         cursor = await connection.execute(
             """
             SELECT partner_balance_rub, prompt_repeat_balance_rub,
@@ -428,10 +428,11 @@ async def test_prompt_repeat_reward_requires_positive_spend_on_postgres(monkeypa
             """,
             (author_id,),
         )
-        assert tuple(await cursor.fetchone()) == (10, 10, 10)
+        assert tuple(await cursor.fetchone()) == (5, 5, 5)
 
 @pytest.mark.asyncio
-async def test_concurrent_prompt_repeat_reward_credits_once_on_postgres():
+@pytest.mark.parametrize('legacy_task,expected_reward', [(False, 5), (True, 10)])
+async def test_concurrent_prompt_repeat_reward_credits_once_on_postgres(legacy_task, expected_reward):
     from bot import database
 
     await ensure_prompt_repeat_events_schema()
@@ -461,6 +462,14 @@ async def test_concurrent_prompt_repeat_reward_credits_once_on_postgres():
             """
         )
         repeater_id = (await repeater_cursor.fetchone())[0]
+        if legacy_task:
+            # Accepted pre-policy tasks keep their original economics, even
+            # while new direct repeat rewards use the prospective 5 RUB rate.
+            await connection.execute(
+                """INSERT INTO generation_tasks(user_id, task_id, status, cost, request_data)
+                   VALUES(%s, 'postgres-repeat-race', 'pending', 2.5, '{}')""",
+                (repeater_id,),
+            )
         await connection.commit()
 
     async def credit_once():
@@ -488,8 +497,8 @@ async def test_concurrent_prompt_repeat_reward_credits_once_on_postgres():
         os.environ["DATABASE_URL"]
     ) as connection:
         cursor = await connection.execute(
-            "SELECT COUNT(*) FROM prompt_repeat_events WHERE repeat_task_id = %s",
-            ("postgres-repeat-race",),
+            "SELECT COUNT(*) FROM prompt_repeat_events WHERE repeater_id = %s",
+            (repeater_id,),
         )
         assert (await cursor.fetchone())[0] == 1
         cursor = await connection.execute(
@@ -500,4 +509,4 @@ async def test_concurrent_prompt_repeat_reward_credits_once_on_postgres():
             """,
             (author_id,),
         )
-        assert tuple(await cursor.fetchone()) == (10, 10, 10)
+        assert tuple(await cursor.fetchone()) == (expected_reward,) * 3

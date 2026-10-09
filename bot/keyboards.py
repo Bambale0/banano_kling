@@ -980,8 +980,6 @@ def get_referral_keyboard(referral_link: str):
 
 def get_partner_program_keyboard(referral_link: str, is_partner: bool = False):
     builder = InlineKeyboardBuilder()
-    if not is_partner:
-        builder.button(text="✔ Прочитал и согласен с условиями", callback_data="partner_accept")
     if referral_link:
         share_url = f"https://t.me/share/url?url={referral_link}"
         builder.button(text="📨 Поделиться ссылкой", url=share_url)
@@ -996,7 +994,7 @@ def get_partner_program_keyboard(referral_link: str, is_partner: bool = False):
 
 def get_partner_consent_keyboard():
     builder = InlineKeyboardBuilder()
-    builder.button(text="✔ Прочитал и согласен с условиями", callback_data="partner_accept")
+    builder.button(text="🤝 Партнёрский кабинет", callback_data="menu_partner")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
     builder.adjust(1, 1, 1)
     return builder.as_markup()

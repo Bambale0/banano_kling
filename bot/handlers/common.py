@@ -1,5 +1,6 @@
 import asyncio
 import html
+import json
 import logging
 import mimetypes
 import re
@@ -22,10 +23,10 @@ from bot.config import config
 from bot.database import (
     DATABASE_PATH,
     PARTNER_INVITER_BONUS,
+    PARTNER_NEW_USER_BONUS,
     REFERRAL_ANTIFRAUD_BLOCK_CODES,
     REFERRAL_ANTIFRAUD_BLOCK_REFERRER_IDS,
     _merge_task_id_aliases,
-    accept_partner_agreement,
     approve_partner_withdrawal,
     cancel_partner_withdrawal,
     create_partner_withdrawal,
@@ -1182,7 +1183,8 @@ async def _notify_partner_about_new_referral(
     text = (
         "🎉 <b>Новый реферал</b>\n\n"
         f"К вам присоединился: <b>{referred_name}</b>{referred_username_line}\n\n"
-        f"Начислено: <code>{PARTNER_INVITER_BONUS}</code>🍌 за регистрацию. "
+        f"Бонус <code>{PARTNER_INVITER_BONUS}</code>🍌 будет начислен после первой "
+        "генерации реферала, принятой сервисом в работу. "
         "Партнёрские начисления с оплат появятся в вашей статистике."
     )
 
@@ -1288,7 +1290,7 @@ def _build_main_menu_text(user_credits: int, referral_bonus_text: str = "") -> s
         "🤖 Помощник — подберёт модель и поможет с запросом\n\n"
         f"🍌 <b>Баланс:</b> <code>{user_credits}</code> бананов"
         f"{bonus_block}"
-        "🎁 <b>Новым пользователям — 15 бананов в подарок!</b>\n"
+        f"🎁 <b>Новым пользователям — {PARTNER_NEW_USER_BONUS} бананов в подарок!</b>\n"
         "<i>Просто выбери, что сделать, и нажми кнопку ниже 👇</i>"
     )
 
@@ -4303,23 +4305,23 @@ async def render_partner_program(target, user_id: int):
             "Для канала рекомендуем ссылку на бота (надёжнее).\n\n"
         )
     else:
-        links_text = "Ссылка появится после активации.\n\n"
+        links_text = "Ссылка временно недоступна. Обновите кабинет.\n\n"
 
     text = (
         "💼 <b>Партнёрам</b>\n\n"
         "Это практическое руководство по участию в партнёрской программе.\n"
         f"{links_text}"
-        "<b>1 уровень</b> — ваш личный процент: <code>30%</code> от всех покупок ваших рефералов.\n"
-        "<b>2 уровень</b> — <code>7%</code> от покупок рефералов ваших рефералов.\n\n"
+        f"<b>1 уровень</b> — ваш личный процент: <code>{stats['percent']}%</code> от всех покупок ваших рефералов.\n"
+        f"<b>2 уровень</b> — <code>{stats['level2_percent']}%</code> от покупок рефералов ваших рефералов.\n\n"
         "<b>Как это работает:</b>\n"
         "• Пользователь переходит по вашей ссылке\n"
         "• Регистрируется и закрепляется за вами навсегда\n"
         "• После оплат рефералов начисляется денежное вознаграждение\n\n"
         "<b>2 уровень:</b>\n"
-        "Ваш реферал привёл ещё рефералов. За все их покупки вам также начисляется денежное вознаграждение — <code>7%</code>.\n\n"
-        "• Вывод доступен после достижения минимальной суммы <code>1000₽</code>\n"
-        "• Каждый, кто перейдёт по вашей реферальной ссылке, получает 🍌 <code>15</code> бананов для тестирования бота\n"
-        "• За каждого приглашённого вами реферала вам начисляется + 🍌 <code>3</code> бананов\n\n"
+        f"Ваш реферал привёл ещё рефералов. За все их покупки вам также начисляется денежное вознаграждение — <code>{stats['level2_percent']}%</code>.\n\n"
+        f"• Вывод доступен после достижения минимальной суммы <code>{config.PARTNER_MIN_WITHDRAWAL_RUB:g}₽</code>\n"
+        f"• Новый пользователь получает 🍌 <code>{stats['new_user_bonus']}</code> бананов при регистрации\n"
+        f"• За реферала вам начисляется 🍌 <code>{stats['inviter_bonus']}</code> банана после его первой генерации, принятой сервисом в работу\n\n"
         "<b>Ваша статистика:</b>\n"
         f"👥 1 уровень: <code>{stats.get('level1_count', stats.get('referrals_count', 0))}</code>\n"
         f"👥 2 уровень: <code>{stats.get('level2_count', 0)}</code>\n"
@@ -4341,36 +4343,9 @@ async def render_partner_program(target, user_id: int):
 
 @router.callback_query(F.data == "partner_accept")
 async def accept_partner(callback: types.CallbackQuery):
-    """Подтверждение участия в партнёрской программе."""
-    from bot.database import generate_referral_code, update_user_referral_code
-
-    await accept_partner_agreement(callback.from_user.id)
-
-    # Ensure user has a referral code after activation — some older users may lack it
-    user = await get_or_create_user(callback.from_user.id)
-    try:
-        if not user.referral_code:
-            new_code = await generate_referral_code()
-            await update_user_referral_code(callback.from_user.id, new_code)
-            # refresh user object
-            user = await get_or_create_user(callback.from_user.id)
-    except Exception:
-        # Non-fatal: if generation/update fails, continue without blocking the flow
-        logger.exception("Failed to ensure referral code on partner accept")
-    # Подготавливаем корректную реферальную ссылку — без лишнего 'ref_' если кода нет
-    me = await callback.bot.get_me()
-    referral_code = user.referral_code
-    referral_bot_link_str = (
-        build_referral_bot_link(me.username, referral_code) if referral_code else ""
-    )
-
-    await callback.message.edit_text(
-        "✅ <b>Партнёрская программа активирована</b>\n\n"
-        "Теперь вы получаете 30% с покупок рефералов 1 уровня и 7% с покупок 2 уровня.",
-        reply_markup=get_partner_program_keyboard(referral_bot_link_str, is_partner=True),
-        parse_mode="HTML",
-    )
-    await callback.answer("Партнёрская программа активирована")
+    """Compatibility path for stale activation buttons; no agreement is written."""
+    await render_partner_program(callback.message, user_id=callback.from_user.id)
+    await callback.answer("Партнёрская программа доступна всем пользователям")
 
 
 @router.callback_query(F.data == "partner_stats")
@@ -4417,7 +4392,7 @@ async def partner_withdraw(callback: types.CallbackQuery, state: FSMContext):
     available_amount = await get_partner_available_withdrawal(callback.from_user.id)
 
     if not stats.get("is_partner", False):
-        await callback.answer("Сначала активируйте партнёрскую программу", show_alert=True)
+        await callback.answer("Партнёрский кабинет временно недоступен", show_alert=True)
         return
 
     if available_amount < min_withdraw:
@@ -4458,7 +4433,7 @@ async def partner_exchange(callback: types.CallbackQuery, state: FSMContext):
     rub_per_credit = _partner_exchange_rate_rub_per_credit()
 
     if not stats.get("is_partner", False):
-        await callback.answer("Сначала активируйте партнёрскую программу", show_alert=True)
+        await callback.answer("Партнёрский кабинет временно недоступен", show_alert=True)
         return
 
     if available_amount < rub_per_credit:
@@ -5442,7 +5417,9 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
     quality = mode if mode in {"720p", "1080p", "4k"} else None
     cost = _pm.get_video_cost_with_quality(video_model, actual_duration, quality)
 
-    await deduct_credits(telegram_id, cost)
+    if not await deduct_credits(telegram_id, cost):
+        await message.answer("❌ Недостаточно бананов. Пополните баланс и попробуйте снова.")
+        return
 
     local_task_id = f"motion_{uuid.uuid4().hex[:12]}"
     await add_generation_task(
@@ -5479,11 +5456,18 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
                 except Exception:
                     request_data = {}
             request_data = _merge_task_id_aliases(request_data, local_task_id, api_task_id)
+            from bot.partner_policy import generation_partner_snapshot
+
+            request_data = generation_partner_snapshot(request_data, accepted=True, previous=request_data)
             await db.execute(
                 "UPDATE generation_tasks SET task_id = ?, request_data = ? WHERE task_id = ? AND user_id = ?",
                 (api_task_id, json.dumps(request_data, ensure_ascii=False), local_task_id, user.id),
             )
             await db.commit()
+        from bot.partner_policy import mark_generation_accepted
+
+        await mark_generation_accepted(api_task_id)
+
         await message.answer(
             f"🚀 <b>Motion Control запущен!</b>"
             f"💰 <code>{cost}</code>🍌\n"

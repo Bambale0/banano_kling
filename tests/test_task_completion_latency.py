@@ -110,5 +110,5 @@ async def test_alias_then_canonical_completion_rewards_repeat_once():
             task_id, "https://example.test/repeat.png"
         )
     overview = await database.get_partner_overview(author.telegram_id)
-    assert overview["prompt_repeat_balance_rub"] == 10
-    assert overview["prompt_repeat_total_rub"] == 10
+    assert overview["prompt_repeat_balance_rub"] == 5
+    assert overview["prompt_repeat_total_rub"] == 5

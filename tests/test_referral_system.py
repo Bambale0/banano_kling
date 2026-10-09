@@ -54,8 +54,8 @@ def test_process_referral_adds_bonus_and_links_user(tmp_path, monkeypatch):
         assert updated_referred.referred_by == master.id
         # new user already got PARTNER_NEW_USER_BONUS=5 at registration; process_referral gives signup_bonus=0 more
         assert updated_referred.credits == db.PARTNER_NEW_USER_BONUS
-        # inviter gets PARTNER_INVITER_BONUS credits into referral_earned
-        assert updated_master.referral_earned == db.PARTNER_INVITER_BONUS
+        # Attachment alone does not credit inviter; accepted generation is required
+        assert updated_master.referral_earned == 0
         assert stats["referrals_count"] == 1
 
     asyncio.run(run())
@@ -337,7 +337,7 @@ def test_process_referral_keeps_first_referrer(tmp_path, monkeypatch):
         updated_second = await db.get_or_create_user(second_referrer.telegram_id)
 
         assert updated_referred.referred_by == first_referrer.id
-        assert updated_first.referral_earned == db.PARTNER_INVITER_BONUS
+        assert updated_first.referral_earned == 0
         assert updated_second.referral_earned == 0
 
     asyncio.run(run())
@@ -398,7 +398,7 @@ def test_process_referral_allows_new_user_when_referrer_ancestry_is_already_cycl
         updated_referrer = await db.get_or_create_user(referrer.telegram_id)
 
         assert updated_referred.referred_by == referrer.id
-        assert updated_referrer.referral_earned == db.PARTNER_INVITER_BONUS
+        assert updated_referrer.referral_earned == 0
 
     asyncio.run(run())
 

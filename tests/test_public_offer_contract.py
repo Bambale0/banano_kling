@@ -92,9 +92,6 @@ def test_telegram_offer_is_exposed_in_more_and_removed_from_partner_ui():
     partner_keyboards = keyboards_source.split(
         "def get_partner_program_keyboard", 1
     )[1].split("def get_settings_keyboard", 1)[0]
-    preapproval_ui = partner_source.split("def _preapproval_keyboard", 1)[1].split(
-        "async def _render_partner_entry", 1
-    )[0]
 
     assert 'text="📜 Публичная оферта"' in more_keyboard
     assert 'callback_data="more_public_offer"' in more_keyboard
@@ -102,7 +99,10 @@ def test_telegram_offer_is_exposed_in_more_and_removed_from_partner_ui():
     assert 'get_back_keyboard("ux_more")' in offer_source
 
     assert 'callback_data="partner_offer"' not in partner_keyboards
-    assert "Публичная оферта" not in preapproval_ui
+    # Activation no longer has a preapproval keyboard; none of the partner
+    # entry routes should reintroduce the offer into the partner cabinet.
+    assert "Публичная оферта" not in partner_source
+    assert 'callback_data="partner_offer"' not in partner_source
 
 
 def test_telegram_offer_is_not_in_any_payment_keyboard():

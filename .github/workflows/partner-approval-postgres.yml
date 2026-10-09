@@ -5,6 +5,11 @@ on:
     branches: [tanyapi]
     paths:
       - 'bot/services/partner_approval_service.py'
+      - 'bot/partner_policy.py'
+      - 'bot/partner_commission_settings.py'
+      - 'bot/database.py'
+      - 'schema_postgres.sql'
+      - 'tests/test_partner_policy_postgres.py'
       - 'bot/handlers/partner_approval.py'
       - 'bot/handlers/miniapp_regression_safety.py'
       - 'bot/handlers/__init__.py'
@@ -73,4 +78,4 @@ jobs:
 
       - name: Run focused PostgreSQL regression tests
         run: |
-          pytest tests/test_partner_approval_postgres.py -vv --tb=short
+          pytest tests/test_partner_approval_postgres.py tests/test_partner_policy_postgres.py -vv --tb=short
