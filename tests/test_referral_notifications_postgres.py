@@ -88,3 +88,30 @@ async def test_pg_managed_templates_and_never_started_deferral():
         assert bot.send_message.await_args.kwargs['text'].startswith('Managed ')
     finally:
         await notices.reset_referral_notification_settings(admin_id=999999999)
+
+
+@pytest.mark.asyncio
+async def test_pg_legacy_settings_audit_columns_migrate_without_losing_values():
+    # This bootstrap verifies the disposable localhost banano_partner_test DB.
+    await _bootstrap_policy_schema()
+    async with db_backend.connect() as db:
+        ddl = getattr(db, 'execute_native_ddl', db.execute)
+        await ddl('ALTER TABLE bot_settings DROP COLUMN updated_by_telegram_id')
+        await ddl('ALTER TABLE bot_settings DROP COLUMN updated_at')
+        await db.execute("INSERT INTO bot_settings (key, value) VALUES ('legacy.fixture', 'preserved')")
+        await notices.init_referral_notification_schema(db)
+        await notices.init_referral_notification_schema(db)
+        await db.commit()
+    await notices.save_referral_notification_settings('{"max_attempts": 3}', admin_id=999999999)
+    await notices.reset_referral_notification_settings(admin_id=999999999)
+    async with db_backend.connect() as db:
+        row = await (await db.execute(
+            "SELECT value, updated_by_telegram_id, updated_at FROM bot_settings WHERE key = 'legacy.fixture'",
+        )).fetchone()
+        assert (row[0], row[1], row[2]) == ('preserved', None, None)
+        row = await (await db.execute(
+            'SELECT updated_by_telegram_id, updated_at FROM bot_settings WHERE key = ?',
+            (notices.REFERRAL_NOTIFICATION_SETTINGS_KEY,),
+        )).fetchone()
+        assert row[0] == 999999999
+        assert row[1] is not None

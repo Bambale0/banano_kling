@@ -1223,3 +1223,47 @@ async def test_notification_admin_document_limits_reject_without_mutation(app, m
     save.assert_not_awaited()
     if declared is None or declared > 48000:
         message.bot.download.assert_not_awaited()
+
+
+@pytest.mark.parametrize('template', [
+    '<code>{identity}</code> {bonus}',
+    '<pre>{identity}</pre> {bonus}',
+    '{identity} <b><code>{bonus}</code></b>',
+    '{identity} <code><i>{bonus}</i></code>',
+    '{identity} <pre><code>{bonus}</code></pre>',
+])
+async def test_managed_template_rejects_overlapping_code_entities(app, template):
+    with pytest.raises(ValueError):
+        app.outbox.validate_referral_notification_settings({'attached_template': template})
+
+
+async def test_legacy_settings_migration_preserves_values_and_enables_audited_set_reset(app, monkeypatch):
+    from bot.config import config
+    monkeypatch.setattr(config, "is_admin", lambda value: value == 999999999)
+    async with app.backend.connect() as db:
+        await db.execute('DROP TABLE bot_settings')
+        await db.execute('CREATE TABLE bot_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
+        await db.execute("INSERT INTO bot_settings VALUES ('genjutsu.config', 'legacy-value')")
+        await app.outbox.init_referral_notification_schema(db)
+        await app.outbox.init_referral_notification_schema(db)
+        await db.commit()
+    await app.outbox.save_referral_notification_settings('{"max_attempts": 3}', admin_id=999999999)
+    await app.outbox.reset_referral_notification_settings(admin_id=999999999)
+    values = await rows(app, 'SELECT * FROM bot_settings ORDER BY key')
+    assert values[0]['value'] == 'legacy-value'
+    assert values[0]['updated_by_telegram_id'] is None
+    assert values[1]['updated_by_telegram_id'] == 999999999
+    assert values[1]['updated_at'] is not None
+
+
+async def test_schema_migration_supports_raw_postgres_connections(app, monkeypatch):
+    statements = []
+
+    class RawPostgresConnection:
+        async def execute(self, sql):
+            statements.append(sql)
+
+    monkeypatch.setattr(app.backend, 'is_postgres', lambda: True)
+    await app.outbox.init_referral_notification_schema(RawPostgresConnection())
+    assert sum('ADD COLUMN IF NOT EXISTS' in sql for sql in statements) == 2
+    assert not any('PRAGMA' in sql for sql in statements)

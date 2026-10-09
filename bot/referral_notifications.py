@@ -52,9 +52,20 @@ class ReferralNotificationSettings:
 
 class _ReceiptTemplateHTML(HTMLParser):
     """Receipt templates permit formatting, never link/attribute substitutions."""
+    def __init__(self):
+        super().__init__()
+        self.stack = []
+
     def handle_starttag(self, tag, attrs):
         if tag not in {'b', 'strong', 'i', 'em', 'u', 'ins', 's', 'strike', 'del', 'code', 'pre'} or attrs:
             raise ValueError("В шаблонах разрешены только теги форматирования без атрибутов")
+        if (tag in {'code', 'pre'} and self.stack) or any(t in {'code', 'pre'} for t in self.stack):
+            raise ValueError("Теги code/pre не должны пересекаться с другими тегами")
+        self.stack.append(tag)
+
+    def handle_endtag(self, tag):
+        if not self.stack or self.stack.pop() != tag:
+            raise ValueError("HTML-теги должны быть правильно вложены")
 
     def handle_startendtag(self, tag, attrs):
         raise ValueError("Самозакрывающиеся HTML-теги не поддерживаются")
@@ -89,6 +100,9 @@ def validate_referral_notification_settings(value: dict) -> ReferralNotification
             raise ValueError("Шаблон должен содержать {identity} и {bonus}")
         sample = template.format(identity='<b>' + '😀' * 257 + '</b>\n@' + 'x' * 64,
                                  bonus='9' * 32)
+        expanded_parser = _ReceiptTemplateHTML()
+        expanded_parser.feed(sample)
+        expanded_parser.close()
         build_message_snapshot({'schema_version': 2, 'text': sample, 'parse_mode': 'HTML'}, None)
     return ReferralNotificationSettings(**data)
 
@@ -168,6 +182,18 @@ async def init_referral_notification_schema(db) -> None:
         updated_by_telegram_id BIGINT,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""")
+    # Genjutsu may have created this shared registry with only key/value.
+    # Preserve legacy values and leave unknown historical audit metadata NULL.
+    audit_columns = (('updated_by_telegram_id', 'BIGINT'), ('updated_at', 'TIMESTAMP'))
+    if hasattr(db, "execute_native_ddl") or db_backend.is_postgres():
+        # Support both the native adapter and raw PostgreSQL migration connections.
+        for name, definition in audit_columns:
+            await ddl(f'ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS {name} {definition}')
+    else:
+        columns = {row[1] for row in await (await db.execute('PRAGMA table_info(bot_settings)')).fetchall()}
+        for name, definition in audit_columns:
+            if name not in columns:
+                await ddl(f'ALTER TABLE bot_settings ADD COLUMN {name} {definition}')
     await ddl(SCHEMA)
     await ddl("""CREATE INDEX IF NOT EXISTS idx_referral_notification_pending
                  ON referral_notification_outbox(status, next_attempt_at)""")

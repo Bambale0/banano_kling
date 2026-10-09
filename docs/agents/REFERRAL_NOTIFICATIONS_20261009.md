@@ -53,3 +53,9 @@ the dedicated disposable CI job is required. All Bot API calls in tests are mock
   unsafe template attribute/link contexts, and retry-limit ordering changes.
 - Expanded notification tests: 114 passed; exact final full backend/PostgreSQL CI
   and protected corrected release remain required. No production fix claimed.
+
+## PR283 review corrections
+
+- Reproduced invalid expanded code/pre nesting and missing legacy audit-column failures. Reject overlapping code/pre entities, including after identity expansion.
+- Idempotently add nullable audit columns to legacy bot_settings using existing schema startup; preserve all key/value data and unknown historical metadata. SQLite regression passes; dedicated PostgreSQL regression covers the populated two-column table and repeated initialization.
+- Notification unit tests: 120 passed; changed runtime/test Ruff clean. Exact updated-head CI and repeated code/security reviews are required before release.

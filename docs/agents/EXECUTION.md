@@ -1776,3 +1776,4 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - New functional regressions reproduced 5 failures before correction; 114 offline notification tests now pass. Full current-base backend, real PostgreSQL, changed-line lint, independent review and exact-head GitHub gates remain mandatory before the corrected release.
 - Detailed test evidence: [referral notification verification](REFERRAL_NOTIFICATIONS_20261009.md). Preserve all earlier ledger history; this is an appended entry only.
 
+- PR283 review follow-up: six reproduced edge cases now pass. Editable templates reject code/pre overlaps after placeholder expansion. Existing schema startup adds nullable missing bot_settings audit columns idempotently, preserving legacy values without inventing historical audit metadata. Unit suite: 120 passed; new real PostgreSQL legacy-table test is required in updated-head CI. Repeated code/security reviews and exact-head CI remain release gates.
