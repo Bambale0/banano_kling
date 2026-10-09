@@ -6,6 +6,7 @@ import { generateSeedance25 } from '@/lib/seedance25-api'
 
 jest.mock('@/lib/seedance25-api', () => ({
   SEEDANCE25_MAX_PROMPT_LENGTH: 30000,
+  SEEDANCE25_IDENTITY_MAX_PROMPT_LENGTH: 20480,
   generateSeedance25: jest.fn().mockResolvedValue({ ok: true, task_id: 'editing-task', duration: -1, aspect_ratio: 'adaptive', admin_free: true }),
   uploadSeedance25Video: jest.fn(),
 }))

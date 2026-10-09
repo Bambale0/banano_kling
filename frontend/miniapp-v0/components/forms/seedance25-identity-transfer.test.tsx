@@ -5,7 +5,7 @@ import { generateSeedance25, quoteSeedance25Identity } from '@/lib/seedance25-ap
 import type { VideoPromptPreset } from '@/lib/types'
 
 jest.mock('@/lib/seedance25-api', () => ({
-  SEEDANCE25_MAX_PROMPT_LENGTH: 30000, generateSeedance25: jest.fn(), quoteSeedance25Identity: jest.fn(), uploadSeedance25Video: jest.fn(),
+  SEEDANCE25_MAX_PROMPT_LENGTH: 30000, SEEDANCE25_IDENTITY_MAX_PROMPT_LENGTH: 20480, generateSeedance25: jest.fn(), quoteSeedance25Identity: jest.fn(), uploadSeedance25Video: jest.fn(),
 }))
 jest.mock('@/lib/api', () => ({ uploadFile: jest.fn() }))
 const quote = { ok: true, quote_only: true, cost: 88, billing_duration: 11, source_video_duration_seconds: 10.04,
@@ -91,4 +91,33 @@ it('never restores hidden text from a stale identity preset, including reopening
 it('keeps the visible ordinary owner identity instruction', () => {
   render(<Seedance25PublicForm credits={1000} isAdmin={false} promptPreset={{ ...preset, promptHidden: false, prompt: 'Owner instruction' }} />)
   expect(screen.getByLabelText('Промпт для Seedance 2.5')).toHaveValue('Owner instruction')
+})
+
+
+it('keeps a complete direct-edit prompt intact through quote and explicit launch', async () => {
+  render(<Seedance25PublicForm credits={1000} isAdmin={false} promptPreset={preset} />)
+  expect(screen.getByText('Инструкция прямой замены')).toBeInTheDocument()
+  const prompt = 'Video edit: replace the person in @Video1 with @Image1. Keep the dress.'
+  fireEvent.change(screen.getByLabelText('Промпт для Seedance 2.5'), { target: { value: prompt } })
+  await waitFor(() => expect(quoteSeedance25Identity).toHaveBeenLastCalledWith(expect.objectContaining({ prompt, identityTransfer: true })))
+  const button = await screen.findByRole('button', { name: '🚀 Создать видео · 88🍌' })
+  await waitFor(() => expect(button).toBeEnabled())
+  fireEvent.click(button)
+  await waitFor(() => expect(generateSeedance25).toHaveBeenCalledWith(expect.objectContaining({
+    prompt, identityTransfer: true,
+    referenceImages: ['https://example.test/front.png', 'https://example.test/profile.png'],
+    referenceVideos: ['https://example.test/source.mp4'],
+  })))
+  expect(generateSeedance25).toHaveBeenCalledTimes(1)
+})
+
+it('uses the direct-edit prompt limit without reducing the ordinary-mode limit', async () => {
+  render(<Seedance25PublicForm credits={1000} isAdmin={false} promptPreset={preset} />)
+  fireEvent.change(screen.getByLabelText('Промпт для Seedance 2.5'), { target: { value: 'x'.repeat(20481) } })
+  expect(screen.getByText('20481/20480')).toBeInTheDocument()
+  await screen.findByRole('button', { name: '🚀 Создать видео · 88🍌' })
+  expect(screen.getByRole('button', { name: '🚀 Создать видео · 88🍌' })).toBeDisabled()
+  expect(generateSeedance25).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: /По референсам Использовать/ }))
+  expect(screen.getByText('20481/30000')).toBeInTheDocument()
 })

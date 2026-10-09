@@ -11,6 +11,7 @@ mutually exclusive:
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Any, Iterable
 from urllib.parse import urlsplit, urlunsplit
@@ -20,7 +21,9 @@ from bot.services.kling_service import KlingService
 from bot.services.media_input_utils import canonicalize_local_upload_url
 from bot.services.seedance25_identity import (
     IDENTITY_ROLE_VERSION,
+    SEEDANCE_25_PROMPT_MAX_CHARS,
     build_identity_transfer_prompt,
+    resolve_identity_transfer_prompt,
     validate_identity_transfer_refs,
 )
 from bot.services.seedance_reference_binding import (
@@ -185,8 +188,11 @@ class Seedance25Service(KlingService):
         )
         if missing:
             raise ValueError("Prompt references missing Seedance media: " + ", ".join(missing))
-        if len(normalized) > cls.MAX_PROMPT_LENGTH:
-            raise ValueError(f"Seedance 2.5 prompt exceeds {cls.MAX_PROMPT_LENGTH} characters after reference-role instructions")
+        # Compact aliases can grow during canonicalization (e.g. @img1).
+        # Validate the exact provider text, including the direct-edit cap.
+        limit = SEEDANCE_25_PROMPT_MAX_CHARS if identity_transfer else cls.MAX_PROMPT_LENGTH
+        if len(normalized) > limit:
+            raise ValueError(f"Seedance 2.5 prompt exceeds {limit} characters after reference-role instructions")
         return normalized
 
     async def generate_video(
@@ -243,6 +249,12 @@ class Seedance25Service(KlingService):
             return {"success": False, "error": "Seedance 2.5 video editing requires exactly one video reference"}
 
         try:
+            if identity_transfer is True:
+                validate_identity_transfer_refs(
+                    images=image_urls, videos=video_urls, audio=audio_urls,
+                    first_frame=first_frame_url, last_frame=last_frame_url,
+                )
+                raw_prompt = await resolve_identity_transfer_prompt(raw_prompt, image_count=len(image_urls))
             normalized_prompt = self.prepare_prompt(
                 raw_prompt, image_urls=image_urls, video_urls=video_urls, audio_urls=audio_urls,
                 identity_transfer=identity_transfer, first_frame=first_frame_url, last_frame=last_frame_url,
@@ -308,6 +320,10 @@ class Seedance25Service(KlingService):
             "nsfw_checker": bool(nsfw_checker),
         }
 
+        if identity_transfer:
+            # Accepted and echoed by KIE in the controlled edit experiment.
+            # This hint does not prove how the upstream model uses it.
+            input_data["omni_reference_task_type"] = "edit"
         if first_frame:
             input_data["first_frame_url"] = first_frame
         if last_frame:
@@ -361,8 +377,15 @@ class Seedance25Service(KlingService):
             result.setdefault("aspect_ratio", normalized_ratio)
             result.setdefault("video_editing", video_editing or identity_transfer)
             if identity_transfer:
+                prompt_hash = hashlib.sha256(normalized_prompt.encode("utf-8")).hexdigest()
                 result.setdefault("identity_transfer", True)
                 result.setdefault("identity_role_version", IDENTITY_ROLE_VERSION)
+                result.setdefault("provider_prompt_sha256", prompt_hash)
+                logger.info(
+                    "Seedance direct edit: task_id=%s role_version=%s prompt_sha256=%s images=%s videos=%s",
+                    result.get("task_id"), IDENTITY_ROLE_VERSION, prompt_hash,
+                    len(image_urls), len(video_urls),
+                )
         return result
 
 

@@ -15,6 +15,7 @@ without touching tanyapi:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
@@ -36,7 +37,12 @@ from bot.services.delivery_state import (
     terminal_telegram_delivery_reason,
 )
 from bot.services.preset_manager import preset_manager
-from bot.services.seedance25_identity import IDENTITY_ROLE_VERSION, validate_identity_transfer_refs
+from bot.services.seedance25_identity import (
+    IDENTITY_ROLE_VERSION,
+    SEEDANCE_25_PROMPT_MAX_CHARS as IDENTITY_PROMPT_MAX_CHARS,
+    resolve_identity_transfer_prompt,
+    validate_identity_transfer_refs,
+)
 from bot.video_reference_policy import apply_video_reference_cost
 from bot.services.seedance_25_service import (
     get_seedance25_callback_url,
@@ -213,8 +219,9 @@ async def _public_show_screen(target, state: FSMContext, *, edit: bool = True, a
 
     if identity:
         media_hint = (
-            "Перенос персонажа: <b>1–3 фото одного человека</b> и <b>одно исходное видео 4–30с</b>. "
-            "Первое фото задаёт личность, остальные уточняют ракурсы; видео задаёт движение, камеру и сцену. "
+            "Прямая замена: <b>1–3 фото одного человека</b> и <b>одно исходное видео 4–30с</b>. "
+            "Фото и видео отправляются прямо в Seedance, без промежуточных кадров. "
+            "Полный промпт с @Image1 и @Video1 идёт без шаблона; короткие пожелания дополнят команду замены. "
             f"Сейчас фото: <code>{images}/3</code>, видео: <code>{videos}/1</code>."
         )
     if identity and quote is not None:
@@ -247,7 +254,7 @@ async def _public_show_screen(target, state: FSMContext, *, edit: bool = True, a
         f"{media_hint}\n\n"
         "🎥 Движение камеры и lock объектива задавайте прямо в промпте.\n\n"
         f"{billing_line}{auto_note}\n\n"
-        f"После настройки отправьте промпт до {seedance_25_service.MAX_PROMPT_LENGTH} символов."
+        f"После настройки отправьте промпт до {IDENTITY_PROMPT_MAX_CHARS if identity else seedance_25_service.MAX_PROMPT_LENGTH} символов."
     )
     markup = preview_module._seedance_25_keyboard(display_data)
 
@@ -372,9 +379,18 @@ async def _validate_public_payload(
     identity = payload.get("seedance25_identity_transfer", False)
     if not isinstance(identity, bool):
         raise ValueError("Некорректный режим переноса персонажа")  # noqa: TRY004 - maps input validation to HTTP 400
+    # Resolve and freeze the exact provider prompt before debit. A later admin
+    # template edit must not change the already-validated paid request.
+    provider_prompt = payload["prompt"]
+    if identity:
+        validate_identity_transfer_refs(
+            images=payload["image_urls"], videos=payload["video_urls"], audio=payload["audio_urls"],
+            first_frame=payload["first_frame"], last_frame=payload["last_frame"],
+        )
+        provider_prompt = await resolve_identity_transfer_prompt(provider_prompt, image_count=len(payload["image_urls"]))
     # Shared adapter validation runs before credit checks, debit or any provider call.
-    seedance_25_service.prepare_prompt(
-        payload["prompt"], image_urls=payload["image_urls"], video_urls=payload["video_urls"],
+    payload["provider_prompt"] = seedance_25_service.prepare_prompt(
+        provider_prompt, image_urls=payload["image_urls"], video_urls=payload["video_urls"],
         audio_urls=payload["audio_urls"], identity_transfer=identity,
         first_frame=payload["first_frame"], last_frame=payload["last_frame"],
     )
@@ -434,7 +450,7 @@ async def _validate_public_payload(
 
 async def _launch_provider(payload: dict[str, Any]) -> dict[str, Any]:
     return await seedance_25_service.generate_video(
-        prompt=payload["prompt"],
+        prompt=payload.get("provider_prompt", payload["prompt"]),
         duration=payload["duration"],
         aspect_ratio=payload["ratio"],
         resolution=payload["resolution"],
@@ -473,6 +489,10 @@ def _request_data(
         "seedance25_video_editing": payload.get("seedance25_video_editing", False),
         "seedance25_identity_transfer": payload.get("seedance25_identity_transfer", False),
         "seedance25_identity_role_version": IDENTITY_ROLE_VERSION if payload.get("seedance25_identity_transfer") else None,
+        "seedance25_provider_prompt_sha256": (
+            hashlib.sha256(payload["provider_prompt"].encode("utf-8")).hexdigest()
+            if payload.get("seedance25_identity_transfer") and payload.get("provider_prompt") else None
+        ),
         "seedance25_reference_roles": ({"images": "same_person_identity", "video": "motion_scene_camera_only"} if payload.get("seedance25_identity_transfer") else None),
         "billing_duration": payload.get("billing_duration", payload["duration"]),
         "source_video_duration_seconds": payload.get("source_video_duration_seconds"),
