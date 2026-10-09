@@ -1,6 +1,11 @@
-# Referral notifications execution
+# Referral notifications supporting test evidence
 
-Baseline: production tanyapi 23b52ad9c20ef3d78434d4da9322ea9f8e66cb29 (PR280).
+The designated execution record is docs/agents/EXECUTION.md; this file retains
+the detailed verification evidence linked from that record.
+
+Publication baseline: tanyapi 31d02d43dd0d2bb18904eea588ac90ea40e2fe1f (PR281).
+Initial diagnosis used production 23b52ad9c20ef3d78434d4da9322ea9f8e66cb29 (PR280).
+Follow-up baseline: 482c424c971e86404666bc7dfc04010ba7923bc9 (PR282); its deployment was cancelled before SSH.
 Task: restore immediate new-referral messages and add separate bonus receipts.
 
 ## Audit and invariants
@@ -36,3 +41,15 @@ the dedicated disposable CI job is required. All Bot API calls in tests are mock
   service has 12 unrelated legacy lint findings; changed lines are comments only.
 - Exact full backend and real PostgreSQL checks will run in GitHub, without local
   environment exclusions. Independent fault-injection review passed.
+
+## Corrective follow-up
+- PR282 merged as 482c424c971e86404666bc7dfc04010ba7923bc9 after all four required
+  CI gates passed; user cancelled its deployment before any SSH deploy started.
+- Reproduced five failures for never-started recipients and retry-claim budgets;
+  corrected both without changing financial rules or replaying old notices.
+- Managed settings and templates reuse existing bot_settings and authenticated
+  read/set/reset admin command, including bounded JSON document transport.
+- Independent review also found and verified fixes for huge-number fallback,
+  unsafe template attribute/link contexts, and retry-limit ordering changes.
+- Expanded notification tests: 114 passed; exact final full backend/PostgreSQL CI
+  and protected corrected release remain required. No production fix claimed.

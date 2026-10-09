@@ -61,3 +61,30 @@ async def test_pg_referral_receipts_atomic_and_concurrent(monkeypatch):
         row = await (await db.execute('SELECT COUNT(*) FROM referral_notification_outbox')).fetchone()
         assert row[0] == 0
         await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_pg_managed_templates_and_never_started_deferral():
+    await _bootstrap_policy_schema()
+    partner = await database.get_or_create_user(98905003, initial_telegram_chat_state='never_started')
+    buyer = await database.get_or_create_user(98905004)
+    await notices.save_referral_notification_settings(
+        '{"max_attempts": 3, "attached_template": "Managed {identity}: {bonus}"}',
+        admin_id=999999999,
+    )
+    try:
+        assert await database.process_referral(buyer.telegram_id, partner.referral_code)
+        bot = SimpleNamespace(send_message=AsyncMock(return_value=SimpleNamespace(message_id=124)))
+        assert not await notices.deliver_pending_referral_notification(bot)
+        bot.send_message.assert_not_awaited()
+        async with db_backend.connect() as db:
+            row = await (await db.execute(
+                'SELECT attempts, status FROM referral_notification_outbox WHERE referred_id = ?', (buyer.id,),
+            )).fetchone()
+            assert (row[0], row[1]) == (0, 'queued')
+        assert await database.mark_telegram_chat_available(partner.telegram_id)
+        assert await notices.deliver_pending_referral_notification(bot)
+        bot.send_message.assert_awaited_once()
+        assert bot.send_message.await_args.kwargs['text'].startswith('Managed ')
+    finally:
+        await notices.reset_referral_notification_settings(admin_id=999999999)

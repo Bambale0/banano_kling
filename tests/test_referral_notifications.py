@@ -10,6 +10,7 @@ import hmac
 import json
 import socket
 import time
+from dataclasses import asdict
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from urllib.parse import urlencode
@@ -39,6 +40,7 @@ async def app(isolated_database, monkeypatch):
     from bot.services import referral_service
 
     monkeypatch.setattr(referral_service, "DATABASE_PATH", database.DATABASE_PATH)
+    monkeypatch.setattr(database, "_BOT_SETTING_CACHE", {})
     monkeypatch.setattr(config, "is_admin", lambda _telegram_id: False)
     return SimpleNamespace(
         db=database,
@@ -671,3 +673,553 @@ async def test_worker_start_is_guarded_and_shutdown_allows_clean_restart(app, mo
     finally:
         await app.outbox.stop_referral_notification_worker()
     app.bot.send_message.assert_not_awaited()
+
+
+@pytest.mark.parametrize("activation", ["available_marker", "start_command"])
+async def test_miniapp_only_inviter_waits_for_bot_start_then_delivers_in_order(app, monkeypatch, activation):
+    inviter = await app.db.get_or_create_user(886101, initial_telegram_chat_state="never_started")
+    _, invited = await attach(app)
+    task_id = await accepted_task(app, monkeypatch, invited)
+    assert await app.policy.mark_generation_accepted(task_id)
+    credited = await app.db.get_or_create_user(inviter.telegram_id)
+
+    for _ in range(2):
+        assert not await app.outbox.deliver_pending_referral_notification(app.bot)
+        assert await app.outbox.recover_expired_referral_notifications() == 0
+    events = await rows(app)
+    assert [(event["kind"], event["status"], event["attempts"]) for event in events] == [
+        ("attached", "queued", 0), ("bonus", "queued", 0),
+    ]
+    assert all(json.loads(event["delivery_parts"]) == [] for event in events)
+    app.bot.send_message.assert_not_awaited()
+
+    if activation == "available_marker":
+        await app.db.mark_telegram_chat_available(inviter.telegram_id)
+    else:
+        from aiogram.types import User
+
+        from bot.handlers import common
+
+        message = SimpleNamespace(
+            text="/start",
+            from_user=User(id=inviter.telegram_id, is_bot=False, first_name="Synthetic Inviter"),
+            bot=app.bot,
+            answer=AsyncMock(),
+        )
+        await common.cmd_start(message, SimpleNamespace(clear=AsyncMock()))
+        message.answer.assert_awaited_once()
+    app.bot.send_message.assert_not_awaited()
+
+    assert await app.outbox.deliver_pending_referral_notification(app.bot)
+    events = await rows(app)
+    assert [(event["kind"], event["status"]) for event in events] == [
+        ("attached", "sent"), ("bonus", "queued"),
+    ]
+    assert await app.outbox.deliver_pending_referral_notification(app.bot)
+    assert all(event["status"] == "sent" for event in await rows(app))
+    assert not await app.outbox.deliver_pending_referral_notification(app.bot)
+    assert app.bot.send_message.await_count == 2
+    assert (await app.db.get_or_create_user(inviter.telegram_id)).credits == credited.credits
+
+
+async def test_miniapp_only_inviter_does_not_starve_available_recipient(app, monkeypatch):
+    waiting = await app.db.get_or_create_user(886101, initial_telegram_chat_state="never_started")
+    _, invited = await attach(app)
+    task_id = await accepted_task(app, monkeypatch, invited)
+    assert await app.policy.mark_generation_accepted(task_id)
+    available = await app.db.get_or_create_user(886201, initial_telegram_chat_state="available")
+    other_invited = await app.db.get_or_create_user(886202)
+    assert await app.db.process_referral(other_invited.telegram_id, available.referral_code)
+
+    assert await app.outbox.deliver_pending_referral_notification(app.bot)
+    app.bot.send_message.assert_awaited_once()
+    assert app.bot.send_message.await_args.kwargs["chat_id"] == available.telegram_id
+    assert not await app.outbox.deliver_pending_referral_notification(app.bot)
+    waiting_events = [event for event in await rows(app) if event["referrer_id"] == waiting.id]
+    assert len(waiting_events) == 2
+    assert all(event["status"] == "queued" and event["attempts"] == 0 for event in waiting_events)
+
+
+async def test_bot_start_does_not_requeue_real_telegram_blocked_result(app):
+    inviter, _ = await attach(app)
+    app.bot.send_message.side_effect = TelegramForbiddenError(
+        method=SendMessage(chat_id=inviter.telegram_id, text="synthetic"), message="bot was blocked",
+    )
+    assert await app.outbox.deliver_pending_referral_notification(app.bot)
+    assert (await rows(app))[0]["status"] == "blocked"
+    await app.db.mark_telegram_chat_available(inviter.telegram_id)
+    assert await app.outbox.recover_expired_referral_notifications() == 0
+    assert not await app.outbox.deliver_pending_referral_notification(app.bot)
+    assert (await rows(app))[0]["status"] == "blocked"
+    app.bot.send_message.assert_awaited_once()
+
+
+@pytest.mark.parametrize("actual_attempts", [1, 4])
+async def test_unstarted_retry_claim_crashes_preserve_actual_api_attempt_budget(app, actual_attempts):
+    await attach(app)
+    app.bot.send_message.side_effect = TelegramRetryAfter(
+        method=SendMessage(chat_id=886101, text="synthetic"), message="rate limited", retry_after=1,
+    )
+    for _ in range(actual_attempts):
+        assert await app.outbox.deliver_pending_referral_notification(app.bot)
+        await execute(app, "UPDATE referral_notification_outbox SET next_attempt_at = 0")
+    event = (await rows(app))[0]
+    saved_parts = json.loads(event["delivery_parts"])
+    assert saved_parts[0]["status"] == "retryable"
+    assert saved_parts[0]["attempts"] == actual_attempts
+    assert event["attempts"] == actual_attempts
+
+    for _ in range(3):
+        # Crash after acquiring ownership, before persisting a new send intent.
+        claim = await app.outbox._claim()
+        assert claim is not None
+        during = (await rows(app))[0]
+        assert during["status"] == "sending"
+        assert json.loads(during["delivery_parts"]) == saved_parts
+        await execute(app, "UPDATE referral_notification_outbox SET lease_until = ?", (time.time() - 1,))
+        assert await app.outbox.recover_expired_referral_notifications() == 1
+        recovered = (await rows(app))[0]
+        assert recovered["status"] in {"queued", "failed"}
+        assert recovered["attempts"] == actual_attempts
+        assert app.bot.send_message.await_count == actual_attempts
+        await execute(app, "UPDATE referral_notification_outbox SET next_attempt_at = 0")
+
+    app.bot.send_message.side_effect = None
+    assert await app.outbox.deliver_pending_referral_notification(app.bot)
+    sent = (await rows(app))[0]
+    assert sent["status"] == "sent"
+    assert sent["attempts"] == actual_attempts + 1
+    assert json.loads(sent["delivery_parts"])[0]["attempts"] == actual_attempts + 1
+    assert app.bot.send_message.await_count == actual_attempts + 1
+    assert not await app.outbox.deliver_pending_referral_notification(app.bot)
+
+
+async def managed_settings(app, monkeypatch, **overrides):
+    from bot.config import config
+
+    monkeypatch.setattr(config, "is_admin", lambda actor: actor == 999999999)
+    values = asdict(await app.outbox.get_referral_notification_settings())
+    values.update(overrides)
+    await app.outbox.save_referral_notification_settings(json.dumps(values), admin_id=999999999)
+    return values
+
+
+async def test_managed_notification_settings_default_save_and_reset(app, monkeypatch):
+    defaults = asdict(await app.outbox.get_referral_notification_settings())
+    assert defaults["poll_seconds"] == 1.0
+    assert defaults["batch_delay_seconds"] == 0.05
+    assert defaults["lease_seconds"] == 90
+    assert defaults["max_attempts"] == 5
+    for field in ("attached_template", "bonus_template"):
+        assert "{identity}" in defaults[field]
+        assert "{bonus}" in defaults[field]
+    updated = await managed_settings(
+        app, monkeypatch, poll_seconds=2.5, batch_delay_seconds=0.2,
+        lease_seconds=120, max_attempts=7,
+        attached_template="<b>Attached</b> {identity}: {bonus}",
+        bonus_template="<b>Bonus</b> {identity}: {bonus}",
+    )
+    assert asdict(await app.outbox.get_referral_notification_settings()) == updated
+    async with app.backend.connect() as db:
+        db.row_factory = app.backend.Row
+        assert asdict(await app.outbox.get_referral_notification_settings(db)) == updated
+    stored = await rows(
+        app, "SELECT * FROM bot_settings WHERE key = ?",
+        (app.outbox.REFERRAL_NOTIFICATION_SETTINGS_KEY,),
+    )
+    assert stored[0]["updated_by_telegram_id"] == 999999999
+    await app.outbox.reset_referral_notification_settings(admin_id=999999999)
+    assert asdict(await app.outbox.get_referral_notification_settings()) == defaults
+
+
+@pytest.mark.parametrize("field,value", [
+    ("poll_seconds", 0.09), ("poll_seconds", 61), ("poll_seconds", True),
+    ("poll_seconds", float("nan")), ("poll_seconds", float("inf")),
+    ("batch_delay_seconds", 0), ("batch_delay_seconds", 5.1), ("batch_delay_seconds", False),
+    ("lease_seconds", 60), ("lease_seconds", 901), ("lease_seconds", 61.5),
+    ("lease_seconds", True), ("max_attempts", 0), ("max_attempts", 21),
+    ("max_attempts", 1.5), ("max_attempts", False), ("unknown_field", 1),
+    ("attached_template", "Missing bonus {identity}"),
+    ("bonus_template", "Missing identity {bonus}"),
+    ("attached_template", "{identity.__class__} {bonus}"),
+    ("attached_template", "{identity[0]} {bonus}"),
+    ("attached_template", "{identity!r} {bonus}"),
+    ("attached_template", "{identity:>20} {bonus}"),
+    ("attached_template", "{identity} {bonus} {unexpected}"),
+    ("attached_template", "<script>{identity}</script> {bonus}"),
+    ("attached_template", "<b>{identity} {bonus}"),
+    ("attached_template", "X" * 2001 + " {identity} {bonus}"),
+])
+async def test_managed_notification_settings_reject_unsafe_or_invalid_values(app, field, value):
+    settings = asdict(await app.outbox.get_referral_notification_settings())
+    settings[field] = value
+    with pytest.raises(ValueError):
+        app.outbox.validate_referral_notification_settings(settings)
+
+
+@pytest.mark.parametrize("edge", ["minimum", "maximum"])
+async def test_managed_notification_settings_accept_documented_boundaries(app, edge):
+    settings = asdict(await app.outbox.get_referral_notification_settings())
+    if edge == "minimum":
+        settings.update(poll_seconds=0.1, batch_delay_seconds=0.01, lease_seconds=61, max_attempts=1)
+    else:
+        settings.update(poll_seconds=60, batch_delay_seconds=5, lease_seconds=900, max_attempts=20)
+    assert asdict(app.outbox.validate_referral_notification_settings(settings)) == settings
+
+
+async def test_managed_settings_unauthorized_save_and_reset_cannot_mutate_state(app):
+    defaults = asdict(await app.outbox.get_referral_notification_settings())
+    changed = {**defaults, "max_attempts": 7}
+    with pytest.raises(PermissionError):
+        await app.outbox.save_referral_notification_settings(json.dumps(changed), admin_id=886101)
+    with pytest.raises(PermissionError):
+        await app.outbox.reset_referral_notification_settings(admin_id=886101)
+    assert asdict(await app.outbox.get_referral_notification_settings()) == defaults
+
+
+@pytest.mark.parametrize("invalid", ["not-json", "unsafe-settings"])
+async def test_invalid_stored_notification_settings_fall_back_without_logging_payload(app, caplog, invalid):
+    defaults = asdict(await app.outbox.get_referral_notification_settings())
+    marker = "SYNTHETIC_PRIVATE_SETTINGS_MARKER"
+    payload = marker if invalid == "not-json" else json.dumps({**defaults, "attached_template": marker})
+    assert await app.db.set_bot_setting(app.outbox.REFERRAL_NOTIFICATION_SETTINGS_KEY, payload)
+    assert asdict(await app.outbox.get_referral_notification_settings()) == defaults
+    assert caplog.records
+    assert marker not in caplog.text
+
+
+async def test_managed_notification_copy_is_frozen_for_existing_events(app, monkeypatch):
+    await managed_settings(
+        app, monkeypatch,
+        attached_template="OLD {identity}; pending {bonus}",
+        bonus_template="OLD BONUS {identity}; credited {bonus}",
+    )
+    inviter, invited = await attach(app)
+    old_snapshot = (await rows(app))[0]["snapshot"]
+    assert json.loads(old_snapshot)["message"]["text"].startswith("OLD ")
+    await managed_settings(
+        app, monkeypatch,
+        attached_template="NEW {identity}; pending {bonus}",
+        bonus_template="NEW BONUS {identity}; credited {bonus}",
+    )
+    task_id = await accepted_task(app, monkeypatch, invited)
+    assert await app.policy.mark_generation_accepted(task_id)
+    newcomer = await app.db.get_or_create_user(886103)
+    assert await app.db.process_referral(newcomer.telegram_id, inviter.referral_code)
+    events = {event["event_key"]: event for event in await rows(app)}
+    assert events[f"attached:{invited.id}"]["snapshot"] == old_snapshot
+    assert json.loads(events[f"attached:{newcomer.id}"]["snapshot"])["message"]["text"].startswith("NEW ")
+    assert json.loads(events[f"bonus:{invited.id}"]["snapshot"])["message"]["text"].startswith("NEW BONUS ")
+
+
+async def test_managed_max_attempts_applies_to_future_claims(app, monkeypatch):
+    await attach(app)
+    app.bot.send_message.side_effect = TelegramRetryAfter(
+        method=SendMessage(chat_id=886101, text="synthetic"), message="rate limited", retry_after=1,
+    )
+    assert await app.outbox.deliver_pending_referral_notification(app.bot)
+    await execute(app, "UPDATE referral_notification_outbox SET next_attempt_at = 0")
+    await managed_settings(app, monkeypatch, max_attempts=1)
+    assert not await app.outbox.deliver_pending_referral_notification(app.bot)
+    app.bot.send_message.assert_awaited_once()
+    assert (await rows(app))[0]["status"] == "terminal"
+    await managed_settings(app, monkeypatch, max_attempts=2)
+    app.bot.send_message.side_effect = None
+    assert not await app.outbox.deliver_pending_referral_notification(app.bot)
+    # Higher limits apply to new eligible work, never revive terminal receipts.
+    inviter = await app.db.get_or_create_user(886101)
+    newcomer = await app.db.get_or_create_user(886199)
+    assert await app.db.process_referral(newcomer.telegram_id, inviter.referral_code)
+    assert await app.outbox.deliver_pending_referral_notification(app.bot)
+    assert next(row for row in await rows(app) if row['referred_id'] == newcomer.id)['status'] == 'sent'
+    assert app.bot.send_message.await_count == 2
+
+
+async def test_managed_lease_and_attempt_policy_are_captured_for_inflight_claim(app, monkeypatch):
+    await managed_settings(app, monkeypatch, lease_seconds=120, max_attempts=1)
+    await attach(app)
+    finish = app.outbox._finish
+    observed_remaining_lease = []
+
+    async def change_policy_during_send(**_kwargs):
+        await managed_settings(app, monkeypatch, lease_seconds=300, max_attempts=7)
+        raise TelegramRetryAfter(
+            method=SendMessage(chat_id=886101, text="synthetic"), message="rate limited", retry_after=1,
+        )
+
+    async def observe_finish(item, status, **kwargs):
+        current = (await rows(app))[0]
+        observed_remaining_lease.append(current["lease_until"] - time.time())
+        await finish(item, status, **kwargs)
+
+    app.bot.send_message.side_effect = change_policy_during_send
+    monkeypatch.setattr(app.outbox, "_finish", observe_finish)
+    assert await app.outbox.deliver_pending_referral_notification(app.bot)
+    assert (await rows(app))[0]["status"] == "terminal"
+    assert len(observed_remaining_lease) == 1
+    assert 115 <= observed_remaining_lease[0] <= 121
+    assert not await app.outbox.deliver_pending_referral_notification(app.bot)
+    app.bot.send_message.assert_awaited_once()
+
+
+async def test_managed_worker_poll_and_batch_delay_are_used(app, monkeypatch):
+    await managed_settings(app, monkeypatch, poll_seconds=2.5, batch_delay_seconds=0.2)
+    monkeypatch.setattr(app.outbox, "recover_expired_referral_notifications", AsyncMock(return_value=0))
+    monkeypatch.setattr(app.outbox, "deliver_pending_referral_notification", AsyncMock(side_effect=[False, True]))
+    delays = []
+
+    async def observed_sleep(delay):
+        delays.append(delay)
+        if len(delays) == 2:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(app.outbox.asyncio, "sleep", observed_sleep)
+    with pytest.raises(asyncio.CancelledError):
+        await app.outbox.referral_notification_worker(app.bot)
+    assert delays == [2.5, 0.2]
+
+
+def settings_admin_message(text="/referral_notifications_config", *, actor=999999999, reply=None):
+    return SimpleNamespace(
+        text=text,
+        from_user=SimpleNamespace(id=actor) if actor is not None else None,
+        reply_to_message=reply,
+        answer=AsyncMock(),
+        answer_document=AsyncMock(),
+    )
+
+
+@pytest.mark.parametrize("actor", [None, 886101])
+@pytest.mark.parametrize("action", ["", " set {}", " reset"])
+async def test_notification_admin_command_rejects_unauthorized_before_settings_access(app, monkeypatch, actor, action):
+    from bot.handlers import admin
+
+    monkeypatch.setattr(admin, "is_admin", lambda _actor: False)
+    spies = []
+    for name in (
+        "get_referral_notification_settings", "save_referral_notification_settings",
+        "reset_referral_notification_settings",
+    ):
+        spy = AsyncMock(side_effect=AssertionError("Unauthorized settings access"))
+        monkeypatch.setattr(app.outbox, name, spy)
+        spies.append(spy)
+    message = settings_admin_message("/referral_notifications_config" + action, actor=actor)
+    await admin.cmd_referral_notifications_config(message)
+    message.answer.assert_awaited_once()
+    message.answer_document.assert_not_awaited()
+    for spy in spies:
+        spy.assert_not_awaited()
+
+
+async def test_notification_admin_read_returns_downloadable_current_json(app, monkeypatch):
+    from bot.handlers import admin
+
+    expected = await managed_settings(app, monkeypatch, poll_seconds=2.5, max_attempts=7)
+    monkeypatch.setattr(admin, "is_admin", lambda actor: actor == 999999999)
+    message = settings_admin_message()
+    await admin.cmd_referral_notifications_config(message)
+    message.answer_document.assert_awaited_once()
+    document = message.answer_document.await_args.kwargs["document"]
+    assert document.filename == "referral-notifications-config.json"
+    assert json.loads(document.data.decode("utf-8")) == expected
+    message.answer.assert_awaited_once()
+    assert asdict(await app.outbox.get_referral_notification_settings()) == expected
+
+
+@pytest.mark.parametrize("source", ["inline", "reply_text", "reply_caption"])
+async def test_notification_admin_set_and_reset_use_authorized_persisted_settings(app, monkeypatch, source):
+    from bot.config import config
+    from bot.handlers import admin
+
+    monkeypatch.setattr(config, "is_admin", lambda actor: actor == 999999999)
+    monkeypatch.setattr(admin, "is_admin", lambda actor: actor == 999999999)
+    defaults = asdict(await app.outbox.get_referral_notification_settings())
+    expected = {**defaults, "max_attempts": 8}
+    payload = json.dumps(expected)
+    command = "/referral_notifications_config set"
+    reply = None
+    if source == "inline":
+        command += " " + payload
+    else:
+        reply = SimpleNamespace(
+            text=payload if source == "reply_text" else None,
+            caption=payload if source == "reply_caption" else None,
+        )
+    message = settings_admin_message(command, reply=reply)
+    await admin.cmd_referral_notifications_config(message)
+    message.answer.assert_awaited_once()
+    assert asdict(await app.outbox.get_referral_notification_settings()) == expected
+    reset = settings_admin_message("/referral_notifications_config reset")
+    await admin.cmd_referral_notifications_config(reset)
+    reset.answer.assert_awaited_once()
+    assert asdict(await app.outbox.get_referral_notification_settings()) == defaults
+
+
+@pytest.mark.parametrize("suffix", [" set", " set " + "X" * 12001, " reset unexpected", " unknown"])
+async def test_notification_admin_invalid_command_never_mutates_settings(app, monkeypatch, suffix):
+    from bot.handlers import admin
+
+    monkeypatch.setattr(admin, "is_admin", lambda actor: actor == 999999999)
+    save = AsyncMock(side_effect=AssertionError("Invalid command cannot save settings"))
+    reset = AsyncMock(side_effect=AssertionError("Invalid command cannot reset settings"))
+    monkeypatch.setattr(app.outbox, "save_referral_notification_settings", save)
+    monkeypatch.setattr(app.outbox, "reset_referral_notification_settings", reset)
+    message = settings_admin_message("/referral_notifications_config" + suffix)
+    await admin.cmd_referral_notifications_config(message)
+    message.answer.assert_awaited_once()
+    save.assert_not_awaited()
+    reset.assert_not_awaited()
+
+
+@pytest.mark.parametrize("exception_type", [ValueError, RuntimeError])
+async def test_notification_admin_error_response_and_logs_do_not_echo_private_input(app, monkeypatch, caplog, exception_type):
+    from bot.handlers import admin
+
+    monkeypatch.setattr(admin, "is_admin", lambda actor: actor == 999999999)
+    marker = "SYNTHETIC_PRIVATE_ADMIN_INPUT"
+    save = AsyncMock(side_effect=exception_type(marker))
+    monkeypatch.setattr(app.outbox, "save_referral_notification_settings", save)
+    message = settings_admin_message('/referral_notifications_config set {"private":"' + marker + '"}')
+    await admin.cmd_referral_notifications_config(message)
+    save.assert_awaited_once()
+    message.answer.assert_awaited_once()
+    assert marker not in str(message.answer.await_args)
+    assert marker not in caplog.text
+
+
+async def test_huge_integer_managed_setting_is_rejected_and_stored_fallback_is_safe(app, caplog):
+    value = {"poll_seconds": 10 ** 400}
+    with pytest.raises(ValueError):
+        app.outbox.validate_referral_notification_settings(value)
+    await app.db.set_bot_setting(app.outbox.REFERRAL_NOTIFICATION_SETTINGS_KEY, json.dumps(value))
+    settings = await app.outbox.get_referral_notification_settings()
+    assert settings.poll_seconds == 1.0
+    await attach(app)
+    assert len(await rows(app)) == 1
+    assert str(10 ** 400) not in caplog.text
+
+
+@pytest.mark.parametrize("template", [
+    '<a href="{identity}">{bonus}</a>',
+    '<a href="javascript:alert(1)">{identity}</a> {bonus}',
+    '<a href="https://example.com">{identity}</a> {bonus}',
+    '<b title="{identity}">Name</b> {bonus}',
+])
+async def test_receipt_templates_reject_attributes_and_links(app, template):
+    with pytest.raises(ValueError):
+        app.outbox.validate_referral_notification_settings({"attached_template": template})
+
+
+async def test_lower_then_higher_retry_limit_cannot_reverse_receipt_order(app, monkeypatch):
+    inviter, invited = await attach(app)
+    task_id = await accepted_task(app, monkeypatch, invited)
+    assert await app.policy.mark_generation_accepted(task_id)
+    app.bot.send_message.side_effect = TelegramRetryAfter(
+        method=SendMessage(chat_id=inviter.telegram_id, text="synthetic"),
+        message="synthetic rate limit", retry_after=1,
+    )
+    assert await app.outbox.deliver_pending_referral_notification(app.bot)
+    monkeypatch.setattr(app.outbox, 'get_referral_notification_settings', AsyncMock(
+        return_value=app.outbox.ReferralNotificationSettings(max_attempts=1),
+    ))
+    app.bot.send_message.side_effect = None
+    assert await app.outbox.deliver_pending_referral_notification(app.bot)
+    current = await rows(app)
+    assert next(r for r in current if r['kind'] == 'attached')['status'] == 'terminal'
+    assert next(r for r in current if r['kind'] == 'bonus')['status'] == 'sent'
+    monkeypatch.setattr(app.outbox, 'get_referral_notification_settings', AsyncMock(
+        return_value=app.outbox.ReferralNotificationSettings(max_attempts=2),
+    ))
+    await execute(app, 'UPDATE referral_notification_outbox SET next_attempt_at = 0')
+    assert not await app.outbox.deliver_pending_referral_notification(app.bot)
+    assert app.bot.send_message.await_count == 2
+
+
+async def test_admin_can_reapply_maximum_templates_from_bounded_json_document(app, monkeypatch):
+    from bot.config import config
+    from bot.handlers import admin
+
+    monkeypatch.setattr(config, 'is_admin', lambda actor: actor == 999999999)
+    monkeypatch.setattr(admin, 'is_admin', lambda actor: actor == 999999999)
+    template = '{identity} {bonus}' + 'x' * 1982
+    assert len(template) == 2000
+    payload = json.dumps({**asdict(app.outbox.ReferralNotificationSettings()),
+                          'attached_template': template, 'bonus_template': template}).encode()
+    assert len(payload) > 4096
+    document = SimpleNamespace(file_size=len(payload), file_id='synthetic-json')
+    reply = SimpleNamespace(document=document, text=None, caption='Edited settings file')
+    message = settings_admin_message('/referral_notifications_config set', reply=reply)
+    async def download(file, *, destination, timeout):
+        assert file is document and timeout == 10
+        destination.write(payload)
+    message.bot = SimpleNamespace(download=AsyncMock(side_effect=download))
+    await admin.cmd_referral_notifications_config(message)
+    message.bot.download.assert_awaited_once()
+    saved = await app.outbox.get_referral_notification_settings()
+    assert saved.attached_template == template and saved.bonus_template == template
+
+
+@pytest.mark.parametrize('size,content,downloaded', [
+    (None, b'{}', False), (48001, b'{}', False),
+    (1, b'x' * 48001, True), (1, b'\xff', True),
+])
+async def test_admin_document_bounds_and_encoding_fail_before_setting_mutation(app, monkeypatch, size, content, downloaded):
+    from bot.handlers import admin
+
+    monkeypatch.setattr(admin, 'is_admin', lambda actor: actor == 999999999)
+    save = AsyncMock(side_effect=AssertionError('Invalid document cannot mutate settings'))
+    monkeypatch.setattr(app.outbox, 'save_referral_notification_settings', save)
+    reply = SimpleNamespace(document=SimpleNamespace(file_size=size), text=None, caption=None)
+    message = settings_admin_message('/referral_notifications_config set', reply=reply)
+    async def download(_file, *, destination, timeout):
+        destination.write(content)
+    message.bot = SimpleNamespace(download=AsyncMock(side_effect=download))
+    await admin.cmd_referral_notifications_config(message)
+    assert message.bot.download.await_count == int(downloaded)
+    save.assert_not_awaited()
+    message.answer.assert_awaited_once()
+
+
+async def test_notification_admin_large_settings_roundtrip_via_bounded_json_document(app, monkeypatch):
+    from bot.config import config
+    from bot.handlers import admin
+
+    monkeypatch.setattr(config, 'is_admin', lambda actor: actor == 999999999)
+    monkeypatch.setattr(admin, 'is_admin', lambda actor: actor == 999999999)
+    template = '"' * 1978 + '{identity} {bonus}'
+    assert len(template) < 2000
+    value = {'attached_template': template, 'bonus_template': template, 'max_attempts': 6}
+    raw = json.dumps(value).encode('utf-8')
+    assert len(raw) > 4096
+    reply = SimpleNamespace(text=None, caption=None, document=SimpleNamespace(file_size=len(raw)))
+    message = settings_admin_message('/referral_notifications_config set', reply=reply)
+
+    async def download(document, *, destination, timeout):
+        assert document is reply.document and timeout == 10
+        destination.write(raw)
+
+    message.bot = SimpleNamespace(download=AsyncMock(side_effect=download))
+    await admin.cmd_referral_notifications_config(message)
+    message.bot.download.assert_awaited_once()
+    assert (await app.outbox.get_referral_notification_settings()).attached_template == template
+    assert (await app.outbox.get_referral_notification_settings()).max_attempts == 6
+
+
+@pytest.mark.parametrize('declared,actual', [(48001, b'{}'), (None, b'{}'), (100, b'X' * 48001), (100, b'\xff')])
+async def test_notification_admin_document_limits_reject_without_mutation(app, monkeypatch, declared, actual):
+    from bot.handlers import admin
+
+    monkeypatch.setattr(admin, 'is_admin', lambda actor: actor == 999999999)
+    save = AsyncMock(side_effect=AssertionError('Invalid document must not be saved'))
+    monkeypatch.setattr(app.outbox, 'save_referral_notification_settings', save)
+    reply = SimpleNamespace(text=None, caption=None, document=SimpleNamespace(file_size=declared))
+    message = settings_admin_message('/referral_notifications_config set', reply=reply)
+
+    async def download(_document, *, destination, timeout):
+        destination.write(actual)
+
+    message.bot = SimpleNamespace(download=AsyncMock(side_effect=download))
+    await admin.cmd_referral_notifications_config(message)
+    save.assert_not_awaited()
+    if declared is None or declared > 48000:
+        message.bot.download.assert_not_awaited()
