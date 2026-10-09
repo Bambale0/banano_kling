@@ -1,5 +1,13 @@
 # Seedance creator pricing
 
+Ordinary Seedance 2.0 launches currently use provider resolution 720p. Their
+server quote therefore uses the configured ordinary 720p per-second rate even
+when the caller omits quality. If that rate is absent, existing legacy duration
+prices remain the fallback. This does not add a resolution selector or change
+provider capabilities. Creator rates still override only for eligible creators;
+administrators retain free access and see the ordinary quote. Existing accepted
+task quotes and refund amounts are never recalculated after a price edit.
+
 ## Admin workflow
 
 Open the Telegram admin panel → Prices → «🎬 Тариф креатора · Seedance».
@@ -9,7 +17,7 @@ Open the Telegram admin panel → Prices → «🎬 Тариф креатора 
 3. Open «👤 Найти пользователя по ID», enter the Telegram ID of an existing user, and confirm grant or revoke. This changes only price-profile membership. It never grants admin rights or changes the balance.
 4. Disable the profile to return assigned users to ordinary prices without losing their membership. Missing, invalid or incomplete configuration also uses ordinary prices. The admin screen explicitly shows this state.
 
-Existing admin-free generation remains free. Prices for other models, packages, image generation and ordinary users are unchanged. Existing per-launch video-reference pricing remains ×2 once, regardless of the number of video references. Total base prices retain existing half-banana rounding; Mini App metadata supplies server-rounded totals to prevent browser rounding differences.
+Existing admin-free generation remains free. Enabling or editing the creator profile does not change ordinary rates, other models, packages or image generation. Ordinary Seedance 2 quotes honor their own configured 720p rate as described above. Existing per-launch video-reference pricing remains ×2 once, regardless of the number of video references. Total base prices retain existing half-banana rounding; Mini App metadata supplies server-rounded totals to prevent browser rounding differences.
 
 Seedance 2.5 Auto and ordinary video-editing keep the existing five-second estimate; identity transfer retains its measured-duration billing. This change does not alter duration/provider policy.
 

@@ -169,6 +169,12 @@ def resolve_video_quote(
         raise ValueError('Unknown server price profile')
     model = preset_manager.normalize_video_model_key(model)
     quality = str(quality).strip().lower() if quality else None
+    # Normal Seedance 2 launches send 720p to the provider without a quality
+    # selector. Price that same resolution for every quote consumer; otherwise
+    # admin edits to its per-second rate lose to legacy duration totals.
+    # The pricing manager still falls back to legacy totals when no rate exists.
+    if model == 'seedance_2' and not quality:
+        quality = '720p'
     duration = 5 if int(duration) == -1 and model == 'seedance_2_5' else int(duration)
     prices = preset_manager.get_price_config()
     ordinary_model = prices.get('costs_reference', {}).get('video_models', {}).get(model, {})
