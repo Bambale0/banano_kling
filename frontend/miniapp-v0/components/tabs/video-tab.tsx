@@ -79,6 +79,14 @@ export function VideoTab() {
     veoResolution: string
     veoSeed: number | null
     veoWatermark: string
+    wanResolution: string
+    wanSeed: number | null
+    wanAudio: boolean
+    wanNsfwChecker: boolean
+    wanFirstFrameUrl: string | null
+    wanLastFrameUrl: string | null
+    wanReferenceFileUrls: string[]
+    wanReferenceLinkUrls: string[]
     klingNegativePrompt: string
     klingCfgScale: number
     omniResolution: string
@@ -96,6 +104,7 @@ export function VideoTab() {
     references: string[]
     videoReferences: string[]
     audioReference: string | null
+    audioReferences: string[]
   }) => {
     if (state.mode !== 'live') {
       const modeError = new Error('Откройте Mini App через Telegram, чтобы запустить генерацию.')
@@ -254,6 +263,16 @@ export function VideoTab() {
             onPromptPresetConsumed={handleVideoPromptPresetConsumed}
             isSubmitting={isSubmitting}
             credits={state.user.credits}
+            isAdmin={state.user.isAdmin}
+            onWanQueued={result => {
+              if (typeof result.credits === 'number') setCredits(result.credits)
+              // Keep the composer and its idempotency key mounted, especially
+              // when provider acknowledgement is still unknown.
+              addTask({ task_id: result.internal_task_id, type: 'video', model: 'wan_3_prime',
+                model_label: 'Wan 3.0 Video Prime', aspect_ratio: 'adaptive',
+                status: result.status === 'done' ? 'completed' : 'pending',
+                created_at: new Date().toISOString(), prompt_preview: '', cost: result.reserve_cost })
+            }}
           />
         )}
 

@@ -11,6 +11,8 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Input } from '@/components/ui/input'
 import { ModelSelect } from './model-select'
+import { Wan3PrimeForm } from './wan3-prime-form'
+import type { Wan3PrimeGenerateResponse, Wan3PrimeRecipe } from '@/lib/wan3-prime-api'
 import { RatioSelect } from './ratio-select'
 import { UploadArea } from './upload-area'
 import { ScenarioSelect } from './scenario-select'
@@ -69,6 +71,14 @@ interface VideoGeneratorFormProps {
     veoResolution: string
     veoSeed: number | null
     veoWatermark: string
+    wanResolution: string
+    wanSeed: number | null
+    wanAudio: boolean
+    wanNsfwChecker: boolean
+    wanFirstFrameUrl: string | null
+    wanLastFrameUrl: string | null
+    wanReferenceFileUrls: string[]
+    wanReferenceLinkUrls: string[]
     klingNegativePrompt: string
     klingCfgScale: number
     omniResolution: string
@@ -86,6 +96,7 @@ interface VideoGeneratorFormProps {
     references: string[]
     videoReferences: string[]
     audioReference: string | null
+    audioReferences: string[]
   }) => Promise<void>
   onUploadImageReference?: (file: File) => Promise<UploadedFile>
   onUploadVideoReference?: (file: File, typedRepeatModel?: string) => Promise<UploadedFile>
@@ -97,6 +108,8 @@ interface VideoGeneratorFormProps {
   onPromptPresetConsumed?: () => void
   isSubmitting: boolean
   credits: number
+  isAdmin?: boolean
+  onWanQueued?: (result: Wan3PrimeGenerateResponse) => void | Promise<void>
   onModelSelected?: (modelId: string) => void
   onCheckPendingVideo?: () => void
 }
@@ -114,6 +127,8 @@ export function VideoGeneratorForm({
   onPromptPresetConsumed,
   isSubmitting,
   credits,
+  isAdmin = false,
+  onWanQueued,
   onModelSelected,
   onCheckPendingVideo,
 }: VideoGeneratorFormProps) {
@@ -129,6 +144,16 @@ export function VideoGeneratorForm({
   const [veoResolution, setVeoResolution] = useState('720p')
   const [veoSeed, setVeoSeed] = useState('')
   const [veoWatermark, setVeoWatermark] = useState('')
+  const [wanOwnerTaskId, setWanOwnerTaskId] = useState<string | undefined>()
+  const [wanRecipe, setWanRecipe] = useState<Wan3PrimeRecipe | undefined>()
+  const [wanPublicationSource, setWanPublicationSource] = useState<number | null>(null)
+  const [wanResolution, setWanResolution] = useState('1080P')
+  const [wanSeed, setWanSeed] = useState('')
+  const [wanAudio, setWanAudio] = useState(true)
+  const [wanNsfwChecker, setWanNsfwChecker] = useState(false)
+  const [wanLastFrame, setWanLastFrame] = useState<UploadedFile[]>([])
+  const [wanFileUrl, setWanFileUrl] = useState('')
+  const [wanLinkUrl, setWanLinkUrl] = useState('')
   const [klingNegativePrompt, setKlingNegativePrompt] = useState('')
   const [klingCfgScale, setKlingCfgScale] = useState(0.5)
   const [omniResolution, setOmniResolution] = useState('720p')
@@ -189,6 +214,7 @@ export function VideoGeneratorForm({
   const isOmniAudio = selectedModel === 'gemini_omni_audio' || (isGeminiOmni && selectedScenario === 'audio')
   const isOmniCharacter = selectedModel === 'gemini_omni_character' || (isGeminiOmni && selectedScenario === 'character')
   const isOmniVideo = selectedModel === 'gemini_omni_video' || (isGeminiOmni && !isOmniAudio && !isOmniCharacter)
+  const isWanPrime = selectedModel === 'wan_3_prime'
   const qualityForModel = (item?: VideoModel) => {
     if (!item) return undefined
     if (item.grok_resolutions?.length) {
@@ -196,6 +222,9 @@ export function VideoGeneratorForm({
     }
     if (item.veo_resolutions?.length) {
       return item.veo_resolutions.includes(veoResolution) ? veoResolution : item.veo_resolutions[0]
+    }
+    if (item.wan_resolutions?.length) {
+      return item.wan_resolutions.includes(wanResolution) ? wanResolution.toLowerCase() : item.wan_resolutions[0].toLowerCase()
     }
     if ((item.id === 'gemini_omni' || item.id === 'gemini_omni_video') && selectedScenario !== 'audio' && selectedScenario !== 'character') {
       return item.omni_resolutions?.includes(omniResolution) ? omniResolution : item.omni_resolutions?.[0]
@@ -208,8 +237,11 @@ export function VideoGeneratorForm({
   const requiresDurationQuote = Boolean(repeatSlots && selectedModel === 'seedance_2_5')
   const retainedDurationCosts = repeatSlots?.duration_costs
   const retainedDurationCost = retainedDurationCosts?.[selectedDuration.toString()]
+  const modelQualityPrice = selectedQuality ? model?.quality_costs?.[selectedQuality] : undefined
+  const modelRequiresConfiguredQuality = Boolean(model?.requires_quality_pricing)
   const priceAvailable = (!repeatSlots || repeatSlots.available)
     && (!requiresDurationQuote || (typeof retainedDurationCost === 'number' && Number.isFinite(retainedDurationCost)))
+    && (!modelRequiresConfiguredQuality || (typeof modelQualityPrice === 'number' && Number.isFinite(modelQualityPrice) && modelQualityPrice > 0))
   // Normal Seedance 2 submits retained video refs even after switching scenario.
   // Repeat descriptors already include all retained/replacement source inputs.
   const repeatCostMultiplier = repeatSlots?.cost_multiplier ?? (
@@ -260,12 +292,21 @@ export function VideoGeneratorForm({
   // The backend promotes the first selected reference to the provider's primary image slot.
   const needsPhotoReference = selectedScenario === 'imgtxt' && !isOmniVideo && !sourceFeedGenId && photoReferences.length === 0
   const needsCharacterImage = !repeatSlots && selectedScenario === 'character' && startImage.length === 0
-  const needsVideoRef = selectedScenario === 'video' && !isOmniVideo && !sourceFeedGenId && videoReferences.length === 0
+  const needsVideoRef = selectedScenario === 'video' && !isOmniVideo && !isWanPrime && !sourceFeedGenId && videoReferences.length === 0
+  const needsWanEditSource = isWanPrime && selectedScenario === 'edit' && !sourceFeedGenId && videoReferences.length === 0
+  const needsWanFile = isWanPrime && selectedScenario === 'file' && wanFileUrl.trim().length === 0
+  const needsWanLink = isWanPrime && selectedScenario === 'link' && wanLinkUrl.trim().length === 0
+  const needsWanLastFrame = isWanPrime && selectedScenario === 'first_last' && wanLastFrame.length === 0
   const needsAvatarImage = !repeatSlots && selectedScenario === 'avatar' && startImage.length === 0
   const needsAvatarAudio = !repeatSlots && selectedScenario === 'avatar' && audioReference.length === 0
   const needsOmniVoiceName = isOmniAudio && omniVoiceName.trim().length === 0
 
-  const hasPrompt = prompt.trim().length > 0 || Boolean(sourceFeedGenId)
+  const wanHasReferenceOnlyInput = isWanPrime
+    && selectedScenario === 'video'
+    && photoReferences.length === 0
+    && videoReferences.length === 0
+    && audioReference.length > 0
+  const hasPrompt = prompt.trim().length > 0 || Boolean(sourceFeedGenId) || wanHasReferenceOnlyInput
   const isValid = hasPrompt &&
     canAfford &&
     !repeatBlocked &&
@@ -273,6 +314,10 @@ export function VideoGeneratorForm({
     !needsPhotoReference &&
     !needsCharacterImage &&
     !needsVideoRef &&
+    !needsWanEditSource &&
+    !needsWanFile &&
+    !needsWanLink &&
+    !needsWanLastFrame &&
     !needsAvatarImage &&
     !needsAvatarAudio &&
     !needsOmniVoiceName &&
@@ -315,6 +360,11 @@ export function VideoGeneratorForm({
   useEffect(() => {
     if (!promptPreset || appliedPromptPresetRef.current === promptPreset) return
     appliedPromptPresetRef.current = promptPreset
+    if (promptPreset.model === 'wan_3_prime') {
+      setWanOwnerTaskId(promptPreset.wan3OwnerTaskId)
+      setWanRecipe(promptPreset.wan3Recipe)
+      setWanPublicationSource(promptPreset.wan3OwnerTaskId ? null : promptPreset.sourceFeedGenId || null)
+    }
     setPrompt(normalizeRepeatPrompt(promptPreset).prompt)
     setSourceFeedGenId(promptPreset.sourceFeedGenId || null)
     setRepeatTitle(promptPreset.sourceFeedGenId ? promptPreset.title : '')
@@ -419,6 +469,7 @@ export function VideoGeneratorForm({
     if (!model.supports_translation) setVeoTranslation(true)
     if (!model.supports_watermark) setVeoWatermark('')
     if (!model.supports_seed) setVeoSeed('')
+    if (!model.supports_seed && model.id !== 'wan_3_prime') setWanSeed('')
     if (!model.supports_negative_prompt) setKlingNegativePrompt('')
     if (!model.supports_cfg_scale) setKlingCfgScale(0.5)
     if (!model.supports_omni_seed) setOmniSeed('')
@@ -477,6 +528,14 @@ export function VideoGeneratorForm({
       setPhotoReferences([])
       setVideoReferences([])
       setAudioReference([])
+    } else if (nextModel.id === 'wan_3_prime') {
+      setSelectedScenario('text')
+      setSelectedRatio((current) =>
+        nextModel.ratios.includes(current) ? current : 'adaptive'
+      )
+      setSelectedDuration((current) =>
+        nextModel.durations.includes(current) ? current : 5
+      )
     }
   }
 
@@ -499,6 +558,14 @@ export function VideoGeneratorForm({
       veoResolution,
       veoSeed: veoSeed.trim() ? Number(veoSeed) : null,
       veoWatermark,
+      wanResolution,
+      wanSeed: wanSeed.trim() ? Number(wanSeed) : null,
+      wanAudio,
+      wanNsfwChecker,
+      wanFirstFrameUrl: isWanPrime && selectedScenario === 'first_last' ? photoReferences[0]?.url || null : null,
+      wanLastFrameUrl: isWanPrime ? wanLastFrame[0]?.url || null : null,
+      wanReferenceFileUrls: isWanPrime && selectedScenario === 'file' ? [wanFileUrl.trim()].filter(Boolean) : [],
+      wanReferenceLinkUrls: isWanPrime && selectedScenario === 'link' ? [wanLinkUrl.trim()].filter(Boolean) : [],
       klingNegativePrompt,
       klingCfgScale,
       omniResolution,
@@ -524,6 +591,7 @@ export function VideoGeneratorForm({
             : [],
       videoReferences: repeatSlots ? typedSlots.filter((slot) => slot.type === 'video' && slot.binding === 'upload').map((slot) => repeatUploads[slot.key][0].url) : isOmniVideo || (model?.max_video_references ?? 0) > 0 ? videoReferences.map(r => r.url) : [],
       audioReference: selectedScenario === 'avatar' ? audioReference[0]?.url || null : null,
+      audioReferences: isWanPrime ? audioReference.map((item) => item.url) : [],
     })
     } catch (error) {
       if (submittedSession === repeatSession.current) {
@@ -545,7 +613,21 @@ export function VideoGeneratorForm({
     setVideoReferences([])
     setAudioReference([])
     setOmniSeed('')
+    setWanSeed('')
+    setWanFileUrl('')
+    setWanLinkUrl('')
+    setWanLastFrame([])
   }
+
+  if (isWanPrime) return <Wan3PrimeForm
+    credits={credits} isAdmin={isAdmin} ownerTaskId={wanOwnerTaskId}
+    initialRecipe={wanRecipe} onQueued={onWanQueued}
+    publicationSourceId={wanPublicationSource}
+    modelSelector={<ModelSelect models={visibleModels.map(item => ({
+      id: item.id, label: item.label, description: item.description,
+      cost: item.id === 'wan_3_prime' ? undefined : getVideoModelPerSecondCost(item, 5, qualityForModel(item)),
+    }))} value={selectedModel} onChange={handleModelChange} />}
+  />
 
   return (
     <div className="min-w-0 space-y-4 overflow-x-hidden">
@@ -608,6 +690,91 @@ export function VideoGeneratorForm({
           {repeatSlots ? <p className="text-xs text-muted-foreground">Модель и сценарий сохранены из публикации.</p> : null}
           {repeatSlots?.pricing_quality ? <p className="text-xs text-muted-foreground">Качество исходного видео: {repeatSlots.pricing_quality}</p> : null}
         </fieldset>
+
+        {isWanPrime ? (
+          <div className="space-y-4 rounded-2xl border border-cyan/20 bg-cyan/5 p-4">
+            <div className="grid gap-3 lg:grid-cols-2">
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">Качество Wan</label>
+                <div className="flex gap-2">
+                  {(model?.wan_resolutions || ['480P', '720P', '1080P']).map((resolution) => {
+                    const key = resolution.toLowerCase()
+                    const resolutionCost = model?.quality_costs?.[key]
+                    const unavailable = typeof resolutionCost !== 'number'
+                    return (
+                      <button
+                        key={resolution}
+                        type="button"
+                        onClick={() => setWanResolution(resolution)}
+                        className={cn(
+                          'flex-1 rounded-xl border px-3 py-2 text-xs font-medium leading-tight transition-all duration-200',
+                          wanResolution === resolution
+                            ? 'border-cyan/50 bg-cyan/15 text-cyan'
+                            : 'border-border/50 bg-secondary/40 text-muted-foreground hover:bg-secondary hover:text-foreground'
+                        )}
+                      >
+                        <span className="block">{resolution}</span>
+                        <span className="block text-[10px] text-gold">
+                          {unavailable ? 'не настроено' : `${resolutionCost}🍌/с`}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">Seed</label>
+                <Input
+                  type="number"
+                  min="0"
+                  max="2147483647"
+                  value={wanSeed}
+                  onChange={(e) => setWanSeed(e.target.value)}
+                  placeholder="Авто"
+                  className="bg-secondary/50 border-border/50"
+                />
+              </div>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => setWanAudio((prev) => !prev)}
+                className={cn(
+                  'rounded-xl border px-4 py-3 text-left text-sm transition-all duration-200',
+                  wanAudio
+                    ? 'border-cyan/40 bg-cyan/10 text-cyan'
+                    : 'border-border/50 bg-secondary/40 text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
+                )}
+              >
+                {wanAudio ? 'Аудио в результате включено' : 'Аудио в результате выключено'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setWanNsfwChecker((prev) => !prev)}
+                className={cn(
+                  'rounded-xl border px-4 py-3 text-left text-sm transition-all duration-200',
+                  wanNsfwChecker
+                    ? 'border-cyan/40 bg-cyan/10 text-cyan'
+                    : 'border-border/50 bg-secondary/40 text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
+                )}
+              >
+                {wanNsfwChecker ? 'Проверка NSFW включена' : 'Проверка NSFW выключена'}
+              </button>
+            </div>
+            {selectedScenario === 'file' ? (
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">Публичный URL файла</label>
+                <Input value={wanFileUrl} onChange={(e) => setWanFileUrl(e.target.value)} placeholder="https://..." className="bg-secondary/50 border-border/50" />
+              </div>
+            ) : null}
+            {selectedScenario === 'link' ? (
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">Публичная ссылка</label>
+                <Input value={wanLinkUrl} onChange={(e) => setWanLinkUrl(e.target.value)} placeholder="https://..." className="bg-secondary/50 border-border/50" />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         {!isOmniAudio && !isOmniCharacter && selectedScenario !== 'avatar' ? (
           <div className="grid gap-3 lg:grid-cols-2">
@@ -983,11 +1150,11 @@ export function VideoGeneratorForm({
           </div>
         )}
 
-        {!repeatSlots && (selectedScenario === 'video' || isOmniVideo) && (
+        {!repeatSlots && (selectedScenario === 'video' || selectedScenario === 'edit' || isOmniVideo) && (
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground">
-              {isOmniVideo ? 'Видео-референс' : 'Видео-референсы'}
-              {isOmniVideo || sourceFeedGenId ? (
+              {selectedScenario === 'edit' ? 'Video1 · исходное видео' : isOmniVideo ? 'Видео-референс' : 'Видео-референсы'}
+              {isOmniVideo || (isWanPrime && selectedScenario === 'video') || sourceFeedGenId ? (
                 <span className="text-xs text-muted-foreground ml-2">(опционально)</span>
               ) : (
                 <span className="text-destructive ml-1">*</span>
@@ -998,7 +1165,7 @@ export function VideoGeneratorForm({
             onFilesChange={setVideoReferences}
             maxFiles={isOmniVideo ? 1 : model?.max_video_references || 5}
             accept="video/*"
-            required={!isOmniVideo && !sourceFeedGenId}
+            required={selectedScenario === 'edit' && !sourceFeedGenId}
             onUpload={onUploadVideoReference}
             libraryFiles={savedVideoReferences}
             libraryLabel="Сохранённые видео-референсы"
@@ -1006,15 +1173,34 @@ export function VideoGeneratorForm({
           </div>
         )}
 
-        {selectedScenario === 'avatar' ? (
+        {isWanPrime && selectedScenario === 'first_last' ? (
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground">
-              Аудио для аватара<span className="text-destructive ml-1">*</span>
+              Последний кадр<span className="text-destructive ml-1">*</span>
+            </label>
+            <UploadArea
+              files={wanLastFrame}
+              onFilesChange={setWanLastFrame}
+              maxFiles={1}
+              accept="image/*"
+              required
+              onUpload={onUploadImageReference}
+              libraryFiles={savedImageReferences}
+              libraryLabel="Сохранённые фото"
+            />
+          </div>
+        ) : null}
+
+        {selectedScenario === 'avatar' || (isWanPrime && ['video', 'edit', 'file', 'link'].includes(selectedScenario)) ? (
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-foreground">
+              {selectedScenario === 'avatar' ? 'Аудио для аватара' : 'Аудио-референсы'}
+              {selectedScenario === 'avatar' ? <span className="text-destructive ml-1">*</span> : <span className="text-xs text-muted-foreground ml-2">(опционально)</span>}
             </label>
             <UploadArea
               files={audioReference}
               onFilesChange={setAudioReference}
-              maxFiles={1}
+              maxFiles={isWanPrime ? model?.max_audio_references || 5 : 1}
               accept="audio/*"
               onUpload={onUploadAudioReference}
               libraryFiles={savedAudioReferences}
@@ -1023,11 +1209,11 @@ export function VideoGeneratorForm({
           </div>
         ) : null}
 
-        {!repeatSlots && !isOmniAudio && !isOmniCharacter && ((model?.max_image_references ?? 8) > 0 || selectedScenario === 'imgtxt') ? (
+        {!repeatSlots && !isOmniAudio && !isOmniCharacter && ((model?.max_image_references ?? 8) > 0 || selectedScenario === 'imgtxt' || selectedScenario === 'first_last') ? (
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground">
               Фото-референсы
-              {selectedScenario === 'imgtxt' && !isOmniVideo && !sourceFeedGenId ? (
+              {(selectedScenario === 'imgtxt' || selectedScenario === 'first_last') && !isOmniVideo && !sourceFeedGenId ? (
                 <span className="text-destructive ml-1">*</span>
               ) : (
                 <span className="text-xs text-muted-foreground ml-2">(опционально)</span>
@@ -1037,19 +1223,20 @@ export function VideoGeneratorForm({
               files={photoReferences}
               onFilesChange={setPhotoReferences}
               maxFiles={
-                selectedScenario === 'imgtxt'
-                  ? Math.max(1, model?.max_image_references ?? 0)
-                  : model?.max_image_references || 8
+                selectedScenario === 'first_last'
+                  ? 1
+                  : selectedScenario === 'imgtxt'
+                    ? Math.max(1, model?.max_image_references ?? 0)
+                    : model?.max_image_references || 8
               }
               accept="image/*"
-              required={selectedScenario === 'imgtxt' && !isOmniVideo && !sourceFeedGenId}
+              required={(selectedScenario === 'imgtxt' || selectedScenario === 'first_last') && !isOmniVideo && !sourceFeedGenId}
               onUpload={onUploadImageReference}
               libraryFiles={savedImageReferences}
               libraryLabel="Сохранённые фото-референсы"
             />
           </div>
         ) : null}
-
         {repeatPending ? (
           <div role="status" className="space-y-2 rounded-2xl border border-gold/30 bg-gold/10 p-4">
             <p className="text-sm font-medium">Видео принято, ожидаем подтверждения статуса</p>

@@ -102,6 +102,7 @@ from .seedance_25_telegram_compat import router as seedance_25_telegram_compat_r
 from .seedance_25_upload_compat import install_seedance_25_upload_compat
 from .seedance_25_video_ref_pricing import install_seedance_25_video_ref_pricing
 from .video_generation_compat import router as video_generation_compat_router
+from .wan3_prime import router as wan3_prime_router
 from .seedance_multimodal_compat import (
     install_seedance_multimodal_runtime_compat,
 )
@@ -188,6 +189,7 @@ generation_router.include_router(seedance_25_telegram_compat_router)
 generation_router.include_router(seedance_25_fullstack_router)
 generation_router.include_router(seedance_25_preview_router)
 generation_router.include_router(seedance_multimodal_compat_router)
+generation_router.include_router(wan3_prime_router)
 generation_router.include_router(video_generation_compat_router)
 generation_router.include_router(repeat_run_confirm_compat_router)
 generation_router.include_router(generation_module.router)

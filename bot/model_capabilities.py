@@ -144,6 +144,25 @@ VIDEO_MODEL_CAPABILITIES: Mapping[str, VideoModelCapability] = {
         supports_reference_videos=True, max_reference_videos=3,
         supports_audio_input=True,
     ),
+    "wan_3_prime": VideoModelCapability(
+        key="wan_3_prime", label="Wan 3.0 Video Prime", provider="kie_wan",
+        modes=("text", "first_frame", "first_last", "reference", "edit", "file", "link"),
+        durations=(-1,) + tuple(range(2, 31)),
+        aspect_ratios=("adaptive", "16:9", "4:3", "1:1", "3:4", "9:16"),
+        resolutions=("480P", "720P", "1080P"),
+        supports_start_image=True,
+        supports_end_image=True,
+        supports_reference_images=True,
+        max_reference_images=10,
+        supports_reference_videos=True,
+        max_reference_videos=5,
+        supports_audio_input=True,
+        max_reference_audio=5,
+        supports_generated_audio=True,
+        supports_nsfw_checker=True,
+        supports_auto_duration=True,
+        camera_control_via_prompt=True,
+    ),
     "grok_imagine": VideoModelCapability(
         key="grok_imagine", label="Grok Imagine", provider="grok",
         durations=(6,), aspect_ratios=("16:9", "9:16", "1:1", "3:2", "2:3"),
@@ -217,6 +236,11 @@ VIDEO_MODEL_ALIASES: Mapping[str, str] = {
     "seedance-2.0-fast": "seedance_2_fast",
     "seedance_2.0_fast": "seedance_2_fast",
     "gemini_omni": "gemini_omni_video",
+    "wan/3-0-video-prime": "wan_3_prime",
+    "wan-3.0-video-prime": "wan_3_prime",
+    "wan_3.0_video_prime": "wan_3_prime",
+    "wan3_prime": "wan_3_prime",
+    "wan3-video-prime": "wan_3_prime",
 }
 
 

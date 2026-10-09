@@ -7,6 +7,11 @@ from bot.config import config
 from bot.services.preset_manager import preset_manager
 
 
+@pytest.fixture(autouse=True)
+def isolated_database():
+    yield
+
+
 @pytest.fixture
 def price_config(monkeypatch):
     value = deepcopy(preset_manager.get_price_config())
@@ -44,6 +49,30 @@ def test_standard_and_admin_are_preserved(price_config):
     assert quote.cost == ordinary
     assert quote.charge_cost == 0
     assert quote.profile == 'admin'
+
+
+def test_wan_prime_requires_configured_quality_rate_and_reserves_auto_max(price_config):
+    from bot.creator_tariff import resolve_video_quote
+
+    with pytest.raises(ValueError):
+        resolve_video_quote('wan_3_prime', 5, '1080p')
+    admin_quote = resolve_video_quote('wan_3_prime', 5, '1080p', tariff='admin')
+    assert admin_quote.cost == 0
+    assert admin_quote.charge_cost == 0
+    assert admin_quote.profile == 'admin'
+
+    price_config['costs_reference']['video_models']['wan_3_prime'] = {
+        'default_duration': 5,
+        'duration_min': 2,
+        'duration_max': 30,
+        'quality_costs': {'1080p': 3.0},
+    }
+    quote = resolve_video_quote('wan/3-0-video-prime', -1, '1080P')
+
+    assert quote.model == 'wan_3_prime'
+    assert quote.duration == 30
+    assert quote.cost == 90
+    assert quote.reference_multiplier == 1
 
 
 def test_disabled_unconfigured_and_non_seedance_fall_back_to_standard(price_config):

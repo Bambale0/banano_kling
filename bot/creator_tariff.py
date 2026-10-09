@@ -19,6 +19,7 @@ from bot.services.preset_manager import preset_manager
 from bot.video_reference_policy import apply_video_reference_cost
 
 CREATOR_MODELS = ('seedance_2', 'seedance_2_5')
+STRICT_QUALITY_PRICED_VIDEO_MODELS = {'wan_3_prime'}
 
 
 def _required_qualities(raw: dict[str, Any] | None = None) -> dict[str, list[str]]:
@@ -175,9 +176,26 @@ def resolve_video_quote(
     # The pricing manager still falls back to legacy totals when no rate exists.
     if model == 'seedance_2' and not quality:
         quality = '720p'
-    duration = 5 if int(duration) == -1 and model == 'seedance_2_5' else int(duration)
+    duration = (
+        5 if int(duration) == -1 and model == 'seedance_2_5'
+        else 30 if int(duration) == -1 and model == 'wan_3_prime'
+        else int(duration)
+    )
     prices = preset_manager.get_price_config()
     ordinary_model = prices.get('costs_reference', {}).get('video_models', {}).get(model, {})
+    if model in STRICT_QUALITY_PRICED_VIDEO_MODELS:
+        quality_key = quality or '1080p'
+        quality_lookup = {
+            str(key).strip().lower(): value
+            for key, value in (ordinary_model.get('quality_costs', {}) if isinstance(ordinary_model, dict) else {}).items()
+        }
+        if quality_key not in quality_lookup:
+            if tariff == 'admin':
+                billable_duration = duration if int(duration) == 30 else preset_manager._clamp_video_duration(duration, ordinary_model)
+                revision_data = {'profile': 'admin', 'model': model, 'ordinary': ordinary_model, 'creator': None, 'missing_quality': quality_key}
+                revision = hashlib.sha256(json.dumps(revision_data, sort_keys=True, separators=(',', ':')).encode()).hexdigest()[:16]
+                return VideoQuote(model, billable_duration, quality, 0.0, 0.0, 'admin', 0.0, 1.0, revision)
+            raise ValueError('Generation price is not configured for this model quality')
     billable_duration = preset_manager._clamp_video_duration(duration, ordinary_model)
     profile = 'admin' if tariff == 'admin' else 'standard'
     base_cost = float(preset_manager.get_video_cost_with_quality(model, duration, quality))

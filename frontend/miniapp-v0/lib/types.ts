@@ -1,7 +1,7 @@
 export type TaskStatus = 'pending' | 'completed' | 'failed'
 export type TaskType = 'image' | 'video' | 'audio' | 'character'
 export type AppMode = 'locked' | 'live'
-export type ScenarioType = 'text' | 'imgtxt' | 'video' | 'avatar' | 'audio' | 'character'
+export type ScenarioType = 'text' | 'imgtxt' | 'first_last' | 'video' | 'edit' | 'file' | 'link' | 'avatar' | 'audio' | 'character'
 export type UploadedFileType = 'image' | 'video' | 'audio'
 export type WorkspacePanel =
   | 'assistant'
@@ -34,6 +34,8 @@ export interface VideoRepeatReferenceSlots {
 }
 
 export interface VideoPromptPreset {
+  wan3OwnerTaskId?: string
+  wan3Recipe?: import('./wan3-prime-api').Wan3PrimeRecipe
   repeatReferenceSlots?: VideoRepeatReferenceSlots
 
   seedance25IdentityTransfer?: boolean
@@ -79,11 +81,15 @@ export interface VideoModel {
   grok_resolutions?: string[]
   veo_generation_types?: string[]
   veo_resolutions?: string[]
+  wan_resolutions?: string[]
   supports_translation?: boolean
   supports_seed?: boolean
   supports_watermark?: boolean
+  supports_wan_audio?: boolean
   supports_negative_prompt?: boolean
   supports_cfg_scale?: boolean
+  supports_nsfw_checker?: boolean
+  requires_quality_pricing?: boolean
   omni_modes?: string[]
   omni_resolutions?: string[]
   omni_audio_cost?: number

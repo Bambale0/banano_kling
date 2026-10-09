@@ -305,6 +305,26 @@ def _bounded_int(value: Any, *, default: int, minimum: int = 1, maximum: int) ->
     return min(max(parsed, minimum), maximum)
 
 
+def _miniapp_optional_int(value: Any, *, field_label: str) -> int | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"{field_label} должен быть числом")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    raise ValueError(f"{field_label} должен быть числом")
+
+
+def _miniapp_bool(value: Any, *, default: bool, field_label: str) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    raise ValueError(f"{field_label} должен быть true или false")
+
+
 def _saved_reference_payload(reference: SavedReference) -> dict[str, Any]:
     file_url = reference.file_url
     if reference.kind == "image":
@@ -561,6 +581,22 @@ VIDEO_MODELS = (
         "max_audio_references": get_max_audio_references("seedance_2"),
     },
     {
+        "id": "wan_3_prime",
+        "label": "Wan 3.0 Video Prime",
+        "description": "Полная KIE Wan 3.0: текст, кадры, референсы, edit, документы и ссылки",
+        "durations": [-1] + list(range(2, 31)),
+        "ratios": ["adaptive", "16:9", "4:3", "1:1", "3:4", "9:16"],
+        "supports": ["text", "imgtxt", "first_last", "video", "edit", "file", "link"],
+        "wan_resolutions": ["480P", "720P", "1080P"],
+        "supports_seed": True,
+        "supports_wan_audio": True,
+        "supports_nsfw_checker": True,
+        "requires_quality_pricing": True,
+        "max_image_references": 10,
+        "max_video_references": 5,
+        "max_audio_references": get_max_audio_references("wan_3_prime"),
+    },
+    {
         "id": "gemini_omni",
         "label": "Gemini Omni",
         "description": "Единое меню для Gemini Omni Video, Audio ID и Character ID",
@@ -713,6 +749,8 @@ def _video_pricing_quality(
         return veo_resolution or "720p"
     if key == "gemini_omni_video":
         return omni_resolution or "720p"
+    if key == "wan_3_prime":
+        return (veo_resolution or "1080P").lower()
     return None
 
 
@@ -728,6 +766,15 @@ def _clean_unique_values(values: list[Any] | None) -> list[str]:
             continue
         seen.add(text)
         cleaned.append(text)
+    return cleaned
+
+
+def _clean_ordered_values(values: list[Any] | None) -> list[str]:
+    cleaned: list[str] = []
+    for value in values or []:
+        text = str(value or "").strip()
+        if text:
+            cleaned.append(canonicalize_local_upload_url(text))
     return cleaned
 
 
@@ -1991,6 +2038,14 @@ async def _launch_video_generation_task(
     veo_resolution: str = "720p",
     veo_seed: int | None = None,
     veo_watermark: str | None = None,
+    wan_resolution: str = "1080P",
+    wan_seed: int | None = None,
+    wan_audio: bool = True,
+    wan_nsfw_checker: bool = False,
+    wan_first_frame_url: str | None = None,
+    wan_last_frame_url: str | None = None,
+    wan_reference_file_urls: list[str] | None = None,
+    wan_reference_link_urls: list[str] | None = None,
     kling_negative_prompt: str | None = None,
     kling_cfg_scale: float | None = None,
     omni_resolution: str = "720p",
@@ -2045,6 +2100,9 @@ async def _launch_video_generation_task(
     if model == "gemini_omni_video":
         image_references = _clean_unique_values(image_references)
         video_references = _clean_unique_values(video_references)
+    elif model == "wan_3_prime":
+        image_references = _clean_ordered_values(image_references)
+        video_references = _clean_ordered_values(video_references)
     else:
         image_references = normalize_reference_urls(
             image_references,
@@ -2054,10 +2112,13 @@ async def _launch_video_generation_task(
             video_references,
             max_count=get_max_video_references(model),
         )
-    audio_references = normalize_reference_urls(
-        audio_references or [],
-        max_count=get_max_audio_references(model),
-    )
+    if model == "wan_3_prime":
+        audio_references = _clean_ordered_values(audio_references or [])
+    else:
+        audio_references = normalize_reference_urls(
+            audio_references or [],
+            max_count=get_max_audio_references(model),
+        )
     normalized_reference_contract = str(reference_contract or "").strip() or None
     normalized_fixed_asset_counts = {
         kind: max(0, int((fixed_asset_counts or {}).get(kind, 0) or 0))
@@ -2205,6 +2266,38 @@ async def _launch_video_generation_task(
             seeds=veo_seed,
             callBackUrl=(config.kie_notification_url if config.WEBHOOK_HOST else None),
         )
+    elif model == "wan_3_prime":
+        from bot.services.wan3_prime_service import wan3_prime_service
+
+        wan_images = list(image_references)
+        wan_first_frame = wan_first_frame_url
+        wan_last_frame = wan_last_frame_url
+        if generation_type in {"imgtxt", "first_last"} and image_url:
+            wan_first_frame = image_url
+        elif image_url:
+            wan_images = [image_url, *wan_images]
+        result = await wan3_prime_service.generate_video(
+            prompt=prompt,
+            scenario=(
+                "first_last"
+                if generation_type == "first_last"
+                else "first_frame" if generation_type == "imgtxt" else "edit" if generation_type == "edit" else "reference" if generation_type == "video" else generation_type
+            ),
+            duration=duration,
+            aspect_ratio=normalized_ratio,
+            resolution=wan_resolution,
+            first_frame_url=wan_first_frame,
+            last_frame_url=wan_last_frame,
+            reference_image_urls=wan_images or None,
+            reference_video_urls=video_references or None,
+            reference_audio_urls=audio_references or None,
+            reference_file_urls=wan_reference_file_urls or None,
+            reference_link_urls=wan_reference_link_urls or None,
+            audio=wan_audio,
+            seed=wan_seed,
+            nsfw_checker=wan_nsfw_checker,
+            callBackUrl=(config.kie_notification_url if config.WEBHOOK_HOST else None),
+        )
     else:
         result = await kling_service.generate_video(
             prompt=prompt,
@@ -2295,6 +2388,14 @@ async def _launch_video_generation_task(
                 "veo_resolution": veo_resolution,
                 "veo_seed": veo_seed,
                 "veo_watermark": veo_watermark,
+                "wan_resolution": wan_resolution,
+                "wan_seed": wan_seed,
+                "wan_audio": wan_audio,
+                "wan_nsfw_checker": wan_nsfw_checker,
+                "wan_first_frame_url": wan_first_frame_url,
+                "wan_last_frame_url": wan_last_frame_url,
+                "wan_reference_file_urls": wan_reference_file_urls or [],
+                "wan_reference_link_urls": wan_reference_link_urls or [],
                 "kling_negative_prompt": kling_negative_prompt,
                 "kling_cfg_scale": kling_cfg_scale,
                 "omni_resolution": omni_resolution,
@@ -4902,6 +5003,9 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
     source_feed_gen_id: int | None = None
     try:
         body = await request.json()
+        if isinstance(body, dict) and str(body.get('model') or body.get('v_model') or '') in {'wan_3_prime', 'wan3_prime', 'wan/3-0-video-prime'}:
+            from bot.wan3_prime_api import miniapp_generate_wan
+            return await miniapp_generate_wan(request, body)
         init_data = body.get("init_data", "")
         telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         user = ctx["user"]
@@ -5003,6 +5107,39 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
         veo_seed_raw = body.get("veo_seed")
         veo_seed = int(veo_seed_raw) if veo_seed_raw not in (None, "", False) else None
         veo_watermark = str(body.get("veo_watermark", "") or "") or None
+        wan_resolution = str(body.get("wan_resolution", "1080P") or "1080P")
+        try:
+            wan_seed = _miniapp_optional_int(
+                body.get("wan_seed"),
+                field_label="Wan seed",
+            )
+            wan_audio = _miniapp_bool(
+                body.get("wan_audio"),
+                default=True,
+                field_label="Wan audio",
+            )
+            wan_nsfw_checker = _miniapp_bool(
+                body.get("wan_nsfw_checker"),
+                default=False,
+                field_label="Wan safety",
+            )
+        except ValueError as exc:
+            return web.json_response(
+                {"ok": False, "error": str(exc)},
+                status=400,
+            )
+        wan_first_frame_url = str(body.get("wan_first_frame_url", "") or "") or None
+        wan_last_frame_url = str(body.get("wan_last_frame_url", "") or "") or None
+        wan_reference_file_urls = [
+            str(item).strip()
+            for item in list(body.get("wan_reference_file_urls", []) or [])
+            if str(item).strip()
+        ]
+        wan_reference_link_urls = [
+            str(item).strip()
+            for item in list(body.get("wan_reference_link_urls", []) or [])
+            if str(item).strip()
+        ]
         kling_negative_prompt = str(body.get("kling_negative_prompt", "") or "") or None
         kling_cfg_scale_raw = body.get("kling_cfg_scale", 0.5)
         kling_cfg_scale = (
@@ -5071,7 +5208,7 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
             )
         effective_model = _resolve_gemini_omni_model(model, generation_type)
         if (
-            generation_type == "imgtxt"
+            generation_type in {"imgtxt", "first_last"}
             and not image_url
             and image_references
             and effective_model != "gemini_omni_video"
@@ -5118,15 +5255,20 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
                 status=400,
             )
         if (
-            generation_type == "imgtxt"
+            generation_type in {"imgtxt", "first_last"}
             and not image_url
             and effective_model != "gemini_omni_video"
         ):
             return web.json_response(
                 {
                     "ok": False,
-                    "error": "Для режима Фото + Текст добавьте фото-референс",
+                    "error": "Для этого режима добавьте фото-референс",
                 },
+                status=400,
+            )
+        if effective_model == "wan_3_prime" and generation_type == "first_last" and not wan_last_frame_url:
+            return web.json_response(
+                {"ok": False, "error": "Для Wan First+Last добавьте последний кадр"},
                 status=400,
             )
         if generation_type == "character" and not image_url:
@@ -5140,7 +5282,7 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
         if (
             generation_type == "video"
             and not video_references
-            and effective_model != "gemini_omni_video"
+            and effective_model not in {"gemini_omni_video", "wan_3_prime"}
         ):
             return web.json_response(
                 {
@@ -5269,11 +5411,22 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
             await touch_saved_references(telegram_id, [audio_url], kind="audio")
 
         pricing_quality = _video_pricing_quality(
-            effective_model, veo_resolution, omni_resolution
+            effective_model,
+            wan_resolution if effective_model == "wan_3_prime" else veo_resolution,
+            omni_resolution,
         )
-        billing_quote = await quote_video_for_actor(
-            telegram_id, effective_model, duration, pricing_quality, video_references,
-        )
+        try:
+            billing_quote = await quote_video_for_actor(
+                telegram_id, effective_model, duration, pricing_quality, video_references,
+            )
+        except ValueError:
+            return web.json_response(
+                {
+                    "ok": False,
+                    "error": "Для выбранной модели администратор ещё не настроил цену.",
+                },
+                status=400,
+            )
         cost = billing_quote.cost
         is_admin = billing_quote.charge_cost == 0
         if not is_admin and not await check_can_afford(telegram_id, cost):
@@ -5337,6 +5490,14 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
             veo_resolution=veo_resolution,
             veo_seed=veo_seed,
             veo_watermark=veo_watermark,
+            wan_resolution=wan_resolution,
+            wan_seed=wan_seed,
+            wan_audio=wan_audio,
+            wan_nsfw_checker=wan_nsfw_checker,
+            wan_first_frame_url=wan_first_frame_url,
+            wan_last_frame_url=wan_last_frame_url,
+            wan_reference_file_urls=wan_reference_file_urls,
+            wan_reference_link_urls=wan_reference_link_urls,
             kling_negative_prompt=kling_negative_prompt,
             kling_cfg_scale=kling_cfg_scale,
             omni_resolution=omni_resolution,
@@ -6053,6 +6214,8 @@ def setup_miniapp_routes(app: web.Application):
     app.router.add_get("/telegram-web-app.js", _miniapp_root_file)
     app.router.add_get(miniapp_root, _miniapp_frontend_redirect)
     app.router.add_get(f"{miniapp_root}/", _miniapp_frontend_redirect)
+    from bot.wan3_prime_api import setup_wan3_prime_routes
+    setup_wan3_prime_routes(app, miniapp_root)
     app.router.add_post(miniapp_root + "/api/bootstrap", miniapp_bootstrap)
     app.router.add_post(miniapp_root + "/api/write-access", miniapp_write_access)
     app.router.add_post(miniapp_root + "/api/client-log", miniapp_client_log)
