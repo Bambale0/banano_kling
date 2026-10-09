@@ -4277,30 +4277,32 @@ async def miniapp_feed_share(request: web.Request) -> web.Response:
         init_data = body.get("init_data", "")
         gen_id = body.get("gen_id") or body.get("task_id")
         allow_profile = str(body.get("surface", "feed") or "feed").strip().lower() == "profile"
-        telegram_id, _ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
+        telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         card = await increment_feed_share(gen_id, allow_profile=allow_profile)
         if not card:
             return web.json_response({"ok": False, "error": "Публикация не найдена"}, status=404)
         me = await request.app["bot"].get_me()
-        author_referral_code = str(card.get("author_referral_code") or "").strip().upper()
+        # Invitation attribution belongs to the authenticated sharer. The card
+        # still identifies the original creator for repeat/royalty accounting.
+        sharer_referral_code = str(getattr(ctx["user"], "referral_code", "") or "").strip().upper()
         is_image_feed_item = str(card.get("gen_type") or "").strip().lower() == "image"
         post_link = (
-            build_feed_bot_link(me.username, card["id"], author_referral_code)
+            build_feed_bot_link(me.username, card["id"], sharer_referral_code)
             if me.username
             else config.mini_app_url
         )
         repeat_link = (
-            build_remix_bot_link(me.username, card["id"], author_referral_code)
+            build_remix_bot_link(me.username, card["id"], sharer_referral_code)
             if me.username and is_image_feed_item
             else post_link
         )
         miniapp_post_link = (
-            build_feed_link(me.username, card["id"], author_referral_code)
+            build_feed_link(me.username, card["id"], sharer_referral_code)
             if me.username
             else config.mini_app_url
         )
         miniapp_repeat_link = (
-            build_remix_link(me.username, card["id"], author_referral_code)
+            build_remix_link(me.username, card["id"], sharer_referral_code)
             if me.username and is_image_feed_item
             else miniapp_post_link
         )
