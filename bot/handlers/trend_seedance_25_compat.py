@@ -16,6 +16,7 @@ from typing import Any
 from aiohttp import web
 
 from bot.config import config
+from bot.creator_tariff import quote_video_for_actor
 from bot.seedance_trend_recipe import REFERENCE_CONTRACT
 from bot.services.seedance_reference_binding import missing_seedance_reference_tags
 
@@ -194,20 +195,26 @@ async def _run_seedance25_trend(
                 "source_video_duration_seconds": measured_seconds,
             },
         )
-    cost = trend_api.estimate_trend_repeat_cost(pricing_trend)
-    if cost is None:
-        raise trend_api.TrendRunValidationError(
-            "Не удалось определить стоимость Seedance 2.5 тренда"
-        )
+    pricing_duration = (
+        trend_api._int_setting(pricing_trend.settings, "source_video_duration_seconds", 5)
+        if video_editing else duration
+    )
+    billing_quote = await quote_video_for_actor(
+        telegram_id, MODEL_KEY, pricing_duration, resolution, video_references,
+    )
+    cost = billing_quote.cost
+    is_admin = billing_quote.charge_cost == 0
     debited, debit_error = await trend_api._debit_for_generation(telegram_id, user, cost)
     if debit_error is not None:
         return debit_error
 
     launched = False
+    refund_attempted = False
     try:
         result = await public_release._launch_provider(payload)
         if not result or not result.get("task_id"):
             if debited:
+                refund_attempted = True
                 await generation_module.add_credits(telegram_id, cost)
             error = result.get("error") if isinstance(result, dict) else "provider response has no task_id"
             return web.json_response(
@@ -218,12 +225,14 @@ async def _run_seedance25_trend(
                 status=502,
             )
 
+        launched = True
         task_id = str(result["task_id"])
         request_data = public_release._request_data(
             payload,
             is_admin=is_admin,
             quote=cost,
             source="trend",
+            billing_quote=billing_quote,
         )
         request_data.update(
             {
@@ -250,7 +259,7 @@ async def _run_seedance25_trend(
             duration=duration,
             aspect_ratio=ratio,
             prompt=payload["prompt"],
-            cost=cost,
+            cost=billing_quote.charge_cost,
             request_data=request_data,
             action_type="trend",
         )
@@ -281,7 +290,8 @@ async def _run_seedance25_trend(
             }
         )
     except Exception:
-        if debited and not launched:
+        if debited and not launched and not refund_attempted:
+            refund_attempted = True
             await generation_module.add_credits(telegram_id, cost)
         raise
 

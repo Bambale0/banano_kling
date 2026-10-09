@@ -109,7 +109,7 @@ async def test_public_normal_reference_launch_keeps_selected_settings_and_charge
     with patch.object(miniapp, "_get_user_context", AsyncMock(return_value=(123, {"user": user}))), \
          patch.object(public.config, "is_admin", return_value=False), \
          patch.object(fullstack, "_validate_seedance_sources", AsyncMock()), \
-         patch.object(public.preview_module, "_price_quote", return_value=96), \
+         patch.object(public.preset_manager, "_price_config", {"costs_reference": {"video_models": {"seedance_2_5": {"quality_costs": {"720p": 4}}}}}), \
          patch.object(miniapp, "check_can_afford", AsyncMock(return_value=True)), \
          patch.object(miniapp, "deduct_credits", AsyncMock()) as debit, \
          patch.object(miniapp, "get_or_create_user", AsyncMock(return_value=user)), \

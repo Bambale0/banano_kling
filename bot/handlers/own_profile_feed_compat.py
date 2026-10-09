@@ -92,8 +92,8 @@ def install_own_profile_feed_compat() -> None:
                 viewer_user_id=viewer.id,
                 feed_summary=feed_summary,
             )
-            response = miniapp_module.web.json_response(
-                {"ok": True, "profile": profile, "feed": feed}
+            response = await miniapp_module.creator_tariff_display.priced_feed_response(
+                {"ok": True, "profile": profile, "feed": feed}, telegram_id,
             )
             response.headers["Cache-Control"] = (
                 "no-store, no-cache, must-revalidate, max-age=0"

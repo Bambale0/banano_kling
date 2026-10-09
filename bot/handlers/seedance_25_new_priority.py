@@ -12,6 +12,7 @@ from typing import Any
 from aiogram import types
 from aiohttp import web
 
+from bot.creator_tariff import resolve_video_quote
 from bot.services.preset_manager import preset_manager
 
 from . import generation as generation_module
@@ -23,19 +24,20 @@ MODEL_LABEL = "Seedance 2.5"
 TELEGRAM_MODEL_LABEL = "🔥🆕 NEW · Seedance 2.5"
 
 
-def _priority_button_text(current_model: str) -> str:
+def _priority_button_text(current_model: str, *, tariff: str = "standard") -> str:
     check = "✅ " if current_model == MODEL_KEY else ""
-    per_second = preset_manager.get_video_cost_per_second(MODEL_KEY, 5, "720p")
+    quote = resolve_video_quote(MODEL_KEY, 5, "720p", tariff=tariff)
+    per_second = preset_manager._format_cost(quote.cost / 5)
     return f"{check}{TELEGRAM_MODEL_LABEL} • {per_second}🍌/с"
 
 
-def _priority_model_meta() -> dict[str, Any]:
+def _priority_model_meta(*, tariff: str = "standard") -> dict[str, Any]:
     original = getattr(
         public_release,
         "_public_model_meta_original",
         public_release._public_model_meta,
     )
-    meta = original()
+    meta = original(tariff=tariff)
     meta.update(
         {
             "label": MODEL_LABEL,
@@ -50,8 +52,8 @@ def _priority_model_meta() -> dict[str, Any]:
 
 def _prioritize_video_keyboard(original):
     @wraps(original)
-    def wrapped(current_model: str = "v3_pro", user_id: int | None = None):
-        markup = original(current_model, user_id=user_id)
+    def wrapped(current_model: str = "v3_pro", user_id: int | None = None, *, tariff: str = "standard"):
+        markup = original(current_model, user_id=user_id, **({"tariff": tariff} if tariff != "standard" else {}))
         rows: list[list[types.InlineKeyboardButton]] = []
         seedance_button: types.InlineKeyboardButton | None = None
 
@@ -60,7 +62,7 @@ def _prioritize_video_keyboard(original):
             for button in row:
                 if str(button.callback_data or "") == "v_model_seedance_2_5":
                     seedance_button = types.InlineKeyboardButton(
-                        text=_priority_button_text(current_model),
+                        text=_priority_button_text(current_model, tariff=tariff),
                         callback_data="v_model_seedance_2_5",
                     )
                 else:
@@ -70,7 +72,7 @@ def _prioritize_video_keyboard(original):
 
         if seedance_button is None:
             seedance_button = types.InlineKeyboardButton(
-                text=_priority_button_text(current_model),
+                text=_priority_button_text(current_model, tariff=tariff),
                 callback_data="v_model_seedance_2_5",
             )
 
@@ -81,7 +83,9 @@ def _prioritize_video_keyboard(original):
     return wrapped
 
 
-def _move_seedance_first(models: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _move_seedance_first(
+    models: list[dict[str, Any]], *, tariff: str = "standard",
+) -> list[dict[str, Any]]:
     seedance: dict[str, Any] | None = None
     others: list[dict[str, Any]] = []
     for model in models:
@@ -91,7 +95,7 @@ def _move_seedance_first(models: list[dict[str, Any]]) -> list[dict[str, Any]]:
             others.append(model)
 
     if seedance is None:
-        seedance = _priority_model_meta()
+        seedance = _priority_model_meta(tariff=tariff)
     else:
         seedance.update(
             label=MODEL_LABEL,
@@ -134,9 +138,10 @@ def install_seedance_25_new_priority() -> None:
         if not payload:
             return response
         payload["video_models"] = _move_seedance_first(
-            list(payload.get("video_models") or [])
+            list(payload.get("video_models") or []),
+            tariff=getattr(request, "_creator_tariff", "standard"),
         )
-        return web.json_response(payload)
+        return web.json_response(payload, headers={"Cache-Control": "no-store"})
 
     miniapp_module.miniapp_bootstrap = prioritized_bootstrap
     generation_module._seedance_25_new_priority_installed = True

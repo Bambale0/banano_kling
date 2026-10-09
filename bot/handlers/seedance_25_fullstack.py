@@ -307,10 +307,10 @@ async def _validate_seedance_sources(
         await _validate_local_source(source, "audio")
 
 
-def _seedance25_model_meta() -> dict[str, Any]:
+def _seedance25_model_meta(*, tariff: str = "standard") -> dict[str, Any]:
     durations = [-1, *range(4, 31)]
     quality_costs = preset_manager.get_video_quality_costs(MODEL_KEY)
-    return {
+    metadata = {
         "id": MODEL_KEY,
         "label": "🧪 Seedance 2.5 (admin)",
         "description": "Полный admin-preview Bytedance: first/last frame, мультимодальные фото/видео/аудио референсы, audio generation и web search",
@@ -340,6 +340,10 @@ def _seedance25_model_meta() -> dict[str, Any]:
         "max_audio_references": 10,
         "admin_only": True,
     }
+
+    from bot.creator_tariff_display import price_video_model_metadata
+
+    return price_video_model_metadata(metadata, tariff=tariff)
 
 
 def _json_response_payload(response: web.StreamResponse) -> dict[str, Any] | None:
@@ -1695,9 +1699,9 @@ def install_seedance_25_fullstack() -> None:
             return response
         models = list(payload.get("video_models") or [])
         if not any(str(item.get("id")) == MODEL_KEY for item in models if isinstance(item, dict)):
-            models.append(_seedance25_model_meta())
+            models.append(_seedance25_model_meta(tariff=getattr(request, "_creator_tariff", "standard")))
         payload["video_models"] = models
-        return web.json_response(payload)
+        return web.json_response(payload, headers={"Cache-Control": "no-store"})
 
     async def generate_video_with_seedance25(request: web.Request) -> web.Response:
         try:

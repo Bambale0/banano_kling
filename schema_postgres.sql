@@ -36,6 +36,43 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_referral_code ON users(referral_code);
 
 -- ============================================================
+-- SEEDANCE CREATOR TARIFF (independent of users/admin privileges)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS creator_tariff_memberships (
+    telegram_id BIGINT PRIMARY KEY REFERENCES users(telegram_id),
+    enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+    updated_by_telegram_id BIGINT NOT NULL,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS creator_tariff_audit (
+    id TEXT PRIMARY KEY,
+    actor_telegram_id BIGINT NOT NULL,
+    target_telegram_id BIGINT,
+    event_type TEXT NOT NULL,
+    before_state TEXT NOT NULL,
+    after_state TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_creator_tariff_audit_target
+    ON creator_tariff_audit(target_telegram_id, created_at);
+CREATE OR REPLACE FUNCTION creator_tariff_audit_append_only()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'creator tariff audit is append-only';
+END;
+$$;
+DO $$ BEGIN
+IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger WHERE tgname = 'creator_tariff_audit_append_only_guard'
+    AND tgrelid = 'creator_tariff_audit'::regclass
+) THEN
+    CREATE TRIGGER creator_tariff_audit_append_only_guard
+    BEFORE UPDATE OR DELETE OR TRUNCATE ON creator_tariff_audit
+    FOR EACH STATEMENT EXECUTE FUNCTION creator_tariff_audit_append_only();
+END IF;
+END $$;
+
+-- ============================================================
 -- INTERNAL ADMIN COMMAND LEDGER
 -- ============================================================
 CREATE TABLE IF NOT EXISTS internal_admin_commands (

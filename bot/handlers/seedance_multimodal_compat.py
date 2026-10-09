@@ -333,7 +333,9 @@ async def _show_seedance_creation_screen(
     await _render_text(
         message_or_callback,
         text,
-        reply_markup=generation_module._build_video_creation_keyboard(data),
+        reply_markup=generation_module._build_video_creation_keyboard(
+            data, tariff=await generation_module.get_actor_tariff(getattr(getattr(message_or_callback, "from_user", None), "id", None)),
+        ),
         edit=edit,
     )
     await state.set_state(GenerationStates.waiting_for_video_prompt)
@@ -411,6 +413,7 @@ def install_seedance_multimodal_runtime_compat() -> None:
         prompt,
         cost,
         is_admin,
+        **kwargs,
     ):
         original_images = await _prepare_seedance_runtime_state(state)
         try:
@@ -420,6 +423,7 @@ def install_seedance_multimodal_runtime_compat() -> None:
                 prompt,
                 cost,
                 is_admin,
+                **kwargs,
             )
         finally:
             await _restore_seedance_reference_state(state, original_images)

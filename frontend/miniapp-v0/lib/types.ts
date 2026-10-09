@@ -74,6 +74,7 @@ export interface VideoModel {
   supports: ScenarioType[]
   costs: Record<string, number>
   quality_costs?: Record<string, number>
+  quality_duration_costs?: Record<string, Record<string, number>>
   grok_modes?: string[]
   grok_resolutions?: string[]
   veo_generation_types?: string[]

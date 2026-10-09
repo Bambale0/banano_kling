@@ -30,6 +30,7 @@ from aiogram import types
 from aiogram.fsm.context import FSMContext
 
 from bot.config import config
+from bot.creator_tariff import VideoQuote, quote_video_for_actor, resolve_video_quote
 from bot.services.delivery_state import (
     is_terminal_telegram_delivery_error,
     terminal_telegram_delivery_reason,
@@ -74,8 +75,8 @@ def _copy_button_with_text(button: types.InlineKeyboardButton, text: str):
 
 def _public_video_model_keyboard(original):
     @wraps(original)
-    def wrapped(current_model: str = "v3_pro", user_id: int | None = None):
-        markup = original(current_model, user_id=user_id)
+    def wrapped(current_model: str = "v3_pro", user_id: int | None = None, *, tariff: str = "standard"):
+        markup = original(current_model, user_id=user_id, **({"tariff": tariff} if tariff != "standard" else {}))
         rows: list[list[types.InlineKeyboardButton]] = []
         has_seedance = False
         insert_after = None
@@ -86,7 +87,7 @@ def _public_video_model_keyboard(original):
                 callback = str(button.callback_data or "")
                 if callback == "v_model_seedance_2_5":
                     has_seedance = True
-                    label = _seedance_public_button_text(current_model)
+                    label = _seedance_public_button_text(current_model, tariff=tariff)
                     cleaned_row.append(_copy_button_with_text(button, label))
                     continue
                 cleaned_row.append(
@@ -98,7 +99,7 @@ def _public_video_model_keyboard(original):
 
         if not has_seedance:
             seedance_button = types.InlineKeyboardButton(
-                text=_seedance_public_button_text(current_model),
+                text=_seedance_public_button_text(current_model, tariff=tariff),
                 callback_data="v_model_seedance_2_5",
             )
             index = (insert_after + 1) if insert_after is not None else max(len(rows) - 1, 0)
@@ -125,14 +126,15 @@ def _clean_keyboard_new_markers(original):
     return wrapped
 
 
-def _seedance_public_button_text(current_model: str) -> str:
+def _seedance_public_button_text(current_model: str, *, tariff: str = "standard") -> str:
     check = "✅ " if current_model == MODEL_KEY else ""
-    per_second = preset_manager.get_video_cost_per_second(MODEL_KEY, 5, "720p")
+    quote = resolve_video_quote(MODEL_KEY, 5, "720p", tariff=tariff)
+    per_second = preset_manager._format_cost(quote.cost / 5)
     return f"{check}🆕 Seedance 2.5 NEW • {per_second}🍌/с"
 
 
-def _public_model_meta() -> dict[str, Any]:
-    meta = fullstack._seedance25_model_meta_original()
+def _public_model_meta(*, tariff: str = "standard") -> dict[str, Any]:
+    meta = fullstack._seedance25_model_meta_original(tariff=tariff)
     meta.update(
         {
             "label": "🆕 Seedance 2.5 NEW",
@@ -164,19 +166,22 @@ async def _public_show_screen(target, state: FSMContext, *, edit: bool = True, a
     if editing:
         display_data.update(v_duration=-1, v_ratio="adaptive")
     duration = int(display_data.get("v_duration", 5))
-    quote = preview_module._price_quote(display_data)
+    quote = None
     identity_error = ""
     if identity:
-        quote = None
         try:
             identity_payload = _scenario_payload(data, "")
             await _validate_public_payload(identity_payload, is_admin=is_admin, telegram_id=user_id)
-            current_quote = _identity_quote(identity_payload)
+            billing_quote = await _payload_quote(user_id, identity_payload)
+            current_quote = _identity_quote(identity_payload, cost=billing_quote.cost)
             quote = current_quote["cost"]
             await state.update_data(seedance25_identity_quote=current_quote)
         except ValueError as exc:
             identity_error = str(exc)
             await state.update_data(seedance25_identity_quote=None)
+    else:
+        pricing_payload = _scenario_payload(display_data, "")
+        quote = (await _payload_quote(user_id, pricing_payload)).cost
 
     if scenario == "first_frame":
         media_hint = f"Загрузите <b>1 фото</b> как первый кадр. Сейчас: {'✅' if first else '—'}"
@@ -290,16 +295,32 @@ def _identity_local_path(source: str, kind: str, telegram_id: int) -> str:
     return local
 
 
-def _identity_quote(payload: dict[str, Any]) -> dict[str, Any]:
+def _identity_quote(payload: dict[str, Any], *, cost: float | None = None) -> dict[str, Any]:
     duration = payload["billing_duration"]
     return {
-        "cost": float(apply_video_reference_cost(MODEL_KEY, preset_manager.get_video_cost_with_quality(MODEL_KEY, duration, payload["resolution"]), payload["video_urls"])),
+        "cost": float(cost) if cost is not None else float(apply_video_reference_cost(MODEL_KEY, preset_manager.get_video_cost_with_quality(MODEL_KEY, duration, payload["resolution"]), payload["video_urls"])),
         "billing_duration": duration,
         "source_video_url": payload["video_urls"][0],
         "source_feed_gen_id": payload.get("source_feed_gen_id"),
         "parent_generation_id": payload.get("parent_generation_id"),
         "resolution": payload["resolution"],
     }
+
+
+async def _payload_quote(telegram_id: int | None, payload: dict[str, Any]) -> VideoQuote:
+    """Price only normalized provider inputs, never client tariff/quote fields."""
+    duration = payload.get("billing_duration", payload["duration"])
+    # Identity uses the measured, rounded-up source duration. Ordinary Auto
+    # and editing retain the established five-second estimate.
+    duration = 5 if duration == -1 else int(duration)
+    kwargs = {
+        "duration": duration,
+        "quality": payload["resolution"],
+        "video_references": payload["video_urls"],
+    }
+    if telegram_id is None:
+        return resolve_video_quote(MODEL_KEY, **kwargs)
+    return await quote_video_for_actor(telegram_id, MODEL_KEY, **kwargs)
 
 
 def _scenario_payload(data: dict[str, Any], prompt: str) -> dict[str, Any]:
@@ -428,9 +449,16 @@ async def _launch_provider(payload: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def _request_data(payload: dict[str, Any], *, is_admin: bool, quote: float, source: str) -> dict[str, Any]:
-    price_quote = float(quote)
-    charged_cost = 0.0 if is_admin else price_quote
+def _request_data(
+    payload: dict[str, Any], *, is_admin: bool, quote: float, source: str,
+    billing_quote: VideoQuote | None = None,
+) -> dict[str, Any]:
+    # The optional argument preserves compatibility with existing trend callers.
+    # Public launches always supply the immutable, server-resolved quote.
+    price_quote = float(billing_quote.cost if billing_quote is not None else quote)
+    charged_cost = float(billing_quote.charge_cost if billing_quote is not None else 0.0 if is_admin else price_quote)
+    if billing_quote is not None:
+        is_admin = billing_quote.profile == "admin"
     return {
         "source": source,
         "release": "seedance_2_5_public",
@@ -457,10 +485,11 @@ def _request_data(payload: dict[str, Any], *, is_admin: bool, quote: float, sour
         "web_search": payload["web_search"],
         "nsfw_checker": payload["nsfw_checker"],
         "price_quote": price_quote,
-        "charged": not is_admin,
+        **({"billing_quote": billing_quote.to_dict()} if billing_quote is not None else {}),
+        "charged": charged_cost > 0,
         "charged_cost": charged_cost,
         "admin_free": is_admin,
-        "refund_on_failure": not is_admin,
+        "refund_on_failure": charged_cost > 0,
         "refund_claimed": False,
         "callback_url": get_seedance25_callback_url(),
         "provider_model": seedance_25_service.MODEL_NAME,
@@ -478,12 +507,14 @@ async def _public_message_launch(message: types.Message, state: FSMContext, prom
         await message.answer(f"❌ {exc}")
         return
 
-    quote = _identity_quote(payload)["cost"] if payload.get("seedance25_identity_transfer") else float(preview_module._price_quote(dict(data, v_duration=payload["duration"], v_ratio=payload["ratio"])))
-    if payload.get("seedance25_identity_transfer") and not is_admin and data.get("seedance25_identity_quote") != _identity_quote(payload):
+    billing_quote = await _payload_quote(telegram_id, payload)
+    quote, charge_cost = billing_quote.cost, billing_quote.charge_cost
+    is_admin = billing_quote.profile == "admin"
+    if payload.get("seedance25_identity_transfer") and not is_admin and data.get("seedance25_identity_quote") != _identity_quote(payload, cost=quote):
         await _public_show_screen(message, state, edit=False, actor_id=telegram_id)
         await message.answer("Проверьте обновлённую цену выше и отправьте промпт ещё раз для запуска.")
         return
-    if not is_admin and not await generation_module.check_can_afford(telegram_id, quote):
+    if charge_cost > 0 and not await generation_module.check_can_afford(telegram_id, charge_cost):
         credits = await generation_module.get_user_credits(telegram_id)
         await message.answer(
             f"❌ Недостаточно бананов. Нужно <b>{quote:g}🍌</b>, на балансе <b>{credits:g}🍌</b>.",
@@ -491,33 +522,43 @@ async def _public_message_launch(message: types.Message, state: FSMContext, prom
         )
         return
 
-    charged = False
+    charged = refund_attempted = False
+    accepted_task_id = None
     processing = await message.answer(
         "🆕 <b>Seedance 2.5 · NEW</b>\n"
         f"Цена: <code>{quote:g}</code>🍌 · отправляю задачу в Kie.ai…",
         parse_mode="HTML",
     )
     try:
-        if not is_admin:
-            await generation_module.deduct_credits(telegram_id, quote)
+        if charge_cost > 0:
+            debited = await generation_module.deduct_credits(telegram_id, charge_cost)
+            if debited is False:
+                await processing.delete()
+                await message.answer("❌ Не удалось списать бананы. Обновите баланс и попробуйте снова.")
+                return
             charged = True
 
         result = await _launch_provider(payload)
         if not result or not result.get("task_id"):
             if charged:
-                await generation_module.add_credits(telegram_id, quote)
+                refund_attempted = True
+                refunded = await generation_module.add_credits(telegram_id, charge_cost)
+                if refunded is False:
+                    raise RuntimeError("video_refund_unconfirmed")
                 charged = False
             error = result.get("error") if isinstance(result, dict) else "provider response has no task_id"
             await processing.delete()
             await message.answer(
                 f"❌ Seedance 2.5 не запустилась: <code>{str(error)[:500]}</code>"
-                + ("\n🍌 Списание возвращено." if not is_admin else ""),
+                + ("\n🍌 Списание возвращено." if refund_attempted and not charged else ""),
                 parse_mode="HTML",
             )
             return
 
+        # Acceptance is the financial boundary, before persistence or Telegram
+        # delivery. Subsequent errors must never undo this accepted job's debit.
+        task_id = accepted_task_id = str(result["task_id"])
         user = await generation_module.get_or_create_user(telegram_id)
-        task_id = str(result["task_id"])
         await generation_module.add_generation_task(
             user.id,
             telegram_id,
@@ -528,8 +569,8 @@ async def _public_message_launch(message: types.Message, state: FSMContext, prom
             duration=payload["duration"],
             aspect_ratio=payload["ratio"],
             prompt=payload["prompt"],
-            cost=0.0 if is_admin else quote,
-            request_data=_request_data(payload, is_admin=is_admin, quote=quote, source="telegram"),
+            cost=charge_cost,
+            request_data=_request_data(payload, is_admin=is_admin, quote=quote, source="telegram", billing_quote=billing_quote),
         )
         await processing.delete()
         billing = "администратору бесплатно" if is_admin else f"списано {quote:g}🍌"
@@ -543,19 +584,39 @@ async def _public_message_launch(message: types.Message, state: FSMContext, prom
             parse_mode="HTML",
         )
     except Exception as exc:
-        logger.exception("Public Seedance 2.5 Telegram launch failed")
-        if charged:
+        if accepted_task_id:
+            logger.error("Seedance 2.5 Telegram job accepted; status delivery failed: task_id=%s error_type=%s",
+                         accepted_task_id, type(exc).__name__)
             try:
-                await generation_module.add_credits(telegram_id, quote)
+                await message.answer(
+                    "Видео принято провайдером, но статус пока не подтверждён. "
+                    "Не повторяйте запуск сразу.\n"
+                    f"🆔 <code>{accepted_task_id}</code>", parse_mode="HTML",
+                )
             except Exception:
-                logger.exception("Seedance 2.5 immediate refund failed for %s", telegram_id)
+                logger.exception("Seedance 2.5 accepted-job notice unavailable: task_id=%s", accepted_task_id)
+            return
+        logger.exception("Public Seedance 2.5 Telegram launch failed")
+        if charged and not refund_attempted:
+            # A raised credit call can have committed already. Never retry it
+            # in this exception handler without an idempotent refund claim.
+            refund_attempted = True
+            try:
+                refunded = await generation_module.add_credits(telegram_id, charge_cost)
+                if refunded is not False:
+                    charged = False
+            except Exception:
+                logger.exception("Seedance 2.5 immediate refund unconfirmed for %s", telegram_id)
         try:
             await processing.delete()
         except Exception:
             pass
+        refund_notice = (
+            "\n🍌 Не удалось подтвердить возврат бананов. Требуется проверка платежа; не повторяйте запуск сразу."
+            if charged else "\n🍌 Списание возвращено." if refund_attempted else ""
+        )
         await message.answer(
-            f"❌ Seedance 2.5: <code>{str(exc)[:500]}</code>"
-            + ("\n🍌 Если списание успело пройти, оно возвращено." if not is_admin else ""),
+            f"❌ Seedance 2.5: <code>{str(exc)[:500]}</code>" + refund_notice,
             parse_mode="HTML",
         )
     finally:
@@ -664,10 +725,11 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
         return web.json_response({"ok": False, "error": error}, status=400)
 
     payload.update(source_feed_gen_id=source_feed_gen_id, parent_generation_id=immediate_parent_id)
-    quote = _identity_quote(payload)["cost"] if payload.get("seedance25_identity_transfer") else float(preview_module._price_quote(dict(data, v_duration=payload["duration"], v_ratio=payload["ratio"])))
+    billing_quote = await _payload_quote(telegram_id, payload)
+    quote, charge_cost = billing_quote.cost, billing_quote.charge_cost
+    is_admin = billing_quote.profile == "admin"
     if payload.get("seedance25_identity_transfer"):
-        current_quote = _identity_quote(payload)
-        quote = current_quote["cost"]
+        current_quote = _identity_quote(payload, cost=quote)
         if body.get("seedance25_quote_only") is True:
             return web.json_response({"ok": True, "quote_only": True, **current_quote,
                                       "source_video_duration_seconds": payload["source_video_duration_seconds"],
@@ -676,7 +738,7 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
             return web.json_response({"ok": False, "error": "Цена или исходное видео изменились. Обновите расчёт перед запуском."}, status=400)
     elif body.get("seedance25_quote_only") is True:
         return web.json_response({"ok": False, "error": "Расчёт доступен для переноса персонажа"}, status=400)
-    if not is_admin and not await miniapp_module.check_can_afford(telegram_id, quote):
+    if charge_cost > 0 and not await miniapp_module.check_can_afford(telegram_id, charge_cost):
         fresh = await miniapp_module.get_or_create_user(telegram_id)
         return web.json_response(
             {"ok": False, "error": f"Недостаточно бананов. Нужно {quote:g}🍌", "credits": fresh.credits},
@@ -704,27 +766,27 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
         if permission_error is not None:
             await record_video_repeat_launch(receipt_id, user.id, phase="permission_rejected", terminal=True)
             return permission_error
-        if not is_admin:
-            await record_video_repeat_launch(receipt_id, user.id, phase="debit_pending", attempted_cost=quote)
+        if charge_cost > 0:
+            await record_video_repeat_launch(receipt_id, user.id, phase="debit_pending", attempted_cost=charge_cost)
             debit_attempted = True
-            debited = await miniapp_module.deduct_credits(telegram_id, quote)
+            debited = await miniapp_module.deduct_credits(telegram_id, charge_cost)
             debit_completed = True
-            if private_repeat and quote > 0 and debited is False:
+            if debited is False:
                 await record_video_repeat_launch(receipt_id, user.id, phase="debit_rejected", terminal=True)
                 return web.json_response(
                     {"ok": False, "error": "Не удалось списать бананы. Обновите баланс и попробуйте снова."}, status=400,
                 )
-            charged = bool(quote > 0 and debited is not False) if private_repeat else True
+            charged = True
 
-        await record_video_repeat_launch(receipt_id, user.id, phase="launching", cost=quote if charged else 0)
+        await record_video_repeat_launch(receipt_id, user.id, phase="launching", cost=charge_cost if charged else 0)
         launch_started = True
         result = await _launch_provider(payload)
         if not result or not result.get("task_id"):
             provider_rejected = True
             if charged:
                 refund_attempted = True
-                refunded = await miniapp_module.add_credits(telegram_id, quote)
-                if private_repeat and refunded is False:
+                refunded = await miniapp_module.add_credits(telegram_id, charge_cost)
+                if refunded is False:
                     raise RuntimeError("video_refund_unconfirmed")
                 charged = False
             await record_video_repeat_launch(receipt_id, user.id, phase="rejected", cost=0, terminal=True)
@@ -734,7 +796,8 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
                 else result.get("error") if isinstance(result, dict) else "provider response has no task_id"
             )
             return web.json_response(
-                {"ok": False, "error": f"Seedance 2.5 не запустилась: {error}. Списание возвращено."},
+                {"ok": False, "error": f"Seedance 2.5 не запустилась: {error}."
+                 + (" Списание возвращено." if refund_attempted and not charged else "")},
                 status=502,
             )
 
@@ -745,6 +808,7 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
             is_admin=is_admin,
             quote=quote,
             source="miniapp",
+            billing_quote=billing_quote,
         )
         if getattr(request, "_video_repeat_authorization", None):
             request_data["video_repeat_contract_version"] = 1
@@ -764,7 +828,7 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
             duration=payload["duration"],
             aspect_ratio=payload["ratio"],
             prompt=payload["prompt"],
-            cost=0.0 if is_admin else quote,
+            cost=charge_cost,
             request_data=request_data,
             source_feed_gen_id=source_feed_gen_id,
             parent_generation_id=(immediate_parent_id if source_feed_gen_id else None),
@@ -780,7 +844,7 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
                     immediate_parent_id,
                     user.id,
                     repeat_task_id=task_id,
-                    credits_spent=quote,
+                    credits_spent=charge_cost,
                 )
             except Exception as reward_error:
                 if private_repeat:
@@ -816,21 +880,21 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
             }
         )
     except Exception as exc:
+        if accepted_task_id:
+            if not task_persisted and receipt_id:
+                task_persisted = await recover_video_repeat_launch(receipt_id, user.id, accepted_task_id)
+            logger.error("Seedance accepted; status reconciliation needed: task_id=%s error_type=%s",
+                         accepted_task_id, type(exc).__name__)
+            return web.json_response(
+                {"ok": False, "code": "video_status_pending", "task_id": accepted_task_id if task_persisted or not receipt_id else receipt_id,
+                 "error": "Видео принято провайдером, но статус пока не подтверждён. Не повторяйте запуск сразу."},
+                status=500,
+            )
         if private_repeat:
-            if accepted_task_id:
-                if not task_persisted and receipt_id:
-                    task_persisted = await recover_video_repeat_launch(receipt_id, user.id, accepted_task_id)
-                logger.error("Private Seedance accepted; status reconciliation needed: task_id=%s error_type=%s",
-                             accepted_task_id, type(exc).__name__)
-                return web.json_response(
-                    {"ok": False, "code": "video_status_pending", "task_id": accepted_task_id if task_persisted or not receipt_id else receipt_id,
-                     "error": "Видео принято провайдером, но статус пока не подтверждён. Не повторяйте запуск сразу."},
-                    status=500,
-                )
             if charged and not refund_attempted:
                 refund_attempted = True
                 try:
-                    refunded = await miniapp_module.add_credits(telegram_id, quote)
+                    refunded = await miniapp_module.add_credits(telegram_id, charge_cost)
                     if refunded is not False:
                         charged = False
                 except Exception as refund_error:
@@ -860,11 +924,20 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
             logger.error("Private Seedance video repeat failed: error_type=%s", type(exc).__name__)
             return web.json_response({"ok": False, "error": "Не удалось запустить видео. Попробуйте ещё раз."}, status=500)
         logger.exception("Public Seedance 2.5 Mini App launch failed")
-        if charged:
+        if charged and not refund_attempted:
+            refund_attempted = True
             try:
-                await miniapp_module.add_credits(telegram_id, quote)
+                refunded = await miniapp_module.add_credits(telegram_id, charge_cost)
+                if refunded is not False:
+                    charged = False
             except Exception:
-                logger.exception("Seedance 2.5 Mini App immediate refund failed for %s", telegram_id)
+                logger.exception("Seedance 2.5 Mini App immediate refund unconfirmed for %s", telegram_id)
+        if charged:
+            return web.json_response(
+                {"ok": False, "code": "video_refund_pending",
+                 "error": "Не удалось подтвердить возврат бананов. Требуется проверка платежа; не повторяйте запуск сразу."},
+                status=500,
+            )
         return web.json_response({"ok": False, "error": str(exc)}, status=500)
 
 
@@ -885,7 +958,7 @@ async def _claim_async_refund(task_id: str) -> tuple[int, float] | None:
     if not request_data.get("refund_on_failure") or request_data.get("refund_claimed"):
         return None
 
-    cost = float(request_data.get("charged_cost") or row["cost"] or 0)
+    cost = float(request_data["charged_cost"] if "charged_cost" in request_data else row["cost"] or 0)
     if cost <= 0:
         return None
 
@@ -1182,9 +1255,9 @@ def install_seedance_25_public_release() -> None:
             item for item in list(payload.get("video_models") or [])
             if not (isinstance(item, dict) and str(item.get("id")) == MODEL_KEY)
         ]
-        models.append(_public_model_meta())
+        models.append(_public_model_meta(tariff=getattr(request, "_creator_tariff", "standard")))
         payload["video_models"] = models
-        return web.json_response(payload)
+        return web.json_response(payload, headers={"Cache-Control": "no-store"})
 
     miniapp_module.miniapp_bootstrap = public_bootstrap
 
@@ -1221,10 +1294,10 @@ def install_seedance_25_public_release() -> None:
         return await _public_message_launch(message, state, prompt)
 
     @wraps(current_callback_launch)
-    async def public_callback_launch(callback, state, prompt, cost, is_admin):
+    async def public_callback_launch(callback, state, prompt, cost, is_admin, **kwargs):
         data = await state.get_data()
         if data.get("v_model") != MODEL_KEY:
-            return await current_callback_launch(callback, state, prompt, cost, is_admin)
+            return await current_callback_launch(callback, state, prompt, cost, is_admin, **kwargs)
         await _public_message_launch(callback.message, state, prompt, actor_id=callback.from_user.id)
         try:
             await callback.answer("Seedance 2.5 запускаю")

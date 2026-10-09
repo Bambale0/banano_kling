@@ -33,6 +33,8 @@ function roundVideoCost(raw: number) {
 
 function getVideoModelCost(model: VideoModel | undefined, duration: number, quality?: string, multiplier = 1) {
   if (!model) return 5
+  const quotedCost = quality ? model.quality_duration_costs?.[quality]?.[duration.toString()] : undefined
+  if (typeof quotedCost === 'number' && Number.isFinite(quotedCost)) return quotedCost * multiplier
   const qualityCost = quality ? model.quality_costs?.[quality] : undefined
   if (typeof qualityCost === 'number') {
     return roundVideoCost(qualityCost * duration) * multiplier
