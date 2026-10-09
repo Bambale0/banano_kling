@@ -792,7 +792,7 @@ async def process_referral_click(
             referred_user_id=visitor_user_id,
             attached=True,
             reason="attached",
-            notify_partner=False,
+            notify_partner=False,  # Transactional outbox owns notification delivery.
             referrer_telegram_id=referrer_telegram_id,
             source=source,
             start_param=start_param,
@@ -1033,7 +1033,7 @@ async def attach_referral_in_transaction(
         referred_user_id=visitor_user_id,
         attached=True,
         reason="attached",
-        notify_partner=False,
+        notify_partner=False,  # Transactional outbox owns notification delivery.
         referrer_telegram_id=referrer_telegram_id,
         source=source,
         start_param=start_param,

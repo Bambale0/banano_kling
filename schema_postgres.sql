@@ -644,3 +644,27 @@ DO $$ BEGIN
            FOR EACH STATEMENT EXECUTE FUNCTION partner_commission_audit_append_only();
        END IF;
        END $$;
+
+-- Durable referral receipts; no historical rows are enrolled.
+CREATE TABLE IF NOT EXISTS referral_notification_outbox (
+    event_key TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('attached', 'bonus')),
+    referred_id BIGINT NOT NULL REFERENCES users(id),
+    referrer_id BIGINT NOT NULL REFERENCES users(id),
+    telegram_id BIGINT NOT NULL,
+    snapshot TEXT NOT NULL,
+    delivery_parts TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'queued'
+        CHECK (status IN ('queued', 'sending', 'failed', 'sent', 'blocked', 'terminal', 'uncertain')),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at DOUBLE PRECISION NOT NULL DEFAULT 0,
+    lease_until DOUBLE PRECISION,
+    attempt_token TEXT,
+    last_error TEXT,
+    telegram_message_id BIGINT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    sent_at TIMESTAMP,
+    UNIQUE(kind, referred_id)
+);
+CREATE INDEX IF NOT EXISTS idx_referral_notification_pending
+    ON referral_notification_outbox(status, next_attempt_at);

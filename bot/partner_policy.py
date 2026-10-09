@@ -80,6 +80,10 @@ async def init_partner_policy_tables(db) -> None:
         ddl = getattr(db, "execute_native_ddl", db.execute)
         await ddl(statement)
 
+    from bot.referral_notifications import init_referral_notification_schema
+
+    await init_referral_notification_schema(db)
+
     from bot.partner_commission_settings import ensure_partner_commission_schema
 
     await ensure_partner_commission_schema(db)
@@ -87,13 +91,17 @@ async def init_partner_policy_tables(db) -> None:
 
 async def record_pending_invite_bonus(db, referrer_id: int, referred_id: int, bonus: float) -> None:
     """Called only in the transaction that creates a new referral attachment."""
-    await db.execute(
+    inserted = await db.execute(
         """INSERT INTO referral_activation_bonuses
            (referred_id, referrer_id, bonus_credits, after_generation_id)
            VALUES (?, ?, ?, (SELECT COALESCE(MAX(id), 0) FROM generation_tasks WHERE user_id = ?))
            ON CONFLICT(referred_id) DO NOTHING""",
         (referred_id, referrer_id, bonus, referred_id),
     )
+    if inserted.rowcount == 1:
+        from bot.referral_notifications import enqueue_referral_notification
+
+        await enqueue_referral_notification(db, "attached", referrer_id, referred_id, bonus)
 
 
 def generation_partner_snapshot(request_data, *, accepted: bool = False, previous=None, invite_eligible: bool | None = None) -> dict:
@@ -198,6 +206,11 @@ async def _credit_accepted_invite_bonus(task) -> bool:
         await db.execute(
             "UPDATE referrals SET bonus_credits = ? WHERE referrer_id = ? AND referred_id = ?",
             (pending["bonus_credits"], pending["referrer_id"], task.user_id),
+        )
+        from bot.referral_notifications import enqueue_referral_notification
+
+        await enqueue_referral_notification(
+            db, "bonus", pending["referrer_id"], task.user_id, pending["bonus_credits"],
         )
         await db.commit()
         logger.info("Invite activation bonus credited: generation_id=%s referred_id=%s referrer_id=%s",
