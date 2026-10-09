@@ -65,5 +65,9 @@ async def test_chunk_retry_same_hash_ok_changed_hash_conflict():
     )
     await wan3_prime_storage.save_chunk(a, upload_id=init["upload_id"], index=0, total=1, chunk=raw)
     await wan3_prime_storage.save_chunk(a, upload_id=init["upload_id"], index=0, total=1, chunk=raw)
-    with pytest.raises(Wan3PrimeValidationError, match="different"):
-        await wan3_prime_storage.save_chunk(a, upload_id=init["upload_id"], index=0, total=1, chunk=b"different")
+    # Keep the declared size unchanged so this reaches the hash guard rather
+    # than accidentally testing only the earlier size validator.
+    changed = bytes([raw[0] ^ 1]) + raw[1:]
+    with pytest.raises(Wan3PrimeValidationError, match="Chunk hash changed") as rejected:
+        await wan3_prime_storage.save_chunk(a, upload_id=init["upload_id"], index=0, total=1, chunk=changed)
+    assert rejected.value.status == 409
