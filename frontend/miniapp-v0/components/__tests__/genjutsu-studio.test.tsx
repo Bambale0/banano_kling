@@ -281,6 +281,25 @@ test('source duration stays exact while billable seconds and price come from the
   expectVideoRange(0, 8.1)
 })
 
+test('the server quote shows reference seconds plus requested generation seconds', async () => {
+  const original = call.getMockImplementation()!
+  call.mockImplementation(async (action: string, body: Record<string, unknown>) => {
+    if (action === 'quote') {
+      const quote = quoteWithDuration('split-duration-quote', 20, 260)
+      return { quote: { ...quote, allocations: [
+        { ...quote.allocations[0], reference_seconds: 12, generation_seconds: 8 },
+      ] } }
+    }
+    return original(action, body)
+  })
+  render(<GenjutsuStudio initial={initial} onClose={jest.fn()} />)
+  await inputs()
+  fireEvent.click(screen.getByRole('button', { name: 'Рассчитать стоимость' }))
+  expect(await screen.findByText('260 бананов')).toBeInTheDocument()
+  expect(screen.getByText(/12 с видеорефа \+ 8 с генерации = 20 с к оплате/)).toBeVisible()
+})
+
+
 test('replacing the selected source resets a pending range to the replacement full duration and removes its old quote', async () => {
   const original = call.getMockImplementation()!
   call.mockImplementation(async (action: string, body: Record<string, unknown>) => {
