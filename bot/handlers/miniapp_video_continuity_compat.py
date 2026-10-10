@@ -592,7 +592,7 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
 
 async def redirect_typed_video_repeat(callback, task) -> bool:
     """Keep new typed/derived recipes out of legacy Telegram billing/FSM paths."""
-    if getattr(task, "model", None) == "wan_3_prime":
+    if getattr(task, "model", None) in {"wan_3_prime", "wan_3"}:
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
         from bot.database import get_or_create_user

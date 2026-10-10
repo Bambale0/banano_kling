@@ -97,7 +97,7 @@ async def test_all_tab_still_paginates_every_public_model_after_seedance_entry()
         'advanced_v_model_grok_imagine', 'advanced_v_model_grok_imagine_v15',
         'advanced_v_model_veo3', 'advanced_v_model_veo3_fast', 'advanced_v_model_veo3_lite',
         'advanced_v_model_gemini_omni_video', 'advanced_v_model_gemini_omni_audio',
-        'advanced_v_model_gemini_omni_character', 'v_model_wan_3_prime',
+        'advanced_v_model_gemini_omni_character', 'v_model_wan_3_prime', 'v_model_wan_3',
     }
     back = callback('video_models:all:2')
     await video.show_video_models_page(back, state)
@@ -106,7 +106,7 @@ async def test_all_tab_still_paginates_every_public_model_after_seedance_entry()
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(('family', 'expected'), [
-    ('wan', ['v_model_wan_3_prime']),
+    ('wan', ['v_model_wan_3', 'v_model_wan_3_prime']),
     ('kling', ['advanced_v_model_v3_std', 'advanced_v_model_v3_pro',
                'advanced_v_model_v3_4k', 'advanced_v_model_v26_pro']),
     ('motion', ['advanced_v_model_motion_control_v26', 'advanced_v_model_motion_control_v30',
@@ -129,7 +129,7 @@ async def test_family_tabs_remain_selectable_from_new_video_entry(family, expect
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('model', ['veo3', 'wan_3_prime', 'grok_imagine', 'seedance_2_5'])
+@pytest.mark.parametrize('model', ['veo3', 'wan_3_prime', 'wan_3', 'grok_imagine', 'seedance_2_5'])
 @pytest.mark.parametrize('navigation', [{}, {'video_model_family': 'all', 'video_model_page': 2}])
 async def test_change_model_preserves_existing_generation_and_catalog_navigation(model, navigation):
     event, state = callback('video_change_model'), State()

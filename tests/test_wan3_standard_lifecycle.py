@@ -1,5 +1,7 @@
 """Ordinary WAN shares lifecycle but never Prime identity/rates."""
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -66,3 +68,35 @@ async def test_cross_model_idempotency_reuse_cannot_return_prime_task():
         await lifecycle.launch(actor, body(model="wan_3_prime"), quote, "same-key")
     assert provider.creates == 1
     assert await balance(actor.user_id) == 80
+
+
+def test_ordinary_publication_preserves_first_last_roles_and_audio():
+    from bot.video_repeat_reference_contract import (
+        active_video_recipe,
+        build_video_repeat_plan,
+    )
+
+    source = {"id": 12, "user_id": 1, "model": "wan_3", "request_data": {
+        "model": "wan_3", "scenario": "first_last", "prompt": "test",
+        "first_frame_url": "https://example.test/first.png",
+        "last_frame_url": "https://example.test/last.png",
+        "reference_audio_urls": ["https://example.test/sound.mp3"],
+    }}
+    for plan in (active_video_recipe(source), build_video_repeat_plan(source)):
+        assert plan["model"] == "wan_3"
+        assert [slot["role"] for slot in plan["images"]] == ["first_frame", "last_frame"]
+        assert plan["audio"] == ["https://example.test/sound.mp3"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("own", [True, False])
+async def test_ordinary_telegram_repeat_uses_full_wan_editor(monkeypatch, own):
+    from bot.handlers.miniapp_video_continuity_compat import redirect_typed_video_repeat
+
+    monkeypatch.setattr(database, "get_or_create_user", AsyncMock(return_value=SimpleNamespace(id=1)))
+    callback = SimpleNamespace(from_user=SimpleNamespace(id=101), answer=AsyncMock(),
+                               message=SimpleNamespace(answer=AsyncMock()))
+    task = SimpleNamespace(model="wan_3", user_id=1 if own else 2, task_id="wan3_test", id=12)
+    assert await redirect_typed_video_repeat(callback, task)
+    markup = callback.message.answer.call_args.kwargs["reply_markup"]
+    assert markup.inline_keyboard[0][0].callback_data == ("wan3_recipe:wan3_test" if own else "wan3_repeat:12")

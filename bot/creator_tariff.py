@@ -19,7 +19,7 @@ from bot.services.preset_manager import preset_manager
 from bot.video_reference_policy import apply_video_reference_cost
 
 CREATOR_MODELS = ('seedance_2', 'seedance_2_5')
-STRICT_QUALITY_PRICED_VIDEO_MODELS = {'wan_3_prime'}
+STRICT_QUALITY_PRICED_VIDEO_MODELS = {'wan_3_prime', 'wan_3'}
 
 
 def _required_qualities(raw: dict[str, Any] | None = None) -> dict[str, list[str]]:
@@ -178,7 +178,7 @@ def resolve_video_quote(
         quality = '720p'
     duration = (
         5 if int(duration) == -1 and model == 'seedance_2_5'
-        else 30 if int(duration) == -1 and model == 'wan_3_prime'
+        else 30 if int(duration) == -1 and model in {'wan_3_prime', 'wan_3'}
         else int(duration)
     )
     prices = preset_manager.get_price_config()

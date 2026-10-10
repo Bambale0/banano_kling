@@ -293,7 +293,7 @@ export function Wan3PrimeForm({ model = 'wan_3_prime', credits, isAdmin = false,
     resetKey: JSON.stringify([ownerTaskId, repeatKey, recipe.scenario]), resetRecipe: initialRecipe }
   const videos = recipe.reference_video_urls || []
   const unknown = attempted && (!result || result.status === 'unknown')
-  return <div className="min-w-0 space-y-4" data-testid="wan3-prime-form">
+  return <div className="min-w-0 space-y-4 pb-[calc(6rem+env(safe-area-inset-bottom))]" data-testid="wan3-prime-form">
     {modelSelector ? <section className={CARD}><h3 className="text-sm font-medium">Модель</h3>{modelSelector}</section> : null}
     <section className={CARD}>
       <div><h3 className="font-serif text-lg font-semibold">{recipe.model === 'wan_3' ? 'Wan 3.0 Video' : 'Wan 3.0 Video Prime'}</h3><p className="mt-1 text-xs text-muted-foreground">Выберите задачу. Черновики каждого режима сохраняются при переключении.</p></div>
