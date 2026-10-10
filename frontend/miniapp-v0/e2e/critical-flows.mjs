@@ -227,7 +227,7 @@ try {
     window.__telegramEventHandlers = {}
     window.Telegram = {
       WebApp: {
-        initData: 'query_id=e2e&user=%7B%22id%22%3A22%7D',
+        initData: 'query_id=e2e&user=%7B%22id%22%3A424242%7D',
         initDataUnsafe: {},
         ready() {},
         expand() {},
@@ -523,7 +523,7 @@ try {
     })
   })
 
-  await page.goto(`${baseUrl}?tgWebAppData=query_id%3De2e`, {
+  await page.goto(`${baseUrl}?tgWebAppData=query_id%3De2e%26user%3D%257B%2522id%2522%253A424242%257D`, {
     waitUntil: 'networkidle',
   })
   await page.getByText('Онлайн', { exact: true }).waitFor()
@@ -775,7 +775,7 @@ try {
   // Exercise the exported Seedance UI with mocked provider transport only.
   for (const editing of [true, false]) {
     bootstrapPayload.is_admin = editing
-    await page.goto(`${baseUrl}?tgWebAppData=query_id%3De2e`, { waitUntil: 'networkidle' })
+    await page.goto(`${baseUrl}?tgWebAppData=query_id%3De2e%26user%3D%257B%2522id%2522%253A424242%257D`, { waitUntil: 'networkidle' })
     await page.getByRole('button', { name: 'Видео', exact: true }).click()
     const durationSlider = page.getByLabel('Длительность видео', { exact: true })
     await durationSlider.waitFor()
