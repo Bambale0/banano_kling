@@ -510,6 +510,8 @@ class ActualWan3PrimeProbe:
                 completed = subprocess.run(
                     [
                         "ffprobe",
+                        "-protocol_whitelist", "file,pipe",
+                        "-format_whitelist", "mov,wav,mp3,ogg,aac",
                         "-v",
                         "error",
                         "-print_format",

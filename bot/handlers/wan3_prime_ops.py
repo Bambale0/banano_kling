@@ -49,7 +49,10 @@ async def prepare_wan_resolution(message: types.Message, state: FSMContext) -> N
         return
     task_id, action, argument = parts[1:]
     row = await wan3_prime_lifecycle._intent(task_id)
-    if not row or row["status"] != "unknown" or row["provider_task_id"] or row["settled"]:
+    eligible = row and not row["settled"] and (
+        (row["status"] == "unknown" and not row["provider_task_id"])
+        or (action == "refund" and row["status"] == "result_attention"))
+    if not eligible:
         await message.answer("Операция не является неподтверждённым запуском. Её состояние и баланс не изменены.")
         return
     if action == "bind":

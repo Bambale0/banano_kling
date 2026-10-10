@@ -111,7 +111,8 @@ def convert_voice_to_mp3(source: Path, destination: Path) -> None:
     """Preserve the complete audio; final media validation enforces input limits."""
     try:
         subprocess.run(
-            ['ffmpeg', '-nostdin', '-v', 'error', '-i', str(source), '-map', '0:a:0',
+            ['ffmpeg', '-nostdin', '-v', 'error', '-protocol_whitelist', 'file,pipe',
+             '-format_whitelist', 'ogg,mov,wav,mp3,aac', '-i', str(source), '-map', '0:a:0',
              '-vn', '-c:a', 'libmp3lame', '-b:a', '128k', '-y', str(destination)],
             capture_output=True, timeout=30, check=True,
         )

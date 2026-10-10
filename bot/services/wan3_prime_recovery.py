@@ -111,7 +111,7 @@ async def unresolved_operations(*, limit: int = 30) -> list[dict]:
             SELECT internal_task_id, provider_task_id, user_id, telegram_id, status,
                    reserve_credits, delivery_status, error_code, created_at
             FROM wan3_prime_intents
-            WHERE (status = 'unknown' AND settled = 0) OR delivery_status = 'uncertain'
+            WHERE (status IN ('unknown', 'result_attention') AND settled = 0) OR delivery_status = 'uncertain'
             ORDER BY created_at, id LIMIT ?
         """, (max(1, min(limit, 100)),))).fetchall()
     return [dict(row) for row in rows]

@@ -306,6 +306,8 @@ class Wan3PrimeLifecycle:
         await init_recovery_schema()
         from bot.services.wan3_prime_trends import init_trend_schema
         await init_trend_schema()
+        from bot.services.wan3_prime_result_repair import init_result_repair_schema
+        await init_result_repair_schema()
 
     async def startup(self) -> None:
         await self.init_schema()
@@ -647,7 +649,9 @@ class Wan3PrimeLifecycle:
             return "accepted", provider_task_id, None
         if code == 200:
             return "no_task_id", None, str(result.get("message") or result.get("msg") or "")
-        if isinstance(code, (int, str)) and str(code).isdigit() and 500 <= int(code) <= 599:
+        raw = result.get("raw") if isinstance(result.get("raw"), dict) else {}
+        codes = (code, result.get("status_code"), raw.get("code"))
+        if any(isinstance(value, (int, str)) and str(value).isdigit() and 500 <= int(value) <= 599 for value in codes):
             # A gateway can fail after createTask was accepted. Keep the same
             # reservation/identity until canonical or operator reconciliation.
             return "upstream_submission_unknown", None, "Provider acknowledgement unavailable"
@@ -924,7 +928,10 @@ class Wan3PrimeLifecycle:
             await db.commit()
             return lease_until if updated.rowcount == 1 else None
 
-    async def _claim_reconcile_lease(self, internal_task_id: str, seconds: int = 120, *, respect_backoff: bool = False) -> bool:
+    async def _claim_reconcile_lease(self, internal_task_id: str, seconds: int | None = None, *, respect_backoff: bool = False) -> bool:
+        from bot.services.wan3_prime_storage_policy import positive_setting
+
+        seconds = seconds or positive_setting('WAN3_RESULT_DOWNLOAD_TIMEOUT_SECONDS', 180) + 120
         lease_until = (datetime.now(UTC) + timedelta(seconds=seconds)).replace(tzinfo=None).isoformat(sep=" ")
         schedule_clause = " AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP)" if respect_backoff else ""
         async with db_backend.connect(_database_path()) as db:
@@ -973,12 +980,9 @@ class Wan3PrimeLifecycle:
             except (ImportError, AttributeError, ValueError):
                 result_seconds = None
         if result_seconds is None or not math.isfinite(float(result_seconds)) or float(result_seconds) <= 0:
-            async with db_backend.connect(_database_path()) as db:
-                await db.execute(
-                    "UPDATE wan3_prime_intents SET status = 'settlement_pending', provider_state = 'success', result_path = ?, result_url = ?, updated_at = CURRENT_TIMESTAMP WHERE internal_task_id = ? AND settled = 0",
-                    (local_path, public_url, row["internal_task_id"]),
-                )
-                await db.commit()
+            from bot.services.wan3_prime_result_repair import reject_invalid_result
+
+            await reject_invalid_result(row["internal_task_id"], local_path)
             return False
 
         quote = json.loads(row["quote_json"])
@@ -1089,8 +1093,8 @@ class Wan3PrimeLifecycle:
                 SET status = 'settling_failure', updated_at = CURRENT_TIMESTAMP
                 WHERE internal_task_id = ?
                   AND settled = 0
-                  AND status IN ('submitting', 'submitted', 'unknown', 'settlement_pending')
-                """ + (" AND status = 'unknown' AND provider_task_id IS NULL" if operator else ""),
+                  AND status IN ('submitting', 'submitted', 'unknown', 'settlement_pending', 'result_attention')
+                """ + (" AND ((status = 'unknown' AND provider_task_id IS NULL) OR status = 'result_attention')" if operator else ""),
                 (internal_task_id,),
             )
             if claimed.rowcount != 1:
