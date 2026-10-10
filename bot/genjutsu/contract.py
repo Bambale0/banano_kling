@@ -21,6 +21,9 @@ class PipelineError(ValueError):
 
 CATALOG = json.loads(Path(__file__).with_name('catalog.json').read_text())
 
+# Bump when the charging formula changes; stale, unused quotes must be rejected.
+GENJUTSU_PRICING_VERSION = 2
+
 
 def default_settings() -> dict[str, Any]:
     return json.loads(Path(__file__).with_name('defaults.json').read_text())
@@ -249,6 +252,21 @@ def provider_input(step: dict, video_url: str, image_urls: list[str]) -> dict:
     return payload
 
 
+def billable_seconds(reference_duration_ms: int, generation_duration_ms: int) -> tuple[int, int, int]:
+    """Bill the video reference and requested generated video separately.
+
+    Higgsfield Genjutsu currently has no independent output-duration input: the
+    generated clip follows the selected reference clip. Its callers therefore
+    pass the effective source duration for both arguments.
+    """
+    for duration in (reference_duration_ms, generation_duration_ms):
+        if type(duration) is not int or duration <= 0:
+            raise PipelineError('invalid_video_duration')
+    reference = (reference_duration_ms + 999) // 1000
+    generation = (generation_duration_ms + 999) // 1000
+    return reference, generation, reference + generation
+
+
 def quote_plan(plan: dict, assets: Mapping[str, dict], settings: dict) -> dict:
     allocations = []
     for variant in range(plan['variants']):
@@ -256,19 +274,22 @@ def quote_plan(plan: dict, assets: Mapping[str, dict], settings: dict) -> dict:
             op = step['operation']
             duration = (assets[plan['source_asset_id']]['duration_ms'] if index == 0
                         else CATALOG[op]['maximum_video_ms'])
-            seconds = (duration + 999) // 1000
+            reference_seconds, generation_seconds, seconds = billable_seconds(duration, duration)
             rate = settings['prices'][op][step['resolution']]
             if rate is None:
                 raise PipelineError('price_not_configured', status=503)
             integer(rate, 1, 10000, 'invalid_prices')
             allocations.append({'variant': variant, 'ordinal': index,
                                 'operation': op, 'billable_seconds': seconds,
+                                'reference_seconds': reference_seconds,
+                                'generation_seconds': generation_seconds,
                                 'credits_per_second': rate, 'reserved_credits': seconds * rate,
                                 'maximum_reserve': index > 0})
     total = sum(a['reserved_credits'] for a in allocations)
     if total > settings['max_quote_credits']:
         raise PipelineError('quote_budget_exceeded')
     return {'total_credits': total, 'allocations': allocations,
+            'pricing_version': GENJUTSU_PRICING_VERSION,
             'plan_hash': fingerprint(plan)}
 
 
