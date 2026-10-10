@@ -146,6 +146,23 @@ build_or_pull_image() {
     verify_configured_miniapp_url
 }
 
+# A minimum free-space floor is a fail-closed preflight, not a prediction of
+# build/backup size. Retained history still needs operator capacity monitoring.
+require_disk_space() {
+    local minimum="${DEPLOY_MIN_FREE_BYTES:-10737418240}"
+    local target="${1:-$PROJECT_DIR}"
+    local available=""
+    [[ "$minimum" =~ ^[0-9]{1,18}$ ]] && (( 10#$minimum >= 10737418240 )) \
+        || die "DEPLOY_MIN_FREE_BYTES must be at least 10737418240 (10 GiB)"
+    # Check the existing ancestor before creating a new backup directory.
+    while [ ! -e "$target" ]; do
+        target="$(dirname -- "$target")"
+    done
+    available="$(df -PB1 -- "$target" | awk 'NR == 2 {print $4}')"
+    [[ "$available" =~ ^[0-9]{1,18}$ ]] && (( 10#$available >= 10#$minimum )) \
+        || die "Insufficient disk space at $target: available=${available:-unknown} required=$minimum; no backups deleted"
+}
+
 backup_database() {
     if [ "$SKIP_BACKUP" = "1" ]; then
         warn "Database backup skipped because SKIP_BACKUP=1"
@@ -154,8 +171,16 @@ backup_database() {
 
     [ -x "$PROJECT_DIR/scripts/backup_db.sh" ] \
         || chmod +x "$PROJECT_DIR/scripts/backup_db.sh"
-    log "Creating pre-deploy database backup"
-    SEND_BACKUP_TO_ADMINS=0 "$PROJECT_DIR/scripts/backup_db.sh"
+    local backup_root="${DB_BACKUP_DIR:-$PROJECT_DIR/backups}"
+    local backup_dir=""
+    mkdir -p "$backup_root"
+    require_disk_space "$backup_root"
+    # Each invocation owns a new directory; the helper's rolling filenames
+    # cannot overwrite prior release backups. Keep even failed attempts for review.
+    backup_dir="$(mktemp -d "$backup_root/predeploy-$(date -u '+%Y%m%dT%H%M%SZ')-XXXXXX")"
+    log "Creating pre-deploy database backup in $backup_dir"
+    DB_BACKUP_DIR="$backup_dir" SEND_BACKUP_TO_ADMINS=0 "$PROJECT_DIR/scripts/backup_db.sh"
+    log "Database backup retained at $backup_dir (use its dump/database for an explicit restore)"
 }
 
 container_health() {
@@ -212,6 +237,19 @@ reconcile_rendergrid_legacy_images() {
     fi
 }
 
+# Historical media rewrites are a separately approved operation, never a
+# side effect of deploy (even if the opt-in flag exists in the environment).
+maintenance_media() {
+    [ "${ALLOW_MEDIA_MAINTENANCE:-0}" = "1" ] \
+        || die "maintenance-media requires ALLOW_MEDIA_MAINTENANCE=1 and explicit operator approval"
+    [ "$SKIP_BACKUP" != "1" ] || die "maintenance-media requires a database backup"
+    cd "$PROJECT_DIR"
+    wait_for_health || die "Media maintenance requires a healthy backend"
+    backup_database
+    backfill_public_feed_videos
+    reconcile_rendergrid_legacy_images
+}
+
 rollback_to_systemd() {
     warn "Rolling back to systemd service"
     compose down --remove-orphans || true
@@ -230,6 +268,8 @@ deploy() {
     local systemd_was_active=0
 
     cd "$PROJECT_DIR"
+    require_disk_space "$PROJECT_DIR"
+    require_disk_space "${DB_BACKUP_DIR:-$PROJECT_DIR/backups}"
     prepare_deploy_environment
     prepare_runtime_dirs
     compose config --quiet
@@ -255,8 +295,7 @@ deploy() {
     fi
 
     verify_running_miniapp_url
-    backfill_public_feed_videos
-    reconcile_rendergrid_legacy_images
+    log "Historical media maintenance is excluded from deployment; run maintenance-media separately with explicit approval"
 
     if service_exists; then
         systemctl disable "$SYSTEMD_SERVICE" >/dev/null 2>&1 || true
@@ -295,9 +334,17 @@ Usage:
   sudo bash scripts/deploy_backend_docker.sh rollback
   sudo bash scripts/deploy_backend_docker.sh stop
 
+Separately approved maintenance (never run by deploy):
+  sudo ALLOW_MEDIA_MAINTENANCE=1 bash scripts/deploy_backend_docker.sh maintenance-media
+  Rewrites historical media records; requires a healthy backend and database backup.
+
 Environment overrides:
   SYSTEMD_SERVICE=banano-kling
   SKIP_BACKUP=1
+  DB_BACKUP_DIR=<backup-parent>  # unique predeploy-UTC-run directory per backup
+  DEPLOY_MIN_FREE_BYTES=10737418240  # minimum 10 GiB, raise for larger builds/backups
+  Backups are retained without pruning; monitor capacity and approve cleanup separately.
+  Rollback only restores the service; database restore remains an explicit operator action.
   PULL_IMAGE=1 BANANO_IMAGE=ghcr.io/bambale0/banano-kling-bot:tanyapi
   HEALTH_TIMEOUT_SECONDS=180
   FEED_VIDEO_BACKFILL_LIMIT=50
@@ -315,6 +362,7 @@ main() {
 
     case "$ACTION" in
         deploy) deploy ;;
+        maintenance-media) maintenance_media ;;
         status) status ;;
         logs) logs ;;
         rollback) rollback_to_systemd ;;
