@@ -5930,7 +5930,7 @@ async def claim_task_delivery(task_id: str, *, lease_seconds: int = 300) -> bool
     retry_at = request_data.get("delivery_retry_at")
     if retry_at:
         try:
-            retry_time = datetime.fromisoformat(str(retry_at).replace("Z", "+00:00"))
+            retry_time = datetime.fromisoformat(str(retry_at))
             if retry_time.tzinfo is None:
                 retry_time = retry_time.replace(tzinfo=UTC)
             if now < retry_time:

@@ -2,10 +2,10 @@
 import ast
 import asyncio
 import logging
-from pathlib import Path
 import sys
 import types
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def load_function(path, name, namespace):
     tree = ast.parse((ROOT / path).read_text())
     node = next(n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name)
-    exec(compile(ast.Module(body=[node], type_ignores=[]), path, "exec"), namespace)
+    exec(compile(ast.Module(body=[node], type_ignores=[]), path, "exec"), namespace)  # noqa: S102 - fixed repository source, isolated from application imports
     return namespace[name]
 
 
@@ -119,7 +119,7 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_uncertain_is_not_automatically_retryable(self):
         ns = {}
-        exec(compile((ROOT / "bot/services/delivery_state.py").read_text(),
+        exec(compile((ROOT / "bot/services/delivery_state.py").read_text(),  # noqa: S102 - fixed pure repository module only
                      "delivery_state.py", "exec"), ns)
         self.assertIn("uncertain", ns["TASK_DELIVERY_STATUSES"])
         self.assertIn("uncertain", ns["TERMINAL_TASK_DELIVERY_STATUSES"])
