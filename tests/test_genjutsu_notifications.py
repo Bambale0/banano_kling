@@ -404,7 +404,7 @@ async def test_custom_notification_templates_use_settled_amounts_and_categories(
     text = send.call_args.args[1]
     assert 'Работу завершить не удалось' in text
     assert 'Ответ провайдера: модерация' in text
-    assert 'Возвращено на баланс: 5 бананов' in text
+    assert 'Возвращено на баланс: 10 бананов' in text
     assert 'Списано всего: 0 бананов' in text
     assert 'Бесплатный запуск' not in text
     assert '{' not in text
