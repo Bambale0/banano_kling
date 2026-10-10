@@ -15,7 +15,9 @@ from uuid import uuid4
 
 from .contract import (
     CATALOG,
+    GENJUTSU_PRICING_VERSION,
     PipelineError,
+    billable_seconds,
     default_settings,
     fingerprint,
     request_key,
@@ -283,6 +285,8 @@ class Repository:
             if self.start_validator:
                 await self.start_validator(db, q)
             plan, quote = json.loads(q['plan']), json.loads(q['quote'])
+            if quote.get('pricing_version') != GENJUTSU_PRICING_VERSION:
+                raise PipelineError('quote_changed', status=409)
             if not admin_free and any(s['operation'] not in settings['verified_operations'] for s in plan['steps']):
                 raise PipelineError('operation_not_verified', status=503)
             active = await one(db, "SELECT COUNT(*) AS count FROM genjutsu_runs WHERE owner=? AND state IN ('running','waiting','review')", (owner,))
@@ -514,14 +518,18 @@ class Repository:
             if step['status'] != 'ready' or step['cancel_requested']:
                 raise PipelineError('submission_not_allowed', status=409)
             validate_duration(duration_ms, json.loads(step['spec'])['operation'])
-            actual = 0 if step['admin_free'] else ((duration_ms + 999) // 1000) * step['rate']
+            reference_seconds, generation_seconds, total_seconds = billable_seconds(duration_ms, duration_ms)
+            actual = 0 if step['admin_free'] else total_seconds * step['rate']
             if actual > step['reserved_credits']:
                 raise PipelineError('quote_budget_exceeded')
             attempt = uuid4().hex
             await db.execute("UPDATE genjutsu_steps SET status='submitting',attempt_id=?,actual_credits=?,updated_ms=? WHERE id=?",
                              (attempt, actual, self.clock(), step_id))
             await self._event(db, 'submit_started', run_id=step['run_id'], step_id=step_id,
-                              details={'attempt_id': attempt, 'billable_ms': duration_ms})
+                              details={'attempt_id': attempt, 'billable_ms': duration_ms,
+                                       'reference_seconds': reference_seconds,
+                                       'generation_seconds': generation_seconds,
+                                       'billable_seconds': total_seconds})
             return attempt
 
     async def accept_submission(
