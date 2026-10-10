@@ -152,9 +152,21 @@ class VideoQuote:
     reference_multiplier: float
     revision: str
     version: int = 1
+    billing_mode: str | None = None
+    input_seconds: float | None = None
+    selected_output_seconds: float | None = None
+    billable_seconds: float | None = None
+    rate: float | None = None
+    references_fingerprint: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        result = asdict(self)
+        if self.version == 1:
+            # Preserve the exact historical snapshot representation.
+            for key in ("billing_mode", "input_seconds", "selected_output_seconds",
+                        "billable_seconds", "rate", "references_fingerprint"):
+                result.pop(key)
+        return result
 
 
 def resolve_video_quote(
@@ -164,6 +176,9 @@ def resolve_video_quote(
     video_references: Iterable[str] | None = None,
     *,
     tariff: str = 'standard',
+    input_video_seconds: float | None = None,
+    references_fingerprint: str | None = None,
+    selected_output_seconds: float | None = None,
 ) -> VideoQuote:
     """Pure quote seam. ``tariff`` is supplied only by authenticated server code."""
     if tariff not in {'standard', 'creator', 'admin'}:
@@ -176,6 +191,13 @@ def resolve_video_quote(
     # The pricing manager still falls back to legacy totals when no rate exists.
     if model == 'seedance_2' and not quality:
         quality = '720p'
+    if input_video_seconds is not None:
+        return _measured_video_quote(
+            model, duration, quality, tariff=tariff,
+            input_seconds=input_video_seconds,
+            selected_output_seconds=selected_output_seconds,
+            references_fingerprint=references_fingerprint,
+        )
     duration = (
         5 if int(duration) == -1 and model == 'seedance_2_5'
         else 30 if int(duration) == -1 and model == 'wan_3_prime'
@@ -222,5 +244,61 @@ async def quote_video_for_actor(
     duration: int = 5,
     quality: str | None = None,
     video_references: Iterable[str] | None = None,
+    *,
+    input_video_seconds: float | None = None,
+    references_fingerprint: str | None = None,
+    selected_output_seconds: float | None = None,
 ) -> VideoQuote:
-    return resolve_video_quote(model, duration, quality, video_references, tariff=await get_actor_tariff(telegram_id))
+    return resolve_video_quote(
+        model, duration, quality, video_references,
+        tariff=await get_actor_tariff(telegram_id),
+        input_video_seconds=input_video_seconds,
+        references_fingerprint=references_fingerprint,
+        selected_output_seconds=selected_output_seconds,
+    )
+
+
+def _measured_video_quote(
+    model: str, duration: int, quality: str | None, *, tariff: str,
+    input_seconds: float, selected_output_seconds: float | None,
+    references_fingerprint: str | None,
+) -> VideoQuote:
+    """Opt-in v2: server-measured input plus selected/source-locked output.
+
+    Output validation belongs to the provider recipe validator. Never clamp the
+    sum using output-only duration limits, or reinterpret a free Auto as 5s.
+    """
+    if model not in CREATOR_MODELS:
+        raise ValueError("Measured quote is not enabled for this model")
+    output = float(duration if selected_output_seconds is None else selected_output_seconds)
+    source = float(input_seconds)
+    if (isinstance(input_seconds, bool) or not math.isfinite(source) or source < 0
+            or not math.isfinite(output) or output <= 0):
+        raise ValueError("A measured input and explicit output duration are required")
+    if not references_fingerprint or len(references_fingerprint) != 64:
+        raise ValueError("Verified video-reference fingerprint is required")
+    status = creator_tariff_status()
+    profile = "admin" if tariff == "admin" else "standard"
+    if tariff == "creator" and status["enabled"] and status["configured"]:
+        profile = "creator"
+    rates = video_quality_rates(model, tariff=profile)
+    raw_rate = rates.get(quality or "720p")
+    if isinstance(raw_rate, bool) or raw_rate is None:
+        raise ValueError("Generation price is not configured for this model quality")
+    rate = float(raw_rate)
+    total = source + output
+    if not math.isfinite(rate) or rate <= 0 or not math.isfinite(rate * total):
+        raise ValueError("Generation price must be finite and positive")
+    cost = float(preset_manager._format_cost(rate * total))
+    if cost <= 0:
+        raise ValueError("Generation price must be positive after rounding")
+    revision_data = {"version": 2, "profile": profile, "model": model,
+                     "quality": quality, "rate": rate}
+    revision = hashlib.sha256(json.dumps(revision_data, sort_keys=True).encode()).hexdigest()[:16]
+    return VideoQuote(
+        model, duration, quality, cost, 0.0 if profile == "admin" else cost,
+        profile, cost, 1.0, revision, version=2,
+        billing_mode="input_plus_selected_output", input_seconds=source,
+        selected_output_seconds=output, billable_seconds=total, rate=rate,
+        references_fingerprint=references_fingerprint,
+    )
