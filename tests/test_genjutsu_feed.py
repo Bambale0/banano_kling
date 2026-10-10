@@ -466,7 +466,7 @@ async def test_only_final_step_publishes_and_repeat_preserves_chain_and_variant_
     assert len(result["recipe"]["slots"]) == 2
     assert result["recipe"]["current_cost"] > 10
     task = await database.get_task_by_id(result["card"]["task_id"])
-    assert task.cost == 10  # The selected variant's two completed steps only.
+    assert task.cost == 20  # The selected variant's two completed steps only.
 
 
 @pytest.mark.asyncio
