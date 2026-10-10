@@ -19,10 +19,10 @@ cd /root/tanya/banano_kling
 # Atomic creation; no secrets or financial writes.
 : > data/seedance-launches.paused
 # Verify the actual container sees the marker and disallows new claims.
-docker exec banano-kling-bot python -c 'from pathlib import Path; p=Path("/app/data/seedance-launches.paused"); print("paused=" + str(p.exists()))'
+docker exec banano-kling-bot python -c 'import importlib.util; s=importlib.util.spec_from_file_location("gate", "/app/bot/services/seedance_launch_gate.py"); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print("paused=" + str(not m.launches_allowed()))'
 ```
 
-The common receipt store checks the marker under the claim lock, after media checks and immediately before debit. Quotes already claimed before the marker may finish their one provider submission. Existing submitting, unknown and accepted receipts remain replayable; callbacks, reconciliation and refunds continue. UI changes alone are not an admission stop.
+The common receipt store checks the marker under the claim lock, after media checks and immediately before debit. A claim that passed the marker check before its creation may commit afterward and finish its one provider submission. Marker creation alone is not a quiescence barrier; perform the synchronized drain below. Existing submitting, unknown and accepted receipts remain replayable; callbacks, reconciliation and refunds continue. UI changes alone are not an admission stop.
 
 After an authorized resume, remove only this marker:
 
@@ -31,11 +31,14 @@ cd /root/tanya/banano_kling
 rm -- data/seedance-launches.paused
 ```
 
-## Read-only drain check
+## Synchronized drain check (no data changes)
 
-Use the established authenticated PostgreSQL operator connection; never print its connection string. Run the following read-only SQL (no application database adapter import):
+Use the established authenticated PostgreSQL operator connection; never print its connection string. After verifying the marker is active, run the following transaction (no data writes and no application database adapter import). The row lock waits for any claim that passed admission before the marker. READ COMMITTED ensures the subsequent query sees those committed receipts. The first SELECT must return id=1; a missing row or timeout makes the check inconclusive. Keep the marker in place throughout.
 
 ```sql
+BEGIN ISOLATION LEVEL READ COMMITTED;
+SET LOCAL lock_timeout = '30s';
+SELECT id FROM wan3_prime_storage_lock WHERE id = 1 FOR UPDATE;
 SELECT q.phase, q.canonical_bound, COALESCE(t.status, 'missing') AS task_status,
        COUNT(*) AS receipt_count
 FROM seedance_quote_receipts q
@@ -44,6 +47,7 @@ WHERE q.phase IN ('submitting', 'outcome_unknown')
    OR (q.phase = 'accepted' AND
        (q.canonical_bound = 0 OR t.task_id IS NULL OR t.status NOT IN ('completed', 'failed')))
 GROUP BY q.phase, q.canonical_bound, COALESCE(t.status, 'missing');
+COMMIT;
 ```
 
 Any row blocks rollback to a backend lacking the measured receipt guards. Missing canonical tasks and unknown provider outcomes are unresolved, never evidence of failure. Do not refund or resubmit them to make the drain appear empty.

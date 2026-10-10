@@ -110,6 +110,52 @@ class ReceiptTests(unittest.IsolatedAsyncioTestCase):
         async with self.connect() as db:
             return (await (await db.execute("SELECT credits FROM users WHERE id=1")).fetchone())[0]
 
+    async def test_pause_barrier_waits_for_pre_marker_admission_commit(self):
+        admitted = asyncio.Event()
+        release_debit = asyncio.Event()
+        barrier_started = asyncio.Event()
+        barrier_done = asyncio.Event()
+
+        @asynccontextmanager
+        async def delayed_connect():
+            async with self.connect() as db:
+                original_execute = db.execute
+                async def execute(sql, *args):
+                    if "UPDATE users SET credits = credits -" in sql:
+                        admitted.set()
+                        await release_debit.wait()
+                    return await original_execute(sql, *args)
+                db.execute = execute
+                yield db
+
+        self.store.connect = delayed_connect
+        self.store.allow_new_claim = lambda: True
+        claim = asyncio.create_task(self.claim())
+        await admitted.wait()
+        # Operator creates marker AFTER this claim passed admission.
+        self.store.allow_new_claim = lambda: False
+        async with self.connect() as db:
+            plain = await (await db.execute("SELECT COUNT(*) FROM seedance_quote_receipts WHERE phase='submitting'")).fetchone()
+            self.assertEqual(plain[0], 0)  # A bare SELECT would falsely look drained.
+
+        async def barrier():
+            async with self.connect() as db:
+                barrier_started.set()
+                await db.execute("SELECT id FROM fixture_locks WHERE id=1 FOR UPDATE" if self.socket else "BEGIN IMMEDIATE")
+                row = await (await db.execute("SELECT COUNT(*) FROM seedance_quote_receipts WHERE phase='submitting'")).fetchone()
+                await db.commit()
+                barrier_done.set()
+                return row[0]
+
+        drain = asyncio.create_task(barrier())
+        await barrier_started.wait()
+        await asyncio.sleep(0.02)
+        self.assertFalse(barrier_done.is_set())
+        release_debit.set()
+        self.assertTrue((await claim)["created"])
+        self.assertEqual(await drain, 1)
+        self.assertEqual(await self.balance(), 52)
+
     async def test_double_click_claim_debit_once(self):
         rows = await asyncio.gather(self.claim(), self.claim())
         self.assertEqual(sum(row["created"] for row in rows), 1)
