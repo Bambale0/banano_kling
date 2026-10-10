@@ -94,7 +94,9 @@ components using the effective step input. Follow-on chain steps reserve both
 components at the catalog maximum and release the unused amount on successful
 completion; failure/refund and idempotent replay semantics are unchanged.
 Unconsumed pre-change quotes are rejected by `pricing_version=2`, requiring
-a fresh quote. Already accepted runs retain their original reserved prices.
+a fresh quote. Already accepted runs retain their original single-duration
+pricing version, even if a queued step submits after deployment; they are not
+retroactively charged the new rate or blocked by a larger actual charge.
 No new admin price, endpoint, migration or environment variable is required.
 
 ## Task lifecycle
