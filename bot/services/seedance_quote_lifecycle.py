@@ -11,6 +11,7 @@ from bot import database
 from bot import db as db_backend
 from bot.creator_tariff import quote_video_for_actor
 from bot.services.motion_launch_receipts import _has_acceptance_witness
+from bot.services.seedance_launch_gate import PAUSE_MESSAGE, launches_allowed
 from bot.services.seedance_quote_receipts import (
     QuoteConflict,
     SeedanceQuoteReceipts,
@@ -30,7 +31,7 @@ logger = logging.getLogger(__name__)
 async def receipt_store():
     await Wan3PrimeStorage().init_schema()
     store = SeedanceQuoteReceipts(lambda: db_backend.connect(database.DATABASE_PATH), db_backend.Row,
-                                 storage_lock=lock_storage, validate_media=verify_quote_snapshots)
+                                 storage_lock=lock_storage, validate_media=verify_quote_snapshots, allow_new_claim=launches_allowed)
     await store.ensure_schema()
     return store
 
@@ -66,6 +67,8 @@ async def prepare_quote(telegram_id: int, model: str, original: dict, *, video_k
     if duration <= 0 and not source_locked:
         raise QuoteConflict("Для точной цены выберите длительность результата")
     store = await receipt_store()
+    if not launches_allowed():
+        raise QuoteConflict(PAUSE_MESSAGE)
     user = await database.get_or_create_user(telegram_id)
     actor = SimpleNamespace(user_id=user.id, telegram_id=telegram_id)
     sources = effective_video_sources(original, video_key, model)

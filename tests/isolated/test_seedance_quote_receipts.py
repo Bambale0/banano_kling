@@ -53,6 +53,24 @@ class ReceiptTests(unittest.IsolatedAsyncioTestCase):
         self.original = {"prompt": "hello", "video_urls": ["original"]}
         self.quote = await self.create()
 
+    async def test_pause_blocks_new_debit_but_preserves_unknown_and_accepted_replay(self):
+        self.store.allow_new_claim = lambda: False
+        with self.assertRaisesRegex(module.QuoteConflict, "приостановлены"):
+            await self.claim()
+        self.assertEqual(await self.balance(), 100)
+        self.assertEqual((await self.store.find(5000000001, self.quote["quote_id"]))["phase"], "quoted")
+        self.store.allow_new_claim = lambda: True
+        claimed = await self.claim()
+        self.store.allow_new_claim = lambda: False
+        await self.store.unknown(claimed["quote_id"])
+        self.assertFalse((await self.claim())["created"])
+        self.assertEqual(await self.balance(), 52)
+        await self.store.accepted(claimed["quote_id"], "accepted-during-pause")
+        replay = await self.claim()
+        self.assertFalse(replay["created"])
+        self.assertEqual(replay["provider_task_id"], "accepted-during-pause")
+        self.assertEqual(await self.balance(), 52)
+
     async def asyncTearDown(self):
         self.directory.cleanup()
 
