@@ -17,6 +17,10 @@ from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import aiohttp
+from PIL import Image
+
+from bot import database
+from bot import db as db_backend
 from bot.genjutsu.media import PublicResolver
 from bot.services.wan3_prime_media import (
     AUDIO_EXTENSIONS,
@@ -28,10 +32,6 @@ from bot.services.wan3_prime_media import (
     assert_public_url,
     canonical_child_path,
 )
-from PIL import Image
-
-from bot import database
-from bot import db as db_backend
 
 CHUNK_SIZE = 7 * 1024 * 1024
 MAX_UNFINISHED_SESSIONS = 5
