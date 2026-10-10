@@ -18,6 +18,17 @@ def load_function(path, name, namespace):
     return namespace[name]
 
 
+class AsyncContext:
+    def __init__(self, value):
+        self.value = value
+
+    async def __aenter__(self):
+        return self.value
+
+    async def __aexit__(self, *args):
+        return False
+
+
 class Rejected(Exception):
     pass
 
@@ -169,12 +180,18 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
             ("bot/handlers/seedance_25_fullstack.py", "_send_seedance25_results"),
         ]:
             self.bot.send_video.reset_mock()
+            self.bot.send_message.reset_mock()
+            self.ns["aiohttp"] = types.SimpleNamespace(
+                ClientTimeout=lambda **kw: None,
+                ClientSession=lambda: AsyncContext(types.SimpleNamespace(
+                    get=lambda *a, **kw: AsyncContext(types.SimpleNamespace(status=404)))))
             self.bot.send_photo.side_effect = Rejected("bad photo")
             self.bot.send_message.side_effect = Retryable(75)
             self.ns["_send_seedance25_results"] = load_function(path, name, self.ns)
             self.assertTrue(await dispatcher({"bot": self.bot},
                 {"task_id": "task", "telegram_id": 1}, {"return_last_frame": True}))
             self.assertEqual(self.bot.send_video.await_count, 1)
+            self.assertEqual(self.bot.send_message.await_count, 1)
             self.assertEqual(self.mark.call_args.args[:2], ("task", "delivered"))
 
     async def test_tracker_clears_each_confirmed_rejection(self):
