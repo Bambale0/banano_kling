@@ -17,6 +17,7 @@ from functools import wraps
 from typing import Any
 
 from aiogram import F, Router, types
+from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -318,9 +319,14 @@ def _draft_identity(data: dict[str, Any]) -> tuple[Any, Any]:
 def _serialized_draft_edit(handler):
     @wraps(handler)
     async def wrapped(event, state):
-        identity = _draft_identity(await state.get_data())
+        entry_data = await state.get_data()
+        identity = _draft_identity(entry_data)
+        entered_wan = await _wan_media_flow_active(state, entry_data)
         async with _actor_lock(event.from_user.id):
-            if _draft_identity(await state.get_data()) != identity:
+            current_data = await state.get_data()
+            left_flow = entered_wan and not await _wan_media_flow_active(state, current_data)
+            other_model = handler.__name__ != "open_wan3_prime" and current_data.get("v_model", "wan_3_prime") != "wan_3_prime"
+            if _draft_identity(current_data) != identity or left_flow or other_model:
                 await event.answer("Задача изменилась. Повторите действие для новой задачи.")
                 return
             return await handler(event, state)
@@ -660,7 +666,7 @@ async def new_wan3_prime(callback: types.CallbackQuery, state: FSMContext):
         await _show_dashboard(callback.message, state, draft)
 
 
-@router.callback_query(F.data == "wan3_modes")
+@router.callback_query(StateFilter(*Wan3PrimeStates.__all_states__), F.data == "wan3_modes")
 @_serialized_draft_edit
 async def wan3_modes(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(Wan3PrimeStates.choosing_mode)
@@ -668,7 +674,7 @@ async def wan3_modes(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("wan3_mode:"))
+@router.callback_query(StateFilter(*Wan3PrimeStates.__all_states__), F.data.startswith("wan3_mode:"))
 @_serialized_draft_edit
 async def choose_wan3_mode(callback: types.CallbackQuery, state: FSMContext):
     scenario = str(callback.data).split(":", 1)[1]
@@ -681,7 +687,7 @@ async def choose_wan3_mode(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.callback_query(F.data == "wan3_prompt")
+@router.callback_query(StateFilter(*Wan3PrimeStates.__all_states__), F.data == "wan3_prompt")
 @_serialized_draft_edit
 async def ask_wan3_prompt(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(Wan3PrimeStates.waiting_prompt)
@@ -699,7 +705,7 @@ async def wan3_prompt(message: types.Message, state: FSMContext):
     await _show_dashboard(message, state, draft)
 
 
-@router.callback_query(F.data.startswith("wan3_media:"))
+@router.callback_query(StateFilter(*Wan3PrimeStates.__all_states__), F.data.startswith("wan3_media:"))
 @_serialized_draft_edit
 async def ask_wan3_media(callback: types.CallbackQuery, state: FSMContext):
     kind = str(callback.data).split(":", 1)[1]
@@ -754,12 +760,38 @@ def _detected_input_kind(message: types.Message) -> str:
     raise ValueError("Пришлите фото, видео, аудио, документ или публичную ссылку.")
 
 
+async def _wan_media_flow_active(state: FSMContext, data: dict[str, Any]) -> bool:
+    current_state = await state.get_state()
+    return bool(current_state and current_state.startswith("Wan3PrimeStates:")) and data.get("v_model", "wan_3_prime") == "wan_3_prime"
+
+
+@router.callback_query(StateFilter(*Wan3PrimeStates.__all_states__), F.data == "video_change_model")
+async def leave_wan3_model_picker(callback: types.CallbackQuery, state: FSMContext):
+    # Fence in-flight/queued uploads immediately, before the generic picker does
+    # asynchronous work. Continue routing to the existing model-picker handler.
+    await state.update_data(wan3_reset_token=str(uuid.uuid4()))
+    raise SkipHandler
+
+
+def _validate_media_capacity(draft: Wan3PrimeDraft, kind: str) -> None:
+    slots = {
+        "image": (draft.reference_image_urls, MAX_IMAGE_REFS, "Image"),
+        "video": (draft.reference_video_urls, MAX_VIDEO_REFS, "Video"),
+        "audio": (draft.reference_audio_urls, MAX_AUDIO_REFS, "Audio"),
+    }
+    if kind in slots:
+        values, limit, label = slots[kind]
+        if len(values) >= limit:
+            raise ValueError(f"Wan 3.0 принимает максимум {limit} {label}. Удалите материал перед заменой.")
+
+
 async def _receive_media(message: types.Message, state: FSMContext, explicit_kind: str | None = None) -> None:
     # Telegram album updates arrive concurrently. Serialize media writes, then
     # reload state after storage so prompt/settings edits cannot be overwritten.
     identity = _draft_identity(await state.get_data())
     async with _actor_lock(message.from_user.id):
-        if _draft_identity(await state.get_data()) != identity:
+        entry_data = await state.get_data()
+        if _draft_identity(entry_data) != identity or not await _wan_media_flow_active(state, entry_data):
             await message.answer("Материал относился к предыдущей задаче. Пришлите его ещё раз для новой задачи.", parse_mode=None)
             return
         draft = draft_from_state(await state.get_data())
@@ -771,12 +803,13 @@ async def _receive_media(message: types.Message, state: FSMContext, explicit_kin
             if draft.auto_mode and draft.scenario == "text":
                 draft.scenario = "reference"
             _validate_media_allowed(draft, kind)
+            _validate_media_capacity(draft, kind)
             await state.update_data(wan3_uploading=True)
             progress = await message.answer("📎 Материал получен. Сохраняю и проверяю…", parse_mode=None)
             url = await _store_or_import_media(message, draft, kind)
             latest = await state.get_data()
             current = draft_from_state(latest)
-            if _draft_identity(latest) != identity:
+            if _draft_identity(latest) != identity or not await _wan_media_flow_active(state, latest):
                 await message.answer("Загрузка относилась к предыдущей задаче. В новую задачу материал не добавлен.", parse_mode=None)
                 return
             if current.auto_mode and current.scenario == "text":
@@ -816,7 +849,8 @@ async def receive_wan3_input(message: types.Message, state: FSMContext):
         return
     identity = _draft_identity(await state.get_data())
     async with _actor_lock(message.from_user.id):
-        if _draft_identity(await state.get_data()) != identity:
+        current_data = await state.get_data()
+        if _draft_identity(current_data) != identity or not await _wan_media_flow_active(state, current_data):
             await message.answer("Задача изменилась. Отправьте промпт для новой задачи ещё раз.", parse_mode=None)
             return
         draft = draft_from_state(await state.get_data())
@@ -825,7 +859,7 @@ async def receive_wan3_input(message: types.Message, state: FSMContext):
         await _show_dashboard(message, state, draft)
 
 
-@router.callback_query(F.data == "wan3_settings")
+@router.callback_query(StateFilter(*Wan3PrimeStates.__all_states__), F.data == "wan3_settings")
 @_serialized_draft_edit
 async def show_wan3_settings(callback: types.CallbackQuery, state: FSMContext):
     draft = draft_from_state(await state.get_data())
@@ -835,7 +869,7 @@ async def show_wan3_settings(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.callback_query(F.data == "wan3_materials")
+@router.callback_query(StateFilter(*Wan3PrimeStates.__all_states__), F.data == "wan3_materials")
 @_serialized_draft_edit
 async def show_wan3_materials(callback: types.CallbackQuery, state: FSMContext):
     draft = draft_from_state(await state.get_data())
@@ -847,7 +881,7 @@ async def show_wan3_materials(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("wan3_remove:"))
+@router.callback_query(StateFilter(*Wan3PrimeStates.__all_states__), F.data.startswith("wan3_remove:"))
 @_serialized_draft_edit
 async def remove_wan3_media(callback: types.CallbackQuery, state: FSMContext):
     draft = draft_from_state(await state.get_data())
@@ -881,7 +915,7 @@ async def remove_wan3_media(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer("Удалено")
 
 
-@router.callback_query(F.data.startswith("wan3_set:"))
+@router.callback_query(StateFilter(*Wan3PrimeStates.__all_states__), F.data.startswith("wan3_set:"))
 @_serialized_draft_edit
 async def set_wan3_option(callback: types.CallbackQuery, state: FSMContext):
     draft = draft_from_state(await state.get_data())
@@ -912,7 +946,7 @@ async def set_wan3_option(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("wan3_toggle:"))
+@router.callback_query(StateFilter(*Wan3PrimeStates.__all_states__), F.data.startswith("wan3_toggle:"))
 @_serialized_draft_edit
 async def toggle_wan3_option(callback: types.CallbackQuery, state: FSMContext):
     draft = draft_from_state(await state.get_data())
@@ -929,7 +963,7 @@ async def toggle_wan3_option(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.callback_query(F.data == "wan3_seed")
+@router.callback_query(StateFilter(*Wan3PrimeStates.__all_states__), F.data == "wan3_seed")
 @_serialized_draft_edit
 async def ask_wan3_seed(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(Wan3PrimeStates.waiting_seed)
@@ -972,16 +1006,22 @@ def duration_keyboard(draft: Wan3PrimeDraft) -> types.InlineKeyboardMarkup:
 
 async def _show_duration(callback, state, draft):
     await state.set_state(Wan3PrimeStates.waiting_duration)
-    await callback.message.edit_text(
-        "Длительность: " + ("Auto" if draft.duration == -1 else f"{draft.duration} с")
-        + "\nИспользуйте −/+ или отправьте целое число 2..30. Auto выбирается отдельно."
-        + "\nИсходное видео + результат: не более 30 с. Точную совместимость и стоимость проверит расчёт.",
-        reply_markup=duration_keyboard(draft), parse_mode=None,
-    )
+    from aiogram.exceptions import TelegramBadRequest
+
+    try:
+        await callback.message.edit_text(
+            "Длительность: " + ("Auto" if draft.duration == -1 else f"{draft.duration} с")
+            + "\nИспользуйте −/+ или отправьте целое число 2..30. Auto выбирается отдельно."
+            + "\nИсходное видео + результат: не более 30 с. Точную совместимость и стоимость проверит расчёт.",
+            reply_markup=duration_keyboard(draft), parse_mode=None,
+        )
+    except TelegramBadRequest as exc:
+        if "message is not modified" not in str(exc).lower():
+            raise
     await callback.answer()
 
 
-@router.callback_query(F.data.in_({"wan3_duration", "wan3_duration_number"}))
+@router.callback_query(StateFilter(*Wan3PrimeStates.__all_states__), F.data.in_({"wan3_duration", "wan3_duration_number"}))
 @_serialized_draft_edit
 async def ask_wan3_duration(callback: types.CallbackQuery, state: FSMContext):
     if callback.data == "wan3_duration_number":
@@ -993,7 +1033,7 @@ async def ask_wan3_duration(callback: types.CallbackQuery, state: FSMContext):
     await _show_duration(callback, state, draft_from_state(await state.get_data()))
 
 
-@router.callback_query(F.data.startswith("wan3_duration_step:") | F.data.startswith("wan3_quick_duration:"))
+@router.callback_query(StateFilter(*Wan3PrimeStates.__all_states__), F.data.startswith("wan3_duration_step:") | F.data.startswith("wan3_quick_duration:"))
 @_serialized_draft_edit
 async def step_wan3_duration(callback: types.CallbackQuery, state: FSMContext):
     draft = draft_from_state(await state.get_data())
@@ -1003,6 +1043,9 @@ async def step_wan3_duration(callback: types.CallbackQuery, state: FSMContext):
             raise ValueError
     except (ValueError, TypeError):
         await callback.answer("Длительность: Auto или 2..30 секунд.", show_alert=True)
+        return
+    if value == draft.duration:
+        await callback.answer("Длительность уже выбрана")
         return
     draft.duration = value
     invalidate_quote(draft)
@@ -1033,7 +1076,7 @@ async def receive_wan3_duration(message: types.Message, state: FSMContext):
     await _show_dashboard(message, state, draft)
 
 
-@router.callback_query(F.data == "wan3_quote")
+@router.callback_query(StateFilter(*Wan3PrimeStates.__all_states__), F.data == "wan3_quote")
 async def quote_wan3_prime(callback: types.CallbackQuery, state: FSMContext):
     if (await state.get_data()).get("wan3_uploading"):
         await callback.answer("Дождитесь сохранения материалов", show_alert=True)
@@ -1078,7 +1121,7 @@ async def quote_wan3_prime(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer("Проверьте расчёт")
 
 
-@router.callback_query(F.data == "wan3_confirm")
+@router.callback_query(StateFilter(*Wan3PrimeStates.__all_states__), F.data == "wan3_confirm")
 async def confirm_wan3_prime(callback: types.CallbackQuery, state: FSMContext):
     actor_id = callback.from_user.id
     draft = draft_from_state(await state.get_data())
@@ -1222,7 +1265,7 @@ async def open_wan3_shared_repeat(callback: types.CallbackQuery, state: FSMConte
         await callback.answer("Повтор больше недоступен", show_alert=True)
 
 
-@router.callback_query(F.data.startswith("wan3_repeat_slot:"))
+@router.callback_query(StateFilter(*Wan3PrimeStates.__all_states__), F.data.startswith("wan3_repeat_slot:"))
 @_serialized_draft_edit
 async def ask_wan3_repeat_slot(callback: types.CallbackQuery, state: FSMContext):
     draft = draft_from_state(await state.get_data())

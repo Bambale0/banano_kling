@@ -32,8 +32,8 @@ async def cleanup_expired(*, limit: int = 100) -> dict[str, int]:
         db.row_factory = db_backend.Row
         await lock_storage(db)
         sessions = await (await db.execute(
-            "SELECT upload_id FROM wan3_prime_upload_sessions WHERE expires_at <= CURRENT_TIMESTAMP "
-            "AND status IN ('open', 'assembling', 'importing', 'rejected', 'failed', 'completed') AND updated_at <= ? "
+            "SELECT upload_id FROM wan3_prime_upload_sessions WHERE ((expires_at <= CURRENT_TIMESTAMP "
+            "AND status IN ('open', 'assembling', 'importing', 'rejected', 'failed', 'completed')) OR status = 'cancelled') AND updated_at <= ? "
             "ORDER BY expires_at LIMIT ?" + (' FOR UPDATE' if db_backend.is_postgres() else ''),
             (stale_lease, limit),
         )).fetchall()
@@ -92,3 +92,4 @@ async def cleanup_expired(*, limit: int = 100) -> dict[str, int]:
     if removed_sessions or removed_media:
         logger.info('Wan3 retention: removed_sessions=%s removed_unused_media=%s', removed_sessions, removed_media)
     return {'removed_sessions': removed_sessions, 'removed_media': removed_media}
+

@@ -13,9 +13,11 @@ jest.mock('../api', () => ({
 }))
 
 const fetchMock = jest.fn()
+const UPLOAD_ID = '00000000000000000000000000000001'
 
 beforeEach(() => {
   fetchMock.mockReset()
+  jest.spyOn(crypto, 'randomUUID').mockReturnValue('00000000-0000-0000-0000-000000000001')
   ;(global as any).fetch = fetchMock
 })
 
@@ -113,7 +115,7 @@ test('import validates public Wan references through the dedicated route', async
 
 test('chunk upload uses Wan limits and preserves large video capability', async () => {
   fetchMock
-    .mockResolvedValueOnce(jsonResponse({ ok: true, upload_id: 'up1', chunk_size: 5 }))
+    .mockResolvedValueOnce(jsonResponse({ ok: true, upload_id: UPLOAD_ID, chunk_size: 5 }))
     .mockResolvedValueOnce(jsonResponse({ ok: true }))
     .mockResolvedValueOnce(jsonResponse({ ok: true }))
     .mockResolvedValueOnce(jsonResponse({
@@ -138,7 +140,7 @@ test('chunk upload uses Wan limits and preserves large video capability', async 
 
 test('upload reports acknowledged chunk progress and keeps original Cyrillic filenames in the unchanged protocol', async () => {
   fetchMock
-    .mockResolvedValueOnce(jsonResponse({ ok: true, upload_id: 'up1', chunk_size: 5 }))
+    .mockResolvedValueOnce(jsonResponse({ ok: true, upload_id: UPLOAD_ID, chunk_size: 5 }))
     .mockResolvedValueOnce(jsonResponse({ ok: true }))
     .mockResolvedValueOnce(jsonResponse({ ok: true }))
     .mockResolvedValueOnce(jsonResponse({ ok: true, url: 'https://cdn.test/upload.mov', kind: 'video', filename: 'upload.mov', size: 10 }))
@@ -152,15 +154,16 @@ test('upload reports acknowledged chunk progress and keeps original Cyrillic fil
   expect(result.url).toBe('https://cdn.test/upload.mov')
 })
 
-test.each(['init', 'chunk', 'complete'])('aborting %s rejects promptly and never advances or accepts a late response', async stage => {
+test.each(['init', 'chunk', 'complete'])('aborting %s captures init then awaits cancellation and discards late media', async stage => {
   let finish: (response: Response) => void = () => {}
   let pendingSignal: AbortSignal | undefined
   fetchMock.mockImplementation((url, options) => {
+    if (url.endsWith('/cancel')) return Promise.resolve(jsonResponse({ ok: true, status: 'cancelled' }))
     if (url.endsWith(`/${stage}`)) {
       pendingSignal = options.signal
       return new Promise(resolve => { finish = resolve })
     }
-    return Promise.resolve(jsonResponse({ ok: true, upload_id: 'up1', chunk_size: 10 }))
+    return Promise.resolve(jsonResponse({ ok: true, upload_id: UPLOAD_ID, chunk_size: 10 }))
   })
   const controller = new AbortController()
   const promise = uploadWan3PrimeReference('image', new File(['01234'], 'Фото.jpg', { type: 'image/jpeg' }), controller.signal)
@@ -169,23 +172,29 @@ test.each(['init', 'chunk', 'complete'])('aborting %s rejects promptly and never
   expect(pendingSignal).toBeDefined()
   const count = fetchMock.mock.calls.length
   controller.abort()
+  if (stage === 'init') {
+    expect(pendingSignal?.aborted).toBe(false)
+    finish(jsonResponse({ ok: true, upload_id: UPLOAD_ID, chunk_size: 10 }))
+  }
   await rejected
-  expect(pendingSignal?.aborted).toBe(true)
+  expect(pendingSignal?.aborted).toBe(stage !== 'init')
   finish(jsonResponse({ ok: true, url: 'https://cdn.test/late.jpg', kind: 'image', filename: 'late.jpg' }))
   await Promise.resolve(); await Promise.resolve()
-  expect(fetchMock).toHaveBeenCalledTimes(count)
+  expect(fetchMock).toHaveBeenCalledTimes(count + 1)
+  expect(fetchMock.mock.calls.at(-1)[0]).toBe('/mini-app/api/wan3/upload/cancel')
 })
 
 test('a stalled chunk times out, aborts its request and exposes a retryable error', async () => {
   jest.useFakeTimers()
   try {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, upload_id: 'up1', chunk_size: 5 }))
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, upload_id: UPLOAD_ID, chunk_size: 5 }))
       .mockImplementationOnce(() => new Promise(() => {}))
+      .mockResolvedValueOnce(jsonResponse({ ok: true, status: 'cancelled' }))
     const result = uploadWan3PrimeReference('image', new File(['012345'], 'Фото.jpg', { type: 'image/jpeg' }))
     const rejected = expect(result).rejects.toThrow('Сервер не ответил за 15 минут')
     await jest.advanceTimersByTimeAsync(WAN3_PRIME_MEDIA_TIMEOUT_MS)
     await rejected
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
     expect(fetchMock.mock.calls[1][1].signal.aborted).toBe(true)
     expect(jest.getTimerCount()).toBe(0)
   } finally { jest.useRealTimers() }
@@ -195,7 +204,7 @@ test('large multi-chunk files receive a fresh timeout budget per request', async
   jest.useFakeTimers()
   try {
     fetchMock.mockImplementation((url: string) => new Promise(resolve => setTimeout(() => resolve(jsonResponse(
-      url.endsWith('/init') ? { ok: true, upload_id: 'up1', chunk_size: 5 }
+      url.endsWith('/init') ? { ok: true, upload_id: UPLOAD_ID, chunk_size: 5 }
         : url.endsWith('/complete') ? { ok: true, url: 'https://cdn.test/video.mov', kind: 'video', filename: 'Видео.mov', size: 10 }
           : { ok: true },
     )), WAN3_PRIME_MEDIA_TIMEOUT_MS - 1)))

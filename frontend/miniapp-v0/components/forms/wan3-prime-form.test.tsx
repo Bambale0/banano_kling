@@ -387,3 +387,28 @@ test('mode change clears unfinished upload retry state from the previous draft',
   fireEvent.click(screen.getByRole('button', { name: 'Из документа' }))
   expect(within(screen.getByRole('region', { name: 'Фото-референсы' })).queryByRole('button', { name: 'Повторить загрузку' })).not.toBeInTheDocument()
 })
+
+test('cancellation stays busy until cleanup finishes and retains a cleanup failure for safe retry', async () => {
+  let rejectCleanup: (error: Error) => void = () => {}
+  let uploadSignal: AbortSignal | undefined
+  ;(uploadWan3PrimeReference as jest.Mock).mockImplementationOnce((_kind, _file, signal) => {
+    uploadSignal = signal
+    return new Promise((_resolve, reject) => { rejectCleanup = reject })
+  })
+  render(<Wan3PrimeForm credits={1000} />)
+  fireEvent.click(screen.getByRole('button', { name: 'По референсам' }))
+  const field = within(screen.getByRole('region', { name: 'Фото-референсы' }))
+  const input = field.getByLabelText('Загрузить фото-референсы')
+  fireEvent.change(input, { target: { files: [new File(['synthetic'], 'Фото.jpg', { type: 'image/jpeg' })] } })
+  fireEvent.click(field.getByRole('button', { name: 'Отменить загрузку' }))
+  expect(uploadSignal?.aborted).toBe(true)
+  expect(field.getByRole('status')).toHaveTextContent('Отменяю загрузку')
+  expect(field.getByRole('button', { name: 'Отменить загрузку' })).toBeDisabled()
+  expect(input).toBeDisabled()
+  expect(field.queryByRole('button', { name: 'Повторить загрузку' })).not.toBeInTheDocument()
+  await act(async () => rejectCleanup(Object.assign(new Error('Не удалось подтвердить отмену предыдущей загрузки. Повтор сначала проверит и освободит её.'), { name: 'Wan3PrimeUploadCleanupError' })))
+  expect(field.getByRole('alert')).toHaveTextContent('Не удалось подтвердить отмену')
+  expect(field.getByRole('alert')).not.toHaveTextContent('Загрузка отменена. Можно повторить.')
+  expect(field.getByRole('button', { name: 'Повторить загрузку' })).toBeEnabled()
+  expect(uploadWan3PrimeReference).toHaveBeenCalledTimes(1)
+})

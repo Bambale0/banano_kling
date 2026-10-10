@@ -10,6 +10,9 @@ from bot import db as db_backend
 from bot.services.wan3_prime_media import Wan3PrimeValidationError
 
 ACTIVE_UPLOAD_STATES = "('open', 'assembling', 'importing', 'rejected')"
+# Cancellation releases the unfinished-session slot, not disk bytes that still
+# exist. Retention changes cancelled -> expired only after removing those files.
+RESERVED_UPLOAD_STATES = "('open', 'assembling', 'importing', 'rejected', 'cancelled')"
 
 
 def positive_setting(name: str, default: int) -> int:
@@ -38,11 +41,11 @@ async def assert_capacity(db, user_id: int, incoming_bytes: int, *, exclude_uplo
     all_media = await (await db.execute("SELECT COALESCE(SUM(size_bytes), 0) FROM wan3_prime_media")).fetchone()
     user_pending = await (await db.execute(
         "SELECT COALESCE(SUM(declared_size), 0) FROM wan3_prime_upload_sessions "
-        f"WHERE user_id = ? AND status IN {ACTIVE_UPLOAD_STATES} AND upload_id <> ?", (user_id, exclude_upload_id),
+        f"WHERE user_id = ? AND status IN {RESERVED_UPLOAD_STATES} AND upload_id <> ?", (user_id, exclude_upload_id),
     )).fetchone()
     all_pending = await (await db.execute(
         "SELECT COALESCE(SUM(declared_size), 0) FROM wan3_prime_upload_sessions "
-        f"WHERE status IN {ACTIVE_UPLOAD_STATES} AND upload_id <> ?", (exclude_upload_id,),
+        f"WHERE status IN {RESERVED_UPLOAD_STATES} AND upload_id <> ?", (exclude_upload_id,),
     )).fetchone()
     if int(user_media[0]) + int(user_pending[0]) + incoming_bytes > positive_setting("WAN3_UPLOAD_USER_QUOTA_BYTES", 2 * 1024**3):
         raise Wan3PrimeValidationError("Wan storage quota exceeded for this user", status=429)
@@ -56,3 +59,4 @@ async def assert_capacity(db, user_id: int, incoming_bytes: int, *, exclude_uplo
     required = (int(all_pending[0]) + incoming_bytes) * 3
     if disk.free - required < positive_setting("WAN3_UPLOAD_MIN_FREE_BYTES", 1024**3):
         raise Wan3PrimeValidationError("Wan storage reserve is temporarily unavailable", status=503)
+

@@ -17,8 +17,8 @@ from bot.services.wan3_prime_lifecycle import Wan3PrimeLifecycle
 from tests.test_wan3_prime_lifecycle import Prices, Probe, Provider, balance, user_actor
 
 
-def signed_user(telegram_id):
-    fields = {'auth_date': str(int(time.time())), 'user': json.dumps({'id': telegram_id})}
+def signed_user(telegram_id, *, auth_date=None):
+    fields = {'auth_date': str(int(time.time()) if auth_date is None else auth_date), 'user': json.dumps({'id': telegram_id})}
     key = hmac.new(b'WebAppData', config.BOT_TOKEN.encode(), hashlib.sha256).digest()
     fields['hash'] = hmac.new(key, '\n'.join(f'{k}={v}' for k, v in sorted(fields.items())).encode(), hashlib.sha256).hexdigest()
     return urlencode(fields)
@@ -111,3 +111,71 @@ async def test_real_multipart_chunk_accepts_frontend_start_fallback_for_all_uplo
     assert save_chunk.await_args.kwargs == {
         'upload_id': f'{kind}-upload', 'index': 0, 'total': 1, 'chunk': b'synthetic-bytes',
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('auth_kind', ['missing', 'expired', 'forged'])
+async def test_upload_cancel_signed_http_rejects_missing_expired_or_forged_auth(auth_kind, monkeypatch):
+    actor = await user_actor(100, telegram_id=971284101)
+    cancel = AsyncMock()
+    monkeypatch.setattr(api.wan3_prime_storage, 'cancel_upload', cancel)
+    app = web.Application()
+    app.router.add_post('/upload/cancel', api._http_boundary(api._upload_cancel_route))
+    payload = {'upload_id': 'a' * 32, 'user_id': actor.user_id, 'telegram_id': actor.telegram_id}
+    if auth_kind == 'expired':
+        payload['init_data'] = signed_user(actor.telegram_id, auth_date=1)
+    elif auth_kind == 'forged':
+        payload['init_data'] = signed_user(actor.telegram_id).replace(str(actor.telegram_id), '971284102', 1)
+    async with TestClient(TestServer(app)) as client:
+        response = await client.post('/upload/cancel', json=payload)
+        assert response.status == 401, await response.text()
+        assert (await response.json())['code'] in {'auth_required', 'auth_invalid'}
+    cancel.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_upload_signed_http_init_replay_owner_cancel_and_foreign_ids_are_safe(monkeypatch, tmp_path):
+    from bot.services import wan3_prime_storage as storage_module
+
+    monkeypatch.setattr(storage_module, 'CHUNK_ROOT', tmp_path / 'chunks')
+    monkeypatch.setattr(storage_module, 'UPLOAD_ROOT', tmp_path / 'references')
+    owner = await user_actor(100, telegram_id=971284103)
+    foreign = await user_actor(100, telegram_id=971284104)
+    await api.wan3_prime_storage.init_schema()
+    app = web.Application()
+    app.router.add_post('/upload/init', api._http_boundary(api._upload_init_route))
+    app.router.add_post('/upload/cancel', api._http_boundary(api._upload_cancel_route))
+    init_body = {'upload_id': 'b' * 32, 'kind': 'file', 'filename': 'Файл.txt', 'size': 4, 'content_type': 'text/plain'}
+    owner_auth = {'init_data': signed_user(owner.telegram_id)}
+    foreign_auth = {'init_data': signed_user(foreign.telegram_id), 'user_id': owner.user_id, 'telegram_id': owner.telegram_id}
+    async with TestClient(TestServer(app)) as client:
+        first = await client.post('/upload/init', json={**init_body, **owner_auth})
+        assert first.status == 200, await first.text()
+        original = await first.json()
+        repeated = await client.post('/upload/init', json={**init_body, **owner_auth})
+        assert repeated.status == 200, await repeated.text()
+        assert await repeated.json() == original
+        collision = await client.post('/upload/init', json={**init_body, **foreign_auth})
+        assert collision.status == 409
+        assert (await collision.json())['code'] == 'upload_session_conflict'
+        denied = await client.post('/upload/cancel', json={**foreign_auth, 'upload_id': init_body['upload_id']})
+        unknown = await client.post('/upload/cancel', json={**foreign_auth, 'upload_id': 'c' * 32})
+        assert denied.status == unknown.status == 200
+        assert await denied.json() == await unknown.json() == {'ok': True, 'status': 'not_found'}
+        async with database.db_backend.connect(database.DATABASE_PATH) as db:
+            row = await (await db.execute('SELECT status, user_id FROM wan3_prime_upload_sessions WHERE upload_id = ?', (init_body['upload_id'],))).fetchone()
+        assert row[0] == 'open' and int(row[1]) == owner.user_id
+        for _ in range(2):
+            cancelled = await client.post('/upload/cancel', json={**owner_auth, 'upload_id': init_body['upload_id']})
+            assert cancelled.status == 200
+            assert await cancelled.json() == {'ok': True, 'status': 'cancelled'}
+        fenced = await client.post('/upload/init', json={**init_body, **owner_auth})
+        assert fenced.status == 409
+        assert (await fenced.json())['code'] == 'upload_session_conflict'
+    async with database.db_backend.connect(database.DATABASE_PATH) as db:
+        rows = await (await db.execute('SELECT status, user_id FROM wan3_prime_upload_sessions')).fetchall()
+        media_count = await (await db.execute('SELECT COUNT(*) FROM wan3_prime_media')).fetchone()
+    assert len(rows) == 1 and rows[0][0] == 'cancelled' and int(rows[0][1]) == owner.user_id
+    assert media_count[0] == 0
+    assert await balance(owner.user_id) == await balance(foreign.user_id) == 100
+

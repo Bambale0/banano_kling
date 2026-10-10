@@ -25,11 +25,10 @@ const bootstrap = { ok: true, telegram_id: 424242, first_name: 'Synthetic', last
   image_models: [{ id: 'banana_pro', label: 'Synthetic image model', ratios: ['1:1'], max_references: 8, cost: 2 }],
   video_models: [wan, ...extraModels], recent_tasks: [], saved_references: [] }
 let browser
-let counter = 0
 async function setup(width = 375, behavior = {}) {
   const context = await browser.newContext({ viewport: { width, height: 840 } })
   const page = await context.newPage(); page.setDefaultTimeout(12000)
-  const errors = [], quotes = [], generations = [], uploads = new Map(), chunks = []
+  const errors = [], quotes = [], generations = [], uploads = new Map(), completedUploads = new Set(), chunks = []
   page.on('pageerror', error => errors.push(error.message))
   await page.addInitScript(() => {
     window.Telegram = { WebApp: { initData: 'query_id=wan3-browser-fixture', initDataUnsafe: {}, ready() {}, expand() {}, onEvent() {}, offEvent() {} } }
@@ -46,12 +45,15 @@ async function setup(width = 375, behavior = {}) {
       else if (url.pathname.endsWith('/feed')) result = { ok: true, feed: [] }
       else if (url.pathname.endsWith('/prompts')) result = { ok: true, prompts: [] }
       else if (url.pathname.endsWith('/wan3/upload/init')) {
-        const id = `upload-${++counter}`; uploads.set(id, body)
+        const id = body.upload_id; assert.match(id, /^[a-f0-9]{32}$/); uploads.set(id, body)
         result = { ok: true, upload_id: id, chunk_size: 7 * 1024 * 1024 }
       } else if (url.pathname.endsWith('/wan3/upload/chunk')) chunks.push(true)
       else if (url.pathname.endsWith('/wan3/upload/complete')) {
         const upload = uploads.get(body.upload_id); assert.ok(upload, 'Unknown upload session')
+        completedUploads.add(body.upload_id)
         result = { ok: true, kind: upload.kind, url: `https://owned.test/${upload.filename}`, filename: upload.filename, size: upload.size }
+      } else if (url.pathname.endsWith('/wan3/upload/cancel')) {
+        result = { ok: true, status: completedUploads.has(body.upload_id) ? 'completed' : 'cancelled' }
       } else if (url.pathname.endsWith('/wan3/import')) result = { ok: true, kind: body.kind, url: body.url, filename: 'page' }
       else if (url.pathname.endsWith('/wan3/quote')) {
         assert.equal(generations.length, 0, 'Quote is tested before any launch')

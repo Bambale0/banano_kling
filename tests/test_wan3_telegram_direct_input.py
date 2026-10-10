@@ -436,3 +436,110 @@ def test_explicit_legacy_advanced_recipe_requires_explicit_auto_choice(scenario)
     assert not draft.auto_mode
     draft = wan.apply_wan3_mode(draft, 'auto')
     assert draft.auto_mode and wan.build_wan3_payload(draft)['scenario'] == 'reference'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('value', [2, 30, -1])
+async def test_unchanged_duration_endpoint_is_acknowledged_without_edit_or_quote_loss(runtime, value):
+    state = FakeState()
+    draft = wan.Wan3PrimeDraft(duration=value, quote_hash='valid-quote', last_quote={'reserve_cost': 42})
+    await state.update_data(**wan.draft_to_state(draft))
+    callback = FakeCallback(f'wan3_duration_step:{value}')
+    await wan.step_wan3_duration(callback, state)
+    assert callback.answers and not callback.message.edits
+    assert wan.draft_from_state(await state.get_data()).quote_hash == 'valid-quote'
+
+
+@pytest.mark.asyncio
+async def test_reopening_identical_duration_screen_acknowledges_telegram_unchanged_error(runtime):
+    from aiogram.exceptions import TelegramBadRequest
+    state = FakeState()
+    await wan.open_wan3_prime(FakeCallback('wan3_open'), state)
+    callback = FakeCallback('wan3_duration')
+    callback.message.edit_text = AsyncMock(side_effect=TelegramBadRequest(method=None, message='Bad Request: message is not modified'))
+    await wan.ask_wan3_duration(callback, state)
+    assert callback.answers
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(('kind', 'field', 'limit'), [
+    ('image', 'reference_image_urls', 10), ('video', 'reference_video_urls', 5),
+    ('audio', 'reference_audio_urls', 5),
+])
+async def test_reference_capacity_rejects_before_download_or_import(runtime, kind, field, limit):
+    state = FakeState()
+    draft = wan.Wan3PrimeDraft(scenario='reference')
+    setattr(draft, field, [f'https://owned.test/{kind}/{i}' for i in range(limit)])
+    await state.update_data(**wan.draft_to_state(draft))
+    await state.set_state(wan.Wan3PrimeStates.dashboard)
+    message = media_message(kind)
+    await dispatch(message, state)
+    assert not runtime.stored and not runtime.imported
+    assert len(getattr(wan.draft_from_state(await state.get_data()), field)) == limit
+    assert any('максимум' in text for text, _ in message.answers)
+
+
+@pytest.mark.asyncio
+async def test_full_edit_video_list_allows_explicit_source_replacement(runtime):
+    state = FakeState()
+    draft = wan.Wan3PrimeDraft(scenario='edit', reference_video_urls=[f'https://owned.test/video/{i}' for i in range(5)])
+    await state.update_data(**wan.draft_to_state(draft))
+    await state.set_state(wan.Wan3PrimeStates.waiting_source_video)
+    await dispatch(media_message('source_video'), state)
+    current = wan.draft_from_state(await state.get_data())
+    assert len(runtime.stored) == 1 and len(current.reference_video_urls) == 5
+    assert current.reference_video_urls[0] == 'https://owned.test/video/video-1'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('departure', ['model_picker', 'other_state', 'other_model'])
+async def test_upload_completion_cannot_reopen_wan_after_leaving(runtime, departure):
+    state = FakeState()
+    await wan.open_wan3_prime(FakeCallback('wan3_open'), state)
+    started, release = asyncio.Event(), asyncio.Event()
+    original = runtime.store_telegram_wan3_prime_media
+    async def storage(**kwargs):
+        started.set()
+        await release.wait()
+        return await original(**kwargs)
+    runtime.store_telegram_wan3_prime_media = storage
+    first = asyncio.create_task(dispatch(media_message('image', 1), state))
+    await started.wait()
+    queued = asyncio.create_task(dispatch(media_message('image', 2), state))
+    prompt = asyncio.create_task(dispatch(FakeMessage(text='Queued old prompt'), state))
+    option = asyncio.create_task(wan.set_wan3_option(FakeCallback('wan3_set:ratio:9:16'), state))
+    await asyncio.sleep(0.02)
+    if departure == 'model_picker':
+        callback = FakeCallback('video_change_model')
+        result = await wan.router.callback_query.trigger(callback, state=state, raw_state=await state.get_state())
+        assert result is UNHANDLED  # The existing generic picker remains responsible for rendering.
+        await state.set_state('GenerationStates:waiting_for_input')
+    elif departure == 'other_state':
+        await state.set_state('MainMenuStates:dashboard')
+    else:
+        await state.update_data(v_model='different_video_model')
+    expected_state = await state.get_state()
+    release.set()
+    await asyncio.gather(first, queued, prompt, option)
+    assert await state.get_state() == expected_state
+    current = wan.draft_from_state(await state.get_data())
+    assert not current.reference_image_urls and not current.prompt
+    assert current.aspect_ratio == 'adaptive'
+    assert len(runtime.stored) == 1 and not runtime.launches
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('callback_data', ['wan3_set:ratio:9:16', 'wan3_toggle:audio', 'wan3_duration_step:8', 'wan3_quote', 'wan3_confirm'])
+async def test_stale_controls_do_not_reenter_wan_but_explicit_open_still_works(runtime, callback_data):
+    state = FakeState()
+    await wan.open_wan3_prime(FakeCallback('wan3_open'), state)
+    original = wan.draft_from_state(await state.get_data())
+    await state.set_state('MainMenuStates:dashboard')
+    result = await wan.router.callback_query.trigger(FakeCallback(callback_data), state=state, raw_state=await state.get_state())
+    assert result is UNHANDLED
+    assert await state.get_state() == 'MainMenuStates:dashboard'
+    assert wan.draft_from_state(await state.get_data()) == original
+    result = await wan.router.callback_query.trigger(FakeCallback('wan3_open'), state=state, raw_state=await state.get_state())
+    assert result is not UNHANDLED
+    assert await state.get_state() == wan.Wan3PrimeStates.dashboard.state
+    assert not runtime.quotes and not runtime.launches
