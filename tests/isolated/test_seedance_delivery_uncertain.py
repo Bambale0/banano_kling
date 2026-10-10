@@ -26,6 +26,11 @@ class Uncertain(Exception):
     pass
 
 
+class Retryable(Exception):
+    def __init__(self, delay):
+        self.retry_after = delay
+
+
 class DeliveryTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.bot = types.SimpleNamespace(send_video=AsyncMock(), send_document=AsyncMock(),
@@ -43,6 +48,8 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
             "FSInputFile": lambda *a, **kw: "file",
             "os": __import__("os"), "MODEL_KEY": "seedance_2_5",
             "TelegramDeliveryUncertain": Uncertain,
+            "TelegramDeliveryRetryable": Retryable,
+            "telegram_delivery_retry_delay": lambda exc: exc.retry_after if isinstance(exc, Retryable) else None,
             "telegram_delivery_is_definitely_rejected": lambda exc: isinstance(exc, Rejected),
             "is_terminal_telegram_delivery_error": lambda exc: False,
             "terminal_telegram_delivery_reason": lambda exc: None,
@@ -104,6 +111,36 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("uncertain", ns["TASK_DELIVERY_STATUSES"])
         self.assertIn("uncertain", ns["TERMINAL_TASK_DELIVERY_STATUSES"])
         self.assertNotIn("uncertain", ns["RETRYABLE_TASK_DELIVERY_STATUSES"])
+
+    async def test_explicit_rate_limit_does_not_fallback(self):
+        for path, name in [
+            ("bot/handlers/seedance_25_public_release.py", "_public_send_results"),
+            ("bot/handlers/seedance_25_fullstack.py", "_send_seedance25_results"),
+        ]:
+            self.bot.send_video.side_effect = Retryable(75)
+            with self.assertRaises(Retryable) as caught:
+                await self.run_delivery(path, name)
+            self.assertEqual(caught.exception.retry_after, 75)
+        self.download.assert_not_awaited()
+        self.bot.send_message.assert_not_awaited()
+
+    async def test_dispatcher_honors_rate_limit_and_presend_timeout(self):
+        self.ns.update(asyncio=asyncio, SEEDANCE25_DELIVERY_TIMEOUT_SECONDS=1,
+            _can_attempt_seedance25_result_delivery=AsyncMock(return_value=True),
+            _claim_seedance25_delivery=AsyncMock(return_value=True),
+            _stored_result_urls=lambda _: ["https://example.test/result.mp4"],
+            _classify_results=lambda *a: ("https://example.test/result.mp4", None))
+        fn = load_function("bot/handlers/seedance_25_fullstack.py", "_retry_seedance25_delivery", self.ns)
+        self.ns["_send_seedance25_results"] = AsyncMock(side_effect=Retryable(75))
+        await fn({"bot": self.bot}, {"task_id": "task", "telegram_id": 1}, {})
+        self.assertEqual(self.mark.call_args.args[:2], ("task", "pending"))
+        self.assertEqual(self.mark.call_args.kwargs["retry_after_seconds"], 75)
+        self.ns["_send_seedance25_results"] = AsyncMock(side_effect=TimeoutError())
+        await fn({"bot": self.bot}, {"task_id": "task", "telegram_id": 1}, {})
+        self.assertEqual(self.mark.call_args.args[:2], ("task", "pending"))
+        await fn({"bot": self.bot}, {"task_id": "task", "telegram_id": 1},
+                 {"_telegram_send_inflight": True})
+        self.assertEqual(self.mark.call_args.args[:2], ("task", "uncertain"))
 
     async def test_dispatcher_stores_uncertain_and_does_not_requeue(self):
         self.ns.update(asyncio=asyncio, SEEDANCE25_DELIVERY_TIMEOUT_SECONDS=1,

@@ -98,3 +98,19 @@ def telegram_delivery_is_definitely_rejected(error: Exception) -> bool:
     from aiogram.exceptions import TelegramBadRequest
 
     return isinstance(error, TelegramBadRequest)
+
+
+class TelegramDeliveryRetryable(RuntimeError):
+    """Explicit flood-limit rejection: no send occurred; honor retry_after."""
+
+    def __init__(self, retry_after: int):
+        super().__init__("Telegram explicitly requested a later retry")
+        self.retry_after = max(1, int(retry_after))
+
+
+def telegram_delivery_retry_delay(error: Exception) -> int | None:
+    from aiogram.exceptions import TelegramRetryAfter
+
+    if isinstance(error, TelegramRetryAfter):
+        return max(1, int(error.retry_after))
+    return None

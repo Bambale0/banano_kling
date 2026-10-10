@@ -5784,6 +5784,7 @@ async def mark_task_delivery_status(
     status: str,
     *,
     error: str | None = None,
+    retry_after_seconds: int | None = None,
 ) -> bool:
     """Persist Telegram delivery outcome separately from provider completion."""
     normalized_status = str(status or "").strip().lower()
@@ -5805,6 +5806,12 @@ async def mark_task_delivery_status(
     else:
         request_data["delivery_attempts"] = int(request_data.get("delivery_attempts") or 0) + 1
     request_data["delivery_updated_at"] = datetime.now(UTC).isoformat()
+    if retry_after_seconds is not None:
+        request_data["delivery_retry_at"] = (
+            datetime.now(UTC) + timedelta(seconds=max(1, int(retry_after_seconds)))
+        ).isoformat()
+    else:
+        request_data.pop("delivery_retry_at", None)
     if error:
         request_data["delivery_error"] = str(error)[:500]
     else:
@@ -5920,6 +5927,16 @@ async def claim_task_delivery(task_id: str, *, lease_seconds: int = 300) -> bool
         return False
 
     now = datetime.now(UTC)
+    retry_at = request_data.get("delivery_retry_at")
+    if retry_at:
+        try:
+            retry_time = datetime.fromisoformat(str(retry_at).replace("Z", "+00:00"))
+            if retry_time.tzinfo is None:
+                retry_time = retry_time.replace(tzinfo=UTC)
+            if now < retry_time:
+                return False
+        except (TypeError, ValueError):
+            return False  # Invalid retry deadline requires reconciliation.
     if current_status == "delivering":
         claimed_at_raw = str(
             request_data.get("delivery_claimed_at")

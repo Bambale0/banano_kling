@@ -34,6 +34,8 @@ from bot.config import config
 from bot.creator_tariff import VideoQuote, quote_video_for_actor, resolve_video_quote
 from bot.services.delivery_state import (
     TelegramDeliveryUncertain,
+    TelegramDeliveryRetryable,
+    telegram_delivery_retry_delay,
     telegram_delivery_is_definitely_rejected,
     is_terminal_telegram_delivery_error,
     terminal_telegram_delivery_reason,
@@ -1135,6 +1137,7 @@ async def _public_send_results(
     suffix = ".mov" if output_format == "mov" else ".mp4"
     if output_format == "mp4":
         try:
+            request_data["_telegram_send_inflight"] = True
             await bot.send_video(
                 telegram_id,
                 video=video_url,
@@ -1143,14 +1146,20 @@ async def _public_send_results(
                 supports_streaming=True,
                 reply_markup=result_markup,
             )
+            request_data["_telegram_send_inflight"] = False
             delivered = True
         except Exception as exc:
+            delay = telegram_delivery_retry_delay(exc)
+            if delay is not None:
+                request_data["_telegram_send_inflight"] = False
+                raise TelegramDeliveryRetryable(delay) from exc
             if not telegram_delivery_is_definitely_rejected(exc):
                 if is_terminal_telegram_delivery_error(exc):
                     raise
                 raise TelegramDeliveryUncertain("Telegram send outcome is unknown") from exc
             if is_terminal_telegram_delivery_error(exc):
                 raise
+            request_data["_telegram_send_inflight"] = False
             logger.info("Seedance 2.5 URL delivery failed; trying downloaded file")
 
     if not delivered:
@@ -1158,6 +1167,7 @@ async def _public_send_results(
         if temp_path:
             try:
                 if output_format == "mp4":
+                    request_data["_telegram_send_inflight"] = True
                     await bot.send_video(
                         telegram_id,
                         video=types.FSInputFile(temp_path),
@@ -1167,6 +1177,7 @@ async def _public_send_results(
                         reply_markup=result_markup,
                     )
                 else:
+                    request_data["_telegram_send_inflight"] = True
                     await bot.send_document(
                         telegram_id,
                         document=types.FSInputFile(temp_path, filename=f"seedance25-{task_id}.mov"),
@@ -1174,14 +1185,20 @@ async def _public_send_results(
                         parse_mode="HTML",
                         reply_markup=result_markup,
                     )
+                request_data["_telegram_send_inflight"] = False
                 delivered = True
             except Exception as exc:
+                delay = telegram_delivery_retry_delay(exc)
+                if delay is not None:
+                    request_data["_telegram_send_inflight"] = False
+                    raise TelegramDeliveryRetryable(delay) from exc
                 if not telegram_delivery_is_definitely_rejected(exc):
                     if is_terminal_telegram_delivery_error(exc):
                         raise
                     raise TelegramDeliveryUncertain("Telegram send outcome is unknown") from exc
                 if is_terminal_telegram_delivery_error(exc):
                     raise
+                request_data["_telegram_send_inflight"] = False
                 logger.exception("Seedance 2.5 file delivery failed for task %s", task_id)
             finally:
                 try:
@@ -1191,6 +1208,7 @@ async def _public_send_results(
 
     if not delivered and not request_data.get("delivery_link_sent"):
         try:
+            request_data["_telegram_send_inflight"] = True
             await bot.send_message(
                 telegram_id,
                 caption + f"\n\n🔗 Оригинал:\n{video_url}",
@@ -1200,6 +1218,10 @@ async def _public_send_results(
             )
             await fullstack._mark_seedance25_delivery(task_id, "link_sent")
         except Exception as exc:
+            delay = telegram_delivery_retry_delay(exc)
+            if delay is not None:
+                request_data["_telegram_send_inflight"] = False
+                raise TelegramDeliveryRetryable(delay) from exc
             if not telegram_delivery_is_definitely_rejected(exc):
                 if is_terminal_telegram_delivery_error(exc):
                     raise
@@ -1213,6 +1235,7 @@ async def _public_send_results(
 
     if last_frame_url:
         try:
+            request_data["_telegram_send_inflight"] = True
             await bot.send_photo(
                 telegram_id,
                 photo=last_frame_url,
@@ -1237,12 +1260,17 @@ async def _public_send_results(
                 )
                 return delivered
             try:
+                request_data["_telegram_send_inflight"] = True
                 await bot.send_message(
                     telegram_id,
                     f"🖼 Последний кадр Seedance 2.5:\n{last_frame_url}",
                     disable_web_page_preview=False,
                 )
             except Exception as exc:
+                delay = telegram_delivery_retry_delay(exc)
+                if delay is not None:
+                    request_data["_telegram_send_inflight"] = False
+                    raise TelegramDeliveryRetryable(delay) from exc
                 if not telegram_delivery_is_definitely_rejected(exc):
                     if is_terminal_telegram_delivery_error(exc):
                         raise
