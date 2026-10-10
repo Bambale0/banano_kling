@@ -70,7 +70,7 @@ async def setup_owned_run(*, variants=1, step_count=1):
     step = run["steps"][0]
     async with repo.transaction() as db:
         await db.execute("UPDATE genjutsu_runs SET state='completed' WHERE id=?", (run["id"],))
-        await db.execute("UPDATE genjutsu_steps SET status='completed',output_asset_id=?,actual_credits=5 WHERE run_id=?", (output["id"], run["id"]))
+        await db.execute("UPDATE genjutsu_steps SET status='completed',output_asset_id=?,actual_credits=10 WHERE run_id=?", (output["id"], run["id"]))
     copy = AsyncMock(return_value="https://example.test/uploads/feed/public-output.mp4")
     publisher = FeedPublisher(repo, recipes, copy)
     pipeline = SimpleNamespace(repository=repo)
