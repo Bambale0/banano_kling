@@ -81,7 +81,7 @@ def source_request(task: dict[str, Any]) -> dict[str, Any]:
 def active_video_recipe(task: dict[str, Any]) -> dict[str, Any]:
     data = source_request(task)
     model = str(task.get("model") or data.get("v_model") or "")
-    if model == "wan_3_prime":
+    if model in {"wan_3_prime", "wan_3"}:
         from bot.services.wan3_prime_repeat import legacy_video_plan
 
         return legacy_video_plan(task)
@@ -154,7 +154,7 @@ def build_video_repeat_plan(
     task: dict[str, Any], *, replaced_kinds: set[str] | None = None,
     allow_audio_replacement: bool = False,
 ) -> dict[str, Any] | None:
-    if str(task.get("model") or "") == "wan_3_prime":
+    if str(task.get("model") or "") in {"wan_3_prime", "wan_3"}:
         from bot.services.wan3_prime_repeat import legacy_video_plan
 
         try:

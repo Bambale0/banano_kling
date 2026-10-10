@@ -84,16 +84,22 @@ def _recipe_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _quote_response(quote) -> dict[str, Any]:
+    from bot.services.wan3_models import wan3_model_spec
     from bot.services.wan3_prime_storage_policy import positive_setting
 
+    model = wan3_model_spec(getattr(quote, "safe_request", {}).get("model"))
     auto = quote.requested_output_seconds is None
     retention_days = positive_setting('WAN3_RESULT_RETENTION_SECONDS', 30 * 86400) / 86400
     notice = f'Неопубликованный оригинал хранится на сервере {retention_days:g} дн. после генерации; скачайте его. Опубликованные и ещё не доставленные работы сохраняются.'
+    if not auto:
+        notice = 'Цена фиксируется за входное видео и выбранную длительность результата. ' + notice
     if auto:
         notice = 'Auto резервирует максимум 30 суммарных видеосекунд; неиспользованная часть возвращается после проверки результата. ' + notice
     return {
         "ok": True,
         "quote_hash": quote.quote_hash,
+        "model": model.key,
+        "provider_model": model.provider_model,
         "reserve_cost": quote.reserve_credits,
         "estimated_final_cost": None if auto else quote.reserve_credits,
         "billing_duration_seconds": quote.billable_seconds_reserved,
@@ -101,6 +107,8 @@ def _quote_response(quote) -> dict[str, Any]:
         "tariff_missing": not quote.price_configured,
         "admin_free": quote.admin_free,
         "auto_duration": auto,
+        "billing_version": 2,
+        "billing_mode": "auto_reserve" if auto else "input_plus_selected_output",
         "settlement_notice": notice,
     }
 
@@ -114,6 +122,8 @@ async def _launch_response(actor, result):
         'ok': True, 'status': public_state,
         'task_id': result['task_id'], 'internal_task_id': result['internal_task_id'],
         'provider_task_id': result.get('provider_task_id'),
+        'model': result.get('model', 'wan_3_prime'),
+        'provider_model': result.get('provider_model', 'wan/3-0-video-prime'),
         'reserve_cost': result.get('reserve_amount', 0),
         'charged_cost': result.get('charged_credits', 0),
         'refunded_cost': result.get('refunded_credits', 0),

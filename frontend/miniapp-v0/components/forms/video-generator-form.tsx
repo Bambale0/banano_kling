@@ -214,7 +214,7 @@ export function VideoGeneratorForm({
   const isOmniAudio = selectedModel === 'gemini_omni_audio' || (isGeminiOmni && selectedScenario === 'audio')
   const isOmniCharacter = selectedModel === 'gemini_omni_character' || (isGeminiOmni && selectedScenario === 'character')
   const isOmniVideo = selectedModel === 'gemini_omni_video' || (isGeminiOmni && !isOmniAudio && !isOmniCharacter)
-  const isWanPrime = selectedModel === 'wan_3_prime'
+  const isWanPrime = selectedModel === 'wan_3_prime' || selectedModel === 'wan_3'
   const qualityForModel = (item?: VideoModel) => {
     if (!item) return undefined
     if (item.grok_resolutions?.length) {
@@ -360,7 +360,7 @@ export function VideoGeneratorForm({
   useEffect(() => {
     if (!promptPreset || appliedPromptPresetRef.current === promptPreset) return
     appliedPromptPresetRef.current = promptPreset
-    if (promptPreset.model === 'wan_3_prime') {
+    if ((promptPreset.model === 'wan_3_prime' || promptPreset.model === 'wan_3')) {
       setWanOwnerTaskId(promptPreset.wan3OwnerTaskId)
       setWanRecipe(promptPreset.wan3Recipe)
       setWanPublicationSource(promptPreset.wan3OwnerTaskId ? null : promptPreset.sourceFeedGenId || null)
@@ -469,7 +469,7 @@ export function VideoGeneratorForm({
     if (!model.supports_translation) setVeoTranslation(true)
     if (!model.supports_watermark) setVeoWatermark('')
     if (!model.supports_seed) setVeoSeed('')
-    if (!model.supports_seed && model.id !== 'wan_3_prime') setWanSeed('')
+    if (!model.supports_seed && !['wan_3_prime', 'wan_3'].includes(model.id)) setWanSeed('')
     if (!model.supports_negative_prompt) setKlingNegativePrompt('')
     if (!model.supports_cfg_scale) setKlingCfgScale(0.5)
     if (!model.supports_omni_seed) setOmniSeed('')
@@ -479,6 +479,11 @@ export function VideoGeneratorForm({
   }, [model, grokMode, grokResolution, veoGenerationType, veoResolution, omniResolution, omniBaseVoice])
 
   const handleModelChange = (modelId: string) => {
+    if (modelId !== selectedModel) {
+      setWanOwnerTaskId(undefined)
+      setWanRecipe(undefined)
+      setWanPublicationSource(null)
+    }
     onModelSelected?.(modelId)
     const nextModel = models.find((item) => item.id === modelId)
     if (!nextModel) {
@@ -528,7 +533,7 @@ export function VideoGeneratorForm({
       setPhotoReferences([])
       setVideoReferences([])
       setAudioReference([])
-    } else if (nextModel.id === 'wan_3_prime') {
+    } else if ((nextModel.id === 'wan_3_prime' || nextModel.id === 'wan_3')) {
       setSelectedScenario('text')
       setSelectedRatio((current) =>
         nextModel.ratios.includes(current) ? current : 'adaptive'
@@ -620,13 +625,14 @@ export function VideoGeneratorForm({
   }
 
   if (isWanPrime) return <Wan3PrimeForm
-    key={wanOwnerTaskId || (wanPublicationSource ? `publication-${wanPublicationSource}` : 'wan-composer')}
+    key={selectedModel + ':' + (wanOwnerTaskId || (wanPublicationSource ? `publication-${wanPublicationSource}` : 'wan-composer'))}
+    model={selectedModel === 'wan_3' ? 'wan_3' : 'wan_3_prime'}
     credits={credits} isAdmin={isAdmin} ownerTaskId={wanOwnerTaskId}
     initialRecipe={wanRecipe} onQueued={onWanQueued}
     publicationSourceId={wanPublicationSource}
     modelSelector={<ModelSelect models={visibleModels.map(item => ({
       id: item.id, label: item.label, description: item.description,
-      cost: item.id === 'wan_3_prime' ? undefined : getVideoModelPerSecondCost(item, 5, qualityForModel(item)),
+      cost: (item.id === 'wan_3_prime' || item.id === 'wan_3') ? undefined : getVideoModelPerSecondCost(item, 5, qualityForModel(item)),
     }))} value={selectedModel} onChange={handleModelChange} />}
   />
 

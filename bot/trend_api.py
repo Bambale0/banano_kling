@@ -482,7 +482,7 @@ def estimate_trend_repeat_cost(
 
     # Wan bills measured source + output seconds. The catalog has no validated
     # replacement media yet, so only its explicit quote may display a price.
-    if model == "wan_3_prime":
+    if model in {"wan_3_prime", "wan_3"}:
         return None
 
     if not model or kind not in {"image", "video"}:
@@ -1034,7 +1034,7 @@ async def miniapp_run_trend(request: web.Request) -> web.Response:
         if not prompt:
             raise TrendRunValidationError("Тренд не найден")
 
-        if prompt.get("model") == "wan_3_prime":
+        if prompt.get("model") in {"wan_3_prime", "wan_3"}:
             return web.json_response({"ok": False, "code": "wan3_editor_required", "trend_id": parsed.trend_id,
                 "error": "Откройте тренд в обновлённом редакторе Wan: он сохраняет все референсы и рассчитывает стоимость перед запуском.",
                 "retry_same_request": False}, status=409)
