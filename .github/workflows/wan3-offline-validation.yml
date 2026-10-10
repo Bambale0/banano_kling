@@ -1,0 +1,28 @@
+name: Wan isolated validation bundle
+on:
+  pull_request:
+    branches: [tanyapi]
+    paths: ['.github/workflows/wan3-offline-validation.yml']
+permissions:
+  contents: read
+jobs:
+  bundle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Package tracked public source only
+        run: |
+          mkdir -p offline-validation/wheels
+          git archive --format=tar.gz HEAD AGENTS.md README.md .agents .github bot tests scripts frontend/miniapp-v0 docs data prompts requirements.txt pytest.ini pyproject.toml ruff.toml Dockerfile docker-compose.yml .gitignore > offline-validation/source.tar.gz
+          git rev-parse HEAD > offline-validation/source-sha.txt
+      - name: Download wheels without application secrets or runtime data
+        run: pip download --only-binary=:all: --dest offline-validation/wheels -r requirements.txt pytest pytest-asyncio ruff pypdf
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wan-isolated-validation
+          path: offline-validation
+          retention-days: 1
