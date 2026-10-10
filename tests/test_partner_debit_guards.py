@@ -35,11 +35,28 @@ async def test_miniapp_lost_debit_race_never_submits_or_refunds(monkeypatch, rou
         monkeypatch.setattr(miniapp, 'get_generation_task_payload', AsyncMock(return_value={'prompt': payload['prompt'], 'request_data': '{}'}))
         response = await miniapp.miniapp_feed_remix(request)
     elif route == 'motion':
+        from bot.handlers import motion_launch as motion_handler
+        from bot.services.motion_launch_receipts import MotionInsufficientCredits
+
+        # Motion now owns an atomic receipt+debit, rather than the legacy
+        # standalone deduct_credits seam. Exercise the same lost-balance race
+        # after a valid frozen quote, not an obsolete payload validation error.
+        payload.update(motion_request_id='a' * 32, motion_quote_hash='synthetic-quote')
+        monkeypatch.setattr(motion_handler, '_validated_quote', AsyncMock(return_value={
+            'quote_hash': 'synthetic-quote', 'cost': 10, 'admin_free': False,
+        }))
+        reserve = AsyncMock(side_effect=MotionInsufficientCredits('Недостаточно бананов'))
+        store = SimpleNamespace(ensure_schema=AsyncMock(), find=AsyncMock(return_value=None),
+                                reserve=reserve)
+        monkeypatch.setattr(motion_handler, 'MotionLaunchReceipts', lambda *_args: store)
         response = await miniapp.miniapp_generate_motion(request)
+        reserve.assert_awaited_once()
+        debit.assert_not_awaited()
     else:
         response = await miniapp.miniapp_generate_image(request)
-    assert response.status == 400
-    debit.assert_awaited_once()
+    assert response.status == (409 if route == 'motion' else 400)
+    if route != 'motion':
+        debit.assert_awaited_once()
     image_launch.assert_not_awaited()
     motion_launch.assert_not_awaited()
     refund.assert_not_awaited()
