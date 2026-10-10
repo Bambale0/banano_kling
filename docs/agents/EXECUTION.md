@@ -1901,3 +1901,13 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Independent exact-head review and full CI are required before publication release. No paid generation, real Telegram message, live checkout edit, secret read or history repricing.
 
 - WAN review follow-up: ordinary now enters full publication reference contract, Telegram continuity redirect, internal admin replay lifecycle, strict quality tariff, and trend editor guard. Added ordinary first/last/audio, own/public redirect and admin replay regressions. Actual Chromium against local production static build passed all 14 Prime+ordinary scenario journeys plus model navigation and unknown-ack retry. Start hit-test remains mandatory after quote layout settles; safe-area bottom padding added. Interrupted Prime upload -> ordinary switch component test passed.
+
+## 2026-10-10 — Tanya Motion durable launch safety (review pending)
+
+- Scope: owner-bound measured source + locked output quote, atomic receipt/debit and proven-rejection refund; no historical balance changes.
+- Accepted-but-unbound receipts recover through watchdog without browser presence. Unknown provider acceptance is held, never retried or refunded automatically.
+- Watchdog/callback failure requires terminal provider evidence for new Motion receipts; frozen charged amount survives later role/price changes.
+- Mini App persists original request identity before sending, restores status across reload, and uses identity-CAS cleanup so late responses cannot clear a later launch.
+- Local checks: 27 isolated Python tests on synthetic SQLite/pure functions; 5 real PostgreSQL16 fixture transaction tests (BIGINT, concurrency, refund rollback, pending guard); 3 Jest pending-state tests; TypeScript and changed ESLint passed.
+- PostgreSQL fixture used a temporary network-disabled container and test-only asyncpg cursor shim, not application adapter/full application CI. Created container removed after tests. No provider calls, actual Telegram sends or production DB access.
+- Independent review and full exact-head CI required before merge/release.

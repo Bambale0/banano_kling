@@ -132,6 +132,7 @@ async def check_task_with_provider(
             "grok_imagine",
             "grok_imagine_v15",
             "motion_control_v26",
+            "motion_control_v30",
             "v3_std",
             "v3_pro",
         }:
@@ -141,7 +142,7 @@ async def check_task_with_provider(
                 status = result.get("state") or result.get("status")
                 if status and str(status).lower() in ("success", "completed", "done"):
                     return "completed"
-                if status and str(status).lower() in ("failed", "error", "rejected"):
+                if status and str(status).lower() in ("failed", "fail", "error", "rejected"):
                     return "failed"
         elif normalized_service in {"banana_2", "nano-banana-2", "nano_banana_2"}:
             from bot.services.nano_banana_2_service import nano_banana_2_service
@@ -192,6 +193,7 @@ async def force_fail_task(
     cost: float,
     *,
     expected_provider_task_id: str | None = None,
+    provider_confirmed_failed: bool = False,
 ) -> bool:
     """Переводит задачу в failed и возвращает только реально списанные credits."""
     async with db_backend.connect(DATABASE_PATH) as db:
@@ -225,6 +227,12 @@ async def force_fail_task(
         if not isinstance(request_data, dict):
             request_data = {}
 
+        motion_receipt_id = request_data.get("motion_launch_receipt_id")
+        if motion_receipt_id and not provider_confirmed_failed:
+            # Age, lookup outage and unknown status are not provider rejection.
+            await db.rollback()
+            return False
+
         # Webhook refunds and the watchdog share this row-level transaction.
         # Explicit billing markers take precedence over a legacy/non-zero cost:
         # admin/test tasks may retain a nominal quote but were never charged.
@@ -236,14 +244,31 @@ async def force_fail_task(
         )
         admin_user = False
         locked_quote = request_data.get("billing_quote")
+        if motion_receipt_id:
+            locked_quote = request_data.get("motion_quote")
         has_locked_quote = (
             isinstance(locked_quote, dict)
-            and locked_quote.get("version") == 1
+            and locked_quote.get("version") == (2 if motion_receipt_id else 1)
             and isinstance(locked_quote.get("charge_cost"), (int, float))
             and not isinstance(locked_quote.get("charge_cost"), bool)
             and math.isfinite(locked_quote["charge_cost"])
             and locked_quote["charge_cost"] >= 0
         )
+        if motion_receipt_id:
+            motion_row = await (await db.execute(
+                "UPDATE motion_launch_receipts SET phase = 'provider_failed', refunded = 1, "
+                "updated_at = CURRENT_TIMESTAMP WHERE receipt_id = ? AND user_id = ? "
+                "AND provider_task_id = (SELECT task_id FROM generation_tasks WHERE id = ?) "
+                "AND phase = 'accepted' AND refunded = 0 RETURNING charged_cost",
+                (motion_receipt_id, user_id, task_id),
+            )).fetchone()
+            if not motion_row or not has_locked_quote:
+                await db.rollback()
+                return False
+            receipt_charge = float(motion_row["charged_cost"])
+            if receipt_charge != float(locked_quote["charge_cost"]):
+                await db.rollback()
+                return False
         if has_locked_quote:
             # A later role/profile/price change cannot alter an accepted debit.
             cost = float(locked_quote["charge_cost"])
@@ -303,6 +328,12 @@ async def run_watchdog_cycle(on_completed=None, on_failed=None) -> int:
     from bot.partner_policy import reconcile_pending_invite_bonuses
 
     await reconcile_pending_invite_bonuses()
+    from bot.handlers.motion_launch import recover_accepted_motion
+
+    try:
+        await recover_accepted_motion()
+    except Exception as exc:  # noqa: BLE001 - Motion recovery must not stop unrelated watchdog work
+        logger.error("Motion accepted recovery deferred: error_type=%s", type(exc).__name__)
     orphan_stats = await cleanup_stale_local_generation_tasks(
         max_age_seconds=LOCAL_ORPHAN_MAX_AGE_SECONDS
     )
@@ -366,7 +397,8 @@ async def run_watchdog_cycle(on_completed=None, on_failed=None) -> int:
             continue
 
         if provider_status == "failed":
-            if await force_fail_task(tid, uid, cost):
+            if await force_fail_task(tid, uid, cost, expected_provider_task_id=external_task_id,
+                                     provider_confirmed_failed=True):
                 logger.warning(
                     "Watchdog: recovered failed upstream task %s (user=%s, model=%s, cost=%s)",
                     tid, uid, model, cost,
