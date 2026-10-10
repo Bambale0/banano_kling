@@ -46,11 +46,13 @@ export interface TrendReferenceInput {
 
 export class TrendRunRequestError extends Error {
   readonly retrySameRequest: boolean
+  readonly code?: string
 
-  constructor(message: string, retrySameRequest: boolean) {
+  constructor(message: string, retrySameRequest: boolean, code?: string) {
     super(message)
     this.name = 'TrendRunRequestError'
     this.retrySameRequest = retrySameRequest
+    this.code = code
   }
 }
 
@@ -104,11 +106,11 @@ async function parseTrendResponse(response: Response): Promise<RunTrendResponse>
   const text = await response.text()
   let payload:
     | RunTrendResponse
-    | { ok?: false; error?: string; retry_same_request?: boolean }
+    | { ok?: false; error?: string; retry_same_request?: boolean; code?: string }
   try {
     payload = JSON.parse(text) as
       | RunTrendResponse
-      | { ok?: false; error?: string; retry_same_request?: boolean }
+      | { ok?: false; error?: string; retry_same_request?: boolean; code?: string }
   } catch {
     throw new TrendRunRequestError(
       'Сервер вернул некорректный ответ. Обновите Mini App.',
@@ -126,7 +128,9 @@ async function parseTrendResponse(response: Response): Promise<RunTrendResponse>
       typeof payload.retry_same_request === 'boolean'
         ? payload.retry_same_request
         : response.status === 409
-    throw new TrendRunRequestError(message, retrySameRequest)
+    const code = 'code' in payload ? payload.code : undefined
+    const terminalQuote = ['video_quote_missing','video_quote_changed','video_input_invalid','video_rejected','video_not_reserved'].includes(code || '')
+    throw new TrendRunRequestError(message, terminalQuote ? false : retrySameRequest, code)
   }
   return payload
 }
@@ -278,6 +282,7 @@ function clearPendingTrend(quoteId: string): void {
 export async function recoverPendingTrend(): Promise<RunTrendResult | null> {
   const pending = readPendingTrend()
   if (!pending) return null
+  try {
   const response = await fetch(`${getApiBasePath()}/generate-video`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', cache: 'no-store',
     body: JSON.stringify({ ...authorizedPayload(), v_model: pending.model, video_quote_id: pending.quoteId,
@@ -296,6 +301,10 @@ export async function recoverPendingTrend(): Promise<RunTrendResult | null> {
   }
   if (['rejected','provider_failed'].includes(status)) clearPendingTrend(pending.quoteId)
   return null
+  } catch (error) {
+    if (error instanceof TrendRunRequestError && !error.retrySameRequest) clearPendingTrend(pending.quoteId)
+    throw error
+  }
 }
 
 export async function runTrend(

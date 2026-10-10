@@ -619,7 +619,6 @@ async def _run_image_trend(
     telegram_id: int,
     user: Any,
     trend: TrustedTrendRun,
-    quote_context: dict | None = None,
 ) -> web.Response:
     from bot import miniapp as miniapp_module
 
@@ -747,6 +746,7 @@ async def _run_video_trend(
     telegram_id: int,
     user: Any,
     trend: TrustedTrendRun,
+    quote_context: dict | None = None,
 ) -> web.Response:
     from bot import miniapp as miniapp_module
 

@@ -63,6 +63,27 @@ class SnapshotTests(unittest.IsolatedAsyncioTestCase):
     async def leased(self):
         return await self.fn["snapshot_is_leased"](self.db,1)
 
+    async def test_repeated_source_slots_have_distinct_provider_urls(self):
+        import math
+        from contextlib import asynccontextmanager
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        tree = ast.parse((ROOT / "bot/services/seedance_quote_snapshots.py").read_text())
+        nodes = [node for node in tree.body if isinstance(node, ast.AsyncFunctionDef) and node.name == "prepare_video_snapshots"]
+        @asynccontextmanager
+        async def slot(_):
+            yield
+        async def snapshot(actor, source, storage, *, occurrence):
+            return {"url": f"{source}-slot-{occurrence}", "seconds": 3 if source == "A" else 4}
+        ns = {"asyncio": asyncio, "math": math, "probe_slot": slot, "_snapshot": snapshot,
+              "Wan3PrimeStorage": lambda: SimpleNamespace(init_schema=AsyncMock())}
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), "snapshot_plan", "exec"), ns)  # noqa: S102
+        rows = await ns["prepare_video_snapshots"](SimpleNamespace(user_id=1), ["A", "B", "A"])
+        self.assertEqual([row["url"] for row in rows], ["A-slot-0", "B-slot-0", "A-slot-1"])
+        self.assertEqual(sum(row["seconds"] for row in rows), 10)
+        self.assertEqual(len({row["url"] for row in rows}), 3)
+
     async def test_complete_ordered_repeated_plan_passes(self):
         await self.verify()
 

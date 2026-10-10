@@ -327,6 +327,7 @@ export function VideoGeneratorForm({
   const measuredKey = JSON.stringify(submissionPayload)
   const needsMeasuredQuote = ['seedance_2', 'seedance_2_5'].includes(selectedModel)
     && (videoReferences.length > 0 || (repeatSlots?.videos.length || 0) > 0)
+  const [measuredAttempt, setMeasuredAttempt] = useState(0)
   const [measuredState, setMeasuredState] = useState<{ key: string; quote?: MeasuredVideoQuote; error?: string } | null>(null)
   const measuredQuote = needsMeasuredQuote && measuredState?.key === measuredKey ? measuredState.quote : undefined
   useEffect(() => {
@@ -342,7 +343,7 @@ export function VideoGeneratorForm({
     return () => { cancelled = true; window.clearTimeout(timer) }
   // The serialized effective client recipe, including the repeat context, owns this request.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [needsMeasuredQuote, measuredKey, repeatBlocked, hasPrompt, isSubmitting])
+  }, [needsMeasuredQuote, measuredKey, repeatBlocked, hasPrompt, isSubmitting, measuredAttempt])
   // The descriptor covers the complete server recipe, including retained video
   // inputs that deliberately have no local URL. Never infer a tariff from IDs.
   const requiresDurationQuote = Boolean(!needsMeasuredQuote && repeatSlots && selectedModel === 'seedance_2_5')
@@ -623,7 +624,10 @@ export function VideoGeneratorForm({
     await onSubmit({ ...submissionPayload, videoQuoteId: measuredQuote?.quote_id, videoQuoteHash: measuredQuote?.quote_hash })
     } catch (error) {
       if (submittedSession === repeatSession.current) {
-        if (isVideoStatusPending(error)) setRepeatPending(getPendingVideoRepeat(sourceFeedGenId))
+        if (error && typeof error === 'object' && 'code' in error && error.code === 'video_quote_changed') {
+          setMeasuredState(null)
+          setMeasuredAttempt(value => value + 1)
+        } else if (isVideoStatusPending(error)) setRepeatPending(getPendingVideoRepeat(sourceFeedGenId))
         else if (repeatSlots) setRepeatError(true)
       }
       return

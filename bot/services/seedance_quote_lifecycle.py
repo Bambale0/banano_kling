@@ -43,6 +43,22 @@ def public_quote(row: dict) -> dict:
             "expires_at": str(row["expires_at"])}
 
 
+def effective_video_sources(original: dict, video_key: str, model: str) -> list[str]:
+    from bot.services.media_input_utils import canonicalize_local_upload_url
+
+    sources = [canonicalize_local_upload_url(str(value).strip()) for value in original[video_key] if str(value or "").strip()]
+    # Explicit private/trend slots are deliberate occurrences. Ordinary URL
+    # lists retain the existing adapter's canonical de-duplication semantics.
+    ordered_slots = bool(original.get("reference_contract") or original.get("_private_repeat")
+                         or original.get("video_repeat_contract_version"))
+    if not ordered_slots:
+        sources = list(dict.fromkeys(sources))
+    limit = 3 if model == "seedance_2" else 10
+    if not 1 <= len(sources) <= limit:
+        raise QuoteConflict("Некорректное число видео-референсов")
+    return sources
+
+
 async def prepare_quote(telegram_id: int, model: str, original: dict, *, video_key: str,
                         duration: int, quality: str, source_locked: bool = False) -> dict:
     """Only call after effective recipe assembly and source/repeat authorization."""
@@ -51,7 +67,7 @@ async def prepare_quote(telegram_id: int, model: str, original: dict, *, video_k
     store = await receipt_store()
     user = await database.get_or_create_user(telegram_id)
     actor = SimpleNamespace(user_id=user.id, telegram_id=telegram_id)
-    snapshots = await prepare_video_snapshots(actor, original[video_key])
+    snapshots = await prepare_video_snapshots(actor, effective_video_sources(original, video_key, model))
     provider = deepcopy(original)
     provider[video_key] = [item["url"] for item in snapshots]
     provider["_snapshot_media_ids"] = [item["media_id"] for item in snapshots]

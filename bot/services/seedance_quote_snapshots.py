@@ -41,7 +41,7 @@ def _copy_bounded(source: Path, destination: Path):
         raise ValueError("Видео-референс пуст")
 
 
-async def _snapshot(actor, source: str, storage: Wan3PrimeStorage) -> dict:
+async def _snapshot(actor, source: str, storage: Wan3PrimeStorage, *, occurrence: int = 0) -> dict:
     reservation = await storage.init_upload(actor, kind="video", filename="quote.mp4",
                                              size=MAX_VIDEO_BYTES, importing=True)
     upload_id = reservation["upload_id"]
@@ -73,7 +73,7 @@ async def _snapshot(actor, source: str, storage: Wan3PrimeStorage) -> dict:
         if not math.isfinite(seconds) or not 2 <= seconds <= 30:
             raise ValueError("Видео-референс должно длиться 2–30 секунд")
         size = staged.stat().st_size
-        source_key = "seedance-quote-" + hashlib.sha256(source.encode()).hexdigest() + ".mp4"
+        source_key = "seedance-quote-" + hashlib.sha256(f"{source}\nslot-occurrence:{occurrence}".encode()).hexdigest() + ".mp4"
         async with db_backend.connect(database.DATABASE_PATH) as db:
             db.row_factory = db_backend.Row
             await lock_storage(db)
@@ -124,13 +124,15 @@ async def prepare_video_snapshots(actor, sources: list[str]) -> list[dict]:
     storage = Wan3PrimeStorage()
     await storage.init_schema()
     snapshots = []
-    physical = {}
+    occurrences = {}
     # Shared bounded admission and whole-plan deadline, including downloads.
     async with probe_slot(actor.user_id), asyncio.timeout(120):
         for source in sources:
-            if source not in physical:
-                physical[source] = await _snapshot(actor, source, storage)
-            snapshots.append(physical[source])
+            occurrence = occurrences.get(source, 0)
+            occurrences[source] = occurrence + 1
+            # Distinct provider URLs preserve repeated slots through adapters
+            # that de-duplicate URL strings. Same-slot objects still reuse across quotes.
+            snapshots.append(await _snapshot(actor, source, storage, occurrence=occurrence))
     if math.fsum(item["seconds"] for item in snapshots) > 30.01:
         raise ValueError("Суммарная длительность видео-референсов — максимум 30 секунд")
     return snapshots

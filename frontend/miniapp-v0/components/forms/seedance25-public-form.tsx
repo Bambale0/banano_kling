@@ -963,7 +963,7 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
           </div>
           {!isAdmin ? <div className="text-right text-xs text-muted-foreground">Баланс<br /><span className="font-semibold text-foreground">{credits}🍌</span></div> : <div className="text-right text-xs text-cyan">Для админа<br /><span className="font-semibold">без списания</span></div>}
         </div>
-        {needsMeasuredQuote ? (
+        {needsMeasuredQuote || identityTransfer ? (
           <div className="mt-3 space-y-2 text-xs leading-relaxed text-muted-foreground" aria-live="polite">
             {identityTransfer && identityRefs.issue ? <p>{identityRefs.issue}</p> : quoteError ? (
               <><p className="text-destructive">{quoteError}</p><button type="button" className="text-cyan underline" onClick={() => setQuoteAttempt((value) => value + 1)}>Повторить расчёт</button></>
@@ -1001,6 +1001,8 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
           ? 'Запускаю генерацию…'
           : uploading
             ? 'Загружаю файлы…'
+            : identityTransfer && identityRefs.issue
+              ? 'Добавьте фото и исходное видео'
             : needsMeasuredQuote && !measuredQuote
               ? identityTransfer && identityRefs.issue ? 'Добавьте фото и исходное видео' : quoteError ? 'Не удалось рассчитать стоимость' : 'Рассчитываю стоимость…'
             : !canAfford

@@ -38,6 +38,32 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def launch(self):
         return await self.ns["submit_claimed_quote"](self.row, submit=self.submit, bind=self.bind)
 
+    async def test_actual_seedance25_callback_passes_owner_and_cost_to_atomic_refund(self):
+        from types import SimpleNamespace
+
+        tree = ast.parse((ROOT / "bot/handlers/seedance_25_public_release.py").read_text())
+        node = next(node for node in tree.body if isinstance(node, ast.AsyncFunctionDef) and node.name == "_public_process_payload")
+        class StripImports(ast.NodeTransformer):
+            def visit_ImportFrom(self, node):
+                return None if (node.module or "").startswith("bot") else node
+        node = StripImports().visit(node)
+        node.returns = None
+        for arg in node.args.args:
+            arg.annotation = None
+        metadata = {"seedance_quote_id":"q", "charged_cost":48}
+        fullstack = SimpleNamespace(_load_task_row=AsyncMock(return_value={"id":11,"user_id":22,"request_data":json.dumps(metadata)}),
+                                    _auto_retry_seedance25_video_editing=AsyncMock(), _process_seedance25_payload_original=AsyncMock())
+        fail = AsyncMock(return_value=True)
+        ns = {"json":json,"fullstack":fullstack,"force_fail_task":fail,"logger":logging.getLogger(__name__)}
+        exec(compile(ast.fix_missing_locations(ast.Module(body=[node], type_ignores=[])), "actual_seedance_callback", "exec"), ns)  # noqa: S102
+        handler = ns["_public_process_payload"]
+        self.assertTrue(await handler({}, {"data":{"taskId":"provider-1","state":"fail","failMsg":"failed"}}))
+        fail.assert_awaited_once_with(11,22,48.0,expected_provider_task_id="provider-1",provider_confirmed_failed=True)
+        self.assertFalse(await handler({}, {"code":500,"data":{"taskId":"provider-1","state":"processing"}}))
+        self.assertEqual(fail.await_count,1)
+        fullstack._auto_retry_seedance25_video_editing.assert_not_awaited()
+        fullstack._process_seedance25_payload_original.assert_not_awaited()
+
     async def test_accepted_is_persisted_before_binding(self):
         async def bind(row):
             self.store.accepted.assert_awaited_once_with("q", "provider-1")

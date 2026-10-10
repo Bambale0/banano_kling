@@ -215,6 +215,7 @@ class Seedance25Service(KlingService):
         web_search: bool = False,
         nsfw_checker: bool = False,
         callBackUrl: str | None = None,
+        _prompt_is_prepared: bool = False,
     ) -> dict[str, Any]:
         """Create a Seedance 2.5 task through Kie's unified jobs endpoint."""
         if not self.kie_key:
@@ -254,8 +255,12 @@ class Seedance25Service(KlingService):
                     images=image_urls, videos=video_urls, audio=audio_urls,
                     first_frame=first_frame_url, last_frame=last_frame_url,
                 )
-                raw_prompt = await resolve_identity_transfer_prompt(raw_prompt, image_count=len(image_urls))
-            normalized_prompt = self.prepare_prompt(
+                if not _prompt_is_prepared:
+                    raw_prompt = await resolve_identity_transfer_prompt(raw_prompt, image_count=len(image_urls))
+            # Only server-owned durable quote payloads use this internal flag.
+            # Their prompt was fully validated before approval and must not read
+            # mutable admin templates or wrap the prompt again after debit.
+            normalized_prompt = raw_prompt if _prompt_is_prepared else self.prepare_prompt(
                 raw_prompt, image_urls=image_urls, video_urls=video_urls, audio_urls=audio_urls,
                 identity_transfer=identity_transfer, first_frame=first_frame_url, last_frame=last_frame_url,
             )

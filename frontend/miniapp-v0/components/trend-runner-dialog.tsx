@@ -197,7 +197,12 @@ export function TrendRunnerDialog({
       try {
         const result = await recoverPendingTrend()
         if (!cancelled && result) { addTask(result.task); setCredits(result.credits); selectTask(result.task) }
-      } catch { /* Unknown outcome stays bound to its durable quote. */ }
+      } catch (error) {
+        if (!cancelled && !readPendingTrend()) {
+          setError(error instanceof Error ? error.message : 'Расчёт устарел. Проверьте новую цену')
+          setQuoteState({ key: '' })
+        }
+      }
       if (!cancelled) timer = setTimeout(check, 3000)
     }
     void check()

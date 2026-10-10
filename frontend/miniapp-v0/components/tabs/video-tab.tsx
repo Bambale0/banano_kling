@@ -81,7 +81,9 @@ export function VideoTab() {
           if (result.credits !== undefined) setCredits(result.credits)
           await refreshTasks()
         }
-      } catch { /* Durable receipt holds unknown outcomes; status polling is safe. */ }
+      } catch (error) {
+        if (!cancelled && !readPendingMeasuredVideo()) setError(error instanceof Error ? error.message : 'Расчёт устарел. Проверьте новую цену')
+      }
       if (!cancelled) timer = setTimeout(check, 3000)
     }
     void check()

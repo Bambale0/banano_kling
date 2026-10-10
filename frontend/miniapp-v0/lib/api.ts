@@ -1499,6 +1499,11 @@ export async function recoverPendingMeasuredVideo(): Promise<{ status: string; c
   const response = await postJson<{ ok: true; status: string; credits?: number }>('generate-video', {
     init_data: getInitData(), v_model: pending.model, video_quote_id: pending.videoQuoteId,
     video_quote_status_only: true, seedance25_status_only: pending.model === 'seedance_2_5',
+  }).catch((error: unknown) => {
+    if (error instanceof MiniAppApiError && ['video_quote_missing', 'video_quote_changed', 'video_input_invalid', 'video_rejected'].includes(error.code || '')) {
+      clearPendingMeasuredVideo(pending.videoQuoteId!)
+    }
+    throw error
   })
   if (response.status === 'quoted') {
     const result = await generateVideo(pending)

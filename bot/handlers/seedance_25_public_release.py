@@ -562,6 +562,7 @@ async def _launch_provider(payload: dict[str, Any]) -> dict[str, Any]:
         web_search=payload["web_search"],
         nsfw_checker=payload["nsfw_checker"],
         callBackUrl=get_seedance25_callback_url(),
+        **({"_prompt_is_prepared": True} if payload.get("_snapshot_media_ids") and payload.get("provider_prompt") else {}),
         **({"video_editing": True} if payload.get("seedance25_video_editing") is True else {}),
         **({"identity_transfer": True} if payload.get("seedance25_identity_transfer") is True else {}),
     )
@@ -1234,7 +1235,7 @@ async def _public_process_payload(app: web.Application, payload: dict[str, Any])
             if state not in {"fail", "failed", "error"}:
                 return False
             from bot.services.task_watchdog import force_fail_task
-            return await force_fail_task(int(row["id"]), str((data or {}).get("failMsg") or "provider_failed"),
+            return await force_fail_task(int(row["id"]), int(row["user_id"]), float(metadata.get("charged_cost") or 0),
                                          expected_provider_task_id=task_id, provider_confirmed_failed=True)
     if is_failure and task_id:
         fail_msg = str((data or {}).get("failMsg") or payload.get("msg") or "")
