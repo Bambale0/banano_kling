@@ -80,12 +80,29 @@ def test_feed_video_preview_uses_video_element_not_mp4_as_image():
     assert "feedMediaUrl(previewItem.result_url)" in source
 
 
-def test_production_deploy_runs_video_backfill_after_health_gate():
+def test_production_deploy_keeps_video_backfill_in_opt_in_maintenance():
     source = Path("scripts/deploy_backend_docker.sh").read_text(encoding="utf-8")
+    deploy = source.split("\ndeploy() {", 1)[1].split("\nstatus() {", 1)[0]
+    maintenance = source.split("\nmaintenance_media() {", 1)[1].split(
+        "\nrollback_to_systemd() {", 1
+    )[0]
+    backfill = source.split("\nbackfill_public_feed_videos() {", 1)[1].split(
+        "\nreconcile_rendergrid_legacy_images() {", 1
+    )[0]
 
-    health_index = source.index("if ! wait_for_health; then")
-    backfill_index = source.index("backfill_public_feed_videos", health_index)
-    assert backfill_index > health_index
-    assert (
-        "compose exec -T bot python -m scripts.backfill_feed_video_media" in source
+    assert "backfill_public_feed_videos" not in deploy
+    assert "reconcile_rendergrid_legacy_images" not in deploy
+    assert deploy.index('require_disk_space "$PROJECT_DIR"') < deploy.index(
+        "build_or_pull_image"
+    ) < deploy.index("backup_database") < deploy.index("if ! wait_for_health; then")
+    assert 'maintenance-media) maintenance_media ;;' in source
+    assert '[ "${ALLOW_MEDIA_MAINTENANCE:-0}" = "1" ]' in maintenance
+    assert '[ "$SKIP_BACKUP" != "1" ]' in maintenance
+    assert maintenance.index("ALLOW_MEDIA_MAINTENANCE") < maintenance.index(
+        "wait_for_health"
+    ) < maintenance.index("backup_database") < maintenance.index(
+        "backfill_public_feed_videos"
     )
+    assert "compose exec -T bot python -m scripts.backfill_feed_video_media" in backfill
+    assert "maintenance failed" in backfill
+    assert "return 1" in backfill

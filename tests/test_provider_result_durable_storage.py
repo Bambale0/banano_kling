@@ -178,19 +178,38 @@ def test_rendergrid_completed_localized_result_is_canonical_in_database(monkeypa
     asyncio.run(run())
 
 
-def test_production_deploy_runs_bounded_rendergrid_reconciliation():
+def test_explicit_media_maintenance_runs_bounded_rendergrid_reconciliation():
     deploy_script = (
         Path(__file__).resolve().parents[1] / "scripts" / "deploy_backend_docker.sh"
     ).read_text(encoding="utf-8")
+    deploy = deploy_script.split("\ndeploy() {", 1)[1].split("\nstatus() {", 1)[0]
+    maintenance = deploy_script.split("\nmaintenance_media() {", 1)[1].split(
+        "\nrollback_to_systemd() {", 1
+    )[0]
+    reconcile = deploy_script.split("\nreconcile_rendergrid_legacy_images() {", 1)[
+        1
+    ].split("\n# Historical media rewrites", 1)[0]
+    backup = deploy_script.split("\nbackup_database() {", 1)[1].split(
+        "\ncontainer_health() {", 1
+    )[0]
 
-    assert "reconcile_rendergrid_legacy_images" in deploy_script
-    assert "RENDERGRID_DEPLOY_BACKFILL_LIMIT" in deploy_script
-    assert "RENDERGRID_DEPLOY_BACKFILL_CONCURRENCY" in deploy_script
-    assert "RENDERGRID_DEPLOY_BACKFILL_MAX_BATCHES" in deploy_script
-    assert "RENDERGRID_IMAGE_BACKFILL_CHECKPOINT_PATH" in deploy_script
-    assert "/app/data/rendergrid-image-backfill-checkpoint.json" in deploy_script
-    assert "scripts.backfill_rendergrid_image_results" in deploy_script
-    assert "deployment continues with TTL/media_unavailable safeguards" in deploy_script
+    assert "reconcile_rendergrid_legacy_images" not in deploy
+    assert '[ "${ALLOW_MEDIA_MAINTENANCE:-0}" = "1" ]' in maintenance
+    assert '[ "$SKIP_BACKUP" != "1" ]' in maintenance
+    assert maintenance.index("wait_for_health") < maintenance.index(
+        "backup_database"
+    ) < maintenance.index("reconcile_rendergrid_legacy_images")
+    assert backup.index('require_disk_space "$backup_root"') < backup.index(
+        'DB_BACKUP_DIR="$backup_dir" SEND_BACKUP_TO_ADMINS=0'
+    )
+    assert "${RENDERGRID_DEPLOY_BACKFILL_LIMIT:-50}" in reconcile
+    assert "${RENDERGRID_DEPLOY_BACKFILL_CONCURRENCY:-4}" in reconcile
+    assert "${RENDERGRID_DEPLOY_BACKFILL_MAX_BATCHES:-1}" in reconcile
+    assert "RENDERGRID_IMAGE_BACKFILL_CHECKPOINT_PATH" in reconcile
+    assert "/app/data/rendergrid-image-backfill-checkpoint.json" in reconcile
+    assert "scripts.backfill_rendergrid_image_results" in reconcile
+    assert "maintenance failed" in reconcile
+    assert "return 1" in reconcile
 
 
 def test_rendergrid_backfill_checkpoint_persists_cursor_and_resets_after_full_pass(tmp_path):
