@@ -594,6 +594,7 @@ async def redirect_typed_video_repeat(callback, task) -> bool:
     """Keep new typed/derived recipes out of legacy Telegram billing/FSM paths."""
     if getattr(task, "model", None) == "wan_3_prime":
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
         from bot.database import get_or_create_user
 
         viewer = await get_or_create_user(callback.from_user.id)

@@ -172,7 +172,11 @@ async def _replay_video(
         # explicit replay confirmation. Billing exemption never comes from a
         # public Mini App field. Preserve the recipient's media ownership.
         import hashlib
-        from bot.services.wan3_prime_lifecycle import Wan3PrimeActor, wan3_prime_lifecycle
+
+        from bot.services.wan3_prime_lifecycle import (
+            Wan3PrimeActor,
+            wan3_prime_lifecycle,
+        )
 
         actor = Wan3PrimeActor(user.id, telegram_id, is_admin=True, operation_context={
             "source_operation_id": int(source["id"]), "admin_user_id": admin_user_id,
