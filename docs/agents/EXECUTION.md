@@ -1,5 +1,19 @@
 # Execution ledger
 
+## 2026-10-10 — Higgsfield Genjutsu reference + generation seconds billing
+
+- Baseline: `tanyapi` `fb499599112c630e43ebb0c5b87c66d5b409c075`. Task branch: `fix/tanyapi-genjutsu-reference-plus-generation-seconds`. Draft PR #290.
+- Goal: bill selected video-reference seconds plus generated-video seconds, using the existing configured per-operation/per-resolution rate. Quote breakdown and atomic actual debit must agree, including private trend repeats.
+- Current audit: `contract.quote_plan` billed only source duration; `repository.begin_submission` also used only source duration. The user-facing Genjutsu editor has source clip trimming, but the provider input contract does **not** have an independent generation duration control. Generation seconds currently equal selected effective source-clip seconds. Distinct durations can be calculated by the pure duration helper, but a separate UI duration selector would be fake and was not added.
+- Options considered: frontend-only doubling (rejected: billing mismatch), fake output-duration parameter (rejected: provider schema invalid), shared double-component backend accounting (selected). Supplier pricing is by input video only; this is an explicitly requested NEUROMIX customer tariff change.
+- Change: shared millisecond-to-seconds function rounds each component up independently; reserve/actual charge both use the sum; quote exposes `reference_seconds`, `generation_seconds` and `billable_seconds`. A pricing version gate invalidates outstanding unused old quotes, but preserves accepted/in-flight tasks and refund accounting.
+- Scope: `bot/genjutsu/contract.py`, `bot/genjutsu/repository.py`, Mini App quote types and both Studio/Trend quote views, focused backend/frontend regression tests and Genjutsu docs. Existing admin prices, DB schema, model payload, provider routing and env unchanged.
+- Critical invariants: prior quote cannot be started under new pricing, atomic balance reservation remains idempotent, failed/unexecuted steps refund correctly, multi-step/variant max reserves include both duration components, and no duration is invented when metadata is missing.
+- Test-first: contract, repository, and browser-visible component regression tests were committed before implementation. CI/test outcome to be verified from the final PR head; no paid generation or production runtime validation has been performed.
+- Rollout: exact-head Python and Mini App CI/E2E, independent review, squash auto-merge to `tanyapi`, exact-deploy-SHA plus focused quote/charge smoke. Rollback through revert; check pre-change unused quotes and no balance migration. Live verification remains outstanding.
+- Playbooks consulted: `Bambale0/skills` diagnosing-bugs, tdd, implement; `Bambale0/claw` backend-integration and release-hardening; `anthropics/skills` webapp-testing.
+
+
 ## 2026-10-09 — Seedance 2 ordinary price editor/quote alignment
 
 - Baseline: fresh `tanyapi` `d766b0eeb6693de1ea84f79734efc66a3ad93789`. Isolated task branch `fix/seedance2-ordinary-quality-price-20261009`; source blobs verified against the remote tree. No unrelated referral changes are included.
