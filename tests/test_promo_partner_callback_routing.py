@@ -1,6 +1,6 @@
 """Telegram dispatcher regression: promo callbacks must not be mistaken for partner rates."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -41,7 +41,7 @@ async def test_promo_history_and_draft_open_reach_promo_router(monkeypatch):
     user = types.User(id=999999999, is_bot=False, first_name="Admin")
     menu = types.Message(
         message_id=100,
-        date=datetime.now(timezone.utc),
+        date=datetime.now(UTC),
         chat=types.Chat(id=user.id, type="private"),
         from_user=types.User(id=123456, is_bot=True, first_name="Bot"),
         text="Promos",
