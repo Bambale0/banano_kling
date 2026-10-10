@@ -26,7 +26,7 @@ from bot.partner_commission_settings import (
 
 logger = logging.getLogger(__name__)
 router = Router(name="partner_rate_admin")
-PREFIX = "admin_pr"
+PREFIX = "admin_rate"  # Unique: promo_admin has existing admin_pr:* callbacks.
 SCREEN_TTL_SECONDS = 10 * 60
 _LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
 
