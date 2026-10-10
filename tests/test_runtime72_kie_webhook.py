@@ -455,3 +455,60 @@ async def test_concurrent_success_callbacks_deliver_once(setup_webhook, monkeypa
     env.bot.send_photo.assert_awaited_once()
     env.complete.assert_awaited_once()
     env.claim.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["motion_control_v26", "motion_control_v30"])
+async def test_motion_receipt_full_webhook_lifecycle_and_duplicate_binding(monkeypatch, model):
+    from bot import db as db_backend
+    from bot.handlers.motion_launch import persist_accepted_motion
+    from bot.services.motion_launch_receipts import MotionLaunchReceipts
+    from bot.services.motion_quote import build_motion_quote
+
+    user = await database.get_or_create_user(5000000001)
+    await database.add_credits(user.telegram_id, 100)
+    initial = (await database.get_or_create_user(user.telegram_id)).credits
+    store = MotionLaunchReceipts(db_backend.connect, db_backend.Row)
+    await store.ensure_schema()
+    quote = build_motion_quote(
+        model=model, quality="720p", direction="video", prompt="synthetic",
+        image_url="https://example.test/image.png", video_url="https://example.test/video.mp4",
+        source_sha256="synthetic", source_seconds=5, rate=1, admin_free=False,
+        format_cost=lambda value: round(value * 2) / 2,
+    )
+    receipt = await store.reserve(
+        user_id=user.id, telegram_id=user.telegram_id, request_key="a" * 32,
+        recipe=quote, cost=quote["cost"], admin_free=False,
+    )
+    await store.accepted(receipt["receipt_id"], "provider-task")
+    receipt.update(provider_task_id="provider-task", phase="accepted")
+    api = SimpleNamespace(add_generation_task=database.add_generation_task)
+    await persist_accepted_motion(receipt, quote, api)
+    await persist_accepted_motion(receipt, quote, api)
+    assert await store.unbound_accepted() == []
+    assert (await database.get_or_create_user(user.telegram_id)).credits == initial - 10
+
+    monkeypatch.setattr(main.config, "KIE_AI_WEBHOOK_SECRET", "")
+    monkeypatch.setattr(task_watchdog, "DATABASE_PATH", database.DATABASE_PATH)
+    # A paid actor becoming admin after acceptance still receives the frozen refund.
+    monkeypatch.setattr(task_watchdog.config, "is_admin", lambda _id: True)
+    provider = AsyncMock(return_value={"taskId": "provider-task", "state": "generating"})
+    monkeypatch.setattr(kie_market_service, "get_task_status", provider)
+    bot = SimpleNamespace(send_message=AsyncMock())
+    response = await main.handle_kie_ai_webhook(Request(payload(), bot))
+    assert response.status == 200
+    assert (await database.get_task_by_id("provider-task")).status == "pending"
+    assert (await database.get_or_create_user(user.telegram_id)).credits == initial - 10
+    bot.send_message.assert_not_awaited()
+
+    provider.return_value = {"taskId": "provider-task", "state": "fail", "failCode": "400", "failMsg": "synthetic failure"}
+    responses = await asyncio.gather(*[
+        main.handle_kie_ai_webhook(Request(payload(), bot)) for _ in range(3)
+    ])
+    assert [response.status for response in responses] == [200, 200, 200]
+    assert (await database.get_task_by_id("provider-task")).status == "failed"
+    assert (await database.get_or_create_user(user.telegram_id)).credits == initial
+    saved = await store.find(user.telegram_id, "a" * 32)
+    assert saved["phase"] == "provider_failed"
+    assert saved["refunded"] == 1
+    bot.send_message.assert_awaited_once()

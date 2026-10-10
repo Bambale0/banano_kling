@@ -1606,6 +1606,58 @@ export async function askAIAssistant(payload: {
   return { reply: response.reply }
 }
 
+export type MotionQuote = {
+  version: number
+  billing_mode: 'source_locked_output'
+  quote_hash: string
+  input_seconds: number
+  output_seconds: number
+  billable_seconds: number
+  rate_per_second: number
+  cost: number
+  charge_cost: number
+  admin_free: boolean
+}
+
+export async function quoteMotion(payload: {
+  prompt: string
+  imageUrl: string
+  videoUrl: string
+  mode: '720p' | '1080p'
+  direction: 'video' | 'image'
+  model: 'motion_control_v26' | 'motion_control_v30'
+}): Promise<MotionQuote> {
+  const response = await postJson<{ ok: true; quote: MotionQuote }>('quote-motion', {
+    init_data: getInitData(),
+    prompt: payload.prompt,
+    motion_model: payload.model,
+    motion_image_url: restoreProviderUploadUrl(payload.imageUrl),
+    motion_video_url: restoreProviderUploadUrl(payload.videoUrl),
+    motion_mode: payload.mode,
+    motion_direction: payload.direction,
+  })
+  return response.quote
+}
+
+export async function motionStatus(requestId: string): Promise<{
+  status: string; task?: Task; credits?: number
+}> {
+  const response = await postJson<{
+    ok: true; status: string; task_id?: string; model?: string; model_label?: string;
+    prompt_preview?: string; cost?: number; duration?: number; credits?: number; saved_url?: string
+  }>('status-motion', { init_data: getInitData(), motion_request_id: requestId })
+  return {
+    status: response.status, credits: response.credits,
+    task: response.task_id ? {
+      task_id: response.task_id, type: 'video', model: response.model || 'motion_control_v26',
+      model_label: response.model_label || 'Motion Control', aspect_ratio: '1:1',
+      status: response.status === 'done' ? 'completed' : response.status === 'failed' ? 'failed' : 'pending',
+      result_url: response.saved_url || null, created_at: new Date().toISOString(), prompt_preview: response.prompt_preview || '',
+      cost: response.cost || 0, duration: response.duration,
+    } : undefined,
+  }
+}
+
 export async function generateMotion(payload: {
   prompt: string
   imageUrl: string
@@ -1613,7 +1665,8 @@ export async function generateMotion(payload: {
   mode: '720p' | '1080p'
   direction: 'video' | 'image'
   model: 'motion_control_v26' | 'motion_control_v30'
-  videoDuration?: number
+  quoteHash: string
+  requestId: string
 }): Promise<{
   task: Task
   detail?: TaskDetail | null
@@ -1634,6 +1687,7 @@ export async function generateMotion(payload: {
     credits: number
     cost: number
     model_label: string
+    duration: number
   }>('generate-motion', {
     init_data: initData,
     prompt: payload.prompt,
@@ -1642,7 +1696,8 @@ export async function generateMotion(payload: {
     motion_video_url: videoUrl,
     motion_mode: payload.mode,
     motion_direction: payload.direction,
-    ...(payload.videoDuration ? { motion_duration: payload.videoDuration } : {}),
+    motion_quote_hash: payload.quoteHash,
+    motion_request_id: payload.requestId,
   })
 
   const task: Task = {
@@ -1657,7 +1712,7 @@ export async function generateMotion(payload: {
     prompt_preview:
       payload.prompt.slice(0, 100) + (payload.prompt.length > 100 ? '...' : ''),
     cost: response.cost,
-    duration: 5,
+    duration: response.duration,
   }
 
   return {

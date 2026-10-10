@@ -1,14 +1,16 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Sparkles, Upload, Video, Image as ImageIcon, Wand2, CheckCircle2 } from 'lucide-react'
 import { useApp } from '@/lib/app-context'
-import { generateMotion, uploadFile } from '@/lib/api'
+import { generateMotion, quoteMotion, motionStatus, MiniAppApiError, uploadFile } from '@/lib/api'
+import type { MotionQuote } from '@/lib/api'
 import type { Task, UploadedFile } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { ResultCard } from '../result-card'
 import { cn } from '@/lib/utils'
+import { clearPendingMotion, pendingMotionId } from '@/lib/motion-pending'
 
 type MotionMode = '720p' | '1080p'
 type MotionModel = 'motion_control_v26' | 'motion_control_v30'
@@ -107,7 +109,15 @@ export function MotionTab() {
 
   const [characterImage, setCharacterImage] = useState<UploadedFile | null>(null)
   const [motionVideo, setMotionVideo] = useState<UploadedFile | null>(null)
-  const [videoDuration, setVideoDuration] = useState<number>(5)
+  const [videoDuration, setVideoDuration] = useState<number>(0)
+  const [quote, setQuote] = useState<MotionQuote | null>(null)
+  const requestId = useRef<string>('')
+  const mounted = useRef(true)
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+  const [pendingRequest, setPendingRequest] = useState<string | null>(null)
+  const [recoveryLoaded, setRecoveryLoaded] = useState(false)
+  const [quoteRevision, setQuoteRevision] = useState(0)
+  const pendingKey = `motion-pending:${state.user.telegramId || 'locked'}`
   const [motionModel, setMotionModel] = useState<MotionModel>('motion_control_v26')
   const [mode, setMode] = useState<MotionMode>('720p')
   const [direction, setDirection] = useState<MotionDirection>('video')
@@ -116,10 +126,90 @@ export function MotionTab() {
   const [lastРезультат, setLastРезультат] = useState<Task | null>(null)
   const [error, setError] = useState<string | null>(null)
   const motionModelData = state.videoModels.find((item) => item.id === motionModel)
-  const perSecondCost =
-    (motionModelData?.quality_costs?.[mode] ??
-    (motionModelData?.costs?.['5'] ?? 15) / 5)
-  const motionCost = Math.round(perSecondCost * videoDuration * 2) / 2
+  const motionCost = quote?.cost
+
+  useEffect(() => {
+    setRecoveryLoaded(false)
+    try {
+      const saved = localStorage.getItem(pendingKey)
+      setPendingRequest(pendingMotionId(saved))
+      setRecoveryLoaded(true)
+    } catch {
+      setError('Не удалось сохранить защиту от повторного запуска. Разрешите хранилище браузера.')
+    }
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === pendingKey) setPendingRequest(pendingMotionId(event.newValue))
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [pendingKey])
+
+  useEffect(() => {
+    if (!pendingRequest || state.mode !== 'live') return
+    let stale = false
+    let timer: ReturnType<typeof setTimeout>
+    const check = async () => {
+      try {
+        let result = await motionStatus(pendingRequest)
+        if (stale) return
+        if (result.status === 'not_found') {
+          const saved = JSON.parse(localStorage.getItem(pendingKey) || '{}')
+          if (saved.requestId === pendingRequest && saved.payload?.requestId === pendingRequest) {
+            const recovered = await generateMotion(saved.payload)
+            result = { status: 'queued', task: recovered.task, credits: recovered.credits }
+          }
+        }
+        if (stale) return
+        if (result.task) {
+          addTask(result.task)
+          setLastРезультат(result.task)
+          if (typeof result.credits === 'number') setCredits(result.credits)
+        }
+        if (result.task || result.status === 'rejected') {
+          if (!clearPendingMotion(localStorage, pendingKey, pendingRequest)) return
+          setPendingRequest(null)
+          requestId.current = crypto.randomUUID().replaceAll('-', '')
+          setQuoteRevision((value) => value + 1)
+          if (result.status === 'rejected') setError('Запуск отклонён. Можно проверить цену и запустить заново.')
+          return
+        }
+        // not_found can race the original POST; never clear the durable key here.
+        setError('Проверяем предыдущий запуск Motion. Повторное списание заблокировано.')
+      } catch (err) {
+        if (!stale && err instanceof MiniAppApiError && ['motion_quote_changed', 'motion_rejected', 'motion_not_reserved'].includes(err.code || '')) {
+          if (!clearPendingMotion(localStorage, pendingKey, pendingRequest)) return
+          setPendingRequest(null)
+          setQuoteRevision((value) => value + 1)
+          setError(err.message)
+          return
+        }
+        if (!stale) setError(err instanceof Error ? err.message : 'Проверяем предыдущий запуск Motion')
+      }
+      if (!stale) timer = setTimeout(check, 5000)
+    }
+    void check()
+    return () => { stale = true; clearTimeout(timer) }
+  }, [pendingRequest, pendingKey, state.mode, addTask, setCredits])
+
+  useEffect(() => {
+    let stale = false
+    setQuote(null)
+    setError(null)
+    requestId.current = ''
+    if (state.mode !== 'live' || !recoveryLoaded || pendingRequest || !characterImage || !motionVideo) return
+    quoteMotion({ imageUrl: characterImage.url, videoUrl: motionVideo.url,
+      prompt, mode, direction, model: motionModel })
+      .then((next) => {
+        if (stale) return
+        setQuote(next)
+        setVideoDuration(next.input_seconds)
+        requestId.current = crypto.randomUUID().replaceAll('-', '')
+      })
+      .catch((err) => {
+        if (!stale) setError(err instanceof Error ? err.message : 'Не удалось проверить длительность и цену')
+      })
+    return () => { stale = true }
+  }, [characterImage, motionVideo, prompt, mode, direction, motionModel, state.mode, pendingRequest, recoveryLoaded, quoteRevision])
 
   async function uploadImage(file: File) {
     if (state.mode !== 'live') {
@@ -131,20 +221,6 @@ export function MotionTab() {
   }
 
   async function uploadVideo(file: File) {
-    // read duration before uploading
-    const duration = await new Promise<number>((resolve) => {
-      const url = URL.createObjectURL(file)
-      const el = document.createElement('video')
-      el.preload = 'metadata'
-      el.onloadedmetadata = () => {
-        resolve(Math.max(1, Math.round(el.duration)))
-        URL.revokeObjectURL(url)
-      }
-      el.onerror = () => { resolve(5); URL.revokeObjectURL(url) }
-      el.src = url
-    })
-    setVideoDuration(duration)
-
     if (state.mode !== 'live') {
       setError('Откройте Mini App через Telegram, чтобы загрузить видео.')
       return
@@ -171,19 +247,30 @@ export function MotionTab() {
       return
     }
 
+    if (!quote || !requestId.current || !recoveryLoaded || pendingRequest || isSubmitting) {
+      setError('Дождитесь проверенного расчёта перед запуском')
+      return
+    }
     setIsSubmitting(true)
+    const launchId = requestId.current
 
     try {
-      const result = await generateMotion({
-        imageUrl: characterImage.url,
-        videoUrl: motionVideo.url,
-        prompt,
-        mode,
-        direction,
-        model: motionModel,
-        videoDuration,
-      })
+      const otherPending = localStorage.getItem(pendingKey)
+      if (otherPending) {
+        setPendingRequest(pendingMotionId(otherPending))
+        throw new Error('Предыдущий запуск Motion ещё проверяется')
+      }
+      const payload = {
+        imageUrl: characterImage.url, videoUrl: motionVideo.url, prompt, mode, direction,
+        model: motionModel, quoteHash: quote.quote_hash, requestId: launchId,
+      }
+      localStorage.setItem(pendingKey, JSON.stringify({ requestId: launchId, payload }))
+      setPendingRequest(launchId)
+      const result = await generateMotion(payload)
 
+      if (!mounted.current || !clearPendingMotion(localStorage, pendingKey, launchId)) return
+      setPendingRequest(null)
+      requestId.current = crypto.randomUUID().replaceAll('-', '')
       addTask(result.task)
       setCredits(result.credits)
       setLastРезультат(result.task)
@@ -193,13 +280,23 @@ export function MotionTab() {
         setTaskDetail(result.detail)
       }
     } catch (e) {
+      if (!mounted.current) return
+      if (e instanceof MiniAppApiError && ['motion_quote_changed', 'motion_rejected', 'motion_not_reserved'].includes(e.code || '')) {
+        if (!clearPendingMotion(localStorage, pendingKey, launchId)) return
+        setPendingRequest(null)
+        setQuote(null)
+        requestId.current = ''
+        setQuoteRevision((value) => value + 1)
+      }
       setError(e instanceof Error ? e.message : 'Не удалось запустить Motion Control')
     } finally {
-      setIsSubmitting(false)
+      if (mounted.current) setIsSubmitting(false)
     }
   }
 
-  const estimatedCost = `${motionCost}🍌 • ${formatPerSecondCost(perSecondCost)}🍌/с`
+  const estimatedCost = quote
+    ? `${quote.admin_free ? 'Без списания' : String(motionCost) + '🍌'} • ${formatPerSecondCost(quote.rate_per_second)}🍌/с · вход ${quote.input_seconds}с + выход ${quote.output_seconds}с`
+    : 'Проверяем длительность и цену после загрузки'
 
   return (
     <div className="px-4 space-y-5 pb-28">
@@ -232,7 +329,7 @@ export function MotionTab() {
             accept="image/*"
             file={characterImage}
             onUpload={uploadImage}
-            disabled={isSubmitting}
+            disabled={isSubmitting || Boolean(pendingRequest)}
           />
 
           <MotionUploadCard
@@ -242,11 +339,14 @@ export function MotionTab() {
             accept="video/*"
             file={motionVideo}
             onUpload={uploadVideo}
-            disabled={isSubmitting}
+            disabled={isSubmitting || Boolean(pendingRequest)}
           />
 
           <div className="glass rounded-[1.75rem] border border-border/60 p-4">
             <p className="font-serif text-lg text-foreground mb-4">Настройки</p>
+            <p className="mb-3 text-sm text-muted-foreground">
+              Длина результата следует видео движения. Чтобы изменить её, загрузите другой отрезок.
+            </p>
 
             <div className="space-y-3">
               <div>
@@ -261,8 +361,8 @@ export function MotionTab() {
                     const itemModel = state.videoModels.find((model) => model.id === item.id)
                     const itemPerSecondCost =
                       (itemModel?.quality_costs?.[mode] ??
-                      (itemModel?.costs?.['5'] ?? 15) / 5)
-                    const itemCost = Math.round(itemPerSecondCost * videoDuration * 2) / 2
+                      (itemModel?.costs?.['5'] ?? 0) / 5)
+                    const itemCost = Math.round(itemPerSecondCost * (videoDuration + videoDuration) * 2) / 2
                     return (
                     <button
                       key={item.id}
@@ -292,8 +392,8 @@ export function MotionTab() {
                 <div className="grid grid-cols-2 gap-2">
                   {(['720p', '1080p'] as MotionMode[]).map((item) => {
                     const qPerSec = (motionModelData?.quality_costs?.[item] ??
-                      (motionModelData?.costs?.['5'] ?? 15) / 5)
-                    const qCost = Math.round(qPerSec * videoDuration * 2) / 2
+                      (motionModelData?.costs?.['5'] ?? 0) / 5)
+                    const qCost = Math.round(qPerSec * (videoDuration + videoDuration) * 2) / 2
                     return (
                     <button
                       key={item}
@@ -366,7 +466,7 @@ export function MotionTab() {
             type="button"
             size="lg"
             onClick={handleSubmit}
-            disabled={isSubmitting}
+            disabled={isSubmitting || Boolean(pendingRequest) || !recoveryLoaded || !quote}
             className="h-14 w-full rounded-2xl bg-gold text-background hover:bg-gold/90"
           >
             <Wand2 className="mr-2 h-5 w-5" />

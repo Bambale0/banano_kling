@@ -1890,3 +1890,13 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Remaining: Motion durable receipt/refund and trusted duration; shared pricing/frontends; WAN standard; exact-head tests and independent review; draft PR then release gates. No merge/deploy yet.
 
 - Delivery review follow-up: explicit Telegram 429 is retryable rejection with persisted retry_after deadline honored by atomic claim; it does not trigger immediate fallback or permanent uncertain. Timeout before any active send remains pending, while in-flight send timeout remains uncertain. Nine isolated behavior regressions pass and changed Python parses; database claim/deadline integration requires normal CI.
+
+## 2026-10-10 — Tanya Motion durable launch safety (review pending)
+
+- Scope: owner-bound measured source + locked output quote, atomic receipt/debit and proven-rejection refund; no historical balance changes.
+- Accepted-but-unbound receipts recover through watchdog without browser presence. Unknown provider acceptance is held, never retried or refunded automatically.
+- Watchdog/callback failure requires terminal provider evidence for new Motion receipts; frozen charged amount survives later role/price changes.
+- Mini App persists original request identity before sending, restores status across reload, and uses identity-CAS cleanup so late responses cannot clear a later launch.
+- Local checks: 27 isolated Python tests on synthetic SQLite/pure functions; 5 real PostgreSQL16 fixture transaction tests (BIGINT, concurrency, refund rollback, pending guard); 3 Jest pending-state tests; TypeScript and changed ESLint passed.
+- PostgreSQL fixture used a temporary network-disabled container and test-only asyncpg cursor shim, not application adapter/full application CI. Created container removed after tests. No provider calls, actual Telegram sends or production DB access.
+- Independent review and full exact-head CI required before merge/release.
