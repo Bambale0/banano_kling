@@ -5604,6 +5604,7 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
 
 async def miniapp_quote_motion(request: web.Request) -> web.Response:
     import sys
+
     from bot.handlers.motion_launch import quote_motion
 
     return await quote_motion(request, sys.modules[__name__])
@@ -5611,6 +5612,7 @@ async def miniapp_quote_motion(request: web.Request) -> web.Response:
 
 async def miniapp_status_motion(request: web.Request) -> web.Response:
     import sys
+
     from bot.handlers.motion_launch import status_motion
 
     return await status_motion(request, sys.modules[__name__])
@@ -5618,6 +5620,7 @@ async def miniapp_status_motion(request: web.Request) -> web.Response:
 
 async def miniapp_generate_motion(request: web.Request) -> web.Response:
     import sys
+
     from bot.handlers.motion_launch import generate_motion
 
     return await generate_motion(request, sys.modules[__name__])
