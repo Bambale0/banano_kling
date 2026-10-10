@@ -178,7 +178,7 @@ async def show_complete_video_model_selection(callback: types.CallbackQuery, sta
 
     await _render_video_model_page(
         callback, state, current_model=current_model,
-        family="all" if callback.data == "create_video_new" else data.get("video_model_family", "all"),
+        family="seedance" if callback.data == "create_video_new" else data.get("video_model_family", "all"),
         page=0 if callback.data == "create_video_new" else data.get("video_model_page", 0),
     )
 
