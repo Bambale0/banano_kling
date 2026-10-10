@@ -282,11 +282,11 @@ async def test_concurrent_service_revision_conflict_does_not_retry(editor):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("raw", ["admin_pr:confirm:bad", "admin_pr:quick:40:ю", "admin_pr:quick:99:{token}"])
+@pytest.mark.parametrize("raw", ["{prefix}:confirm:bad", "{prefix}:quick:40:ю", "{prefix}:quick:99:{token}"])
 async def test_forged_callbacks_do_not_mutate(editor, raw):
     state, cb, _, _, _, setter = editor
     await lookup(state, cb)
-    cb.data = raw.format(token=state.data["partner_rate_token"])
+    cb.data = raw.format(prefix=admin.PREFIX, token=state.data["partner_rate_token"])
     await admin.partner_rate_callback(cb, state)
     assert not setter.await_count
     assert cb.answer.await_args.kwargs["show_alert"]
