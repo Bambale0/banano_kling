@@ -519,6 +519,10 @@ def estimate_trend_repeat_cost(
             if fixed_video_count > 0 or has_replaceable_video
             else ()
         )
+        if pricing_video_refs:
+            # Presence markers cannot establish input seconds. The effective
+            # hidden/replacement plan is quoted only after media assembly.
+            return None
         if model == "seedance_2_5":
             resolution = str(
                 settings.get("seedance25_resolution") or "720p"
@@ -742,6 +746,7 @@ async def _run_video_trend(
     telegram_id: int,
     user: Any,
     trend: TrustedTrendRun,
+    quote_context: dict | None = None,
 ) -> web.Response:
     from bot import miniapp as miniapp_module
 
@@ -820,6 +825,11 @@ async def _run_video_trend(
     )
     veo_resolution = str(trend.settings.get("veo_resolution") or "720p")
     omni_resolution = str(trend.settings.get("omni_resolution") or "720p")
+    if effective_model == "seedance_2" and trend.provider_video_urls:
+        from bot.handlers.seedance_measured_launch import run_measured_trend_seedance2
+        return await run_measured_trend_seedance2(telegram_id, trend, duration, runtime_generation_type, quote_context or {})
+    if quote_context and quote_context.get("video_quote_only"):
+        raise TrendRunValidationError("Измеренный расчёт недоступен")
     billing_quote = await quote_video_for_actor(
         telegram_id, effective_model, duration,
         miniapp_module._video_pricing_quality(effective_model, veo_resolution, omni_resolution),
@@ -1039,40 +1049,6 @@ async def miniapp_run_trend(request: web.Request) -> web.Response:
                 "error": "Откройте тренд в обновлённом редакторе Wan: он сохраняет все референсы и рассчитывает стоимость перед запуском.",
                 "retry_same_request": False}, status=409)
 
-        if parsed.client_request_id:
-            claim_context = (int(user.id), parsed.trend_id, parsed.client_request_id)
-            claim = await reserve_trend_run_claim(
-                user_id=claim_context[0],
-                trend_id=claim_context[1],
-                client_request_id=claim_context[2],
-                request_hash=_trend_run_request_hash(parsed),
-            )
-            if not claim.get("claimed"):
-                if claim.get("conflict"):
-                    return web.json_response(
-                        {
-                            "ok": False,
-                            "error": "Этот идентификатор уже использован для другого запуска",
-                            "retry_same_request": False,
-                        },
-                        status=409,
-                    )
-                previous = claim.get("response")
-                if isinstance(previous, Mapping):
-                    return web.json_response(
-                        dict(previous),
-                        status=int(claim.get("http_status") or 200),
-                    )
-                return web.json_response(
-                    {
-                        "ok": False,
-                        "error": "Этот запуск уже обрабатывается. Не нажимайте кнопку повторно.",
-                        "retry_same_request": True,
-                    },
-                    status=409,
-                )
-            claim_reserved = True
-
         raw_settings = prompt.get("generation_settings")
         settings = raw_settings if isinstance(raw_settings, Mapping) else {}
         template_assets: Sequence[Mapping[str, Any]] = ()
@@ -1137,6 +1113,46 @@ async def miniapp_run_trend(request: web.Request) -> web.Response:
                 await validate_seedance2_reference_videos(list(trend.provider_video_urls))
             except TrendReferenceStorageError as exc:
                 raise TrendRunValidationError(str(exc)) from exc
+
+        measured_seedance = trend.kind == "video" and trend.model in {"seedance_2", "seedance_2_5"} and bool(trend.provider_video_urls)
+        if body.get("video_quote_only") is True and not measured_seedance:
+            return web.json_response({"ok": False, "error": "Видеореференс для расчёта не найден"}, status=400)
+        if measured_seedance:
+            return await _run_video_trend(telegram_id=telegram_id, user=user, trend=trend, quote_context=body)
+
+        if parsed.client_request_id:
+            claim_context = (int(user.id), parsed.trend_id, parsed.client_request_id)
+            claim = await reserve_trend_run_claim(
+                user_id=claim_context[0],
+                trend_id=claim_context[1],
+                client_request_id=claim_context[2],
+                request_hash=_trend_run_request_hash(parsed),
+            )
+            if not claim.get("claimed"):
+                if claim.get("conflict"):
+                    return web.json_response(
+                        {
+                            "ok": False,
+                            "error": "Этот идентификатор уже использован для другого запуска",
+                            "retry_same_request": False,
+                        },
+                        status=409,
+                    )
+                previous = claim.get("response")
+                if isinstance(previous, Mapping):
+                    return web.json_response(
+                        dict(previous),
+                        status=int(claim.get("http_status") or 200),
+                    )
+                return web.json_response(
+                    {
+                        "ok": False,
+                        "error": "Этот запуск уже обрабатывается. Не нажимайте кнопку повторно.",
+                        "retry_same_request": True,
+                    },
+                    status=409,
+                )
+            claim_reserved = True
 
         if trend.kind == "video":
             response = await _run_video_trend(

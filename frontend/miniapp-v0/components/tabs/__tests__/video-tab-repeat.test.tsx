@@ -8,7 +8,7 @@ jest.mock('@/lib/app-context', () => ({
   useApp: jest.fn(),
 }))
 
-jest.mock('@/lib/api', () => ({
+jest.mock('@/lib/api', () => ({ readPendingMeasuredVideo: jest.fn(() => null), recoverPendingMeasuredVideo: jest.fn(async () => ({ status: 'none' })), quoteVideo: jest.fn(async () => ({ quote_id: 'a'.repeat(32), quote_hash: 'b'.repeat(64), cost: 10, charge_cost: 10, input_seconds: 5, selected_output_seconds: 5 })),
   generateVideo: jest.fn(),
   uploadFile: jest.fn(),
 }))

@@ -24,6 +24,8 @@ export interface Seedance25GeneratePayload {
   videoEditing?: boolean
   identityTransfer?: boolean
   sourceFeedGenId?: number | null
+  videoQuoteId?: string
+  videoQuoteHash?: string
   identityQuote?: Seedance25IdentityQuote
   resolution: Seedance25Resolution
   outputFormat: Seedance25OutputFormat
@@ -40,7 +42,8 @@ export interface Seedance25GeneratePayload {
 
 export interface Seedance25GenerateResponse {
   ok: true
-  status: 'queued'
+  status: 'queued' | 'done' | 'failed'
+  saved_url?: string | null
   task_id: string
   credits: number
   cost: number
@@ -62,6 +65,10 @@ export interface Seedance25IdentityQuote {
 export interface Seedance25QuoteResponse {
   ok: true
   quote_only: true
+  quote_id?: string
+  quote_hash?: string
+  input_seconds?: number
+  selected_output_seconds?: number
   cost: number
   billing_duration: number
   source_video_duration_seconds: number
@@ -80,6 +87,10 @@ interface Seedance25UploadAssemblyResponse {
   } | null
 }
 
+export class SeedanceApiError extends Error {
+  constructor(message: string, public code?: string, public status?: number) { super(message) }
+}
+
 async function parseJsonResponse<T>(response: Response, fallback: string): Promise<T> {
   const text = await response.text()
   let data: any = null
@@ -89,7 +100,7 @@ async function parseJsonResponse<T>(response: Response, fallback: string): Promi
     throw new Error(fallback)
   }
   if (!response.ok || data?.ok === false) {
-    throw new Error(data?.error || fallback)
+    throw new SeedanceApiError(data?.error || fallback, data?.code, response.status)
   }
   return data as T
 }
@@ -195,6 +206,8 @@ async function requestSeedance25<T>(
       ...(payload.sourceFeedGenId ? { source_feed_gen_id: payload.sourceFeedGenId } : {}),
       ...(quoteOnly ? { seedance25_quote_only: true } : {}),
       seedance25_identity_transfer: payload.identityTransfer === true,
+      ...(payload.videoQuoteId ? { video_quote_id: payload.videoQuoteId } : {}),
+      ...(payload.videoQuoteHash ? { video_quote_hash: payload.videoQuoteHash } : {}),
       ...(payload.identityQuote ? { seedance25_identity_quote: payload.identityQuote } : {}),
       prompt: payload.prompt,
       v_ratio: payload.videoEditing || payload.identityTransfer ? 'adaptive' : payload.ratio,
@@ -226,4 +239,14 @@ export async function generateSeedance25(payload: Seedance25GeneratePayload): Pr
 
 export async function quoteSeedance25Identity(payload: Seedance25GeneratePayload): Promise<Seedance25QuoteResponse> {
   return requestSeedance25<Seedance25QuoteResponse>(payload, true)
+}
+
+
+export async function seedance25QuoteStatus(quoteId: string): Promise<Seedance25GenerateResponse | { ok: true; status: string; quote_id: string }> {
+  const response = await fetch(`${getApiBasePath()}/generate-video`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ init_data: getInitData(), start_param_fallback: getStartParamFallback(),
+      v_model: 'seedance_2_5', seedance25_status_only: true, video_quote_id: quoteId }),
+  })
+  return parseJsonResponse(response, 'Не удалось проверить запуск Seedance')
 }

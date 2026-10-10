@@ -162,7 +162,7 @@ class Wan3PrimeStorage:
         return summary
 
     async def init_upload(self, actor, *, kind: str, filename: str, size: int, content_type: str | None = None, importing: bool = False,
-                          upload_id: str | None = None) -> dict[str, Any]:
+                          upload_id: str | None = None, seedance_snapshot: bool = False) -> dict[str, Any]:
         from bot.services.wan3_prime_storage_policy import (
             ACTIVE_UPLOAD_STATES,
             assert_capacity,
@@ -173,7 +173,12 @@ class Wan3PrimeStorage:
         kind = str(kind or "").strip().lower()
         if kind not in {"image", "video", "audio", "file"}:
             raise Wan3PrimeValidationError("Unsupported upload kind")
-        if isinstance(size, bool) or not isinstance(size, int) or size <= 0 or size > _kind_limit(kind):
+        # Server-only bounded import for Seedance's documented 200 MB source
+        # limit. Public WAN upload routes never forward this internal argument.
+        if seedance_snapshot and (seedance_snapshot is not True or not importing or kind != "video" or upload_id is not None):
+            raise Wan3PrimeValidationError("Invalid Seedance snapshot reservation")
+        maximum = 200 * 1024 * 1024 if seedance_snapshot else _kind_limit(kind)
+        if isinstance(size, bool) or not isinstance(size, int) or size <= 0 or size > maximum:
             raise Wan3PrimeValidationError("Upload size is not allowed")
         filename = _safe_basename(filename)
         if Path(filename).suffix.lower() not in _allowed_ext(kind):
@@ -397,7 +402,7 @@ class Wan3PrimeStorage:
 
     async def _persist_owned_file(self, actor, *, kind: str, filename: str, path: Path, info: MediaInfo,
                                   content_type: str | None, source: str, upload_id: str | None,
-                                  assembly_stamp: str | None) -> dict[str, Any]:
+                                  assembly_stamp: str | None, expected_sha256: str | None = None) -> dict[str, Any]:
         """Persist inspected bytes while retaining the final owner/quota lock."""
         from bot.services.wan3_prime_files import copy_atomic
         from bot.services.wan3_prime_storage_policy import assert_capacity, lock_storage
@@ -424,6 +429,9 @@ class Wan3PrimeStorage:
                     raise Wan3PrimeValidationError("Upload assembly lease changed", status=409)
             await assert_capacity(db, actor.user_id, info.size_bytes, exclude_upload_id=upload_id or "")
             digest = await asyncio.to_thread(copy_atomic, path, dest)
+            if expected_sha256 is not None and digest != expected_sha256:
+                await asyncio.to_thread(dest.unlink, missing_ok=True)
+                raise Wan3PrimeValidationError("Snapshot bytes changed during persistence", status=409)
             await db.execute(
                 "INSERT INTO wan3_prime_media "
                 "(user_id, telegram_id, kind, public_url, local_path, filename, content_type, size_bytes, sha256, media_info, source) "

@@ -5181,7 +5181,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         sanitize_provider_log_payload(retry_error),
                     )
 
-            if task and _is_retryable_seedance_real_person_failure(task, fail_msg):
+            if task and not _extract_task_request_data(task).get("seedance_quote_id") and _is_retryable_seedance_real_person_failure(task, fail_msg):
                 try:
                     retried_task_id = (
                         await _retry_transient_seedance_real_person_failure(

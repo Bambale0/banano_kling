@@ -36,7 +36,7 @@ def test_pinterest_repeat_matches_reference_video_flow():
     assert "weightKg: parseOptionalNumber(weightKg)" in runner
     assert "model: pinterestModel" in runner
     assert "completedReferences.length === exactReferenceCount" in runner
-    assert "disabled={busy || !readyToGenerate}" in runner
+    assert "disabled={busy || !readyToGenerate || pendingMeasured || (needsMeasuredQuote && !measuredQuote)}" in runner
 
 
 def test_height_and_weight_reach_backend_payload():

@@ -24,6 +24,8 @@ from uuid import uuid4
 import aiohttp
 from PIL import Image, ImageOps, UnidentifiedImageError
 
+from bot.public_network import is_public_unicast
+
 from .contract import PipelineError, integer
 from .provider import ProviderFailure, https_url
 
@@ -38,7 +40,7 @@ class PublicResolver(aiohttp.abc.AbstractResolver):
         except ValueError:
             literal = None
         if literal is not None:
-            if not literal.is_global:
+            if not is_public_unicast(str(literal)):
                 raise OSError('Non-public media address')
             return [{'hostname': host, 'host': str(literal), 'port': port,
                      'family': socket.AF_INET6 if literal.version == 6 else socket.AF_INET,
@@ -46,7 +48,7 @@ class PublicResolver(aiohttp.abc.AbstractResolver):
         rows = await self._resolver.resolve(host, port, family)
         # Fail the complete answer, rather than picking a public entry next to
         # a private one. The connector uses these validated addresses directly.
-        if not rows or any(not ipaddress.ip_address(row['host']).is_global for row in rows):
+        if not rows or any(not is_public_unicast(row['host']) for row in rows):
             raise OSError('Non-public media address')
         return rows
 

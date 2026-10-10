@@ -31,6 +31,11 @@ async def cleanup_expired(*, limit: int = 100) -> dict[str, int]:
     async with db_backend.connect(database.DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
         await lock_storage(db)
+        if await _table_exists(db, 'seedance_snapshot_reservations'):
+            from bot.services.seedance_quote_snapshots import (
+                cleanup_snapshot_reservations,
+            )
+            await cleanup_snapshot_reservations(db, cutoff=cutoff, limit=limit)
         sessions = await (await db.execute(
             "SELECT upload_id FROM wan3_prime_upload_sessions WHERE ((expires_at <= CURRENT_TIMESTAMP "
             "AND status IN ('open', 'assembling', 'importing', 'rejected', 'failed', 'completed')) OR status = 'cancelled') AND updated_at <= ? "
@@ -53,7 +58,7 @@ async def cleanup_expired(*, limit: int = 100) -> dict[str, int]:
         cursor = await (await db.execute('SELECT last_media_id FROM wan3_prime_cleanup_cursor WHERE id = 1')).fetchone()
         after_id = int(cursor[0]) if cursor else 0
         rows = await (await db.execute(
-            'SELECT id, public_url, local_path FROM wan3_prime_media WHERE created_at <= ? AND id > ? ORDER BY id LIMIT ?',
+            'SELECT id, public_url, local_path, source FROM wan3_prime_media WHERE created_at <= ? AND id > ? ORDER BY id LIMIT ?',
             (cutoff, after_id, limit),
         )).fetchall()
         # Persist progress, including pinned inputs; otherwise the oldest full
@@ -69,16 +74,22 @@ async def cleanup_expired(*, limit: int = 100) -> dict[str, int]:
             except ValueError:
                 continue
             match = '%' + local.stem + '%'
-            referenced = bool(await (await db.execute(
-                'SELECT 1 FROM generation_tasks WHERE request_data LIKE ? LIMIT 1', (match,),
-            )).fetchone())
-            if not referenced:
-                for table, column in optional_tables:
-                    referenced = bool(await (await db.execute(
-                        f'SELECT 1 FROM {table} WHERE {column} LIKE ? LIMIT 1', (match,),
-                    )).fetchone())
-                    if referenced:
-                        break
+            if row['source'] == 'seedance_quote_snapshot':
+                if not await _table_exists(db, 'seedance_quote_media_leases'):
+                    continue  # Unknown lease schema must fail closed.
+                from bot.services.seedance_quote_snapshots import snapshot_is_leased
+                referenced = await snapshot_is_leased(db, row['id'])
+            else:
+                referenced = bool(await (await db.execute(
+                    'SELECT 1 FROM generation_tasks WHERE request_data LIKE ? LIMIT 1', (match,),
+                )).fetchone())
+                if not referenced:
+                    for table, column in optional_tables:
+                        referenced = bool(await (await db.execute(
+                            f'SELECT 1 FROM {table} WHERE {column} LIKE ? LIMIT 1', (match,),
+                        )).fetchone())
+                        if referenced:
+                            break
             if referenced:
                 continue
             try:
@@ -86,6 +97,8 @@ async def cleanup_expired(*, limit: int = 100) -> dict[str, int]:
             except OSError:
                 logger.warning('Wan3 unused media removal deferred: media_id=%s', row['id'])
                 continue
+            if row['source'] == 'seedance_quote_snapshot':
+                await db.execute('DELETE FROM seedance_quote_media_leases WHERE media_id = ?', (row['id'],))
             await db.execute('DELETE FROM wan3_prime_media WHERE id = ?', (row['id'],))
             removed_media += 1
         await db.commit()

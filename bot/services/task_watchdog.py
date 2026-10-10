@@ -228,7 +228,8 @@ async def force_fail_task(
             request_data = {}
 
         motion_receipt_id = request_data.get("motion_launch_receipt_id")
-        if motion_receipt_id and not provider_confirmed_failed:
+        seedance_quote_id = request_data.get("seedance_quote_id")
+        if (motion_receipt_id or seedance_quote_id) and not provider_confirmed_failed:
             # Age, lookup outage and unknown status are not provider rejection.
             await db.rollback()
             return False
@@ -248,12 +249,23 @@ async def force_fail_task(
             locked_quote = request_data.get("motion_quote")
         has_locked_quote = (
             isinstance(locked_quote, dict)
-            and locked_quote.get("version") == (2 if motion_receipt_id else 1)
+            and locked_quote.get("version") == (2 if motion_receipt_id or seedance_quote_id else 1)
             and isinstance(locked_quote.get("charge_cost"), (int, float))
             and not isinstance(locked_quote.get("charge_cost"), bool)
             and math.isfinite(locked_quote["charge_cost"])
             and locked_quote["charge_cost"] >= 0
         )
+        if seedance_quote_id:
+            seedance_row = await (await db.execute(
+                "UPDATE seedance_quote_receipts SET phase='provider_failed',refunded=1,updated_at=CURRENT_TIMESTAMP "
+                "WHERE quote_id=? AND user_id=? AND provider_task_id=(SELECT task_id FROM generation_tasks WHERE id=?) "
+                "AND phase='accepted' AND refunded=0 RETURNING charged_cost",
+                (seedance_quote_id, user_id, task_id),
+            )).fetchone()
+            if (not seedance_row or not has_locked_quote
+                    or float(seedance_row["charged_cost"]) != float(locked_quote["charge_cost"])):
+                await db.rollback()
+                return False
         if motion_receipt_id:
             motion_row = await (await db.execute(
                 "UPDATE motion_launch_receipts SET phase = 'provider_failed', refunded = 1, "
@@ -334,6 +346,12 @@ async def run_watchdog_cycle(on_completed=None, on_failed=None) -> int:
         await recover_accepted_motion()
     except Exception as exc:  # noqa: BLE001 - Motion recovery must not stop unrelated watchdog work
         logger.error("Motion accepted recovery deferred: error_type=%s", type(exc).__name__)
+    from bot.services.seedance_quote_lifecycle import recover_accepted_quotes
+
+    try:
+        await recover_accepted_quotes()
+    except Exception as exc:  # noqa: BLE001 - reconciliation must not stop unrelated watchdog work
+        logger.error("Seedance accepted recovery deferred: error_type=%s", type(exc).__name__)
     orphan_stats = await cleanup_stale_local_generation_tasks(
         max_age_seconds=LOCAL_ORPHAN_MAX_AGE_SECONDS
     )

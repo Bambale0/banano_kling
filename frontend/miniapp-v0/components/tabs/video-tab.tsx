@@ -7,7 +7,7 @@ import { Seedance25PublicForm } from '../forms/seedance25-public-form'
 import { ResultCard } from '../result-card'
 import type { Task, ScenarioType, UploadedFile } from '@/lib/types'
 import { uploadSeedance25Video, type Seedance25GenerateResponse } from '@/lib/seedance25-api'
-import { generateVideo, uploadFile } from '@/lib/api'
+import { generateVideo, uploadFile, readPendingMeasuredVideo, recoverPendingMeasuredVideo } from '@/lib/api'
 import { isVideoStatusPending } from '@/lib/video-repeat-pending'
 import { GenjutsuButton } from '../genjutsu-entry'
 
@@ -30,6 +30,7 @@ export function VideoTab() {
     presetTargetsSeedance25 && !presetIsIdentityTransfer && videoPromptPreset?.sourceFeedGenId,
   )
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [hasPendingMeasured, setHasPendingMeasured] = useState(() => Boolean(readPendingMeasuredVideo()))
   const [lastРезультат, setLastРезультат] = useState<Task | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [videoMode, setVideoMode] = useState<'regular' | 'seedance25'>(() =>
@@ -66,11 +67,36 @@ export function VideoTab() {
     setVideoMode(presetTargetsSeedance25 ? 'seedance25' : 'regular')
   }, [canUseSeedance25, presetIsSeedanceRepeat, presetTargetsSeedance25, videoPromptPreset])
 
+  useEffect(() => {
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout>
+    const check = async () => {
+      if (cancelled) return
+      const pending = Boolean(readPendingMeasuredVideo())
+      setHasPendingMeasured(pending)
+      if (!pending) { timer = setTimeout(check, 3000); return }
+      try {
+        const result = await recoverPendingMeasuredVideo()
+        if (!cancelled && ['queued', 'done', 'failed', 'rejected', 'provider_failed'].includes(result.status)) {
+          if (result.credits !== undefined) setCredits(result.credits)
+          await refreshTasks()
+        }
+      } catch (error) {
+        if (!cancelled && !readPendingMeasuredVideo()) setError(error instanceof Error ? error.message : 'Расчёт устарел. Проверьте новую цену')
+      }
+      if (!cancelled) timer = setTimeout(check, 3000)
+    }
+    void check()
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [refreshTasks, setCredits])
+
   const handleSubmit = async (data: {
     model: string
     scenario: ScenarioType
     ratio: string
     duration: number
+    videoQuoteId?: string
+    videoQuoteHash?: string
     sourceFeedGenId?: number | null
     grokMode: string
     grokResolution: string
@@ -261,7 +287,7 @@ export function VideoTab() {
             savedAudioReferences={state.savedReferences.filter((item) => item.type === 'audio')}
             promptPreset={videoPromptPreset}
             onPromptPresetConsumed={handleVideoPromptPresetConsumed}
-            isSubmitting={isSubmitting}
+            isSubmitting={isSubmitting || hasPendingMeasured}
             credits={state.user.credits}
             isAdmin={state.user.isAdmin}
             onWanQueued={result => {

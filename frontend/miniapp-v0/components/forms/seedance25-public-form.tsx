@@ -2,10 +2,13 @@
 
 import { normalizeRepeatPrompt } from '@/lib/repeat-prompt'
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { uploadFile } from '@/lib/api'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { getInitData, uploadFile } from '@/lib/api'
+import { clearPendingSeedance, readPendingSeedance, seedancePendingKey, type PendingSeedanceLaunch } from '@/lib/seedance-pending'
 import {
   generateSeedance25,
+  seedance25QuoteStatus,
+  SeedanceApiError,
   quoteSeedance25Identity,
   type Seedance25GeneratePayload,
   type Seedance25QuoteResponse,
@@ -294,6 +297,55 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [queued, setQueued] = useState<Seedance25GenerateResponse | null>(null)
+  const mounted = useRef(true)
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+  const pendingKey = typeof getInitData === 'function' ? seedancePendingKey(getInitData()) : null
+  const [pendingLaunch, setPendingLaunch] = useState<PendingSeedanceLaunch | null>(null)
+  useEffect(() => {
+    if (pendingKey) setPendingLaunch(readPendingSeedance(localStorage, pendingKey))
+  }, [pendingKey])
+  const finishPending = (quoteId: string) => {
+    if (!mounted.current) return
+    if (pendingKey && clearPendingSeedance(localStorage, pendingKey, quoteId)) {
+      setPendingLaunch((current) => current?.quoteId === quoteId ? null : current)
+    }
+  }
+  useEffect(() => {
+    if (!pendingLaunch || submitting) return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const recover = async () => {
+      try {
+        let result = await seedance25QuoteStatus(pendingLaunch.quoteId)
+        if (result.status === 'quoted') result = await generateSeedance25(pendingLaunch.payload)
+        if (cancelled) return
+        if ('task_id' in result) {
+          finishPending(pendingLaunch.quoteId)
+          setQueued(result as Seedance25GenerateResponse)
+          await onQueued?.(result as Seedance25GenerateResponse)
+          return
+        }
+        if (['rejected', 'provider_failed'].includes(result.status)) {
+          finishPending(pendingLaunch.quoteId)
+          setError('Провайдер отклонил задачу. Для нового запуска проверьте новый расчёт.')
+          return
+        }
+      } catch (value) {
+        if (cancelled) return
+        if (value instanceof SeedanceApiError && ['video_quote_changed', 'video_quote_missing', 'video_rejected', 'video_not_reserved', 'video_input_invalid'].includes(value.code || '')) {
+          finishPending(pendingLaunch.quoteId)
+          setError(value.message)
+          return
+        }
+      }
+      if (!cancelled) timer = setTimeout(() => void recover(), 3000)
+    }
+    void recover()
+    return () => { cancelled = true; if (timer) clearTimeout(timer) }
+  // Recovery owns the original immutable launch; form edits do not replace it.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingLaunch, submitting, pendingKey])
+
 
   const [sourceFeedGenId, setSourceFeedGenId] = useState<number | null>(null)
   useEffect(() => {
@@ -327,18 +379,25 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
       return { photos: [], sources: [], issue: value instanceof Error ? value.message : 'Проверьте ссылки на референсы' }
     }
   }, [images, videos, imageSources, videoSources])
+  const hasVideoReference = referenceScenario && (videos.length > 0 || videoSources.trim().length > 0)
+  const needsMeasuredQuote = hasVideoReference && (duration > 0 || sourceSettings)
   const quotePayload = useMemo<Seedance25GeneratePayload>(() => ({
-    scenario: 'multimodal', identityTransfer: true, videoEditing: false, sourceFeedGenId,
-    prompt: prompt.trim(), ratio: 'adaptive', duration: -1, resolution, outputFormat: 'mp4',
-    generateAudio: true, returnLastFrame: false, webSearch: false, nsfwChecker: false,
-    firstFrameUrl: null, lastFrameUrl: null, referenceAudios: [],
+    scenario: 'multimodal', identityTransfer, videoEditing: !identityTransfer && videoEditing,
+    sourceFeedGenId: identityTransfer ? sourceFeedGenId : null,
+    prompt: prompt.trim(), ratio: sourceSettings ? 'adaptive' : ratio,
+    duration: sourceSettings ? -1 : duration, resolution, outputFormat,
+    generateAudio, returnLastFrame, webSearch, nsfwChecker,
+    firstFrameUrl: null, lastFrameUrl: null,
+    referenceAudios: identityTransfer ? [] : [...new Set([...audios.map((item) => item.file.url), ...audioSources.split(/\r?\n/).map((x) => x.trim()).filter(Boolean)])],
     referenceImages: identityRefs.photos, referenceVideos: identityRefs.sources,
-  }), [identityRefs, resolution, sourceFeedGenId, prompt])
+  }), [identityRefs, identityTransfer, videoEditing, sourceFeedGenId, prompt, sourceSettings, ratio,
+    duration, resolution, outputFormat, generateAudio, returnLastFrame, webSearch, nsfwChecker, audios, audioSources])
   const quoteKey = JSON.stringify(quotePayload)
-  const identityQuote = identityTransfer && quoteState?.key === quoteKey ? quoteState.quote : undefined
-  const quoteError = identityTransfer && quoteState?.key === quoteKey ? quoteState.error : undefined
+  const measuredQuote = needsMeasuredQuote && quoteState?.key === quoteKey ? quoteState.quote : undefined
+  const identityQuote = identityTransfer ? measuredQuote : undefined
+  const quoteError = needsMeasuredQuote && quoteState?.key === quoteKey ? quoteState.error : undefined
   useEffect(() => {
-    if (!identityTransfer || identityRefs.issue) return
+    if (!needsMeasuredQuote || (identityTransfer && identityRefs.issue)) return
     let cancelled = false
     setQuoteState(null)
     const timer = window.setTimeout(() => { void quoteSeedance25Identity(quotePayload).then((quote) => {
@@ -348,13 +407,12 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
     })
     }, 250)
     return () => { cancelled = true; window.clearTimeout(timer) }
-  }, [identityTransfer, identityRefs.issue, quotePayload, quoteKey, quoteAttempt])
+  }, [needsMeasuredQuote, identityTransfer, identityRefs.issue, quotePayload, quoteKey, quoteAttempt])
 
   const knownVideoSeconds = useMemo(
     () => videos.reduce((sum, item) => sum + (item.duration || 0), 0),
     [videos],
   )
-  const hasVideoReference = referenceScenario && (videos.length > 0 || videoSources.trim().length > 0)
   const basePrice = useMemo(() => {
     const seconds = videoEditing || duration === -1 ? 5 : duration
     const quotedCost = model?.quality_duration_costs?.[resolution]?.[seconds.toString()]
@@ -362,7 +420,7 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
     const perSecond = Number(model?.quality_costs?.[resolution] || 0)
     return perSecond ? Math.round(perSecond * seconds * 2) / 2 : 0
   }, [duration, videoEditing, model?.quality_costs, model?.quality_duration_costs, resolution])
-  const price = identityTransfer ? identityQuote?.cost ?? 0 : hasVideoReference ? basePrice * 2 : basePrice
+  const price = needsMeasuredQuote ? measuredQuote?.cost ?? 0 : hasVideoReference ? basePrice * 2 : basePrice
   const canAfford = isAdmin || !price || credits >= price
   const promptStep = scenario === 'text' ? 2 : 3
   const settingsStep = promptStep + 1
@@ -490,14 +548,17 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
         if (scenario !== 'multimodal' || new Set(refVideos).size !== 1) throw new Error('Для редактирования добавьте ровно одно исходное видео')
         if (videos.some((item) => item.duration != null && (item.duration < 4 || item.duration > 30))) throw new Error('Исходное видео для редактирования должно длиться 4–30 секунд')
       }
+      if (needsMeasuredQuote && !measuredQuote?.quote_hash) throw new Error(quoteError || 'Дождитесь точного расчёта по видео')
       if (!canAfford) throw new Error(`Недостаточно бананов. Нужно ${price}🍌`)
 
       setSubmitting(true)
-      const result = await generateSeedance25({
+      const launchPayload: Seedance25GeneratePayload = {
         scenario: identityTransfer ? 'multimodal' : scenario,
         identityTransfer,
         sourceFeedGenId: identityTransfer ? sourceFeedGenId : null,
         identityQuote: identityQuote?.seedance25_identity_quote,
+        videoQuoteHash: measuredQuote?.quote_hash,
+        videoQuoteId: measuredQuote?.quote_id,
         prompt: prompt.trim(),
         ratio: sourceSettings ? 'adaptive' : ratio,
         duration: sourceSettings ? -1 : duration,
@@ -513,18 +574,31 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
         referenceImages: referenceScenario ? [...new Set(refImages)].slice(0, 30) : [],
         referenceVideos: referenceScenario ? [...new Set(refVideos)].slice(0, 10) : [],
         referenceAudios: scenario === 'multimodal' ? [...new Set(refAudios)].slice(0, 10) : [],
-      })
+      }
+      if (needsMeasuredQuote) {
+        if (!pendingKey || !measuredQuote?.quote_id) throw new Error('Откройте Mini App из Telegram для безопасного запуска')
+        const pending = { quoteId: measuredQuote.quote_id, payload: launchPayload }
+        localStorage.setItem(pendingKey, JSON.stringify(pending))
+        setPendingLaunch(pending)
+      }
+      const result = await generateSeedance25(launchPayload)
+      if (!mounted.current) return
+      if (launchPayload.videoQuoteId) finishPending(launchPayload.videoQuoteId)
       setQueued(result)
       await onQueued?.(result)
     } catch (value) {
+      if (!mounted.current) return
+      if (value instanceof SeedanceApiError && ['video_quote_changed', 'video_quote_missing', 'video_rejected', 'video_not_reserved', 'video_input_invalid'].includes(value.code || '') && measuredQuote?.quote_id) {
+        finishPending(measuredQuote.quote_id)
+      }
       setError(value instanceof Error ? value.message : 'Не удалось запустить Seedance 2.5')
-      if (identityTransfer) {
+      if (needsMeasuredQuote) {
         // A changed tariff or source must be reviewed before another explicit launch.
         setQuoteState(null)
         setQuoteAttempt((value) => value + 1)
       }
     } finally {
-      setSubmitting(false)
+      if (mounted.current) setSubmitting(false)
     }
   }
 
@@ -885,16 +959,16 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
         <div className="flex items-end justify-between gap-4">
           <div>
             <div className="text-xs text-muted-foreground">Стоимость генерации</div>
-            <div className="mt-1 text-2xl font-bold text-foreground">{identityTransfer && !identityQuote ? 'После проверки видео' : `${price || 0}🍌`}</div>
+            <div className="mt-1 text-2xl font-bold text-foreground">{needsMeasuredQuote && !measuredQuote ? 'После проверки видео' : `${price || 0}🍌`}</div>
           </div>
           {!isAdmin ? <div className="text-right text-xs text-muted-foreground">Баланс<br /><span className="font-semibold text-foreground">{credits}🍌</span></div> : <div className="text-right text-xs text-cyan">Для админа<br /><span className="font-semibold">без списания</span></div>}
         </div>
-        {identityTransfer ? (
+        {needsMeasuredQuote || identityTransfer ? (
           <div className="mt-3 space-y-2 text-xs leading-relaxed text-muted-foreground" aria-live="polite">
-            {identityRefs.issue ? <p>{identityRefs.issue}</p> : quoteError ? (
+            {identityTransfer && identityRefs.issue ? <p>{identityRefs.issue}</p> : quoteError ? (
               <><p className="text-destructive">{quoteError}</p><button type="button" className="text-cyan underline" onClick={() => setQuoteAttempt((value) => value + 1)}>Повторить расчёт</button></>
-            ) : identityQuote ? (
-              <p>Исходное видео: {identityQuote.source_video_duration_seconds.toFixed(2)}с · к оплате {identityQuote.billing_duration}с (округление вверх). Цена уже включает коэффициент видео ×2.</p>
+            ) : measuredQuote ? (
+              <p>Видеорефы: {measuredQuote.input_seconds?.toFixed(2)}с + результат {measuredQuote.selected_output_seconds?.toFixed(2)}с. Цена фиксируется при запуске.</p>
             ) : <p>Проверяем длительность и рассчитываем стоимость…</p>}
           </div>
         ) : hasVideoReference ? (
@@ -909,7 +983,7 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
       {error ? <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</div> : null}
       {queued ? (
         <div className="rounded-xl border border-cyan/30 bg-cyan/5 p-3 text-sm">
-          <strong>✅ Видео поставлено в очередь</strong>
+          <strong>{queued.status === 'done' ? '✅ Видео готово' : queued.status === 'failed' ? 'Генерация завершилась ошибкой' : '✅ Видео поставлено в очередь'}</strong>
           <div className="mt-1 break-all font-mono text-xs text-muted-foreground">{queued.task_id}</div>
           <div className="mt-1 text-xs text-muted-foreground">{queued.admin_free ? 'Для администратора без списания.' : `Списано ${queued.cost}🍌.`} Результат придёт в Telegram.</div>
         </div>
@@ -917,16 +991,20 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
 
       <button
         type="button"
-        disabled={submitting || uploading || (identityTransfer && (!!identityRefs.issue || !identityQuote)) || !canAfford || promptLength > promptLimit}
+        disabled={submitting || !!pendingLaunch || uploading || (needsMeasuredQuote && !measuredQuote?.quote_hash) || (identityTransfer && (!!identityRefs.issue || !identityQuote)) || !canAfford || promptLength > promptLimit}
         onClick={() => void submit()}
         className="w-full rounded-2xl border border-cyan/50 bg-cyan/15 px-4 py-3.5 text-sm font-semibold text-cyan transition hover:bg-cyan/20 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {submitting
+        {pendingLaunch && !submitting
+          ? 'Проверяю ранее отправленный запуск…'
+          : submitting
           ? 'Запускаю генерацию…'
           : uploading
             ? 'Загружаю файлы…'
-            : identityTransfer && !identityQuote
-              ? identityRefs.issue ? 'Добавьте фото и исходное видео' : quoteError ? 'Не удалось рассчитать стоимость' : 'Рассчитываю стоимость…'
+            : identityTransfer && identityRefs.issue
+              ? 'Добавьте фото и исходное видео'
+            : needsMeasuredQuote && !measuredQuote
+              ? identityTransfer && identityRefs.issue ? 'Добавьте фото и исходное видео' : quoteError ? 'Не удалось рассчитать стоимость' : 'Рассчитываю стоимость…'
             : !canAfford
               ? `Не хватает ${Math.max(0, price - credits)}🍌`
               : isAdmin

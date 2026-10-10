@@ -4995,6 +4995,24 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
         init_data = body.get("init_data", "")
         telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         user = ctx["user"]
+        if body.get("video_quote_status_only") is True:
+            from bot.handlers.seedance_measured_launch import (
+                bind_seedance2,
+                response_for_receipt,
+            )
+            from bot.services.seedance_quote_lifecycle import receipt_store
+
+            row = await (await receipt_store()).find(telegram_id, body.get("video_quote_id"))
+            if not row or json.loads(row["billing_json"])["model"] != "seedance_2":
+                return web.json_response({"ok": False, "code": "video_quote_missing", "error": "Расчёт не найден"}, status=404)
+            if row["phase"] == "accepted":
+                await bind_seedance2(row)
+                return await response_for_receipt(row)
+            return web.json_response({"ok": True, "status": row["phase"], "quote_id": row["quote_id"]})
+        if body.get("video_quote_only") is True and str(body.get("v_model")) != "seedance_2":
+            # Quote-only requests must never fall through into an unmigrated
+            # launch/debit path. Dedicated measured handlers intercept first.
+            return web.json_response({"ok": False, "error": "Измеренный расчёт этого режима ещё недоступен"}, status=400)
 
         prompt = str(body.get("prompt", "")).strip()
         source_feed_gen_id_raw = body.get("source_feed_gen_id") or body.get("sourceFeedGenId")
@@ -5399,6 +5417,30 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
         if audio_url and audio_url not in private_repeat_audio_refs:
             await touch_saved_references(telegram_id, [audio_url], kind="audio")
 
+        if effective_model == "seedance_2" and video_references:
+            from bot.handlers.seedance_measured_launch import miniapp_measured_seedance2
+            from bot.services.seedance_reference_binding import (
+                canonicalize_seedance_reference_tags,
+            )
+            from bot.services.seedance_service import seedance_service
+
+            effective_images = normalize_reference_urls([image_url, *image_references],
+                                                        max_count=seedance_service.MAX_REFERENCE_IMAGES)
+            effective_videos = normalize_reference_urls(video_references, max_count=seedance_service.MAX_REFERENCE_VIDEOS)
+            effective_audio = normalize_reference_urls([audio_url, *audio_references], max_count=seedance_service.MAX_REFERENCE_AUDIO)
+            effective_prompt = canonicalize_seedance_reference_tags(prompt, image_count=len(effective_images),
+                                                                    video_count=len(effective_videos))
+            payload = {"prompt": effective_prompt, "duration": duration, "ratio": _normalize_video_ratio(aspect_ratio),
+                       "generation_type": generation_type, "image_url": None, "image_references": effective_images,
+                       "video_references": effective_videos, "audio_references": effective_audio,
+                       "source_feed_gen_id": source_feed_gen_id,
+                       "parent_generation_id": immediate_parent_id if source_feed_gen_id else None,
+                       "action_type": "repeat" if source_feed_gen_id else None, "_launch_surface": "miniapp",
+                       "video_repeat_contract_version": 1 if private_repeat else None,
+                       "_authorized_video_sources": list(private_repeat_video_refs) if private_repeat else []}
+            return await miniapp_measured_seedance2(request, body, telegram_id, payload)
+        if body.get("video_quote_only") is True:
+            return web.json_response({"ok": False, "error": "Добавьте видео для измеренного расчёта"}, status=400)
         pricing_quality = _video_pricing_quality(
             effective_model,
             wan_resolution if effective_model == "wan_3_prime" else veo_resolution,

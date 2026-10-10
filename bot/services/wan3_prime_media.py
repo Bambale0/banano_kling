@@ -264,7 +264,10 @@ def _host_is_private(host: str) -> bool:
     if normalized in {"localhost", "localhost.localdomain"} or normalized.endswith(".local"):
         return True
     try:
-        return ipaddress.ip_address(normalized).is_private or ipaddress.ip_address(normalized).is_loopback
+        from bot.public_network import is_public_unicast
+
+        ipaddress.ip_address(normalized)
+        return not is_public_unicast(normalized)
     except ValueError:
         pass
     return False

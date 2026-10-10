@@ -16,6 +16,7 @@ jest.mock('@/components/forms/duration-select', () => ({
 
 import { VideoGeneratorForm } from '@/components/forms/video-generator-form'
 import type { UploadedFile, VideoModel, VideoPromptPreset } from '@/lib/types'
+jest.mock('@/lib/api', () => ({ ...jest.requireActual('@/lib/api'), quoteVideo: jest.fn(async () => ({quote_id:'a'.repeat(32),quote_hash:'b'.repeat(64),cost:10,charge_cost:10,input_seconds:5,selected_output_seconds:5})) }))
 
 const models: VideoModel[] = [{
   id: 'seedance_2_5',
@@ -183,7 +184,7 @@ describe('video repeat replacement slots', () => {
     fireEvent.click(within(screen.getByRole('group', { name: 'Видео 2' })).getByRole('button', { name: 'clip.mp4' }))
     expect(launch).toBeDisabled()
     fireEvent.click(within(screen.getByRole('group', { name: 'Первый кадр · Фото 1' })).getByRole('button', { name: 'saved-frame.jpg' }))
-    expect(launch).toBeEnabled()
+    await waitFor(() => expect(launch).toBeEnabled())
     fireEvent.click(launch)
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
       sourceFeedGenId: 42, prompt: '', startImage: null,
@@ -203,7 +204,7 @@ describe('video repeat slot lifecycle', () => {
     const onSubmit = jest.fn(() => new Promise<void>((resolve) => { finish = resolve }))
     render(<VideoGeneratorForm models={models} onSubmit={onSubmit} isSubmitting={false} credits={100} promptPreset={fixed} />)
     const launch = screen.getByRole('button', { name: /Запустить видео/i })
-    expect(launch).toBeEnabled()
+    await waitFor(() => expect(launch).toBeEnabled())
     fireEvent.click(launch)
     fireEvent.click(launch)
     expect(onSubmit).toHaveBeenCalledTimes(1)
@@ -211,14 +212,14 @@ describe('video repeat slot lifecycle', () => {
     finish()
     await waitFor(() => expect(screen.queryByRole('group', { name: 'Референсы повтора' })).not.toBeInTheDocument())
   })
-  it('blocks unavailable or unknown descriptors and resets for a fresh publication', () => {
+  it('blocks unavailable or unknown descriptors and resets for a fresh publication', async () => {
     const props = { models, onSubmit: jest.fn(), isSubmitting: false, credits: 100 }
     const view = render(<VideoGeneratorForm {...props} promptPreset={{ ...fixed, repeatReferenceSlots: { ...fixed.repeatReferenceSlots!, available: false } }} />)
     expect(screen.getByRole('alert')).toHaveTextContent('Откройте публикацию заново')
     expect(screen.getByRole('button', { name: /Запустить видео/i })).toBeDisabled()
     view.rerender(<VideoGeneratorForm {...props} promptPreset={fixed} />)
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Запустить видео/i })).toBeEnabled()
+    await waitFor(() => expect(screen.getByRole('button', { name: /Запустить видео/i })).toBeEnabled())
     view.rerender(<VideoGeneratorForm {...props} promptPreset={{ ...fixed, repeatReferenceSlots: { ...fixed.repeatReferenceSlots!, version: 2 } as never }} />)
     expect(screen.getByRole('button', { name: /Запустить видео/i })).toBeDisabled()
   })
@@ -231,13 +232,14 @@ describe('video repeat slot lifecycle', () => {
     const props = { models, onSubmit: jest.fn().mockRejectedValue(new Error('Permission changed')), isSubmitting: false, credits: 100 }
     const view = render(<VideoGeneratorForm {...props} promptPreset={fixed} />)
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'My adjustment' } })
+    await waitFor(() => expect(screen.getByRole('button', { name: /Запустить видео/i })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: /Запустить видео/i }))
     await screen.findByRole('alert')
     expect(screen.getByRole('textbox')).toHaveValue('My adjustment')
     expect(screen.getByRole('button', { name: /Запустить видео/i })).toBeDisabled()
     view.rerender(<VideoGeneratorForm {...props} promptPreset={{ ...fixed }} />)
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Запустить видео/i })).toBeEnabled()
+    await waitFor(() => expect(screen.getByRole('button', { name: /Запустить видео/i })).toBeEnabled())
   })
   it('ignores an upload finishing after a newer repeat opens', async () => {
     let finish!: (file: UploadedFile) => void

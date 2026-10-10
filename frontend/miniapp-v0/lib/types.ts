@@ -249,6 +249,7 @@ export interface TrendGenerationSettings {
   reference_labels?: string[]
   reference_slots?: TrendReferenceSlot[]
   automatic_hidden_references?: boolean
+  fixed_video_reference_count?: number
   required_video_duration_seconds?: number
   user_fields?: TrendUserField[]
   quality?: string

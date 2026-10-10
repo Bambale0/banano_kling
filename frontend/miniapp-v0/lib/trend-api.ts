@@ -5,7 +5,7 @@ import type { Task, TaskDetail } from './types'
 
 interface RunTrendResponse {
   ok: true
-  status: 'queued' | 'done'
+  status: 'queued' | 'done' | 'failed'
   task_id: string
   task_type: 'image' | 'video' | 'audio' | 'character'
   saved_url?: string | null
@@ -46,11 +46,13 @@ export interface TrendReferenceInput {
 
 export class TrendRunRequestError extends Error {
   readonly retrySameRequest: boolean
+  readonly code?: string
 
-  constructor(message: string, retrySameRequest: boolean) {
+  constructor(message: string, retrySameRequest: boolean, code?: string) {
     super(message)
     this.name = 'TrendRunRequestError'
     this.retrySameRequest = retrySameRequest
+    this.code = code
   }
 }
 
@@ -104,11 +106,11 @@ async function parseTrendResponse(response: Response): Promise<RunTrendResponse>
   const text = await response.text()
   let payload:
     | RunTrendResponse
-    | { ok?: false; error?: string; retry_same_request?: boolean }
+    | { ok?: false; error?: string; retry_same_request?: boolean; code?: string }
   try {
     payload = JSON.parse(text) as
       | RunTrendResponse
-      | { ok?: false; error?: string; retry_same_request?: boolean }
+      | { ok?: false; error?: string; retry_same_request?: boolean; code?: string }
   } catch {
     throw new TrendRunRequestError(
       'Сервер вернул некорректный ответ. Обновите Mini App.',
@@ -126,7 +128,9 @@ async function parseTrendResponse(response: Response): Promise<RunTrendResponse>
       typeof payload.retry_same_request === 'boolean'
         ? payload.retry_same_request
         : response.status === 409
-    throw new TrendRunRequestError(message, retrySameRequest)
+    const code = 'code' in payload ? payload.code : undefined
+    const terminalQuote = ['video_quote_missing','video_quote_changed','video_input_invalid','video_rejected','video_not_reserved'].includes(code || '')
+    throw new TrendRunRequestError(message, terminalQuote ? false : retrySameRequest, code)
   }
   return payload
 }
@@ -149,7 +153,7 @@ function toRunResult(data: RunTrendResponse, referenceUrls: string[]): RunTrendR
     model: data.model,
     model_label: data.model_label,
     aspect_ratio: data.aspect_ratio,
-    status: data.status === 'done' ? 'completed' : 'pending',
+    status: data.status === 'done' ? 'completed' : data.status === 'failed' ? 'failed' : 'pending',
     result_url: data.saved_url || null,
     created_at: new Date().toISOString(),
     prompt_preview: '',
@@ -222,43 +226,110 @@ export async function runPinterestRepeatTrend(
   return toRunResult(data, referenceUrls)
 }
 
-export async function runTrend(
-  trendId: number,
-  referenceUrls: string[],
-  userValues: Record<string, string> = {},
-  clientRequestId: string = createTrendRunRequestId(),
-  referenceInputs: TrendReferenceInput[] = [],
-): Promise<RunTrendResult> {
+export interface TrendQuote {
+  quote_id: string; quote_hash: string; cost: number; charge_cost: number;
+  input_seconds: number; selected_output_seconds: number;
+}
+
+function trendPayload(trendId: number, referenceUrls: string[], userValues: Record<string,string>,
+                      clientRequestId: string, referenceInputs: TrendReferenceInput[]): Record<string,unknown> {
   const payload = authorizedPayload()
   payload.trend_id = trendId
   payload.reference_urls = referenceUrls.map(providerReferenceUrl)
-  if (referenceInputs.length) {
-    payload.reference_inputs = referenceInputs.map((input) => ({
-      ...input,
-      url: providerReferenceUrl(input.url),
-    }))
-  }
+  if (referenceInputs.length) payload.reference_inputs = referenceInputs.map(input => ({ ...input, url: providerReferenceUrl(input.url) }))
   payload.client_request_id = clientRequestId
   if (Object.keys(userValues).length) payload.user_values = userValues
+  return payload
+}
 
+async function requestTrend(payload: Record<string,unknown>): Promise<RunTrendResponse> {
   let response: Response
   try {
     response = await fetch(`${getApiBasePath()}/trends/run`, {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-      cache: 'no-store',
-      credentials: 'same-origin',
+      method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload), cache: 'no-store', credentials: 'same-origin',
     })
   } catch (cause) {
-    throw new TrendRunRequestError(
-      cause instanceof Error ? cause.message : 'Не удалось связаться с сервером',
-      true,
-    )
+    throw new TrendRunRequestError(cause instanceof Error ? cause.message : 'Не удалось связаться с сервером', true)
   }
+  return parseTrendResponse(response)
+}
+
+export async function quoteTrend(trendId: number, refs: string[], values: Record<string,string>, inputs: TrendReferenceInput[]): Promise<TrendQuote> {
+  return await requestTrend({ ...trendPayload(trendId, refs, values, createTrendRunRequestId(), inputs), video_quote_only: true }) as unknown as TrendQuote
+}
+
+function trendPendingKey(): string | null {
+  try {
+    const user = JSON.parse(new URLSearchParams(getInitData()).get('user') || 'null')
+    return user?.id ? `trend-quote-pending:${user.id}` : null
+  } catch { return null }
+}
+
+export function readPendingTrend(): { payload: Record<string, unknown>; refs: string[]; model: string; quoteId: string } | null {
+  try {
+    const key = trendPendingKey()
+    const value = key && JSON.parse(localStorage.getItem(key) || 'null')
+    return value && /^[a-f0-9]{32}$/.test(value.quoteId) && value.payload?.video_quote_id === value.quoteId ? value : null
+  } catch { return null }
+}
+
+function clearPendingTrend(quoteId: string): void {
+  const key = trendPendingKey()
+  if (key && readPendingTrend()?.quoteId === quoteId) localStorage.removeItem(key)
+}
+
+export async function recoverPendingTrend(): Promise<RunTrendResult | null> {
+  const pending = readPendingTrend()
+  if (!pending) return null
+  try {
+  const response = await fetch(`${getApiBasePath()}/generate-video`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', cache: 'no-store',
+    body: JSON.stringify({ ...authorizedPayload(), v_model: pending.model, video_quote_id: pending.quoteId,
+      video_quote_status_only: true, seedance25_status_only: pending.model === 'seedance_2_5' }),
+  })
   const data = await parseTrendResponse(response)
-  return toRunResult(data, referenceUrls)
+  const status = data.status as string
+  if (status === 'quoted') {
+    const resumed = await requestTrend({ ...pending.payload, ...authorizedPayload() })
+    clearPendingTrend(pending.quoteId)
+    return toRunResult(resumed, pending.refs)
+  }
+  if (['queued','done','failed'].includes(status)) {
+    clearPendingTrend(pending.quoteId)
+    return toRunResult(data, pending.refs)
+  }
+  if (['rejected','provider_failed'].includes(status)) clearPendingTrend(pending.quoteId)
+  return null
+  } catch (error) {
+    if (error instanceof TrendRunRequestError && ['video_quote_missing','video_quote_changed','video_input_invalid','video_rejected','video_not_reserved'].includes(error.code || '')) clearPendingTrend(pending.quoteId)
+    throw error
+  }
+}
+
+export async function runTrend(
+  trendId: number, referenceUrls: string[], userValues: Record<string,string> = {},
+  clientRequestId: string = createTrendRunRequestId(), referenceInputs: TrendReferenceInput[] = [],
+  quote?: TrendQuote, model?: string,
+): Promise<RunTrendResult> {
+  const payload = trendPayload(trendId, referenceUrls, userValues, clientRequestId, referenceInputs)
+  if (quote) {
+    const pending = readPendingTrend()
+    if (pending && pending.quoteId !== quote.quote_id) throw new TrendRunRequestError('Проверяем статус предыдущего запуска', true)
+    payload.video_quote_id = quote.quote_id
+    payload.video_quote_hash = quote.quote_hash
+    const key = trendPendingKey()
+    if (!key) throw new Error('Не удалось сохранить идентификатор запуска')
+    // Persist only user-submitted references; hidden provider assets never reach this record.
+    const { init_data: _initData, ...savedPayload } = payload
+    localStorage.setItem(key, JSON.stringify({ payload: savedPayload, refs: referenceUrls, model, quoteId: quote.quote_id }))
+  }
+  try {
+    const data = await requestTrend(payload)
+    if (quote) clearPendingTrend(quote.quote_id)
+    return toRunResult(data, referenceUrls)
+  } catch (error) {
+    if (quote && error instanceof TrendRunRequestError && ['video_quote_missing','video_quote_changed','video_input_invalid','video_rejected','video_not_reserved'].includes(error.code || '')) clearPendingTrend(quote.quote_id)
+    throw error
+  }
 }

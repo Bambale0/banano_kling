@@ -3126,6 +3126,13 @@ async def quick_repeat_image_confirm(callback: types.CallbackQuery, state: FSMCo
             pass
 
 
+@router.callback_query(F.data.startswith("seedquote2:"))
+async def confirm_measured_seedance2(callback: types.CallbackQuery, state: FSMContext):
+    from bot.handlers.seedance_measured_launch import confirm_telegram_seedance2
+
+    await confirm_telegram_seedance2(callback, state)
+
+
 @router.callback_query(F.data.startswith("repeat_video_result_"))
 async def quick_repeat_video_result(callback: types.CallbackQuery, state: FSMContext):
     """Быстрый повтор генерации видео с теми же параметрами (из кнопки «🔁 Повторить»)."""
@@ -3173,6 +3180,22 @@ async def quick_repeat_video_result(callback: types.CallbackQuery, state: FSMCon
         reference_videos = []
 
     reference_images, _ = _available_reference_images(reference_images)
+
+    if v_model == "seedance_2" and reference_videos:
+        import hashlib
+
+        from bot.handlers.seedance_measured_launch import prepare_telegram_seedance2
+
+        await state.clear()
+        await state.update_data(v_model=v_model, v_type=v_type, v_duration=v_duration, v_ratio=v_ratio,
+                                v_image_url=v_image_url, reference_images=reference_images,
+                                v_reference_videos=reference_videos,
+                                reference_audios=request_data.get("reference_audios", []),
+                                seedance2_repeat_context={"task_id": task_id,
+                                    "recipe_hash": hashlib.sha256(str(task.request_data or "").encode()).hexdigest()})
+        await prepare_telegram_seedance2(callback.message, state, callback.from_user.id, prompt)
+        await callback.answer()
+        return
 
     billing_quote = None
     if preset_manager.normalize_video_model_key(v_model) in {"seedance_2", "seedance_2_5"}:
@@ -7735,6 +7758,13 @@ async def run_no_preset_video_from_message(
         if validation_error:
             await message.answer(f"❌ {validation_error}")
             return
+
+    if v_model == "seedance_2" and video_urls:
+        from bot.handlers.seedance_measured_launch import prepare_telegram_seedance2
+
+        await state.update_data(seedance2_repeat_context=None)
+        await prepare_telegram_seedance2(message, state, message.from_user.id, prompt)
+        return
 
     pricing_quality = None
     if v_model.startswith("veo3"):
