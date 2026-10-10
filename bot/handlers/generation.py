@@ -3183,6 +3183,7 @@ async def quick_repeat_video_result(callback: types.CallbackQuery, state: FSMCon
 
     if v_model == "seedance_2" and reference_videos:
         import hashlib
+
         from bot.handlers.seedance_measured_launch import prepare_telegram_seedance2
 
         await state.clear()

@@ -32,7 +32,9 @@ async def cleanup_expired(*, limit: int = 100) -> dict[str, int]:
         db.row_factory = db_backend.Row
         await lock_storage(db)
         if await _table_exists(db, 'seedance_snapshot_reservations'):
-            from bot.services.seedance_quote_snapshots import cleanup_snapshot_reservations
+            from bot.services.seedance_quote_snapshots import (
+                cleanup_snapshot_reservations,
+            )
             await cleanup_snapshot_reservations(db, cutoff=cutoff, limit=limit)
         sessions = await (await db.execute(
             "SELECT upload_id FROM wan3_prime_upload_sessions WHERE ((expires_at <= CURRENT_TIMESTAMP "
