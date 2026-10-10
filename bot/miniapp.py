@@ -5602,200 +5602,25 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
         return _miniapp_error_response(e, log_message="Mini App video generation failed")
 
 
+async def miniapp_quote_motion(request: web.Request) -> web.Response:
+    from bot import miniapp as api
+    from bot.handlers.motion_launch import quote_motion
+
+    return await quote_motion(request, api)
+
+
+async def miniapp_status_motion(request: web.Request) -> web.Response:
+    from bot import miniapp as api
+    from bot.handlers.motion_launch import status_motion
+
+    return await status_motion(request, api)
+
+
 async def miniapp_generate_motion(request: web.Request) -> web.Response:
-    """Mini App endpoint for Motion Control."""
-    try:
-        body = await request.json()
-        init_data = body.get("init_data", "")
-        telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
-        user = ctx["user"]
+    from bot import miniapp as api
+    from bot.handlers.motion_launch import generate_motion
 
-        prompt = str(body.get("prompt", "") or "").strip()
-        model = str(
-            body.get("motion_model", "motion_control_v26") or "motion_control_v26"
-        )
-        image_url = str(body.get("motion_image_url", "") or "").strip()
-        video_url = str(body.get("motion_video_url", "") or "").strip()
-        mode = str(body.get("motion_mode", "720p") or "720p")
-        motion_direction = str(body.get("motion_direction", "video") or "video")
-
-        if not image_url:
-            return web.json_response(
-                {"ok": False, "error": "Загрузите фото персонажа"},
-                status=400,
-            )
-        if not video_url:
-            return web.json_response(
-                {"ok": False, "error": "Загрузите видео движения"},
-                status=400,
-            )
-        if mode not in {"720p", "1080p"}:
-            return web.json_response(
-                {"ok": False, "error": "Недопустимое качество Motion Control"},
-                status=400,
-            )
-        if motion_direction not in {"video", "image"}:
-            motion_direction = "video"
-        if model not in {"motion_control_v26", "motion_control_v30"}:
-            model = "motion_control_v26"
-
-        from bot.services.kling_service import kling_service
-
-        raw_duration = body.get("motion_duration")
-        if raw_duration in (None, ""):
-            duration = 5
-        else:
-            try:
-                duration = int(raw_duration)
-            except (TypeError, ValueError):
-                return web.json_response(
-                    {"ok": False, "error": "Длительность Motion Control должна быть целым числом от 3 до 30 секунд"},
-                    status=400,
-                )
-            if duration < 3 or duration > 30:
-                return web.json_response(
-                    {"ok": False, "error": "Длительность Motion Control должна быть от 3 до 30 секунд"},
-                    status=400,
-                )
-
-        await touch_saved_references(telegram_id, [image_url], kind="image")
-        await touch_saved_references(telegram_id, [video_url], kind="video")
-
-        cost = preset_manager.get_video_cost_with_quality(model, duration, mode)
-
-        is_admin = config.is_admin(telegram_id)
-        if not is_admin and not await check_can_afford(telegram_id, cost):
-            return web.json_response(
-                {
-                    "ok": False,
-                    "error": f"Недостаточно бананов. Нужно {cost}🍌",
-                    "credits": user.credits,
-                },
-                status=400,
-            )
-
-        if not is_admin and not await deduct_credits(telegram_id, cost):
-            return web.json_response(
-                {"ok": False, "error": "Недостаточно бананов. Пополните баланс и попробуйте снова."},
-                status=400,
-            )
-
-        callback_url = config.kie_notification_url if config.WEBHOOK_HOST else None
-        api_motion_model = (
-            "kling-3.0/motion-control"
-            if model == "motion_control_v30"
-            else "kling-2.6/motion-control"
-        )
-        model_label = (
-            "Kling 3.0 Motion Control"
-            if model == "motion_control_v30"
-            else "Kling 2.6 Motion Control"
-        )
-        result = await kling_service.generate_motion_control(
-            image_url=image_url,
-            video_urls=[video_url],
-            prompt=prompt,
-            mode=mode,
-            motion_direction=motion_direction,
-            motion_model=api_motion_model,
-            webhook_url=callback_url,
-        )
-
-        result_status, error_message = _classify_video_generation_result(result)
-
-        if result_status == "queued":
-            task_id = result["task_id"]
-            await add_generation_task(
-                user.id,
-                telegram_id,
-                task_id,
-                "video",
-                "miniapp_motion_control",
-                model=model,
-                duration=duration,
-                aspect_ratio="1:1",
-                prompt=prompt,
-                cost=cost,
-                request_data={
-                    "source": "miniapp",
-                    "v_type": "motion_control",
-                    "motion_image_url": image_url,
-                    "motion_video_url": video_url,
-                    "motion_mode": mode,
-                    "motion_direction": motion_direction,
-                },
-                provider_accepted=True,
-            )
-            fresh_user = await get_or_create_user(telegram_id)
-            return web.json_response(
-                {
-                    "ok": True,
-                    "status": "queued",
-                    "task_id": task_id,
-                    "credits": fresh_user.credits,
-                    "cost": cost,
-                    "model_label": model_label,
-                }
-            )
-
-        local_task_id = f"miniapp_motion_{int(time.time() * 1000)}_{telegram_id}"
-        await add_generation_task(
-            user.id,
-            telegram_id,
-            local_task_id,
-            "video",
-            "miniapp_motion_control",
-            model=model,
-            duration=duration,
-            aspect_ratio="1:1",
-            prompt=prompt,
-            cost=cost,
-            request_data={
-                "source": "miniapp",
-                "v_type": "motion_control",
-                "motion_image_url": image_url,
-                "motion_video_url": video_url,
-                "motion_mode": mode,
-                "motion_direction": motion_direction,
-            },
-        )
-
-        if result_status == "done":
-            saved_url = _save_uploaded_file_lazy(bytes(result), "mp4")
-            await complete_video_task(local_task_id, saved_url)
-            fresh_user = await get_or_create_user(telegram_id)
-            return web.json_response(
-                {
-                    "ok": True,
-                    "status": "done",
-                    "task_id": local_task_id,
-                    "saved_url": saved_url,
-                    "credits": fresh_user.credits,
-                    "cost": cost,
-                    "model_label": model_label,
-                }
-            )
-
-        await complete_video_task(local_task_id, None)
-        if not is_admin:
-            await add_credits(telegram_id, cost)
-
-        return web.json_response(
-            {
-                "ok": False,
-                "error": error_message or "Не удалось запустить Motion Control",
-            },
-            status=500,
-        )
-
-    except Exception as e:
-        logger.exception(f"Mini App Motion Control failed: {e}")
-        if 'telegram_id' in locals() and 'cost' in locals():
-            try:
-                await add_credits(telegram_id, cost)
-            except Exception:
-                pass
-        return _miniapp_error_response(e, log_message="Mini App Motion Control generation failed")
+    return await generate_motion(request, api)
 
 
 async def miniapp_partner_overview(request: web.Request) -> web.Response:
@@ -6230,6 +6055,8 @@ def setup_miniapp_routes(app: web.Application):
     )
     app.router.add_post(miniapp_root + "/api/generate-image", miniapp_generate_image)
     app.router.add_post(miniapp_root + "/api/generate-video", miniapp_generate_video)
+    app.router.add_post(miniapp_root + "/api/quote-motion", miniapp_quote_motion)
+    app.router.add_post(miniapp_root + "/api/status-motion", miniapp_status_motion)
     app.router.add_post(miniapp_root + "/api/generate-motion", miniapp_generate_motion)
     app.router.add_post(
         miniapp_root + "/api/partner-overview", miniapp_partner_overview
