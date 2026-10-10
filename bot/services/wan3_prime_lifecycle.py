@@ -789,7 +789,8 @@ class Wan3PrimeLifecycle:
                     """
                     SELECT * FROM wan3_prime_intents
                     WHERE provider_task_id IS NOT NULL
-                      AND status IN ('submitted', 'unknown', 'settlement_pending')
+                      AND (status IN ('submitted', 'unknown', 'settlement_pending')
+                           OR (status = 'result_attention' AND error_code = 'provider_wait_timeout'))
                       AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP)
                       AND (lease_until IS NULL OR lease_until <= CURRENT_TIMESTAMP)
                     ORDER BY updated_at ASC, id ASC
@@ -847,8 +848,15 @@ class Wan3PrimeLifecycle:
         except (ValueError, TypeError, AttributeError):
             expired = True
         provider_state = state if state in PENDING_STATES else 'unconfirmed'
+        row_data = dict(row)
         async with db_backend.connect(_database_path()) as db:
-            if expired:
+            if row_data.get('status') == 'result_attention' and row_data.get('error_code') == 'provider_wait_timeout':
+                retry_at = (datetime.now(UTC) + timedelta(seconds=30 if state in PENDING_STATES else 60)).replace(tzinfo=None).isoformat(sep=' ')
+                await db.execute('UPDATE wan3_prime_intents SET provider_state = ?, lease_until = NULL, '
+                    'last_checked_at = CURRENT_TIMESTAMP, next_attempt_at = ?, updated_at = CURRENT_TIMESTAMP '
+                    "WHERE internal_task_id = ? AND settled = 0 AND status = 'result_attention' "
+                    "AND error_code = 'provider_wait_timeout'", (provider_state, retry_at, row['internal_task_id']))
+            elif expired:
                 changed = await db.execute("UPDATE wan3_prime_intents SET status = 'result_attention', provider_state = ?, "
                     "error_code = 'provider_wait_timeout', error_message = 'Provider has not completed the task; operator review required', "
                     "lease_until = NULL, next_attempt_at = NULL, updated_at = CURRENT_TIMESTAMP "
@@ -982,7 +990,8 @@ class Wan3PrimeLifecycle:
             updated = await db.execute(
                 "UPDATE wan3_prime_intents SET lease_until = ?, updated_at = CURRENT_TIMESTAMP "
                 "WHERE internal_task_id = ? AND settled = 0 "
-                "AND status IN ('submitted', 'unknown', 'settlement_pending') "
+                "AND (status IN ('submitted', 'unknown', 'settlement_pending') "
+                "OR (status = 'result_attention' AND error_code = 'provider_wait_timeout')) "
                 "AND (lease_until IS NULL OR lease_until <= CURRENT_TIMESTAMP)" + schedule_clause,
                 (lease_until, internal_task_id),
             )
@@ -1050,7 +1059,8 @@ class Wan3PrimeLifecycle:
                 SET status = 'settling_success', updated_at = CURRENT_TIMESTAMP
                 WHERE internal_task_id = ?
                   AND settled = 0
-                  AND status IN ('submitted', 'unknown', 'settlement_pending')
+                  AND (status IN ('submitted', 'unknown', 'settlement_pending')
+                       OR (status = 'result_attention' AND error_code = 'provider_wait_timeout'))
                 """,
                 (row["internal_task_id"],),
             )

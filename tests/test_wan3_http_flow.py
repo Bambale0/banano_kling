@@ -3,10 +3,11 @@ import hashlib
 import hmac
 import json
 import time
+from unittest.mock import AsyncMock
 from urllib.parse import urlencode
 
 import pytest
-from aiohttp import web
+from aiohttp import FormData, web
 from aiohttp.test_utils import TestClient, TestServer
 
 from bot import database
@@ -70,3 +71,43 @@ async def test_all_modes_signed_quote_launch_idempotency_status_and_owner_recipe
         assert (await malformed.json())['ok'] is False
         task = await database.get_task_by_id(result['task_id'])
         assert task.telegram_id == actor.telegram_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(('kind', 'filename', 'content_type'), [
+    ('image', 'frame.png', 'image/png'),
+    ('video', 'source.mp4', 'video/mp4'),
+    ('audio', 'voice.mp3', 'audio/mpeg'),
+    ('file', 'brief.pdf', 'application/pdf'),
+])
+async def test_real_multipart_chunk_accepts_frontend_start_fallback_for_all_upload_kinds(
+    kind, filename, content_type, monkeypatch,
+):
+    actor = await user_actor(100, telegram_id=971284002)
+    save_chunk = AsyncMock()
+    monkeypatch.setattr(api.wan3_prime_storage, 'save_chunk', save_chunk)
+    app = web.Application()
+    app.router.add_post('/upload/chunk', api._http_boundary(api._upload_chunk_route))
+    form = FormData()
+    form.add_field('init_data', signed_user(actor.telegram_id))
+    form.add_field('start_param_fallback', 'ref-safe')
+    form.add_field('upload_id', f'{kind}-upload')
+    form.add_field('index', '0')
+    form.add_field('total', '1')
+    form.add_field('chunk', b'synthetic-bytes', filename=filename, content_type=content_type)
+    async with TestClient(TestServer(app)) as client:
+        response = await client.post(
+            '/upload/chunk',
+            data=form,
+            headers={'X-Telegram-Init-Data': signed_user(actor.telegram_id)},
+        )
+        status = response.status
+        response_text = await response.text()
+    assert status == 200, response_text
+    save_chunk.assert_awaited_once()
+    saved_actor = save_chunk.await_args.args[0]
+    assert saved_actor.user_id == actor.user_id
+    assert saved_actor.telegram_id == actor.telegram_id
+    assert save_chunk.await_args.kwargs == {
+        'upload_id': f'{kind}-upload', 'index': 0, 'total': 1, 'chunk': b'synthetic-bytes',
+    }

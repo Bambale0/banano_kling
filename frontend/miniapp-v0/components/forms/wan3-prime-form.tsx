@@ -24,6 +24,9 @@ const ACCEPT = {
 const CARD = 'min-w-0 space-y-3 rounded-2xl border border-border/50 bg-secondary/20 p-3 sm:p-4'
 const SELECT = 'w-full min-w-0 rounded-lg border border-border bg-background p-2 text-sm'
 function newId() { return crypto.randomUUID() }
+function optionalSourceFor(recipe: Wan3PrimeRecipe): 'none' | 'file' | 'link' {
+  return recipe.reference_file_urls?.length ? 'file' : recipe.reference_link_urls?.length ? 'link' : 'none'
+}
 function emptyRecipe(scenario: Wan3PrimeScenario = 'text'): Wan3PrimeRecipe {
   return { model: 'wan_3_prime', scenario, prompt: '', resolution: '1080P', aspect_ratio: 'adaptive',
     duration: 5, audio: true, nsfw_checker: false, seed: null, first_frame_url: null, last_frame_url: null,
@@ -153,8 +156,7 @@ export function Wan3PrimeForm({ credits, isAdmin = false, modelSelector, initial
   const locked = working || attempted || Boolean(disabledReason)
   const isFrames = !sourceId && (recipe.scenario === 'first_frame' || recipe.scenario === 'first_last')
   const isReferences = !sourceId && ['reference', 'edit', 'file', 'link'].includes(recipe.scenario)
-  const additionalKind = recipe.reference_file_urls?.length ? 'file' : recipe.reference_link_urls?.length ? 'link' : 'none'
-  const [extraSource, setExtraSource] = useState<'none' | 'file' | 'link'>(additionalKind)
+  const [extraSource, setExtraSource] = useState<'none' | 'file' | 'link'>(() => optionalSourceFor(recipe))
   const onBusy = (delta: number) => setPending(n => Math.max(0, n + delta))
   const patch = (value: Partial<Wan3PrimeRecipe>) => { setRecipe(old => ({ ...old, ...value })); setError('') }
 
@@ -163,13 +165,13 @@ export function Wan3PrimeForm({ credits, isAdmin = false, modelSelector, initial
     const abort = new AbortController()
     setRecipeLoading(true)
     void fetchWan3PrimeOwnerRecipe(ownerTaskId, abort.signal).then(value => {
-      if (!abort.signal.aborted) { setRecipe({ ...emptyRecipe(), ...value.recipe }); setQuoteState(null); setAttempted(false); setResult(null); frozenRequest.current = null; setRequestId(newId()) }
+      if (!abort.signal.aborted) { setRecipe({ ...emptyRecipe(), ...value.recipe }); setExtraSource(optionalSourceFor(value.recipe)); setQuoteState(null); setAttempted(false); setResult(null); frozenRequest.current = null; setRequestId(newId()) }
     }).catch(error => { if (!abort.signal.aborted) setError(error instanceof Error ? error.message : 'Не удалось восстановить собственную задачу.') })
       .finally(() => { if (!abort.signal.aborted) setRecipeLoading(false) })
     return () => abort.abort()
   }, [ownerTaskId])
   useEffect(() => {
-    if (initialRecipe && !attempted) setRecipe({ ...emptyRecipe(), ...initialRecipe })
+    if (initialRecipe && !attempted) { setRecipe({ ...emptyRecipe(), ...initialRecipe }); setExtraSource(optionalSourceFor(initialRecipe)) }
   }, [initialRecipe]) // A new owner recipe is an explicit user selection, not a provider prompt.
 
   useEffect(() => {
@@ -200,7 +202,7 @@ export function Wan3PrimeForm({ credits, isAdmin = false, modelSelector, initial
     const next = drafts.current[mode] || { ...emptyRecipe(mode), prompt: recipe.prompt, resolution: recipe.resolution,
       aspect_ratio: recipe.aspect_ratio, duration: recipe.duration, seed: recipe.seed, audio: recipe.audio, nsfw_checker: recipe.nsfw_checker }
     setRecipe(next); setQuoteState(null); setError('')
-    setExtraSource(next.reference_file_urls?.length ? 'file' : next.reference_link_urls?.length ? 'link' : 'none')
+    setExtraSource(optionalSourceFor(next))
   }
   const calculate = async () => {
     if (working || attempted || issue || disabledReason) return
