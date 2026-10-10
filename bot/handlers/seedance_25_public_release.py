@@ -1232,11 +1232,6 @@ async def _public_send_results(
                 parse_mode="HTML",
             )
         except Exception as photo_exc:
-            if not telegram_delivery_is_definitely_rejected(photo_exc):
-                # The primary video is already handled. Never replay a possibly
-                # accepted auxiliary photo as a link after a lost response.
-                logger.warning("Seedance 2.5 last-frame outcome unknown: task_id=%s", task_id)
-                return delivered
             if is_terminal_telegram_delivery_error(photo_exc):
                 from bot.database import mark_telegram_chat_unavailable
 
@@ -1247,6 +1242,11 @@ async def _public_send_results(
                     task_id,
                     telegram_id,
                 )
+                return delivered
+            if not telegram_delivery_is_definitely_rejected(photo_exc):
+                # The primary video is already handled. Never replay a possibly
+                # accepted auxiliary photo as a link after a lost response.
+                logger.warning("Seedance 2.5 last-frame outcome unknown: task_id=%s", task_id)
                 return delivered
             try:
                 await tracked_telegram_send(request_data, False, bot.send_message,

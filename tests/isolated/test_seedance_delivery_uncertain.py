@@ -202,6 +202,30 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
                     AsyncMock(side_effect=error), 1)
             self.assertFalse(progress["_telegram_send_inflight"])
 
+    async def test_terminal_auxiliary_failure_still_marks_chat_unavailable(self):
+        fake_database = types.ModuleType("bot.database")
+        fake_database.mark_telegram_chat_unavailable = AsyncMock()
+        old = sys.modules.get("bot.database")
+        sys.modules["bot.database"] = fake_database
+        try:
+            self.ns["is_terminal_telegram_delivery_error"] = lambda exc: "chat not found" in str(exc)
+            self.ns["terminal_telegram_delivery_reason"] = lambda exc: "chat_not_found"
+            self.bot.send_photo.side_effect = RuntimeError("chat not found")
+            for path, name in [
+                ("bot/handlers/seedance_25_public_release.py", "_public_send_results"),
+                ("bot/handlers/seedance_25_fullstack.py", "_send_seedance25_results"),
+            ]:
+                fake_database.mark_telegram_chat_unavailable.reset_mock()
+                fn = load_function(path, name, self.ns)
+                self.assertTrue(await fn({"bot": self.bot}, 1, "task", "video.mp4", "frame", {}))
+                fake_database.mark_telegram_chat_unavailable.assert_awaited_once_with(1)
+                self.bot.send_message.assert_not_awaited()
+        finally:
+            if old is None:
+                sys.modules.pop("bot.database", None)
+            else:
+                sys.modules["bot.database"] = old
+
     async def test_dispatcher_stores_uncertain_and_does_not_requeue(self):
         self.ns.update(asyncio=asyncio, SEEDANCE25_DELIVERY_TIMEOUT_SECONDS=1,
             _can_attempt_seedance25_result_delivery=AsyncMock(return_value=True),

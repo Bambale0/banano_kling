@@ -8,6 +8,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.methods import SendVideo, SendMessage
 
 import bot.handlers.seedance_25_public_release as public_release
 import bot.miniapp as miniapp_module
@@ -425,10 +427,10 @@ async def test_seedance25_result_download_retries_after_timeout(monkeypatch):
 async def test_seedance25_public_delivery_returns_false_when_all_channels_fail(monkeypatch):
     class FakeBot:
         async def send_video(self, *_args, **_kwargs):
-            raise RuntimeError("telegram url send failed")
+            raise TelegramBadRequest(method=SendVideo(chat_id=1, video="https://example.test/video.mp4"), message="wrong file identifier")
 
         async def send_message(self, *_args, **_kwargs):
-            raise RuntimeError("telegram text send failed")
+            raise TelegramBadRequest(method=SendMessage(chat_id=1, text="test"), message="message rejected")
 
     monkeypatch.setattr(fullstack_module, "_download_to_temp", AsyncMock(return_value=None))
 
@@ -531,7 +533,7 @@ async def test_refund_database_error_keeps_failure_retryable(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_link_only_delivery_remains_retryable_without_repeated_notifications(monkeypatch):
-    bot = SimpleNamespace(send_video=AsyncMock(side_effect=RuntimeError('CDN unavailable')), send_message=AsyncMock())
+    bot = SimpleNamespace(send_video=AsyncMock(side_effect=TelegramBadRequest(method=SendVideo(chat_id=1, video='https://example.test/video.mp4'), message='wrong file identifier')), send_message=AsyncMock())
     monkeypatch.setattr(fullstack_module, '_download_to_temp', AsyncMock(return_value=None))
     mark = AsyncMock()
     monkeypatch.setattr(fullstack_module, '_mark_seedance25_delivery', mark)
@@ -1269,7 +1271,7 @@ async def test_fullstack_seedance25_terminal_last_frame_marks_chat(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_seedance25_transient_delivery_error_remains_pending(monkeypatch):
+async def test_seedance25_presend_timeout_remains_pending(monkeypatch):
     row = {
         "task_id": "seedance-transient-delivery",
         "telegram_id": 612441694,
@@ -1299,7 +1301,7 @@ async def test_seedance25_transient_delivery_error_remains_pending(monkeypatch):
     mark.assert_awaited_once_with(
         "seedance-transient-delivery",
         "pending",
-        error="request timeout",
+        error="delivery_attempt_timed_out",
     )
 
 
