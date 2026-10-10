@@ -1,9 +1,9 @@
 """Isolated shell contract tests: no Docker, app imports, or production paths."""
 import os
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "scripts/deploy_backend_docker.sh"
@@ -13,7 +13,7 @@ MINIAPP = ROOT / "scripts/deploy_miniapp_local.sh"
 def shell(script, cwd):
     return subprocess.run(
         ["bash", "-c", script], cwd=cwd, text=True, capture_output=True,
-        env={"PATH": os.environ["PATH"], "PROJECT_DIR": str(cwd)}, timeout=10,
+        env={"PATH": os.environ["PATH"], "PROJECT_DIR": str(cwd)}, timeout=10, check=False,
     )
 
 
