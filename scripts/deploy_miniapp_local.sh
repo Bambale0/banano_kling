@@ -21,7 +21,6 @@ PROFILE_FILE="/etc/banano-miniapp/profiles/${FRONTEND_DOMAIN}.env"
 WEB_ROOT="/var/www/${FRONTEND_DOMAIN}"
 MINIAPP_ROOT="${WEB_ROOT}/mini-app"
 BACKUP_ROOT="/var/backups/banano-miniapp/${FRONTEND_DOMAIN}"
-KEEP_BACKUPS="${KEEP_BACKUPS:-7}"
 RUN_NPM_AUDIT="${RUN_NPM_AUDIT:-0}"
 
 log() {
@@ -32,6 +31,24 @@ die() {
   printf '[miniapp-local] ERROR: %s\n' "$*" >&2
   exit 1
 }
+
+# A minimum free-space floor is a fail-closed preflight, not a prediction of
+# build/backup size. Retained history still needs operator capacity monitoring.
+require_disk_space() {
+    local minimum="${DEPLOY_MIN_FREE_BYTES:-10737418240}"
+    local target="${1:-$PROJECT_DIR}"
+    local available=""
+    [[ "$minimum" =~ ^[0-9]{1,18}$ ]] && (( 10#$minimum >= 10737418240 )) \
+        || die "DEPLOY_MIN_FREE_BYTES must be at least 10737418240 (10 GiB)"
+    # Check the existing ancestor before creating a new backup directory.
+    while [ ! -e "$target" ]; do
+        target="$(dirname -- "$target")"
+    done
+    available="$(df -PB1 -- "$target" | awk 'NR == 2 {print $4}')"
+    [[ "$available" =~ ^[0-9]{1,18}$ ]] && (( 10#$available >= 10#$minimum )) \
+        || die "Insufficient disk space at $target: available=${available:-unknown} required=$minimum; no backups deleted"
+}
+
 
 run_npm_audit() {
   local audit_json audit_status
@@ -123,7 +140,6 @@ if [[ -f "$PROFILE_FILE" ]]; then
   WEB_ROOT="${WEB_ROOT:-/var/www/${FRONTEND_DOMAIN}}"
   MINIAPP_ROOT="${MINIAPP_ROOT:-${WEB_ROOT}/mini-app}"
   BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/banano-miniapp/${FRONTEND_DOMAIN}}"
-  KEEP_BACKUPS="${KEEP_BACKUPS:-7}"
   RUN_NPM_AUDIT="${RUN_NPM_AUDIT:-0}"
 fi
 
@@ -145,6 +161,11 @@ OUT_DIR="${FRONTEND_DIR}/out"
 node_major="$(node -p 'process.versions.node.split(".")[0]')"
 [[ "$node_major" =~ ^[0-9]+$ ]] || die "could not determine Node.js version"
 (( node_major >= 20 )) || die "Node.js 20+ is required; found $(node -v)"
+
+# Fail before build/backup if either filesystem is below the configured floor.
+# Increase DEPLOY_MIN_FREE_BYTES for larger builds; retained history is not pruned.
+require_disk_space "$PROJECT_DIR"
+require_disk_space "$BACKUP_ROOT"
 
 log "Building exact commit ${EXPECTED_SHA} on $(hostname)"
 cd "$FRONTEND_DIR"
@@ -170,24 +191,20 @@ if [[ -f "${MINIAPP_ROOT}/index.html" ]]; then
   mkdir -p "$backup_dir"
   cp -al "${MINIAPP_ROOT}/." "$backup_dir/"
 
-  mapfile -t old_backups < <(
-    find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' \
-      | sort -nr \
-      | awk '{print $2}'
-  )
-  if (( ${#old_backups[@]} > KEEP_BACKUPS )); then
-    for ((i=KEEP_BACKUPS; i<${#old_backups[@]}; i++)); do
-      rm -rf -- "${old_backups[$i]}"
-    done
-  fi
+  # Releases preserve every historical backup. Retention/deletion is a
+  # separately reviewed maintenance operation, never a deployment side effect.
+  log "Preserving all existing Mini App backups"
 fi
 
 log "Publishing static export to ${MINIAPP_ROOT}"
 # Keep older hashed chunks for in-flight Telegram WebViews while replacing the
 # entrypoint and all current assets atomically enough for static Nginx serving.
 rsync -a --chmod=D755,F644 "${OUT_DIR}/" "${MINIAPP_ROOT}/"
-printf '%s\n' "$EXPECTED_SHA" > "${MINIAPP_ROOT}/revision.txt"
-chmod 0644 "${MINIAPP_ROOT}/revision.txt"
+# Backups use hard links: replace the inode instead of truncating old revisions.
+revision_file="$(mktemp "${MINIAPP_ROOT}/.revision-XXXXXX")"
+printf '%s\n' "$EXPECTED_SHA" > "$revision_file"
+chmod 0644 "$revision_file"
+mv -f -- "$revision_file" "${MINIAPP_ROOT}/revision.txt"
 chown -R root:root "$WEB_ROOT"
 
 BASE_URL="https://${FRONTEND_DOMAIN}/mini-app"
