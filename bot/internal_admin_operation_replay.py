@@ -167,6 +167,26 @@ async def _replay_video(
     user = await get_or_create_user(telegram_id)
 
     v_model = str(request_data.get("v_model") or source["model"] or "v3_std")
+    if v_model == "wan_3_prime":
+        # This helper is reached only after internal-admin authentication and
+        # explicit replay confirmation. Billing exemption never comes from a
+        # public Mini App field. Preserve the recipient's media ownership.
+        import hashlib
+        from bot.services.wan3_prime_lifecycle import Wan3PrimeActor, wan3_prime_lifecycle
+
+        actor = Wan3PrimeActor(user.id, telegram_id, is_admin=True, operation_context={
+            "source_operation_id": int(source["id"]), "admin_user_id": admin_user_id,
+            "request_id": request_id, "reason": reason, "comment": comment,
+        })
+        recipe = await wan3_prime_lifecycle.owner_recipe(actor, str(source["task_id"]))
+        key = "admin_replay:" + hashlib.sha256((admin_user_id + ":" + idempotency_key).encode()).hexdigest()
+        quote = await wan3_prime_lifecycle.quote(actor, recipe)
+        launched = await wan3_prime_lifecycle.launch(actor, recipe, quote, key)
+        child = await _operation_by_task_id(launched["task_id"])
+        if child is None:
+            raise CommandConflictError("Wan replay receipt could not be read; retry the same idempotency key")
+        return child
+
     v_type = str(request_data.get("v_type") or "text")
     prompt = str(request_data.get("user_prompt") or source["prompt"] or "")
     duration = int(request_data.get("v_duration") or source["duration"] or 5)

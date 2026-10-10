@@ -35,3 +35,19 @@ Telegram media download/import is intentionally a bridge seam for the lifecycle/
 ## Pricing/admin
 
 Wan paid launches require a positive admin-configured quality rate for `480p`, `720p`, or `1080p`. Admin-free launches can quote zero while rates are missing. Admin video prices are grouped and paginated; unknown/future configured models remain in `Другое`.
+
+## Release hardening and unified repeats (2026-10-10)
+
+The public Telegram picker now has family tabs and six models per page. All seven Wan modes remain available; mode drafts preserve inputs. Editing keeps Video1 as the source, including a missing-source placeholder after its removal. Native voice messages are converted in full to MP3 before the same media validation.
+
+All new Wan launches use the dedicated persistent lifecycle. Public feed repeats and curated trends compile server-side from an original recipe and explicit per-slot consent. Fixed source URLs and the original hidden prompt never enter the consumer form or an owned derived recipe. Settings, ordered image/video/audio/document/link roles and first/last frame fields remain intact. Consent is rechecked in the reservation transaction. Accepted repeat accounting and successful-generation rewards use the existing partner ledger; replay and duplicate callbacks cannot credit twice. Administrative video replays use the same Wan adapter, not Kling. Generic pending-Wan refunds are refused because their amounts are lifecycle reserves.
+
+Admins can publish an original completed Wan task from its Mini App detail panel. Title/description and URL-free settings appear in the existing Trends catalog. The complete private recipe lives in wan3_prime_trend_recipes. Each media slot can be fixed or replaced, including the source Video1. Old generic clients are redirected to the Wan editor before debit.
+
+Storage quotas account for open, assembling/importing and completed inputs under one SQLite/PostgreSQL lock. Capacity checks use the actual uploads filesystem. Expired chunks release quota only after deletion; unused media expires while task/trend-referenced originals remain protected. Configuration: WAN3_UPLOAD_USER_QUOTA_BYTES, WAN3_UPLOAD_GLOBAL_QUOTA_BYTES, WAN3_UPLOAD_MIN_FREE_BYTES, WAN3_UNUSED_MEDIA_TTL_SECONDS, WAN3_ASSEMBLY_LEASE_SECONDS. Defaults preserve all provider-supported per-file limits. PDF page validation uses a time/memory-bounded child process with pypdf; 50 pages is accepted without counting /Pages as an extra page.
+
+Callbacks require the per-intent secret before provider lookup/polling. Unknown createTask outcomes, including gateway 5xx, retain the original reservation and idempotency key. Canonical callback URL, model and prepared input must agree to recover an unbound provider ID. /wan3_ops lists unresolved cases; /wan3_resolve offers explicit confirmed, audited bind/refund operations without creating a new generation.
+
+Verification in the isolated workspace: all seven signed Mini App HTTP scenarios traverse real SQLite quote/reserve/status/owner-recipe paths with only the provider/probe mocked; full seven-mode mobile browser run passes (including 320px editor), family search/pages and lost acknowledgement retry. Frontend production build and TypeScript check pass. Focused backend, replay, consent and partner regressions pass. Exact final-head GitHub CI, PostgreSQL concurrency, security review and deployment verification remain release gates, not implied by these local results.
+
+Retail rates are intentionally not invented: configure Wan 480p/720p/1080p in the existing admin price editor. Existing production price.json must be retained. Paid launches fail before debit when the selected rate is absent. No paid upstream generation or visual result-quality verification is claimed by automated tests.

@@ -79,16 +79,9 @@ def document_pages(path: Path) -> int | None:
     extension = path.suffix.lower()
     if extension == ".pdf":
         # A child process bounds both wall-clock and memory for untrusted PDFs.
-        program = (
-            "import resource,sys; "
-            "resource.setrlimit(resource.RLIMIT_AS,(768*1024**2,768*1024**2)); "
-            "from pypdf import PdfReader; "
-            "r=PdfReader(sys.argv[1],strict=False,root_object_recovery_limit=10000); "
-            "assert not r.is_encrypted,'encrypted PDF'; "
-            "print(len(r.pages))"
-        )
+        worker = Path(__file__).with_name("wan3_prime_document_probe.py").resolve()
         try:
-            result = subprocess.run([sys.executable, "-I", "-c", program, str(path.resolve())],
+            result = subprocess.run([sys.executable, "-I", str(worker), str(path.resolve())],
                                     capture_output=True, text=True, timeout=12, check=False)
             count = int(result.stdout.strip()) if result.returncode == 0 else 0
         except (OSError, subprocess.SubprocessError, ValueError) as exc:
@@ -112,3 +105,16 @@ def document_pages(path: Path) -> int | None:
     # Word/Keynote page count depends on layout. Do not invent an exact count;
     # this is disclosed in the quote and remains checked by the provider.
     return None
+
+
+def convert_voice_to_mp3(source: Path, destination: Path) -> None:
+    """Preserve the complete audio; final media validation enforces input limits."""
+    try:
+        subprocess.run(
+            ['ffmpeg', '-nostdin', '-v', 'error', '-i', str(source), '-map', '0:a:0',
+             '-vn', '-c:a', 'libmp3lame', '-b:a', '128k', '-y', str(destination)],
+            capture_output=True, timeout=30, check=True,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        destination.unlink(missing_ok=True)
+        raise Wan3PrimeValidationError('Could not convert this audio to MP3') from exc

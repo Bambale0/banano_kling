@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+from functools import wraps
 from typing import Any
 
 from aiohttp import web
@@ -11,6 +13,8 @@ from bot.services.wan3_prime_lifecycle import (
 )
 from bot.services.wan3_prime_media import Wan3PrimeValidationError
 from bot.services.wan3_prime_storage import wan3_prime_storage
+
+logger = logging.getLogger(__name__)
 
 
 async def _actor_from_request(request: web.Request, body: dict[str, Any]) -> Wan3PrimeActor:
@@ -25,10 +29,12 @@ async def _actor_from_request(request: web.Request, body: dict[str, Any]) -> Wan
         raise Wan3PrimeLifecycleError("initData is required", status=401, code="auth_required")
     from bot import miniapp
     from bot.config import config
-
     from bot.database import is_user_banned
 
-    telegram_id, context = await miniapp._get_user_context(request.app, init_data, start_param)
+    try:
+        telegram_id, context = await miniapp._get_user_context(request.app, init_data, start_param)
+    except ValueError as exc:
+        raise Wan3PrimeLifecycleError("Откройте Mini App заново из Telegram.", status=401, code="auth_invalid") from exc
     if await is_user_banned(int(telegram_id)):
         raise Wan3PrimeLifecycleError("Доступ к генерации ограничен.", status=403, code="user_banned")
     user = context.get("user")
@@ -63,7 +69,7 @@ def _lifecycle(request: web.Request):
 async def _json_body(request: web.Request) -> dict[str, Any]:
     try:
         payload = await request.json()
-    except Exception as exc:
+    except (ValueError, TypeError, UnicodeError) as exc:
         raise Wan3PrimeValidationError("Malformed JSON") from exc
     if not isinstance(payload, dict):
         raise Wan3PrimeValidationError("Request body must be an object")
@@ -110,8 +116,8 @@ async def _launch_response(actor, result):
     try:
         from bot.database import get_or_create_user
         payload['credits'] = (await get_or_create_user(actor.telegram_id)).credits
-    except Exception:
-        pass  # An acknowledged task must not become an error because balance refresh failed.
+    except Exception as exc:  # noqa: BLE001 - an acknowledged provider task must not become a failed launch
+        logger.warning("Wan3 accepted balance refresh deferred: task_id=%s error_type=%s", result['task_id'], type(exc).__name__)
     return payload
 
 
@@ -146,8 +152,9 @@ async def miniapp_generate_wan(request: web.Request, body: dict[str, Any] | None
         return _json_error(str(exc), status=403, code="permission_denied")
     except web.HTTPException:
         raise
-    except Exception as exc:
-        return _json_error(type(exc).__name__, status=500, code="internal_error")
+    except Exception as exc:  # noqa: BLE001 - public boundary, preserve uncertain submissions and keep secrets out of responses
+        logger.error("Wan3 request failed: error_type=%s", type(exc).__name__)
+        return _json_error("Не удалось подтвердить операцию. Повторите проверку с тем же идентификатором.", status=500, code="internal_error")
 
 
 async def _quote_route(request: web.Request) -> web.Response:
@@ -165,7 +172,7 @@ async def _launch_route(request: web.Request) -> web.Response:
 
 async def _status_route(request: web.Request) -> web.Response:
     try:
-        body = await request.json()
+        body = await _json_body(request)
         actor = await _actor_from_request(request, body)
         task_id = str(body.get("task_id") or body.get("internal_task_id") or "")
         result = await _lifecycle(request).status(actor, task_id)
@@ -175,8 +182,8 @@ async def _status_route(request: web.Request) -> web.Response:
 
 
 async def _callback_route(request: web.Request) -> web.Response:
-    payload = await request.json()
-    result, status = await _lifecycle(request).handle_callback(
+    payload = await _json_body(request)
+    _result, status = await _lifecycle(request).handle_callback(
         payload,
         internal_task_id=request.query.get("intent"),
         nonce=request.query.get("nonce"),
@@ -273,11 +280,93 @@ async def _recipe_route(request: web.Request) -> web.Response:
         body = await _json_body(request)
         actor = await _actor_from_request(request, body)
         recipe = await _lifecycle(request).owner_recipe(actor, str(body.get("task_id") or ""))
-        return _json_ok({"ok": True, "recipe": recipe, "private_media_redacted": False})
+        return _json_ok({"ok": True, "recipe": recipe, "private_media_redacted": bool(recipe.get("source_feed_gen_id") or recipe.get("trend_id"))})
     except Wan3PrimeValidationError as exc:
         return _json_error(str(exc), status=exc.status, code="validation_error")
     except Wan3PrimeLifecycleError as exc:
         return _json_error(str(exc), status=exc.status, code=exc.code)
+
+
+async def _repeat_plan_route(request: web.Request) -> web.Response:
+    from bot.services.wan3_prime_repeat import get_repeat_plan, public_plan
+
+    try:
+        body = await _json_body(request)
+        actor = await _actor_from_request(request, body)
+        if body.get("trend_id") is not None:
+            if body.get("source_feed_gen_id") is not None:
+                raise Wan3PrimeValidationError("Choose exactly one repeat source")
+            from bot.services.wan3_prime_trends import get_trend_plan
+            return _json_ok(public_plan(await get_trend_plan(actor, body["trend_id"])))
+        return _json_ok(public_plan(await get_repeat_plan(actor, body.get("source_feed_gen_id"))))
+    except Wan3PrimeValidationError as exc:
+        return _json_error(str(exc), status=exc.status, code="validation_error")
+    except Wan3PrimeLifecycleError as exc:
+        return _json_error(str(exc), status=exc.status, code=exc.code)
+
+
+async def repeat_plan_telegram_wan3_prime(*, telegram_id: int, source_id: int) -> dict:
+    from bot.services.wan3_prime_repeat import get_repeat_plan, public_plan
+
+    return public_plan(await get_repeat_plan(await _telegram_actor(telegram_id), source_id))
+
+
+async def trend_plan_telegram_wan3_prime(*, telegram_id: int, trend_id: int) -> dict:
+    from bot.services.wan3_prime_repeat import public_plan
+    from bot.services.wan3_prime_trends import get_trend_plan
+
+    return public_plan(await get_trend_plan(await _telegram_actor(telegram_id), trend_id))
+
+
+async def _trend_recipe_route(request: web.Request) -> web.Response:
+    from bot.services.wan3_prime_trends import publication_recipe
+
+    try:
+        body = await _json_body(request)
+        actor = await _actor_from_request(request, body)
+        plan = await publication_recipe(actor, str(body.get("task_id") or ""))
+        return _json_ok({"ok": True, "recipe": plan["recipe"], "slots": plan["slots"]})
+    except Wan3PrimeValidationError as exc:
+        return _json_error(str(exc), status=exc.status, code="validation_error")
+    except Wan3PrimeLifecycleError as exc:
+        return _json_error(str(exc), status=exc.status, code=exc.code)
+
+
+async def _trend_publish_route(request: web.Request) -> web.Response:
+    from bot.services.wan3_prime_trends import publish_trend
+
+    try:
+        body = await _json_body(request)
+        actor = await _actor_from_request(request, body)
+        result = await publish_trend(actor, task_id=str(body.get("task_id") or ""), title=body.get("title"),
+                                     description=body.get("description", ""), replacement_keys=body.get("replacement_keys"))
+        return _json_ok(result)
+    except Wan3PrimeValidationError as exc:
+        return _json_error(str(exc), status=exc.status, code="validation_error")
+    except Wan3PrimeLifecycleError as exc:
+        return _json_error(str(exc), status=exc.status, code=exc.code)
+
+
+def _http_boundary(handler):
+    """Consistent errors for every Wan route, not only the generation endpoint."""
+    @wraps(handler)
+    async def wrapped(request):
+        try:
+            return await handler(request)
+        except Wan3PrimeValidationError as exc:
+            return _json_error(str(exc), status=exc.status, code="validation_error")
+        except Wan3PrimeLifecycleError as exc:
+            return _json_error(str(exc), status=exc.status, code=exc.code)
+        except PermissionError:
+            return _json_error("Нет доступа к этой операции.", status=403, code="permission_denied")
+        except (ValueError, UnicodeError):
+            return _json_error("Некорректные данные запроса.", status=400, code="validation_error")
+        except web.HTTPException as exc:
+            return _json_error("Запрос не может быть обработан.", status=exc.status, code="http_error")
+        except Exception as exc:  # noqa: BLE001 - HTTP service boundary maps unexpected errors without leaking request data
+            logger.error("Wan3 HTTP boundary failure: path=%s error_type=%s", request.path, type(exc).__name__)
+            return _json_error("Операция временно недоступна.", status=500, code="internal_error")
+    return wrapped
 
 
 def setup_wan3_prime_routes(app: web.Application, miniapp_root: str = "/mini-app") -> None:
@@ -295,16 +384,19 @@ def setup_wan3_prime_routes(app: web.Application, miniapp_root: str = "/mini-app
 
     app.on_startup.append(_startup)
     app.on_cleanup.append(_cleanup)
-    app.router.add_post(f"{miniapp_root}/api/wan3/quote", _quote_route)
-    app.router.add_post(f"{miniapp_root}/api/wan3/generate", _launch_route)
-    app.router.add_post(f"{miniapp_root}/api/wan3/launch", _launch_route)
-    app.router.add_post(f"{miniapp_root}/api/wan3/status", _status_route)
-    app.router.add_post(f"{miniapp_root}/api/wan3/recipe", _recipe_route)
-    app.router.add_post(f"{miniapp_root}/api/wan3/callback", _callback_route)
-    app.router.add_post(f"{miniapp_root}/api/wan3/import", _import_route)
-    app.router.add_post(f"{miniapp_root}/api/wan3/upload/init", _upload_init_route)
-    app.router.add_post(f"{miniapp_root}/api/wan3/upload/chunk", _upload_chunk_route)
-    app.router.add_post(f"{miniapp_root}/api/wan3/upload/complete", _upload_complete_route)
+    app.router.add_post(f"{miniapp_root}/api/wan3/quote", _http_boundary(_quote_route))
+    app.router.add_post(f"{miniapp_root}/api/wan3/generate", _http_boundary(_launch_route))
+    app.router.add_post(f"{miniapp_root}/api/wan3/launch", _http_boundary(_launch_route))
+    app.router.add_post(f"{miniapp_root}/api/wan3/status", _http_boundary(_status_route))
+    app.router.add_post(f"{miniapp_root}/api/wan3/recipe", _http_boundary(_recipe_route))
+    app.router.add_post(f"{miniapp_root}/api/wan3/repeat-plan", _http_boundary(_repeat_plan_route))
+    app.router.add_post(f"{miniapp_root}/api/wan3/trends/recipe", _http_boundary(_trend_recipe_route))
+    app.router.add_post(f"{miniapp_root}/api/wan3/trends/publish", _http_boundary(_trend_publish_route))
+    app.router.add_post(f"{miniapp_root}/api/wan3/callback", _http_boundary(_callback_route))
+    app.router.add_post(f"{miniapp_root}/api/wan3/import", _http_boundary(_import_route))
+    app.router.add_post(f"{miniapp_root}/api/wan3/upload/init", _http_boundary(_upload_init_route))
+    app.router.add_post(f"{miniapp_root}/api/wan3/upload/chunk", _http_boundary(_upload_chunk_route))
+    app.router.add_post(f"{miniapp_root}/api/wan3/upload/complete", _http_boundary(_upload_complete_route))
 
 
 async def _telegram_actor(telegram_id: int) -> Wan3PrimeActor:
@@ -340,23 +432,40 @@ async def owner_telegram_wan3_prime_recipe(*, telegram_id: int, task_id: str) ->
 
 
 async def store_telegram_wan3_prime_media(*, telegram_id: int, bot, file_id: str, filename: str, kind: str, declared_size: int | None) -> dict:
+    import asyncio
     import io
-    import tempfile
     from pathlib import Path
 
+    from bot.services.wan3_prime_files import convert_voice_to_mp3
+    from bot.services.wan3_prime_media import canonical_child_path
     from bot.services.wan3_prime_storage import CHUNK_ROOT, _kind_limit, _safe_basename
+
     actor = await _telegram_actor(telegram_id)
     maximum = min(_kind_limit(kind), 20 * 1024 * 1024)
-    if declared_size is not None and (isinstance(declared_size, bool) or declared_size < 0 or declared_size > maximum):
-        raise Wan3PrimeValidationError('Этот файл нужно загрузить через Mini App: там поддерживаются видео и документы до 100 MB. Ограничение здесь относится к скачиванию из Telegram, а не к Wan.')
+    if not maximum or declared_size is not None and (isinstance(declared_size, bool) or declared_size < 0 or declared_size > maximum):
+        raise Wan3PrimeValidationError('Use Mini App to upload files beyond the Telegram download limit.')
+    name = _safe_basename(filename)
+    convert_audio = kind == 'audio' and Path(name).suffix.lower() in {'.ogg', '.oga', '.m4a'}
+    output_name = 'voice.mp3' if convert_audio else name
+    # Quota reservation precedes file download, including Telegram's temp bytes.
+    reservation = await wan3_prime_storage.init_upload(actor, kind=kind, filename=output_name,
+        size=maximum if convert_audio or not declared_size else declared_size, importing=True)
+    upload_id = reservation['upload_id']
+    path = canonical_child_path(CHUNK_ROOT, f'{upload_id}/{name}')
+
     class BoundedFile(io.BufferedWriter):
         def write(self, data):
             if self.tell() + len(data) > maximum:
-                raise Wan3PrimeValidationError('Файл слишком большой для загрузки через Telegram. Откройте Mini App.')
+                raise Wan3PrimeValidationError('File exceeds the Telegram download limit; use Mini App.')
             return super().write(data)
-    CHUNK_ROOT.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix='telegram-', dir=CHUNK_ROOT) as folder:
-        path = Path(folder) / _safe_basename(filename)
+    try:
         with BoundedFile(io.FileIO(path, 'w')) as output:
             await bot.download(file_id, destination=output, timeout=90, seek=False)
-        return await wan3_prime_storage.save_owned_file(actor, kind=kind, filename=path.name, path=path, source='telegram_wan3')
+        if convert_audio:
+            converted = path.with_name('voice-converted.mp3')
+            await asyncio.to_thread(convert_voice_to_mp3, path, converted)
+            path = converted
+        return await wan3_prime_storage.save_owned_file(actor, kind=kind, filename=output_name,
+            path=path, source='telegram_wan3', upload_id=upload_id)
+    finally:
+        await wan3_prime_storage.discard_import(actor, upload_id)

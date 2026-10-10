@@ -1029,6 +1029,11 @@ async def miniapp_run_trend(request: web.Request) -> web.Response:
         if not prompt:
             raise TrendRunValidationError("Тренд не найден")
 
+        if prompt.get("model") == "wan_3_prime":
+            return web.json_response({"ok": False, "code": "wan3_editor_required", "trend_id": parsed.trend_id,
+                "error": "Откройте тренд в обновлённом редакторе Wan: он сохраняет все референсы и рассчитывает стоимость перед запуском.",
+                "retry_same_request": False}, status=409)
+
         if parsed.client_request_id:
             claim_context = (int(user.id), parsed.trend_id, parsed.client_request_id)
             claim = await reserve_trend_run_claim(

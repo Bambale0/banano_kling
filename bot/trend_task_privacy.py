@@ -21,6 +21,8 @@ _PRIVATE_TASK_FIELDS = {
     "feed_repeat_reference_selection",
 }
 _PRIVATE_REQUEST_FIELDS = {
+    "quote", "prepared_input", "client_request", "repeat_context",
+    "raw_recipe", "reference_file_urls", "reference_link_urls",
     "prompt",
     "effective_prompt",
     "source_url",

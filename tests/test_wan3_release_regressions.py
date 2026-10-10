@@ -72,9 +72,9 @@ async def test_active_wan_history_status_is_pending():
 
 @pytest.mark.asyncio
 async def test_completed_upload_still_counts_against_user_quota(monkeypatch, tmp_path):
+    from bot.services.wan3_prime_media import Wan3PrimeValidationError
     from bot.services.wan3_prime_storage import wan3_prime_storage
     from tests.test_wan3_prime_storage import png_bytes
-    from bot.services.wan3_prime_media import Wan3PrimeValidationError
 
     monkeypatch.chdir(tmp_path)
     actor = await user_actor()
@@ -143,6 +143,7 @@ async def test_telegram_and_http_wan_reject_banned_users(monkeypatch):
 @pytest.mark.asyncio
 async def test_wan_canonical_task_has_partner_acceptance_proof():
     import json
+
     from bot import database
 
     actor = await user_actor()
@@ -159,9 +160,10 @@ async def test_wan_canonical_task_has_partner_acceptance_proof():
 @pytest.mark.asyncio
 async def test_lost_ack_callback_recovers_only_the_matching_provider_request(monkeypatch):
     import json
+    from urllib.parse import parse_qs, urlparse
+
     from bot import database
     from bot.services.wan3_prime_media import WAN3_PROVIDER_MODEL
-    from urllib.parse import parse_qs, urlparse
 
     monkeypatch.setenv("WAN3_CALLBACK_BASE_URL", "https://callback.example.test")
     actor = await user_actor()
@@ -213,3 +215,52 @@ async def test_operator_can_resolve_unknown_reserve_once_with_audit(monkeypatch)
     async with database.db_backend.connect(database.DATABASE_PATH) as db:
         count = await (await db.execute("SELECT COUNT(*) FROM wan3_prime_operator_audit WHERE internal_task_id = ?", (submitted["task_id"],))).fetchone()
     assert count[0] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('code', [500, 502, 503, 504])
+async def test_gateway_create_failure_does_not_assume_provider_rejected(code):
+    from tests.test_wan3_prime_lifecycle import balance
+    actor = await user_actor()
+    provider = Provider()
+    provider.create_result = {'success': False, 'error': 'api_error', 'code': code}
+    lifecycle = Wan3PrimeLifecycle(probe=Probe(), preset_manager=Prices(), transport=provider)
+    quote = await lifecycle.quote(actor, body())
+    first = await lifecycle.launch(actor, body(), quote, 'gateway-error')
+    assert first['status'] == 'unknown'
+    assert await balance(actor.user_id) == 90
+    second = await lifecycle.launch(actor, body(), quote, 'gateway-error')
+    assert second['task_id'] == first['task_id'] and provider.creates == 1
+
+
+@pytest.mark.asyncio
+async def test_legacy_launcher_cannot_bypass_wan_intent_and_confirmation(monkeypatch):
+    from bot import miniapp
+    actor = await user_actor()
+    pricing = AsyncMock(side_effect=AssertionError('unsafe pricing boundary reached'))
+    monkeypatch.setattr(miniapp, 'quote_video_for_actor', pricing)
+    with pytest.raises(ValueError, match='Wan'):
+        await miniapp._launch_video_generation_task(telegram_id=actor.telegram_id, user=actor,
+            model='wan_3_prime', prompt='video', duration=5, aspect_ratio='9:16',
+            generation_type='text', image_url=None, image_references=[], video_references=[])
+    pricing.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_pending_wan_generic_admin_refund_cannot_duplicate_lifecycle_refund(monkeypatch):
+    from bot import internal_admin_operations as operations
+    from tests.test_internal_admin_operations import (
+        FakeConnection,
+        command_request,
+        operation_row,
+    )
+    request = command_request('/internal/admin/operations/7/refund', {
+        'amount': 4, 'reason': 'operator verification', 'confirmation': 'REFUND 4'})
+    connection = FakeConnection()
+    monkeypatch.setattr(operations.db_backend, 'connect', lambda: connection)
+    monkeypatch.setattr(operations, '_reserve_command', AsyncMock(return_value=None))
+    monkeypatch.setattr(operations, '_fetch_operation_in_connection', AsyncMock(return_value=
+        operation_row(task_id='wan3_pending', model='wan_3_prime', status='processing')))
+    with pytest.raises(operations.CommandConflictError, match='Wan'):
+        await operations.refund_operation_handler.__wrapped__(request)
+    assert not any('UPDATE users' in sql for sql, _args in connection.calls)

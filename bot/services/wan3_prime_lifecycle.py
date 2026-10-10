@@ -63,6 +63,7 @@ class Wan3PrimeActor:
     telegram_id: int
     is_admin: bool = False
     miniapp_context: dict[str, Any] | None = None
+    operation_context: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -303,6 +304,8 @@ class Wan3PrimeLifecycle:
         from bot.services.wan3_prime_recovery import init_recovery_schema
 
         await init_recovery_schema()
+        from bot.services.wan3_prime_trends import init_trend_schema
+        await init_trend_schema()
 
     async def startup(self) -> None:
         await self.init_schema()
@@ -324,6 +327,7 @@ class Wan3PrimeLifecycle:
         while True:
             try:
                 await self.reconcile_once()
+                await wan3_prime_storage.cleanup_expired(limit=50)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - isolate transport/storage failures with durable outcome state
@@ -399,14 +403,21 @@ class Wan3PrimeLifecycle:
         )
 
     async def _validated_recipe(self, actor: Wan3PrimeActor, body: dict[str, Any]) -> Wan3PrimeRecipe:
+        from bot.services.wan3_prime_repeat import client_recipe, compile_repeat
         from bot.services.wan3_prime_service import wan3_prime_service
 
-        recipe = await validate_wan3_recipe(body, self.probe.for_actor(actor) if hasattr(self.probe, "for_actor") else self.probe)
+        request = client_recipe(body)
+        context = {}
+        probe = self.probe.for_actor(actor) if hasattr(self.probe, "for_actor") else self.probe
+        effective = request
+        if request.get("source_feed_gen_id") is not None or request.get("trend_id") is not None:
+            effective, probe, context, request = await compile_repeat(actor, request, self.probe)
+        recipe = await validate_wan3_recipe(effective, probe)
         try:
             prepared = await wan3_prime_service.prepare_request(**recipe.raw_provider_args())
         except ValueError as exc:
             raise Wan3PrimeValidationError(str(exc)) from exc
-        return replace(recipe, prepared_input=prepared)
+        return replace(recipe, prepared_input=prepared, client_request=request, repeat_context=context)
 
     async def quote(self, actor: Wan3PrimeActor, body: dict[str, Any]) -> Wan3PrimeQuote:
         recipe = await self._validated_recipe(actor, body)
@@ -453,8 +464,16 @@ class Wan3PrimeLifecycle:
             )
             existing_before_quote = await cursor.fetchone()
         if existing_before_quote:
-            recipe = await validate_wan3_recipe(body, self.probe.for_actor(actor) if hasattr(self.probe, "for_actor") else self.probe)
-            if existing_before_quote["recipe_fingerprint"] != recipe.fingerprint():
+            from bot.services.wan3_prime_repeat import client_recipe
+
+            persisted = json.loads(existing_before_quote["request_summary"])
+            original = persisted.get("client_request")
+            if original is not None:
+                same_request = _json_dumps(original) == _json_dumps(client_recipe(body))
+            else:
+                checked = await validate_wan3_recipe(body, self.probe.for_actor(actor) if hasattr(self.probe, "for_actor") else self.probe)
+                same_request = existing_before_quote["recipe_fingerprint"] == checked.fingerprint()
+            if not same_request:
                 raise Wan3PrimeLifecycleError("Same idempotency key used for a different request", status=409, code="idempotency_conflict")
             return self._status_from_row(existing_before_quote)
 
@@ -464,8 +483,24 @@ class Wan3PrimeLifecycle:
         submission_lease_until = (datetime.now(UTC) + timedelta(minutes=10)).replace(tzinfo=None).isoformat(sep=" ")
 
         async with db_backend.connect(_database_path()) as db:
+            from bot.services.wan3_prime_storage_policy import lock_storage
+
             db.row_factory = db_backend.Row
-            await db.execute("BEGIN IMMEDIATE" if not _is_postgres() else "BEGIN")
+            await lock_storage(db)
+            from bot.services.wan3_prime_repeat import verify_repeat_in_transaction
+
+            await verify_repeat_in_transaction(db, recipe.repeat_context)
+            # Serialize expiry with task persistence: no file may disappear
+            # between the validated quote and the committed generation recipe.
+            for inputs in recipe.media.values():
+                for info in inputs:
+                    if info.sha256:
+                        present = await (await db.execute(
+                            "SELECT local_path FROM wan3_prime_media WHERE public_url = ? AND sha256 = ?",
+                            (info.url, info.sha256),
+                        )).fetchone()
+                        if not present or not Path(present["local_path"]).is_file():
+                            raise Wan3PrimeValidationError("Media expired before launch; upload it again", status=409)
             insert_prefix = "INSERT INTO" if _is_postgres() else "INSERT OR IGNORE INTO"
             insert_sql = f"""
                 {insert_prefix} wan3_prime_intents (
@@ -487,7 +522,7 @@ class Wan3PrimeLifecycle:
                     server_quote.quote_hash,
                     _json_dumps(server_quote.as_response()),
                     _json_dumps(server_quote.safe_request),
-                    _json_dumps(recipe.raw_provider_args()),
+                    _json_dumps(recipe.client_request if recipe.repeat_context else recipe.raw_provider_args()),
                     nonce,
                     WAN3_PROVIDER_MODEL,
                     server_quote.reserve_credits,
@@ -524,6 +559,17 @@ class Wan3PrimeLifecycle:
                 "wan3_prime": True, "quote": server_quote.as_response(),
                 "delivery_status": "pending", "stable_task_id": internal_task_id,
             }, accepted=False, invite_eligible=not actor.is_admin)
+            if recipe.repeat_context:
+                task_metadata.update(private_recipe=True, prompt_hidden=True, prompt_actions_allowed=False)
+                if recipe.repeat_context.get("trend_id"):
+                    task_metadata.update(trend_id=recipe.repeat_context["trend_id"], action_type="trend")
+                else:
+                    task_metadata.update(source_feed_gen_id=recipe.repeat_context["source_id"], action_type="repeat")
+            if actor.operation_context:
+                if not actor.is_admin:
+                    raise Wan3PrimeLifecycleError("Trusted operator context required", status=403)
+                task_metadata["admin_replay"] = dict(actor.operation_context)
+                task_metadata["action_type"] = "admin_replay"
             await db.execute(
                 """
                 INSERT INTO generation_tasks
@@ -544,6 +590,18 @@ class Wan3PrimeLifecycle:
                     _json_dumps(task_metadata),
                 ),
             )
+            if recipe.repeat_context:
+                if recipe.repeat_context.get("trend_id"):
+                    await db.execute("UPDATE generation_tasks SET action_type = 'trend' WHERE task_id = ?", (internal_task_id,))
+                    await db.execute("INSERT INTO trend_generation_runs (task_id, trend_id, user_id) VALUES (?, ?, ?) ON CONFLICT (task_id) DO NOTHING",
+                                     (internal_task_id, recipe.repeat_context["trend_id"], actor.user_id))
+                else:
+                    await db.execute("UPDATE generation_tasks SET source_feed_gen_id = ?, parent_generation_id = ?, "
+                                     "action_type = 'repeat' WHERE task_id = ?",
+                                     (recipe.repeat_context["source_id"], recipe.repeat_context["source_id"], internal_task_id))
+            if actor.operation_context:
+                await db.execute("UPDATE generation_tasks SET parent_generation_id = ?, action_type = 'admin_replay' WHERE task_id = ?",
+                                 (actor.operation_context["source_operation_id"], internal_task_id))
             await db.commit()
 
         callback_url = self._callback_url(internal_task_id, nonce)
@@ -589,6 +647,10 @@ class Wan3PrimeLifecycle:
             return "accepted", provider_task_id, None
         if code == 200:
             return "no_task_id", None, str(result.get("message") or result.get("msg") or "")
+        if isinstance(code, (int, str)) and str(code).isdigit() and 500 <= int(code) <= 599:
+            # A gateway can fail after createTask was accepted. Keep the same
+            # reservation/identity until canonical or operator reconciliation.
+            return "upstream_submission_unknown", None, "Provider acknowledgement unavailable"
         if error == "api_error":
             return "api_error", None, str(result.get("message") or result.get("msg") or result.get("error") or "")
         if code not in (None, 200) and not result.get("success"):
@@ -635,6 +697,9 @@ class Wan3PrimeLifecycle:
                 "UPDATE generation_tasks SET request_data = ?, updated_at = CURRENT_TIMESTAMP WHERE task_id = ?",
                 (_json_dumps(request_data), internal_task_id),
             )
+            if request_data.get("trend_id"):
+                await db.execute("UPDATE user_prompts SET uses_count = uses_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                                 (request_data["trend_id"],))
             await db.commit()
         from bot.partner_policy import mark_generation_accepted
 
@@ -680,7 +745,10 @@ class Wan3PrimeLifecycle:
     async def reconcile_once(self, *, provider_task_id: str | None = None, limit: int = 50, respect_backoff: bool = False) -> int:
         await self.init_schema()
         if provider_task_id is None:
-            from bot.services.wan3_prime_recovery import recover_candidates, recover_expired_submissions
+            from bot.services.wan3_prime_recovery import (
+                recover_candidates,
+                recover_expired_submissions,
+            )
 
             await recover_expired_submissions()
             await recover_candidates(self, limit=limit)
@@ -982,6 +1050,13 @@ class Wan3PrimeLifecycle:
                 """,
                 (public_url, charge, _json_dumps(request_data), row["internal_task_id"]),
             )
+            context = json.loads(row["request_summary"]).get("repeat_context") or {}
+            if context and charge > 0:
+                await database._credit_prompt_repeat_reward_in_db(
+                    db, author_id=int(context["owner_id"]), repeater_id=int(row["user_id"]),
+                    source_type="prompt" if context.get("trend_id") else "feed", source_id=int(context.get("trend_id") or context["source_id"]),
+                    repeat_task_id=row["internal_task_id"], credits_spent=charge,
+                )
             await db.commit()
         return True
 

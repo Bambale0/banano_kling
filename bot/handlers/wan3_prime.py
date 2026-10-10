@@ -8,6 +8,7 @@ delegated to the lazy `bot.wan3_prime_api` facade.
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import uuid
 from copy import deepcopy
@@ -20,6 +21,7 @@ from aiogram.fsm.state import State, StatesGroup
 
 from bot.services.wan3_prime_service import Wan3PrimeService
 
+logger = logging.getLogger(__name__)
 router = Router(name="wan3_prime")
 
 TELEGRAM_DIRECT_DOWNLOAD_BYTES = 20 * 1024 * 1024
@@ -54,6 +56,7 @@ class Wan3PrimeStates(StatesGroup):
     dashboard = State()
     choosing_mode = State()
     waiting_prompt = State()
+    waiting_repeat_input = State()
     waiting_first_frame = State()
     waiting_last_frame = State()
     waiting_source_video = State()
@@ -89,6 +92,11 @@ class Wan3PrimeDraft:
     quote_hash: str | None = None
     mode_drafts: dict[str, dict[str, Any]] = field(default_factory=dict)
     last_quote: dict[str, Any] | None = None
+    source_feed_gen_id: int | None = None
+    trend_id: int | None = None
+    repeat_plan_hash: str | None = None
+    repeat_replacements: dict[str, str] = field(default_factory=dict)
+    repeat_slots: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _new_ids(draft: Wan3PrimeDraft) -> None:
@@ -143,6 +151,8 @@ def _restore_mode(base: Wan3PrimeDraft, scenario: str) -> Wan3PrimeDraft | None:
 
 
 def apply_wan3_mode(draft: Wan3PrimeDraft, scenario: str) -> Wan3PrimeDraft:
+    if draft.source_feed_gen_id or draft.trend_id:
+        raise ValueError("Режим повтора сохранён из публикации. Для другого режима создайте новую задачу.")
     if scenario not in Wan3PrimeService.SCENARIOS:
         raise ValueError("Неизвестный режим Wan 3.0")
     draft.mode_drafts[draft.scenario] = _snapshot_mode(draft)
@@ -185,6 +195,9 @@ def remove_ordered_slot(values: list[str], index: int, *, label: str) -> list[st
 def build_wan3_payload(draft: Wan3PrimeDraft) -> dict[str, Any]:
     return {
         "model": "wan_3_prime",
+        **({**({"trend_id": draft.trend_id} if draft.trend_id else {"source_feed_gen_id": draft.source_feed_gen_id}),
+            "repeat_plan_hash": draft.repeat_plan_hash, "repeat_replacements": dict(draft.repeat_replacements)}
+           if draft.source_feed_gen_id or draft.trend_id else {}),
         "scenario": draft.scenario,
         "prompt": draft.prompt,
         "resolution": draft.resolution,
@@ -204,6 +217,13 @@ def build_wan3_payload(draft: Wan3PrimeDraft) -> dict[str, Any]:
 
 
 def validate_wan3_draft(draft: Wan3PrimeDraft) -> None:
+    if draft.source_feed_gen_id or draft.trend_id:
+        required = {slot["key"] for slot in draft.repeat_slots if slot["binding"] == "upload"}
+        if not draft.repeat_plan_hash or set(draft.repeat_replacements) != required or any(not value for value in draft.repeat_replacements.values()):
+            raise ValueError("Загрузите свои материалы для каждого заменяемого места")
+        if draft.duration not in DURATIONS or (draft.seed is not None and not 0 <= int(draft.seed) <= Wan3PrimeService.MAX_SEED):
+            raise ValueError("Проверьте длительность и Seed")
+        return
     if draft.scenario == "edit" and (not draft.reference_video_urls or not draft.reference_video_urls[0]):
         raise ValueError("Добавьте исходное видео Video1 перед расчётом")
     Wan3PrimeService._validate_scenario(
@@ -264,13 +284,20 @@ def dashboard_keyboard(draft: Wan3PrimeDraft) -> types.InlineKeyboardMarkup:
         [("Режим", "wan3_modes"), ("Новая задача", "wan3_new")],
         [("Промпт/инструкции", "wan3_prompt")],
     ]
-    if draft.scenario in {"first_frame", "first_last"}:
+    if not (draft.source_feed_gen_id or draft.trend_id) and draft.scenario in {"first_frame", "first_last"}:
         rows.append([("Первый кадр", "wan3_media:first"), ("Последний кадр", "wan3_media:last")])
-    if draft.scenario == "edit":
+    if not (draft.source_feed_gen_id or draft.trend_id) and draft.scenario == "edit":
         rows.append([("Video1 источник", "wan3_media:source_video"), ("Видео 2-5", "wan3_media:video")])
-    if draft.scenario in {"reference", "edit", "file", "link"}:
+    if not (draft.source_feed_gen_id or draft.trend_id) and draft.scenario in {"reference", "edit", "file", "link"}:
         rows.append([("Image 1-10", "wan3_media:image"), ("Video refs", "wan3_media:video"), ("Audio 1-5", "wan3_media:audio")])
         rows.append([("Файл 1", "wan3_media:file"), ("Webpage 1", "wan3_media:link")])
+    if draft.source_feed_gen_id or draft.trend_id:
+        rows[0] = [("Новая задача", "wan3_new")]
+        for slot in draft.repeat_slots:
+            if slot["binding"] == "upload":
+                label = _repeat_slot_label(slot)
+                prefix = "✅ " if draft.repeat_replacements.get(slot["key"]) else "➕ "
+                rows.append([(prefix + label, "wan3_repeat_slot:" + slot["key"])])
     rows.extend([
         [("480P", "wan3_set:resolution:480P"), ("720P", "wan3_set:resolution:720P"), ("1080P", "wan3_set:resolution:1080P")],
         [("adaptive", "wan3_set:ratio:adaptive"), ("16:9", "wan3_set:ratio:16:9"), ("9:16", "wan3_set:ratio:9:16")],
@@ -316,6 +343,11 @@ def build_review_text(draft: Wan3PrimeDraft, quote: dict[str, Any] | None = None
         f"Seed: {draft.seed if draft.seed is not None else 'Auto'}; аудио: {'да' if draft.audio else 'нет'}; NSFW: {'да' if draft.nsfw_checker else 'нет'}",
         f"Client ID: {draft.client_request_id}",
     ]
+    if draft.source_feed_gen_id or draft.trend_id:
+        lines.append("Повтор публикации " + str(draft.trend_id or draft.source_feed_gen_id))
+        for slot in draft.repeat_slots:
+            state = "материал автора" if slot["binding"] == "fixed" else "загружено" if draft.repeat_replacements.get(slot["key"]) else "нужен ваш файл"
+            lines.append(_repeat_slot_label(slot) + ": " + state)
     if quote:
         if quote.get("tariff_missing"):
             lines.append("Стоимость: тариф для качества не настроен.")
@@ -337,10 +369,18 @@ async def _show_dashboard(target: Any, state: FSMContext, draft: Wan3PrimeDraft)
     await state.set_state(Wan3PrimeStates.dashboard)
     await state.update_data(**draft_to_state(draft), v_model="wan_3_prime")
     text = dashboard_text(draft)
-    if hasattr(target, "edit_text"):
-        await target.edit_text(text, reply_markup=dashboard_keyboard(draft), parse_mode=None)
-    else:
-        await target.answer(text, reply_markup=dashboard_keyboard(draft), parse_mode=None)
+    from aiogram.exceptions import TelegramBadRequest
+
+    editable = (hasattr(target, "edit_text") and getattr(getattr(target, "from_user", None), "is_bot", True)
+                and not any(getattr(target, kind, None) for kind in ("photo", "video", "document", "audio")))
+    if editable:
+        try:
+            await target.edit_text(text, reply_markup=dashboard_keyboard(draft), parse_mode=None)
+            return
+        except TelegramBadRequest as exc:
+            if "message is not modified" in str(exc).lower():
+                return
+    await target.answer(text, reply_markup=dashboard_keyboard(draft), parse_mode=None)
 
 
 def _message_file(message: types.Message) -> tuple[str, str, int, str] | None:
@@ -397,6 +437,8 @@ def _entry_kind_from_state(state_name: str | None) -> str:
 
 
 def _validate_media_allowed(draft: Wan3PrimeDraft, kind: str) -> None:
+    if draft.source_feed_gen_id or draft.trend_id:
+        raise ValueError("Используйте пронумерованные места повтора")
     if kind in {"image", "video", "audio", "file", "link", "source_video"} and draft.scenario in {"text", "first_frame", "first_last"}:
         raise ValueError("В режиме кадров нельзя добавлять reference_* без смены режима.")
     if kind in {"first", "last"} and draft.scenario not in {"first_frame", "first_last"}:
@@ -467,9 +509,8 @@ async def _store_or_import_media(message: types.Message, draft: Wan3PrimeDraft, 
     elif expected == "video":
         if detected_kind not in {"video", "file"} or (detected_kind == "file" and not _has_ext(filename, VIDEO_EXTS)):
             raise ValueError("Видео: mp4/mov.")
-    elif expected == "audio":
-        if detected_kind not in {"audio", "file"} or (detected_kind == "file" and not _has_ext(filename, AUDIO_EXTS)):
-            raise ValueError("Аудио: wav/mp3; voice принимается как аудио и валидируется на сервере.")
+    elif expected == "audio" and (detected_kind not in {"audio", "file"} or (detected_kind == "file" and not _has_ext(filename, AUDIO_EXTS))):
+        raise ValueError("Аудио: wav/mp3; voice принимается как аудио и валидируется на сервере.")
     stored = await runtime.store_telegram_wan3_prime_media(
         telegram_id=actor_id,
         bot=message.bot,
@@ -506,7 +547,11 @@ async def wan3_modes(callback: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("wan3_mode:"))
 async def choose_wan3_mode(callback: types.CallbackQuery, state: FSMContext):
     scenario = str(callback.data).split(":", 1)[1]
-    draft = apply_wan3_mode(draft_from_state(await state.get_data()), scenario)
+    try:
+        draft = apply_wan3_mode(draft_from_state(await state.get_data()), scenario)
+    except ValueError as exc:
+        await callback.answer(str(exc)[:180], show_alert=True)
+        return
     await _show_dashboard(callback.message, state, draft)
     await callback.answer()
 
@@ -522,7 +567,7 @@ async def ask_wan3_prompt(callback: types.CallbackQuery, state: FSMContext):
 async def wan3_prompt(message: types.Message, state: FSMContext):
     draft = draft_from_state(await state.get_data())
     text = str(getattr(message, "text", "") or "").strip()
-    draft.prompt = "" if text == "-" and draft.scenario not in {"text", "edit"} else text
+    draft.prompt = "" if text == "-" and (draft.source_feed_gen_id or draft.trend_id or draft.scenario not in {"text", "edit"}) else text
     invalidate_quote(draft)
     await _show_dashboard(message, state, draft)
 
@@ -720,7 +765,12 @@ async def quote_wan3_prime(callback: types.CallbackQuery, state: FSMContext):
             client_request_id=draft.client_request_id,
             recipe=build_wan3_payload(draft),
         )
-    except Exception:  # noqa: BLE001 - FSM boundary preserves draft and reports safe failure
+    except (ValueError, RuntimeError) as exc:
+        await callback.message.answer(str(exc)[:1000], parse_mode=None)
+        await callback.answer("Проверьте материалы и настройки", show_alert=True)
+        return
+    except Exception as exc:  # noqa: BLE001 - user boundary retains the draft on infrastructure errors
+        logger.warning("Wan3 Telegram quote deferred: telegram_id=%s error_type=%s", callback.from_user.id, type(exc).__name__)
         await callback.answer("Не удалось получить расчёт. Черновик сохранён.", show_alert=True)
         return
     draft.quote_hash = str(quote.get("quote_hash") or "") or None
@@ -770,7 +820,8 @@ async def confirm_wan3_prime(callback: types.CallbackQuery, state: FSMContext):
     }.get(status, f"Статус: {status}")
     await callback.message.edit_text(
         f"Wan 3.0\n{status_text}\nTask ID: {internal_task_id}\nClient ID: {draft.client_request_id}",
-        reply_markup=_keyboard([[("Новая задача", "wan3_new")], [("Дашборд", "wan3_dashboard")]]),
+        reply_markup=_keyboard([[("Проверить этот запуск", "wan3_confirm")]] if status == "unknown"
+            else [[("Новая задача", "wan3_new")], [("Дашборд", "wan3_dashboard")]]),
         parse_mode=None,
     )
     await callback.answer()
@@ -783,12 +834,24 @@ async def restore_wan3_owner_recipe(callback: types.CallbackQuery, state: FSMCon
     try:
         response = await runtime.owner_telegram_wan3_prime_recipe(telegram_id=callback.from_user.id, task_id=task_id)
         if not isinstance(response, dict):
-            raise ValueError("Invalid owner recipe")
+            raise TypeError("Invalid owner recipe")
         recipe = response.get("recipe", response)
         if not isinstance(recipe, dict) or not recipe.get("scenario"):
             raise ValueError("Incomplete owner recipe")
     except Exception:  # noqa: BLE001 - FSM boundary preserves draft and reports safe failure
         await callback.answer("Не удалось восстановить рецепт.", show_alert=True)
+        return
+    if recipe.get("source_feed_gen_id") or recipe.get("trend_id"):
+        try:
+            if recipe.get("trend_id"):
+                plan = await runtime.trend_plan_telegram_wan3_prime(telegram_id=callback.from_user.id, trend_id=recipe["trend_id"])
+            else:
+                plan = await runtime.repeat_plan_telegram_wan3_prime(telegram_id=callback.from_user.id, source_id=recipe["source_feed_gen_id"])
+            draft = _draft_from_repeat_plan(plan, recipe)
+            await _show_dashboard(callback.message, state, draft)
+            await callback.answer()
+        except (ValueError, RuntimeError):
+            await callback.answer("Публикация или разрешение на повтор больше недоступны.", show_alert=True)
         return
     draft = Wan3PrimeDraft(
         scenario=str(recipe.get("scenario") or "text"),
@@ -829,3 +892,81 @@ __all__ = [
     "router",
     "validate_wan3_draft",
 ]
+
+
+def _repeat_slot_label(slot: dict[str, Any]) -> str:
+    if slot["role"] == "first_frame":
+        return "Первый кадр"
+    if slot["role"] == "last_frame":
+        return "Последний кадр"
+    prefix = {"image": "Image", "video": "Video", "audio": "Audio", "file": "Документ ", "link": "Страница "}[slot["kind"]]
+    return prefix + str(slot["index"] + 1) + (" (исходник)" if slot["role"] == "source_video" else "")
+
+
+def _draft_from_repeat_plan(plan: dict, own_request: dict | None = None) -> Wan3PrimeDraft:
+    allowed = {"scenario", "prompt", "resolution", "aspect_ratio", "duration", "audio", "nsfw_checker", "seed"}
+    recipe = {key: value for key, value in plan["recipe"].items() if key in allowed}
+    if own_request:
+        recipe.update({key: value for key, value in own_request.items() if key in allowed and key != "scenario"})
+    draft = Wan3PrimeDraft(**recipe)
+    draft.source_feed_gen_id = plan.get("source_feed_gen_id")
+    draft.trend_id = plan.get("trend_id")
+    draft.repeat_plan_hash = plan["repeat_plan_hash"]
+    draft.repeat_slots = plan["slots"]
+    draft.repeat_replacements = dict((own_request or {}).get("repeat_replacements") or {})
+    return draft
+
+
+@router.callback_query(F.data.startswith("wan3_repeat:"))
+async def open_wan3_shared_repeat(callback: types.CallbackQuery, state: FSMContext):
+    runtime = await _runtime()
+    try:
+        plan = await runtime.repeat_plan_telegram_wan3_prime(telegram_id=callback.from_user.id, source_id=int(str(callback.data).split(":", 1)[1]))
+        await _show_dashboard(callback.message, state, _draft_from_repeat_plan(plan))
+        await callback.answer()
+    except (ValueError, RuntimeError):
+        await callback.answer("Повтор больше недоступен", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("wan3_repeat_slot:"))
+async def ask_wan3_repeat_slot(callback: types.CallbackQuery, state: FSMContext):
+    draft = draft_from_state(await state.get_data())
+    key = str(callback.data).split(":", 1)[1]
+    slot = next((item for item in draft.repeat_slots if item["key"] == key and item["binding"] == "upload"), None)
+    if not slot:
+        await callback.answer("Это место нельзя заменить", show_alert=True)
+        return
+    await state.update_data(wan3_repeat_slot_key=key)
+    await state.set_state(Wan3PrimeStates.waiting_repeat_input)
+    await callback.message.edit_text("Пришлите ваш материал для " + _repeat_slot_label(slot) + ". Новый файл заменит предыдущий в этом месте.",
+        reply_markup=_keyboard([[("Назад", "wan3_dashboard")]]), parse_mode=None)
+    await callback.answer()
+
+
+@router.message(Wan3PrimeStates.waiting_repeat_input)
+async def receive_wan3_repeat_slot(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    draft = draft_from_state(data)
+    slot = next((item for item in draft.repeat_slots if item["key"] == data.get("wan3_repeat_slot_key") and item["binding"] == "upload"), None)
+    if not slot:
+        await _show_dashboard(message, state, draft)
+        return
+    try:
+        url = await _store_or_import_media(message, draft, slot["kind"])
+    except (ValueError, RuntimeError) as exc:
+        await message.answer(str(exc), parse_mode=None)
+        return
+    draft.repeat_replacements[slot["key"]] = url
+    invalidate_quote(draft)
+    await _show_dashboard(message, state, draft)
+
+
+@router.callback_query(F.data.startswith("wan3_trend:"))
+async def open_wan3_curated_trend(callback: types.CallbackQuery, state: FSMContext):
+    runtime = await _runtime()
+    try:
+        plan = await runtime.trend_plan_telegram_wan3_prime(telegram_id=callback.from_user.id, trend_id=int(str(callback.data).split(":", 1)[1]))
+        await _show_dashboard(callback.message, state, _draft_from_repeat_plan(plan))
+        await callback.answer()
+    except (ValueError, RuntimeError):
+        await callback.answer("Тренд больше недоступен", show_alert=True)

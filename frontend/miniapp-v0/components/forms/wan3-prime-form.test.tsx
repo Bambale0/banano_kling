@@ -1,12 +1,12 @@
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { Wan3PrimeForm } from './wan3-prime-form'
-import { generateWan3Prime, quoteWan3Prime, uploadWan3PrimeReference } from '@/lib/wan3-prime-api'
+import { fetchWan3PrimeRepeatPlan, generateWan3Prime, quoteWan3Prime, uploadWan3PrimeReference } from '@/lib/wan3-prime-api'
 
 jest.mock('@/lib/wan3-prime-api', () => ({
   quoteWan3Prime: jest.fn(), generateWan3Prime: jest.fn(),
   uploadWan3PrimeReference: jest.fn(), importWan3PrimeReference: jest.fn(),
-  fetchWan3PrimeOwnerRecipe: jest.fn(),
+  fetchWan3PrimeOwnerRecipe: jest.fn(), fetchWan3PrimeRepeatPlan: jest.fn(), fetchWan3PrimeTrendPlan: jest.fn(),
 }))
 const quote = { ok: true, quote_hash: 'quote-1', reserve_cost: 60,
   billing_duration_seconds: 30, source_video_duration_seconds: 2.5,
@@ -94,4 +94,53 @@ test('confirmed provider rejection is shown as failed and refunded, never accept
   expect(screen.queryByText('Видео принято в работу.')).not.toBeInTheDocument()
   expect(screen.getByText(/Генерация не выполнена/)).toBeInTheDocument()
   expect(screen.getByText(/Возвращено: 60/)).toBeInTheDocument()
+})
+
+
+test('shared edit asks only for replacement slots and preserves private Video1 on the server', async () => {
+  ;(fetchWan3PrimeRepeatPlan as jest.Mock).mockResolvedValue({ ok: true, source_feed_gen_id: 42, repeat_plan_hash: 'consent-42',
+    recipe: { model: 'wan_3_prime', scenario: 'edit', prompt: '', duration: 5, aspect_ratio: '9:16', resolution: '720P', audio: true, nsfw_checker: true },
+    slots: [
+      { key: 'image:0', kind: 'image', role: 'reference', index: 0, binding: 'upload' },
+      { key: 'video:0', kind: 'video', role: 'source_video', index: 0, binding: 'fixed' },
+      { key: 'audio:0', kind: 'audio', role: 'reference', index: 0, binding: 'upload' },
+    ] })
+  render(<Wan3PrimeForm credits={1000} publicationSourceId={42} />)
+  await screen.findByLabelText('Загрузить Image1')
+  expect(screen.queryByLabelText('Загрузить исходное видео (Video1)')).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'По тексту' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Рассчитать стоимость' })).toBeDisabled()
+  await upload('Загрузить Image1', 'my-face.png', 'image/png')
+  await upload('Загрузить Audio1', 'my-sound.mp3', 'audio/mpeg')
+  fireEvent.click(screen.getByRole('button', { name: 'Рассчитать стоимость' }))
+  await waitFor(() => expect(quoteWan3Prime).toHaveBeenCalledTimes(1))
+  const sent = (quoteWan3Prime as jest.Mock).mock.calls[0][0].recipe
+  expect(sent).toMatchObject({ scenario: 'edit', prompt: '', source_feed_gen_id: 42, repeat_plan_hash: 'consent-42',
+    repeat_replacements: { 'image:0': 'https://owned.test/my-face.png', 'audio:0': 'https://owned.test/my-sound.mp3' },
+    reference_video_urls: [] })
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Запустить Wan' })).toBeEnabled())
+  fireEvent.click(screen.getByRole('button', { name: 'Запустить Wan' }))
+  await screen.findByText('wan3_test')
+  expect((generateWan3Prime as jest.Mock).mock.calls[0][0].recipe).toEqual(sent)
+})
+
+test('restoring an owned derived recipe retains its output settings after consent reload', async () => {
+  const api = jest.requireMock('@/lib/wan3-prime-api')
+  api.fetchWan3PrimeOwnerRecipe.mockResolvedValue({ ok: true, recipe: {
+    model: 'wan_3_prime', scenario: 'edit', source_feed_gen_id: 123, prompt: 'Keep my changes',
+    resolution: '480P', aspect_ratio: '4:3', duration: 7, audio: false, seed: 0, nsfw_checker: true,
+    repeat_plan_hash: 'old', repeat_replacements: { 'image:0': 'https://owned.test/mine.png' },
+  } })
+  api.fetchWan3PrimeRepeatPlan.mockResolvedValue({ ok: true, source_feed_gen_id: 123, repeat_plan_hash: 'fresh',
+    recipe: { model: 'wan_3_prime', scenario: 'edit', prompt: '', resolution: '1080P',
+      aspect_ratio: 'adaptive', duration: 5, audio: true, seed: 123, nsfw_checker: false },
+    slots: [{ key: 'image:0', kind: 'image', role: 'reference', index: 0, binding: 'upload' }],
+  })
+  render(<Wan3PrimeForm credits={1000} ownerTaskId="wan3_owned_repeat" />)
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Рассчитать стоимость' })).toBeEnabled())
+  fireEvent.click(screen.getByRole('button', { name: 'Рассчитать стоимость' }))
+  await waitFor(() => expect(quoteWan3Prime).toHaveBeenCalled())
+  expect((quoteWan3Prime as jest.Mock).mock.calls[0][0].recipe).toMatchObject({ resolution: '480P',
+    aspect_ratio: '4:3', duration: 7, audio: false, seed: 0, nsfw_checker: true,
+    prompt: 'Keep my changes', repeat_plan_hash: 'fresh' })
 })

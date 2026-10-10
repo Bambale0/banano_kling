@@ -94,6 +94,8 @@ class Wan3PrimeRecipe:
     nsfw_checker: bool = False
     # Internal-only frozen provider input. Never populated from client JSON.
     prepared_input: dict[str, Any] = field(default_factory=dict, repr=False)
+    client_request: dict[str, Any] = field(default_factory=dict, repr=False)
+    repeat_context: dict[str, Any] = field(default_factory=dict, repr=False)
     media: dict[str, list[MediaInfo]] = field(default_factory=dict)
     input_video_seconds: float = 0.0
     input_audio_seconds: float = 0.0
@@ -165,6 +167,8 @@ def normalize_wan3_body(body: dict[str, Any]) -> dict[str, Any]:
     aliases = {
         "v_model": "model",
         "generation_type": "scenario",
+        "v_type": "scenario",
+        "sourceFeedGenId": "source_feed_gen_id",
         "v_duration": "duration",
         "v_ratio": "aspect_ratio",
         "wan_resolution": "resolution",

@@ -9,7 +9,6 @@ from pathlib import Path
 from bot import db as db_backend
 from bot.services.wan3_prime_media import Wan3PrimeValidationError
 
-
 ACTIVE_UPLOAD_STATES = "('open', 'assembling', 'importing')"
 
 
@@ -49,7 +48,10 @@ async def assert_capacity(db, user_id: int, incoming_bytes: int, *, exclude_uplo
         raise Wan3PrimeValidationError("Wan storage quota exceeded for this user", status=429)
     if int(all_media[0]) + int(all_pending[0]) + incoming_bytes > positive_setting("WAN3_UPLOAD_GLOBAL_QUOTA_BYTES", 20 * 1024**3):
         raise Wan3PrimeValidationError("Wan global storage quota is full; try again later", status=429)
-    disk = await asyncio.to_thread(shutil.disk_usage, Path.cwd())
+    volume = Path("static/uploads").resolve()
+    while not volume.exists():
+        volume = volume.parent
+    disk = await asyncio.to_thread(shutil.disk_usage, volume)
     # Chunks, assembly and final atomic persistence can briefly coexist.
     required = (int(all_pending[0]) + incoming_bytes) * 3
     if disk.free - required < positive_setting("WAN3_UPLOAD_MIN_FREE_BYTES", 1024**3):

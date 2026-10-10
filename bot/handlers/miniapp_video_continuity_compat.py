@@ -592,6 +592,17 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
 
 async def redirect_typed_video_repeat(callback, task) -> bool:
     """Keep new typed/derived recipes out of legacy Telegram billing/FSM paths."""
+    if getattr(task, "model", None) == "wan_3_prime":
+        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+        from bot.database import get_or_create_user
+
+        viewer = await get_or_create_user(callback.from_user.id)
+        own = task.user_id == viewer.id
+        target = f"wan3_recipe:{task.task_id}" if own else f"wan3_repeat:{task.id}"
+        await callback.answer()
+        await callback.message.answer("Откройте редактор Wan: роли и порядок материалов будут сохранены.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Открыть Wan", callback_data=target)]]))
+        return True
     parent_id = getattr(task, "source_feed_gen_id", None)
     request_data = source_request({"request_data": getattr(task, "request_data", None)})
     tagged_child = request_data.get("video_repeat_contract_version") == 1

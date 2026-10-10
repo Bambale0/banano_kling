@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -64,8 +65,7 @@ class Downloader:
 
     async def download(self, url: str, *, task_id: str) -> str:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.path, "wb") as handle:
-            handle.write(b"video")
+        await asyncio.to_thread(self.path.write_bytes, b"video")
         return str(self.path)
 
 

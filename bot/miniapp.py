@@ -309,7 +309,7 @@ def _miniapp_optional_int(value: Any, *, field_label: str) -> int | None:
     if value is None or value == "":
         return None
     if isinstance(value, bool):
-        raise ValueError(f"{field_label} должен быть числом")
+        raise ValueError(f"{field_label} должен быть числом")  # noqa: TRY004 - preserves the public validation-error contract
     if isinstance(value, int):
         return value
     if isinstance(value, str) and value.strip().isdigit():
@@ -2068,6 +2068,8 @@ async def _launch_video_generation_task(
     _launch_observation: dict[str, Any] | None = None,
     billing_quote: VideoQuote | None = None,
 ) -> dict[str, Any]:
+    if model == "wan_3_prime":
+        raise ValueError("Wan requires its validated quote and idempotent lifecycle; open the Wan editor")
     from bot.services.gemini_omni_service import gemini_omni_service
     from bot.services.grok_service import grok_service
     from bot.services.kling_service import kling_service
@@ -2264,38 +2266,6 @@ async def _launch_video_generation_task(
             watermark=veo_watermark,
             resolution=veo_resolution or "720p",
             seeds=veo_seed,
-            callBackUrl=(config.kie_notification_url if config.WEBHOOK_HOST else None),
-        )
-    elif model == "wan_3_prime":
-        from bot.services.wan3_prime_service import wan3_prime_service
-
-        wan_images = list(image_references)
-        wan_first_frame = wan_first_frame_url
-        wan_last_frame = wan_last_frame_url
-        if generation_type in {"imgtxt", "first_last"} and image_url:
-            wan_first_frame = image_url
-        elif image_url:
-            wan_images = [image_url, *wan_images]
-        result = await wan3_prime_service.generate_video(
-            prompt=prompt,
-            scenario=(
-                "first_last"
-                if generation_type == "first_last"
-                else "first_frame" if generation_type == "imgtxt" else "edit" if generation_type == "edit" else "reference" if generation_type == "video" else generation_type
-            ),
-            duration=duration,
-            aspect_ratio=normalized_ratio,
-            resolution=wan_resolution,
-            first_frame_url=wan_first_frame,
-            last_frame_url=wan_last_frame,
-            reference_image_urls=wan_images or None,
-            reference_video_urls=video_references or None,
-            reference_audio_urls=audio_references or None,
-            reference_file_urls=wan_reference_file_urls or None,
-            reference_link_urls=wan_reference_link_urls or None,
-            audio=wan_audio,
-            seed=wan_seed,
-            nsfw_checker=wan_nsfw_checker,
             callBackUrl=(config.kie_notification_url if config.WEBHOOK_HOST else None),
         )
     else:

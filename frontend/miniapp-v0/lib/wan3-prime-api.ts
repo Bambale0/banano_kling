@@ -15,6 +15,10 @@ const WAN3_PRIME_CHUNK_BYTES = 7 * 1024 * 1024
 
 export interface Wan3PrimeRecipe {
   model: 'wan_3_prime'
+  source_feed_gen_id?: number | null
+  trend_id?: number | null
+  repeat_plan_hash?: string
+  repeat_replacements?: Record<string, string>
   scenario: Wan3PrimeScenario
   prompt: string
   resolution: Wan3PrimeResolution
@@ -239,4 +243,33 @@ export async function uploadWan3PrimeReference(kind: Wan3PrimeUploadKind, file: 
     upload_id: init.upload_id,
   })
   return uploadedFileFromWan3(file, completed)
+}
+
+export interface Wan3PrimeRepeatSlot {
+  key: string
+  kind: Wan3PrimeUploadKind | 'link'
+  role: 'first_frame' | 'last_frame' | 'source_video' | 'reference'
+  index: number
+  binding: 'fixed' | 'upload'
+}
+export interface Wan3PrimeRepeatPlan {
+  ok: true
+  source_feed_gen_id?: number
+  trend_id?: number
+  repeat_plan_hash: string
+  recipe: Wan3PrimeRecipe
+  slots: Wan3PrimeRepeatSlot[]
+}
+export async function fetchWan3PrimeRepeatPlan(sourceId: number, signal?: AbortSignal): Promise<Wan3PrimeRepeatPlan> {
+  return wan3PostJson('repeat-plan', { source_feed_gen_id: sourceId }, signal)
+}
+
+export async function fetchWan3PrimeTrendPlan(trendId: number, signal?: AbortSignal): Promise<Wan3PrimeRepeatPlan> {
+  return wan3PostJson('repeat-plan', { trend_id: trendId }, signal)
+}
+export async function fetchWan3PrimeTrendRecipe(taskId: string): Promise<{ ok: true; recipe: Wan3PrimeRecipe; slots: Array<Wan3PrimeRepeatSlot & { url: string }> }> {
+  return wan3PostJson('trends/recipe', { task_id: taskId })
+}
+export async function publishWan3PrimeTrend(payload: { task_id: string; title: string; description: string; replacement_keys: string[] }): Promise<{ ok: true; trend_id: number; replayed: boolean }> {
+  return wan3PostJson('trends/publish', payload)
 }

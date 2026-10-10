@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import logging
 import secrets
-from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlparse
 
 from bot import database

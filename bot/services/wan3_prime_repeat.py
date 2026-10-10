@@ -11,7 +11,11 @@ from copy import deepcopy
 from types import SimpleNamespace
 from typing import Any
 
-from bot.services.wan3_prime_media import WAN3_MODEL_KEY, Wan3PrimeValidationError, normalize_wan3_body
+from bot.services.wan3_prime_media import (
+    WAN3_MODEL_KEY,
+    Wan3PrimeValidationError,
+    normalize_wan3_body,
+)
 
 OUTPUT_FIELDS = ("resolution", "aspect_ratio", "duration", "audio", "nsfw_checker", "seed")
 ARRAY_FIELDS = {
@@ -20,7 +24,7 @@ ARRAY_FIELDS = {
 }
 FRAME_FIELDS = ("first_frame_url", "last_frame_url")
 RECIPE_FIELDS = ("model", "scenario", "prompt", *OUTPUT_FIELDS, *FRAME_FIELDS, *ARRAY_FIELDS)
-PUBLIC_REQUEST_FIELDS = (*RECIPE_FIELDS, "source_feed_gen_id", "repeat_plan_hash", "repeat_replacements")
+PUBLIC_REQUEST_FIELDS = (*RECIPE_FIELDS, "source_feed_gen_id", "trend_id", "repeat_plan_hash", "repeat_replacements")
 
 
 def client_recipe(body: dict[str, Any]) -> dict[str, Any]:
@@ -105,7 +109,7 @@ def build_repeat_plan(source: dict[str, Any]) -> dict[str, Any]:
 
 def public_plan(plan: dict[str, Any]) -> dict[str, Any]:
     recipe = plan["recipe"]
-    return {"ok": True, "source_feed_gen_id": plan["source_id"], "repeat_plan_hash": plan["hash"],
+    return {"ok": True, **({"trend_id": plan["trend_id"]} if plan.get("trend_id") else {"source_feed_gen_id": plan["source_id"]}), "repeat_plan_hash": plan["hash"],
             "recipe": {"model": WAN3_MODEL_KEY, "scenario": recipe["scenario"], "prompt": "",
                        **{key: recipe[key] for key in OUTPUT_FIELDS if key in recipe}},
             "slots": [{key: slot[key] for key in ("key", "kind", "role", "index", "binding")} for slot in plan["slots"]]}
@@ -142,7 +146,14 @@ class ConsentedMediaProbe:
 async def compile_repeat(actor, body: dict[str, Any], probe):
     public_input = client_recipe(body)
     source_id = public_input.get("source_feed_gen_id")
-    plan = await get_repeat_plan(actor, source_id)
+    trend_id = public_input.get("trend_id")
+    if source_id and trend_id:
+        raise Wan3PrimeValidationError("Choose a publication or a curated trend, not both")
+    if trend_id:
+        from bot.services.wan3_prime_trends import get_trend_plan
+        plan = await get_trend_plan(actor, trend_id)
+    else:
+        plan = await get_repeat_plan(actor, source_id)
     if public_input.get("repeat_plan_hash") != plan["hash"]:
         raise Wan3PrimeValidationError("Разрешение изменилось. Откройте повтор заново", status=409)
     replacements = public_input.get("repeat_replacements", {})
@@ -176,6 +187,8 @@ async def compile_repeat(actor, body: dict[str, Any], probe):
     original = str(compiled.get("prompt") or "")
     compiled["prompt"] = original if not edits.strip() else (original + "\n\nUser requested changes:\n" + edits.strip()).strip()
     context = {"source_id": plan["source_id"], "owner_id": plan["owner_id"], "source_hash": plan["hash"]}
+    if plan.get("trend_id"):
+        context["trend_id"] = plan["trend_id"]
     return compiled, ConsentedMediaProbe(probe, actor, plan), context, public_input
 
 
@@ -183,6 +196,10 @@ async def verify_repeat_in_transaction(db, context: dict[str, Any]) -> None:
     from bot import db as db_backend
 
     if not context:
+        return
+    if context.get("trend_id"):
+        from bot.services.wan3_prime_trends import verify_trend_in_transaction
+        await verify_trend_in_transaction(db, context)
         return
     row = await (await db.execute(
         "SELECT * FROM generation_tasks WHERE id = ?" + (" FOR SHARE" if db_backend.is_postgres() else ""),

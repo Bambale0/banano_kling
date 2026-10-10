@@ -80,7 +80,7 @@ class Wan3PrimeService(KlingService):
     MAX_REFERENCE_AUDIO = 5
     MAX_REFERENCE_FILES = 1
     MAX_REFERENCE_LINKS = 1
-    SCENARIOS = {
+    SCENARIOS = frozenset({
         "text",
         "first_frame",
         "first_last",
@@ -88,7 +88,7 @@ class Wan3PrimeService(KlingService):
         "edit",
         "file",
         "link",
-    }
+    })
     _ROLE_RE = re.compile(r"\b(?P<kind>Image|Video|Audio)(?P<index>[1-9][0-9]*)\b", re.IGNORECASE)
 
     @staticmethod
@@ -96,11 +96,11 @@ class Wan3PrimeService(KlingService):
         if values is None:
             return []
         if isinstance(values, (str, bytes)) or not isinstance(values, Iterable):
-            raise ValueError(f"Wan 3.0 {label} must be a list of URL strings")
+            raise TypeError(f"Wan 3.0 {label} must be a list of URL strings")
         cleaned: list[str] = []
         for index, raw in enumerate(values, start=1):
             if not isinstance(raw, str):
-                raise ValueError(f"Wan 3.0 {label} slot {index} must be a URL string")
+                raise TypeError(f"Wan 3.0 {label} slot {index} must be a URL string")
             value = raw.strip()
             if not value:
                 raise ValueError(f"Wan 3.0 {label} slot {index} is empty")
@@ -335,7 +335,7 @@ class Wan3PrimeService(KlingService):
                 limit=self.MAX_REFERENCE_LINKS,
                 label="link references",
             )
-        except ValueError as exc:
+        except (ValueError, TypeError) as exc:
             return {"success": False, "error": str(exc)}
 
         normalized_resolution = str(resolution or "1080P").strip().upper()
@@ -412,7 +412,7 @@ class Wan3PrimeService(KlingService):
                 video_count=len(video_urls),
                 audio_count=len(audio_urls),
             )
-        except ValueError as exc:
+        except (ValueError, TypeError) as exc:
             return {"success": False, "error": str(exc)}
 
         input_data: dict[str, Any] = {

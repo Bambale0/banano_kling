@@ -620,6 +620,7 @@ export function VideoGeneratorForm({
   }
 
   if (isWanPrime) return <Wan3PrimeForm
+    key={wanOwnerTaskId || (wanPublicationSource ? `publication-${wanPublicationSource}` : 'wan-composer')}
     credits={credits} isAdmin={isAdmin} ownerTaskId={wanOwnerTaskId}
     initialRecipe={wanRecipe} onQueued={onWanQueued}
     publicationSourceId={wanPublicationSource}

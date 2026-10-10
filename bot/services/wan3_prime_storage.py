@@ -78,7 +78,7 @@ def _public_url_for_path(path: str | os.PathLike[str]) -> str:
         from bot.config import config
 
         base = str(getattr(config, "static_base_url", "") or "").rstrip("/")
-    except Exception:
+    except (ImportError, AttributeError):
         base = ""
     return f"{base}/uploads/{rel.as_posix()}" if base else f"/uploads/{rel.as_posix()}"
 
@@ -144,8 +144,18 @@ class Wan3PrimeStorage:
             await db.execute("INSERT INTO wan3_prime_storage_lock (id) VALUES (1) ON CONFLICT (id) DO NOTHING")
             await db.commit()
 
+    async def cleanup_expired(self, *, limit: int = 100) -> dict[str, int]:
+        from bot.services.wan3_prime_retention import cleanup_expired
+
+        await self.init_schema()
+        return await cleanup_expired(limit=limit)
+
     async def init_upload(self, actor, *, kind: str, filename: str, size: int, content_type: str | None = None, importing: bool = False) -> dict[str, Any]:
-        from bot.services.wan3_prime_storage_policy import ACTIVE_UPLOAD_STATES, assert_capacity, lock_storage
+        from bot.services.wan3_prime_storage_policy import (
+            ACTIVE_UPLOAD_STATES,
+            assert_capacity,
+            lock_storage,
+        )
 
         await self.init_schema()
         kind = str(kind or "").strip().lower()
@@ -474,19 +484,24 @@ class ActualWan3PrimeProbe:
         ext = file_path.suffix.lower()
         size = file_path.stat().st_size
         if kind == "image":
-            with Image.open(file_path) as image:
-                has_alpha = image.mode in {"RGBA", "LA"} or ("transparency" in image.info)
-                actual_extension = {"JPEG": ".jpg", "PNG": ".png", "BMP": ".bmp", "WEBP": ".webp"}.get(image.format or "")
-                if not actual_extension:
-                    raise Wan3PrimeValidationError("Unsupported image format")
-                width, height = image.size
-                if not 240 <= width <= 8000 or not 240 <= height <= 8000 or max(width, height) / min(width, height) > 8 or has_alpha:
-                    raise Wan3PrimeValidationError("Image dimensions or transparency are unsupported")
-                image.verify()
-                return MediaInfo(kind=kind, path=str(file_path), size_bytes=size, width=width, height=height, extension=actual_extension, has_alpha=has_alpha)
+            def inspect_image() -> MediaInfo:
+                with Image.open(file_path) as image:
+                    has_alpha = image.mode in {"RGBA", "LA"} or ("transparency" in image.info)
+                    actual_extension = {"JPEG": ".jpg", "PNG": ".png", "BMP": ".bmp", "WEBP": ".webp"}.get(image.format or "")
+                    if not actual_extension:
+                        raise Wan3PrimeValidationError("Unsupported image format")
+                    width, height = image.size
+                    if not 240 <= width <= 8000 or not 240 <= height <= 8000 or max(width, height) / min(width, height) > 8 or has_alpha:
+                        raise Wan3PrimeValidationError("Image dimensions or transparency are unsupported")
+                    image.verify()
+                    return MediaInfo(kind=kind, path=str(file_path), size_bytes=size, width=width, height=height, extension=actual_extension, has_alpha=has_alpha)
+            try:
+                return await asyncio.to_thread(inspect_image)
+            except (OSError, Image.DecompressionBombError) as exc:
+                raise Wan3PrimeValidationError("Invalid or unsafe image") from exc
         if kind in {"video", "audio"}:
             return await self._ffprobe(file_path, kind=kind, size=size, ext=ext)
-        pages = self._document_pages(file_path)
+        pages = await asyncio.to_thread(self._document_pages, file_path)
         return MediaInfo(kind=kind, path=str(file_path), size_bytes=size, extension=ext, pages=pages, upstream_page_validation_required=pages is None)
 
     async def _ffprobe(self, path: Path, *, kind: str, size: int, ext: str) -> MediaInfo:
@@ -509,8 +524,21 @@ class ActualWan3PrimeProbe:
                     check=False,
                 )
                 data = json.loads(completed.stdout or "{}")
-            except Exception:
-                data = {}
+            except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                raise Wan3PrimeValidationError("Could not inspect media") from exc
+            if completed.returncode != 0 or not isinstance(data, dict):
+                raise Wan3PrimeValidationError("Cannot decode media")
+            streams = data.get("streams")
+            if not isinstance(streams, list) or not any(item.get("codec_type") == kind for item in streams if isinstance(item, dict)):
+                raise Wan3PrimeValidationError(f"File does not contain a {kind} stream")
+            container = str((data.get("format") or {}).get("format_name") or "")
+            formats = set(container.split(","))
+            if kind == "audio":
+                ext = ".wav" if "wav" in formats else ".mp3" if "mp3" in formats else ""
+                if not ext:
+                    raise Wan3PrimeValidationError("Audio container must be WAV or MP3")
+            elif not formats.intersection({"mov", "mp4"}):
+                raise Wan3PrimeValidationError("Video container must be MP4 or MOV")
             duration = None
             width = None
             height = None
@@ -537,18 +565,14 @@ class ActualWan3PrimeProbe:
                         except (TypeError, ValueError):
                             pass
                     break
-            return MediaInfo(kind=kind, path=str(path), size_bytes=size, width=width, height=height, duration_seconds=duration, extension=ext)
+            return MediaInfo(kind=kind, path=str(path), size_bytes=size, width=width, height=height, duration_seconds=duration, extension=(ext if kind == "audio" else path.suffix.lower()))
 
         return await asyncio.to_thread(run_probe)
 
     def _document_pages(self, path: Path) -> int | None:
-        if path.suffix.lower() != ".pdf":
-            return None
-        try:
-            raw = path.read_bytes()
-        except OSError:
-            return None
-        return raw.count(b"/Type /Page") or None
+        from bot.services.wan3_prime_files import document_pages
+
+        return document_pages(path)
 
 
 wan3_prime_storage = Wan3PrimeStorage()

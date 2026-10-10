@@ -10,7 +10,10 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
 from bot.config import config
-from bot.services.wan3_prime_lifecycle import Wan3PrimeLifecycleError, wan3_prime_lifecycle
+from bot.services.wan3_prime_lifecycle import (
+    Wan3PrimeLifecycleError,
+    wan3_prime_lifecycle,
+)
 from bot.services.wan3_prime_recovery import matches_submission, unresolved_operations
 
 router = Router(name="wan3_prime_ops")

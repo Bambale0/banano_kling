@@ -7332,7 +7332,7 @@ def _feed_reference_image_candidates(request_data: dict[str, Any]) -> list[str]:
     list candidates instead of prepending them.
     """
     source_refs = request_data.get("source_reference_images")
-    base = source_refs if isinstance(source_refs, list) else request_data.get("reference_images", [])
+    base = source_refs if isinstance(source_refs, list) else request_data.get("reference_images", request_data.get("reference_image_urls", []))
     candidates = _reference_url_candidates(base)
     for key in (
         "v_image_url",
