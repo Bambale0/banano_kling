@@ -10,7 +10,7 @@ import re
 import shutil
 import subprocess
 import uuid
-from dataclasses import asdict, replace
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -469,11 +469,9 @@ class ActualWan3PrimeProbe:
                 base = UPLOAD_ROOT.resolve()
                 if base not in local.parents or not local.is_file():
                     raise Wan3PrimeValidationError("Owned media is no longer available")
-                digest = await asyncio.to_thread(_sha256_file, local)
-                if digest != row["sha256"]:
-                    raise Wan3PrimeValidationError("Owned media has changed; upload it again", status=409)
-                info = await self.probe_file(str(local), kind=kind)
-                return replace(info, url=url, sha256=digest)
+                from bot.services.wan3_prime_probe_cache import verified_metadata
+
+                return await verified_metadata(row, local, _sha256_file)
         if kind == "link":
             await fetch_public_asset(url, destination=None, max_bytes=2 * 1024 * 1024, webpage=True)
             return MediaInfo(kind="link", url=url)
