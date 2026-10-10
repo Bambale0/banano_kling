@@ -409,3 +409,30 @@ async def test_compact_dashboard_duration_and_audio_controls_preserve_refs(runti
     assert keyboard[2][0].text == '🔇 Звук: выкл'
     assert await state.get_state() == wan.Wan3PrimeStates.dashboard.state
     assert not runtime.launches
+
+
+@pytest.mark.asyncio
+async def test_legacy_explicit_edit_source_removal_cannot_become_auto_reference(runtime):
+    state = FakeState()
+    draft = wan.Wan3PrimeDraft(scenario='edit', prompt='Synthetic edit',
+        reference_video_urls=['https://owned.test/source.mp4', 'https://owned.test/style.mp4'])
+    await state.update_data(**wan.draft_to_state(draft))
+    await wan.remove_wan3_media(FakeCallback('wan3_remove:video:0'), state)
+    current = wan.draft_from_state(await state.get_data())
+    assert current.reference_video_urls == ['', 'https://owned.test/style.mp4']
+    assert current.scenario == 'edit' and not current.auto_mode
+    with pytest.raises(ValueError, match='Video1'):
+        wan.validate_wan3_draft(current)
+
+
+@pytest.mark.parametrize('scenario', ['first_frame', 'first_last', 'edit'])
+def test_explicit_legacy_advanced_recipe_requires_explicit_auto_choice(scenario):
+    legacy = {'wan3_prime': {'scenario': scenario, 'prompt': 'Synthetic prompt',
+        'first_frame_url': 'https://owned.test/first' if scenario != 'edit' else None,
+        'last_frame_url': 'https://owned.test/last' if scenario == 'first_last' else None,
+        'reference_video_urls': ['https://owned.test/source'] if scenario == 'edit' else []}}
+    draft = wan.draft_from_state(legacy)
+    assert wan.build_wan3_payload(draft)['scenario'] == scenario
+    assert not draft.auto_mode
+    draft = wan.apply_wan3_mode(draft, 'auto')
+    assert draft.auto_mode and wan.build_wan3_payload(draft)['scenario'] == 'reference'

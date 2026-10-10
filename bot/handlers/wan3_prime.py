@@ -103,6 +103,12 @@ class Wan3PrimeDraft:
     repeat_replacements: dict[str, str] = field(default_factory=dict)
     repeat_slots: list[dict[str, Any]] = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        # Explicit frame/edit recipes predate auto_mode. Their intent must remain
+        # pinned even when a constructor or stored recipe omits the new flag.
+        if self.scenario in {"first_frame", "first_last", "edit"}:
+            self.auto_mode = False
+
 
 def _new_ids(draft: Wan3PrimeDraft) -> None:
     draft.client_request_id = str(uuid.uuid4())
