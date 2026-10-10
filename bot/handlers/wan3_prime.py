@@ -13,9 +13,11 @@ import re
 import uuid
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
+from functools import wraps
 from typing import Any
 
 from aiogram import F, Router, types
+from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
@@ -54,6 +56,7 @@ _ACTOR_LOCKS: dict[int, asyncio.Lock] = {}
 
 class Wan3PrimeStates(StatesGroup):
     dashboard = State()
+    settings = State()
     choosing_mode = State()
     waiting_prompt = State()
     waiting_repeat_input = State()
@@ -73,6 +76,8 @@ class Wan3PrimeStates(StatesGroup):
 @dataclass
 class Wan3PrimeDraft:
     scenario: str = "text"
+    auto_mode: bool = True
+    media_message_order: dict[str, int] = field(default_factory=dict)
     prompt: str = ""
     first_frame_url: str | None = None
     last_frame_url: str | None = None
@@ -120,6 +125,8 @@ def draft_from_state(data: dict[str, Any] | None) -> Wan3PrimeDraft:
     draft = Wan3PrimeDraft()
     for key, value in payload.items():
         setattr(draft, key, value)
+    if "auto_mode" not in payload:
+        draft.auto_mode = draft.scenario not in {"first_frame", "first_last", "edit"}
     if not draft.client_request_id:
         draft.client_request_id = str(uuid.uuid4())
     if not draft.idempotency_key:
@@ -153,11 +160,32 @@ def _restore_mode(base: Wan3PrimeDraft, scenario: str) -> Wan3PrimeDraft | None:
 def apply_wan3_mode(draft: Wan3PrimeDraft, scenario: str) -> Wan3PrimeDraft:
     if draft.source_feed_gen_id or draft.trend_id:
         raise ValueError("Режим повтора сохранён из публикации. Для другого режима создайте новую задачу.")
+    if scenario == "auto":
+        draft.mode_drafts[draft.scenario] = _snapshot_mode(draft)
+        # Explicit frame roles use a separate draft. Returning to automatic input
+        # restores the saved references before adding any explicitly chosen frames.
+        if draft.scenario in {"first_frame", "first_last"}:
+            saved = next((draft.mode_drafts.get(key) for key in ("reference", "file", "link", "text")
+                          if draft.mode_drafts.get(key)), {})
+            for name in ("reference_image_urls", "reference_video_urls", "reference_audio_urls", "reference_file_urls", "reference_link_urls"):
+                if not getattr(draft, name):
+                    setattr(draft, name, list(saved.get(name) or []))
+        for url in (draft.first_frame_url, draft.last_frame_url):
+            if url and url not in draft.reference_image_urls:
+                draft.reference_image_urls = append_ordered_slot(draft.reference_image_urls, url, limit=MAX_IMAGE_REFS, label="Image")
+        draft.first_frame_url = None
+        draft.last_frame_url = None
+        draft.auto_mode = True
+        sync_auto_scenario(draft)
+        invalidate_quote(draft)
+        return draft
+    draft.auto_mode = False
     if scenario not in Wan3PrimeService.SCENARIOS:
         raise ValueError("Неизвестный режим Wan 3.0")
     draft.mode_drafts[draft.scenario] = _snapshot_mode(draft)
     restored = _restore_mode(draft, scenario)
     if restored:
+        restored.auto_mode = False
         return restored
     next_draft = Wan3PrimeDraft(**{key: deepcopy(getattr(draft, key)) for key in Wan3PrimeDraft.__dataclass_fields__ if key != "mode_drafts"})  # type: ignore[attr-defined]
     next_draft.mode_drafts = deepcopy(draft.mode_drafts)
@@ -177,6 +205,20 @@ def apply_wan3_mode(draft: Wan3PrimeDraft, scenario: str) -> Wan3PrimeDraft:
     return next_draft
 
 
+def sync_auto_scenario(draft: Wan3PrimeDraft) -> None:
+    """Presence selects a reference scenario; editing/frame roles need consent."""
+    if not draft.auto_mode or draft.source_feed_gen_id or draft.trend_id:
+        return
+    if draft.reference_image_urls or draft.reference_video_urls or draft.reference_audio_urls:
+        draft.scenario = "reference"
+    elif draft.reference_file_urls:
+        draft.scenario = "file"
+    elif draft.reference_link_urls:
+        draft.scenario = "link"
+    else:
+        draft.scenario = "text"
+
+
 def append_ordered_slot(values: list[str], url: str, *, limit: int, label: str) -> list[str]:
     cleaned = str(url or "").strip()
     if not cleaned:
@@ -193,6 +235,7 @@ def remove_ordered_slot(values: list[str], index: int, *, label: str) -> list[st
 
 
 def build_wan3_payload(draft: Wan3PrimeDraft) -> dict[str, Any]:
+    sync_auto_scenario(draft)
     return {
         "model": "wan_3_prime",
         **({**({"trend_id": draft.trend_id} if draft.trend_id else {"source_feed_gen_id": draft.source_feed_gen_id}),
@@ -217,6 +260,7 @@ def build_wan3_payload(draft: Wan3PrimeDraft) -> dict[str, Any]:
 
 
 def validate_wan3_draft(draft: Wan3PrimeDraft) -> None:
+    sync_auto_scenario(draft)
     if draft.source_feed_gen_id or draft.trend_id:
         required = {slot["key"] for slot in draft.repeat_slots if slot["binding"] == "upload"}
         if not draft.repeat_plan_hash or set(draft.repeat_replacements) != required or any(not value for value in draft.repeat_replacements.values()):
@@ -261,6 +305,22 @@ def _actor_lock(actor_id: int) -> asyncio.Lock:
     return lock
 
 
+def _draft_identity(data: dict[str, Any]) -> tuple[Any, Any]:
+    return (dict(data.get("wan3_prime") or {}).get("client_request_id"), data.get("wan3_reset_token"))
+
+
+def _serialized_draft_edit(handler):
+    @wraps(handler)
+    async def wrapped(event, state):
+        identity = _draft_identity(await state.get_data())
+        async with _actor_lock(event.from_user.id):
+            if _draft_identity(await state.get_data()) != identity:
+                await event.answer("Задача изменилась. Повторите действие для новой задачи.")
+                return
+            return await handler(event, state)
+    return wrapped
+
+
 def _keyboard(rows: list[list[tuple[str, str]]]) -> types.InlineKeyboardMarkup:
     return types.InlineKeyboardMarkup(
         inline_keyboard=[
@@ -272,16 +332,16 @@ def _keyboard(rows: list[list[tuple[str, str]]]) -> types.InlineKeyboardMarkup:
 
 def _mode_keyboard() -> types.InlineKeyboardMarkup:
     return _keyboard([
-        [("Текст", "wan3_mode:text"), ("Первый кадр", "wan3_mode:first_frame")],
-        [("Первый+последний", "wan3_mode:first_last"), ("Референсы", "wan3_mode:reference")],
-        [("Правка видео", "wan3_mode:edit"), ("Файл", "wan3_mode:file"), ("Ссылка", "wan3_mode:link")],
-        [("🔙 Дашборд", "wan3_dashboard")],
+        [("Автоматически по материалам", "wan3_mode:auto")],
+        [("Первый кадр", "wan3_mode:first_frame"), ("Первый + последний", "wan3_mode:first_last")],
+        [("Править исходное видео Video1", "wan3_mode:edit")],
+        [("Назад к задаче", "wan3_dashboard")],
     ])
 
 
-def dashboard_keyboard(draft: Wan3PrimeDraft) -> types.InlineKeyboardMarkup:
+def settings_keyboard(draft: Wan3PrimeDraft) -> types.InlineKeyboardMarkup:
     rows: list[list[tuple[str, str]]] = [
-        [("Режим", "wan3_modes"), ("Новая задача", "wan3_new")],
+        [("Роли материалов", "wan3_modes"), ("Новая задача", "wan3_new")],
         [("Промпт/инструкции", "wan3_prompt")],
     ]
     if not (draft.source_feed_gen_id or draft.trend_id) and draft.scenario in {"first_frame", "first_last"}:
@@ -302,11 +362,41 @@ def dashboard_keyboard(draft: Wan3PrimeDraft) -> types.InlineKeyboardMarkup:
         [("480P", "wan3_set:resolution:480P"), ("720P", "wan3_set:resolution:720P"), ("1080P", "wan3_set:resolution:1080P")],
         [("adaptive", "wan3_set:ratio:adaptive"), ("16:9", "wan3_set:ratio:16:9"), ("9:16", "wan3_set:ratio:9:16")],
         [("4:3", "wan3_set:ratio:4:3"), ("1:1", "wan3_set:ratio:1:1"), ("3:4", "wan3_set:ratio:3:4")],
-        [("Auto duration", "wan3_set:duration:-1"), ("Длительность числом", "wan3_duration")],
+        [("Длительность · " + ("Auto" if draft.duration == -1 else f"{draft.duration} с"), "wan3_duration")],
         [("Seed", "wan3_seed"), ("Seed Auto", "wan3_set:seed:auto")],
         [("Аудио вкл/выкл", "wan3_toggle:audio"), ("NSFW check", "wan3_toggle:nsfw")],
         [("Проверить стоимость", "wan3_quote")],
-        [("🔙 К моделям", "video_change_model")],
+        [("Готово · к задаче", "wan3_dashboard")],
+    ])
+    return _keyboard(rows)
+
+
+def dashboard_keyboard(draft: Wan3PrimeDraft) -> types.InlineKeyboardMarkup:
+    seconds = 5 if draft.duration == -1 else draft.duration
+    duration_label = "⏱ Auto" if draft.duration == -1 else f"⏱ {draft.duration} с"
+    rows = [
+        [("📎 Материалы", "wan3_materials"), ("✏️ Промпт", "wan3_prompt")],
+        [("− 1 с", f"wan3_quick_duration:{max(2, seconds - 1)}"),
+         (duration_label, "wan3_duration_number"),
+         ("+ 1 с", f"wan3_quick_duration:{min(30, seconds + 1)}")],
+        [("🔊 Звук: вкл" if draft.audio else "🔇 Звук: выкл", "wan3_toggle:audio"),
+         ("⚙️ Настройки", "wan3_settings")],
+    ]
+    if draft.scenario in {"first_frame", "first_last"} and not (draft.source_feed_gen_id or draft.trend_id):
+        roles = [("Первый кадр", "wan3_media:first")]
+        if draft.scenario == "first_last":
+            roles.append(("Последний кадр", "wan3_media:last"))
+        rows.append(roles)
+    if draft.scenario == "edit" and not (draft.source_feed_gen_id or draft.trend_id):
+        rows.append([("Video1 · исходное видео", "wan3_media:source_video")])
+    if draft.source_feed_gen_id or draft.trend_id:
+        for slot in draft.repeat_slots:
+            if slot["binding"] == "upload":
+                prefix = "✅ " if draft.repeat_replacements.get(slot["key"]) else "➕ "
+                rows.append([(prefix + _repeat_slot_label(slot), "wan3_repeat_slot:" + slot["key"])])
+    rows.extend([
+        [("Рассчитать стоимость", "wan3_quote")],
+        [("Новая задача", "wan3_new"), ("🔙 К моделям", "video_change_model")],
     ])
     return _keyboard(rows)
 
@@ -328,7 +418,11 @@ def remove_keyboard(draft: Wan3PrimeDraft) -> types.InlineKeyboardMarkup:
                 row = []
         if row:
             rows.append(row)
-    rows.append([("Дашборд", "wan3_dashboard")])
+    if draft.first_frame_url:
+        rows.append([("Удалить первый кадр", "wan3_remove:first:0")])
+    if draft.last_frame_url:
+        rows.append([("Удалить последний кадр", "wan3_remove:last:0")])
+    rows.append([("Готово · к задаче", "wan3_dashboard")])
     return _keyboard(rows)
 
 
@@ -362,10 +456,28 @@ def build_review_text(draft: Wan3PrimeDraft, quote: dict[str, Any] | None = None
 
 
 def dashboard_text(draft: Wan3PrimeDraft) -> str:
-    return build_review_text(draft, draft.last_quote) + "\n\nВыберите, что настроить."
+    sync_auto_scenario(draft)
+    counts = [("фото", len(draft.reference_image_urls)), ("видео", len(draft.reference_video_urls)),
+              ("аудио", len(draft.reference_audio_urls)), ("документ", len(draft.reference_file_urls)),
+              ("ссылка", len(draft.reference_link_urls))]
+    summary = ", ".join(f"{name}: {count}" for name, count in counts if count) or "пока нет"
+    lines = ["Wan 3.0 Video Prime", "Материалы: " + summary]
+    if draft.first_frame_url or draft.last_frame_url:
+        lines.append(f"Первый кадр: {'есть' if draft.first_frame_url else 'нет'} · последний: {'есть' if draft.last_frame_url else 'нет'}")
+    lines.append("Промпт: " + (draft.prompt[:700] if draft.prompt else "ещё не добавлен"))
+    lines.append(f"{draft.resolution} · {draft.aspect_ratio} · {'Auto' if draft.duration == -1 else str(draft.duration) + ' с'}")
+    if not draft.auto_mode:
+        lines.append("Задача: " + WAN3_MODE_LABELS.get(draft.scenario, draft.scenario))
+    if draft.source_feed_gen_id or draft.trend_id:
+        lines.append("Добавьте свои материалы в отмеченные места повтора.")
+    else:
+        lines.append("\nПришлите фото, видео или альбом и напишите, что должно получиться. Можно начать только с текста.")
+    lines.append("Сначала рассчитаем стоимость. Запуск — только после вашего подтверждения.")
+    return "\n".join(lines)
 
 
 async def _show_dashboard(target: Any, state: FSMContext, draft: Wan3PrimeDraft) -> None:
+    sync_auto_scenario(draft)
     await state.set_state(Wan3PrimeStates.dashboard)
     await state.update_data(**draft_to_state(draft), v_model="wan_3_prime")
     text = dashboard_text(draft)
@@ -523,6 +635,7 @@ async def _store_or_import_media(message: types.Message, draft: Wan3PrimeDraft, 
 
 
 @router.callback_query(F.data.in_({"wan3_open", "v_model_wan_3_prime", "wan3_dashboard"}))
+@_serialized_draft_edit
 async def open_wan3_prime(callback: types.CallbackQuery, state: FSMContext):
     draft = draft_from_state(await state.get_data())
     await _show_dashboard(callback.message, state, draft)
@@ -531,13 +644,18 @@ async def open_wan3_prime(callback: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "wan3_new")
 async def new_wan3_prime(callback: types.CallbackQuery, state: FSMContext):
-    draft = Wan3PrimeDraft()
-    _new_ids(draft)
-    await _show_dashboard(callback.message, state, draft)
-    await callback.answer("Новая Wan-задача")
+    # Signal cancellation immediately, but serialize the fresh draft commit with
+    # every upload/edit. Queued messages from the previous task will be discarded.
+    await state.update_data(wan3_reset_token=str(uuid.uuid4()))
+    await callback.answer("Создаю новую Wan-задачу")
+    async with _actor_lock(callback.from_user.id):
+        draft = Wan3PrimeDraft()
+        _new_ids(draft)
+        await _show_dashboard(callback.message, state, draft)
 
 
 @router.callback_query(F.data == "wan3_modes")
+@_serialized_draft_edit
 async def wan3_modes(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(Wan3PrimeStates.choosing_mode)
     await callback.message.edit_text("Выберите режим Wan 3.0. Несовместимые поля сохраняются в черновике режима и не будут отправлены.", reply_markup=_mode_keyboard(), parse_mode=None)
@@ -545,6 +663,7 @@ async def wan3_modes(callback: types.CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(F.data.startswith("wan3_mode:"))
+@_serialized_draft_edit
 async def choose_wan3_mode(callback: types.CallbackQuery, state: FSMContext):
     scenario = str(callback.data).split(":", 1)[1]
     try:
@@ -557,13 +676,15 @@ async def choose_wan3_mode(callback: types.CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(F.data == "wan3_prompt")
+@_serialized_draft_edit
 async def ask_wan3_prompt(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(Wan3PrimeStates.waiting_prompt)
     await callback.message.edit_text("Отправьте промпт или инструкции. Для любого режима кроме text/edit можно отправить '-' и оставить пусто.", reply_markup=_keyboard([[("Дашборд", "wan3_dashboard")]]), parse_mode=None)
     await callback.answer()
 
 
-@router.message(Wan3PrimeStates.waiting_prompt)
+@router.message(Wan3PrimeStates.waiting_prompt, F.text)
+@_serialized_draft_edit
 async def wan3_prompt(message: types.Message, state: FSMContext):
     draft = draft_from_state(await state.get_data())
     text = str(getattr(message, "text", "") or "").strip()
@@ -573,6 +694,7 @@ async def wan3_prompt(message: types.Message, state: FSMContext):
 
 
 @router.callback_query(F.data.startswith("wan3_media:"))
+@_serialized_draft_edit
 async def ask_wan3_media(callback: types.CallbackQuery, state: FSMContext):
     kind = str(callback.data).split(":", 1)[1]
     draft = draft_from_state(await state.get_data())
@@ -596,7 +718,7 @@ async def ask_wan3_media(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.message(
+@router.message(StateFilter(
     Wan3PrimeStates.waiting_first_frame,
     Wan3PrimeStates.waiting_last_frame,
     Wan3PrimeStates.waiting_source_video,
@@ -605,24 +727,122 @@ async def ask_wan3_media(callback: types.CallbackQuery, state: FSMContext):
     Wan3PrimeStates.waiting_audio_reference,
     Wan3PrimeStates.waiting_file_reference,
     Wan3PrimeStates.waiting_link_reference,
-)
-async def receive_wan3_media(message: types.Message, state: FSMContext):
+))
+async def receive_wan3_media(message: types.Message, state: FSMContext, raw_state: str | None = None):
+    kind = _entry_kind_from_state(raw_state or await state.get_state())
+    await _receive_media(message, state, kind or None)
+
+
+def _detected_input_kind(message: types.Message) -> str:
+    info = _message_file(message)
+    if info:
+        _, kind, _, filename = info
+        if kind != "file":
+            return kind
+        for expected, extensions in (("image", IMAGE_EXTS), ("video", VIDEO_EXTS), ("audio", AUDIO_EXTS), ("file", FILE_EXTS)):
+            if _has_ext(filename, extensions):
+                return expected
+        raise ValueError("Этот формат не поддерживается. Фото: JPG/PNG/WEBP/BMP; видео: MP4/MOV. HEIC сначала сохраните как JPG.")
+    if _looks_url(str(getattr(message, "text", "") or "")):
+        return "link"
+    raise ValueError("Пришлите фото, видео, аудио, документ или публичную ссылку.")
+
+
+async def _receive_media(message: types.Message, state: FSMContext, explicit_kind: str | None = None) -> None:
+    # Telegram album updates arrive concurrently. Serialize media writes, then
+    # reload state after storage so prompt/settings edits cannot be overwritten.
+    identity = _draft_identity(await state.get_data())
+    async with _actor_lock(message.from_user.id):
+        if _draft_identity(await state.get_data()) != identity:
+            await message.answer("Материал относился к предыдущей задаче. Пришлите его ещё раз для новой задачи.", parse_mode=None)
+            return
+        draft = draft_from_state(await state.get_data())
+        progress = None
+        try:
+            kind = explicit_kind or _detected_input_kind(message)
+            if not explicit_kind and draft.scenario in {"first_frame", "first_last"}:
+                raise ValueError("Для этого фото выберите роль: первый или последний кадр в Настройках.")
+            if draft.auto_mode and draft.scenario == "text":
+                draft.scenario = "reference"
+            _validate_media_allowed(draft, kind)
+            await state.update_data(wan3_uploading=True)
+            progress = await message.answer("📎 Материал получен. Сохраняю и проверяю…", parse_mode=None)
+            url = await _store_or_import_media(message, draft, kind)
+            latest = await state.get_data()
+            current = draft_from_state(latest)
+            if _draft_identity(latest) != identity:
+                await message.answer("Загрузка относилась к предыдущей задаче. В новую задачу материал не добавлен.", parse_mode=None)
+                return
+            if current.auto_mode and current.scenario == "text":
+                current.scenario = "reference"
+            _assign_url(current, kind, url)
+            message_id = getattr(message, "message_id", None)
+            if isinstance(message_id, int):
+                current.media_message_order[url] = message_id
+                for name in ("reference_image_urls", "reference_video_urls", "reference_audio_urls"):
+                    values = getattr(current, name)
+                    start = 1 if name == "reference_video_urls" and current.scenario == "edit" else 0
+                    setattr(current, name, values[:start] + sorted(values[start:], key=lambda value: current.media_message_order.get(value, 0)))
+            caption = str(getattr(message, "caption", "") or "").strip()
+            if caption and current.prompt == draft.prompt and not (current.source_feed_gen_id or current.trend_id):
+                current.prompt = caption
+            sync_auto_scenario(current)
+            await _show_dashboard(progress or message, state, current)
+            logger.info("Wan3 Telegram media accepted: telegram_id=%s kind=%s images=%s videos=%s",
+                message.from_user.id, kind, len(current.reference_image_urls), len(current.reference_video_urls))
+        except ValueError as exc:
+            await message.answer(str(exc), reply_markup=dashboard_keyboard(draft_from_state(await state.get_data())), parse_mode=None)
+        except Exception as exc:  # noqa: BLE001 - retain the draft and show immediate upload failure
+            logger.warning("Wan3 Telegram media failed: telegram_id=%s error_type=%s", message.from_user.id, type(exc).__name__)
+            await message.answer("Не удалось сохранить материал. Уже добавленные материалы и промпт сохранены. Пришлите файл ещё раз.",
+                reply_markup=dashboard_keyboard(draft_from_state(await state.get_data())), parse_mode=None)
+        finally:
+            await state.update_data(wan3_uploading=False)
+
+
+@router.message(StateFilter(Wan3PrimeStates.dashboard, Wan3PrimeStates.settings, Wan3PrimeStates.reviewing,
+                            Wan3PrimeStates.waiting_prompt),
+                F.photo | F.video | F.document | F.audio | F.voice | (F.text & ~F.text.startswith("/")))
+async def receive_wan3_input(message: types.Message, state: FSMContext):
+    text = str(getattr(message, "text", "") or "").strip()
+    if _message_file(message) or _looks_url(text):
+        await _receive_media(message, state)
+        return
+    identity = _draft_identity(await state.get_data())
+    async with _actor_lock(message.from_user.id):
+        if _draft_identity(await state.get_data()) != identity:
+            await message.answer("Задача изменилась. Отправьте промпт для новой задачи ещё раз.", parse_mode=None)
+            return
+        draft = draft_from_state(await state.get_data())
+        draft.prompt = text
+        invalidate_quote(draft)
+        await _show_dashboard(message, state, draft)
+
+
+@router.callback_query(F.data == "wan3_settings")
+@_serialized_draft_edit
+async def show_wan3_settings(callback: types.CallbackQuery, state: FSMContext):
     draft = draft_from_state(await state.get_data())
-    kind = _entry_kind_from_state(await state.get_state())
-    try:
-        _validate_media_allowed(draft, kind)
-        url = await _store_or_import_media(message, draft, kind)
-        _assign_url(draft, kind, url)
-    except ValueError as exc:
-        await message.answer(str(exc), reply_markup=remove_keyboard(draft), parse_mode=None)
-        return
-    except Exception:  # noqa: BLE001 - FSM boundary preserves draft and reports safe failure
-        await message.answer("Не удалось сохранить медиа. Черновик и ключ запуска сохранены; повторите загрузку.", reply_markup=remove_keyboard(draft), parse_mode=None)
-        return
-    await _show_dashboard(message, state, draft)
+    await state.set_state(Wan3PrimeStates.settings)
+    await callback.message.edit_text(build_review_text(draft) + "\n\nРоли кадров и правка видео выбираются здесь явно. Материалы сохранены.",
+        reply_markup=settings_keyboard(draft), parse_mode=None)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "wan3_materials")
+@_serialized_draft_edit
+async def show_wan3_materials(callback: types.CallbackQuery, state: FSMContext):
+    draft = draft_from_state(await state.get_data())
+    await state.set_state(Wan3PrimeStates.dashboard)
+    await callback.message.edit_text("Пришлите фото, видео, аудио, документ или альбом прямо в этот чат.\n"
+        "Материалы добавятся по порядку. Ненужные можно удалить ниже; для замены удалите материал и пришлите новый.\n"
+        "Telegram позволяет боту скачать файл до 20 MB. Для большего файла используйте Mini App.",
+        reply_markup=remove_keyboard(draft), parse_mode=None)
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("wan3_remove:"))
+@_serialized_draft_edit
 async def remove_wan3_media(callback: types.CallbackQuery, state: FSMContext):
     draft = draft_from_state(await state.get_data())
     _, kind, raw_index = str(callback.data).split(":", 2)
@@ -639,6 +859,10 @@ async def remove_wan3_media(callback: types.CallbackQuery, state: FSMContext):
             draft.reference_audio_urls = remove_ordered_slot(draft.reference_audio_urls, index, label="Audio")
         elif kind == "file":
             draft.reference_file_urls = remove_ordered_slot(draft.reference_file_urls, index, label="File")
+        elif kind == "first":
+            draft.first_frame_url = None
+        elif kind == "last":
+            draft.last_frame_url = None
         elif kind == "link":
             draft.reference_link_urls = remove_ordered_slot(draft.reference_link_urls, index, label="Link")
         else:
@@ -652,6 +876,7 @@ async def remove_wan3_media(callback: types.CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(F.data.startswith("wan3_set:"))
+@_serialized_draft_edit
 async def set_wan3_option(callback: types.CallbackQuery, state: FSMContext):
     draft = draft_from_state(await state.get_data())
     _, field, value = str(callback.data).split(":", 2)
@@ -682,6 +907,7 @@ async def set_wan3_option(callback: types.CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(F.data.startswith("wan3_toggle:"))
+@_serialized_draft_edit
 async def toggle_wan3_option(callback: types.CallbackQuery, state: FSMContext):
     draft = draft_from_state(await state.get_data())
     field = str(callback.data).split(":", 1)[1]
@@ -698,6 +924,7 @@ async def toggle_wan3_option(callback: types.CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(F.data == "wan3_seed")
+@_serialized_draft_edit
 async def ask_wan3_seed(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(Wan3PrimeStates.waiting_seed)
     await callback.message.edit_text("Введите seed целым числом 0..2147483647 или '-' для Auto.", reply_markup=_keyboard([[("Дашборд", "wan3_dashboard")]]), parse_mode=None)
@@ -705,6 +932,7 @@ async def ask_wan3_seed(callback: types.CallbackQuery, state: FSMContext):
 
 
 @router.message(Wan3PrimeStates.waiting_seed)
+@_serialized_draft_edit
 async def receive_wan3_seed(message: types.Message, state: FSMContext):
     draft = draft_from_state(await state.get_data())
     text = str(getattr(message, "text", "") or "").strip()
@@ -725,14 +953,63 @@ async def receive_wan3_seed(message: types.Message, state: FSMContext):
     await _show_dashboard(message, state, draft)
 
 
-@router.callback_query(F.data == "wan3_duration")
-async def ask_wan3_duration(callback: types.CallbackQuery, state: FSMContext):
+def duration_keyboard(draft: Wan3PrimeDraft) -> types.InlineKeyboardMarkup:
+    value = 5 if draft.duration == -1 else draft.duration
+    return _keyboard([
+        [("−", f"wan3_duration_step:{max(2, value - 1)}"),
+         (f"{value} с · ввести число", "wan3_duration_number"),
+         ("+", f"wan3_duration_step:{min(30, value + 1)}")],
+        [("✓ Auto" if draft.duration == -1 else "Auto", "wan3_duration_step:-1")],
+        [("Готово · к задаче", "wan3_dashboard")],
+    ])
+
+
+async def _show_duration(callback, state, draft):
     await state.set_state(Wan3PrimeStates.waiting_duration)
-    await callback.message.edit_text("Введите длительность: -1 для Auto или целое 2..30.", reply_markup=_keyboard([[("Дашборд", "wan3_dashboard")]]), parse_mode=None)
+    await callback.message.edit_text(
+        "Длительность: " + ("Auto" if draft.duration == -1 else f"{draft.duration} с")
+        + "\nИспользуйте −/+ или отправьте целое число 2..30. Auto выбирается отдельно."
+        + "\nИсходное видео + результат: не более 30 с. Точную совместимость и стоимость проверит расчёт.",
+        reply_markup=duration_keyboard(draft), parse_mode=None,
+    )
     await callback.answer()
 
 
+@router.callback_query(F.data.in_({"wan3_duration", "wan3_duration_number"}))
+@_serialized_draft_edit
+async def ask_wan3_duration(callback: types.CallbackQuery, state: FSMContext):
+    if callback.data == "wan3_duration_number":
+        await state.set_state(Wan3PrimeStates.waiting_duration)
+        await callback.message.edit_text("Введите целое число от 2 до 30 секунд. Auto доступно в Настройках.",
+            reply_markup=_keyboard([[("Назад к задаче", "wan3_dashboard")]]), parse_mode=None)
+        await callback.answer()
+        return
+    await _show_duration(callback, state, draft_from_state(await state.get_data()))
+
+
+@router.callback_query(F.data.startswith("wan3_duration_step:") | F.data.startswith("wan3_quick_duration:"))
+@_serialized_draft_edit
+async def step_wan3_duration(callback: types.CallbackQuery, state: FSMContext):
+    draft = draft_from_state(await state.get_data())
+    try:
+        value = int(callback.data.split(":", 1)[1])
+        if value not in DURATIONS:
+            raise ValueError
+    except (ValueError, TypeError):
+        await callback.answer("Длительность: Auto или 2..30 секунд.", show_alert=True)
+        return
+    draft.duration = value
+    invalidate_quote(draft)
+    await state.update_data(**draft_to_state(draft))
+    if callback.data.startswith("wan3_quick_duration:"):
+        await _show_dashboard(callback.message, state, draft)
+        await callback.answer("Длительность обновлена. Стоимость нужно пересчитать.")
+    else:
+        await _show_duration(callback, state, draft)
+
+
 @router.message(Wan3PrimeStates.waiting_duration)
+@_serialized_draft_edit
 async def receive_wan3_duration(message: types.Message, state: FSMContext):
     draft = draft_from_state(await state.get_data())
     text = str(getattr(message, "text", "") or "").strip()
@@ -752,12 +1029,16 @@ async def receive_wan3_duration(message: types.Message, state: FSMContext):
 
 @router.callback_query(F.data == "wan3_quote")
 async def quote_wan3_prime(callback: types.CallbackQuery, state: FSMContext):
+    if (await state.get_data()).get("wan3_uploading"):
+        await callback.answer("Дождитесь сохранения материалов", show_alert=True)
+        return
     draft = draft_from_state(await state.get_data())
     try:
         validate_wan3_draft(draft)
     except ValueError as exc:
         await callback.answer(str(exc), show_alert=True)
         return
+    identity = _draft_identity(await state.get_data())
     runtime = await _runtime()
     try:
         quote = await runtime.quote_telegram_wan3_prime(
@@ -773,15 +1054,21 @@ async def quote_wan3_prime(callback: types.CallbackQuery, state: FSMContext):
         logger.warning("Wan3 Telegram quote deferred: telegram_id=%s error_type=%s", callback.from_user.id, type(exc).__name__)
         await callback.answer("Не удалось получить расчёт. Черновик сохранён.", show_alert=True)
         return
-    draft.quote_hash = str(quote.get("quote_hash") or "") or None
-    draft.last_quote = dict(quote)
-    await state.set_state(Wan3PrimeStates.reviewing)
-    await state.update_data(**draft_to_state(draft))
-    await callback.message.edit_text(
-        build_review_text(draft, quote),
-        reply_markup=_keyboard([[("▶️ Подтвердить запуск", "wan3_confirm")], [("Дашборд", "wan3_dashboard")]]),
-        parse_mode=None,
-    )
+    async with _actor_lock(callback.from_user.id):
+        current = draft_from_state(await state.get_data())
+        if _draft_identity(await state.get_data()) != identity or current.client_request_id != draft.client_request_id or build_wan3_payload(current) != build_wan3_payload(draft) or (await state.get_data()).get("wan3_uploading"):
+            await callback.answer("Материалы или промпт изменились. Рассчитайте стоимость заново.", show_alert=True)
+            return
+        draft = current
+        draft.quote_hash = str(quote.get("quote_hash") or "") or None
+        draft.last_quote = dict(quote)
+        await state.set_state(Wan3PrimeStates.reviewing)
+        await state.update_data(**draft_to_state(draft))
+        await callback.message.edit_text(
+            build_review_text(draft, quote),
+            reply_markup=_keyboard([[("▶️ Подтвердить запуск", "wan3_confirm")], [("Дашборд", "wan3_dashboard")]]),
+            parse_mode=None,
+        )
     await callback.answer("Проверьте расчёт")
 
 
@@ -854,6 +1141,7 @@ async def restore_wan3_owner_recipe(callback: types.CallbackQuery, state: FSMCon
             await callback.answer("Публикация или разрешение на повтор больше недоступны.", show_alert=True)
         return
     draft = Wan3PrimeDraft(
+        auto_mode=str(recipe.get("scenario")) not in {"first_frame", "first_last", "edit"},
         scenario=str(recipe.get("scenario") or "text"),
         prompt=str(recipe.get("prompt") or ""),
         first_frame_url=recipe.get("first_frame_url"),
@@ -929,6 +1217,7 @@ async def open_wan3_shared_repeat(callback: types.CallbackQuery, state: FSMConte
 
 
 @router.callback_query(F.data.startswith("wan3_repeat_slot:"))
+@_serialized_draft_edit
 async def ask_wan3_repeat_slot(callback: types.CallbackQuery, state: FSMContext):
     draft = draft_from_state(await state.get_data())
     key = str(callback.data).split(":", 1)[1]
@@ -944,6 +1233,7 @@ async def ask_wan3_repeat_slot(callback: types.CallbackQuery, state: FSMContext)
 
 
 @router.message(Wan3PrimeStates.waiting_repeat_input)
+@_serialized_draft_edit
 async def receive_wan3_repeat_slot(message: types.Message, state: FSMContext):
     data = await state.get_data()
     draft = draft_from_state(data)
@@ -970,3 +1260,4 @@ async def open_wan3_curated_trend(callback: types.CallbackQuery, state: FSMConte
         await callback.answer()
     except (ValueError, RuntimeError):
         await callback.answer("Тренд больше недоступен", show_alert=True)
+

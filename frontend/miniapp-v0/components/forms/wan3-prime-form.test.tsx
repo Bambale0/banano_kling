@@ -1,7 +1,7 @@
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { Wan3PrimeForm } from './wan3-prime-form'
-import { fetchWan3PrimeRepeatPlan, generateWan3Prime, quoteWan3Prime, uploadWan3PrimeReference } from '@/lib/wan3-prime-api'
+import { fetchWan3PrimeRepeatPlan, generateWan3Prime, importWan3PrimeReference, quoteWan3Prime, uploadWan3PrimeReference } from '@/lib/wan3-prime-api'
 
 jest.mock('@/lib/wan3-prime-api', () => ({
   quoteWan3Prime: jest.fn(), generateWan3Prime: jest.fn(),
@@ -26,6 +26,31 @@ async function upload(label: string, filename: string, mime: string) {
   await waitFor(() => expect(screen.getByText(filename)).toBeInTheDocument())
 }
 
+test('duration uses a seconds slider and a separate Auto switch that restores manual seconds', async () => {
+  render(<Wan3PrimeForm credits={1000} />)
+  const slider = screen.getByRole('slider', { name: 'Длительность Wan' })
+  const automatic = screen.getByRole('switch', { name: 'Auto: длительность Wan' })
+  expect(slider).toHaveValue('5')
+  expect(slider).toHaveAttribute('min', '2')
+  expect(slider).toHaveAttribute('max', '30')
+  expect(slider).toHaveAttribute('step', '1')
+  expect(screen.getByText('5 сек')).toBeInTheDocument()
+  fireEvent.change(slider, { target: { value: '12' } })
+  expect(slider).toHaveAttribute('aria-valuetext', '12 секунд')
+  expect(screen.getByText('12 сек')).toBeInTheDocument()
+  fireEvent.click(automatic)
+  expect(automatic).toBeChecked()
+  expect(slider).toBeDisabled()
+  fireEvent.change(screen.getByLabelText('Инструкции Wan'), { target: { value: 'Рассвет.' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Рассчитать стоимость' }))
+  await waitFor(() => expect(quoteWan3Prime).toHaveBeenCalledTimes(1))
+  expect((quoteWan3Prime as jest.Mock).mock.calls[0][0].recipe.duration).toBe(-1)
+  fireEvent.click(automatic)
+  expect(slider).toBeEnabled()
+  expect(slider).toHaveValue('12')
+  expect(screen.getByRole('button', { name: 'Запустить Wan' })).toBeDisabled()
+})
+
 test('edit source, mixed references, false and zero survive quote and explicit start', async () => {
   render(<Wan3PrimeForm credits={1000} />)
   fireEvent.click(screen.getByRole('button', { name: 'Редактирование видео' }))
@@ -37,7 +62,7 @@ test('edit source, mixed references, false and zero survive quote and explicit s
   fireEvent.change(screen.getByLabelText('Инструкции Wan'), { target: { value: 'Изменить одежду, сохранить движения.' } })
   fireEvent.change(screen.getByLabelText('Seed Wan'), { target: { value: '0' } })
   fireEvent.click(screen.getByLabelText('Аудио в результате'))
-  fireEvent.change(screen.getByLabelText('Длительность Wan'), { target: { value: '-1' } })
+  fireEvent.click(screen.getByRole('switch', { name: 'Auto: длительность Wan' }))
   fireEvent.click(screen.getByRole('button', { name: 'Рассчитать стоимость' }))
   await waitFor(() => expect(quoteWan3Prime).toHaveBeenCalledTimes(1))
   const recipe = (quoteWan3Prime as jest.Mock).mock.calls[0][0].recipe
@@ -189,4 +214,176 @@ test('repeated initial recipe restoration switches the visible optional source a
   expect((quoteWan3Prime as jest.Mock).mock.calls[0][0].recipe).toMatchObject({
     reference_file_urls: ['https://owned.test/replacement.pdf'], reference_link_urls: [],
   })
+})
+
+test('manual slider endpoints invalidate quotes and unknown source duration remains server-validated', async () => {
+  render(<Wan3PrimeForm credits={1000} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Редактирование видео' }))
+  await upload('Загрузить исходное видео (Video1)', 'Видео.mov', 'video/quicktime')
+  fireEvent.change(screen.getByLabelText('Инструкции Wan'), { target: { value: 'Сохранить движения.' } })
+  const slider = screen.getByRole('slider', { name: 'Длительность Wan' })
+  expect(slider).toHaveAttribute('max', '30')
+  fireEvent.change(slider, { target: { value: '2' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Рассчитать стоимость' }))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Запустить Wan' })).toBeEnabled())
+  expect((quoteWan3Prime as jest.Mock).mock.calls[0][0].recipe.duration).toBe(2)
+  fireEvent.change(slider, { target: { value: '30' } })
+  expect(screen.getByRole('button', { name: 'Запустить Wan' })).toBeDisabled()
+  ;(quoteWan3Prime as jest.Mock).mockRejectedValueOnce(new Error('Видеореференсы + результат: не более 30 секунд.'))
+  fireEvent.click(screen.getByRole('button', { name: 'Рассчитать стоимость' }))
+  await screen.findByRole('alert')
+  expect((quoteWan3Prime as jest.Mock).mock.calls[1][0].recipe.duration).toBe(30)
+  expect(screen.getByRole('button', { name: 'Запустить Wan' })).toBeDisabled()
+  expect(generateWan3Prime).not.toHaveBeenCalled()
+})
+
+test('restored Auto and manual durations remain reviewable and failed-start retries lock both controls', async () => {
+  const base = { model: 'wan_3_prime' as const, scenario: 'text' as const, prompt: 'Рассвет.',
+    resolution: '720P' as const, aspect_ratio: 'adaptive' as const, audio: true, nsfw_checker: false }
+  const { rerender } = render(<Wan3PrimeForm credits={1000} initialRecipe={{ ...base, duration: -1 }} />)
+  const slider = screen.getByRole('slider', { name: 'Длительность Wan' })
+  const automatic = screen.getByRole('switch', { name: 'Auto: длительность Wan' })
+  expect(automatic).toBeChecked()
+  expect(slider).toBeDisabled()
+  rerender(<Wan3PrimeForm credits={1000} initialRecipe={{ ...base, duration: 7 }} />)
+  expect(automatic).not.toBeChecked()
+  expect(slider).toHaveValue('7')
+  fireEvent.click(automatic); fireEvent.click(automatic)
+  expect(slider).toHaveValue('7')
+  ;(generateWan3Prime as jest.Mock).mockRejectedValueOnce(new TypeError('Network interrupted'))
+  fireEvent.click(screen.getByRole('button', { name: 'Рассчитать стоимость' }))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Запустить Wan' })).toBeEnabled())
+  fireEvent.click(screen.getByRole('button', { name: 'Запустить Wan' }))
+  await screen.findByRole('button', { name: 'Проверить запуск' })
+  expect(slider).toBeDisabled()
+  expect(automatic).toBeDisabled()
+  fireEvent.click(screen.getByRole('button', { name: 'Проверить запуск' }))
+  await screen.findByText('wan3_test')
+  expect((generateWan3Prime as jest.Mock).mock.calls[1][0]).toEqual((generateWan3Prime as jest.Mock).mock.calls[0][0])
+  fireEvent.click(screen.getByRole('button', { name: 'Новая генерация с этими настройками' }))
+  expect(slider).toBeEnabled()
+  expect(slider).toHaveValue('7')
+})
+
+test('photo failure and retry stay visible beside the input with the original Cyrillic filename', async () => {
+  ;(uploadWan3PrimeReference as jest.Mock).mockRejectedValueOnce(new Error('Не удалось загрузить часть файла.'))
+    .mockResolvedValueOnce({ url: 'https://owned.test/upload.jpg', name: 'upload.jpg', type: 'image', size: 9 })
+  render(<Wan3PrimeForm credits={1000} />)
+  fireEvent.click(screen.getByRole('button', { name: 'По референсам' }))
+  const field = within(screen.getByRole('region', { name: 'Фото-референсы' }))
+  fireEvent.change(field.getByLabelText('Загрузить фото-референсы'), { target: { files: [new File(['synthetic'], 'Фото.jpg', { type: 'image/jpeg' })] } })
+  expect(field.getByRole('status')).toHaveTextContent('Фото.jpg')
+  expect(await field.findByRole('alert')).toHaveTextContent('Фото.jpg')
+  expect(field.getByRole('alert')).toHaveTextContent('Не удалось загрузить часть файла.')
+  fireEvent.click(field.getByRole('button', { name: 'Повторить загрузку' }))
+  await field.findByText('Фото.jpg')
+  expect(field.queryByRole('alert')).not.toBeInTheDocument()
+  expect(field.queryByRole('status')).not.toBeInTheDocument()
+  expect(uploadWan3PrimeReference).toHaveBeenCalledTimes(2)
+  expect((uploadWan3PrimeReference as jest.Mock).mock.calls[1][1].name).toBe('Фото.jpg')
+})
+
+test('multi-file retry uploads only the unfinished files, preserving the accepted video once', async () => {
+  ;(uploadWan3PrimeReference as jest.Mock)
+    .mockResolvedValueOnce({ url: 'https://owned.test/one.mov' })
+    .mockRejectedValueOnce(new Error('Сеть недоступна.'))
+    .mockResolvedValueOnce({ url: 'https://owned.test/two.mov' })
+  render(<Wan3PrimeForm credits={1000} />)
+  fireEvent.click(screen.getByRole('button', { name: 'По референсам' }))
+  const field = within(screen.getByRole('region', { name: 'Видео-референсы' }))
+  fireEvent.change(field.getByLabelText('Загрузить видео-референсы'), { target: { files: [
+    new File(['one'], 'Видео.mov', { type: 'video/quicktime' }), new File(['two'], 'Следующее.mov', { type: 'video/quicktime' }),
+  ] } })
+  await field.findByRole('alert')
+  expect(field.getAllByText('Видео.mov')).toHaveLength(1)
+  fireEvent.click(field.getByRole('button', { name: 'Повторить загрузку' }))
+  await field.findByText('Следующее.mov')
+  expect(field.getAllByText('Видео.mov')).toHaveLength(1)
+  expect((uploadWan3PrimeReference as jest.Mock).mock.calls.map(call => call[1].name)).toEqual(['Видео.mov', 'Следующее.mov', 'Следующее.mov'])
+  fireEvent.click(screen.getByRole('button', { name: 'Рассчитать стоимость' }))
+  await waitFor(() => expect(quoteWan3Prime).toHaveBeenCalledTimes(1))
+  expect((quoteWan3Prime as jest.Mock).mock.calls[0][0].recipe.reference_video_urls).toEqual(['https://owned.test/one.mov', 'https://owned.test/two.mov'])
+})
+
+test('busy upload rejects repeated selections and cancel unlocks a retry without adding late media', async () => {
+  let finish: (result: unknown) => void = () => {}
+  let signal: AbortSignal | undefined
+  ;(uploadWan3PrimeReference as jest.Mock).mockImplementationOnce((_kind, _file, currentSignal, progress) => {
+    signal = currentSignal
+    progress(5, 10)
+    return new Promise((resolve, reject) => { finish = resolve; currentSignal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true }) })
+  })
+  render(<Wan3PrimeForm credits={1000} />)
+  fireEvent.click(screen.getByRole('button', { name: 'По референсам' }))
+  const field = within(screen.getByRole('region', { name: 'Фото-референсы' }))
+  const input = field.getByLabelText('Загрузить фото-референсы')
+  const change = { target: { files: [new File(['synthetic'], 'Фото.jpg', { type: 'image/jpeg' })] } }
+  fireEvent.change(input, change); fireEvent.change(input, change)
+  expect(uploadWan3PrimeReference).toHaveBeenCalledTimes(1)
+  expect(field.getByRole('status')).toHaveTextContent('50%')
+  expect(screen.getByRole('button', { name: 'Рассчитать стоимость' })).toBeDisabled()
+  expect(screen.getByRole('slider', { name: 'Длительность Wan' })).toBeDisabled()
+  fireEvent.click(field.getByRole('button', { name: 'Отменить загрузку' }))
+  await field.findByRole('alert')
+  expect(signal?.aborted).toBe(true)
+  expect(input).toBeEnabled()
+  await act(async () => finish({ url: 'https://owned.test/late.jpg' }))
+  expect(field.queryByText('Фото.jpg')).not.toBeInTheDocument()
+  expect(field.getByRole('button', { name: 'Повторить загрузку' })).toBeEnabled()
+})
+
+test.each([false, true])('recipe replacement (equal content: %s) and unmount discard late uploads', async equalContent => {
+  let finish: (result: unknown) => void = () => {}
+  let signal: AbortSignal | undefined
+  ;(uploadWan3PrimeReference as jest.Mock).mockImplementation((_kind, _file, currentSignal) => {
+    signal = currentSignal
+    return new Promise(resolve => { finish = resolve })
+  })
+  const base = { model: 'wan_3_prime' as const, scenario: 'reference' as const, prompt: '', duration: 5,
+    resolution: '720P' as const, aspect_ratio: 'adaptive' as const, audio: true, nsfw_checker: false }
+  const originalRecipe = { ...base, reference_image_urls: ['https://owned.test/new.jpg'] }
+  const { rerender, unmount } = render(<Wan3PrimeForm credits={1000} initialRecipe={originalRecipe} />)
+  const change = { target: { files: [new File(['synthetic'], 'Старое.jpg', { type: 'image/jpeg' })] } }
+  fireEvent.change(screen.getByLabelText('Загрузить фото-референсы'), change)
+  const nextRecipe = equalContent ? { ...originalRecipe } : { ...originalRecipe, prompt: 'Новая инструкция' }
+  rerender(<Wan3PrimeForm credits={1000} initialRecipe={nextRecipe} />)
+  expect(signal?.aborted).toBe(true)
+  await act(async () => finish({ url: 'https://owned.test/old.jpg' }))
+  expect(screen.getByText('new.jpg')).toBeInTheDocument()
+  expect(screen.queryByText('Старое.jpg')).not.toBeInTheDocument()
+  fireEvent.change(screen.getByLabelText('Загрузить фото-референсы'), change)
+  expect(signal?.aborted).toBe(false)
+  unmount()
+  expect(signal?.aborted).toBe(true)
+  await act(async () => finish({ url: 'https://owned.test/old-again.jpg' }))
+})
+
+test('link import failure stays local and preserves the address for an explicit retry', async () => {
+  ;(importWan3PrimeReference as jest.Mock).mockRejectedValueOnce(new Error('Сервер не ответил за 15 минут.'))
+    .mockResolvedValueOnce({ url: 'https://example.test/brief', filename: 'brief' })
+  render(<Wan3PrimeForm credits={1000} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Из веб-страницы' }))
+  const field = within(screen.getByRole('region', { name: 'Веб-страница' }))
+  const input = field.getByLabelText('Ссылка: Веб-страница')
+  fireEvent.change(input, { target: { value: 'https://example.test/brief' } })
+  fireEvent.click(field.getByRole('button', { name: 'Добавить', hidden: true }))
+  expect(field.getByRole('status')).toHaveTextContent('Проверяю и импортирую ссылку')
+  await field.findByRole('alert')
+  expect(input).toHaveValue('https://example.test/brief')
+  fireEvent.click(field.getByRole('button', { name: 'Добавить', hidden: true }))
+  await field.findByText('brief')
+  expect(field.queryByRole('alert')).not.toBeInTheDocument()
+  expect(input).toHaveValue('')
+})
+
+test('mode change clears unfinished upload retry state from the previous draft', async () => {
+  ;(uploadWan3PrimeReference as jest.Mock).mockRejectedValueOnce(new Error('Сеть недоступна.'))
+  render(<Wan3PrimeForm credits={1000} />)
+  fireEvent.click(screen.getByRole('button', { name: 'По референсам' }))
+  const field = within(screen.getByRole('region', { name: 'Фото-референсы' }))
+  fireEvent.change(field.getByLabelText('Загрузить фото-референсы'), { target: { files: [new File(['synthetic'], 'Фото.jpg', { type: 'image/jpeg' })] } })
+  await field.findByRole('alert')
+  expect(field.getByRole('button', { name: 'Повторить загрузку' })).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Из документа' }))
+  expect(within(screen.getByRole('region', { name: 'Фото-референсы' })).queryByRole('button', { name: 'Повторить загрузку' })).not.toBeInTheDocument()
 })
