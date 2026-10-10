@@ -89,6 +89,10 @@ async def test_signed_callback_settles_late_success_after_wait_timeout_exactly_o
     try:
         await lifecycle.reconcile_once(provider_task_id='provider_1')
         assert (await lifecycle.status(actor, launched['task_id']))['status'] == 'result_attention'
+        # Beyond the finite automatic polling window, a signed callback still
+        # obtains canonical state and can settle the original task.
+        assert await lifecycle.reconcile_once() == 0
+        assert provider.get_task_status.await_count == 1
         provider.get_task_status.return_value = {
             'taskId': 'provider_1', 'state': 'success',
             'response': {'resultUrls': ['https://kie.example.com/late-callback.mp4']},
@@ -103,10 +107,13 @@ async def test_signed_callback_settles_late_success_after_wait_timeout_exactly_o
             assert response.status == 200
             replay = await client.post('/callback?intent=' + launched['task_id'], json=payload, headers=callback_headers)
             assert replay.status == 200
-        assert (await lifecycle.status(actor, launched['task_id']))['status'] == 'completed'
+        completed = await lifecycle.status(actor, launched['task_id'])
+        assert completed['status'] == 'completed'
+        assert completed['error_code'] is None and completed['error_message'] is None
         assert output.exists()
         assert provider.get_task_status.await_count == 2
         assert provider.creates == 1
         assert await balance(actor.user_id) == 90
     finally:
         output.unlink(missing_ok=True)
+

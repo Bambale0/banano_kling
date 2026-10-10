@@ -769,6 +769,13 @@ class Wan3PrimeLifecycle:
 
     async def reconcile_once(self, *, provider_task_id: str | None = None, limit: int = 50, respect_backoff: bool = False) -> int:
         await self.init_schema()
+        from bot.services.wan3_prime_storage_policy import positive_setting
+
+        # Only automatic polling ages out. Authenticated callbacks and explicit
+        # operator reconciliation retain the canonical outcome path indefinitely.
+        attention_window = positive_setting('WAN3_ATTENTION_POLL_WINDOW_SECONDS', 86400)
+        pending_window = positive_setting('WAN3_PROVIDER_MAX_PENDING_SECONDS', 7200)
+        attention_cutoff = (datetime.now(UTC) - timedelta(seconds=pending_window + attention_window)).replace(tzinfo=None).isoformat(sep=' ')
         if provider_task_id is None:
             from bot.services.wan3_prime_recovery import (
                 recover_candidates,
@@ -790,13 +797,16 @@ class Wan3PrimeLifecycle:
                     SELECT * FROM wan3_prime_intents
                     WHERE provider_task_id IS NOT NULL
                       AND (status IN ('submitted', 'unknown', 'settlement_pending')
-                           OR (status = 'result_attention' AND error_code = 'provider_wait_timeout'))
+                           OR (status = 'result_attention' AND error_code = 'provider_wait_timeout'
+                               AND created_at >= ?))
+                      AND settled = 0
                       AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP)
                       AND (lease_until IS NULL OR lease_until <= CURRENT_TIMESTAMP)
-                    ORDER BY updated_at ASC, id ASC
+                    ORDER BY CASE WHEN status = 'result_attention' THEN 1 ELSE 0 END,
+                             updated_at ASC, id ASC
                     LIMIT ?
                     """,
-                    (limit,),
+                    (attention_cutoff, limit,),
                 )
             rows = await cursor.fetchall()
         processed = 0
@@ -838,30 +848,38 @@ class Wan3PrimeLifecycle:
         from bot.services.wan3_prime_storage_policy import positive_setting
 
         maximum = positive_setting('WAN3_PROVIDER_MAX_PENDING_SECONDS', 7200)
+        age_seconds = float('inf')
         try:
             created = row['created_at']
             if isinstance(created, str):
                 created = datetime.fromisoformat(created)
             if created.tzinfo is None:
                 created = created.replace(tzinfo=UTC)
-            expired = (datetime.now(UTC) - created).total_seconds() >= maximum
+            age_seconds = (datetime.now(UTC) - created).total_seconds()
+            expired = age_seconds >= maximum
         except (ValueError, TypeError, AttributeError):
             expired = True
         provider_state = state if state in PENDING_STATES else 'unconfirmed'
         row_data = dict(row)
+        attention_initial = positive_setting('WAN3_ATTENTION_POLL_INITIAL_SECONDS', 300)
+        attention_ceiling = positive_setting('WAN3_ATTENTION_POLL_MAX_SECONDS', 3600)
+        late_age = max(0.0, age_seconds - maximum)
+        attention_delay = min(attention_ceiling, max(attention_initial, late_age / 2))
+        attention_retry = (datetime.now(UTC) + timedelta(seconds=attention_delay)).replace(tzinfo=None).isoformat(sep=' ')
+        attention_message = ('Provider wait timed out; automatic polling is time-limited; '
+                             'canonical callback or operator review remains available')
         async with db_backend.connect(_database_path()) as db:
             if row_data.get('status') == 'result_attention' and row_data.get('error_code') == 'provider_wait_timeout':
-                retry_at = (datetime.now(UTC) + timedelta(seconds=30 if state in PENDING_STATES else 60)).replace(tzinfo=None).isoformat(sep=' ')
                 await db.execute('UPDATE wan3_prime_intents SET provider_state = ?, lease_until = NULL, '
-                    'last_checked_at = CURRENT_TIMESTAMP, next_attempt_at = ?, updated_at = CURRENT_TIMESTAMP '
+                    'last_checked_at = CURRENT_TIMESTAMP, next_attempt_at = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP '
                     "WHERE internal_task_id = ? AND settled = 0 AND status = 'result_attention' "
-                    "AND error_code = 'provider_wait_timeout'", (provider_state, retry_at, row['internal_task_id']))
+                    "AND error_code = 'provider_wait_timeout'", (provider_state, attention_retry, attention_message, row['internal_task_id']))
             elif expired:
                 changed = await db.execute("UPDATE wan3_prime_intents SET status = 'result_attention', provider_state = ?, "
-                    "error_code = 'provider_wait_timeout', error_message = 'Provider has not completed the task; operator review required', "
-                    "lease_until = NULL, next_attempt_at = NULL, updated_at = CURRENT_TIMESTAMP "
+                    "error_code = 'provider_wait_timeout', error_message = ?, "
+                    "lease_until = NULL, next_attempt_at = ?, updated_at = CURRENT_TIMESTAMP "
                     "WHERE internal_task_id = ? AND settled = 0 AND status IN ('submitted', 'unknown', 'settlement_pending')",
-                    (provider_state, row['internal_task_id']))
+                    (provider_state, attention_message, None, row['internal_task_id']))
                 if changed.rowcount:
                     logger.warning('Wan3 provider waiting escalated: task_id=%s provider_task_id=%s state=%s',
                                    row['internal_task_id'], row['provider_task_id'], provider_state)
@@ -1079,6 +1097,7 @@ class Wan3PrimeLifecycle:
                 """
                 UPDATE wan3_prime_intents
                 SET status = 'completed', provider_state = 'success', settled = 1,
+                    error_code = NULL, error_message = NULL, next_attempt_at = NULL,
                     charged_credits = ?, refunded_credits = ?, reserve_refunded = ?,
                     result_url = ?, result_path = ?, result_seconds = ?,
                     delivery_status = 'result_ready', lease_until = NULL,
@@ -1254,3 +1273,4 @@ class Wan3PrimeLifecycle:
 
 
 wan3_prime_lifecycle = Wan3PrimeLifecycle()
+

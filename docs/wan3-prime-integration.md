@@ -75,3 +75,34 @@ Capacity admission counts pending result reservations before scanning retained f
 Accepted provider tasks that do not reach a terminal state by `WAN3_PROVIDER_MAX_PENDING_SECONDS` (default 7200 seconds) are escalated to the existing operator-attention queue. Their provider IDs, reserves and user history remain intact; there is no automatic resubmission or guessed refund. Canonical polling and authenticated callbacks remain active for this timeout reason, so a later terminal result can still settle and deliver exactly once. Explicit audited operator resolution remains available. Result-validation and download failures keep their bounded repair budget and are not reopened by the timeout reconciliation path. Sanitized provider failure reasons are retained privately for diagnosis; public failure responses remain generic and secrets/reference URLs are removed.
 
 Focused validation after this follow-up: 195 passed, 7 PostgreSQL-only skipped locally, including the publication compatibility suite. Exact-head CI and independent review remain required before release.
+
+
+### Bounded late-provider polling (post-release follow-up)
+
+A provider wait timeout keeps the original accepted task in `result_attention`;
+no replacement POST, new debit, automatic age-based refund, or historical ledger
+change occurs. Automatic reconciliation prioritizes active submitted/unknown/
+settlement-pending tasks before timeout attention, so an old attention backlog
+cannot consume the batch ahead of active work.
+
+Timeout-attention automatic polling is limited to
+`WAN3_ATTENTION_POLL_WINDOW_SECONDS` (default 86400 seconds) after the normal
+`WAN3_PROVIDER_MAX_PENDING_SECONDS` wait window (default 7200 seconds). Within
+that window, repeated pending outcomes use a delay that grows with half the time
+since timeout, bounded by `WAN3_ATTENTION_POLL_INITIAL_SECONDS` (default 300) and
+`WAN3_ATTENTION_POLL_MAX_SECONDS` (default 3600). The maximum remains authoritative
+if configured below the initial delay. These follow the existing positive integer
+runtime-environment configuration convention; this release does not change live
+configuration. The first transition to attention remains immediately eligible
+for canonical confirmation; subsequent deferrals apply the longer delay.
+
+After the automatic window, the task stays visible in the operator queue.
+Polling-only providers require an explicit operator canonical reconciliation or
+an authorized operator resolution; there is no silent deletion or settlement.
+Authenticated callbacks and explicit provider-task reconciliation still use the
+same canonical status and settled=0 guards after the window. Callback replay
+continues to respect the stored poll backoff and cannot resubmit or debit again.
+Invalid-result/download attention is not reopened by this policy.
+
+Successful settlement clears old error_code, error_message and next_attempt_at
+alongside the completed state, preserving diagnostics only while they apply.
