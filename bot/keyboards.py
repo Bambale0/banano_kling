@@ -258,6 +258,7 @@ VIDEO_MODEL_LABELS = {
     "seedance_2": "Bytedance Seedance 2.0",
     "seedance_2_5": "Bytedance Seedance 2.5",
     "wan_3_prime": "Wan 3.0 Video Prime",
+        "wan_3": "Wan 3.0 Video",
     "glow": "Kling Glow",
     "veo3": "Veo 3.1 Quality",
     "veo3_fast": "Veo 3.1 Fast",

@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, urlparse
 
 from bot import database
 from bot import db as db_backend
-from bot.services.wan3_prime_media import WAN3_PROVIDER_MODEL
+from bot.services.wan3_models import wan3_model_spec
 from bot.services.wan3_prime_schema import execute_wan_ddl
 
 logger = logging.getLogger(__name__)
@@ -39,10 +39,14 @@ def _object(value):
 
 def matches_submission(row, canonical: dict) -> bool:
     """Provider-authenticated GET, not a callback body, is the source of truth."""
-    if canonical.get("model") != WAN3_PROVIDER_MODEL:
+    try:
+        expected_model = wan3_model_spec(row["provider_model"]).provider_model
+    except (KeyError, ValueError):
+        return False
+    if canonical.get("model") != expected_model:
         return False
     params = _object(canonical.get("param"))
-    if params.get("model") != WAN3_PROVIDER_MODEL:
+    if params.get("model") != expected_model:
         return False
     callback = params.get("callBackUrl")
     if not isinstance(callback, str):

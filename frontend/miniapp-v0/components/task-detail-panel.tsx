@@ -417,12 +417,12 @@ export function TaskDetailPanel() {
               {taskDetail.type === 'video' && taskDetail.status === 'completed' && (
                 <GenjutsuButton taskId={taskDetail.task_id} compact />
               )}
-              {state.user.isAdmin && taskDetail.model === 'wan_3_prime' && taskDetail.status === 'completed' && taskDetail.prompt_actions_allowed !== false ? (
+              {state.user.isAdmin && (taskDetail.model === 'wan_3_prime' || taskDetail.model === 'wan_3') && taskDetail.status === 'completed' && taskDetail.prompt_actions_allowed !== false ? (
                 <Wan3TrendPublisher key={taskDetail.task_id} taskId={taskDetail.task_id} />
               ) : null}
-              {taskDetail.model === 'wan_3_prime' && taskDetail.status !== 'pending' ? (
+              {(taskDetail.model === 'wan_3_prime' || taskDetail.model === 'wan_3') && taskDetail.status !== 'pending' ? (
                   <Button type="button" variant="outline" className="w-full" onClick={() => {
-                    setVideoPromptPreset({ title: 'Повтор Wan 3.0', prompt: '', model: 'wan_3_prime', wan3OwnerTaskId: taskDetail.task_id })
+                    setVideoPromptPreset({ title: 'Повтор Wan 3.0', prompt: '', model: taskDetail.model, wan3OwnerTaskId: taskDetail.task_id })
                     closeTaskDetail()
                     setActiveTab(2)
                   }}>Повторить Wan со всеми настройками</Button>

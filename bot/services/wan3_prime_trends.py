@@ -13,7 +13,7 @@ from typing import Any
 
 from bot import database
 from bot import db as db_backend
-from bot.services.wan3_prime_media import WAN3_MODEL_KEY, Wan3PrimeValidationError
+from bot.services.wan3_prime_media import Wan3PrimeValidationError
 from bot.services.wan3_prime_schema import execute_wan_ddl
 
 
@@ -88,7 +88,7 @@ async def publish_trend(actor, *, task_id: str, title: str, description: str, re
         if not current or current['status'] != 'completed' or source_recipe(dict(current)) != recipe:
             raise Wan3PrimeValidationError('Source generation changed; open it again', status=409)
         settings = {
-            'kind': 'video', 'model': WAN3_MODEL_KEY, 'scenario': recipe['scenario'],
+            'kind': 'video', 'model': recipe['model'], 'scenario': recipe['scenario'],
             'ratio': recipe.get('aspect_ratio', 'adaptive'), 'duration': recipe.get('duration', 5),
             'resolution': recipe.get('resolution', '1080P'), 'wan3_recipe_version': 1,
             'user_reference_count': len(keys),
@@ -101,8 +101,8 @@ async def publish_trend(actor, *, task_id: str, title: str, description: str, re
             (author_id, title, description, category, prompt_text, preview_url,
              model, tags, generation_settings, is_public, status, source_generation_id)
             VALUES (?, ?, ?, 'video', 'Wan 3.0 curated recipe', ?, ?, ?, ?, 1, 'approved', ?)
-        ''', (actor.user_id, title.strip(), description.strip(), original['source']['result_url'], WAN3_MODEL_KEY,
-              _json(['trend', 'trend-video', 'wan3-prime']), _json(settings), original['source']['id']))
+        ''', (actor.user_id, title.strip(), description.strip(), original['source']['result_url'], recipe['model'],
+              _json(['trend', 'trend-video', 'wan3-prime' if recipe['model'] == 'wan_3_prime' else 'wan3']), _json(settings), original['source']['id']))
         trend_id = int(inserted.lastrowid)
         await db.execute('''INSERT INTO wan3_prime_trend_recipes
             (trend_id, source_task_id, owner_id, owner_telegram_id, recipe_json, slots_json, publication_key)
@@ -130,7 +130,7 @@ async def get_trend_plan(actor, trend_id: int) -> dict[str, Any]:
         row = await (await db.execute('''SELECT recipe.*, prompt.status, prompt.is_public
             FROM wan3_prime_trend_recipes recipe JOIN user_prompts prompt ON prompt.id = recipe.trend_id
             WHERE recipe.trend_id = ? AND prompt.status = 'approved' AND prompt.is_public = 1
-              AND prompt.model = ?''', (trend_id, WAN3_MODEL_KEY))).fetchone()
+              AND prompt.model IN ('wan_3_prime', 'wan_3')''', (trend_id,))).fetchone()
     if not row:
         raise Wan3PrimeValidationError('Trend is no longer available', status=404)
     return _plan(row)

@@ -53,8 +53,8 @@ MODEL_EMOJI = {
 
 # Family tabs are presentation only; every existing public model remains reachable.
 VIDEO_MODEL_FAMILIES = (
-    ("all", "Все", tuple(key for _, keys in PUBLIC_VIDEO_MODEL_GROUPS for key in keys) + ("wan_3_prime",)),
-    ("wan", "Wan", ("wan_3_prime",)),
+    ("all", "Все", tuple(key for _, keys in PUBLIC_VIDEO_MODEL_GROUPS for key in keys) + ("wan_3", "wan_3_prime")),
+    ("wan", "Wan", ("wan_3", "wan_3_prime")),
     ("kling", "Kling", PUBLIC_VIDEO_MODEL_GROUPS[0][1]),
     ("motion", "Motion / Аватары", PUBLIC_VIDEO_MODEL_GROUPS[1][1]),
     ("seedance", "Seedance", ("seedance_2_5", "seedance_2")),
@@ -95,7 +95,7 @@ def _advanced_video_models_keyboard(
         capability = VIDEO_MODEL_CAPABILITIES[model_key]
         prefix = "✅ " if selected == model_key else ""
         callback_data = (
-            f"v_model_{model_key}" if model_key in {"seedance_2_5", "wan_3_prime"}
+            f"v_model_{model_key}" if model_key in {"seedance_2_5", "wan_3_prime", "wan_3"}
             else f"advanced_v_model_{model_key}"
         )
         builder.row(types.InlineKeyboardButton(

@@ -101,7 +101,7 @@ def _trend_keyboard(
                 )
             ]
         )
-    if prompt.get("model") == "wan_3_prime":
+    if prompt.get("model") in {"wan_3_prime", "wan_3"}:
         rows.append([InlineKeyboardButton(text="Повторить Wan в боте", callback_data=f"wan3_trend:{prompt_id}")])
     if is_admin:
         rows.append(

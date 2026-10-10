@@ -62,12 +62,15 @@ def _markup(task_id: str, url: str | None) -> InlineKeyboardMarkup:
 
 
 async def deliver_wan_result(bot: Any, record: dict[str, Any]) -> DeliveryOutcome:
+    from bot.services.wan3_models import wan3_model_spec
+
+    label = wan3_model_spec(record.get("provider_model")).label
     task_id = str(record["internal_task_id"])
     telegram_id = int(record["telegram_id"])
     url = str(record.get("result_url") or "")
     timeout = delivery_timeout()
     if record["status"] == "failed":
-        text = ("❌ Wan 3.0 Video Prime не завершил генерацию.\n"
+        text = (f"❌ {label} не завершил генерацию.\n"
                 f"🆔 <code>{html.escape(task_id)}</code>\n"
                 f"Возвращено: <b>{float(record.get('refunded_credits') or 0):g}🍌</b>.")
         try:
@@ -77,7 +80,7 @@ async def deliver_wan_result(bot: Any, record: dict[str, Any]) -> DeliveryOutcom
         except Exception as exc:  # noqa: BLE001 - classify uncertain Telegram outcomes without replay
             return _failure(exc)
 
-    caption = ("✅ <b>Wan 3.0 Video Prime — готово</b>\n"
+    caption = (f"✅ <b>{label} — готово</b>\n"
                f"🆔 <code>{html.escape(task_id)}</code>\n"
                f"Списано: <b>{float(record.get('charged_credits') or 0):g}🍌</b>")
     refunded = float(record.get("refunded_credits") or 0)

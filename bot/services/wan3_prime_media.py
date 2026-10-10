@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import urlparse
 
+from bot.services.wan3_models import wan3_model_spec
+
 WAN3_MODEL_KEY = "wan_3_prime"
 WAN3_PROVIDER_MODEL = "wan/3-0-video-prime"
 
@@ -101,6 +103,11 @@ class Wan3PrimeRecipe:
     input_video_seconds: float = 0.0
     input_audio_seconds: float = 0.0
     upstream_page_validation_required: bool = False
+    model: str = WAN3_MODEL_KEY
+
+    @property
+    def provider_model(self) -> str:
+        return wan3_model_spec(self.model).provider_model
 
     def safe_summary(self) -> dict[str, Any]:
         data = asdict(self)
@@ -148,6 +155,8 @@ class Wan3PrimeRecipe:
         payload = self.safe_summary()
         # Idempotency describes the original user operation, not later admin template edits.
         payload.pop("prepared_input", None)
+        if self.model == WAN3_MODEL_KEY:
+            payload.pop("model", None)  # Preserve every legacy Prime fingerprint.
         payload["provider_args"] = self.raw_provider_args()
         encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
@@ -315,8 +324,10 @@ async def validate_wan3_recipe(body: dict[str, Any], probe: MediaProbe | None = 
     probe = probe or NullMediaProbe()
     data = normalize_wan3_body(body)
     model = str(data.get("model") or data.get("v_model") or WAN3_MODEL_KEY).strip()
-    if model and model not in {WAN3_MODEL_KEY, WAN3_PROVIDER_MODEL, "wan3_prime"}:
-        raise Wan3PrimeValidationError("model must be wan_3_prime")
+    try:
+        model = wan3_model_spec(model).key
+    except ValueError as exc:
+        raise Wan3PrimeValidationError(str(exc)) from exc
 
     scenario = str(data.get("scenario") or "text").strip().lower()
     if scenario not in ALLOWED_SCENARIOS:
@@ -443,6 +454,7 @@ async def validate_wan3_recipe(body: dict[str, Any], probe: MediaProbe | None = 
         raise Wan3PrimeValidationError("reference video duration plus output duration must be <= 30 seconds")
 
     return Wan3PrimeRecipe(
+        model=model,
         scenario=scenario,
         prompt=prompt,
         first_frame_url=first_frame,

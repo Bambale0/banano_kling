@@ -28,8 +28,8 @@ function newId() { return crypto.randomUUID() }
 function optionalSourceFor(recipe: Wan3PrimeRecipe): 'none' | 'file' | 'link' {
   return recipe.reference_file_urls?.length ? 'file' : recipe.reference_link_urls?.length ? 'link' : 'none'
 }
-function emptyRecipe(scenario: Wan3PrimeScenario = 'text'): Wan3PrimeRecipe {
-  return { model: 'wan_3_prime', scenario, prompt: '', resolution: '1080P', aspect_ratio: 'adaptive',
+function emptyRecipe(scenario: Wan3PrimeScenario = 'text', model: Wan3PrimeRecipe['model'] = 'wan_3_prime'): Wan3PrimeRecipe {
+  return { model, scenario, prompt: '', resolution: '1080P', aspect_ratio: 'adaptive',
     duration: 5, audio: true, nsfw_checker: false, seed: null, first_frame_url: null, last_frame_url: null,
     reference_image_urls: [], reference_video_urls: [], reference_audio_urls: [], reference_file_urls: [], reference_link_urls: [] }
 }
@@ -156,13 +156,14 @@ function MediaField({ title, label, prefix, kind, values, limit, offset = 1, dis
 }
 
 interface Wan3PrimeFormProps {
+  model?: Wan3PrimeRecipe['model']
   credits: number; isAdmin?: boolean; modelSelector?: ReactNode; initialRecipe?: Wan3PrimeRecipe | null
   ownerTaskId?: string | null; publicationSourceId?: number | null; trendId?: number | null; disabledReason?: string
   onQueued?: (result: Wan3PrimeGenerateResponse) => void | Promise<void>
 }
-export function Wan3PrimeForm({ credits, isAdmin = false, modelSelector, initialRecipe, ownerTaskId, publicationSourceId, trendId: selectedTrendId, disabledReason: externalDisabledReason, onQueued }: Wan3PrimeFormProps) {
+export function Wan3PrimeForm({ model = 'wan_3_prime', credits, isAdmin = false, modelSelector, initialRecipe, ownerTaskId, publicationSourceId, trendId: selectedTrendId, disabledReason: externalDisabledReason, onQueued }: Wan3PrimeFormProps) {
   const disabledReason = externalDisabledReason || ''
-  const [recipe, setRecipe] = useState<Wan3PrimeRecipe>(() => initialRecipe ? { ...emptyRecipe(), ...initialRecipe } : emptyRecipe())
+  const [recipe, setRecipe] = useState<Wan3PrimeRecipe>(() => initialRecipe ? { ...emptyRecipe('text', model), ...initialRecipe } : emptyRecipe('text', model))
   const drafts = useRef<Partial<Record<Wan3PrimeScenario, Wan3PrimeRecipe>>>({})
   const [requestId, setRequestId] = useState(newId)
   const [pending, setPending] = useState(0)
@@ -200,14 +201,14 @@ export function Wan3PrimeForm({ credits, isAdmin = false, modelSelector, initial
     const abort = new AbortController()
     setRecipeLoading(true)
     void fetchWan3PrimeOwnerRecipe(ownerTaskId, abort.signal).then(value => {
-      if (!abort.signal.aborted) { setRecipe({ ...emptyRecipe(), ...value.recipe }); setExtraSource(optionalSourceFor(value.recipe)); setQuoteState(null); setAttempted(false); setResult(null); frozenRequest.current = null; setRequestId(newId()) }
+      if (!abort.signal.aborted) { setRecipe({ ...emptyRecipe('text', model), ...value.recipe }); setExtraSource(optionalSourceFor(value.recipe)); setQuoteState(null); setAttempted(false); setResult(null); frozenRequest.current = null; setRequestId(newId()) }
     }).catch(error => { if (!abort.signal.aborted) setError(error instanceof Error ? error.message : 'Не удалось восстановить собственную задачу.') })
       .finally(() => { if (!abort.signal.aborted) setRecipeLoading(false) })
     return () => abort.abort()
-  }, [ownerTaskId])
+  }, [ownerTaskId, model])
   useEffect(() => {
-    if (initialRecipe && !attempted) { setRecipe({ ...emptyRecipe(), ...initialRecipe }); setExtraSource(optionalSourceFor(initialRecipe)) }
-  }, [initialRecipe]) // A new owner recipe is an explicit user selection, not a provider prompt.
+    if (initialRecipe && !attempted) { setRecipe({ ...emptyRecipe('text', model), ...initialRecipe }); setExtraSource(optionalSourceFor(initialRecipe)) }
+  }, [initialRecipe, model]) // A new owner recipe is an explicit user selection, not a provider prompt.
 
   useEffect(() => {
     if (!sourceId) { setRepeatPlan(null); setPlanLoading(false); return }
@@ -220,7 +221,7 @@ export function Wan3PrimeForm({ credits, isAdmin = false, modelSelector, initial
         const sameSource = trendId ? old.trend_id === trendId : old.source_feed_gen_id === sourceId
         const settings = sameSource ? { resolution: old.resolution, aspect_ratio: old.aspect_ratio,
           duration: old.duration, seed: old.seed, audio: old.audio, nsfw_checker: old.nsfw_checker } : {}
-        return { ...emptyRecipe(plan.recipe.scenario), ...plan.recipe, ...settings,
+        return { ...emptyRecipe(plan.recipe.scenario, plan.recipe.model), ...plan.recipe, ...settings,
           prompt: sameSource ? old.prompt : '',
           ...(trendId ? { trend_id: trendId } : { source_feed_gen_id: sourceId }), repeat_plan_hash: plan.repeat_plan_hash,
           repeat_replacements: sameSource ? old.repeat_replacements || {} : {} }
@@ -234,11 +235,30 @@ export function Wan3PrimeForm({ credits, isAdmin = false, modelSelector, initial
   const selectMode = (mode: Wan3PrimeScenario) => {
     if (locked || sourceId) return
     drafts.current[recipe.scenario] = recipe
-    const next = drafts.current[mode] || { ...emptyRecipe(mode), prompt: recipe.prompt, resolution: recipe.resolution,
+    const next = drafts.current[mode] || { ...emptyRecipe(mode, recipe.model), prompt: recipe.prompt, resolution: recipe.resolution,
       aspect_ratio: recipe.aspect_ratio, duration: recipe.duration, seed: recipe.seed, audio: recipe.audio, nsfw_checker: recipe.nsfw_checker }
     setRecipe(next); setQuoteState(null); setError('')
     setExtraSource(optionalSourceFor(next))
   }
+  useEffect(() => {
+    if (attempted || pending > 0 || recipeLoading || planLoading || issue || disabledReason) return
+    const abort = new AbortController()
+    const key = snapshot
+    const timer = setTimeout(() => {
+      setQuoting(true)
+      void quoteWan3Prime({ recipe: JSON.parse(key), client_request_id: requestId }, abort.signal)
+        .then(value => {
+          if (!value.quote_hash || !Number.isFinite(value.reserve_cost) || value.reserve_cost < 0) throw new Error('Сервер не подтвердил стоимость.')
+          if (!abort.signal.aborted && currentSnapshot.current === key) setQuoteState({ snapshot: key, quote: value })
+        })
+        .catch(error => {
+          if (!abort.signal.aborted && currentSnapshot.current === key) setError(error instanceof Error ? error.message : 'Не удалось рассчитать стоимость.')
+        })
+        .finally(() => { if (!abort.signal.aborted) setQuoting(false) })
+    }, 350)
+    return () => { clearTimeout(timer); abort.abort(); setQuoting(false) }
+  }, [snapshot, requestId, attempted, pending, recipeLoading, planLoading, issue, disabledReason])
+
   const calculate = async () => {
     if (working || attempted || issue || disabledReason) return
     const key = snapshot; setQuoting(true); setError('')
@@ -276,7 +296,7 @@ export function Wan3PrimeForm({ credits, isAdmin = false, modelSelector, initial
   return <div className="min-w-0 space-y-4" data-testid="wan3-prime-form">
     {modelSelector ? <section className={CARD}><h3 className="text-sm font-medium">Модель</h3>{modelSelector}</section> : null}
     <section className={CARD}>
-      <div><h3 className="font-serif text-lg font-semibold">Wan 3.0 Video Prime</h3><p className="mt-1 text-xs text-muted-foreground">Выберите задачу. Черновики каждого режима сохраняются при переключении.</p></div>
+      <div><h3 className="font-serif text-lg font-semibold">{recipe.model === 'wan_3' ? 'Wan 3.0 Video' : 'Wan 3.0 Video Prime'}</h3><p className="mt-1 text-xs text-muted-foreground">Выберите задачу. Черновики каждого режима сохраняются при переключении.</p></div>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3" aria-label="Режим Wan">
         {MODES.map(([mode, label]) => <button type="button" key={mode} disabled={locked || Boolean(sourceId)} aria-pressed={recipe.scenario === mode} onClick={() => selectMode(mode)}
           className={`rounded-xl border px-3 py-2.5 text-left text-xs transition disabled:opacity-50 ${recipe.scenario === mode ? 'border-cyan/60 bg-cyan/10 text-foreground' : 'border-border/50 text-muted-foreground hover:bg-secondary'}`}>{label}</button>)}
@@ -333,9 +353,9 @@ export function Wan3PrimeForm({ credits, isAdmin = false, modelSelector, initial
       {pending > 0 ? <p role="status" className="text-xs">Загружаю и проверяю материалы…</p> : null}
       <Button type="button" variant="outline" disabled={working || attempted || !!issue || !!disabledReason} onClick={() => { void calculate() }}>{quoting ? 'Рассчитываю…' : 'Рассчитать стоимость'}</Button>
       {approved ? <div className="space-y-1 text-sm" role="status">
-        <p className="text-xl font-semibold">{approved.admin_free ? 'Без списания бананов для администратора' : `Резерв: ${approved.reserve_cost}🍌`}</p>
-        <p className="text-xs text-muted-foreground">Видео-референсы: {approved.source_video_duration_seconds} с · к расчёту до {approved.billing_duration_seconds} с.</p>
-        <p className="text-xs text-muted-foreground">{approved.settlement_notice || 'Финальная стоимость — по фактическому результату; неиспользованный резерв возвращается.'}</p>
+        <p className="text-xl font-semibold">{approved.admin_free ? 'Без списания бананов для администратора' : `${approved.auto_duration ? 'Максимальный резерв' : 'Стоимость'}: ${approved.reserve_cost}🍌`}</p>
+        <p className="text-xs text-muted-foreground">Вход: {approved.source_video_duration_seconds} с + выход: {approved.billing_duration_seconds - approved.source_video_duration_seconds} с · {approved.auto_duration ? 'максимум' : 'всего'} {approved.billing_duration_seconds} с.</p>
+        <p className="text-xs text-muted-foreground">{approved.settlement_notice || (approved.auto_duration ? 'Неиспользованный резерв возвращается после результата.' : 'Показанная стоимость фиксируется при запуске.')}</p>
       </div> : <p className="text-xs text-muted-foreground">Запуск станет доступен после расчёта. Изменение материалов или настроек требует нового расчёта.</p>}
       {error ? <p role="alert" className="break-words text-sm text-destructive">{error}</p> : null}
       {result ? <div role="status" className="space-y-1 rounded-lg border border-border p-3 text-sm"><p>{result.status === 'failed' ? `Генерация не выполнена. Возвращено: ${result.refunded_cost ?? result.reserve_cost}🍌.` : result.status === 'unknown' ? 'Провайдер ещё не подтвердил приём. Проверяем эту же задачу.' : result.status === 'done' ? 'Видео готово.' : 'Видео принято в работу.'}</p><code className="block break-all text-xs">{result.internal_task_id}</code><p className="text-xs text-muted-foreground">Результат появится в истории. Доставка в Telegram зависит от доступности чата.</p></div> : null}

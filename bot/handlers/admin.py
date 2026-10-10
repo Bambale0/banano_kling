@@ -1079,6 +1079,7 @@ VIDEO_MODEL_LABELS = {
     "seedance_2_mini": "Seedance 2.0 Mini",
     "seedance_2_fast": "Seedance 2.0 Fast",
     "wan_3_prime": "Wan 3.0 Video Prime",
+    "wan_3": "Wan 3.0 Video",
 }
 
 SEEDANCE_ADMIN_PRICE_MODELS = {
@@ -1107,10 +1108,15 @@ SEEDANCE_ADMIN_PRICE_MODELS = {
         "duration_max": 30,
         "resolutions": ("480p", "720p", "1080p"),
     },
+    "wan_3": {
+        "duration_min": 2,
+        "duration_max": 30,
+        "resolutions": ("480p", "720p", "1080p"),
+    },
 }
 
 ADMIN_VIDEO_PRICE_GROUPS = (
-    ("wan", "Wan", ("wan_3_prime",)),
+    ("wan", "Wan", ("wan_3", "wan_3_prime")),
     ("seedance", "Seedance", ("seedance_2_5", "seedance_2", "seedance_2_mini", "seedance_2_fast")),
     ("kling", "Kling", ("v3_std", "v3_pro", "v26_pro", "glow", "motion_control_v26", "motion_control_v30", "avatar_std", "avatar_pro")),
     ("grok", "Grok", ("grok_imagine", "grok_imagine_v15")),
