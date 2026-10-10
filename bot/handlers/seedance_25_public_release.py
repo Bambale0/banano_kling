@@ -27,7 +27,7 @@ from urllib.parse import urlsplit
 from typing import Any
 
 from aiohttp import web
-from aiogram import types
+from aiogram import F, types
 from aiogram.fsm.context import FSMContext
 
 from bot.config import config
@@ -188,7 +188,8 @@ async def _public_show_screen(target, state: FSMContext, *, edit: bool = True, a
         try:
             identity_payload = _scenario_payload(data, "")
             await _validate_public_payload(identity_payload, is_admin=is_admin, telegram_id=user_id)
-            billing_quote = await _payload_quote(user_id, identity_payload)
+            row = await _prepare_measured_quote(user_id, identity_payload)
+            billing_quote = VideoQuote(**json.loads(row["billing_json"]))
             current_quote = _identity_quote(identity_payload, cost=billing_quote.cost)
             quote = current_quote["cost"]
             await state.update_data(seedance25_identity_quote=current_quote)
@@ -197,7 +198,15 @@ async def _public_show_screen(target, state: FSMContext, *, edit: bool = True, a
             await state.update_data(seedance25_identity_quote=None)
     else:
         pricing_payload = _scenario_payload(display_data, "")
-        quote = (await _payload_quote(user_id, pricing_payload)).cost
+        try:
+            if _needs_measured_quote(pricing_payload):
+                row = await _prepare_measured_quote(user_id, pricing_payload)
+                billing_quote = VideoQuote(**json.loads(row["billing_json"]))
+            else:
+                billing_quote = await _payload_quote(user_id, pricing_payload)
+            quote = billing_quote.cost
+        except ValueError as exc:
+            identity_error = str(exc)
 
     if scenario == "first_frame":
         media_hint = f"Загрузите <b>1 фото</b> как первый кадр. Сейчас: {'✅' if first else '—'}"
@@ -230,16 +239,17 @@ async def _public_show_screen(target, state: FSMContext, *, edit: bool = True, a
             f"Сейчас фото: <code>{images}/3</code>, видео: <code>{videos}/1</code>."
         )
     if identity and quote is not None:
-        media_hint += f" Исходник: <b>{identity_payload['source_video_duration_seconds']:g}с</b>; расчёт: <b>{identity_payload['billing_duration']}с</b>."
+        media_hint += f" Исходник: <b>{identity_payload['source_video_duration_seconds']:g}с</b>."
     billing_line = (
         f"💰 Цена: <code>{quote}</code>🍌. Для администратора списание отключено."
         if is_admin
         else f"💰 Цена: <code>{quote}</code>🍌 — будет списана при запуске."
     )
-    if identity and quote is None:
+    if quote is None:
         billing_line = "Цена появится после проверки загруженных фото и видео. " + identity_error
-    elif identity:
-        billing_line += " Расчёт по длительности исходника с округлением вверх до секунды."
+    elif billing_quote.version == 2:
+        billing_line += (f" Вход {billing_quote.input_seconds:g}с + "
+                         f"результат {billing_quote.selected_output_seconds:g}с.")
     auto_note = (
         "\n⚠️ Auto сейчас доступен только администратору: для пользователей выберите 4–30с."
         if duration == -1 and not is_admin and not identity
@@ -325,19 +335,101 @@ def _identity_quote(payload: dict[str, Any], *, cost: float | None = None) -> di
 
 
 async def _payload_quote(telegram_id: int | None, payload: dict[str, Any]) -> VideoQuote:
-    """Price only normalized provider inputs, never client tariff/quote fields."""
+    """Legacy/no-reference quote seam. Measured launches use durable quotes below."""
     duration = payload.get("billing_duration", payload["duration"])
-    # Identity uses the measured, rounded-up source duration. Ordinary Auto
-    # and editing retain the established five-second estimate.
-    duration = 5 if duration == -1 else int(duration)
-    kwargs = {
-        "duration": duration,
-        "quality": payload["resolution"],
-        "video_references": payload["video_urls"],
-    }
+    kwargs = {"duration": 5 if duration == -1 else int(duration),
+              "quality": payload["resolution"], "video_references": payload["video_urls"]}
     if telegram_id is None:
         return resolve_video_quote(MODEL_KEY, **kwargs)
     return await quote_video_for_actor(telegram_id, MODEL_KEY, **kwargs)
+
+
+def _needs_measured_quote(payload):
+    return bool(payload["video_urls"] and (payload["duration"] > 0 or payload.get("seedance25_video_editing")))
+
+
+async def _prepare_measured_quote(telegram_id, payload):
+    from bot.services.seedance_quote_lifecycle import prepare_quote
+
+    return await prepare_quote(telegram_id, MODEL_KEY, payload, video_key="video_urls",
+                               duration=payload["duration"], quality=payload["resolution"],
+                               source_locked=bool(payload.get("seedance25_video_editing")))
+
+
+async def _bind_measured_seedance25(row):
+    from bot.database import get_generation_task_payload
+    from bot.services.seedance_quote_lifecycle import receipt_store
+
+    payload = json.loads(row["provider_json"])
+    billing = VideoQuote(**json.loads(row["billing_json"]))
+    task_id = row["provider_task_id"]
+    source_feed_gen_id = payload.get("source_feed_gen_id")
+    request_data = _request_data(payload, is_admin=billing.profile == "admin", quote=billing.cost,
+                                 source=payload.get("_launch_surface", "miniapp"), billing_quote=billing)
+    request_data["seedance_quote_id"] = row["quote_id"]
+    for key in ("trend_id", "action_type", "prompt_source_id", "reference_contract", "fixed_asset_counts", "prompt_hidden", "prompt_actions_allowed"):
+        if payload.get(key) is not None:
+            request_data[key] = payload[key]
+    if payload.get("_private_repeat"):
+        request_data["video_repeat_contract_version"] = 1
+    inserted = await generation_module.add_generation_task(
+        row["user_id"], row["telegram_id"], task_id, "video", "no_preset_video", model=MODEL_KEY,
+        duration=payload["duration"], aspect_ratio=payload["ratio"], prompt=payload["prompt"],
+        cost=row["charged_cost"], request_data=request_data, provider_accepted=True,
+        source_feed_gen_id=source_feed_gen_id,
+        parent_generation_id=payload.get("parent_generation_id") if source_feed_gen_id else None,
+        action_type="repeat" if source_feed_gen_id else payload.get("action_type"),
+    )
+    if not inserted:
+        existing = await get_generation_task_payload(task_id, user_id=int(row["user_id"]))
+        raw = existing.get("request_data") if existing else None
+        metadata = json.loads(raw) if isinstance(raw, str) else raw
+        if not isinstance(metadata, dict) or metadata.get("seedance_quote_id") != row["quote_id"]:
+            raise RuntimeError("Seedance canonical binding does not match quote receipt")
+    await (await receipt_store()).mark_bound(row["quote_id"], task_id)
+    if payload.get("trend_id"):
+        from bot import trend_api
+        await trend_api._record_trend_use(payload["trend_id"], row["user_id"], credits_spent=row["charged_cost"], repeat_task_id=task_id)
+    if source_feed_gen_id and row["charged_cost"] > 0:
+        import bot.miniapp as miniapp_module
+        await miniapp_module.credit_feed_prompt_repeat(
+            payload.get("parent_generation_id"), row["user_id"], repeat_task_id=task_id,
+            credits_spent=row["charged_cost"],
+        )
+
+
+async def _launch_measured_seedance25(telegram_id, payload, quote_id, quote_hash):
+    from bot.services.seedance_quote_lifecycle import claim_quote, submit_claimed_quote
+
+    row = await claim_quote(telegram_id, quote_id, quote_hash, payload)
+    return await submit_claimed_quote(row, submit=_launch_provider, bind=_bind_measured_seedance25)
+
+
+async def _measured_miniapp_response(row):
+    from bot.database import get_generation_task_payload
+
+    if row["phase"] != "accepted":
+        rejected = row["phase"] == "rejected"
+        return web.json_response({"ok": False, "quote_id": row["quote_id"],
+                                  "code": "video_rejected" if rejected else "video_status_pending",
+                                  "error": "Провайдер отклонил запрос. Оплата возвращена." if rejected else
+                                  "Исход запуска проверяется. Не запускайте повторно."}, status=409)
+    payload = json.loads(row["provider_json"])
+    billing = json.loads(row["billing_json"])
+    user = await generation_module.get_or_create_user(row["telegram_id"])
+    canonical = await get_generation_task_payload(row["provider_task_id"], user_id=int(row["user_id"]))
+    canonical_status = canonical.get("status") if canonical else "pending"
+    return web.json_response({"ok": True, "status": "done" if canonical_status == "completed" else
+                              "failed" if canonical_status == "failed" else "queued",
+                              "task_id": row["provider_task_id"], "credits": user.credits,
+                              "cost": billing["cost"], "model": MODEL_KEY, "model_label": "Seedance 2.5",
+                              "admin_free": billing["profile"] == "admin", "resolution": payload["resolution"],
+                              "duration": payload["duration"], "aspect_ratio": payload["ratio"],
+                              "scenario": payload["scenario"], "quote_id": row["quote_id"],
+                              "saved_url": canonical.get("result_url") if canonical else None,
+                              "prompt_hidden": bool(payload.get("trend_id") or payload.get("source_feed_gen_id")),
+                              "prompt_actions_allowed": not bool(payload.get("trend_id") or payload.get("source_feed_gen_id")),
+                              "task_type": "video", "trend_id": payload.get("trend_id")})
 
 
 def _scenario_payload(data: dict[str, Any], prompt: str) -> dict[str, Any]:
@@ -526,17 +618,52 @@ def _request_data(
     }
 
 
+async def _verify_telegram_repeat_context(telegram_id, data):
+    context = data.get("seedance25_repeat_context")
+    if not context:
+        return
+    from bot.handlers.seedance_25_telegram_compat import _repeat_request_data, _repeat_state_payload
+
+    task = await generation_module.get_task_by_id(context["task_id"])
+    user = await generation_module.get_or_create_user(telegram_id)
+    if not task or task.user_id != user.id or task.model != MODEL_KEY:
+        raise ValueError("Исходная генерация больше недоступна владельцу")
+    metadata = _repeat_request_data(task.request_data)
+    prompt = str(metadata.get("user_prompt") or metadata.get("prompt") or task.prompt or "").strip()
+    restored = _repeat_state_payload(task, metadata, prompt)
+    fingerprint = hashlib.sha256(json.dumps(restored, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    if fingerprint != context.get("fingerprint"):
+        raise ValueError("Данные исходной генерации изменились. Откройте повтор заново")
+
+
 async def _public_message_launch(message: types.Message, state: FSMContext, prompt: str, *, actor_id: int | None = None) -> None:
     telegram_id = actor_id if actor_id is not None else message.from_user.id
     data = await state.get_data()
     is_admin = config.is_admin(telegram_id)
     try:
+        await _verify_telegram_repeat_context(telegram_id, data)
         payload = _scenario_payload(data, prompt)
         await _validate_public_payload(payload, is_admin=is_admin, telegram_id=telegram_id)
     except ValueError as exc:
         await message.answer(f"❌ {exc}")
         return
 
+    if _needs_measured_quote(payload):
+        payload["_launch_surface"] = "telegram"
+        try:
+            row = await _prepare_measured_quote(telegram_id, payload)
+        except ValueError as exc:
+            await message.answer(f"❌ {exc}")
+            return
+        billing = json.loads(row["billing_json"])
+        await state.update_data(seedance25_pending_quote={"id": row["quote_id"], "hash": row["quote_hash"],
+                                                         "prompt": prompt})
+        keyboard = types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(
+            text=f"Создать видео · {billing['charge_cost']:g}🍌", callback_data="seedquote:" + row["quote_id"])]])
+        await message.answer(f"Видеорефы {billing['input_seconds']:g}с + результат "
+                             f"{billing['selected_output_seconds']:g}с. Цена: {billing['cost']:g}🍌. "
+                             "Подтвердите запуск по этой цене.", reply_markup=keyboard)
+        return
     billing_quote = await _payload_quote(telegram_id, payload)
     quote, charge_cost = billing_quote.cost, billing_quote.charge_cost
     is_admin = billing_quote.profile == "admin"
@@ -663,6 +790,20 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
         body.get("start_param_fallback"),
     )
     user = ctx["user"]
+    if body.get("seedance25_status_only") is True:
+        from bot.services.seedance_quote_lifecycle import receipt_store
+        from bot.services.seedance_quote_receipts import QuoteConflict
+
+        try:
+            row = await (await receipt_store()).find(telegram_id, body.get("video_quote_id"))
+        except QuoteConflict as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+        if not row:
+            return web.json_response({"ok": False, "code": "video_quote_missing", "error": "Расчёт не найден"}, status=404)
+        if row["phase"] == "accepted":
+            await _bind_measured_seedance25(row)
+            return await _measured_miniapp_response(row)
+        return web.json_response({"ok": True, "status": row["phase"], "quote_id": row["quote_id"]})
     if not isinstance(body.get("seedance25_quote_only", False), bool):
         return web.json_response({"ok": False, "error": "Некорректный запрос расчёта цены"}, status=400)
     is_admin = config.is_admin(telegram_id)
@@ -757,22 +898,41 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
             "Не удалось проверить входные данные повтора. Проверьте свои файлы."
             if source_feed_gen_id else str(exc)
         )
-        return web.json_response({"ok": False, "error": error}, status=400)
+        return web.json_response({"ok": False, "code": "video_input_invalid", "error": error}, status=400)
 
     payload.update(source_feed_gen_id=source_feed_gen_id, parent_generation_id=immediate_parent_id)
+    payload["_launch_surface"] = "miniapp"
+    payload["_private_repeat"] = bool(getattr(request, "_video_repeat_authorization", None))
+    if _needs_measured_quote(payload):
+        from bot.handlers.miniapp_video_continuity_compat import verify_video_repeat_before_charge
+        from bot.services.seedance_quote_lifecycle import public_quote
+        from bot.services.seedance_quote_receipts import InsufficientCredits, QuoteConflict
+
+        permission_error = await verify_video_repeat_before_charge(request)
+        if permission_error is not None:
+            return permission_error
+        try:
+            if body.get("seedance25_quote_only") is True:
+                row = await _prepare_measured_quote(telegram_id, payload)
+                result = public_quote(row)
+                if payload.get("seedance25_identity_transfer"):
+                    result.update(source_video_duration_seconds=payload["source_video_duration_seconds"],
+                                  seedance25_identity_quote=_identity_quote(payload, cost=result["cost"]))
+                return web.json_response(result)
+            row = await _launch_measured_seedance25(telegram_id, payload, body.get("video_quote_id"),
+                                                    body.get("video_quote_hash"))
+            return await _measured_miniapp_response(row)
+        except QuoteConflict as exc:
+            return web.json_response({"ok": False, "code": "video_quote_changed", "error": str(exc)}, status=409)
+        except InsufficientCredits as exc:
+            return web.json_response({"ok": False, "code": "video_not_reserved", "error": str(exc)}, status=400)
+        except ValueError as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
     billing_quote = await _payload_quote(telegram_id, payload)
     quote, charge_cost = billing_quote.cost, billing_quote.charge_cost
     is_admin = billing_quote.profile == "admin"
-    if payload.get("seedance25_identity_transfer"):
-        current_quote = _identity_quote(payload, cost=quote)
-        if body.get("seedance25_quote_only") is True:
-            return web.json_response({"ok": True, "quote_only": True, **current_quote,
-                                      "source_video_duration_seconds": payload["source_video_duration_seconds"],
-                                      "seedance25_identity_quote": current_quote})
-        if not is_admin and body.get("seedance25_identity_quote") != current_quote:
-            return web.json_response({"ok": False, "error": "Цена или исходное видео изменились. Обновите расчёт перед запуском."}, status=400)
-    elif body.get("seedance25_quote_only") is True:
-        return web.json_response({"ok": False, "error": "Расчёт доступен для переноса персонажа"}, status=400)
+    if body.get("seedance25_quote_only") is True:
+        return web.json_response({"ok": False, "error": "Добавьте видео для измеренного расчёта"}, status=400)
     if charge_cost > 0 and not await miniapp_module.check_can_afford(telegram_id, charge_cost):
         fresh = await miniapp_module.get_or_create_user(telegram_id)
         return web.json_response(
@@ -1065,6 +1225,17 @@ async def _public_process_payload(app: web.Application, payload: dict[str, Any])
         or str(code) in failure_codes
         or provider_fail_code in failure_codes
     )
+    if task_id and is_failure:
+        row = await fullstack._load_task_row(task_id)
+        metadata = json.loads(row["request_data"] or "{}") if row else {}
+        if metadata.get("seedance_quote_id"):
+            # A transport/code anomaly is not terminal provider evidence. New
+            # immutable recipes are never silently retried with altered refs.
+            if state not in {"fail", "failed", "error"}:
+                return False
+            from bot.services.task_watchdog import force_fail_task
+            return await force_fail_task(int(row["id"]), str((data or {}).get("failMsg") or "provider_failed"),
+                                         expected_provider_task_id=task_id, provider_confirmed_failed=True)
     if is_failure and task_id:
         fail_msg = str((data or {}).get("failMsg") or payload.get("msg") or "")
         try:
@@ -1119,7 +1290,11 @@ async def _public_send_results(
         f"• Формат: <code>{output_format.upper()}</code>\n"
         f"• Оплата: <code>{billing}</code>"
     )
-    if identity and request_data.get("source_video_duration_seconds") is not None:
+    locked_quote = request_data.get("billing_quote") or {}
+    if locked_quote.get("version") == 2:
+        caption += (f"\n• Расчёт: вход <code>{locked_quote['input_seconds']:g}с</code> + "
+                    f"результат <code>{locked_quote['selected_output_seconds']:g}с</code>")
+    elif identity and request_data.get("source_video_duration_seconds") is not None:
         measured = float(request_data["source_video_duration_seconds"])
         billed = int(request_data["billing_duration"])
         caption += f"\n• Исходное видео: <code>{measured:g}с</code> · расчёт: <code>{billed}с</code>"
@@ -1288,6 +1463,36 @@ def install_seedance_25_public_release() -> None:
 
     if getattr(generation_module, "_seedance_25_public_release_installed", False):
         return
+
+    async def confirm_measured_quote(callback, state):
+        data = await state.get_data()
+        pending = data.get("seedance25_pending_quote")
+        quote_id = str(callback.data).removeprefix("seedquote:")
+        if (data.get("v_model") != MODEL_KEY or not isinstance(pending, dict)
+                or pending.get("id") != quote_id):
+            await callback.answer("Откройте актуальный расчёт перед запуском", show_alert=True)
+            return
+        await callback.answer()
+        telegram_id = callback.from_user.id
+        try:
+            await _verify_telegram_repeat_context(telegram_id, data)
+            payload = _scenario_payload(data, str(pending.get("prompt") or ""))
+            await _validate_public_payload(payload, is_admin=config.is_admin(telegram_id), telegram_id=telegram_id)
+            payload["_launch_surface"] = "telegram"
+            row = await _launch_measured_seedance25(telegram_id, payload, quote_id, pending["hash"])
+            if row["phase"] == "accepted":
+                await callback.message.answer("✅ Видео принято. Результат придёт после завершения.")
+            elif row["phase"] == "rejected":
+                await callback.message.answer("Провайдер отклонил запрос. Оплата возвращена. Для нового запуска нужен новый расчёт.")
+            else:
+                await callback.message.answer("Исход запуска проверяется. Повторная отправка и повторное списание заблокированы.")
+        except ValueError as exc:
+            await callback.message.answer(f"❌ {exc}. Отправьте промпт для нового расчёта.")
+        except Exception as exc:
+            logger.error("Seedance quote confirmation deferred: quote_id=%s error_type=%s", quote_id, type(exc).__name__)
+            await callback.message.answer("Статус запуска пока не подтверждён. Не запускайте повторно.")
+
+    preview_module.router.callback_query.register(confirm_measured_quote, F.data.startswith("seedquote:"))
 
     # Access checks inside the isolated Seedance modules become feature-access
     # checks. Global config.is_admin is still used for billing/admin privileges.

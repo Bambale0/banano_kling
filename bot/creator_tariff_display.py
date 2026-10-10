@@ -56,9 +56,9 @@ def video_repeat_price_metadata(
     capability = get_video_capability(model)
     if capability is None:
         return {}
-    # The quote service uses reference presence only. This marker is not a URL,
-    # never leaves pricing, and cannot restore or disclose a private asset.
-    references = ["repeat-video-reference"] if has_video_reference else []
+    if has_video_reference:
+        return {"pricing_quality": quality, "duration_costs": {}, "requires_video_quote": True}
+    references = []
     return {
         "pricing_quality": quality,
         "duration_costs": {

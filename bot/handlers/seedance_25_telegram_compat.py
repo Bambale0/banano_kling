@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 
@@ -344,7 +345,10 @@ async def seedance25_repeat_video_result(callback: types.CallbackQuery, state: F
         or getattr(task, "prompt", "")
         or ""
     ).strip()
-    await state.update_data(**_repeat_state_payload(task, request_data, prompt))
+    restored = _repeat_state_payload(task, request_data, prompt)
+    fingerprint = hashlib.sha256(json.dumps(restored, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    await state.clear()
+    await state.update_data(**restored, seedance25_repeat_context={"task_id": task_id, "fingerprint": fingerprint})
 
     # The public Seedance wrapper below owns balance checks, charging and refunds.
     # Skipping the generic repeat handler also avoids its pre-charge/double-charge.

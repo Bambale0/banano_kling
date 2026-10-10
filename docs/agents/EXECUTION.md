@@ -1911,3 +1911,15 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Local checks: 27 isolated Python tests on synthetic SQLite/pure functions; 5 real PostgreSQL16 fixture transaction tests (BIGINT, concurrency, refund rollback, pending guard); 3 Jest pending-state tests; TypeScript and changed ESLint passed.
 - PostgreSQL fixture used a temporary network-disabled container and test-only asyncpg cursor shim, not application adapter/full application CI. Created container removed after tests. No provider calls, actual Telegram sends or production DB access.
 - Independent review and full exact-head CI required before merge/release.
+
+
+## 2026-10-10 — Measured Seedance quote integration (in progress, not released)
+
+- Baseline now includes deployed delivery 58b4458, dedicated Motion ccd2f1b and WAN 87087c2. Separate Seedance branch; production untouched.
+- New actor-bound quote receipt owns one atomic debit and acceptance state. Transport ambiguity holds the receipt; accepted-unbound reconciliation binds known provider IDs without createTask retry. Only proven rejection/terminal failure refunds the frozen charge.
+- Owned immutable video snapshots are staged, bounded, MOV-demuxed and hashed, then copied with expected-hash verification. Ordered effective slots determine input seconds; provider uses those same pinned objects. Public-unicast URL/DNS guards reject CGNAT/mapped IPv6/multicast. Explicit quote/job leases share storage lock with claim and GC; missing media/leases/canonical tasks fail closed.
+- Connected WIP callers: Seedance 2 generic Mini App/Telegram ordinary and own-repeat; Seedance 2.5 public Mini App/Telegram and restored repeats; both curated trend launchers. Quote requests assemble/authorize the same recipe as launch and return only price/seconds/token. New UI preserves launch tokens before POST and reconciles status after reload.
+- Confirmed checks so far: 13 security/metering tests, 8 receipt SQLite + same 8 disposable PostgreSQL16 tests, 8 snapshot lease tests, 7 injected lifecycle tests and 12 synthetic refund/receipt tests. TypeScript passes. These are not full application/production-adapter or browser verification; HTTP/Telegram/UI integration and exact-head full CI remain required.
+- Independent core review: ec5d881 and 05a47fe security/lease fixes reviewed with independent tests. Integration still awaits exact-head review.
+- Remaining: targeted complete caller journeys and callback tests; ordinary Motion/Glow other surfaces; Omni video-ref output policy awaiting user decision (provider ignores duration, no proven maximum). Historical accepted quotes/ledger and configured admin rates remain unchanged.
+- Release gate: user explicitly requested a pre-release coverage/formula/test/risk/rollback report. Keep draft; root reports before any merge/auto-merge/deploy. No paid generation or actual Telegram messages in verification.

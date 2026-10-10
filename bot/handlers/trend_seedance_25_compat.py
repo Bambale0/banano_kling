@@ -31,6 +31,7 @@ async def _run_seedance25_trend(
     telegram_id: int,
     user: Any,
     trend: Any,
+    quote_context: dict | None = None,
 ) -> web.Response:
     import bot.miniapp as miniapp_module
     from bot import trend_api
@@ -162,6 +163,10 @@ async def _run_seedance25_trend(
         )
     except ValueError as exc:
         raise trend_api.TrendRunValidationError(str(exc)) from exc
+
+    if video_references:
+        from bot.handlers.seedance_measured_launch import run_measured_trend_seedance25
+        return await run_measured_trend_seedance25(telegram_id, trend, payload, quote_context or {})
 
     pricing_trend = trend
     if video_editing and any(
@@ -312,17 +317,20 @@ def install_trend_seedance_25_compat() -> None:
         telegram_id: int,
         user: Any,
         trend: Any,
+        quote_context: dict | None = None,
     ) -> web.Response:
         if str(trend.model or "").strip() != MODEL_KEY:
             return await current_run_video_trend(
                 telegram_id=telegram_id,
                 user=user,
                 trend=trend,
+                **({"quote_context": quote_context} if quote_context is not None else {}),
             )
         return await _run_seedance25_trend(
             telegram_id=telegram_id,
             user=user,
             trend=trend,
+            quote_context=quote_context,
         )
 
     trend_api._run_video_trend = run_video_trend_with_seedance25
