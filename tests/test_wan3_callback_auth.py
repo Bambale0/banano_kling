@@ -68,7 +68,8 @@ async def test_signed_callback_http_rejects_unsigned_and_expired_before_polling(
 
 
 @pytest.mark.asyncio
-async def test_signed_callback_settles_late_success_after_wait_timeout_exactly_once(monkeypatch):
+@pytest.mark.parametrize('deferred', [False, True, 'transport_error', 'malformed', 'wrong_task', 'wrong_model'])
+async def test_signed_callback_settles_late_success_after_wait_timeout_exactly_once(monkeypatch, deferred):
     monkeypatch.setattr(config, 'KIE_WEBHOOK_HMAC_KEY', 'test-webhook-key')
     actor = await user_actor(100)
     provider = Provider()
@@ -89,6 +90,10 @@ async def test_signed_callback_settles_late_success_after_wait_timeout_exactly_o
     try:
         await lifecycle.reconcile_once(provider_task_id='provider_1')
         assert (await lifecycle.status(actor, launched['task_id']))['status'] == 'result_attention'
+        # Beyond the finite automatic polling window, a signed callback still
+        # obtains canonical state and can settle the original task.
+        assert await lifecycle.reconcile_once() == 0
+        assert provider.get_task_status.await_count == 1
         provider.get_task_status.return_value = {
             'taskId': 'provider_1', 'state': 'success',
             'response': {'resultUrls': ['https://kie.example.com/late-callback.mp4']},
@@ -98,15 +103,54 @@ async def test_signed_callback_settles_late_success_after_wait_timeout_exactly_o
         app.router.add_post('/callback', wan3_prime_api._http_boundary(wan3_prime_api._callback_route))
         payload = {'data': {'taskId': 'provider_1'}}
         callback_headers = headers_for('provider_1', int(time.time()))
+        if deferred:
+            async with database.db_backend.connect(database.DATABASE_PATH) as db:
+                await db.execute("UPDATE wan3_prime_intents SET next_attempt_at = '2999-01-01' WHERE internal_task_id = ?",
+                    (launched['task_id'],))
+                await db.commit()
         async with TestClient(TestServer(app)) as client:
             response = await client.post('/callback?intent=' + launched['task_id'], json=payload, headers=callback_headers)
             assert response.status == 200
             replay = await client.post('/callback?intent=' + launched['task_id'], json=payload, headers=callback_headers)
             assert replay.status == 200
-        assert (await lifecycle.status(actor, launched['task_id']))['status'] == 'completed'
+            if deferred:
+                # Replays are acknowledged without bypassing the stored backoff.
+                assert provider.get_task_status.await_count == 1
+                assert (await lifecycle.status(actor, launched['task_id']))['status'] == 'result_attention'
+                async with database.db_backend.connect(database.DATABASE_PATH) as db:
+                    await db.execute("UPDATE wan3_prime_intents SET next_attempt_at = '2000-01-01' WHERE internal_task_id = ?",
+                        (launched['task_id'],))
+                    await db.commit()
+                # Invalid/unavailable canonical observations cannot consume the
+                # only durable late-completion notification.
+                if isinstance(deferred, str):
+                    canonical = provider.get_task_status.return_value
+                    if deferred == 'transport_error':
+                        provider.get_task_status.side_effect = TimeoutError('temporary provider outage')
+                    else:
+                        provider.get_task_status.return_value = {
+                            'malformed': None,
+                            'wrong_task': {'taskId': 'unrelated', 'state': 'success'},
+                            'wrong_model': {'taskId': 'provider_1', 'model': 'unrelated', 'state': 'success'},
+                        }[deferred]
+                    assert await lifecycle.reconcile_once() == 0
+                    pending = await lifecycle._intent(launched['task_id'])
+                    assert pending['provider_state'].startswith('callback_pending:')
+                    provider.get_task_status.side_effect = None
+                    provider.get_task_status.return_value = canonical
+                    async with database.db_backend.connect(database.DATABASE_PATH) as db:
+                        await db.execute("UPDATE wan3_prime_intents SET next_attempt_at = '2000-01-01' WHERE internal_task_id = ?",
+                            (launched['task_id'],))
+                        await db.commit()
+                # The durable callback marker survives the age cutoff until due.
+                assert await lifecycle.reconcile_once() == 1
+        completed = await lifecycle.status(actor, launched['task_id'])
+        assert completed['status'] == 'completed'
+        assert completed['error_code'] is None and completed['error_message'] is None
         assert output.exists()
-        assert provider.get_task_status.await_count == 2
+        assert provider.get_task_status.await_count == (3 if isinstance(deferred, str) else 2)
         assert provider.creates == 1
         assert await balance(actor.user_id) == 90
     finally:
         output.unlink(missing_ok=True)
+

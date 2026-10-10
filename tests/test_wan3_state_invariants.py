@@ -1,4 +1,5 @@
 import asyncio
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -85,8 +86,8 @@ async def test_late_ready_result_after_wait_timeout_is_saved_settled_and_deliver
     launched = await lifecycle.launch(actor, body(), quote, 'late-timeout-result')
     async with database.db_backend.connect(database.DATABASE_PATH) as db:
         await db.execute(
-            "UPDATE wan3_prime_intents SET created_at = '2000-01-01' WHERE internal_task_id = ?",
-            (launched['task_id'],),
+            "UPDATE wan3_prime_intents SET created_at = ? WHERE internal_task_id = ?",
+            ((datetime.now(UTC) - timedelta(hours=3)).replace(tzinfo=None).isoformat(sep=" "), launched['task_id']),
         )
         await db.commit()
     provider.statuses['provider_1'] = {'taskId': 'provider_1', 'state': 'waiting'}
@@ -100,6 +101,7 @@ async def test_late_ready_result_after_wait_timeout_is_saved_settled_and_deliver
         assert await lifecycle.reconcile_once() == 1
         state = await lifecycle.status(actor, launched['task_id'])
         assert state['status'] == 'completed'
+        assert state['error_code'] is None and state['error_message'] is None
         assert output.exists()
         assert bot.send_video.await_count == 1
         assert await balance(actor.user_id) == 90
@@ -163,3 +165,105 @@ async def test_publication_keeps_result_pinned_until_copy_commits(tmp_path, monk
     proceed.set()
     result, _ = await asyncio.wait_for(asyncio.gather(publication, cleanup), timeout=5)
     assert result and path.exists()
+
+
+
+@pytest.mark.asyncio
+async def test_timeout_attention_does_not_starve_active_tasks_and_ages_out(monkeypatch):
+    monkeypatch.setenv('WAN3_PROVIDER_MAX_PENDING_SECONDS', '7200')
+    monkeypatch.setenv('WAN3_ATTENTION_POLL_WINDOW_SECONDS', '86400')
+    actor = await user_actor(100)
+    provider = Provider()
+    lifecycle = Wan3PrimeLifecycle(probe=Probe(), preset_manager=Prices(), transport=provider)
+    quote = await lifecycle.quote(actor, body())
+    tasks = []
+    for index in range(3):
+        provider.create_result = {'success': True, 'task_id': f'priority_{index}'}
+        tasks.append(await lifecycle.launch(actor, body(), quote, f'priority-{index}'))
+    now = datetime.now(UTC).replace(tzinfo=None)
+    async with database.db_backend.connect(database.DATABASE_PATH) as db:
+        for index, age in ((0, timedelta(hours=3)), (1, timedelta(days=3))):
+            await db.execute("UPDATE wan3_prime_intents SET status = 'result_attention', "
+                "error_code = 'provider_wait_timeout', created_at = ?, updated_at = '2000-01-01', "
+                "next_attempt_at = NULL WHERE internal_task_id = ?",
+                ((now - age).isoformat(sep=' '), tasks[index]['task_id']))
+        await db.commit()
+    provider.get_task_status = AsyncMock(side_effect=lambda task_id: {'taskId': task_id, 'state': 'waiting'})
+    await lifecycle.reconcile_once(limit=1)
+    provider.get_task_status.assert_awaited_once_with('priority_2')
+    provider.get_task_status.reset_mock()
+    await lifecycle.reconcile_once(limit=50)
+    provider.get_task_status.assert_awaited_once_with('priority_0')
+    assert (await lifecycle.status(actor, tasks[1]['task_id']))['status'] == 'result_attention'
+    assert await balance(actor.user_id) == 70 and provider.creates == 3
+    # Expiration stops only background polling, never an explicit canonical check.
+    provider.get_task_status.reset_mock()
+    await lifecycle.reconcile_once(provider_task_id='priority_1')
+    provider.get_task_status.assert_awaited_once_with('priority_1')
+    assert await balance(actor.user_id) == 70 and provider.creates == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(('late_seconds', 'expected_delay'), [(60, 300), (2400, 1200), (20000, 3600)])
+async def test_timeout_attention_backoff_grows_to_configured_ceiling(monkeypatch, late_seconds, expected_delay):
+    monkeypatch.setenv('WAN3_PROVIDER_MAX_PENDING_SECONDS', '7200')
+    monkeypatch.setenv('WAN3_ATTENTION_POLL_INITIAL_SECONDS', '300')
+    monkeypatch.setenv('WAN3_ATTENTION_POLL_MAX_SECONDS', '3600')
+    actor = await user_actor(100)
+    provider = Provider()
+    lifecycle = Wan3PrimeLifecycle(probe=Probe(), preset_manager=Prices(), transport=provider)
+    quote = await lifecycle.quote(actor, body())
+    launched = await lifecycle.launch(actor, body(), quote, 'attention-backoff')
+    created = (datetime.now(UTC) - timedelta(seconds=7200 + late_seconds)).replace(tzinfo=None)
+    async with database.db_backend.connect(database.DATABASE_PATH) as db:
+        await db.execute("UPDATE wan3_prime_intents SET status = 'result_attention', "
+            "error_code = 'provider_wait_timeout', created_at = ? WHERE internal_task_id = ?",
+            (created.isoformat(sep=' '), launched['task_id']))
+        await db.commit()
+    provider.get_task_status = AsyncMock(return_value={'taskId': 'provider_1', 'state': 'waiting'})
+    await lifecycle.reconcile_once()
+    row = await lifecycle._intent(launched['task_id'])
+    retry = row['next_attempt_at']
+    if isinstance(retry, str):
+        retry = datetime.fromisoformat(retry)
+    remaining = (retry.replace(tzinfo=UTC) - datetime.now(UTC)).total_seconds()
+    assert expected_delay - 5 <= remaining <= expected_delay + 5
+    await lifecycle.reconcile_once()
+    provider.get_task_status.assert_awaited_once()
+    assert await balance(actor.user_id) == 90 and provider.creates == 1
+
+
+@pytest.mark.asyncio
+async def test_late_callback_marker_is_consumed_but_newer_inflight_callback_is_preserved():
+    actor = await user_actor(100)
+    provider = Provider()
+    lifecycle = Wan3PrimeLifecycle(probe=Probe(), preset_manager=Prices(), transport=provider)
+    quote = await lifecycle.quote(actor, body())
+    launched = await lifecycle.launch(actor, body(), quote, 'callback-marker')
+    async with database.db_backend.connect(database.DATABASE_PATH) as db:
+        await db.execute("UPDATE wan3_prime_intents SET status = 'result_attention', "
+            "error_code = 'provider_wait_timeout', created_at = '2000-01-01', "
+            "provider_state = 'callback_pending:old' WHERE internal_task_id = ?", (launched['task_id'],))
+        await db.commit()
+    old_poll_row = await lifecycle._intent(launched['task_id'])
+    async with database.db_backend.connect(database.DATABASE_PATH) as db:
+        await db.execute("UPDATE wan3_prime_intents SET provider_state = 'callback_pending:new' "
+            "WHERE internal_task_id = ?", (launched['task_id'],))
+        await db.commit()
+    await lifecycle._defer_provider(old_poll_row, state='waiting')
+    assert (await lifecycle._intent(launched['task_id']))['provider_state'] == 'callback_pending:new'
+    async with database.db_backend.connect(database.DATABASE_PATH) as db:
+        await db.execute("UPDATE wan3_prime_intents SET next_attempt_at = '2000-01-01' WHERE internal_task_id = ?",
+            (launched['task_id'],))
+        await db.commit()
+    provider.get_task_status = AsyncMock(return_value={'taskId': 'provider_1', 'state': 'waiting'})
+    await lifecycle.reconcile_once()
+    assert (await lifecycle._intent(launched['task_id']))['provider_state'] == 'waiting'
+    # No new callback: the old task cannot keep polling beyond the finite window.
+    async with database.db_backend.connect(database.DATABASE_PATH) as db:
+        await db.execute("UPDATE wan3_prime_intents SET next_attempt_at = '2000-01-01' WHERE internal_task_id = ?",
+            (launched['task_id'],))
+        await db.commit()
+    await lifecycle.reconcile_once()
+    provider.get_task_status.assert_awaited_once()
+    assert provider.creates == 1 and await balance(actor.user_id) == 90
