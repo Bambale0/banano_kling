@@ -172,6 +172,16 @@ main
         self.assertNotIn("BACKUP", result.stdout)
         self.assertNotIn("MAINTENANCE", result.stdout)
 
+    def test_maintenance_command_failures_are_reported(self):
+        source = BACKEND.read_text().rsplit('main "$@"', 1)[0]
+        for function in ("backfill_public_feed_videos", "reconcile_rendergrid_legacy_images"):
+            with self.subTest(function=function), tempfile.TemporaryDirectory() as tmp:
+                result = shell(source + """
+compose() { return 1; }
+""" + function, tmp)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("maintenance failed", result.stderr)
+
     def test_miniapp_disk_preflight_precedes_build(self):
         text = MINIAPP.read_text()
         build = text.index("npm ci --no-audit")
@@ -201,6 +211,7 @@ main
             live.mkdir()
             backups.mkdir()
             (live / "index.html").write_text("current")
+            (live / "revision.txt").write_text("old-sha\n")
             for i in range(10):
                 old = backups / f"old-{i}"
                 old.mkdir()
@@ -219,6 +230,15 @@ log() { :; }
             created = [p for p in backups.iterdir() if not p.name.startswith("old-")]
             self.assertEqual(len(created), 1)
             self.assertEqual((created[0] / "index.html").read_text(), "current")
+            revision_start = text.index('revision_file="$(mktemp')
+            revision_end = text.index('chown -R root:root', revision_start)
+            result = shell(
+                'set -Eeuo pipefail; MINIAPP_ROOT="$PROJECT_DIR/live"; EXPECTED_SHA=new-sha\n'
+                + text[revision_start:revision_end], tmp,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((live / "revision.txt").read_text(), "new-sha\n")
+            self.assertEqual((created[0] / "revision.txt").read_text(), "old-sha\n")
 
 
 if __name__ == "__main__":

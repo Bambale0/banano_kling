@@ -200,8 +200,11 @@ log "Publishing static export to ${MINIAPP_ROOT}"
 # Keep older hashed chunks for in-flight Telegram WebViews while replacing the
 # entrypoint and all current assets atomically enough for static Nginx serving.
 rsync -a --chmod=D755,F644 "${OUT_DIR}/" "${MINIAPP_ROOT}/"
-printf '%s\n' "$EXPECTED_SHA" > "${MINIAPP_ROOT}/revision.txt"
-chmod 0644 "${MINIAPP_ROOT}/revision.txt"
+# Backups use hard links: replace the inode instead of truncating old revisions.
+revision_file="$(mktemp "${MINIAPP_ROOT}/.revision-XXXXXX")"
+printf '%s\n' "$EXPECTED_SHA" > "$revision_file"
+chmod 0644 "$revision_file"
+mv -f -- "$revision_file" "${MINIAPP_ROOT}/revision.txt"
 chown -R root:root "$WEB_ROOT"
 
 BASE_URL="https://${FRONTEND_DOMAIN}/mini-app"

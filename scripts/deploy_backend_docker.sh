@@ -217,7 +217,8 @@ wait_for_health() {
 backfill_public_feed_videos() {
     log "Backfilling durable public feed videos"
     if ! compose exec -T bot python -m scripts.backfill_feed_video_media; then
-        warn "Public feed video backfill failed; deployment continues and runtime URLs remain available"
+        warn "Public feed video maintenance failed; inspect results before retrying"
+        return 1
     fi
 }
 
@@ -233,7 +234,8 @@ reconcile_rendergrid_legacy_images() {
         -e RENDERGRID_IMAGE_BACKFILL_MAX_BATCHES="${max_batches}" \
         -e RENDERGRID_IMAGE_BACKFILL_CHECKPOINT_PATH="/app/data/rendergrid-image-backfill-checkpoint.json" \
         bot python -m scripts.backfill_rendergrid_image_results; then
-        warn "RenderGrid legacy reconciliation reported failures; deployment continues with TTL/media_unavailable safeguards"
+        warn "RenderGrid legacy maintenance failed; inspect results before retrying"
+        return 1
     fi
 }
 
