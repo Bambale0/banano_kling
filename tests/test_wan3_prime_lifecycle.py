@@ -326,7 +326,8 @@ async def test_delivery_unavailable_preserves_result_without_regeneration():
 
 
 @pytest.mark.asyncio
-async def test_callback_spoof_rejected_and_nonce_can_bind_after_accept_crash():
+async def test_callback_spoof_rejected_and_nonce_can_bind_after_accept_crash(monkeypatch):
+    monkeypatch.setenv('WAN3_CALLBACK_QUERY_LOGS_REDACTED', '1')
     actor = await user_actor(credits=40)
     provider = Provider()
     lifecycle = Wan3PrimeLifecycle(probe=Probe(), preset_manager=Prices({"720p": 2}), transport=provider)
@@ -377,7 +378,8 @@ async def test_durable_file_missing_cannot_complete_and_startup_marks_stuck_subm
     }
 
     assert await lifecycle.reconcile_once(provider_task_id="provider_1") == 0
-    assert (await lifecycle.status(actor, launched["task_id"]))["status"] == "submitted"
+    assert (await lifecycle.status(actor, launched["task_id"]))["status"] == "settlement_pending"
+    assert await balance(actor.user_id) == 70  # Reserved, not charged twice or falsely refunded.
 
     async with database.db_backend.connect(database.DATABASE_PATH) as db:
         await db.execute(

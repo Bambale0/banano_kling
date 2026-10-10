@@ -147,10 +147,13 @@ class Wan3PrimeStorage:
             await db.commit()
 
     async def cleanup_expired(self, *, limit: int = 100) -> dict[str, int]:
+        from bot.services.wan3_prime_result_retention import cleanup_results
         from bot.services.wan3_prime_retention import cleanup_expired
 
         await self.init_schema()
-        return await cleanup_expired(limit=limit)
+        summary = await cleanup_expired(limit=limit)
+        summary['removed_results'] = await cleanup_results(limit=limit)
+        return summary
 
     async def init_upload(self, actor, *, kind: str, filename: str, size: int, content_type: str | None = None, importing: bool = False) -> dict[str, Any]:
         from bot.services.wan3_prime_storage_policy import (
@@ -278,11 +281,18 @@ class Wan3PrimeStorage:
             with contextlib.suppress(OSError):
                 await asyncio.to_thread(shutil.rmtree, session_dir)
             return saved
-        except (Exception, asyncio.CancelledError):
+        except (Exception, asyncio.CancelledError) as exc:
+            from bot.services.wan3_prime_files import Wan3PrimeDocumentError
+
+            terminal = isinstance(exc, Wan3PrimeDocumentError)
+            next_status = 'rejected' if terminal else 'open'
             async with db_backend.connect(_sqlite_path()) as db:
-                await db.execute("UPDATE wan3_prime_upload_sessions SET status = 'open', updated_at = CURRENT_TIMESTAMP "
-                                 "WHERE upload_id = ? AND status = 'assembling' AND updated_at = ?", (upload_id, stamp))
+                changed = await db.execute("UPDATE wan3_prime_upload_sessions SET status = ?, updated_at = CURRENT_TIMESTAMP "
+                    "WHERE upload_id = ? AND status = 'assembling' AND updated_at = ?", (next_status, upload_id, stamp))
                 await db.commit()
+            if terminal and changed.rowcount == 1:
+                # Retain quota until the actual rejected bytes are removed.
+                await self.discard_import(actor, upload_id)
             raise
 
     async def save_owned_file(self, actor, *, kind: str, filename: str, path: Path, content_type: str | None = None,
@@ -292,7 +302,16 @@ class Wan3PrimeStorage:
         from bot.services.wan3_prime_storage_policy import assert_capacity, lock_storage
 
         await self.init_schema()
-        info = await ActualWan3PrimeProbe(storage=self).probe_file(str(path), kind=kind)
+        from bot.services.wan3_prime_probe_cache import probe_slot
+
+        async with probe_slot(actor.user_id):
+            inspection = asyncio.create_task(ActualWan3PrimeProbe(storage=self).probe_file(str(path), kind=kind))
+            try:
+                info = await asyncio.shield(inspection)
+            except asyncio.CancelledError:
+                # Retain admission until the bounded parser finishes.
+                await asyncio.shield(inspection)
+                raise
         if info.size_bytes is None or info.size_bytes <= 0 or info.size_bytes > _kind_limit(kind):
             raise Wan3PrimeValidationError("Stored media size is not allowed")
         ext = (info.extension or Path(filename).suffix).lower()
@@ -349,12 +368,12 @@ class Wan3PrimeStorage:
         async with db_backend.connect(_sqlite_path()) as db:
             await lock_storage(db)
             row = await (await db.execute("SELECT status FROM wan3_prime_upload_sessions WHERE upload_id = ? AND user_id = ?", (upload_id, actor.user_id))).fetchone()
-            if not row or row[0] not in {"importing", "completed"}:
+            if not row or row[0] not in {"importing", "completed", "rejected"}:
                 return
             directory = canonical_child_path(CHUNK_ROOT, upload_id)
             if directory.exists():
                 await asyncio.to_thread(shutil.rmtree, directory)
-            await db.execute("UPDATE wan3_prime_upload_sessions SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE upload_id = ? AND status = 'importing'", (upload_id,))
+            await db.execute("UPDATE wan3_prime_upload_sessions SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE upload_id = ? AND status IN ('importing', 'rejected')", (upload_id,))
             await db.commit()
 
     async def import_url(self, actor, *, kind: str, url: str) -> dict[str, Any]:

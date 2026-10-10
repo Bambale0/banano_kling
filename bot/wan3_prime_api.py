@@ -84,7 +84,13 @@ def _recipe_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _quote_response(quote) -> dict[str, Any]:
+    from bot.services.wan3_prime_storage_policy import positive_setting
+
     auto = quote.requested_output_seconds is None
+    retention_days = positive_setting('WAN3_RESULT_RETENTION_SECONDS', 30 * 86400) / 86400
+    notice = f'Неопубликованный оригинал хранится на сервере {retention_days:g} дн. после генерации; скачайте его. Опубликованные и ещё не доставленные работы сохраняются.'
+    if auto:
+        notice = 'Auto резервирует максимум 30 суммарных видеосекунд; неиспользованная часть возвращается после проверки результата. ' + notice
     return {
         "ok": True,
         "quote_hash": quote.quote_hash,
@@ -95,7 +101,7 @@ def _quote_response(quote) -> dict[str, Any]:
         "tariff_missing": not quote.price_configured,
         "admin_free": quote.admin_free,
         "auto_duration": auto,
-        "settlement_notice": "Auto резервирует оплату максимум 30 суммарных видеосекунд. Неиспользованная часть возвращается после проверки результата." if auto else None,
+        "settlement_notice": notice,
     }
 
 
@@ -182,13 +188,28 @@ async def _status_route(request: web.Request) -> web.Response:
 
 
 async def _callback_route(request: web.Request) -> web.Response:
-    payload = await _json_body(request)
+    import json
+
+    from bot.services.wan3_prime_callback_auth import nonce_callbacks_enabled, signed_callbacks_enabled
+
+    if not nonce_callbacks_enabled() and (not signed_callbacks_enabled() or not request.headers.get('X-Webhook-Signature')):
+        return _json_error('Callback authentication required', status=403, code='callback_auth_required')
+    raw = bytearray()
+    async for chunk in request.content.iter_chunked(8192):
+        raw.extend(chunk)
+        if len(raw) > 1024 * 1024:
+            return _json_error('Callback payload too large', status=413)
+    try:
+        payload = json.loads(raw)
+    except (ValueError, TypeError):
+        return _json_error('Malformed callback JSON', status=400)
     _result, status = await _lifecycle(request).handle_callback(
         payload,
-        internal_task_id=request.query.get("intent"),
-        nonce=request.query.get("nonce"),
+        internal_task_id=request.query.get('intent'),
+        nonce=request.query.get('nonce'),
+        headers=request.headers,
     )
-    return _json_ok({"ok": status < 400}, status=status)
+    return _json_ok({'ok': status < 400}, status=status)
 
 
 async def _import_route(request: web.Request) -> web.Response:

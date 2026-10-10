@@ -22,19 +22,20 @@ async def init_result_repair_schema() -> None:
         await db.commit()
 
 
-async def reject_invalid_result(task_id: str, local_path: str) -> None:
-    path = Path(local_path).resolve()
-    try:
-        path.relative_to(Path('static/uploads/wan3_prime/results').resolve())
-    except ValueError:
-        logger.error('Wan3 invalid result outside managed root: task_id=%s', task_id)
-        return
-    try:
-        await asyncio.to_thread(path.unlink, missing_ok=True)
-    except OSError:
-        # Clearing the reference still causes the next canonical download to
-        # replace the bad file atomically, rather than repeatedly probing it.
-        logger.warning('Wan3 invalid file removal deferred: task_id=%s', task_id)
+async def reject_invalid_result(task_id: str, local_path: str | None = None) -> None:
+    if local_path:
+        path = Path(local_path).resolve()
+        try:
+            path.relative_to(Path('static/uploads/wan3_prime/results').resolve())
+        except ValueError:
+            logger.error('Wan3 invalid result outside managed root: task_id=%s', task_id)
+        else:
+            try:
+                await asyncio.to_thread(path.unlink, missing_ok=True)
+            except OSError:
+                # Clearing the reference causes the next canonical download to
+                # replace the bad file instead of repeatedly probing it.
+                logger.warning('Wan3 invalid file removal deferred: task_id=%s', task_id)
     maximum = positive_setting('WAN3_RESULT_PROBE_MAX_ATTEMPTS', 5)
     async with db_backend.connect(database.DATABASE_PATH) as db:
         await db.execute('BEGIN' if db_backend.is_postgres() else 'BEGIN IMMEDIATE')

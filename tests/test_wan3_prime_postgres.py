@@ -37,6 +37,7 @@ async def wan_postgres_schema(tmp_path, monkeypatch):
                 ("model", "TEXT"), ("duration", "INTEGER"), ("aspect_ratio", "TEXT"),
                 ("prompt", "TEXT"), ("result_url", "TEXT"), ("result_urls", "TEXT"),
                 ("source_feed_gen_id", "BIGINT"), ("parent_generation_id", "BIGINT"), ("action_type", "TEXT"),
+                ("is_public_feed", "BOOLEAN DEFAULT FALSE"), ("is_profile_visible", "BOOLEAN DEFAULT FALSE"),
             ):
                 await conn.execute(psycopg.sql.SQL("ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS {} " + definition).format(psycopg.sql.Identifier(name)))
             await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_chat_state TEXT DEFAULT 'unknown'")
@@ -181,3 +182,27 @@ async def test_postgres_storage_quota_is_atomic_across_completed_and_concurrent_
     with pytest.raises(Wan3PrimeValidationError) as error:
         await wan3_prime_storage.init_upload(actor, kind='image', filename='over.png', size=len(image))
     assert error.value.status == 429
+
+
+@pytest.mark.asyncio
+async def test_postgres_result_retention_keeps_accounting(tmp_path, monkeypatch):
+    from bot import database
+    from bot.services.wan3_prime_storage import wan3_prime_storage
+
+    monkeypatch.setenv('WAN3_RESULT_RETENTION_SECONDS', '1')
+    actor = await user_actor(100, telegram_id=991284007)
+    provider = Provider()
+    path = Path('static/uploads/wan3_prime/results/pg-expiry.mp4')
+    lifecycle = Wan3PrimeLifecycle(probe=Probe(file_duration=5), preset_manager=Prices(), transport=provider, downloader=Downloader(path))
+    quote = await lifecycle.quote(actor, body())
+    created = await lifecycle.launch(actor, body(), quote, 'pg-result-expiry')
+    provider.statuses['provider_1'] = {'taskId': 'provider_1', 'state': 'success', 'resultUrls': ['https://owned.test/pg-result.mp4']}
+    await lifecycle.reconcile_once(provider_task_id='provider_1')
+    async with db_backend.connect() as db:
+        await db.execute("UPDATE generation_tasks SET completed_at = '2000-01-01' WHERE task_id = ?", (created['task_id'],))
+        await db.execute("UPDATE wan3_prime_intents SET delivery_status = 'delivered' WHERE internal_task_id = ?", (created['task_id'],))
+        await db.commit()
+    await wan3_prime_storage.cleanup_expired()
+    assert not path.exists()
+    assert await balance(actor.user_id) == 90
+    assert (await database.get_task_by_id(created['task_id'])).status == 'completed'

@@ -47,6 +47,8 @@ try {
   for (const { width, model, singlePhoto } of scenarios) {
     const context = await browser.newContext({ viewport: { width, height: 820 }, serviceWorkers: 'block' })
     const page = await context.newPage()
+    page.setDefaultTimeout(30000)
+    page.setDefaultNavigationTimeout(30000)
     const errors = [], forbidden = [], requests = [], uploads = []
     let published
     page.on('pageerror', error => errors.push(error.message))

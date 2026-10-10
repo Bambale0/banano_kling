@@ -33,7 +33,7 @@ async def cleanup_expired(*, limit: int = 100) -> dict[str, int]:
         await lock_storage(db)
         sessions = await (await db.execute(
             "SELECT upload_id FROM wan3_prime_upload_sessions WHERE expires_at <= CURRENT_TIMESTAMP "
-            "AND status IN ('open', 'assembling', 'importing', 'failed', 'completed') AND updated_at <= ? "
+            "AND status IN ('open', 'assembling', 'importing', 'rejected', 'failed', 'completed') AND updated_at <= ? "
             "ORDER BY expires_at LIMIT ?" + (' FOR UPDATE' if db_backend.is_postgres() else ''),
             (stale_lease, limit),
         )).fetchall()

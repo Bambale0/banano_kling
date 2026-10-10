@@ -442,10 +442,18 @@ class Wan3PrimeLifecycle:
         return recipe, server_quote
 
     def _callback_url(self, internal_task_id: str, nonce: str) -> str | None:
+        from bot.services.wan3_prime_callback_auth import nonce_callbacks_enabled, signed_callbacks_enabled
+
         base = _public_callback_base(self.miniapp_root)
         if not base:
             return None
-        return f"{base}?intent={internal_task_id}&nonce={nonce}"
+        if signed_callbacks_enabled():
+            return f"{base}?intent={internal_task_id}"
+        if nonce_callbacks_enabled():
+            return f"{base}?intent={internal_task_id}&nonce={nonce}"
+        # No unauthenticated or secret-in-access-log callbacks. The durable
+        # reconciler polls normally until secure callback settings are supplied.
+        return None
 
     async def launch(
         self,
@@ -543,6 +551,9 @@ class Wan3PrimeLifecycle:
                 await db.rollback()
                 raise Wan3PrimeLifecycleError("Same idempotency key used for a different request", status=409, code="idempotency_conflict")
 
+            from bot.services.wan3_prime_result_retention import assert_result_capacity
+
+            await assert_result_capacity(db)
             if not actor.is_admin and server_quote.reserve_credits > 0:
                 updated = await db.execute(
                     "UPDATE users SET credits = credits - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND credits >= ?",
@@ -709,10 +720,10 @@ class Wan3PrimeLifecycle:
 
         await mark_generation_accepted(internal_task_id)
 
-    async def handle_callback(self, payload: Any, *, internal_task_id: str | None = None, nonce: str | None = None) -> tuple[dict[str, Any] | None, int]:
-        # A public provider task id is not authentication. Validate the per-intent
-        # secret before any task lookup that could cause upstream traffic.
-        if not isinstance(internal_task_id, str) or not internal_task_id.startswith("wan3_") or not isinstance(nonce, str) or not 20 <= len(nonce) <= 200:
+    async def handle_callback(self, payload: Any, *, internal_task_id: str | None = None, nonce: str | None = None, headers: Any = None) -> tuple[dict[str, Any] | None, int]:
+        from bot.services.wan3_prime_callback_auth import nonce_callbacks_enabled, verify_callback_headers
+
+        if not isinstance(internal_task_id, str) or not internal_task_id.startswith("wan3_") or len(internal_task_id) > 100:
             return None, 403
         if not isinstance(payload, dict):
             return None, 400
@@ -721,13 +732,17 @@ class Wan3PrimeLifecycle:
         if not isinstance(provider_task_id, str) or not provider_task_id.strip() or len(provider_task_id) > 200:
             return None, 400
         provider_task_id = provider_task_id.strip()
+        signed = verify_callback_headers(provider_task_id, headers)
+        allowed_nonce = nonce_callbacks_enabled() and isinstance(nonce, str) and 20 <= len(nonce) <= 200
+        if not signed and not allowed_nonce:
+            return None, 403
         if data.get("model") and data["model"] != WAN3_PROVIDER_MODEL:
             return None, 200
         async with db_backend.connect(_database_path()) as db:
             db.row_factory = db_backend.Row
             row = await (await db.execute(
-                "SELECT * FROM wan3_prime_intents WHERE internal_task_id = ? AND callback_nonce = ?",
-                (internal_task_id, nonce),
+                "SELECT * FROM wan3_prime_intents WHERE internal_task_id = ?" + ("" if signed else " AND callback_nonce = ?"),
+                (internal_task_id,) if signed else (internal_task_id, nonce),
             )).fetchone()
         if not row:
             return None, 200
@@ -938,6 +953,7 @@ class Wan3PrimeLifecycle:
             updated = await db.execute(
                 "UPDATE wan3_prime_intents SET lease_until = ?, updated_at = CURRENT_TIMESTAMP "
                 "WHERE internal_task_id = ? AND settled = 0 "
+                "AND status IN ('submitted', 'unknown', 'settlement_pending') "
                 "AND (lease_until IS NULL OR lease_until <= CURRENT_TIMESTAMP)" + schedule_clause,
                 (lease_until, internal_task_id),
             )
@@ -954,8 +970,11 @@ class Wan3PrimeLifecycle:
             await db.commit()
 
     async def _settle_success(self, row: db_backend.Row, provider_data: dict[str, Any]) -> bool:
+        from bot.services.wan3_prime_result_repair import reject_invalid_result
+
         urls = _extract_result_urls(provider_data)
         if not urls:
+            await reject_invalid_result(row["internal_task_id"])
             return False
         downloader = self.downloader
         if downloader is None:
@@ -965,12 +984,15 @@ class Wan3PrimeLifecycle:
             local_path = stored_path if stored_path and os.path.isfile(stored_path) else await downloader.download(urls[0], task_id=row["internal_task_id"])
         except Exception as exc:  # noqa: BLE001 - isolate transport/storage failures with durable outcome state
             logger.warning("Wan3 result download failed: task=%s reason=%s", row["internal_task_id"], type(exc).__name__)
+            await reject_invalid_result(row["internal_task_id"])
             return False
         if not local_path or not os.path.exists(local_path):
+            await reject_invalid_result(row["internal_task_id"])
             return False
         public_url = _managed_public_url(local_path)
         if not public_url:
             logger.warning("Wan3 result not under managed public upload root: task=%s", row["internal_task_id"])
+            await reject_invalid_result(row["internal_task_id"])
             return False
         result_seconds = None
         if self.probe is not None:
@@ -980,8 +1002,6 @@ class Wan3PrimeLifecycle:
             except (ImportError, AttributeError, ValueError):
                 result_seconds = None
         if result_seconds is None or not math.isfinite(float(result_seconds)) or float(result_seconds) <= 0:
-            from bot.services.wan3_prime_result_repair import reject_invalid_result
-
             await reject_invalid_result(row["internal_task_id"], local_path)
             return False
 

@@ -51,6 +51,8 @@ try {
   for (const width of [320, 360, 390, 430]) {
     const context = await browser.newContext({ viewport: { width, height: 820 } })
     const page = await context.newPage()
+    page.setDefaultTimeout(30000)
+    page.setDefaultNavigationTimeout(30000)
     const errors = []
     const requests = []
     const forbidden = []

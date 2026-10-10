@@ -51,3 +51,17 @@ Callbacks require the per-intent secret before provider lookup/polling. Unknown 
 Verification in the isolated workspace: all seven signed Mini App HTTP scenarios traverse real SQLite quote/reserve/status/owner-recipe paths with only the provider/probe mocked; full seven-mode mobile browser run passes (including 320px editor), family search/pages and lost acknowledgement retry. Frontend production build and TypeScript check pass. Focused backend, replay, consent and partner regressions pass. Exact final-head GitHub CI, PostgreSQL concurrency, security review and deployment verification remain release gates, not implied by these local results.
 
 Retail rates are intentionally not invented: configure Wan 480p/720p/1080p in the existing admin price editor. Existing production price.json must be retained. Paid launches fail before debit when the selected rate is absent. No paid upstream generation or visual result-quality verification is claimed by automated tests.
+
+### Final release review closure
+
+The final review added bounded recovery for canonical-download failures as well as invalid bytes. Missing URLs, HTTP errors, missing files and failed probes consume the same finite result-repair budget and then enter `/wan3_ops`; no paid generation is resubmitted. Operators can resolve the reserve with the existing audited confirmation.
+
+ZIP-backed Office/iWork documents now use the same isolated metadata worker as PDF, with CPU, memory and wall-clock limits applied before opening the archive. Per-user/per-worker parser admission remains held across cancellation. Invalid documents terminate their upload session; rejected bytes remain in quota until removed.
+
+Result retention is task-aware: only private, completed, Telegram-delivered outputs older than `WAN3_RESULT_RETENTION_SECONDS` (default 30 days) are expired. Published/profile-visible, referenced, curated-trend and undelivered outputs are preserved. Financial/completion history remains. The quote discloses the retention period. `WAN3_RESULT_GLOBAL_QUOTA_BYTES` (default 20 GiB) and actual filesystem free space bound retained results plus pending-result reservations before any debit/provider call.
+
+Secure callbacks use KIE's documented `X-Webhook-Timestamp`/`X-Webhook-Signature` HMAC-SHA256 headers and the existing `KIE_WEBHOOK_HMAC_KEY`; timestamps must be recent. The URL carries only the non-secret intent identifier. Without that key, the durable worker uses polling; this does not disable any generation/editing mode. Legacy nonce URLs require explicit `WAN3_CALLBACK_QUERY_LOGS_REDACTED=1` after every proxy/app log is safe. An optional TLS-server snippet is provided at `ops/wan3-callback.conf`; this task could not install it because `/etc/nginx` is read-only to SentinelX. No permissions were widened and no live nginx configuration was changed. The nonce opt-in remains disabled by default, so this does not expose callback secrets in existing proxy logs.
+
+Official signature contract: https://docs.kie.ai/common-api/webhook-verification
+
+Fresh local focused result after these changes: 171 passed, 6 PostgreSQL-only cases skipped locally; those run in the dedicated disposable PostgreSQL CI job. The exact candidate's full GitHub CI and production deployment must be checked separately.

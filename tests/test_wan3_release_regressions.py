@@ -166,6 +166,7 @@ async def test_lost_ack_callback_recovers_only_the_matching_provider_request(mon
     from bot.services.wan3_prime_media import WAN3_PROVIDER_MODEL
 
     monkeypatch.setenv("WAN3_CALLBACK_BASE_URL", "https://callback.example.test")
+    monkeypatch.setenv('WAN3_CALLBACK_QUERY_LOGS_REDACTED', '1')
     actor = await user_actor()
     provider = Provider()
     provider.create_result = {"success": False, "error": "network_error"}

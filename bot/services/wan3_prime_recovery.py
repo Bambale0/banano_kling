@@ -51,8 +51,14 @@ def matches_submission(row, canonical: dict) -> bool:
     if callback_query.get("intent") != [row["internal_task_id"]]:
         return False
     supplied_nonce = callback_query.get("nonce", [""])[0]
-    if not secrets.compare_digest(str(row["callback_nonce"]), supplied_nonce):
-        return False
+    if supplied_nonce:
+        if not secrets.compare_digest(str(row["callback_nonce"]), supplied_nonce):
+            return False
+    else:
+        from bot.services.wan3_prime_callback_auth import signed_callbacks_enabled
+
+        if not signed_callbacks_enabled():
+            return False
     expected = _object(row["request_summary"]).get("prepared_input")
     actual = _object(params.get("input"))
     # JSON serialization distinguishes true/1 and false/0; plain Python dict

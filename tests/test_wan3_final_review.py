@@ -159,3 +159,24 @@ async def test_repeated_bad_result_has_bounded_operator_resolution(tmp_path, mon
     monkeypatch.setattr(config, 'is_admin', lambda value: value == 999999999)
     await lifecycle.resolve_unknown_refund(result['task_id'], admin_telegram_id=999999999, reason='provider result permanently unavailable')
     assert await balance(actor.user_id) == 100
+
+
+@pytest.mark.asyncio
+async def test_permanent_download_failure_enters_operator_queue_without_resubmission(tmp_path, monkeypatch):
+    from bot.services.wan3_prime_recovery import unresolved_operations
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv('WAN3_RESULT_PROBE_MAX_ATTEMPTS', '2')
+    actor = await user_actor(100)
+    provider = Provider()
+    failed_download = SimpleNamespace(download=AsyncMock(side_effect=TimeoutError('upstream unavailable')))
+    lifecycle = Wan3PrimeLifecycle(probe=Probe(), preset_manager=Prices(), transport=provider, downloader=failed_download)
+    quote = await lifecycle.quote(actor, body())
+    launched = await lifecycle.launch(actor, body(), quote, 'download-outage')
+    provider.statuses['provider_1'] = {'taskId': 'provider_1', 'state': 'success', 'resultUrls': ['https://owned.test/expired.mp4']}
+    for _ in range(3):
+        await lifecycle.reconcile_once(provider_task_id='provider_1')
+    assert (await lifecycle.status(actor, launched['task_id']))['status'] == 'result_attention'
+    assert failed_download.download.await_count == 2
+    assert launched['task_id'] in [row['internal_task_id'] for row in await unresolved_operations()]
+    assert provider.creates == 1 and await balance(actor.user_id) == 90

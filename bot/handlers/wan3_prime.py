@@ -356,7 +356,7 @@ def build_review_text(draft: Wan3PrimeDraft, quote: dict[str, Any] | None = None
         else:
             lines.append(f"Резерв: {quote.get('reserve_cost')}🍌")
         lines.append(f"Секунды: source {quote.get('source_video_duration_seconds', 0)} + billing {quote.get('billing_duration_seconds', '?')}")
-        if quote.get("auto_duration"):
+        if quote.get("settlement_notice") or quote.get("auto_duration"):
             lines.append(str(quote.get("settlement_notice") or "Auto: резерв максимальный, после результата возможен возврат разницы."))
     return "\n".join(lines)
 

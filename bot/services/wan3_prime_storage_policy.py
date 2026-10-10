@@ -9,7 +9,7 @@ from pathlib import Path
 from bot import db as db_backend
 from bot.services.wan3_prime_media import Wan3PrimeValidationError
 
-ACTIVE_UPLOAD_STATES = "('open', 'assembling', 'importing')"
+ACTIVE_UPLOAD_STATES = "('open', 'assembling', 'importing', 'rejected')"
 
 
 def positive_setting(name: str, default: int) -> int:

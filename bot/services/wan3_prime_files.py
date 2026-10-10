@@ -75,36 +75,31 @@ def assemble_chunks(session_dir: Path, destination: Path, hashes: dict[str, str]
         raise Wan3PrimeValidationError("Upload size mismatch", status=409)
 
 
+class Wan3PrimeDocumentError(Wan3PrimeValidationError):
+    """Invalid or resource-exhausting document; do not reparse its upload."""
+
+
 def document_pages(path: Path) -> int | None:
     extension = path.suffix.lower()
-    if extension == ".pdf":
-        # A child process bounds both wall-clock and memory for untrusted PDFs.
-        worker = Path(__file__).with_name("wan3_prime_document_probe.py").resolve()
-        try:
-            result = subprocess.run([sys.executable, "-I", str(worker), str(path.resolve())],
-                                    capture_output=True, text=True, timeout=12, check=False)
-            count = int(result.stdout.strip()) if result.returncode == 0 else 0
-        except (OSError, subprocess.SubprocessError, ValueError) as exc:
-            raise Wan3PrimeValidationError("Cannot safely read PDF pages") from exc
+    if extension not in {'.pdf', '.docx', '.xlsx', '.pptx', '.key', '.pages', '.numbers'}:
+        return None
+    worker = Path(__file__).with_name('wan3_prime_document_probe.py').resolve()
+    try:
+        result = subprocess.run([sys.executable, '-I', str(worker), str(path.resolve())],
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=12, check=False)
+        if result.returncode != 0:
+            raise Wan3PrimeDocumentError('Invalid, encrypted or resource-intensive document')
+        value = result.stdout.strip()
+        if value == 'unknown' and extension != '.pdf':
+            return None
+        count = int(value)
         if count <= 0:
-            raise Wan3PrimeValidationError("Invalid or encrypted PDF")
+            raise Wan3PrimeDocumentError('Document has no readable pages')
         return count
-    if extension in {".docx", ".xlsx", ".pptx", ".key", ".pages", ".numbers"} and zipfile.is_zipfile(path):
-        try:
-            with zipfile.ZipFile(path) as archive:
-                entries = archive.infolist()
-                if len(entries) > 10000 or sum(entry.file_size for entry in entries) > 250 * 1024**2:
-                    raise Wan3PrimeValidationError("Document archive expands beyond the safe limit")
-                if extension == ".pptx":
-                    count = sum(bool(re.fullmatch(r"ppt/slides/slide\d+\.xml", entry.filename)) for entry in entries)
-                    if not count:
-                        raise Wan3PrimeValidationError("Presentation has no slides")
-                    return count
-        except zipfile.BadZipFile as exc:
-            raise Wan3PrimeValidationError("Invalid document archive") from exc
-    # Word/Keynote page count depends on layout. Do not invent an exact count;
-    # this is disclosed in the quote and remains checked by the provider.
-    return None
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        if isinstance(exc, Wan3PrimeDocumentError):
+            raise
+        raise Wan3PrimeDocumentError('Cannot safely inspect document') from exc
 
 
 def convert_voice_to_mp3(source: Path, destination: Path) -> None:
