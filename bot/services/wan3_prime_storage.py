@@ -397,7 +397,7 @@ class Wan3PrimeStorage:
 
     async def _persist_owned_file(self, actor, *, kind: str, filename: str, path: Path, info: MediaInfo,
                                   content_type: str | None, source: str, upload_id: str | None,
-                                  assembly_stamp: str | None) -> dict[str, Any]:
+                                  assembly_stamp: str | None, expected_sha256: str | None = None) -> dict[str, Any]:
         """Persist inspected bytes while retaining the final owner/quota lock."""
         from bot.services.wan3_prime_files import copy_atomic
         from bot.services.wan3_prime_storage_policy import assert_capacity, lock_storage
@@ -424,6 +424,9 @@ class Wan3PrimeStorage:
                     raise Wan3PrimeValidationError("Upload assembly lease changed", status=409)
             await assert_capacity(db, actor.user_id, info.size_bytes, exclude_upload_id=upload_id or "")
             digest = await asyncio.to_thread(copy_atomic, path, dest)
+            if expected_sha256 is not None and digest != expected_sha256:
+                await asyncio.to_thread(dest.unlink, missing_ok=True)
+                raise Wan3PrimeValidationError("Snapshot bytes changed during persistence", status=409)
             await db.execute(
                 "INSERT INTO wan3_prime_media "
                 "(user_id, telegram_id, kind, public_url, local_path, filename, content_type, size_bytes, sha256, media_info, source) "

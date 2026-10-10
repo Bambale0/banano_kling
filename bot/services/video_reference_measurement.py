@@ -48,13 +48,23 @@ def _file_hash(path: Path) -> str:
 
 async def _probe_seconds(path: Path) -> float:
     process = await asyncio.create_subprocess_exec(
-        "ffprobe", "-v", "error", "-protocol_whitelist", "file,pipe",
+        "ffprobe", "-v", "error", "-format_whitelist", "mov",
+        "-protocol_whitelist", "file,pipe",
         "-show_entries", "stream=codec_type,duration:format=duration",
         "-of", "json", str(path), stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
     )
+    async def read_metadata():
+        output = bytearray()
+        while chunk := await process.stdout.read(8192):
+            output.extend(chunk)
+            if len(output) > 131072:
+                raise ValueError("Видео содержит слишком много потоков")
+        await process.wait()
+        return bytes(output)
+
     try:
-        output, _ = await asyncio.wait_for(process.communicate(), timeout=30)
+        output = await asyncio.wait_for(read_metadata(), timeout=30)
     except BaseException:
         if process.returncode is None:
             process.kill()
@@ -79,7 +89,7 @@ async def measure_video_references(
     sources, *, resolve_local=None, fetch_remote=None, probe=None,
     allowed_root: Path | None = None,
 ) -> VideoReferenceMeasurement:
-    """Measure the ordered effective refs, de-duplicating exact provider URLs.
+    """Measure every ordered effective provider slot, including repeated URLs.
 
     Authorization remains the caller's responsibility. Unknown opaque media
     cannot yield a quote. Local paths must stay within the managed upload root.
@@ -89,7 +99,7 @@ async def measure_video_references(
         resolve_local = resolve_local_upload_path
     probe = probe or _probe_seconds
     root = (allowed_root or Path("static/uploads")).resolve()
-    normalized = list(dict.fromkeys(str(source).strip() for source in (sources or [])))
+    normalized = [str(source).strip() for source in (sources or [])]
     if len(normalized) > 10 or any(not source for source in normalized):
         raise ValueError("Некорректный список видео-референсов")
     references = []
@@ -105,8 +115,7 @@ async def measure_video_references(
                 if parsed.scheme not in {"http", "https"} or not parsed.hostname:
                     raise ValueError("Нужно загрузить видео для точного расчёта цены")
                 if fetch_remote is None:
-                    from bot.services.wan3_prime_storage import fetch_public_asset
-                    fetch_remote = fetch_public_asset
+                    raise ValueError("Видео необходимо сохранить в проверенное хранилище перед расчётом")
                 path = Path(temporary) / f"reference-{index}.video"
                 await fetch_remote(source, destination=path, max_bytes=MAX_VIDEO_BYTES)
             before = await asyncio.to_thread(_file_hash, path)
