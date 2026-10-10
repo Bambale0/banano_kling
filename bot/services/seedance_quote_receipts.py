@@ -26,12 +26,13 @@ def canonical_json(value) -> str:
 
 
 class SeedanceQuoteReceipts:
-    def __init__(self, connect, row_factory, storage_lock=None, validate_media=None, allow_new_claim=None):
+    def __init__(self, connect, row_factory, storage_lock=None, validate_media=None, allow_new_claim=None, validate_context=None):
         self.connect = connect
         self.row_factory = row_factory
         self.storage_lock = storage_lock
         self.validate_media = validate_media
         self.allow_new_claim = allow_new_claim
+        self.validate_context = validate_context
 
     async def ensure_schema(self):
         async with self.connect() as db:
@@ -141,6 +142,8 @@ class SeedanceQuoteReceipts:
                 raise QuoteConflict("Предыдущий запуск ещё проверяется. Повторное списание заблокировано")
             if self.validate_media:
                 await self.validate_media(db, quote_id, row["user_id"])
+            if self.validate_context:
+                await self.validate_context(db, dict(row))
             # Last admission check under the claim lock, after async media checks.
             # Previously claimed/unknown/accepted rows returned above stay recoverable.
             if self.allow_new_claim and not self.allow_new_claim():

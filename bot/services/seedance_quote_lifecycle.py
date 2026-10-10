@@ -12,6 +12,7 @@ from bot import db as db_backend
 from bot.creator_tariff import quote_video_for_actor
 from bot.services.motion_launch_receipts import _has_acceptance_witness
 from bot.services.seedance_launch_gate import PAUSE_MESSAGE, launches_allowed
+from bot.services.seedance_quote_authorization import verify_repeat_claim
 from bot.services.seedance_quote_receipts import (
     QuoteConflict,
     SeedanceQuoteReceipts,
@@ -31,7 +32,7 @@ logger = logging.getLogger(__name__)
 async def receipt_store():
     await Wan3PrimeStorage().init_schema()
     store = SeedanceQuoteReceipts(lambda: db_backend.connect(database.DATABASE_PATH), db_backend.Row,
-                                 storage_lock=lock_storage, validate_media=verify_quote_snapshots, allow_new_claim=launches_allowed)
+                                 storage_lock=lock_storage, validate_media=verify_quote_snapshots, allow_new_claim=launches_allowed, validate_context=verify_repeat_claim)
     await store.ensure_schema()
     return store
 

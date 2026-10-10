@@ -156,6 +156,21 @@ class ReceiptTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await drain, 1)
         self.assertEqual(await self.balance(), 52)
 
+    async def test_permission_fence_runs_after_media_and_before_any_debit(self):
+        order = []
+        async def media(_db, _quote, _owner):
+            order.append("media")
+        async def permission(_db, _row):
+            order.append("permission")
+            raise module.QuoteConflict("permission withdrawn")
+        self.store.validate_media = media
+        self.store.validate_context = permission
+        with self.assertRaisesRegex(module.QuoteConflict, "permission withdrawn"):
+            await self.claim()
+        self.assertEqual(order, ["media", "permission"])
+        self.assertEqual(await self.balance(), 100)
+        self.assertEqual((await self.store.find(5000000001, self.quote["quote_id"]))["phase"], "quoted")
+
     async def test_double_click_claim_debit_once(self):
         rows = await asyncio.gather(self.claim(), self.claim())
         self.assertEqual(sum(row["created"] for row in rows), 1)

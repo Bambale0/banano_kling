@@ -903,6 +903,7 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
 
     payload.update(source_feed_gen_id=source_feed_gen_id, parent_generation_id=immediate_parent_id)
     payload["_launch_surface"] = "miniapp"
+    payload["_repeat_guard"] = getattr(request, "_video_repeat_guard", None)
     payload["_private_repeat"] = bool(getattr(request, "_video_repeat_authorization", None))
     payload["_authorized_video_sources"] = list(body.get("_private_repeat_reference_videos") or []) if payload["_private_repeat"] else []
     if _needs_measured_quote(payload):

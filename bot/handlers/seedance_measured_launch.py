@@ -120,6 +120,7 @@ async def miniapp_measured_seedance2(request, body, telegram_id, payload):
         verify_video_repeat_before_charge,
     )
 
+    payload["_repeat_guard"] = getattr(request, "_video_repeat_guard", None)
     permission_error = await verify_video_repeat_before_charge(request)
     if permission_error is not None:
         return permission_error
