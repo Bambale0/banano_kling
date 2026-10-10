@@ -3535,6 +3535,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                     task.user_id,
                                     task.cost or 0,
                                     expected_provider_task_id=task_id,
+                                    provider_confirmed_failed=str(status).lower() in {"fail", "failed", "error", "rejected"},
                                 ):
                                     logger.info(
                                         "Kie.ai legacy failure already reconciled: task=%s",
@@ -5207,6 +5208,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             if not task or not await force_fail_task(
                 task.id, task.user_id, task.cost or 0,
                 expected_provider_task_id=task_id,
+                provider_confirmed_failed=normalized_status in {"fail", "failed", "error", "rejected"},
             ):
                 return web.Response(status=200)
 
