@@ -12,6 +12,34 @@ export const WAN3_PRIME_MAX_VIDEO_BYTES = 100 * 1024 * 1024
 export const WAN3_PRIME_MAX_AUDIO_BYTES = 15 * 1024 * 1024
 export const WAN3_PRIME_MAX_FILE_BYTES = 100 * 1024 * 1024
 const WAN3_PRIME_CHUNK_BYTES = 7 * 1024 * 1024
+// Match the existing Mini App media budget, per request rather than per file.
+// A large file may need many chunks; completed chunks must not exhaust its next request.
+export const WAN3_PRIME_MEDIA_TIMEOUT_MS = 900_000
+
+async function mediaRequest<T>(request: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
+  const controller = new AbortController()
+  const abort = () => controller.abort()
+  let timedOut = false
+  const timeout = setTimeout(() => { timedOut = true; controller.abort() }, WAN3_PRIME_MEDIA_TIMEOUT_MS)
+  signal?.addEventListener('abort', abort, { once: true })
+  if (signal?.aborted) controller.abort()
+  let rejectOnAbort: (() => void) | undefined
+  try {
+    if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError')
+    const aborted = new Promise<never>((_, reject) => {
+      rejectOnAbort = () => reject(new DOMException('Aborted', 'AbortError'))
+      controller.signal.addEventListener('abort', rejectOnAbort, { once: true })
+    })
+    return await Promise.race([request(controller.signal), aborted])
+  } catch (error) {
+    if (timedOut) throw new Error('Сервер не ответил за 15 минут. Проверьте сеть и повторите загрузку.')
+    throw error
+  } finally {
+    clearTimeout(timeout)
+    signal?.removeEventListener('abort', abort)
+    if (rejectOnAbort) controller.signal.removeEventListener('abort', rejectOnAbort)
+  }
+}
 
 export interface Wan3PrimeRecipe {
   model: 'wan_3_prime'
@@ -169,7 +197,7 @@ export function generateWan3Prime(request: Wan3PrimeGenerateRequest, signal?: Ab
 // Body: { init_data, start_param_fallback, kind, url }. Backend performs SSRF-safe,
 // bounded import and returns an owned URL for media/file, or validates public link.
 export function importWan3PrimeReference(kind: Wan3PrimeUploadKind | 'link', url: string, signal?: AbortSignal) {
-  return wan3PostJson<Wan3PrimeImportResponse>('import', { kind, url }, signal)
+  return mediaRequest(activeSignal => wan3PostJson<Wan3PrimeImportResponse>('import', { kind, url }, activeSignal), signal)
 }
 
 // POST /mini-app/api/wan3/recipe
@@ -204,7 +232,7 @@ function uploadedFileFromWan3(file: File, data: Wan3PrimeUploadCompleteResponse)
 // 2. POST /wan3/upload/chunk multipart { upload_id, index, total, chunk }
 // 3. POST /wan3/upload/complete { upload_id }
 // Parent lifecycle wires these routes to owned media validation/storage.
-export async function uploadWan3PrimeReference(kind: Wan3PrimeUploadKind, file: File): Promise<UploadedFile> {
+export async function uploadWan3PrimeReference(kind: Wan3PrimeUploadKind, file: File, signal?: AbortSignal, onProgress?: (uploadedBytes: number, totalBytes: number) => void): Promise<UploadedFile> {
   if (file.size <= 0) throw new Error('Файл пустой.')
   const maxBytes = maxBytesForKind(kind)
   if (file.size > maxBytes) throw new Error(`Wan 3.0 принимает этот тип файла до ${Math.round(maxBytes / 1024 / 1024)} MB.`)
@@ -212,12 +240,13 @@ export async function uploadWan3PrimeReference(kind: Wan3PrimeUploadKind, file: 
   if (!initData) throw new Error('Откройте Mini App из Telegram и попробуйте снова.')
 
   const contentType = file.type || 'application/octet-stream'
-  const init = await wan3PostJson<Wan3PrimeUploadInitResponse>('upload/init', {
+  onProgress?.(0, file.size)
+  const init = await mediaRequest(activeSignal => wan3PostJson<Wan3PrimeUploadInitResponse>('upload/init', {
     kind,
     filename: file.name,
     size: file.size,
     content_type: contentType,
-  })
+  }, activeSignal), signal)
   const chunkSize = Number.isFinite(init.chunk_size) && init.chunk_size > 0 ? init.chunk_size : WAN3_PRIME_CHUNK_BYTES
   const total = Math.ceil(file.size / chunkSize)
 
@@ -229,19 +258,25 @@ export async function uploadWan3PrimeReference(kind: Wan3PrimeUploadKind, file: 
     form.append('index', String(index))
     form.append('total', String(total))
     form.append('chunk', file.slice(index * chunkSize, Math.min(file.size, (index + 1) * chunkSize), contentType), file.name)
-    const response = await fetch(`${getApiBasePath()}/wan3/upload/chunk`, {
-      method: 'POST',
-      headers: { Accept: 'application/json', 'X-Telegram-Init-Data': initData },
-      body: form,
-      cache: 'no-store',
-      credentials: 'same-origin',
-    })
-    await parseWan3Json<{ ok: true }>(response, 'Wan 3.0: не удалось загрузить часть файла.')
+    await mediaRequest(async activeSignal => {
+      const response = await fetch(`${getApiBasePath()}/wan3/upload/chunk`, {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'X-Telegram-Init-Data': initData },
+        body: form,
+        cache: 'no-store',
+        credentials: 'same-origin',
+        signal: activeSignal,
+      })
+      return parseWan3Json<{ ok: true }>(response, 'Wan 3.0: не удалось загрузить часть файла.')
+    }, signal)
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+    onProgress?.(Math.min(file.size, (index + 1) * chunkSize), file.size)
   }
 
-  const completed = await wan3PostJson<Wan3PrimeUploadCompleteResponse>('upload/complete', {
+  const completed = await mediaRequest(activeSignal => wan3PostJson<Wan3PrimeUploadCompleteResponse>('upload/complete', {
     upload_id: init.upload_id,
-  })
+  }, activeSignal), signal)
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
   return uploadedFileFromWan3(file, completed)
 }
 

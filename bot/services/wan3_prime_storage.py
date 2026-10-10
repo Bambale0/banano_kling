@@ -49,9 +49,15 @@ def _expires(minutes: int = 60) -> str:
 
 
 def _safe_basename(filename: str) -> str:
-    value = Path(str(filename or "upload")).name
-    value = re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("._")
-    return value[:100] or "upload"
+    value = Path(str(filename or "upload").replace("\\", "/")).name
+    suffix = Path(value).suffix
+    # Do not invent an extension from MIME or sanitize an invalid extension into
+    # an allowed one. init_upload still applies the original kind allowlist.
+    stem = value[:-len(suffix)] if suffix else value
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("._") or "upload"
+    if suffix and not re.fullmatch(r"\.[A-Za-z0-9]+", suffix):
+        return "upload"
+    return stem[:max(1, 100 - len(suffix))] + suffix.lower()
 
 
 def _kind_limit(kind: str) -> int:
@@ -604,3 +610,4 @@ class ActualWan3PrimeProbe:
 
 wan3_prime_storage = Wan3PrimeStorage()
 wan3_prime_probe = ActualWan3PrimeProbe(wan3_prime_storage)
+

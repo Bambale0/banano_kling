@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { Wan3DurationSelect } from './wan3-duration-select'
 import {
   fetchWan3PrimeOwnerRecipe, fetchWan3PrimeRepeatPlan, fetchWan3PrimeTrendPlan, generateWan3Prime, importWan3PrimeReference,
   quoteWan3Prime, uploadWan3PrimeReference,
@@ -67,38 +68,64 @@ function recipeIssue(recipe: Wan3PrimeRecipe): string | null {
 
 interface MediaFieldProps {
   title: string; label: string; prefix: string; kind: Wan3PrimeUploadKind | 'link'; values: string[]
-  limit: number; offset?: number; disabled?: boolean; hint?: string
+  limit: number; offset?: number; disabled?: boolean; hint?: string; resetKey: string; resetRecipe?: Wan3PrimeRecipe | null
   onChange: (values: string[]) => void; onBusy: (delta: number) => void; onError: (message: string) => void
 }
-function MediaField({ title, label, prefix, kind, values, limit, offset = 1, disabled, hint, onChange, onBusy, onError }: MediaFieldProps) {
+function MediaField({ title, label, prefix, kind, values, limit, offset = 1, disabled, hint, resetKey, resetRecipe, onChange, onBusy, onError }: MediaFieldProps) {
   const [external, setExternal] = useState('')
   const [names, setNames] = useState<Record<string, string>>({})
+  const [progress, setProgress] = useState('')
+  const [fieldError, setFieldError] = useState('')
+  const [retryFiles, setRetryFiles] = useState<File[]>([])
   const lock = useRef(false)
+  const active = useRef<AbortController | null>(null)
+  useEffect(() => {
+    setFieldError(''); setRetryFiles([]); setProgress(''); setExternal('')
+    return () => { const previous = active.current; active.current = null; previous?.abort() }
+  }, [resetKey, resetRecipe])
+  const fail = (message: string) => { setFieldError(message); onError(message) }
   const upload = async (files: File[]) => {
-    if (!files.length || lock.current) return
-    if (files.length + values.length > limit) { onError(`Можно добавить максимум ${limit}. Выбранные файлы не загружены.`); return }
-    lock.current = true; onBusy(1)
+    if (!files.length || lock.current || disabled) return
+    if (files.length + values.length > limit) { setRetryFiles([]); fail(`Можно добавить максимум ${limit}. Выбранные файлы не загружены.`); return }
+    const controller = new AbortController(); active.current = controller
+    lock.current = true; onBusy(1); setFieldError(''); setRetryFiles([]); onError('')
     let next = [...values]
+    let index = 0
     try {
-      for (const file of files) {
-        const stored = await uploadWan3PrimeReference(kind as Wan3PrimeUploadKind, file)
+      for (; index < files.length; index += 1) {
+        const file = files[index]
+        const caption = `«${file.name}» (${index + 1}/${files.length})`
+        setProgress(`Загружаю ${caption}…`)
+        const stored = await uploadWan3PrimeReference(kind as Wan3PrimeUploadKind, file, controller.signal, (uploaded, total) => {
+          if (!controller.signal.aborted && active.current === controller) {
+            setProgress(uploaded === total ? `Проверяю ${caption}…` : `Загружаю ${caption}: ${Math.floor(uploaded / total * 100)}%`)
+          }
+        })
+        if (controller.signal.aborted || active.current !== controller) return
         next = [...next, stored.url]
         setNames(old => ({ ...old, [stored.url]: file.name }))
         onChange(next)
       }
-    } catch (error) { onError(error instanceof Error ? error.message : 'Не удалось загрузить файл.') }
-    finally { lock.current = false; onBusy(-1) }
+    } catch (error) {
+      if (active.current === controller) {
+        setRetryFiles(files.slice(index))
+        fail(`«${files[index].name}»: ${controller.signal.aborted ? 'Загрузка отменена. Можно повторить.' : error instanceof Error ? error.message : 'Не удалось загрузить файл.'}`)
+      }
+    } finally { if (active.current === controller) { active.current = null; setProgress('') }; lock.current = false; onBusy(-1) }
   }
   const importUrl = async () => {
-    if (lock.current || !external.trim()) return
-    if (values.length >= limit) { onError(`Сначала удалите один из ${limit} референсов.`); return }
-    lock.current = true; onBusy(1)
+    if (lock.current || disabled || !external.trim()) return
+    if (values.length >= limit) { fail(`Сначала удалите один из ${limit} референсов.`); return }
+    const controller = new AbortController(); active.current = controller
+    lock.current = true; onBusy(1); setFieldError(''); setRetryFiles([]); onError(''); setProgress('Проверяю и импортирую ссылку…')
     try {
-      const stored = await importWan3PrimeReference(kind, external.trim())
+      const stored = await importWan3PrimeReference(kind, external.trim(), controller.signal)
+      if (controller.signal.aborted || active.current !== controller) return
       onChange([...values, stored.url]); setExternal('')
       setNames(old => ({ ...old, [stored.url]: stored.filename || (kind === 'link' ? new URL(stored.url).hostname : fileName(stored.url)) }))
-    } catch (error) { onError(error instanceof Error ? error.message : 'Не удалось проверить ссылку.') }
-    finally { lock.current = false; onBusy(-1) }
+    } catch (error) {
+      if (active.current === controller) fail(controller.signal.aborted ? 'Импорт отменён. Ссылка сохранена для повтора.' : error instanceof Error ? error.message : 'Не удалось проверить ссылку.')
+    } finally { if (active.current === controller) { active.current = null; setProgress('') }; lock.current = false; onBusy(-1) }
   }
   return <section className={CARD} aria-label={title}>
     <div className="flex items-center justify-between gap-2"><h4 className="text-sm font-semibold">{title}</h4><span className="text-xs text-muted-foreground">{values.length}/{limit}</span></div>
@@ -113,6 +140,12 @@ function MediaField({ title, label, prefix, kind, values, limit, offset = 1, dis
         className="block w-full min-w-0 text-xs file:mr-2 file:rounded-lg file:border-0 file:bg-secondary file:px-3 file:py-2 file:text-foreground"
         onChange={event => { const files = Array.from(event.target.files || []); event.target.value = ''; void upload(files) }} />
     </label> : null}
+    {progress ? <div className="space-y-1">
+      <p role="status" className="break-words text-xs">{progress}</p>
+      <Button type="button" variant="outline" size="sm" onClick={() => active.current?.abort()}>Отменить загрузку</Button>
+    </div> : null}
+    {fieldError ? <p role="alert" className="break-words text-xs text-destructive">{fieldError}</p> : null}
+    {retryFiles.length ? <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => { void upload(retryFiles) }}>Повторить загрузку</Button> : null}
     <details className="text-xs"><summary className="cursor-pointer py-1 text-muted-foreground">{kind === 'link' ? 'Добавить адрес страницы' : 'Импортировать по ссылке'}</summary>
       <div className="mt-2 flex min-w-0 gap-2"><Input aria-label={`Ссылка: ${title}`} value={external} onChange={e => setExternal(e.target.value)} placeholder="https://…" disabled={disabled} className="min-w-0 text-xs" />
         <Button type="button" variant="outline" size="sm" disabled={disabled || !external.trim()} onClick={() => { void importUrl() }}>Добавить</Button></div>
@@ -234,7 +267,8 @@ export function Wan3PrimeForm({ credits, isAdmin = false, modelSelector, initial
     if (!result || result.status === 'unknown') return
     setRequestId(newId()); setAttempted(false); frozenRequest.current = null; setResult(null); setQuoteState(null); setError('')
   }
-  const mediaProps = { disabled: locked, onBusy, onError: setError }
+  const mediaProps = { disabled: locked, onBusy, onError: setError,
+    resetKey: JSON.stringify([ownerTaskId, repeatKey, recipe.scenario]), resetRecipe: initialRecipe }
   const videos = recipe.reference_video_urls || []
   const unknown = attempted && (!result || result.status === 'unknown')
   return <div className="min-w-0 space-y-4" data-testid="wan3-prime-form">
@@ -285,7 +319,7 @@ export function Wan3PrimeForm({ credits, isAdmin = false, modelSelector, initial
       <fieldset disabled={locked} className="grid min-w-0 grid-cols-2 gap-3">
         <label className="space-y-1 text-xs">Качество<select aria-label="Качество Wan" className={SELECT} value={recipe.resolution} onChange={e => patch({ resolution: e.target.value as Wan3PrimeRecipe['resolution'] })}>{['480P', '720P', '1080P'].map(q => <option key={q}>{q}</option>)}</select></label>
         <label className="space-y-1 text-xs">Формат кадра<select aria-label="Формат Wan" className={SELECT} value={recipe.aspect_ratio} onChange={e => patch({ aspect_ratio: e.target.value as Wan3PrimeRecipe['aspect_ratio'] })}>{RATIOS.map(r => <option key={r} value={r}>{r === 'adaptive' ? 'Автоматически' : r}</option>)}</select></label>
-        <label className="space-y-1 text-xs">Длительность<select aria-label="Длительность Wan" className={SELECT} value={recipe.duration} onChange={e => patch({ duration: Number(e.target.value) })}><option value={-1}>Auto — выбирает модель</option>{Array.from({ length: 29 }, (_, i) => i + 2).map(n => <option key={n} value={n}>{n} секунд</option>)}</select></label>
+        <Wan3DurationSelect value={recipe.duration} disabled={locked} onChange={duration => patch({ duration })} />
         <label className="space-y-1 text-xs">Seed, необязательно<Input aria-label="Seed Wan" type="number" min={0} max={2147483647} step={1} placeholder="Случайный" value={recipe.seed ?? ''} onChange={e => patch({ seed: e.target.value === '' ? null : Number(e.target.value) })} /></label>
         <label className="flex items-center gap-2 text-xs"><input type="checkbox" aria-label="Аудио в результате" checked={recipe.audio} onChange={e => patch({ audio: e.target.checked })} />Аудио в результате</label>
         <label className="flex items-center gap-2 text-xs"><input type="checkbox" aria-label="Проверка контента" checked={recipe.nsfw_checker} onChange={e => patch({ nsfw_checker: e.target.checked })} />Проверка контента</label>

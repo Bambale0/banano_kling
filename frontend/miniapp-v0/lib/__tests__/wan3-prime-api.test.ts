@@ -3,6 +3,7 @@ import {
   importWan3PrimeReference,
   quoteWan3Prime,
   uploadWan3PrimeReference,
+  WAN3_PRIME_MEDIA_TIMEOUT_MS,
 } from '../wan3-prime-api'
 
 jest.mock('../api', () => ({
@@ -133,4 +134,86 @@ test('chunk upload uses Wan limits and preserves large video capability', async 
     '/mini-app/api/wan3/upload/chunk',
     '/mini-app/api/wan3/upload/complete',
   ])
+})
+
+test('upload reports acknowledged chunk progress and keeps original Cyrillic filenames in the unchanged protocol', async () => {
+  fetchMock
+    .mockResolvedValueOnce(jsonResponse({ ok: true, upload_id: 'up1', chunk_size: 5 }))
+    .mockResolvedValueOnce(jsonResponse({ ok: true }))
+    .mockResolvedValueOnce(jsonResponse({ ok: true }))
+    .mockResolvedValueOnce(jsonResponse({ ok: true, url: 'https://cdn.test/upload.mov', kind: 'video', filename: 'upload.mov', size: 10 }))
+  const controller = new AbortController()
+  const progress = jest.fn()
+  const result = await uploadWan3PrimeReference('video', new File(['0123456789'], 'Видео.mov', { type: 'video/quicktime' }), controller.signal, progress)
+  expect(progress.mock.calls).toEqual([[0, 10], [5, 10], [10, 10]])
+  expect(JSON.parse(fetchMock.mock.calls[0][1].body).filename).toBe('Видео.mov')
+  expect(fetchMock.mock.calls[1][1].body.get('chunk').name).toBe('Видео.mov')
+  expect(fetchMock.mock.calls.every(call => call[1].signal instanceof AbortSignal)).toBe(true)
+  expect(result.url).toBe('https://cdn.test/upload.mov')
+})
+
+test.each(['init', 'chunk', 'complete'])('aborting %s rejects promptly and never advances or accepts a late response', async stage => {
+  let finish: (response: Response) => void = () => {}
+  let pendingSignal: AbortSignal | undefined
+  fetchMock.mockImplementation((url, options) => {
+    if (url.endsWith(`/${stage}`)) {
+      pendingSignal = options.signal
+      return new Promise(resolve => { finish = resolve })
+    }
+    return Promise.resolve(jsonResponse({ ok: true, upload_id: 'up1', chunk_size: 10 }))
+  })
+  const controller = new AbortController()
+  const promise = uploadWan3PrimeReference('image', new File(['01234'], 'Фото.jpg', { type: 'image/jpeg' }), controller.signal)
+  const rejected = expect(promise).rejects.toMatchObject({ name: 'AbortError' })
+  for (let turn = 0; turn < 20 && !pendingSignal; turn += 1) await Promise.resolve()
+  expect(pendingSignal).toBeDefined()
+  const count = fetchMock.mock.calls.length
+  controller.abort()
+  await rejected
+  expect(pendingSignal?.aborted).toBe(true)
+  finish(jsonResponse({ ok: true, url: 'https://cdn.test/late.jpg', kind: 'image', filename: 'late.jpg' }))
+  await Promise.resolve(); await Promise.resolve()
+  expect(fetchMock).toHaveBeenCalledTimes(count)
+})
+
+test('a stalled chunk times out, aborts its request and exposes a retryable error', async () => {
+  jest.useFakeTimers()
+  try {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, upload_id: 'up1', chunk_size: 5 }))
+      .mockImplementationOnce(() => new Promise(() => {}))
+    const result = uploadWan3PrimeReference('image', new File(['012345'], 'Фото.jpg', { type: 'image/jpeg' }))
+    const rejected = expect(result).rejects.toThrow('Сервер не ответил за 15 минут')
+    await jest.advanceTimersByTimeAsync(WAN3_PRIME_MEDIA_TIMEOUT_MS)
+    await rejected
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock.mock.calls[1][1].signal.aborted).toBe(true)
+    expect(jest.getTimerCount()).toBe(0)
+  } finally { jest.useRealTimers() }
+})
+
+test('large multi-chunk files receive a fresh timeout budget per request', async () => {
+  jest.useFakeTimers()
+  try {
+    fetchMock.mockImplementation((url: string) => new Promise(resolve => setTimeout(() => resolve(jsonResponse(
+      url.endsWith('/init') ? { ok: true, upload_id: 'up1', chunk_size: 5 }
+        : url.endsWith('/complete') ? { ok: true, url: 'https://cdn.test/video.mov', kind: 'video', filename: 'Видео.mov', size: 10 }
+          : { ok: true },
+    )), WAN3_PRIME_MEDIA_TIMEOUT_MS - 1)))
+    const result = uploadWan3PrimeReference('video', new File(['0123456789'], 'Видео.mov', { type: 'video/quicktime' }))
+    await jest.runAllTimersAsync()
+    await expect(result).resolves.toMatchObject({ url: 'https://cdn.test/video.mov' })
+    expect(fetchMock).toHaveBeenCalledTimes(4)
+    expect(jest.getTimerCount()).toBe(0)
+  } finally { jest.useRealTimers() }
+})
+
+test('cancelled import keeps its request abortable without altering the import body', async () => {
+  fetchMock.mockImplementation(() => new Promise(() => {}))
+  const controller = new AbortController()
+  const imported = importWan3PrimeReference('link', 'https://example.test/page', controller.signal)
+  const rejected = expect(imported).rejects.toMatchObject({ name: 'AbortError' })
+  controller.abort()
+  await rejected
+  expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(true)
+  expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ kind: 'link', url: 'https://example.test/page' })
 })

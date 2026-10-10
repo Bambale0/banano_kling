@@ -202,6 +202,7 @@ async def test_edit_flow_uploads_video1_image_seed0_audiofalse_quote_confirm_act
 async def test_first_last_frames_reject_reference_without_mode_change_and_controls_exist(runtime):
     state = FakeState()
     cb = await open_mode(state, runtime, "first_last")
+    await wan3_prime.show_wan3_settings(cb, state)
     keyboard_texts = [button.text for row in cb.message.edits[-1][1]["reply_markup"].inline_keyboard for button in row]
     assert "Первый кадр" in keyboard_texts
     assert "Последний кадр" in keyboard_texts
@@ -347,3 +348,4 @@ async def test_unknown_status_message_honest_and_no_fake_balance_calls(runtime):
     assert "wan-internal-1" in text
     assert "Task ID" in text
     assert runtime.launches[-1]["telegram_id"] == 101
+
