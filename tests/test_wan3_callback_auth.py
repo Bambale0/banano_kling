@@ -68,7 +68,8 @@ async def test_signed_callback_http_rejects_unsigned_and_expired_before_polling(
 
 
 @pytest.mark.asyncio
-async def test_signed_callback_settles_late_success_after_wait_timeout_exactly_once(monkeypatch):
+@pytest.mark.parametrize('deferred', [False, True])
+async def test_signed_callback_settles_late_success_after_wait_timeout_exactly_once(monkeypatch, deferred):
     monkeypatch.setattr(config, 'KIE_WEBHOOK_HMAC_KEY', 'test-webhook-key')
     actor = await user_actor(100)
     provider = Provider()
@@ -102,11 +103,26 @@ async def test_signed_callback_settles_late_success_after_wait_timeout_exactly_o
         app.router.add_post('/callback', wan3_prime_api._http_boundary(wan3_prime_api._callback_route))
         payload = {'data': {'taskId': 'provider_1'}}
         callback_headers = headers_for('provider_1', int(time.time()))
+        if deferred:
+            async with database.db_backend.connect(database.DATABASE_PATH) as db:
+                await db.execute("UPDATE wan3_prime_intents SET next_attempt_at = '2999-01-01' WHERE internal_task_id = ?",
+                    (launched['task_id'],))
+                await db.commit()
         async with TestClient(TestServer(app)) as client:
             response = await client.post('/callback?intent=' + launched['task_id'], json=payload, headers=callback_headers)
             assert response.status == 200
             replay = await client.post('/callback?intent=' + launched['task_id'], json=payload, headers=callback_headers)
             assert replay.status == 200
+            if deferred:
+                # Replays are acknowledged without bypassing the stored backoff.
+                assert provider.get_task_status.await_count == 1
+                assert (await lifecycle.status(actor, launched['task_id']))['status'] == 'result_attention'
+                async with database.db_backend.connect(database.DATABASE_PATH) as db:
+                    await db.execute("UPDATE wan3_prime_intents SET next_attempt_at = '2000-01-01' WHERE internal_task_id = ?",
+                        (launched['task_id'],))
+                    await db.commit()
+                # The durable callback marker survives the age cutoff until due.
+                assert await lifecycle.reconcile_once() == 1
         completed = await lifecycle.status(actor, launched['task_id'])
         assert completed['status'] == 'completed'
         assert completed['error_code'] is None and completed['error_message'] is None

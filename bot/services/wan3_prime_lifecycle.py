@@ -762,6 +762,16 @@ class Wan3PrimeLifecycle:
             await remember_candidate(internal_task_id, provider_task_id)
             await self._mark_unknown(internal_task_id, "callback_unbound_provider", "Provider callback requires canonical lineage reconciliation")
             return None, 200
+        # Persist one canonical reconciliation opportunity before acknowledging an
+        # authenticated timeout callback. The original backoff/lease still applies,
+        # but the worker must not age this notification out while it waits.
+        # A unique marker lets an in-flight older poll preserve a newer callback.
+        async with db_backend.connect(_database_path()) as db:
+            await db.execute("UPDATE wan3_prime_intents SET provider_state = ? "
+                "WHERE internal_task_id = ? AND provider_task_id = ? AND settled = 0 "
+                "AND status = 'result_attention' AND error_code = 'provider_wait_timeout'",
+                (f'callback_pending:{uuid.uuid4().hex}', internal_task_id, provider_task_id))
+            await db.commit()
         # The worker owns canonical GET + terminal transitions. Its lease/backoff
         # also throttles callback replays; never poll once here and once there.
         await self.reconcile_once(provider_task_id=provider_task_id, respect_backoff=True)
@@ -798,7 +808,7 @@ class Wan3PrimeLifecycle:
                     WHERE provider_task_id IS NOT NULL
                       AND (status IN ('submitted', 'unknown', 'settlement_pending')
                            OR (status = 'result_attention' AND error_code = 'provider_wait_timeout'
-                               AND created_at >= ?))
+                               AND (created_at >= ? OR provider_state LIKE 'callback_pending:%')))
                       AND settled = 0
                       AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP)
                       AND (lease_until IS NULL OR lease_until <= CURRENT_TIMESTAMP)
@@ -870,10 +880,11 @@ class Wan3PrimeLifecycle:
                              'canonical callback or operator review remains available')
         async with db_backend.connect(_database_path()) as db:
             if row_data.get('status') == 'result_attention' and row_data.get('error_code') == 'provider_wait_timeout':
-                await db.execute('UPDATE wan3_prime_intents SET provider_state = ?, lease_until = NULL, '
-                    'last_checked_at = CURRENT_TIMESTAMP, next_attempt_at = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP '
+                await db.execute("UPDATE wan3_prime_intents SET provider_state = CASE "
+                    "WHEN provider_state LIKE 'callback_pending:%' AND provider_state <> ? THEN provider_state ELSE ? END, "
+                    'lease_until = NULL, last_checked_at = CURRENT_TIMESTAMP, next_attempt_at = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP '
                     "WHERE internal_task_id = ? AND settled = 0 AND status = 'result_attention' "
-                    "AND error_code = 'provider_wait_timeout'", (provider_state, attention_retry, attention_message, row['internal_task_id']))
+                    "AND error_code = 'provider_wait_timeout'", (row_data.get('provider_state') or '', provider_state, attention_retry, attention_message, row['internal_task_id']))
             elif expired:
                 changed = await db.execute("UPDATE wan3_prime_intents SET status = 'result_attention', provider_state = ?, "
                     "error_code = 'provider_wait_timeout', error_message = ?, "

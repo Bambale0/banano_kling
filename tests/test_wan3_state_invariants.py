@@ -231,3 +231,39 @@ async def test_timeout_attention_backoff_grows_to_configured_ceiling(monkeypatch
     await lifecycle.reconcile_once()
     provider.get_task_status.assert_awaited_once()
     assert await balance(actor.user_id) == 90 and provider.creates == 1
+
+
+@pytest.mark.asyncio
+async def test_late_callback_marker_is_consumed_but_newer_inflight_callback_is_preserved():
+    actor = await user_actor(100)
+    provider = Provider()
+    lifecycle = Wan3PrimeLifecycle(probe=Probe(), preset_manager=Prices(), transport=provider)
+    quote = await lifecycle.quote(actor, body())
+    launched = await lifecycle.launch(actor, body(), quote, 'callback-marker')
+    async with database.db_backend.connect(database.DATABASE_PATH) as db:
+        await db.execute("UPDATE wan3_prime_intents SET status = 'result_attention', "
+            "error_code = 'provider_wait_timeout', created_at = '2000-01-01', "
+            "provider_state = 'callback_pending:old' WHERE internal_task_id = ?", (launched['task_id'],))
+        await db.commit()
+    old_poll_row = await lifecycle._intent(launched['task_id'])
+    async with database.db_backend.connect(database.DATABASE_PATH) as db:
+        await db.execute("UPDATE wan3_prime_intents SET provider_state = 'callback_pending:new' "
+            "WHERE internal_task_id = ?", (launched['task_id'],))
+        await db.commit()
+    await lifecycle._defer_provider(old_poll_row, state='waiting')
+    assert (await lifecycle._intent(launched['task_id']))['provider_state'] == 'callback_pending:new'
+    async with database.db_backend.connect(database.DATABASE_PATH) as db:
+        await db.execute("UPDATE wan3_prime_intents SET next_attempt_at = '2000-01-01' WHERE internal_task_id = ?",
+            (launched['task_id'],))
+        await db.commit()
+    provider.get_task_status = AsyncMock(return_value={'taskId': 'provider_1', 'state': 'waiting'})
+    await lifecycle.reconcile_once()
+    assert (await lifecycle._intent(launched['task_id']))['provider_state'] == 'waiting'
+    # No new callback: the old task cannot keep polling beyond the finite window.
+    async with database.db_backend.connect(database.DATABASE_PATH) as db:
+        await db.execute("UPDATE wan3_prime_intents SET next_attempt_at = '2000-01-01' WHERE internal_task_id = ?",
+            (launched['task_id'],))
+        await db.commit()
+    await lifecycle.reconcile_once()
+    provider.get_task_status.assert_awaited_once()
+    assert provider.creates == 1 and await balance(actor.user_id) == 90

@@ -106,3 +106,14 @@ Invalid-result/download attention is not reopened by this policy.
 
 Successful settlement clears old error_code, error_message and next_attempt_at
 alongside the completed state, preserving diagnostics only while they apply.
+
+A verified callback on timeout attention persists a unique `callback_pending:`
+marker in the existing provider_state field before returning 200. This is an
+internal reconciliation signal, not a trusted provider outcome. It gives the
+worker one due canonical lookup beyond the automatic age window without skipping
+the existing backoff or lease. Repeated notifications coalesce on the same task;
+an older in-flight poll preserves a newer marker. A pending/unconfirmed lookup
+consumes that notification, leaving the task in operator attention after the age
+window unless another authenticated notification or explicit review arrives.
+Terminal success/failure still comes only from canonical provider status and the
+original settlement fence. No schema change or additional paid task is involved.
