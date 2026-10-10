@@ -33,6 +33,11 @@ from aiogram.fsm.context import FSMContext
 from bot.config import config
 from bot.creator_tariff import VideoQuote, quote_video_for_actor, resolve_video_quote
 from bot.services.delivery_state import (
+    TelegramDeliveryUncertain,
+    tracked_telegram_send,
+    TelegramDeliveryRetryable,
+    telegram_delivery_retry_delay,
+    telegram_delivery_is_definitely_rejected,
     is_terminal_telegram_delivery_error,
     terminal_telegram_delivery_reason,
 )
@@ -1133,7 +1138,7 @@ async def _public_send_results(
     suffix = ".mov" if output_format == "mov" else ".mp4"
     if output_format == "mp4":
         try:
-            await bot.send_video(
+            await tracked_telegram_send(request_data, True, bot.send_video,
                 telegram_id,
                 video=video_url,
                 caption=caption,
@@ -1143,6 +1148,13 @@ async def _public_send_results(
             )
             delivered = True
         except Exception as exc:
+            delay = telegram_delivery_retry_delay(exc)
+            if delay is not None:
+                raise TelegramDeliveryRetryable(delay) from exc
+            if not telegram_delivery_is_definitely_rejected(exc):
+                if is_terminal_telegram_delivery_error(exc):
+                    raise
+                raise TelegramDeliveryUncertain("Telegram send outcome is unknown") from exc
             if is_terminal_telegram_delivery_error(exc):
                 raise
             logger.info("Seedance 2.5 URL delivery failed; trying downloaded file")
@@ -1152,7 +1164,7 @@ async def _public_send_results(
         if temp_path:
             try:
                 if output_format == "mp4":
-                    await bot.send_video(
+                    await tracked_telegram_send(request_data, True, bot.send_video,
                         telegram_id,
                         video=types.FSInputFile(temp_path),
                         caption=caption,
@@ -1161,7 +1173,7 @@ async def _public_send_results(
                         reply_markup=result_markup,
                     )
                 else:
-                    await bot.send_document(
+                    await tracked_telegram_send(request_data, True, bot.send_document,
                         telegram_id,
                         document=types.FSInputFile(temp_path, filename=f"seedance25-{task_id}.mov"),
                         caption=caption,
@@ -1170,6 +1182,13 @@ async def _public_send_results(
                     )
                 delivered = True
             except Exception as exc:
+                delay = telegram_delivery_retry_delay(exc)
+                if delay is not None:
+                    raise TelegramDeliveryRetryable(delay) from exc
+                if not telegram_delivery_is_definitely_rejected(exc):
+                    if is_terminal_telegram_delivery_error(exc):
+                        raise
+                    raise TelegramDeliveryUncertain("Telegram send outcome is unknown") from exc
                 if is_terminal_telegram_delivery_error(exc):
                     raise
                 logger.exception("Seedance 2.5 file delivery failed for task %s", task_id)
@@ -1181,7 +1200,7 @@ async def _public_send_results(
 
     if not delivered and not request_data.get("delivery_link_sent"):
         try:
-            await bot.send_message(
+            await tracked_telegram_send(request_data, False, bot.send_message,
                 telegram_id,
                 caption + f"\n\n🔗 Оригинал:\n{video_url}",
                 parse_mode="HTML",
@@ -1190,6 +1209,13 @@ async def _public_send_results(
             )
             await fullstack._mark_seedance25_delivery(task_id, "link_sent")
         except Exception as exc:
+            delay = telegram_delivery_retry_delay(exc)
+            if delay is not None:
+                raise TelegramDeliveryRetryable(delay) from exc
+            if not telegram_delivery_is_definitely_rejected(exc):
+                if is_terminal_telegram_delivery_error(exc):
+                    raise
+                raise TelegramDeliveryUncertain("Telegram send outcome is unknown") from exc
             if is_terminal_telegram_delivery_error(exc):
                 raise
             logger.exception(
@@ -1199,7 +1225,7 @@ async def _public_send_results(
 
     if last_frame_url:
         try:
-            await bot.send_photo(
+            await tracked_telegram_send(request_data, False, bot.send_photo,
                 telegram_id,
                 photo=last_frame_url,
                 caption=f"🖼 <b>Последний кадр Seedance 2.5</b>\nID: <code>{task_id}</code>",
@@ -1217,13 +1243,25 @@ async def _public_send_results(
                     telegram_id,
                 )
                 return delivered
+            if not telegram_delivery_is_definitely_rejected(photo_exc):
+                # The primary video is already handled. Never replay a possibly
+                # accepted auxiliary photo as a link after a lost response.
+                logger.warning("Seedance 2.5 last-frame outcome unknown: task_id=%s", task_id)
+                return delivered
             try:
-                await bot.send_message(
+                await tracked_telegram_send(request_data, False, bot.send_message,
                     telegram_id,
                     f"🖼 Последний кадр Seedance 2.5:\n{last_frame_url}",
                     disable_web_page_preview=False,
                 )
             except Exception as exc:
+                delay = telegram_delivery_retry_delay(exc)
+                if delay is not None:
+                    raise TelegramDeliveryRetryable(delay) from exc
+                if not telegram_delivery_is_definitely_rejected(exc):
+                    if is_terminal_telegram_delivery_error(exc):
+                        raise
+                    raise TelegramDeliveryUncertain("Telegram send outcome is unknown") from exc
                 if is_terminal_telegram_delivery_error(exc):
                     from bot.database import mark_telegram_chat_unavailable
 

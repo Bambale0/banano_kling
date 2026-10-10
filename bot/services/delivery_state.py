@@ -12,10 +12,11 @@ TASK_DELIVERY_STATUSES = frozenset(
         "pending",
         "link_sent",
         "unavailable",
+        "uncertain",
     }
 )
 TERMINAL_TASK_DELIVERY_STATUSES = frozenset(
-    {"delivered", "failed", "unavailable"}
+    {"delivered", "failed", "unavailable", "uncertain"}
 )
 
 _TERMINAL_TELEGRAM_DELIVERY_REASONS = (
@@ -86,3 +87,47 @@ def retryable_result_sql(*, postgres: bool) -> str:
         "AND CASE WHEN json_valid(request_data) THEN " + state + " ELSE NULL END "
         "IN ('result_ready', 'pending', 'delivering', 'link_sent'))"
     )
+
+
+class TelegramDeliveryUncertain(RuntimeError):
+    """Telegram may have accepted the send; automatic replay can duplicate it."""
+
+
+def telegram_delivery_is_definitely_rejected(error: Exception) -> bool:
+    """Only an explicit API rejection permits another delivery representation."""
+    from aiogram.exceptions import TelegramBadRequest
+
+    return isinstance(error, TelegramBadRequest)
+
+
+class TelegramDeliveryRetryable(RuntimeError):
+    """Explicit flood-limit rejection: no send occurred; honor retry_after."""
+
+    def __init__(self, retry_after: int):
+        super().__init__("Telegram explicitly requested a later retry")
+        self.retry_after = max(1, int(retry_after))
+
+
+def telegram_delivery_retry_delay(error: Exception) -> int | None:
+    from aiogram.exceptions import TelegramRetryAfter
+
+    if isinstance(error, TelegramRetryAfter):
+        return max(1, int(error.retry_after))
+    return None
+
+
+async def tracked_telegram_send(progress: dict, primary: bool, send, *args, **kwargs):
+    """Track acceptance separately from an in-flight request for this attempt."""
+    progress["_telegram_send_inflight"] = True
+    try:
+        response = await send(*args, **kwargs)
+    except Exception as exc:
+        if (telegram_delivery_is_definitely_rejected(exc)
+                or telegram_delivery_retry_delay(exc) is not None
+                or is_terminal_telegram_delivery_error(exc)):
+            progress["_telegram_send_inflight"] = False
+        raise
+    progress["_telegram_send_inflight"] = False
+    if primary:
+        progress["_telegram_primary_delivered"] = True
+    return response
