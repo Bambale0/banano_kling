@@ -16,6 +16,7 @@ import { useApp } from '@/lib/app-context'
 import { uploadFile } from '@/lib/api'
 import {
   createTrendRunRequestId,
+  quoteTrend, readPendingTrend, recoverPendingTrend, type TrendQuote,
   runPinterestRepeatTrend,
   runTrend as runTrendApi,
   type TrendReferenceInput,
@@ -117,7 +118,7 @@ export function TrendRunnerDialog({
   const [trendPreviewFailed, setTrendPreviewFailed] = useState(false)
 
   const pinterestRepeat = isPinterestRepeatItem(trend)
-  const repeatCost = formatTrendRepeatCost(trend?.repeat_cost)
+  const legacyRepeatCost = formatTrendRepeatCost(trend?.repeat_cost)
   const busy = phase === 'uploading' || phase === 'generating'
   const maxPinterestAngles = pinterestModel === 'seedream_5_pro' ? 3 : MAX_PINTEREST_ANGLES
   const isVideoTrend = trend?.generation_settings?.kind === 'video'
@@ -166,6 +167,42 @@ export function TrendRunnerDialog({
   const readyToGenerate = pinterestRepeat
     ? pinterestPrimaryReady && validHeight && validWeight
     : referencesReady && userFieldsReady
+
+  const needsMeasuredQuote = Boolean(isVideoTrend && ['seedance_2','seedance_2_5'].includes(trend?.model || '') &&
+    (Number(trend?.generation_settings?.fixed_video_reference_count || 0) > 0 || referenceSlots.some(slot => slot.media_type === 'video')))
+  const quoteInputs = { trendId: trend?.id, refs: completedReferences.map(ref => ref.url), values: userValues,
+    inputs: typedSlots ? referenceSlots.map((slot,index) => ({ media_type: slot.media_type, position: slot.position, url: uploadedReferences[index]?.url || '' })) : [] }
+  const quoteKey = JSON.stringify(quoteInputs)
+  const [quoteState, setQuoteState] = useState<{ key: string; quote?: TrendQuote; error?: string }>({ key: '' })
+  const [pendingMeasured, setPendingMeasured] = useState(() => Boolean(readPendingTrend()))
+  const measuredQuote = quoteState.key === quoteKey ? quoteState.quote : undefined
+  const repeatCost = needsMeasuredQuote ? (measuredQuote ? String(measuredQuote.cost) : null) : legacyRepeatCost
+  useEffect(() => {
+    if (!open || !trend || !needsMeasuredQuote || !readyToGenerate || busy || pendingMeasured) return
+    let cancelled = false
+    const timer = setTimeout(() => {
+      void quoteTrend(trend.id, quoteInputs.refs, quoteInputs.values, quoteInputs.inputs).then(quote => {
+        if (!cancelled) setQuoteState({ key: quoteKey, quote })
+      }).catch(error => { if (!cancelled) setQuoteState({ key: quoteKey, error: error instanceof Error ? error.message : 'Не удалось рассчитать цену' }) })
+    }, 350)
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [open, quoteKey, needsMeasuredQuote, readyToGenerate, busy, pendingMeasured])
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout>
+    const check = async () => {
+      if (cancelled) return
+      setPendingMeasured(Boolean(readPendingTrend()))
+      try {
+        const result = await recoverPendingTrend()
+        if (!cancelled && result) { addTask(result.task); setCredits(result.credits); selectTask(result.task) }
+      } catch { /* Unknown outcome stays bound to its durable quote. */ }
+      if (!cancelled) timer = setTimeout(check, 3000)
+    }
+    void check()
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [open, addTask, setCredits, selectTask])
 
   const clearPreviews = useCallback(() => {
     for (const previewUrl of previewRefs.current) {
@@ -394,7 +431,7 @@ export function TrendRunnerDialog({
   }
 
   const handleGenerate = async () => {
-    if (!trend || busy || !readyToGenerate) return
+    if (!trend || busy || !readyToGenerate || pendingMeasured || (needsMeasuredQuote && !measuredQuote)) return
     setError(null)
     setPhase('generating')
     const referenceUrls = pinterestRepeat
@@ -428,8 +465,9 @@ export function TrendRunnerDialog({
       trendId: number,
       refs: string[],
       values: Record<string, string>,
-    ) => typedSlots
-      ? runTrendApi(trendId, refs, values, clientRequestId, referenceInputs)
+    ) => measuredQuote
+      ? runTrendApi(trendId, refs, values, clientRequestId, referenceInputs, measuredQuote, trend.model || undefined)
+      : typedSlots ? runTrendApi(trendId, refs, values, clientRequestId, referenceInputs)
       : runTrendApi(trendId, refs, values, clientRequestId)
 
     try {
@@ -922,9 +960,15 @@ export function TrendRunnerDialog({
           </p>
         ) : null}
 
+        {needsMeasuredQuote ? <p className="text-xs text-muted-foreground">
+          {pendingMeasured ? 'Проверяем статус отправленного видео…' : measuredQuote ?
+            `Вход ${measuredQuote.input_seconds} с + результат ${measuredQuote.selected_output_seconds} с` :
+            quoteState.key === quoteKey && quoteState.error ? quoteState.error : 'Цена будет рассчитана после загрузки референсов'}
+        </p> : null}
+
         <Button
           type="button"
-          disabled={busy || !readyToGenerate}
+          disabled={busy || !readyToGenerate || pendingMeasured || (needsMeasuredQuote && !measuredQuote)}
           onClick={() => void handleGenerate()}
           className={pinterestRepeat ? 'h-12 text-base font-semibold' : undefined}
         >

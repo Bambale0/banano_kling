@@ -1,5 +1,7 @@
 'use client'
 
+import { quoteVideo, type MeasuredVideoQuote } from '@/lib/api'
+
 import { normalizeRepeatPrompt } from '@/lib/repeat-prompt'
 import { normalizeVideoRepeatSlots } from '@/lib/video-repeat-references'
 import { getPendingVideoRepeat, isVideoStatusPending, VIDEO_REPEAT_PENDING_CHANGED, type PendingVideoRepeat } from '@/lib/video-repeat-pending'
@@ -63,6 +65,8 @@ interface VideoGeneratorFormProps {
     scenario: ScenarioType
     ratio: string
     duration: number
+    videoQuoteId?: string
+    videoQuoteHash?: string
     sourceFeedGenId?: number | null
     grokMode: string
     grokResolution: string
@@ -232,41 +236,6 @@ export function VideoGeneratorForm({
     return undefined
   }
   const selectedQuality = qualityForModel(model)
-  // The descriptor covers the complete server recipe, including retained video
-  // inputs that deliberately have no local URL. Never infer a tariff from IDs.
-  const requiresDurationQuote = Boolean(repeatSlots && selectedModel === 'seedance_2_5')
-  const retainedDurationCosts = repeatSlots?.duration_costs
-  const retainedDurationCost = retainedDurationCosts?.[selectedDuration.toString()]
-  const modelQualityPrice = selectedQuality ? model?.quality_costs?.[selectedQuality] : undefined
-  const modelRequiresConfiguredQuality = Boolean(model?.requires_quality_pricing)
-  const priceAvailable = (!repeatSlots || repeatSlots.available)
-    && (!requiresDurationQuote || (typeof retainedDurationCost === 'number' && Number.isFinite(retainedDurationCost)))
-    && (!modelRequiresConfiguredQuality || (typeof modelQualityPrice === 'number' && Number.isFinite(modelQualityPrice) && modelQualityPrice > 0))
-  // Normal Seedance 2 submits retained video refs even after switching scenario.
-  // Repeat descriptors already include all retained/replacement source inputs.
-  const repeatCostMultiplier = repeatSlots?.cost_multiplier ?? (
-    selectedModel === 'seedance_2' && (model?.max_video_references ?? 0) > 0 && videoReferences.length > 0 ? 2 : 1
-  )
-  const durationCosts = useMemo(
-    () => requiresDurationQuote ? retainedDurationCosts || {} : priceAvailable
-      ? Object.fromEntries(
-        (model?.durations || [selectedDuration]).map((duration) => [
-          duration.toString(),
-          getVideoModelCost(model, duration, selectedQuality, repeatCostMultiplier),
-        ])
-      ) : {},
-    [model, selectedDuration, selectedQuality, priceAvailable, repeatCostMultiplier, requiresDurationQuote, retainedDurationCosts]
-  )
-  const baseCost = requiresDurationQuote
-    ? retainedDurationCost ?? 0
-    : getVideoModelCost(model, selectedDuration, selectedQuality, repeatCostMultiplier)
-  const cost = isOmniAudio
-    ? model?.omni_audio_cost ?? 3
-    : isOmniCharacter
-      ? model?.omni_character_cost ?? 5
-      : baseCost
-  const perSecondCost = cost / Math.max(selectedDuration, 1)
-  const canAfford = priceAvailable && credits >= cost
   const parseAssetIds = (value: string) =>
     value
       .split(/[\s,;]+/)
@@ -307,6 +276,108 @@ export function VideoGeneratorForm({
     && videoReferences.length === 0
     && audioReference.length > 0
   const hasPrompt = prompt.trim().length > 0 || Boolean(sourceFeedGenId) || wanHasReferenceOnlyInput
+  const submissionPayload: Parameters<VideoGeneratorFormProps["onSubmit"]>[0] = {
+      model: selectedModel,
+      scenario: selectedScenario,
+      ratio: selectedRatio,
+      duration: isOmniAudio || isOmniCharacter ? 6 : selectedDuration,
+      sourceFeedGenId,
+      grokMode,
+      grokResolution,
+      veoGenerationType,
+      veoTranslation,
+      veoResolution,
+      veoSeed: veoSeed.trim() ? Number(veoSeed) : null,
+      veoWatermark,
+      wanResolution,
+      wanSeed: wanSeed.trim() ? Number(wanSeed) : null,
+      wanAudio,
+      wanNsfwChecker,
+      wanFirstFrameUrl: isWanPrime && selectedScenario === 'first_last' ? photoReferences[0]?.url || null : null,
+      wanLastFrameUrl: isWanPrime ? wanLastFrame[0]?.url || null : null,
+      wanReferenceFileUrls: isWanPrime && selectedScenario === 'file' ? [wanFileUrl.trim()].filter(Boolean) : [],
+      wanReferenceLinkUrls: isWanPrime && selectedScenario === 'link' ? [wanLinkUrl.trim()].filter(Boolean) : [],
+      klingNegativePrompt,
+      klingCfgScale,
+      omniResolution,
+      omniSeed: omniSeed.trim() ? Number(omniSeed) : null,
+      omniAudioIds: parsedOmniAudioIds,
+      omniCharacterIds: parsedOmniCharacterIds,
+      omniBaseVoice,
+      omniVoiceName,
+      omniVoiceDescription,
+      omniExampleDialogue,
+      omniCharacterName,
+      omniCharacterAudioIds: parsedOmniCharacterAudioIds,
+      prompt,
+      startImage:
+        repeatSlots ? null : isOmniAudio || !['character', 'avatar'].includes(selectedScenario)
+          ? null
+          : startImage[0]?.url || null,
+      references:
+        repeatSlots ? typedSlots.filter((slot) => slot.type === 'image' && slot.binding === 'upload').map((slot) => repeatUploads[slot.key]?.[0]?.url).filter((url): url is string => !!url) : isOmniAudio || isOmniCharacter
+          ? []
+          : selectedScenario === 'imgtxt' || (model?.max_image_references ?? 8) > 0
+            ? photoReferences.map((item) => item.url)
+            : [],
+      videoReferences: repeatSlots ? typedSlots.filter((slot) => slot.type === 'video' && slot.binding === 'upload').map((slot) => repeatUploads[slot.key]?.[0]?.url).filter((url): url is string => !!url) : isOmniVideo || (model?.max_video_references ?? 0) > 0 ? videoReferences.map(r => r.url) : [],
+      audioReference: selectedScenario === 'avatar' ? audioReference[0]?.url || null : null,
+      audioReferences: isWanPrime ? audioReference.map((item) => item.url) : [],
+    }
+  const measuredKey = JSON.stringify(submissionPayload)
+  const needsMeasuredQuote = ['seedance_2', 'seedance_2_5'].includes(selectedModel)
+    && (videoReferences.length > 0 || (repeatSlots?.videos.length || 0) > 0)
+  const [measuredState, setMeasuredState] = useState<{ key: string; quote?: MeasuredVideoQuote; error?: string } | null>(null)
+  const measuredQuote = needsMeasuredQuote && measuredState?.key === measuredKey ? measuredState.quote : undefined
+  useEffect(() => {
+    if (!needsMeasuredQuote || repeatBlocked || !hasPrompt || isSubmitting) return
+    let cancelled = false
+    const snapshot = submissionPayload
+    setMeasuredState(null)
+    const timer = window.setTimeout(() => { void quoteVideo(snapshot).then((quote) => {
+      if (!cancelled) setMeasuredState({ key: measuredKey, quote })
+    }).catch((value) => {
+      if (!cancelled) setMeasuredState({ key: measuredKey, error: value instanceof Error ? value.message : 'Расчёт недоступен' })
+    }) }, 350)
+    return () => { cancelled = true; window.clearTimeout(timer) }
+  // The serialized effective client recipe, including the repeat context, owns this request.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needsMeasuredQuote, measuredKey, repeatBlocked, hasPrompt, isSubmitting])
+  // The descriptor covers the complete server recipe, including retained video
+  // inputs that deliberately have no local URL. Never infer a tariff from IDs.
+  const requiresDurationQuote = Boolean(!needsMeasuredQuote && repeatSlots && selectedModel === 'seedance_2_5')
+  const retainedDurationCosts = repeatSlots?.duration_costs
+  const retainedDurationCost = retainedDurationCosts?.[selectedDuration.toString()]
+  const modelQualityPrice = selectedQuality ? model?.quality_costs?.[selectedQuality] : undefined
+  const modelRequiresConfiguredQuality = Boolean(model?.requires_quality_pricing)
+  const priceAvailable = (!needsMeasuredQuote || Boolean(measuredQuote)) && (!repeatSlots || repeatSlots.available)
+    && (!requiresDurationQuote || (typeof retainedDurationCost === 'number' && Number.isFinite(retainedDurationCost)))
+    && (!modelRequiresConfiguredQuality || (typeof modelQualityPrice === 'number' && Number.isFinite(modelQualityPrice) && modelQualityPrice > 0))
+  // Normal Seedance 2 submits retained video refs even after switching scenario.
+  // Repeat descriptors already include all retained/replacement source inputs.
+  const repeatCostMultiplier = needsMeasuredQuote ? 1 : repeatSlots?.cost_multiplier ?? (
+    selectedModel === 'seedance_2' && (model?.max_video_references ?? 0) > 0 && videoReferences.length > 0 ? 2 : 1
+  )
+  const durationCosts = useMemo(
+    () => requiresDurationQuote ? retainedDurationCosts || {} : priceAvailable
+      ? Object.fromEntries(
+        (model?.durations || [selectedDuration]).map((duration) => [
+          duration.toString(),
+          getVideoModelCost(model, duration, selectedQuality, repeatCostMultiplier),
+        ])
+      ) : {},
+    [model, selectedDuration, selectedQuality, priceAvailable, repeatCostMultiplier, requiresDurationQuote, retainedDurationCosts]
+  )
+  const baseCost = requiresDurationQuote
+    ? retainedDurationCost ?? 0
+    : getVideoModelCost(model, selectedDuration, selectedQuality, repeatCostMultiplier)
+  const cost = needsMeasuredQuote ? measuredQuote?.cost ?? 0 : isOmniAudio
+    ? model?.omni_audio_cost ?? 3
+    : isOmniCharacter
+      ? model?.omni_character_cost ?? 5
+      : baseCost
+  const perSecondCost = needsMeasuredQuote && measuredQuote ? cost / Math.max(measuredQuote.input_seconds + measuredQuote.selected_output_seconds, 1) : cost / Math.max(selectedDuration, 1)
+  const canAfford = priceAvailable && credits >= (measuredQuote?.charge_cost ?? cost)
   const isValid = hasPrompt &&
     canAfford &&
     !repeatBlocked &&
@@ -548,56 +619,8 @@ export function VideoGeneratorForm({
     if (!isValid || isSubmitting || submittingRef.current) return
     submittingRef.current = true
     const submittedSession = repeatSession.current
-    const submitDuration = isOmniAudio || isOmniCharacter ? 6 : selectedDuration
     try {
-    await onSubmit({
-      model: selectedModel,
-      scenario: selectedScenario,
-      ratio: selectedRatio,
-      duration: submitDuration,
-      sourceFeedGenId,
-      grokMode,
-      grokResolution,
-      veoGenerationType,
-      veoTranslation,
-      veoResolution,
-      veoSeed: veoSeed.trim() ? Number(veoSeed) : null,
-      veoWatermark,
-      wanResolution,
-      wanSeed: wanSeed.trim() ? Number(wanSeed) : null,
-      wanAudio,
-      wanNsfwChecker,
-      wanFirstFrameUrl: isWanPrime && selectedScenario === 'first_last' ? photoReferences[0]?.url || null : null,
-      wanLastFrameUrl: isWanPrime ? wanLastFrame[0]?.url || null : null,
-      wanReferenceFileUrls: isWanPrime && selectedScenario === 'file' ? [wanFileUrl.trim()].filter(Boolean) : [],
-      wanReferenceLinkUrls: isWanPrime && selectedScenario === 'link' ? [wanLinkUrl.trim()].filter(Boolean) : [],
-      klingNegativePrompt,
-      klingCfgScale,
-      omniResolution,
-      omniSeed: omniSeed.trim() ? Number(omniSeed) : null,
-      omniAudioIds: parsedOmniAudioIds,
-      omniCharacterIds: parsedOmniCharacterIds,
-      omniBaseVoice,
-      omniVoiceName,
-      omniVoiceDescription,
-      omniExampleDialogue,
-      omniCharacterName,
-      omniCharacterAudioIds: parsedOmniCharacterAudioIds,
-      prompt,
-      startImage:
-        repeatSlots ? null : isOmniAudio || !['character', 'avatar'].includes(selectedScenario)
-          ? null
-          : startImage[0]?.url || null,
-      references:
-        repeatSlots ? typedSlots.filter((slot) => slot.type === 'image' && slot.binding === 'upload').map((slot) => repeatUploads[slot.key][0].url) : isOmniAudio || isOmniCharacter
-          ? []
-          : selectedScenario === 'imgtxt' || (model?.max_image_references ?? 8) > 0
-            ? photoReferences.map((item) => item.url)
-            : [],
-      videoReferences: repeatSlots ? typedSlots.filter((slot) => slot.type === 'video' && slot.binding === 'upload').map((slot) => repeatUploads[slot.key][0].url) : isOmniVideo || (model?.max_video_references ?? 0) > 0 ? videoReferences.map(r => r.url) : [],
-      audioReference: selectedScenario === 'avatar' ? audioReference[0]?.url || null : null,
-      audioReferences: isWanPrime ? audioReference.map((item) => item.url) : [],
-    })
+    await onSubmit({ ...submissionPayload, videoQuoteId: measuredQuote?.quote_id, videoQuoteHash: measuredQuote?.quote_hash })
     } catch (error) {
       if (submittedSession === repeatSession.current) {
         if (isVideoStatusPending(error)) setRepeatPending(getPendingVideoRepeat(sourceFeedGenId))
@@ -641,7 +664,7 @@ export function VideoGeneratorForm({
       <div className="glass min-w-0 space-y-4 overflow-hidden rounded-2xl border border-cyan/20 p-3 sm:p-4">
         <fieldset disabled={Boolean(repeatSlots)} aria-label="Модель" className="space-y-2">
           <label className="text-sm font-medium text-foreground">Модель</label>
-          {!priceAvailable ? <p className="text-sm text-foreground">{model?.label}</p> : <ModelSelect
+          {!priceAvailable && !needsMeasuredQuote ? <p className="text-sm text-foreground">{model?.label}</p> : <ModelSelect
             models={visibleModels.map(m => ({
               id: m.id,
               label: m.label,
@@ -1392,6 +1415,10 @@ export function VideoGeneratorForm({
           </div>
         </div>
 
+        {needsMeasuredQuote ? <p className="text-xs text-muted-foreground">
+          {measuredQuote ? `Вход ${measuredQuote.input_seconds} с + результат ${measuredQuote.selected_output_seconds} с` :
+            measuredState?.key === measuredKey && measuredState.error ? measuredState.error : 'Рассчитываем цену по видеореференсам…'}
+        </p> : null}
         {!priceAvailable ? <p className="text-sm text-muted-foreground">Стоимость недоступна</p> : <div className="flex items-center justify-between">
           <div>
             <span className="text-sm text-muted-foreground">Стоимость</span>

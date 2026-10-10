@@ -37,6 +37,9 @@ jest.mock('@/lib/trend-api', () => {
   return {
     createTrendRunRequestId: jest.fn(() => 'trend-request-stable'),
     runTrend: jest.fn(),
+    quoteTrend: jest.fn(async () => ({ quote_id: 'a'.repeat(32), quote_hash: 'b'.repeat(64), cost: 48, charge_cost: 48, input_seconds: 7, selected_output_seconds: 5 })),
+    readPendingTrend: jest.fn(() => null),
+    recoverPendingTrend: jest.fn(async () => null),
     runPinterestRepeatTrend: jest.fn(),
     TrendRunRequestError: MockTrendRunRequestError,
   }
@@ -265,6 +268,8 @@ describe('TrendRunnerDialog user fields', () => {
         { media_type: 'image', position: 1, url: 'https://example.test/face.jpg' },
         { media_type: 'video', position: 1, url: 'https://example.test/motion.mp4' },
       ],
+      expect.objectContaining({ cost: 48, input_seconds: 7, selected_output_seconds: 5 }),
+      'seedance_2',
     ))
   })
 })

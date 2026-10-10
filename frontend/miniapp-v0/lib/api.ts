@@ -859,7 +859,7 @@ export async function generateImage(payload: {
 
   const response = await postJson<{
     ok: true
-    status: 'queued' | 'done'
+    status: 'queued' | 'done' | 'failed'
     task_id: string
     saved_url?: string
     credits: number
@@ -1360,7 +1360,7 @@ export async function executeMiniAppAction(action: string): Promise<void> {
   })
 }
 
-export async function generateVideo(payload: {
+export interface VideoSubmission {
   model: string
   scenario: ScenarioType
   ratio: string
@@ -1399,38 +1399,35 @@ export async function generateVideo(payload: {
   videoReferences: string[]
   audioReference?: string | null
   audioReferences?: string[]
-}): Promise<{
-  task: Task
-  detail?: TaskDetail | null
-  credits: number
-}> {
+
+  videoQuoteId?: string
+  videoQuoteHash?: string
+}
+
+export interface MeasuredVideoQuote {
+  ok: true
+  quote_only: true
+  quote_id: string
+  quote_hash: string
+  cost: number
+  charge_cost: number
+  input_seconds: number
+  selected_output_seconds: number
+}
+
+function serializeVideoSubmission(payload: VideoSubmission) {
   const initData = getInitData()
-  if (!initData) {
-    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
-  }
-  const pending = getPendingVideoRepeat(payload.sourceFeedGenId)
-  if (pending) throw new MiniAppApiError('Видео уже принято. Ожидаем подтверждения статуса.', 'video_status_pending', pending.taskId)
+  if (!initData) throw new Error('Откройте Mini App через Telegram')
   const startImage = restoreProviderUploadUrl(payload.startImage)
   const imageReferences = restoreProviderUploadUrls(payload.references)
   const videoReferences = restoreProviderUploadUrls(payload.videoReferences)
   const audioReference = restoreProviderUploadUrl(payload.audioReference)
   const audioReferences = restoreProviderUploadUrls(payload.audioReferences || [])
-
-  const response = await postJson<{
-    ok: true
-    status: 'queued' | 'done'
-    task_id: string
-    saved_url?: string
-    task_type?: 'image' | 'video' | 'audio' | 'character'
-    credits: number
-    cost: number
-    model_label: string
-    prompt_hidden?: boolean
-    prompt_actions_allowed?: boolean
-    source_feed_gen_id?: number | null
-  }>('generate-video', {
+  return {
     init_data: initData,
     v_model: payload.model,
+    video_quote_id: payload.videoQuoteId,
+    video_quote_hash: payload.videoQuoteHash,
     v_type: payload.scenario,
     v_ratio: payload.ratio,
     v_duration: payload.duration,
@@ -1468,12 +1465,101 @@ export async function generateVideo(payload: {
     v_reference_videos: videoReferences,
     audio_url: audioReference,
     audio_references: audioReferences.length ? audioReferences : audioReference ? [audioReference] : [],
-  }).catch((error: unknown) => {
+  }
+}
+
+export async function quoteVideo(payload: VideoSubmission): Promise<MeasuredVideoQuote> {
+  return postJson<MeasuredVideoQuote>('generate-video', { ...serializeVideoSubmission(payload),
+    video_quote_only: true, seedance25_quote_only: payload.model === 'seedance_2_5' })
+}
+
+function measuredPendingKey(): string | null {
+  try {
+    const user = JSON.parse(new URLSearchParams(getInitData()).get('user') || 'null')
+    return user?.id ? `measured-video-pending:${user.id}` : null
+  } catch { return null }
+}
+
+export function readPendingMeasuredVideo(): VideoSubmission | null {
+  try {
+    const key = measuredPendingKey()
+    const value = key && JSON.parse(localStorage.getItem(key) || 'null')
+    return value && /^[a-f0-9]{32}$/.test(value.videoQuoteId) && ['seedance_2', 'seedance_2_5'].includes(value.model) ? value : null
+  } catch { return null }
+}
+
+function clearPendingMeasuredVideo(quoteId: string): void {
+  const key = measuredPendingKey()
+  if (key && readPendingMeasuredVideo()?.videoQuoteId === quoteId) localStorage.removeItem(key)
+}
+
+export async function recoverPendingMeasuredVideo(): Promise<{ status: string; credits?: number }> {
+  const pending = readPendingMeasuredVideo()
+  if (!pending) return { status: 'none' }
+  const response = await postJson<{ ok: true; status: string; credits?: number }>('generate-video', {
+    init_data: getInitData(), v_model: pending.model, video_quote_id: pending.videoQuoteId,
+    video_quote_status_only: true, seedance25_status_only: pending.model === 'seedance_2_5',
+  })
+  if (response.status === 'quoted') {
+    const result = await generateVideo(pending)
+    return { status: 'queued', credits: result.credits }
+  }
+  if (['queued', 'done', 'failed', 'rejected', 'provider_failed'].includes(response.status)) {
+    clearPendingMeasuredVideo(pending.videoQuoteId!)
+  }
+  return response
+}
+
+export async function generateVideo(payload: VideoSubmission): Promise<{
+  task: Task
+  detail?: TaskDetail | null
+  credits: number
+}> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+  const measuredPending = readPendingMeasuredVideo()
+  if (measuredPending && measuredPending.videoQuoteId !== payload.videoQuoteId) {
+    throw new MiniAppApiError('Проверяем статус предыдущего видео.', 'video_status_pending')
+  }
+  if (payload.videoQuoteId) {
+    const key = measuredPendingKey()
+    if (!key) throw new Error('Не удалось сохранить идентификатор запуска')
+    localStorage.setItem(key, JSON.stringify(payload))
+  }
+  const pending = getPendingVideoRepeat(payload.sourceFeedGenId)
+  if (pending) throw new MiniAppApiError('Видео уже принято. Ожидаем подтверждения статуса.', 'video_status_pending', pending.taskId)
+  const startImage = restoreProviderUploadUrl(payload.startImage)
+  const imageReferences = restoreProviderUploadUrls(payload.references)
+  const videoReferences = restoreProviderUploadUrls(payload.videoReferences)
+  const audioReference = restoreProviderUploadUrl(payload.audioReference)
+  const audioReferences = restoreProviderUploadUrls(payload.audioReferences || [])
+
+  const response = await postJson<{
+    ok: true
+    status: 'queued' | 'done' | 'failed'
+    task_id: string
+    saved_url?: string
+    task_type?: 'image' | 'video' | 'audio' | 'character'
+    credits: number
+    cost: number
+    model_label: string
+    prompt_hidden?: boolean
+    prompt_actions_allowed?: boolean
+    source_feed_gen_id?: number | null
+  }>('generate-video', serializeVideoSubmission(payload)).catch((error: unknown) => {
+    if (payload.videoQuoteId && error instanceof MiniAppApiError &&
+        ['video_quote_changed', 'video_quote_missing', 'video_rejected', 'video_not_reserved', 'video_input_invalid'].includes(error.code || '')) {
+      clearPendingMeasuredVideo(payload.videoQuoteId)
+    }
     if (payload.sourceFeedGenId && isVideoStatusPending(error)) {
       markVideoRepeatPending(payload.sourceFeedGenId, error.taskId)
     }
     throw error
   })
+
+  if (payload.videoQuoteId) clearPendingMeasuredVideo(payload.videoQuoteId)
 
   const task: Task = {
     task_id: response.task_id,
@@ -1481,7 +1567,7 @@ export async function generateVideo(payload: {
     model: payload.model,
     model_label: response.model_label,
     aspect_ratio: payload.ratio,
-    status: response.status === 'done' ? 'completed' : 'pending',
+    status: response.status === 'done' ? 'completed' : response.status === 'failed' ? 'failed' : 'pending',
     result_url: response.saved_url || null,
     created_at: new Date().toISOString(),
     prompt_preview:
