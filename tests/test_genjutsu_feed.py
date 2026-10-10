@@ -39,7 +39,8 @@ async def setup_owned_run(*, variants=1, step_count=1):
     }
     await repo.update_settings(999, version, settings)
     async with connect() as db:
-        await db.execute("UPDATE users SET credits=1000 WHERE telegram_id=101")
+        # Repeating user must afford the new two-component clip tariff.
+        await db.execute("UPDATE users SET credits=1000 WHERE telegram_id IN (101, 202)")
         await db.commit()
     async def asset(kind, user=101):
         return await repo.add_asset(user, kind, uuid4().hex + (".mp4" if kind == "video" else ".png"), {
