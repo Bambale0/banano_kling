@@ -142,6 +142,8 @@ class Wan3PrimeStorage:
             )
             await execute_wan_ddl(db, "CREATE TABLE IF NOT EXISTS wan3_prime_storage_lock (id INTEGER PRIMARY KEY)")
             await db.execute("INSERT INTO wan3_prime_storage_lock (id) VALUES (1) ON CONFLICT (id) DO NOTHING")
+            await execute_wan_ddl(db, "CREATE TABLE IF NOT EXISTS wan3_prime_cleanup_cursor (id INTEGER PRIMARY KEY, last_media_id BIGINT NOT NULL DEFAULT 0)")
+            await db.execute("INSERT INTO wan3_prime_cleanup_cursor (id) VALUES (1) ON CONFLICT (id) DO NOTHING")
             await db.commit()
 
     async def cleanup_expired(self, *, limit: int = 100) -> dict[str, int]:

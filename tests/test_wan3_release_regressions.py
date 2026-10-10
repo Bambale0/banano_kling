@@ -264,3 +264,15 @@ async def test_pending_wan_generic_admin_refund_cannot_duplicate_lifecycle_refun
     with pytest.raises(operations.CommandConflictError, match='Wan'):
         await operations.refund_operation_handler.__wrapped__(request)
     assert not any('UPDATE users' in sql for sql, _args in connection.calls)
+
+
+def test_wan_trend_never_uses_a_generic_five_second_price(monkeypatch):
+    from unittest.mock import Mock
+
+    from bot import trend_api
+    pricing = Mock(side_effect=AssertionError('Wan needs measured inputs and its own quote'))
+    monkeypatch.setattr(trend_api, 'resolve_video_quote', pricing)
+    value = trend_api.estimate_trend_repeat_cost({'model': 'wan_3_prime', 'generation_settings': {
+        'kind': 'video', 'model': 'wan_3_prime', 'scenario': 'edit', 'duration': 5, 'resolution': '1080P'}})
+    assert value is None
+    pricing.assert_not_called()

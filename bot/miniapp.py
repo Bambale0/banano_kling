@@ -5034,6 +5034,9 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
             or (source_feed_task or {}).get("model")
             or "v3_pro"
         )
+        if model == "wan_3_prime":
+            return web.json_response({"ok": False, "code": "wan3_editor_required",
+                "error": "Откройте публикацию в редакторе Wan для расчёта и замены референсов."}, status=409)
         generation_type = str(
             body.get("v_type")
             or source_request_data.get("v_type")

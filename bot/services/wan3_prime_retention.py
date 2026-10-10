@@ -50,10 +50,16 @@ async def cleanup_expired(*, limit: int = 100) -> dict[str, int]:
             removed_sessions += 1
         optional_tables = [(table, column) for table, column in (('trend_reference_assets', 'file_url'),
             ('saved_references', 'file_url'), ('wan3_prime_trend_recipes', 'recipe_json')) if await _table_exists(db, table)]
+        cursor = await (await db.execute('SELECT last_media_id FROM wan3_prime_cleanup_cursor WHERE id = 1')).fetchone()
+        after_id = int(cursor[0]) if cursor else 0
         rows = await (await db.execute(
-            'SELECT id, public_url, local_path FROM wan3_prime_media WHERE created_at <= ? ORDER BY created_at LIMIT ?',
-            (cutoff, limit),
+            'SELECT id, public_url, local_path FROM wan3_prime_media WHERE created_at <= ? AND id > ? ORDER BY id LIMIT ?',
+            (cutoff, after_id, limit),
         )).fetchall()
+        # Persist progress, including pinned inputs; otherwise the oldest full
+        # page of protected media would prevent any later orphan from expiring.
+        await db.execute('UPDATE wan3_prime_cleanup_cursor SET last_media_id = ? WHERE id = 1',
+                         (int(rows[-1]['id']) if rows else 0,))
         for row in rows:
             # The UUID-derived basename has no SQL wildcard. Overprotecting a
             # match is safe; deletion never depends on whether a task is public.

@@ -5,7 +5,7 @@ import importlib.machinery
 import json
 import logging
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from aiogram import F, Router, types
@@ -369,7 +369,7 @@ async def share_to_profile(
                 result_urls_json = json.dumps(persisted, ensure_ascii=False)
 
         next_blurred = database.generation_feed_blurred(row) if blurred is None else bool(blurred)
-        published_at = datetime.now(timezone.utc).replace(tzinfo=None).isoformat(
+        published_at = datetime.now(UTC).replace(tzinfo=None).isoformat(
             sep=" ", timespec="microseconds"
         )
         await db.execute(

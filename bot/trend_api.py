@@ -480,6 +480,11 @@ def estimate_trend_repeat_cost(
         kind = str(settings.get("kind") or "").strip().lower()
         model = str(settings.get("model") or trend.get("model") or "").strip()
 
+    # Wan bills measured source + output seconds. The catalog has no validated
+    # replacement media yet, so only its explicit quote may display a price.
+    if model == "wan_3_prime":
+        return None
+
     if not model or kind not in {"image", "video"}:
         return None
 
