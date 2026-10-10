@@ -1877,3 +1877,14 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Rollback: revert this presentation-only change; no migration or financial repair.
 
 - Release coordination: user approved including this isolated catalog change in PR #288 at 13:34 UTC; applied on the fully green WAN head `87072dace66147d9ad4f1c9b2def362d5c54f5b5`, preserving every existing WAN fix. Fresh exact-head CI and automatic review remain required.
+
+## 2026-10-10 — Tanya WAN standard, measured video-reference quotes and safety
+
+- Baseline: origin/tanyapi aa64bb8b8ee90559bec695fc5466ff3df8cbe9d3. Dedicated sparse worktree and agent/tanya-wan3-videoref-20261010. Live checkout has unrelated dirty data/price.json, diagnostics/receipts and restart_check.py; untouched. Restricted database pool module is excluded from checkout, reads and imports.
+- Scope: ordinary KIE wan/3-0-video with separate model/admin rate; measured input plus explicitly selected output seconds retail quote; removal of old videoref multiplier; Motion finance safety; Seedance uncertain delivery. Do not change historical accepted quotes/ledger, admin rates, live configuration, or other bots.
+- Preflight: Prime already provides durable launch/quote/media lifecycle. Standard WAN must reuse it with immutable model identity through recipe, quote, submit, recovery and delivery. Motion presently trusts client duration and refunds any exception, including admin/no debit and accepted submissions. Seedance send timeouts fall through to file/link and are requeued.
+- Decisions pending: Auto and Omni output without independent selector require an explicit reserve/settlement policy; no fabricated output duration will be introduced. Motion duration must come from trusted measured source and documented provider constraints.
+- Vertical slice 1: Seedance public/admin URL, downloaded media and link send exceptions now permit fallback only on explicit Telegram API rejection. Unknown acceptance raises a typed uncertainty outcome; outer dispatch records uncertain, which blocks automatic claims/replay. Auxiliary photo uncertainty does not retry as a link. Stored generated results and balances are unchanged.
+- Evidence: isolated selected-function public send and dispatcher tests initially reproduced four failures (timeout retried and dispatcher pending). After change the isolated tests pass; no application/database/bootstrap imports, paid generation or real messages run. Full application CI remains a release gate.
+- Guidance: read AGENTS, README, local agent instructions, execution ledger, Bambale0/skills diagnosing-bugs/TDD/implement and Bambale0/claw QA checklist, anthropics/webapp-testing. Shared skills updated only after specific user authorization.
+- Remaining: Motion durable receipt/refund and trusted duration; shared pricing/frontends; WAN standard; exact-head tests and independent review; draft PR then release gates. No merge/deploy yet.

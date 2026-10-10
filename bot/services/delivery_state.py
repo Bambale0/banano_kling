@@ -12,10 +12,11 @@ TASK_DELIVERY_STATUSES = frozenset(
         "pending",
         "link_sent",
         "unavailable",
+        "uncertain",
     }
 )
 TERMINAL_TASK_DELIVERY_STATUSES = frozenset(
-    {"delivered", "failed", "unavailable"}
+    {"delivered", "failed", "unavailable", "uncertain"}
 )
 
 _TERMINAL_TELEGRAM_DELIVERY_REASONS = (
@@ -86,3 +87,14 @@ def retryable_result_sql(*, postgres: bool) -> str:
         "AND CASE WHEN json_valid(request_data) THEN " + state + " ELSE NULL END "
         "IN ('result_ready', 'pending', 'delivering', 'link_sent'))"
     )
+
+
+class TelegramDeliveryUncertain(RuntimeError):
+    """Telegram may have accepted the send; automatic replay can duplicate it."""
+
+
+def telegram_delivery_is_definitely_rejected(error: Exception) -> bool:
+    """Only an explicit API rejection permits another delivery representation."""
+    from aiogram.exceptions import TelegramBadRequest
+
+    return isinstance(error, TelegramBadRequest)
