@@ -51,14 +51,22 @@ async def test_probe_has_local_protocol_and_demuxer_allowlists(tmp_path, monkeyp
 
 
 def test_voice_decode_has_local_protocol_and_demuxer_allowlists(tmp_path, monkeypatch):
-    from bot.services import wan3_prime_files as files
+    from bot.services import wan3_prime_audio_worker as worker
+
+    calls = []
     def run(command, **kwargs):
+        calls.append(command)
         assert command[command.index('-protocol_whitelist') + 1] == 'file,pipe'
         assert 'ogg' in command[command.index('-format_whitelist') + 1].split(',')
+        if command[0] == 'ffprobe':
+            return SimpleNamespace(returncode=0, stdout=json.dumps({'format': {'duration': 1.2}, 'streams': [{'codec_type': 'audio'}]}))
         assert command.index('-protocol_whitelist') < command.index('-i')
+        assert command[command.index('-fs') + 1] == str(15 * 1024**2)
+        assert command[command.index('-t') + 1] == '16'
         return SimpleNamespace(returncode=0)
-    monkeypatch.setattr(files.subprocess, 'run', run)
-    files.convert_voice_to_mp3(tmp_path / 'voice.ogg', tmp_path / 'voice.mp3')
+    monkeypatch.setattr(worker.subprocess, 'run', run)
+    worker.transcode(tmp_path / 'voice.ogg', tmp_path / 'voice.mp3', 15, 15 * 1024**2)
+    assert [call[0] for call in calls] == ['ffprobe', 'ffmpeg']
 
 
 def test_access_log_omits_query_secrets():

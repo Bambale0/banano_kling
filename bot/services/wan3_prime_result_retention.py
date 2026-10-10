@@ -37,9 +37,11 @@ async def assert_result_capacity(db) -> None:
     """Caller holds the shared storage lock through reservation persistence."""
     maximum = positive_setting('WAN3_RESULT_MAX_BYTES', 250 * 1024**2)
     quota = positive_setting('WAN3_RESULT_GLOBAL_QUOTA_BYTES', 20 * 1024**3)
-    retained = await asyncio.to_thread(_result_bytes)
+    # Count reservations first. A concurrent settlement may make a file visible
+    # during the scan, but can never remove it from both halves of accounting.
     row = await (await db.execute('SELECT COUNT(*) FROM wan3_prime_intents WHERE settled = 0')).fetchone()
     reserved = int(row[0]) * maximum
+    retained = await asyncio.to_thread(_result_bytes)
     if retained + reserved > quota:
         raise Wan3PrimeValidationError('Result storage capacity is full; no funds were charged', status=503)
     volume = RESULT_ROOT.resolve()
@@ -107,3 +109,12 @@ async def cleanup_results(*, limit: int = 100) -> int:
     if removed:
         logger.info('Wan3 expired private delivered results: count=%s', removed)
     return removed
+
+
+async def lock_publication(db, generation_id: int | str, user_id: int) -> None:
+    """Hold expiry's lock from the fresh publication read through media copy/commit."""
+    clause, value = database._generation_identifier_clause(generation_id)
+    row = await (await db.execute(f'SELECT task_id, model FROM generation_tasks WHERE {clause} AND user_id = ?',
+                                  (value, user_id))).fetchone()
+    if row and (str(row[0] or '').startswith('wan3_') or row[1] == 'wan_3_prime'):
+        await lock_storage(db)

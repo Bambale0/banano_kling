@@ -15,6 +15,7 @@ WAN3_MODEL_KEY = "wan_3_prime"
 WAN3_PROVIDER_MODEL = "wan/3-0-video-prime"
 
 MAX_PROMPT_LENGTH = 20_000
+MAX_REFERENCE_MEDIA_SECONDS = 15
 MAX_SEED = 2_147_483_647
 ALLOWED_SCENARIOS = {"text", "first_frame", "first_last", "reference", "edit", "file", "link"}
 ALLOWED_RESOLUTIONS = {"480P", "720P", "1080P"}
@@ -305,7 +306,7 @@ def _check_duration(info: MediaInfo, *, kind: str) -> float:
     if info.duration_seconds is None:
         raise Wan3PrimeValidationError(f"{kind} duration must be measured server-side before launch")
     duration = float(info.duration_seconds)
-    if not math.isfinite(duration) or not 1 <= duration <= 15:
+    if not math.isfinite(duration) or not 1 <= duration <= MAX_REFERENCE_MEDIA_SECONDS:
         raise Wan3PrimeValidationError(f"{kind} duration must be 1-15 seconds")
     return duration
 

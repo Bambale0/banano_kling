@@ -101,14 +101,19 @@ def document_pages(path: Path) -> int | None:
 
 
 def convert_voice_to_mp3(source: Path, destination: Path) -> None:
-    """Preserve the complete audio; final media validation enforces input limits."""
+    """Convert only supported-duration audio inside a bounded child process."""
+    from bot.services.wan3_prime_media import MAX_REFERENCE_MEDIA_SECONDS
+    from bot.services.wan3_prime_storage import _kind_limit
+    from bot.services.wan3_prime_storage_policy import positive_setting
+
+    worker = Path(__file__).with_name('wan3_prime_audio_worker.py').resolve()
+    memory = positive_setting('WAN3_AUDIO_PREPROCESS_MEMORY_BYTES', 512 * 1024**2)
     try:
         subprocess.run(
-            ['ffmpeg', '-nostdin', '-v', 'error', '-protocol_whitelist', 'file,pipe',
-             '-format_whitelist', 'ogg,mov,wav,mp3,aac', '-i', str(source), '-map', '0:a:0',
-             '-vn', '-c:a', 'libmp3lame', '-b:a', '128k', '-y', str(destination)],
-            capture_output=True, timeout=30, check=True,
+            [sys.executable, '-I', str(worker), str(source.resolve()), str(destination.resolve()),
+             str(MAX_REFERENCE_MEDIA_SECONDS), str(_kind_limit('audio')), str(memory)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30, check=True,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         destination.unlink(missing_ok=True)
-        raise Wan3PrimeValidationError('Could not convert this audio to MP3') from exc
+        raise Wan3PrimeValidationError('Could not safely convert audio; use a 1-15 second WAV or MP3 file') from exc

@@ -806,13 +806,13 @@ class Wan3PrimeLifecycle:
                 status = await self.transport.get_task_status(row["provider_task_id"])
             except Exception as exc:  # noqa: BLE001 - isolate transport/storage failures with durable outcome state
                 logger.info('Wan3 poll failed: task_id=%s error_type=%s', row['internal_task_id'], type(exc).__name__)
-                await self._mark_checked(row['internal_task_id'], retry_seconds=60)
+                await self._defer_provider(row)
                 continue
             if not isinstance(status, dict):
-                await self._mark_checked(row["internal_task_id"], retry_seconds=30)
+                await self._defer_provider(row)
                 continue
             if status.get("taskId") != row["provider_task_id"] or (status.get('model') and status.get('model') != WAN3_PROVIDER_MODEL):
-                await self._mark_checked(row["internal_task_id"], retry_seconds=60)
+                await self._defer_provider(row)
                 continue
             state = str(status.get("state") or status.get("status") or "").lower()
             if state in TERMINAL_SUCCESS:
@@ -827,19 +827,42 @@ class Wan3PrimeLifecycle:
                     str(status.get("failMsg") or "Provider generation failed"),
                 )
                 processed += 1
-            elif state in PENDING_STATES:
-                retry_at = (datetime.now(UTC) + timedelta(seconds=30)).replace(tzinfo=None).isoformat(sep=" ")
-                async with db_backend.connect(_database_path()) as db:
-                    await db.execute(
-                        "UPDATE wan3_prime_intents SET provider_state = ?, lease_until = NULL, last_checked_at = CURRENT_TIMESTAMP, next_attempt_at = ?, updated_at = CURRENT_TIMESTAMP WHERE internal_task_id = ? AND settled = 0",
-                        (state, retry_at, row["internal_task_id"]),
-                    )
-                    await db.commit()
             else:
-                await self._mark_checked(row['internal_task_id'], retry_seconds=60)
+                await self._defer_provider(row, state=state)
         if self.telegram_bot is not None:
             await self.deliver_ready_once(self.telegram_bot, limit=limit)
         return processed
+
+    async def _defer_provider(self, row, *, state: str = 'unconfirmed') -> None:
+        from bot.services.wan3_prime_storage_policy import positive_setting
+
+        maximum = positive_setting('WAN3_PROVIDER_MAX_PENDING_SECONDS', 7200)
+        try:
+            created = row['created_at']
+            if isinstance(created, str):
+                created = datetime.fromisoformat(created)
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=UTC)
+            expired = (datetime.now(UTC) - created).total_seconds() >= maximum
+        except (ValueError, TypeError, AttributeError):
+            expired = True
+        provider_state = state if state in PENDING_STATES else 'unconfirmed'
+        async with db_backend.connect(_database_path()) as db:
+            if expired:
+                changed = await db.execute("UPDATE wan3_prime_intents SET status = 'result_attention', provider_state = ?, "
+                    "error_code = 'provider_wait_timeout', error_message = 'Provider has not completed the task; operator review required', "
+                    "lease_until = NULL, next_attempt_at = NULL, updated_at = CURRENT_TIMESTAMP "
+                    "WHERE internal_task_id = ? AND settled = 0 AND status IN ('submitted', 'unknown', 'settlement_pending')",
+                    (provider_state, row['internal_task_id']))
+                if changed.rowcount:
+                    logger.warning('Wan3 provider waiting escalated: task_id=%s provider_task_id=%s state=%s',
+                                   row['internal_task_id'], row['provider_task_id'], provider_state)
+            else:
+                retry_at = (datetime.now(UTC) + timedelta(seconds=30 if state in PENDING_STATES else 60)).replace(tzinfo=None).isoformat(sep=' ')
+                await db.execute('UPDATE wan3_prime_intents SET provider_state = ?, lease_until = NULL, '
+                    'last_checked_at = CURRENT_TIMESTAMP, next_attempt_at = ?, updated_at = CURRENT_TIMESTAMP '
+                    'WHERE internal_task_id = ? AND settled = 0', (provider_state, retry_at, row['internal_task_id']))
+            await db.commit()
 
     async def _finish_delivery(self, row, lease: str, outcome) -> bool:
         """Commit the Telegram receipt and public history marker together, fenced by lease."""
@@ -1102,6 +1125,9 @@ class Wan3PrimeLifecycle:
 
     async def _terminal_failure(self, internal_task_id: str, code: str, message: str,
                                 *, operator: tuple[int, str] | None = None) -> None:
+        from bot.services.wan3_prime_diagnostics import provider_failure_reason
+
+        safe_reason = provider_failure_reason(message)
         async with db_backend.connect(_database_path()) as db:
             db.row_factory = db_backend.Row
             await db.execute("BEGIN IMMEDIATE" if not _is_postgres() else "BEGIN")
@@ -1144,7 +1170,7 @@ class Wan3PrimeLifecycle:
                     last_checked_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
                 WHERE internal_task_id = ?
                 """,
-                (reserve, code, "Provider generation failed", internal_task_id),
+                (reserve, code, safe_reason, internal_task_id),
             )
             await db.execute(
                 "UPDATE generation_tasks SET status = 'failed', cost = 0, updated_at = CURRENT_TIMESTAMP WHERE task_id = ?",

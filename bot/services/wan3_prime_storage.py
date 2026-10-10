@@ -381,7 +381,10 @@ class Wan3PrimeStorage:
         if kind not in {"image", "video", "audio", "file", "link"}:
             raise Wan3PrimeValidationError("Unsupported import kind")
         if kind == "link":
-            fetched = await fetch_public_asset(url, destination=None, max_bytes=2 * 1024 * 1024, webpage=True)
+            from bot.services.wan3_prime_probe_cache import probe_slot
+
+            async with probe_slot(actor.user_id):
+                fetched = await fetch_public_asset(url, destination=None, max_bytes=2 * 1024 * 1024, webpage=True)
             return {"ok": True, "url": fetched["url"], "kind": "link", "filename": None, "size": None}
         initial_extension = {"image": ".jpg", "video": ".mp4", "audio": ".mp3", "file": ".txt"}[kind]
         reservation = await self.init_upload(actor, kind=kind, filename="import" + initial_extension,
@@ -492,7 +495,10 @@ class ActualWan3PrimeProbe:
 
                 return await verified_metadata(row, local, _sha256_file)
         if kind == "link":
-            await fetch_public_asset(url, destination=None, max_bytes=2 * 1024 * 1024, webpage=True)
+            from bot.services.wan3_prime_probe_cache import probe_slot
+
+            async with probe_slot(int(getattr(self.actor, 'user_id', 0))):
+                await fetch_public_asset(url, destination=None, max_bytes=2 * 1024 * 1024, webpage=True)
             return MediaInfo(kind="link", url=url)
         raise Wan3PrimeValidationError("Media URL must be imported or uploaded before launch")
 

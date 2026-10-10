@@ -483,12 +483,20 @@ async def store_telegram_wan3_prime_media(*, telegram_id: int, bot, file_id: str
                 raise Wan3PrimeValidationError('File exceeds the Telegram download limit; use Mini App.')
             return super().write(data)
     try:
-        with BoundedFile(io.FileIO(path, 'w')) as output:
-            await bot.download(file_id, destination=output, timeout=90, seek=False)
-        if convert_audio:
-            converted = path.with_name('voice-converted.mp3')
-            await asyncio.to_thread(convert_voice_to_mp3, path, converted)
-            path = converted
+        from bot.services.wan3_prime_probe_cache import probe_slot
+
+        async with probe_slot(actor.user_id):
+            with BoundedFile(io.FileIO(path, 'w')) as output:
+                await bot.download(file_id, destination=output, timeout=90, seek=False)
+            if convert_audio:
+                converted = path.with_name('voice-converted.mp3')
+                conversion = asyncio.create_task(asyncio.to_thread(convert_voice_to_mp3, path, converted))
+                try:
+                    await asyncio.shield(conversion)
+                except asyncio.CancelledError:
+                    await asyncio.shield(conversion)
+                    raise
+                path = converted
         return await wan3_prime_storage.save_owned_file(actor, kind=kind, filename=output_name,
             path=path, source='telegram_wan3', upload_id=upload_id)
     finally:

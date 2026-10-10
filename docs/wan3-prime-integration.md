@@ -65,3 +65,13 @@ Secure callbacks use KIE's documented `X-Webhook-Timestamp`/`X-Webhook-Signature
 Official signature contract: https://docs.kie.ai/common-api/webhook-verification
 
 Fresh local focused result after these changes: 171 passed, 6 PostgreSQL-only cases skipped locally; those run in the dedicated disposable PostgreSQL CI job. The exact candidate's full GitHub CI and production deployment must be checked separately.
+
+### Final concurrency and preprocessing follow-up
+
+The follow-up review identified five additional edge cases, all reproduced by regression tests before their fixes. Audio preprocessing now acquires the shared per-user/per-worker admission slot before Telegram download/conversion. A standalone child probes duration before ffmpeg and enforces local-only protocols/demuxers, one codec thread, CPU/memory/output-byte ceilings, and wall-clock deadlines. Supported audio is not shortened; out-of-range sources are rejected. Link imports and quote-time webpage fetches use the same admission budget.
+
+Capacity admission counts pending result reservations before scanning retained files, so a concurrent settlement cannot disappear from both counts. Feed and profile publication acquire the Wan storage lock before the authoritative task read and keep it through media persistence and commit, preventing expiry from deleting an in-flight publication source. This is exercised with deterministic SQLite publication races and a real PostgreSQL lock test.
+
+Accepted provider tasks that never reach a terminal state are escalated after `WAN3_PROVIDER_MAX_PENDING_SECONDS` (default 7200 seconds) to the existing operator-attention queue. Their provider IDs, reserves and user history remain intact; there is no automatic resubmission or guessed refund. Explicit audited operator resolution is required. Sanitized provider failure reasons are retained privately for diagnosis; public failure responses remain generic and secrets/reference URLs are removed.
+
+Focused validation after this follow-up: 195 passed, 7 PostgreSQL-only skipped locally, including the publication compatibility suite. Exact-head CI and independent review remain required before release.

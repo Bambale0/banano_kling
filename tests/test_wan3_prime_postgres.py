@@ -60,7 +60,9 @@ async def wan_postgres_schema(tmp_path, monkeypatch):
         lifecycle = Wan3PrimeLifecycle(probe=Probe(), preset_manager=Prices(), transport=Provider())
         await lifecycle.init_schema()
         async with await psycopg.AsyncConnection.connect(os.environ["DATABASE_URL"]) as conn:
-            await conn.execute("TRUNCATE wan3_prime_intents, wan3_prime_media, wan3_prime_upload_sessions")
+            await conn.execute("TRUNCATE wan3_prime_intents, wan3_prime_media, wan3_prime_upload_sessions, "
+                               "wan3_prime_cleanup_cursor, wan3_prime_trend_recipes, trend_generation_runs, "
+                               "wan3_prime_result_retries, wan3_prime_recovery_candidates, wan3_prime_operator_audit, prompt_repeat_events")
             await conn.commit()
         yield
 
@@ -206,3 +208,33 @@ async def test_postgres_result_retention_keeps_accounting(tmp_path, monkeypatch)
     assert not path.exists()
     assert await balance(actor.user_id) == 90
     assert (await database.get_task_by_id(created['task_id'])).status == 'completed'
+
+
+@pytest.mark.asyncio
+async def test_postgres_publication_lock_excludes_concurrent_result_expiry(monkeypatch):
+    from bot.services.wan3_prime_result_retention import lock_publication
+    from bot.services.wan3_prime_storage import wan3_prime_storage
+
+    actor = await user_actor(100, telegram_id=991284008)
+    provider = Provider()
+    path = Path('static/uploads/wan3_prime/results/pg-publication.mp4')
+    lifecycle = Wan3PrimeLifecycle(probe=Probe(file_duration=5), preset_manager=Prices(), transport=provider, downloader=Downloader(path))
+    quote = await lifecycle.quote(actor, body())
+    created = await lifecycle.launch(actor, body(), quote, 'pg-publication-race')
+    provider.statuses['provider_1'] = {'taskId': 'provider_1', 'state': 'success', 'resultUrls': ['https://owned.test/pg-publish.mp4']}
+    await lifecycle.reconcile_once(provider_task_id='provider_1')
+    async with db_backend.connect() as db:
+        await db.execute("UPDATE generation_tasks SET completed_at = '2000-01-01' WHERE task_id = ?", (created['task_id'],))
+        await db.execute("UPDATE wan3_prime_intents SET delivery_status = 'delivered' WHERE internal_task_id = ?", (created['task_id'],))
+        await db.commit()
+    async with db_backend.connect() as publication:
+        publication.row_factory = db_backend.Row
+        await lock_publication(publication, created['task_id'], actor.user_id)
+        cleanup = asyncio.create_task(wan3_prime_storage.cleanup_expired())
+        await asyncio.sleep(0.05)
+        assert not cleanup.done()
+        assert path.exists()
+        await publication.execute('UPDATE generation_tasks SET is_public_feed = 1 WHERE task_id = ?', (created['task_id'],))
+        await publication.commit()
+    await asyncio.wait_for(cleanup, timeout=5)
+    assert path.exists() and await balance(actor.user_id) == 90

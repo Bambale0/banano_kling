@@ -313,6 +313,9 @@ async def share_to_profile(
     await _ensure_publication_scope_schema()
     async with db_backend.connect(database.DATABASE_PATH, timeout=15) as db:
         db.row_factory = db_backend.Row
+        from bot.services.wan3_prime_result_retention import lock_publication
+
+        await lock_publication(db, gen_id, user_id)
         row = await database._fetch_generation_row(db, gen_id, user_id=user_id)
         if (
             not row

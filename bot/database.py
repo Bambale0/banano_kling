@@ -8095,6 +8095,9 @@ async def share_to_feed(
 
     async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
         db.row_factory = db_backend.Row
+        from bot.services.wan3_prime_result_retention import lock_publication
+
+        await lock_publication(db, gen_id, user_id)
         row = await _fetch_generation_row(db, gen_id, user_id=user_id)
         if (
             not row
