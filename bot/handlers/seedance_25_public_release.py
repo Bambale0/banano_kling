@@ -1148,6 +1148,7 @@ async def _public_send_results(
             )
             request_data["_telegram_send_inflight"] = False
             delivered = True
+            request_data["_telegram_primary_delivered"] = True
         except Exception as exc:
             delay = telegram_delivery_retry_delay(exc)
             if delay is not None:
@@ -1187,6 +1188,7 @@ async def _public_send_results(
                     )
                 request_data["_telegram_send_inflight"] = False
                 delivered = True
+                request_data["_telegram_primary_delivered"] = True
             except Exception as exc:
                 delay = telegram_delivery_retry_delay(exc)
                 if delay is not None:

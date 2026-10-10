@@ -142,6 +142,19 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
                  {"_telegram_send_inflight": True})
         self.assertEqual(self.mark.call_args.args[:2], ("task", "uncertain"))
 
+    async def test_auxiliary_rate_limit_or_timeout_never_requeues_primary(self):
+        self.ns.update(asyncio=asyncio, SEEDANCE25_DELIVERY_TIMEOUT_SECONDS=1,
+            _can_attempt_seedance25_result_delivery=AsyncMock(return_value=True),
+            _claim_seedance25_delivery=AsyncMock(return_value=True),
+            _stored_result_urls=lambda _: ["https://example.test/result.mp4"],
+            _classify_results=lambda *a: ("https://example.test/result.mp4", "frame"))
+        fn = load_function("bot/handlers/seedance_25_fullstack.py", "_retry_seedance25_delivery", self.ns)
+        for error in [Retryable(75), TimeoutError(), Uncertain(), RuntimeError()]:
+            self.ns["_send_seedance25_results"] = AsyncMock(side_effect=error)
+            self.assertTrue(await fn({"bot": self.bot}, {"task_id": "task", "telegram_id": 1},
+                 {"_telegram_primary_delivered": True}))
+            self.assertEqual(self.mark.call_args.args[:2], ("task", "delivered"))
+
     async def test_dispatcher_stores_uncertain_and_does_not_requeue(self):
         self.ns.update(asyncio=asyncio, SEEDANCE25_DELIVERY_TIMEOUT_SECONDS=1,
             _can_attempt_seedance25_result_delivery=AsyncMock(return_value=True),
