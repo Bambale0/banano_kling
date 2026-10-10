@@ -2695,7 +2695,7 @@ async def _cleanup_loop():
                 "static/uploads",
                 max_age_seconds=UPLOAD_RETENTION_SECONDS,
                 skip_filenames=set(),
-                skip_dirnames={"refs", "feed"},
+                skip_dirnames={"refs", "feed", "wan3_prime"},
                 protected_paths=public_feed_paths,
             )
             await _remove_old_files(
@@ -2720,6 +2720,16 @@ async def _cleanup_loop():
         except Exception:
             logger.exception("Cleanup iteration failed")
         await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
+
+async def _start_wan_for_polling(bot: Bot) -> None:
+    if config.WEBHOOK_HOST:
+        return  # The aiohttp application owns the webhook-mode lifecycle.
+    from bot.services.wan3_prime_lifecycle import wan3_prime_lifecycle
+
+    wan3_prime_lifecycle.telegram_bot = bot
+    await wan3_prime_lifecycle.startup()
+    await wan3_prime_lifecycle.start_worker()
+
 
 async def on_startup(bot: Bot, dispatcher: Dispatcher | None = None):
     """Действия при старте бота"""
@@ -2781,6 +2791,7 @@ async def on_startup(bot: Bot, dispatcher: Dispatcher | None = None):
 
     # Загружаем пресеты
     preset_manager.load_all()
+    await _start_wan_for_polling(bot)
     logger.info(f"Loaded {len(preset_manager._presets)} presets")
 
     try:
@@ -2822,6 +2833,10 @@ async def on_shutdown(bot: Bot):
     from bot.referral_notifications import stop_referral_notification_worker
 
     await stop_referral_notification_worker()
+    if not config.WEBHOOK_HOST:
+        from bot.services.wan3_prime_lifecycle import wan3_prime_lifecycle
+
+        await wan3_prime_lifecycle.cleanup()
     try:
         from bot.services.cryptobot_service import cryptobot_service
 
@@ -5601,7 +5616,9 @@ async def main():
         # Webhook mode (для production)
         logger.info("Starting in webhook mode...")
         app = setup_web_server(dp, bot)
-        runner = web.AppRunner(app)
+        from bot.safe_access_log import PathOnlyAccessLogger
+
+        runner = web.AppRunner(app, access_log_class=PathOnlyAccessLogger)
         await runner.setup()
 
         site = web.TCPSite(runner, config.WEBHOOK_BIND_HOST, config.WEBHOOK_PORT)

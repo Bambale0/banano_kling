@@ -199,8 +199,14 @@ def test_base_catalog_models_have_an_admin_tariff_destination():
             aliases[node.targets[0].id] = ast.literal_eval(node.value)
     for model in catalog["IMAGE_MODELS"]:
         assert model == "seedream_5_pro" or aliases["CANONICAL_IMAGE_ALIASES"].get(model, model) in config["image_models"]
+    # Unpriced models intentionally fail closed for paid launches but must still
+    # expose a real admin destination for configuring every supported quality.
+    configured_destinations = set(config["video_models"])
+    for node in ast.parse((ROOT / "bot/handlers/admin.py").read_text()).body:
+        if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name) and node.targets[0].id == "SEEDANCE_ADMIN_PRICE_MODELS":
+            configured_destinations.update(ast.literal_eval(node.value))
     for model in catalog["VIDEO_MODELS"]:
-        assert model in {"avatar_std", "avatar_pro"} or aliases["CANONICAL_VIDEO_ALIASES"].get(model, model) in config["video_models"]
+        assert model in {"avatar_std", "avatar_pro"} or aliases["CANONICAL_VIDEO_ALIASES"].get(model, model) in configured_destinations
 
 
 @pytest.mark.parametrize("value", [True, 0, -1, "3", float("nan"), float("inf")])
@@ -229,10 +235,17 @@ def test_avatar_save_reports_reload_failure():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("model", ["avatar_std", "avatar_pro"])
 async def test_avatar_menu_detail_and_edit_prompt_reachable(model):
+    menu_constants = {
+        node.targets[0].id: ast.literal_eval(node.value)
+        for node in ast.parse((ROOT / "bot/handlers/admin.py").read_text()).body
+        if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id in {"ADMIN_VIDEO_PRICE_GROUPS", "ADMIN_VIDEO_PRICE_PAGE_SIZE"}
+    }
     ns = functions(ROOT / "bot/handlers/admin.py", {
-        "_admin_video_prices_keyboard", "_admin_video_model_keyboard", "admin_video_model", "admin_price_video",
+        "_admin_video_prices_keyboard", "_admin_video_model_keyboard", "_admin_video_model_group", "admin_video_model", "admin_price_video",
     }, {
         "AVATAR_ADMIN_PRICE_MODELS": {"avatar_std", "avatar_pro"}, "SEEDANCE_ADMIN_PRICE_MODELS": {},
+        **menu_constants,
         "VIDEO_MODEL_LABELS": {}, "is_admin": lambda uid: True,
         "_admin_video_price_models": lambda: {model: {"duration_costs": {"5": 15}, "quality_costs": {"720p": 90}}},
         "_model_per_sec": lambda value: "DO_NOT_DISPLAY",
@@ -240,7 +253,9 @@ async def test_avatar_menu_detail_and_edit_prompt_reachable(model):
         "types": SimpleNamespace(InlineKeyboardMarkup=lambda **kw: kw, InlineKeyboardButton=lambda **kw: kw),
         "AdminStates": SimpleNamespace(waiting_price_value="waiting"), "get_back_keyboard": lambda target: target,
     })
-    menu = ns["_admin_video_prices_keyboard"]()["inline_keyboard"]
+    root_menu = ns["_admin_video_prices_keyboard"]()["inline_keyboard"]
+    assert any(b.get("callback_data") == "admin_prices_videos_g_kling_p0" for row in root_menu for b in row)
+    menu = ns["_admin_video_prices_keyboard"](group="kling")["inline_keyboard"]
     button = next(b for row in menu for b in row if b.get("callback_data") == f"admin_video_model_{model}")
     assert "слот 5с" in button["text"] and "🍌/с" not in button["text"]
     callback = SimpleNamespace(from_user=SimpleNamespace(id=123), data=button["callback_data"],

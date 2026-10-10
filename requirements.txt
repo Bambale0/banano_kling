@@ -34,3 +34,6 @@ redis>=5.0.0
 
 # PostgreSQL runtime / migration
 psycopg[binary,pool]>=3.2.0
+
+# Bounded PDF page validation for Wan document inputs
+pypdf>=6.20,<7

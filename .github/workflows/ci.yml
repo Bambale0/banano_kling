@@ -150,6 +150,13 @@ jobs:
           pip install --quiet -r requirements.txt
           python -m pip check
 
+      - name: Install media validation tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          ffmpeg -version | head -1
+          ffprobe -version | head -1
+
       - name: Run full safe regression suite
         id: full_suite
         run: |

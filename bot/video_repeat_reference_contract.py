@@ -81,6 +81,10 @@ def source_request(task: dict[str, Any]) -> dict[str, Any]:
 def active_video_recipe(task: dict[str, Any]) -> dict[str, Any]:
     data = source_request(task)
     model = str(task.get("model") or data.get("v_model") or "")
+    if model == "wan_3_prime":
+        from bot.services.wan3_prime_repeat import legacy_video_plan
+
+        return legacy_video_plan(task)
     declared_scenario = data.get("seedance25_scenario") or data.get("scenario")
     scenario = str(declared_scenario or data.get("v_type") or "").lower()
     images: list[dict[str, Any]] = []
@@ -150,6 +154,13 @@ def build_video_repeat_plan(
     task: dict[str, Any], *, replaced_kinds: set[str] | None = None,
     allow_audio_replacement: bool = False,
 ) -> dict[str, Any] | None:
+    if str(task.get("model") or "") == "wan_3_prime":
+        from bot.services.wan3_prime_repeat import legacy_video_plan
+
+        try:
+            return legacy_video_plan(task)
+        except ValueError as exc:
+            raise VideoRepeatContractError(str(exc)) from exc
     grant = parse_video_repeat_grant(task.get("feed_repeat_reference_selection"))
     if grant is None:
         return None

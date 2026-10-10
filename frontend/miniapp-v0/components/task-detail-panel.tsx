@@ -21,11 +21,12 @@ import { toast } from 'sonner'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
 import { SeedanceTrendPublisher } from '@/components/seedance-trend-publisher'
+import { Wan3TrendPublisher } from '@/components/wan3-trend-publisher'
 
 const EMPTY_REFERENCE_URLS: string[] = []
 
 export function TaskDetailPanel() {
-  const { state, taskDetail, isTaskDetailOpen, closeTaskDetail, updateTask } = useApp()
+  const { state, taskDetail, isTaskDetailOpen, closeTaskDetail, updateTask, setVideoPromptPreset, setActiveTab } = useApp()
   const [publishBusy, setPublishBusy] = useState(false)
   const [libraryBusy, setLibraryBusy] = useState(false)
   const [feedPromptVisible, setFeedPromptVisible] = useState(false)
@@ -416,6 +417,16 @@ export function TaskDetailPanel() {
               {taskDetail.type === 'video' && taskDetail.status === 'completed' && (
                 <GenjutsuButton taskId={taskDetail.task_id} compact />
               )}
+              {state.user.isAdmin && taskDetail.model === 'wan_3_prime' && taskDetail.status === 'completed' && taskDetail.prompt_actions_allowed !== false ? (
+                <Wan3TrendPublisher key={taskDetail.task_id} taskId={taskDetail.task_id} />
+              ) : null}
+              {taskDetail.model === 'wan_3_prime' && taskDetail.status !== 'pending' ? (
+                  <Button type="button" variant="outline" className="w-full" onClick={() => {
+                    setVideoPromptPreset({ title: 'Повтор Wan 3.0', prompt: '', model: 'wan_3_prime', wan3OwnerTaskId: taskDetail.task_id })
+                    closeTaskDetail()
+                    setActiveTab(2)
+                  }}>Повторить Wan со всеми настройками</Button>
+              ) : null}
               <div className="grid grid-cols-2 gap-3">
                 <InfoItem 
                   label="Модель" 

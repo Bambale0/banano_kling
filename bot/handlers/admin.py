@@ -1078,6 +1078,7 @@ VIDEO_MODEL_LABELS = {
     "seedance_2": "Seedance 2.0",
     "seedance_2_mini": "Seedance 2.0 Mini",
     "seedance_2_fast": "Seedance 2.0 Fast",
+    "wan_3_prime": "Wan 3.0 Video Prime",
 }
 
 SEEDANCE_ADMIN_PRICE_MODELS = {
@@ -1101,7 +1102,23 @@ SEEDANCE_ADMIN_PRICE_MODELS = {
         "duration_max": 15,
         "resolutions": ("480p", "720p"),
     },
+    "wan_3_prime": {
+        "duration_min": 2,
+        "duration_max": 30,
+        "resolutions": ("480p", "720p", "1080p"),
+    },
 }
+
+ADMIN_VIDEO_PRICE_GROUPS = (
+    ("wan", "Wan", ("wan_3_prime",)),
+    ("seedance", "Seedance", ("seedance_2_5", "seedance_2", "seedance_2_mini", "seedance_2_fast")),
+    ("kling", "Kling", ("v3_std", "v3_pro", "v26_pro", "glow", "motion_control_v26", "motion_control_v30", "avatar_std", "avatar_pro")),
+    ("grok", "Grok", ("grok_imagine", "grok_imagine_v15")),
+    ("veo", "Veo", ("veo3", "veo3_fast", "veo3_lite")),
+    ("gemini", "Gemini", ("gemini_omni_video", "gemini_omni_audio", "gemini_omni_character")),
+    ("other", "Другое", ()),
+)
+ADMIN_VIDEO_PRICE_PAGE_SIZE = 8
 
 
 def _model_per_sec(model_cfg: dict) -> str:
@@ -1147,16 +1164,43 @@ def _admin_video_price_models() -> dict:
     return models
 
 
-def _admin_video_prices_keyboard() -> types.InlineKeyboardMarkup:
-    """Одна кнопка на модель; Seedance видны даже до настройки розничной цены."""
+def _admin_video_prices_keyboard(group: str = "wan", page: int = 0) -> types.InlineKeyboardMarkup:
+    """Grouped, paginated model picker. Unknown configured models stay visible."""
     video_models = _admin_video_price_models()
     model_keys = list(video_models)
     for model_key in SEEDANCE_ADMIN_PRICE_MODELS:
         if model_key not in model_keys:
             model_keys.append(model_key)
 
+    group_ids = {group_id for group_id, _, _ in ADMIN_VIDEO_PRICE_GROUPS}
+    selected_group = group if group in group_ids else "other"
+    known_by_group = {
+        group_id: tuple(keys)
+        for group_id, _, keys in ADMIN_VIDEO_PRICE_GROUPS
+    }
+    known_keys = {key for keys in known_by_group.values() for key in keys}
+    if selected_group == "other":
+        filtered_keys = [key for key in model_keys if key not in known_keys]
+    else:
+        group_order = known_by_group[selected_group]
+        filtered_keys = [key for key in group_order if key in model_keys]
+    max_page = max(0, (len(filtered_keys) - 1) // ADMIN_VIDEO_PRICE_PAGE_SIZE)
+    page = min(max(int(page or 0), 0), max_page)
+    page_keys = filtered_keys[
+        page * ADMIN_VIDEO_PRICE_PAGE_SIZE:(page + 1) * ADMIN_VIDEO_PRICE_PAGE_SIZE
+    ]
+
+    group_buttons = [
+        types.InlineKeyboardButton(
+            text=("• " if group_id == selected_group else "") + label,
+            callback_data=f"admin_prices_videos_g_{group_id}_p0",
+        )
+        for group_id, label, _ in ADMIN_VIDEO_PRICE_GROUPS
+    ]
+    rows = _chunk_buttons(group_buttons, 3)
+
     buttons = []
-    for model_key in model_keys:
+    for model_key in page_keys:
         model_cfg = video_models.get(model_key)
         price_text = (
             f"{model_cfg['duration_costs']['5']}🍌 за расчётный слот 5с"
@@ -1171,10 +1215,33 @@ def _admin_video_prices_keyboard() -> types.InlineKeyboardMarkup:
                 callback_data=f"admin_video_model_{model_key}",
             )
         )
-    rows = _chunk_buttons(buttons, 1) + [
+    rows += _chunk_buttons(buttons, 1)
+    if max_page > 0:
+        rows.append([
+            types.InlineKeyboardButton(
+                text="‹",
+                callback_data=f"admin_prices_videos_g_{selected_group}_p{max(page - 1, 0)}",
+            ),
+            types.InlineKeyboardButton(
+                text=f"{page + 1}/{max_page + 1}",
+                callback_data=f"admin_prices_videos_g_{selected_group}_p{page}",
+            ),
+            types.InlineKeyboardButton(
+                text="›",
+                callback_data=f"admin_prices_videos_g_{selected_group}_p{min(page + 1, max_page)}",
+            ),
+        ])
+    rows += [
         [types.InlineKeyboardButton(text="🔙 К разделам", callback_data="admin_prices")]
     ]
     return types.InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _admin_video_model_group(model_key: str) -> str:
+    for group_id, _, keys in ADMIN_VIDEO_PRICE_GROUPS:
+        if model_key in keys:
+            return group_id
+    return "other"
 
 
 def _admin_video_model_keyboard(model_key: str) -> types.InlineKeyboardMarkup:
@@ -1243,7 +1310,8 @@ def _admin_video_model_keyboard(model_key: str) -> types.InlineKeyboardMarkup:
     rows = _chunk_buttons(buttons, 2) + [
         [
             types.InlineKeyboardButton(
-                text="🔙 К моделям", callback_data="admin_prices_videos"
+                text="🔙 К моделям",
+                callback_data=f"admin_prices_videos_g_{_admin_video_model_group(model_key)}_p0",
             )
         ]
     ]
@@ -2661,6 +2729,55 @@ async def cmd_seedance25_edit_prompt(message: types.Message) -> None:
     await message.answer("Шаблон сохранён. Применится к следующим запускам прямой замены.")
 
 
+@router.message(Command("wan3_edit_prompt"))
+async def cmd_wan3_edit_prompt(message: types.Message) -> None:
+    """Manage the Wan 3.0 edit prompt wrapper through audited bot settings."""
+    if not message.from_user or not is_admin(message.from_user.id):
+        await message.answer("⛔ Только для администратора.")
+        return
+    from bot.services.wan3_prime_service import (
+        WAN3_EDIT_TEMPLATE_VERSION,
+        get_wan3_edit_template,
+        reset_wan3_edit_template,
+        save_wan3_edit_template,
+    )
+
+    usage = (
+        "/wan3_edit_prompt — скачать текущий шаблон правки видео\n"
+        "/wan3_edit_prompt set ТЕКСТ — сохранить шаблон\n"
+        "Можно ответить этой командой с set на сообщение с шаблоном.\n"
+        "/wan3_edit_prompt reset — вернуть стандартный шаблон.\n"
+        "В шаблоне нужны Video1 и {instruction}. Сырой пользовательский текст хранится отдельно."
+    )
+    parts = str(message.text or "").split(maxsplit=2)
+    action = parts[1].lower() if len(parts) > 1 else ""
+    try:
+        if not action:
+            current = await get_wan3_edit_template()
+            await message.answer_document(
+                document=BufferedInputFile(current.encode("utf-8"), filename=f"wan3-edit-{WAN3_EDIT_TEMPLATE_VERSION}.txt"),
+                caption="Wan 3.0 Video Prime: шаблон правки исходного Video1.",
+            )
+            await message.answer(usage)
+            return
+        if action == "reset" and len(parts) == 2:
+            await reset_wan3_edit_template(admin_id=message.from_user.id)
+        elif action == "set":
+            reply = message.reply_to_message
+            content = parts[2] if len(parts) == 3 else (
+                str(reply.text or reply.caption or "") if reply else ""
+            )
+            await save_wan3_edit_template(content, admin_id=message.from_user.id)
+        else:
+            await message.answer(usage)
+            return
+    except ValueError as exc:
+        await message.answer(str(exc) + "\n\n" + usage, parse_mode=None)
+        return
+    logger.info("Wan 3.0 edit template updated: admin_id=%s action=%s", message.from_user.id, action)
+    await message.answer("Шаблон Wan 3.0 сохранён. Применится к следующим запускам правки видео.")
+
+
 @router.message(Command("gemini_photo_prompt"))
 async def cmd_gemini_photo_prompt(message: types.Message) -> None:
     """Inspect or edit Gemini-only photo instructions with an audited setting."""
@@ -3079,6 +3196,28 @@ async def admin_prices_videos(callback: types.CallbackQuery):
         reply_markup=_admin_video_prices_keyboard(),
         parse_mode="HTML",
     )
+
+
+@router.callback_query(F.data.startswith("admin_prices_videos_g_"))
+async def admin_prices_videos_group(callback: types.CallbackQuery):
+    """Grouped/paginated video model price list with stale page clamping."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    payload = str(callback.data or "").replace("admin_prices_videos_g_", "", 1)
+    group, _, page_part = payload.partition("_p")
+    try:
+        page = int(page_part)
+    except (TypeError, ValueError):
+        page = 0
+    await callback.message.edit_text(
+        "🎬 <b>Цены на видео</b>\n\n"
+        "Модели сгруппированы, неизвестные остаются в Other.",
+        reply_markup=_admin_video_prices_keyboard(group, page),
+        parse_mode="HTML",
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data == "admin_prices_partner_exchange")

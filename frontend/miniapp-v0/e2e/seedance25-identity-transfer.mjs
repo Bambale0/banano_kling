@@ -34,6 +34,8 @@ let browser
 async function setup(width, isAdmin = false, credits = 1000) {
   const context = await browser.newContext({ viewport: { width, height: 820 } })
   const page = await context.newPage()
+  page.setDefaultTimeout(30000)
+  page.setDefaultNavigationTimeout(30000)
   const errors = [], generation = [], quotes = [], uploads = [], detailRequests = []
   const behavior = { quoteCost: null, rejectNext: false, feedItem: null, detailError: false, detailGate: null }
   page.on('pageerror', error => errors.push(error.message))

@@ -1373,6 +1373,14 @@ export async function generateVideo(payload: {
   veoResolution?: string
   veoSeed?: number | null
   veoWatermark?: string
+  wanResolution?: string
+  wanSeed?: number | null
+  wanAudio?: boolean
+  wanNsfwChecker?: boolean
+  wanFirstFrameUrl?: string | null
+  wanLastFrameUrl?: string | null
+  wanReferenceFileUrls?: string[]
+  wanReferenceLinkUrls?: string[]
   klingNegativePrompt?: string
   klingCfgScale?: number
   omniResolution?: string
@@ -1390,6 +1398,7 @@ export async function generateVideo(payload: {
   references: string[]
   videoReferences: string[]
   audioReference?: string | null
+  audioReferences?: string[]
 }): Promise<{
   task: Task
   detail?: TaskDetail | null
@@ -1405,6 +1414,7 @@ export async function generateVideo(payload: {
   const imageReferences = restoreProviderUploadUrls(payload.references)
   const videoReferences = restoreProviderUploadUrls(payload.videoReferences)
   const audioReference = restoreProviderUploadUrl(payload.audioReference)
+  const audioReferences = restoreProviderUploadUrls(payload.audioReferences || [])
 
   const response = await postJson<{
     ok: true
@@ -1432,6 +1442,14 @@ export async function generateVideo(payload: {
     veo_resolution: payload.veoResolution,
     veo_seed: payload.veoSeed,
     veo_watermark: payload.veoWatermark,
+    wan_resolution: payload.wanResolution,
+    wan_seed: payload.wanSeed,
+    wan_audio: payload.wanAudio,
+    wan_nsfw_checker: payload.wanNsfwChecker,
+    wan_first_frame_url: payload.wanFirstFrameUrl,
+    wan_last_frame_url: payload.wanLastFrameUrl,
+    wan_reference_file_urls: payload.wanReferenceFileUrls || [],
+    wan_reference_link_urls: payload.wanReferenceLinkUrls || [],
     kling_negative_prompt: payload.klingNegativePrompt,
     kling_cfg_scale: payload.klingCfgScale,
     omni_resolution: payload.omniResolution,
@@ -1449,7 +1467,7 @@ export async function generateVideo(payload: {
     reference_images: imageReferences,
     v_reference_videos: videoReferences,
     audio_url: audioReference,
-    audio_references: audioReference ? [audioReference] : [],
+    audio_references: audioReferences.length ? audioReferences : audioReference ? [audioReference] : [],
   }).catch((error: unknown) => {
     if (payload.sourceFeedGenId && isVideoStatusPending(error)) {
       markVideoRepeatPending(payload.sourceFeedGenId, error.taskId)

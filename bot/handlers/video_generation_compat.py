@@ -51,25 +51,93 @@ MODEL_EMOJI = {
 }
 
 
-def _advanced_video_models_keyboard(current_model: str | None = None) -> types.InlineKeyboardMarkup:
+# Family tabs are presentation only; every existing public model remains reachable.
+VIDEO_MODEL_FAMILIES = (
+    ("all", "Все", tuple(key for _, keys in PUBLIC_VIDEO_MODEL_GROUPS for key in keys) + ("wan_3_prime",)),
+    ("wan", "Wan", ("wan_3_prime",)),
+    ("kling", "Kling", PUBLIC_VIDEO_MODEL_GROUPS[0][1]),
+    ("motion", "Motion / Аватары", PUBLIC_VIDEO_MODEL_GROUPS[1][1]),
+    ("seedance", "Seedance", ("seedance_2_5", "seedance_2")),
+    ("grok", "Grok", ("grok_imagine", "grok_imagine_v15")),
+    ("veo", "Veo", PUBLIC_VIDEO_MODEL_GROUPS[3][1]),
+    ("gemini", "Gemini", PUBLIC_VIDEO_MODEL_GROUPS[4][1]),
+)
+VIDEO_MODEL_PAGE_SIZE = 6
+
+
+def _video_model_page(family: str = "all", page: int = 0):
+    groups = {key: models for key, _label, models in VIDEO_MODEL_FAMILIES}
+    if family not in groups:
+        family = "all"
+    models = tuple(key for key in groups[family] if key in VIDEO_MODEL_CAPABILITIES)
+    pages = max(1, (len(models) + VIDEO_MODEL_PAGE_SIZE - 1) // VIDEO_MODEL_PAGE_SIZE)
+    try:
+        page = max(0, min(int(page), pages - 1))
+    except (TypeError, ValueError):
+        page = 0
+    start = page * VIDEO_MODEL_PAGE_SIZE
+    return family, page, pages, models[start:start + VIDEO_MODEL_PAGE_SIZE]
+
+
+def _advanced_video_models_keyboard(
+    current_model: str | None = None, *, family: str = "all", page: int = 0,
+) -> types.InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     selected = normalize_video_model_key(current_model)
-    for _group_name, model_keys in PUBLIC_VIDEO_MODEL_GROUPS:
-        for model_key in model_keys:
-            capability = VIDEO_MODEL_CAPABILITIES[model_key]
-            check = "✅ " if selected == model_key else ""
-            callback_data = (
-                "v_model_seedance_2_5"
-                if model_key == "seedance_2_5"
-                else f"advanced_v_model_{model_key}"
-            )
-            builder.button(
-                text=f"{check}{MODEL_EMOJI.get(model_key, '🎬')} {capability.label}",
-                callback_data=callback_data,
-            )
-    builder.button(text="🏠 Главное меню", callback_data="back_main")
-    builder.adjust(1)
+    family, page, pages, model_keys = _video_model_page(family, page)
+    tabs = [types.InlineKeyboardButton(
+        text=("• " if key == family else "") + label,
+        callback_data=f"video_models:{key}:0",
+    ) for key, label, _models in VIDEO_MODEL_FAMILIES]
+    for offset in range(0, len(tabs), 3):
+        builder.row(*tabs[offset:offset + 3])
+    for model_key in model_keys:
+        capability = VIDEO_MODEL_CAPABILITIES[model_key]
+        prefix = "✅ " if selected == model_key else ""
+        callback_data = (
+            f"v_model_{model_key}" if model_key in {"seedance_2_5", "wan_3_prime"}
+            else f"advanced_v_model_{model_key}"
+        )
+        builder.row(types.InlineKeyboardButton(
+            text=f"{prefix}{MODEL_EMOJI.get(model_key, '🎬')} {capability.label}",
+            callback_data=callback_data,
+        ))
+    if pages > 1:
+        navigation = []
+        if page > 0:
+            navigation.append(types.InlineKeyboardButton(text="‹ Назад", callback_data=f"video_models:{family}:{page - 1}"))
+        navigation.append(types.InlineKeyboardButton(text=f"{page + 1} / {pages}", callback_data=f"video_models:{family}:{page}"))
+        if page + 1 < pages:
+            navigation.append(types.InlineKeyboardButton(text="Далее ›", callback_data=f"video_models:{family}:{page + 1}"))
+        builder.row(*navigation)
+    builder.row(types.InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_main"))
     return builder.as_markup()
+
+
+async def _render_video_model_page(callback, state, *, family="all", page=0, current_model=None):
+    family, page, _pages, _models = _video_model_page(family, page)
+    await state.update_data(video_model_family=family, video_model_page=page, video_flow_step="select_model")
+    text = (
+        "🎬 <b>Создание видео</b>\n<b>Шаг 1. Выберите модель</b>\n\n"
+        "Выберите семейство или листайте общий каталог. Все режимы сохранены."
+    )
+    markup = _advanced_video_models_keyboard(current_model, family=family, page=page)
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=markup)
+    except TelegramBadRequest as exc:
+        if "message is not modified" not in str(exc).lower():
+            await callback.message.answer(text, parse_mode="HTML", reply_markup=markup)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("video_models:"))
+async def show_video_models_page(callback: types.CallbackQuery, state: FSMContext) -> None:
+    parts = str(callback.data or "").split(":")
+    data = await state.get_data()
+    await _render_video_model_page(
+        callback, state, family=parts[1] if len(parts) > 1 else "all",
+        page=parts[2] if len(parts) > 2 else 0, current_model=data.get("v_model", "v3_pro"),
+    )
 
 
 def _initial_type_for_model(model: str) -> str:
@@ -108,24 +176,11 @@ async def show_complete_video_model_selection(callback: types.CallbackQuery, sta
         await state.update_data(video_flow_step="select_model")
         current_model = data.get("v_model", "v3_pro")
 
-    text = (
-        "🎬 <b>Создание видео</b>\n"
-        "<b>Шаг 1. Выберите модель</b>\n\n"
-        "Доступны production-модели и расширенные режимы."
+    await _render_video_model_page(
+        callback, state, current_model=current_model,
+        family="all" if callback.data == "create_video_new" else data.get("video_model_family", "all"),
+        page=0 if callback.data == "create_video_new" else data.get("video_model_page", 0),
     )
-    try:
-        await callback.message.edit_text(
-            text,
-            parse_mode="HTML",
-            reply_markup=_advanced_video_models_keyboard(current_model),
-        )
-    except TelegramBadRequest:
-        await callback.message.answer(
-            text,
-            parse_mode="HTML",
-            reply_markup=_advanced_video_models_keyboard(current_model),
-        )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("advanced_v_model_"))

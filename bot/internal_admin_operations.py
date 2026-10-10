@@ -499,6 +499,10 @@ async def refund_operation_handler(request: web.Request) -> web.Response:
         if operation is None:
             await connection.rollback()
             raise web.HTTPNotFound(text="operation_not_found")
+        # Wan's uncompleted cost is a reserve, owned by its settlement machine.
+        # A generic credit here could be credited again on provider failure.
+        if str(operation["task_id"] or "").startswith("wan3_") and operation["status"] != "completed":
+            raise CommandConflictError("Wan reserve must be reconciled through /wan3_ops before a refund")
         original_cost = int(operation["cost"] or 0)
         refunded_before = int(operation["refunded_credits"] or 0)
         refundable = max(original_cost - refunded_before, 0)

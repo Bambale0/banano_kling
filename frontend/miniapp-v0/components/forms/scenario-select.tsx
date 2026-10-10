@@ -2,7 +2,7 @@
 
 import type { ScenarioType } from '@/lib/types'
 import { cn } from '@/lib/utils'
-import { Type, ImageIcon, Video, Headphones, UserRound } from 'lucide-react'
+import { Type, ImageIcon, Video, Headphones, UserRound, FileText, LinkIcon, Wand2 } from 'lucide-react'
 
 interface ScenarioSelectProps {
   scenarios: ScenarioType[]
@@ -25,30 +25,50 @@ const scenarioConfig: Record<ScenarioType, {
     icon: ImageIcon,
     description: 'Анимация изображения',
   },
+  'first_last': {
+    label: 'Первый + последний',
+    icon: ImageIcon,
+    description: 'Два кадра',
+  },
   'video': {
     label: 'Видео + Текст',
     icon: Video,
     description: 'Стилизация видео',
   },
+  'edit': {
+    label: 'Правка видео',
+    icon: Wand2,
+    description: 'Правки исходного видео',
+  },
+  'file': {
+    label: 'Файл → Видео',
+    icon: FileText,
+    description: 'Документ как источник',
+  },
+  'link': {
+    label: 'Ссылка → Видео',
+    icon: LinkIcon,
+    description: 'Публичная страница',
+  },
   'audio': {
-    label: 'Audio ID',
+    label: 'Голосовой ID',
     icon: Headphones,
     description: 'Голосовой ID',
   },
   'character': {
-    label: 'Character ID',
+    label: 'Персонаж ID',
     icon: UserRound,
     description: 'ID персонажа',
   },
   'avatar': {
-    label: 'Avatar',
+    label: 'Аватар',
     icon: UserRound,
     description: 'Аватар',
   },
 }
 
 export function ScenarioSelect({ scenarios, value, onChange }: ScenarioSelectProps) {
-  const allScenarios: ScenarioType[] = ['text', 'imgtxt', 'video', 'audio', 'character', 'avatar']
+  const allScenarios: ScenarioType[] = ['text', 'imgtxt', 'first_last', 'video', 'edit', 'file', 'link', 'audio', 'character', 'avatar']
 
   return (
     <div className="grid min-w-0 grid-cols-3 gap-2 sm:grid-cols-6">
