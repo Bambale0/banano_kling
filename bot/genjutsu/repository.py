@@ -518,7 +518,19 @@ class Repository:
             if step['status'] != 'ready' or step['cancel_requested']:
                 raise PipelineError('submission_not_allowed', status=409)
             validate_duration(duration_ms, json.loads(step['spec'])['operation'])
+            # Accepted runs retain the quote formula from admission, including
+            # steps that were still waiting when this version was deployed.
+            quoted = await one(db, """SELECT q.quote FROM genjutsu_runs r
+                JOIN genjutsu_quotes q ON q.id=r.quote_id WHERE r.id=?""", (step['run_id'],))
+            if not quoted:
+                raise PipelineError('quote_unavailable', status=409)
+            pricing_version = json.loads(quoted['quote']).get('pricing_version', 1)
             reference_seconds, generation_seconds, total_seconds = billable_seconds(duration_ms, duration_ms)
+            if pricing_version == 1:
+                generation_seconds = 0
+                total_seconds = reference_seconds
+            elif pricing_version != GENJUTSU_PRICING_VERSION:
+                raise PipelineError('quote_changed', status=409)
             actual = 0 if step['admin_free'] else total_seconds * step['rate']
             if actual > step['reserved_credits']:
                 raise PipelineError('quote_budget_exceeded')
@@ -527,6 +539,7 @@ class Repository:
                              (attempt, actual, self.clock(), step_id))
             await self._event(db, 'submit_started', run_id=step['run_id'], step_id=step_id,
                               details={'attempt_id': attempt, 'billable_ms': duration_ms,
+                                       'pricing_version': pricing_version,
                                        'reference_seconds': reference_seconds,
                                        'generation_seconds': generation_seconds,
                                        'billable_seconds': total_seconds})
