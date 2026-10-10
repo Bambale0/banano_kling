@@ -302,7 +302,7 @@ export async function recoverPendingTrend(): Promise<RunTrendResult | null> {
   if (['rejected','provider_failed'].includes(status)) clearPendingTrend(pending.quoteId)
   return null
   } catch (error) {
-    if (error instanceof TrendRunRequestError && !error.retrySameRequest) clearPendingTrend(pending.quoteId)
+    if (error instanceof TrendRunRequestError && ['video_quote_missing','video_quote_changed','video_input_invalid','video_rejected','video_not_reserved'].includes(error.code || '')) clearPendingTrend(pending.quoteId)
     throw error
   }
 }
@@ -329,7 +329,7 @@ export async function runTrend(
     if (quote) clearPendingTrend(quote.quote_id)
     return toRunResult(data, referenceUrls)
   } catch (error) {
-    if (quote && error instanceof TrendRunRequestError && !error.retrySameRequest) clearPendingTrend(quote.quote_id)
+    if (quote && error instanceof TrendRunRequestError && ['video_quote_missing','video_quote_changed','video_input_invalid','video_rejected','video_not_reserved'].includes(error.code || '')) clearPendingTrend(quote.quote_id)
     throw error
   }
 }

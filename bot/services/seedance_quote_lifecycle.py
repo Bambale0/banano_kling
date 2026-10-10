@@ -17,6 +17,7 @@ from bot.services.seedance_quote_receipts import (
     canonical_json,
 )
 from bot.services.seedance_quote_snapshots import (
+    authorize_video_sources,
     prepare_video_snapshots,
     verify_quote_snapshots,
 )
@@ -67,7 +68,10 @@ async def prepare_quote(telegram_id: int, model: str, original: dict, *, video_k
     store = await receipt_store()
     user = await database.get_or_create_user(telegram_id)
     actor = SimpleNamespace(user_id=user.id, telegram_id=telegram_id)
-    snapshots = await prepare_video_snapshots(actor, effective_video_sources(original, video_key, model))
+    sources = effective_video_sources(original, video_key, model)
+    server_authorized = bool(original.get("source_feed_gen_id") or original.get("trend_id") or original.get("_repeat_context"))
+    await authorize_video_sources(actor, sources, server_authorized=server_authorized)
+    snapshots = await prepare_video_snapshots(actor, sources)
     provider = deepcopy(original)
     provider[video_key] = [item["url"] for item in snapshots]
     provider["_snapshot_media_ids"] = [item["media_id"] for item in snapshots]

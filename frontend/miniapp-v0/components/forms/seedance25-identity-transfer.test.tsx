@@ -1,14 +1,15 @@
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { Seedance25PublicForm } from './seedance25-public-form'
-import { generateSeedance25, quoteSeedance25Identity } from '@/lib/seedance25-api'
+import { generateSeedance25, quoteSeedance25Identity, SeedanceApiError } from '@/lib/seedance25-api'
 import type { VideoPromptPreset } from '@/lib/types'
 
 jest.mock('@/lib/seedance25-api', () => ({
+  ...jest.requireActual('@/lib/seedance25-api'),
   SEEDANCE25_MAX_PROMPT_LENGTH: 30000, SEEDANCE25_IDENTITY_MAX_PROMPT_LENGTH: 20480, generateSeedance25: jest.fn(), quoteSeedance25Identity: jest.fn(), uploadSeedance25Video: jest.fn(),
 }))
-jest.mock('@/lib/api', () => ({ uploadFile: jest.fn() }))
-const quote = { ok: true, quote_only: true, cost: 88, billing_duration: 11, source_video_duration_seconds: 10.04,
+jest.mock('@/lib/api', () => ({ uploadFile: jest.fn(), getInitData: () => 'user=%7B%22id%22%3A1%7D' }))
+const quote = { ok: true, quote_only: true, quote_id: 'a'.repeat(32), quote_hash: 'b'.repeat(64), input_seconds: 10.04, selected_output_seconds: 10.04, charge_cost: 88, cost: 88, billing_duration: 11, source_video_duration_seconds: 10.04,
   seedance25_identity_quote: { cost: 88, billing_duration: 11, source_video_url: 'https://example.test/source.mp4', resolution: '720p', source_feed_gen_id: 42, parent_generation_id: 42 } }
 const preset: VideoPromptPreset = {
   title: 'Repeat', prompt: '', model: 'seedance_2_5', sourceFeedGenId: 42, promptHidden: true,
@@ -18,6 +19,7 @@ const preset: VideoPromptPreset = {
 }
 beforeEach(() => {
   jest.resetAllMocks()
+  localStorage.clear()
   ;(quoteSeedance25Identity as jest.Mock).mockResolvedValue(quote)
   ;(generateSeedance25 as jest.Mock).mockResolvedValue({ ok: true, task_id: 'mock', cost: 88, admin_free: false })
 })
@@ -46,7 +48,7 @@ it('clears repeat lineage when returning to ordinary references without losing p
   fireEvent.click(screen.getByRole('button', { name: /По референсам Использовать/ }))
   expect(screen.getByText('front.png')).toBeInTheDocument()
   fireEvent.change(screen.getByLabelText('Длительность видео'), { target: { value: '15' } })
-  fireEvent.click(screen.getByRole('button', { name: /Создать видео/ }))
+  fireEvent.click(await screen.findByRole('button', { name: /Создать видео/ }))
   await waitFor(() => expect(generateSeedance25).toHaveBeenCalledWith(expect.objectContaining({
     sourceFeedGenId: null, identityTransfer: false, duration: 15, identityQuote: undefined,
   })))
@@ -64,7 +66,7 @@ it('removing the source prevents both quote and generation rather than silently 
 
 it('invalidates a rejected quote and requires another explicit launch at the refreshed price', async () => {
   ;(quoteSeedance25Identity as jest.Mock).mockReset().mockResolvedValueOnce(quote).mockResolvedValue({ ...quote, cost: 96, seedance25_identity_quote: { ...quote.seedance25_identity_quote, cost: 96 } })
-  ;(generateSeedance25 as jest.Mock).mockRejectedValueOnce(new Error('Price changed'))
+  ;(generateSeedance25 as jest.Mock).mockRejectedValueOnce(new SeedanceApiError('Price changed', 'video_quote_changed', 409))
   render(<Seedance25PublicForm credits={1000} isAdmin={false} promptPreset={preset} />)
   fireEvent.click(await screen.findByRole('button', { name: '🚀 Создать видео · 88🍌' }))
   await screen.findByText('Price changed')

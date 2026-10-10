@@ -61,3 +61,14 @@ test('late accepted video A cannot remove a newer persisted video B', async () =
   await pending
   expect(readPendingMeasuredVideo()?.videoQuoteId).toBe('c'.repeat(32))
 })
+
+
+test.each(['status', 'resubmit'])('trend %s outage preserves the same durable receipt', async phase => {
+  saveTrend()
+  const fetchMock = jest.fn()
+  if (phase === 'resubmit') fetchMock.mockResolvedValueOnce(reply({ ok: true, status: 'quoted' }))
+  fetchMock.mockResolvedValue(reply({ ok: false, error: 'Unavailable' }, 503))
+  global.fetch = fetchMock
+  await expect(recoverPendingTrend()).rejects.toThrow('Unavailable')
+  expect(readPendingTrend()?.quoteId).toBe(id)
+})

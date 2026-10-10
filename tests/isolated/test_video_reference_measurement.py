@@ -1,4 +1,5 @@
 """Pure-file tests: no application bootstrap, network or database imports."""
+import asyncio
 import importlib.util
 import shutil
 import subprocess
@@ -69,7 +70,7 @@ class MeasurementTests(unittest.IsolatedAsyncioTestCase):
     async def test_real_probe_accepts_mp4_and_rejects_playlist(self):
         with tempfile.TemporaryDirectory() as root:
             path = Path(root) / "synthetic.mp4"
-            subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=32x32:r=25",
+            await asyncio.to_thread(subprocess.run, ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=32x32:r=25",
                             "-t", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(path)], check=True)
             self.assertAlmostEqual(await module._probe_seconds(path), 2, places=2)
             playlist = Path(root) / "playlist.mp4"

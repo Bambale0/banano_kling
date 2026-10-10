@@ -117,6 +117,29 @@ async def _snapshot(actor, source: str, storage: Wan3PrimeStorage, *, occurrence
                 raise
 
 
+async def authorize_video_sources(actor, sources: list[str], *, server_authorized: bool = False):
+    """Public remote URLs are fetchable; local paths additionally need ownership.
+
+    The caller may authorize retained private/trend sources only after rebuilding
+    their server-owned permission context; this flag is never client supplied.
+    """
+    if server_authorized:
+        return
+    own_root = (Path("static/uploads/refs/video") / str(actor.telegram_id)).resolve()
+    for source in sources:
+        local = resolve_local_upload_path(source)
+        if not local:
+            continue
+        path = Path(local).resolve()
+        if own_root in path.parents:
+            continue
+        async with db_backend.connect(database.DATABASE_PATH) as db:
+            row = await (await db.execute("SELECT 1 FROM wan3_prime_media WHERE user_id=? AND local_path=? AND kind='video' LIMIT 1",
+                                          (actor.user_id, str(path)))).fetchone()
+        if not row:
+            raise ValueError("Загрузите своё видео-референс через форму")
+
+
 async def prepare_video_snapshots(actor, sources: list[str]) -> list[dict]:
     """Caller has already authorized the full effective recipe (including hidden refs)."""
     if not 1 <= len(sources) <= 10:
