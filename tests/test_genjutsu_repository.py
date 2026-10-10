@@ -89,6 +89,43 @@ async def test_reference_plus_generation_seconds_require_enough_balance(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_accepted_legacy_run_keeps_original_single_duration_charge(tmp_path):
+    """Deploying a new price formula must not break an already reserved run."""
+    repo, _ = await build_repo(tmp_path)
+    quote = await make_quote(repo)
+    accepted = await repo.start(101, "accepted-before-new-price", quote["id"])
+    # Emulate the persisted quote, debit, and step reserve created by the old
+    # deployment; only the quote format, not the request/step IDs, changes.
+    async with repo.transaction() as db:
+        legacy_quote = {
+            "total_credits": 5,
+            "allocations": [{
+                "variant": 0, "ordinal": 0, "operation": "motion_transfer",
+                "billable_seconds": 5, "credits_per_second": 1,
+                "reserved_credits": 5, "maximum_reserve": False,
+            }],
+        }
+        await db.execute("UPDATE genjutsu_quotes SET quote=? WHERE id=?",
+                         (json.dumps(legacy_quote), quote["id"]))
+        await db.execute("UPDATE genjutsu_steps SET reserved_credits=5 WHERE run_id=?",
+                         (accepted["id"],))
+        await db.execute("UPDATE genjutsu_finance SET amount=5 WHERE id=?",
+                         ("reserve:" + accepted["id"],))
+        await db.execute("UPDATE users SET credits=credits+5 WHERE telegram_id=101")
+    assert await repo.balance(101) == 95
+    settings, _ = await repo.settings()
+    step = await repo.claim_step(settings)
+    await repo.begin_submission(step["id"], step["lease_token"], 5_000)
+    in_flight = await repo.get_run(101, accepted["id"])
+    assert in_flight["steps"][0]["actual_credits"] == 5
+    output = await repo.add_asset(101, "video", "accepted-legacy-result.mp4",
+                                  {"duration_ms": 5_000, "size_bytes": 123})
+    await repo.finish_step(step["id"], step["lease_token"],
+                           "completed", output_asset_id=output["id"])
+    assert await repo.balance(101) == 95
+
+
+@pytest.mark.asyncio
 async def test_pre_change_quote_is_rejected_before_debit(tmp_path):
     repo, _ = await build_repo(tmp_path)
     quote = await make_quote(repo)
