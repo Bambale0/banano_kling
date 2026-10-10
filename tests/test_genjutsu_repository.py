@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import aiosqlite
 import pytest
 
-from bot.genjutsu.contract import compile_plan, quote_plan
+from bot.genjutsu.contract import PipelineError, compile_plan, quote_plan
 from bot.genjutsu.pipeline import Pipeline
 from bot.genjutsu.provider import ProviderFailure
 from bot.genjutsu.repository import SCHEMA, Repository
@@ -78,9 +78,26 @@ async def make_quote(repo, *, variants=1, steps=1):
 
 
 @pytest.mark.asyncio
+async def test_pre_change_quote_is_rejected_before_debit(tmp_path):
+    repo, _ = await build_repo(tmp_path)
+    quote = await make_quote(repo)
+    before = await repo.balance(101)
+    # Quotes may outlive the deployment that created them.
+    legacy_quote = {key: value for key, value in quote.items()
+                    if key not in {"id", "expires_ms", "pricing_version"}}
+    async with repo.transaction() as db:
+        await db.execute("UPDATE genjutsu_quotes SET quote=? WHERE id=?",
+                         (json.dumps(legacy_quote), quote["id"]))
+    with pytest.raises(PipelineError, match="quote_changed"):
+        await repo.start(101, "legacy-pricing-request", quote["id"])
+    assert await repo.balance(101) == before
+
+
+@pytest.mark.asyncio
 async def test_concurrent_duplicate_start_debits_once(tmp_path):
     repo, _ = await build_repo(tmp_path)
     quote = await make_quote(repo)
+    assert quote["total_credits"] == 10  # 5 reference seconds + 5 generated seconds.
     before = await repo.balance(101)
     left, right = await asyncio.gather(
         repo.start(101, "same-request-key", quote["id"]),
@@ -100,6 +117,8 @@ async def test_failed_step_refunds_reserve_exactly_once(tmp_path):
     step = await repo.claim_step(settings)
     assert step and step["run_id"] == run["id"]
     await repo.begin_submission(step["id"], step["lease_token"], 5_000)
+    in_flight = await repo.get_run(101, run["id"])
+    assert in_flight["steps"][0]["actual_credits"] == 10
     await repo.finish_step(step["id"], step["lease_token"], "failed", error_code="provider_failed")
     assert await repo.balance(101) == before
     view = await repo.get_run(101, run["id"])
