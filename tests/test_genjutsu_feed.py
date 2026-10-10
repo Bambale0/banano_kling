@@ -39,7 +39,8 @@ async def setup_owned_run(*, variants=1, step_count=1):
     }
     await repo.update_settings(999, version, settings)
     async with connect() as db:
-        await db.execute("UPDATE users SET credits=1000 WHERE telegram_id=101")
+        # Repeating user must afford the new two-component clip tariff.
+        await db.execute("UPDATE users SET credits=1000 WHERE telegram_id IN (101, 202)")
         await db.commit()
     async def asset(kind, user=101):
         return await repo.add_asset(user, kind, uuid4().hex + (".mp4" if kind == "video" else ".png"), {
@@ -70,7 +71,7 @@ async def setup_owned_run(*, variants=1, step_count=1):
     step = run["steps"][0]
     async with repo.transaction() as db:
         await db.execute("UPDATE genjutsu_runs SET state='completed' WHERE id=?", (run["id"],))
-        await db.execute("UPDATE genjutsu_steps SET status='completed',output_asset_id=?,actual_credits=5 WHERE run_id=?", (output["id"], run["id"]))
+        await db.execute("UPDATE genjutsu_steps SET status='completed',output_asset_id=?,actual_credits=10 WHERE run_id=?", (output["id"], run["id"]))
     copy = AsyncMock(return_value="https://example.test/uploads/feed/public-output.mp4")
     publisher = FeedPublisher(repo, recipes, copy)
     pipeline = SimpleNamespace(repository=repo)
@@ -466,7 +467,7 @@ async def test_only_final_step_publishes_and_repeat_preserves_chain_and_variant_
     assert len(result["recipe"]["slots"]) == 2
     assert result["recipe"]["current_cost"] > 10
     task = await database.get_task_by_id(result["card"]["task_id"])
-    assert task.cost == 10  # The selected variant's two completed steps only.
+    assert task.cost == 20  # The selected variant's two completed steps only.
 
 
 @pytest.mark.asyncio

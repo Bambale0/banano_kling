@@ -43,6 +43,16 @@ function stepFailure(errorCode: string) {
   return { title: 'Ошибка генерации', detail: `Технический код: ${errorCode}. Результаты остальных шагов не потеряны.` }
 }
 
+function billedSecondsLabel(item: Quote['allocations'][number]): string {
+  const { reference_seconds, generation_seconds, billable_seconds } = item
+  if (reference_seconds !== undefined && generation_seconds !== undefined
+    && reference_seconds + generation_seconds === billable_seconds) {
+    return `${reference_seconds} с видеорефа + ${generation_seconds} с генерации = ${billable_seconds} с к оплате`
+  }
+  // Older quote fixtures/saved views only include the total.
+  return `${billable_seconds} с к оплате`
+}
+
 export function GenjutsuStudio({ initial = {}, onClose }: {
   initial?: { task_id?: string; run_id?: string; recipe_id?: string; admin?: boolean }; onClose: () => void
 }) {
@@ -435,7 +445,7 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
           <h3 className="font-medium">Подтверждение запуска</h3>
           {recipeSource && <p className="text-sm">Длительность видео к запуску: {videoSeconds(recipeSource.duration_ms || 0)} с</p>}
           <p>Резерв: <strong>{bootstrap.is_admin ? '0' : quote.total_credits} бананов</strong>{bootstrap.is_admin && <span className="text-sm text-muted-foreground"> · пользовательский тариф {quote.total_credits}</span>}</p>
-          {quote.allocations.map(a => <div key={`${a.variant}:${a.ordinal}`} className="flex justify-between gap-2 text-sm"><span>Вариант {a.variant + 1}, шаг {a.ordinal + 1}: {operationLabels[a.operation]} · {a.maximum_reserve ? 'до ' : ''}{a.billable_seconds} с к оплате</span><span>{a.reserved_credits} 🍌</span></div>)}
+          {quote.allocations.map(a => <div key={`${a.variant}:${a.ordinal}`} className="flex justify-between gap-2 text-sm"><span>Вариант {a.variant + 1}, шаг {a.ordinal + 1}: {operationLabels[a.operation]} · {a.maximum_reserve ? 'до ' : ''}{billedSecondsLabel(a)}</span><span>{a.reserved_credits} 🍌</span></div>)}
           {bootstrap.is_admin && <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={ack} onChange={e => setAck(e.target.checked)} />Подтверждаю реальный расход в Higgsfield.</label>}
           <Button disabled={blocked || rangeNeedsAction || !bootstrap.enabled || !bootstrap.configured || (bootstrap.is_admin && !ack)} onClick={() => void action('start', start)}>Запустить тренд</Button>
         </div>}
@@ -522,7 +532,7 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
           })}
         </fieldset>
 
-        {quote && <div className="space-y-3 rounded-[26px] border border-white/10 bg-white/[0.035] p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-xs text-muted-foreground">К запуску</p><h3 className="text-lg font-semibold">{bootstrap.is_admin ? 'Тестовый запуск' : `${quote.total_credits} бананов`}</h3></div><span className="text-xs text-muted-foreground">до {new Date(quote.expires_ms).toLocaleTimeString()}</span></div>{bootstrap.is_admin && <p className="text-sm">С вашего баланса: <strong>0 бананов</strong>. Пользовательский тариф: {quote.total_credits} бананов. Реальный расход Higgsfield подтверждается ниже.</p>}{video && <p className="text-sm">Длительность видео к запуску: {videoSeconds(video.duration_ms || 0)} с</p>}{quote.allocations.map(a => <div key={`${a.variant}:${a.ordinal}`} className="flex justify-between gap-2 text-sm text-muted-foreground"><span>Вариант {a.variant + 1}, шаг {a.ordinal + 1} · {a.maximum_reserve ? 'до ' : ''}{a.billable_seconds} с к оплате</span><span>{a.reserved_credits} 🍌</span></div>)}{bootstrap.is_admin && <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={ack} onChange={e => setAck(e.target.checked)} />Подтверждаю реальный расход в Higgsfield.</label>}<Button className="h-12 w-full rounded-2xl text-base" disabled={blocked || rangeNeedsAction || !bootstrap.enabled || !bootstrap.configured || (bootstrap.is_admin && !ack)} onClick={() => void action('start', start)}>Запустить</Button></div>}
+        {quote && <div className="space-y-3 rounded-[26px] border border-white/10 bg-white/[0.035] p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-xs text-muted-foreground">К запуску</p><h3 className="text-lg font-semibold">{bootstrap.is_admin ? 'Тестовый запуск' : `${quote.total_credits} бананов`}</h3></div><span className="text-xs text-muted-foreground">до {new Date(quote.expires_ms).toLocaleTimeString()}</span></div>{bootstrap.is_admin && <p className="text-sm">С вашего баланса: <strong>0 бананов</strong>. Пользовательский тариф: {quote.total_credits} бананов. Реальный расход Higgsfield подтверждается ниже.</p>}{video && <p className="text-sm">Длительность видео к запуску: {videoSeconds(video.duration_ms || 0)} с</p>}{quote.allocations.map(a => <div key={`${a.variant}:${a.ordinal}`} className="flex justify-between gap-2 text-sm text-muted-foreground"><span>Вариант {a.variant + 1}, шаг {a.ordinal + 1} · {a.maximum_reserve ? 'до ' : ''}{billedSecondsLabel(a)}</span><span>{a.reserved_credits} 🍌</span></div>)}{bootstrap.is_admin && <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={ack} onChange={e => setAck(e.target.checked)} />Подтверждаю реальный расход в Higgsfield.</label>}<Button className="h-12 w-full rounded-2xl text-base" disabled={blocked || rangeNeedsAction || !bootstrap.enabled || !bootstrap.configured || (bootstrap.is_admin && !ack)} onClick={() => void action('start', start)}>Запустить</Button></div>}
 
         {!quote && <div className="sticky bottom-3 z-10 rounded-[24px] border border-white/10 bg-background/90 p-2 shadow-2xl backdrop-blur-xl"><Button className="h-12 w-full rounded-[18px] text-base" disabled={blocked || !plan.source_asset_id || rangeNeedsAction} onClick={() => void action('quote', getQuote)}>Рассчитать стоимость</Button></div>}
       </div>}

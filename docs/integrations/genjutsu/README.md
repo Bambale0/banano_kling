@@ -69,6 +69,36 @@ our account for every operation/resolution actually exposed to users. Unsupporte
 account capabilities must be disabled in managed settings rather than silently
 downgraded.
 
+## NEUROMIX billable video seconds
+
+User-facing tariff accounting intentionally counts two components per Genjutsu
+step, at the **configured admin credits per second** for that operation and
+resolution:
+
+- reference video: `ceil(effective_source_duration_ms / 1000)` seconds;
+- generated video: `ceil(selected_generation_duration_ms / 1000)` seconds;
+- total: their sum multiplied by the configured rate, per variant and step.
+
+**Model limitation:** the current Higgsfield Genjutsu input schema does not
+support a separate output `duration`. The generated clip follows the source
+clip selected by the user (including any applied trim), so for current Genjutsu
+runs both durations are the same. We do not send an invented duration input.
+For instance, a selected 8.1-second clip is quoted as **9 reference + 9
+generation = 18 billable seconds**. Higgsfield's *upstream* API cost is
+different: the provider bills input-video seconds. This section documents our
+user-facing NEUROMIX tariff, not Higgsfield's supplier invoice.
+
+The quote is authoritative for the displayed total, sufficient-balance check
+and atomic reservation. Actual step accounting recomputes the same two
+components using the effective step input. Follow-on chain steps reserve both
+components at the catalog maximum and release the unused amount on successful
+completion; failure/refund and idempotent replay semantics are unchanged.
+Unconsumed pre-change quotes are rejected by `pricing_version=2`, requiring
+a fresh quote. Already accepted runs retain their original single-duration
+pricing version, even if a queued step submits after deployment; they are not
+retroactively charged the new rate or blocked by a larger actual charge.
+No new admin price, endpoint, migration or environment variable is required.
+
 ## Task lifecycle
 
 ```text

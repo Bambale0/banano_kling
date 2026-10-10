@@ -4,6 +4,7 @@ import pytest
 
 from bot.genjutsu.contract import (
     PipelineError,
+    billable_seconds,
     compile_plan,
     default_settings,
     provider_input,
@@ -96,12 +97,31 @@ def test_quote_rounds_source_seconds_up_and_reserves_later_step_maximum():
     quote = quote_plan(plan, assets(4_001), settings)
     first = quote["allocations"][0]
     second = quote["allocations"][1]
-    assert first["billable_seconds"] == 5
-    assert first["reserved_credits"] == 15
+    assert quote["pricing_version"] == 2
+    assert first["reference_seconds"] == 5
+    assert first["generation_seconds"] == 5
+    assert first["billable_seconds"] == 10
+    assert first["reserved_credits"] == 30
     assert second["maximum_reserve"] is True
-    assert second["billable_seconds"] == 30
-    assert second["reserved_credits"] == 60
-    assert quote["total_credits"] == (15 + 60) * 2
+    assert second["reference_seconds"] == 30
+    assert second["generation_seconds"] == 30
+    assert second["billable_seconds"] == 60
+    assert second["reserved_credits"] == 120
+    assert quote["total_credits"] == (30 + 120) * 2
+
+
+
+def test_billing_counts_video_reference_and_selected_generation_separately():
+    assert billable_seconds(12_000, 8_000) == (12, 8, 20)
+    assert billable_seconds(4_001, 8_001) == (5, 9, 14)
+
+
+@pytest.mark.parametrize("bad_duration", [None, 0, -1, 5.5, True, "5000"])
+def test_billing_rejects_invalid_or_missing_duration(bad_duration):
+    with pytest.raises(PipelineError, match="invalid_video_duration"):
+        billable_seconds(bad_duration, 8_000)
+    with pytest.raises(PipelineError, match="invalid_video_duration"):
+        billable_seconds(8_000, bad_duration)
 
 
 def test_operation_specific_reference_roles_fail_closed():

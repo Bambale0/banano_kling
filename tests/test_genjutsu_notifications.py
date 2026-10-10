@@ -26,8 +26,8 @@ async def test_failed_paid_run_enqueues_one_settled_refund_notice(tmp_path):
     assert await repo.balance(101) == 100
     item = await repo.claim_notification(settings)
     assert item['run_id'] == run['id']
-    assert item['summary']['reserved_credits'] == 5
-    assert item['summary']['refunded_credits'] == 5
+    assert item['summary']['reserved_credits'] == 10
+    assert item['summary']['refunded_credits'] == 10
     assert item['summary']['charged_credits'] == 0
     assert item['summary']['moderation_count'] == 1
     assert await repo.claim_notification(settings) is None
@@ -45,7 +45,7 @@ async def test_failed_run_sends_plain_refund_notice_once(tmp_path):
     send.assert_awaited_once()
     owner, text, run_id, _ = send.call_args.args
     assert owner == 101 and run_id == run['id']
-    assert 'модерац' in text and '5 🍌' in text and 'на ваш баланс' in text
+    assert 'модерац' in text and '10 🍌' in text and 'на ваш баланс' in text
     assert 'provider_nsfw' not in text and 'http' not in text
 
 
@@ -78,7 +78,7 @@ async def test_concurrent_cancellation_enqueues_once_and_refunds_once(tmp_path):
     items = [item for item in claims if item]
     assert len(items) == 1
     assert items[0]['summary']['state'] == 'canceled'
-    assert items[0]['summary']['refunded_credits'] == 5
+    assert items[0]['summary']['refunded_credits'] == 10
     assert await repo.balance(101) == 100
     item = items[0]
     await repo.finish_notification(run['id'], item['lease_token'], 'delivered', message_id='test-only')
@@ -103,12 +103,12 @@ async def test_partial_run_waits_for_all_variants_and_reports_net_charge(tmp_pat
     item = await repo.claim_notification(settings)
     assert item['run_id'] == run['id']
     assert item['summary']['state'] == 'partial'
-    assert item['summary']['reserved_credits'] == 10
-    assert item['summary']['refunded_credits'] == 5
-    assert item['summary']['charged_credits'] == 5
+    assert item['summary']['reserved_credits'] == 20
+    assert item['summary']['refunded_credits'] == 10
+    assert item['summary']['charged_credits'] == 10
     assert item['summary']['completed_count'] == 1
     assert 'Готовые результаты сохранены' in terminal_notification_text(item['summary'])
-    assert await repo.balance(101) == 95
+    assert await repo.balance(101) == 90
 
 
 @pytest.mark.asyncio
@@ -121,8 +121,8 @@ async def test_failed_chain_notice_includes_released_downstream_reserve(tmp_path
     await repo.finish_step(first['id'], first['lease_token'], 'failed', error_code='provider_failed')
     item = await repo.claim_notification(settings)
     assert item['run_id'] == run['id']
-    assert item['summary']['reserved_credits'] == 35
-    assert item['summary']['refunded_credits'] == 35
+    assert item['summary']['reserved_credits'] == 70
+    assert item['summary']['refunded_credits'] == 70
     assert item['summary']['charged_credits'] == 0
     assert item['summary']['canceled_count'] == 1
     assert await repo.balance(101) == 100
@@ -140,7 +140,7 @@ async def test_success_and_nonterminal_review_do_not_enqueue_failure_notice(tmp_
     queued = await repo.claim_step(settings)
     await repo.park_step(queued['id'], queued['lease_token'], 'provider_http_503')
     assert await repo.claim_notification(settings) is None
-    assert await repo.balance(101) == 95
+    assert await repo.balance(101) == 90
     await repo.request_reconciliation(999, run['id'], queued['id'])
     step = await repo.claim_step(settings)
     output = await repo.add_asset(101, 'video', 'synthetic-success.mp4', {'duration_ms': 5000})
@@ -175,14 +175,14 @@ async def test_outbox_failure_rolls_back_terminal_state_and_refund(tmp_path):
         await db.commit()
     with pytest.raises(Exception, match='synthetic outbox failure'):
         await repo.finish_step(step['id'], step['lease_token'], 'failed', error_code='provider_failed')
-    assert await repo.balance(101) == 95
+    assert await repo.balance(101) == 90
     assert (await repo.get_run(101, run['id']))['state'] == 'running'
     async with connect() as db:
         await db.execute('DROP TRIGGER fail_notice')
         await db.commit()
     await repo.finish_step(step['id'], step['lease_token'], 'failed', error_code='provider_failed')
     assert await repo.balance(101) == 100
-    assert (await repo.claim_notification(settings))['summary']['refunded_credits'] == 5
+    assert (await repo.claim_notification(settings))['summary']['refunded_credits'] == 10
 
 
 @pytest.mark.asyncio
@@ -404,7 +404,7 @@ async def test_custom_notification_templates_use_settled_amounts_and_categories(
     text = send.call_args.args[1]
     assert 'Работу завершить не удалось' in text
     assert 'Ответ провайдера: модерация' in text
-    assert 'Возвращено на баланс: 5 бананов' in text
+    assert 'Возвращено на баланс: 10 бананов' in text
     assert 'Списано всего: 0 бананов' in text
     assert 'Бесплатный запуск' not in text
     assert '{' not in text

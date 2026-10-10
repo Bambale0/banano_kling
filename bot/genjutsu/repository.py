@@ -15,7 +15,9 @@ from uuid import uuid4
 
 from .contract import (
     CATALOG,
+    GENJUTSU_PRICING_VERSION,
     PipelineError,
+    billable_seconds,
     default_settings,
     fingerprint,
     request_key,
@@ -283,6 +285,8 @@ class Repository:
             if self.start_validator:
                 await self.start_validator(db, q)
             plan, quote = json.loads(q['plan']), json.loads(q['quote'])
+            if quote.get('pricing_version') != GENJUTSU_PRICING_VERSION:
+                raise PipelineError('quote_changed', status=409)
             if not admin_free and any(s['operation'] not in settings['verified_operations'] for s in plan['steps']):
                 raise PipelineError('operation_not_verified', status=503)
             active = await one(db, "SELECT COUNT(*) AS count FROM genjutsu_runs WHERE owner=? AND state IN ('running','waiting','review')", (owner,))
@@ -514,14 +518,31 @@ class Repository:
             if step['status'] != 'ready' or step['cancel_requested']:
                 raise PipelineError('submission_not_allowed', status=409)
             validate_duration(duration_ms, json.loads(step['spec'])['operation'])
-            actual = 0 if step['admin_free'] else ((duration_ms + 999) // 1000) * step['rate']
+            # Accepted runs retain the quote formula from admission, including
+            # steps that were still waiting when this version was deployed.
+            quoted = await one(db, """SELECT q.quote FROM genjutsu_runs r
+                JOIN genjutsu_quotes q ON q.id=r.quote_id WHERE r.id=?""", (step['run_id'],))
+            if not quoted:
+                raise PipelineError('quote_unavailable', status=409)
+            pricing_version = json.loads(quoted['quote']).get('pricing_version', 1)
+            reference_seconds, generation_seconds, total_seconds = billable_seconds(duration_ms, duration_ms)
+            if pricing_version == 1:
+                generation_seconds = 0
+                total_seconds = reference_seconds
+            elif pricing_version != GENJUTSU_PRICING_VERSION:
+                raise PipelineError('quote_changed', status=409)
+            actual = 0 if step['admin_free'] else total_seconds * step['rate']
             if actual > step['reserved_credits']:
                 raise PipelineError('quote_budget_exceeded')
             attempt = uuid4().hex
             await db.execute("UPDATE genjutsu_steps SET status='submitting',attempt_id=?,actual_credits=?,updated_ms=? WHERE id=?",
                              (attempt, actual, self.clock(), step_id))
             await self._event(db, 'submit_started', run_id=step['run_id'], step_id=step_id,
-                              details={'attempt_id': attempt, 'billable_ms': duration_ms})
+                              details={'attempt_id': attempt, 'billable_ms': duration_ms,
+                                       'pricing_version': pricing_version,
+                                       'reference_seconds': reference_seconds,
+                                       'generation_seconds': generation_seconds,
+                                       'billable_seconds': total_seconds})
             return attempt
 
     async def accept_submission(

@@ -98,8 +98,8 @@ async def test_postgres_migration_and_concurrent_refund_are_idempotent(monkeypat
     assert len(notices) == 1
     notice = notices[0]
     assert notice['run_id'] == left['id']
-    assert notice['summary']['reserved_credits'] == 5
-    assert notice['summary']['refunded_credits'] == 5
+    assert notice['summary']['reserved_credits'] == 10
+    assert notice['summary']['refunded_credits'] == 10
     assert notice['summary']['charged_credits'] == 0
     await repo.finish_notification(left['id'], notice['lease_token'], 'delivered', message_id='synthetic')
     await repo.migrate()
@@ -124,7 +124,7 @@ async def test_postgres_migration_and_concurrent_refund_are_idempotent(monkeypat
     monkeypatch.setattr(repo, '_enqueue_terminal_notification', fail_after_enqueue)
     with pytest.raises(RuntimeError, match='synthetic outbox transaction interruption'):
         await repo.finish_step(next_step['id'], next_step['lease_token'], 'failed', error_code='test')
-    assert await repo.balance(owner) == 95
+    assert await repo.balance(owner) == 90
     assert (await repo.get_run(owner, next_run['id']))['state'] == 'running'
     assert await repo.claim_notification(settings) is None
     monkeypatch.setattr(repo, '_enqueue_terminal_notification', enqueue)
@@ -132,7 +132,7 @@ async def test_postgres_migration_and_concurrent_refund_are_idempotent(monkeypat
     assert await repo.balance(owner) == 100
     notice = await repo.claim_notification(settings)
     assert notice['run_id'] == next_run['id']
-    assert notice['summary']['refunded_credits'] == 5
+    assert notice['summary']['refunded_credits'] == 10
     assert await repo.claim_notification(settings) is None
 
 @pytest.mark.asyncio
@@ -185,7 +185,7 @@ async def test_postgres_feed_publication_and_withdrawal_admission_are_transactio
     step = run["steps"][0]
     async with repo.transaction() as db:
         await db.execute("UPDATE genjutsu_runs SET state='completed' WHERE id=?", (run["id"],))
-        await db.execute("UPDATE genjutsu_steps SET status='completed',output_asset_id=?,actual_credits=5 WHERE id=?", (output["id"], step["id"]))
+        await db.execute("UPDATE genjutsu_steps SET status='completed',output_asset_id=?,actual_credits=10 WHERE id=?", (output["id"], step["id"]))
     monkeypatch.setattr(database, "get_feed_generation_card", AsyncMock(return_value={"id": 1}))
     publisher = FeedPublisher(repo, recipes, AsyncMock(return_value="https://fixture.test/output.mp4"))
     left, right = await asyncio.gather(

@@ -78,7 +78,7 @@ async def test_recipe_public_contract_hides_prompt_and_fixed_asset_ids(tmp_path)
     assert recipe["slots"] == [{
         "step_index": 0, "reference_index": 0, "role": "character", "label": "Ваше фото",
     }]
-    assert recipe["current_cost"] == 10
+    assert recipe["current_cost"] == 20
 
 
 @pytest.mark.asyncio
@@ -373,7 +373,7 @@ async def test_recipe_project_fails_closed_after_recipe_unavailable(
     })
     assert (await api.dispatch(101, False, "quote", {
         "project_id": ordinary["id"], "revision": 1,
-    }))["quote"]["total_credits"] == 10
+    }))["quote"]["total_credits"] == 20
 
 
 
