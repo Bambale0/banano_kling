@@ -144,3 +144,49 @@ test('restoring an owned derived recipe retains its output settings after consen
     aspect_ratio: '4:3', duration: 7, audio: false, seed: 0, nsfw_checker: true,
     prompt: 'Keep my changes', repeat_plan_hash: 'fresh' })
 })
+
+test('owner recipe restoration reveals its saved document and submits it visibly', async () => {
+  const api = jest.requireMock('@/lib/wan3-prime-api')
+  api.fetchWan3PrimeOwnerRecipe.mockResolvedValue({ ok: true, recipe: {
+    model: 'wan_3_prime', scenario: 'reference', prompt: 'Use the brief',
+    resolution: '720P', aspect_ratio: 'adaptive', duration: 5, audio: true, nsfw_checker: true,
+    reference_file_urls: ['https://owned.test/saved-brief.pdf'], reference_link_urls: [],
+  } })
+  render(<Wan3PrimeForm credits={1000} ownerTaskId="wan3_owned_document" />)
+  const selector = await screen.findByRole('combobox', { name: 'Дополнительный источник' })
+  await waitFor(() => expect(selector).toHaveValue('file'))
+  expect(screen.getByText('saved-brief.pdf')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Удалить Файл 1' }))
+  expect(screen.queryByText('saved-brief.pdf')).not.toBeInTheDocument()
+  await upload('Загрузить документ', 'replacement.pdf', 'application/pdf')
+  fireEvent.click(screen.getByRole('button', { name: 'Рассчитать стоимость' }))
+  await waitFor(() => expect(quoteWan3Prime).toHaveBeenCalledTimes(1))
+  expect((quoteWan3Prime as jest.Mock).mock.calls[0][0].recipe).toMatchObject({
+    reference_file_urls: ['https://owned.test/replacement.pdf'], reference_link_urls: [],
+  })
+})
+
+test('repeated initial recipe restoration switches the visible optional source and quote payload', async () => {
+  const base = {
+    model: 'wan_3_prime' as const, scenario: 'reference' as const, prompt: 'Use the source',
+    resolution: '720P' as const, aspect_ratio: 'adaptive' as const, duration: 5,
+    audio: true, nsfw_checker: true,
+  }
+  const { rerender } = render(<Wan3PrimeForm credits={1000} initialRecipe={{
+    ...base, reference_link_urls: ['https://example.test/saved-page'], reference_file_urls: [],
+  }} />)
+  const selector = screen.getByRole('combobox', { name: 'Дополнительный источник' })
+  expect(selector).toHaveValue('link')
+  expect(screen.getByText('saved-page')).toBeInTheDocument()
+  rerender(<Wan3PrimeForm credits={1000} initialRecipe={{
+    ...base, reference_link_urls: [], reference_file_urls: ['https://owned.test/replacement.pdf'],
+  }} />)
+  await waitFor(() => expect(selector).toHaveValue('file'))
+  expect(screen.getByText('replacement.pdf')).toBeInTheDocument()
+  expect(screen.queryByText('saved-page')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Рассчитать стоимость' }))
+  await waitFor(() => expect(quoteWan3Prime).toHaveBeenCalledTimes(1))
+  expect((quoteWan3Prime as jest.Mock).mock.calls[0][0].recipe).toMatchObject({
+    reference_file_urls: ['https://owned.test/replacement.pdf'], reference_link_urls: [],
+  })
+})

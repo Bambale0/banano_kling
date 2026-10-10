@@ -258,7 +258,7 @@ async def _upload_chunk_route(request: web.Request) -> web.Response:
         seen = set()
         async for part in reader:
             name = part.name or ''
-            if name not in {'upload_id', 'index', 'total', 'chunk', 'init_data'} or name in seen:
+            if name not in {'upload_id', 'index', 'total', 'chunk', 'init_data', 'start_param_fallback'} or name in seen:
                 raise Wan3PrimeValidationError('Повторяющееся или неизвестное поле загрузки.')
             seen.add(name)
             limit = CHUNK_SIZE if name == 'chunk' else 8192

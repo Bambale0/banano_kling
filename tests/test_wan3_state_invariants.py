@@ -68,6 +68,51 @@ async def test_old_provider_task_has_operator_resolution_without_automatic_refun
 
 
 @pytest.mark.asyncio
+async def test_late_ready_result_after_wait_timeout_is_saved_settled_and_delivered_once():
+    actor = await user_actor(100)
+    provider = Provider()
+    output = Path('static/uploads/wan3_prime/results/test-late-timeout-result.mp4')
+    lifecycle = Wan3PrimeLifecycle(
+        probe=Probe(file_duration=5), preset_manager=Prices(), transport=provider,
+        downloader=Downloader(output),
+    )
+    bot = SimpleNamespace(
+        send_video=AsyncMock(return_value=SimpleNamespace(message_id=91)),
+        send_message=AsyncMock(return_value=SimpleNamespace(message_id=92)),
+    )
+    lifecycle.telegram_bot = bot
+    quote = await lifecycle.quote(actor, body())
+    launched = await lifecycle.launch(actor, body(), quote, 'late-timeout-result')
+    async with database.db_backend.connect(database.DATABASE_PATH) as db:
+        await db.execute(
+            "UPDATE wan3_prime_intents SET created_at = '2000-01-01' WHERE internal_task_id = ?",
+            (launched['task_id'],),
+        )
+        await db.commit()
+    provider.statuses['provider_1'] = {'taskId': 'provider_1', 'state': 'waiting'}
+    try:
+        await lifecycle.reconcile_once(provider_task_id='provider_1')
+        assert (await lifecycle.status(actor, launched['task_id']))['status'] == 'result_attention'
+        provider.statuses['provider_1'] = {
+            'taskId': 'provider_1', 'state': 'success',
+            'response': {'resultUrls': ['https://kie.example.com/late.mp4']},
+        }
+        assert await lifecycle.reconcile_once() == 1
+        state = await lifecycle.status(actor, launched['task_id'])
+        assert state['status'] == 'completed'
+        assert output.exists()
+        assert bot.send_video.await_count == 1
+        assert await balance(actor.user_id) == 90
+        assert provider.creates == 1
+        assert await lifecycle.reconcile_once(provider_task_id='provider_1') == 0
+        assert bot.send_video.await_count == 1
+        assert await balance(actor.user_id) == 90
+        assert provider.creates == 1
+    finally:
+        output.unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
 async def test_provider_reason_is_retained_privately_without_secrets():
     actor = await user_actor(100)
     provider = Provider()
