@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import math
 import os
 from pathlib import Path
@@ -141,10 +142,12 @@ async def snapshot_is_leased(db, media_id: int) -> bool:
         "SELECT 1 FROM seedance_quote_media_leases l JOIN seedance_quote_receipts q ON q.quote_id=l.quote_id "
         "WHERE l.media_id=? AND ((q.phase='quoted' AND q.expires_at>CURRENT_TIMESTAMP) "
         "OR q.phase IN ('submitting','outcome_unknown') "
-        "OR (q.phase='accepted' AND (q.canonical_bound=0 OR EXISTS (SELECT 1 FROM generation_tasks g "
-        "WHERE g.task_id=q.provider_task_id AND g.status NOT IN ('completed','failed')))) "
-        "OR q.updated_at>?) LIMIT 1",
-        (media_id, _retention_cutoff()),
+        "OR (q.phase='accepted' AND (q.canonical_bound=0 "
+        "OR NOT EXISTS (SELECT 1 FROM generation_tasks g WHERE g.task_id=q.provider_task_id) "
+        "OR EXISTS (SELECT 1 FROM generation_tasks g WHERE g.task_id=q.provider_task_id "
+        "AND (g.status NOT IN ('completed','failed') OR g.completed_at IS NULL OR g.completed_at>?)))) "
+        "OR (q.phase IN ('rejected','provider_failed') AND q.updated_at>?)) LIMIT 1",
+        (media_id, _retention_cutoff(), _retention_cutoff()),
     )).fetchone()
     return bool(row)
 
@@ -185,13 +188,26 @@ async def verify_quote_snapshots(db, quote_id: str, user_id: int):
     from bot.services.seedance_quote_receipts import QuoteConflict
     from bot.services.wan3_prime_storage import UPLOAD_ROOT
 
+    receipt = await (await db.execute("SELECT provider_json FROM seedance_quote_receipts WHERE quote_id=? AND user_id=?",
+                                      (quote_id, user_id))).fetchone()
+    recipe = json.loads(receipt[0]) if receipt else {}
+    expected = recipe.get("_snapshot_media_ids")
+    if not isinstance(expected, list) or not expected or any(not isinstance(value, int) for value in expected):
+        raise QuoteConflict("План референсов недоступен")
     rows = await (await db.execute(
-        "SELECT m.local_path,m.sha256,m.user_id FROM seedance_quote_media_leases l "
-        "JOIN wan3_prime_media m ON m.id=l.media_id WHERE l.quote_id=?", (quote_id,),
+        "SELECT l.media_id,m.public_url,m.local_path,m.sha256,m.user_id,m.source FROM seedance_quote_media_leases l "
+        "LEFT JOIN wan3_prime_media m ON m.id=l.media_id WHERE l.quote_id=?", (quote_id,),
     )).fetchall()
-    if not rows:
+    if {row["media_id"] for row in rows} != set(expected):
         raise QuoteConflict("Референсы расчёта недоступны. Загрузите видео заново")
+    urls = recipe.get("video_urls", recipe.get("video_references"))
+    by_id = {row["media_id"]: row for row in rows}
+    if not isinstance(urls, list) or len(urls) != len(expected) or any(
+            url != by_id[media_id]["public_url"] for media_id, url in zip(expected, urls)):
+        raise QuoteConflict("Состав референсов расчёта изменился")
     for row in rows:
+        if not row["local_path"] or row["source"] != "seedance_quote_snapshot":
+            raise QuoteConflict("Референс расчёта удалён")
         path = Path(row["local_path"]).resolve()
         if (row["user_id"] != user_id or UPLOAD_ROOT.resolve() not in path.parents
                 or not path.is_file() or await asyncio.to_thread(_file_hash, path) != row["sha256"]):
