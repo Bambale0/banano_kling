@@ -128,6 +128,27 @@ class MotionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.launch()).status, 409)
         self.assertEqual(await self.balance(), 90)
 
+    async def test_duplicate_canonical_binding_checks_receipt_identity(self):
+        self.assertEqual((await self.launch()).status, 200)
+        receipt_id = "motion_launch_101_" + "a" * 32
+        fake_database = types.ModuleType("bot.database")
+        fake_database.get_generation_task_payload = AsyncMock(return_value={
+            "request_data": json.dumps({"motion_launch_receipt_id": receipt_id})})
+        prior = sys.modules.get("bot.database")
+        sys.modules["bot.database"] = fake_database
+        try:
+            self.api.add_generation_task.return_value = False
+            self.assertEqual((await self.launch()).status, 200)
+            fake_database.get_generation_task_payload.return_value = {"request_data": "{}"}
+            self.assertEqual((await self.launch()).status, 409)
+            self.assertEqual(await self.balance(), 90)
+            self.provider.assert_awaited_once()
+        finally:
+            if prior is None:
+                sys.modules.pop("bot.database", None)
+            else:
+                sys.modules["bot.database"] = prior
+
     async def test_transport_exception_holds_debit_without_second_submission(self):
         self.provider.side_effect = TimeoutError("unknown acceptance")
         self.assertEqual((await self.launch()).status, 409)
