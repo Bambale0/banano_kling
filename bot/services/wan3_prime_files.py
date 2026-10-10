@@ -3,12 +3,10 @@ from __future__ import annotations
 
 import hashlib
 import os
-import re
 import shutil
 import subprocess
 import sys
 import uuid
-import zipfile
 from pathlib import Path
 
 from bot.services.wan3_prime_media import Wan3PrimeValidationError, canonical_child_path

@@ -57,6 +57,7 @@ async def test_telegram_voice_is_converted_not_rejected(tmp_path, monkeypatch):
 
 def test_zip_metadata_is_not_parsed_in_the_bot_process(tmp_path, monkeypatch):
     import zipfile
+
     from bot.services.wan3_prime_files import document_pages
 
     path = tmp_path / 'slides.pptx'

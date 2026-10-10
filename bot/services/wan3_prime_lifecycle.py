@@ -442,7 +442,10 @@ class Wan3PrimeLifecycle:
         return recipe, server_quote
 
     def _callback_url(self, internal_task_id: str, nonce: str) -> str | None:
-        from bot.services.wan3_prime_callback_auth import nonce_callbacks_enabled, signed_callbacks_enabled
+        from bot.services.wan3_prime_callback_auth import (
+            nonce_callbacks_enabled,
+            signed_callbacks_enabled,
+        )
 
         base = _public_callback_base(self.miniapp_root)
         if not base:
@@ -721,7 +724,10 @@ class Wan3PrimeLifecycle:
         await mark_generation_accepted(internal_task_id)
 
     async def handle_callback(self, payload: Any, *, internal_task_id: str | None = None, nonce: str | None = None, headers: Any = None) -> tuple[dict[str, Any] | None, int]:
-        from bot.services.wan3_prime_callback_auth import nonce_callbacks_enabled, verify_callback_headers
+        from bot.services.wan3_prime_callback_auth import (
+            nonce_callbacks_enabled,
+            verify_callback_headers,
+        )
 
         if not isinstance(internal_task_id, str) or not internal_task_id.startswith("wan3_") or len(internal_task_id) > 100:
             return None, 403

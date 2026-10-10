@@ -190,7 +190,10 @@ async def _status_route(request: web.Request) -> web.Response:
 async def _callback_route(request: web.Request) -> web.Response:
     import json
 
-    from bot.services.wan3_prime_callback_auth import nonce_callbacks_enabled, signed_callbacks_enabled
+    from bot.services.wan3_prime_callback_auth import (
+        nonce_callbacks_enabled,
+        signed_callbacks_enabled,
+    )
 
     if not nonce_callbacks_enabled() and (not signed_callbacks_enabled() or not request.headers.get('X-Webhook-Signature')):
         return _json_error('Callback authentication required', status=403, code='callback_auth_required')
