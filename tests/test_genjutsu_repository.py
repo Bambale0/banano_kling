@@ -78,6 +78,17 @@ async def make_quote(repo, *, variants=1, steps=1):
 
 
 @pytest.mark.asyncio
+async def test_reference_plus_generation_seconds_require_enough_balance(tmp_path):
+    repo, _ = await build_repo(tmp_path, credits=9)
+    quote = await make_quote(repo)
+    assert quote["total_credits"] == 10
+    with pytest.raises(PipelineError, match="insufficient_balance"):
+        await repo.start(101, "insufficient-two-component-charge", quote["id"])
+    assert await repo.balance(101) == 9
+    assert await repo.existing_run(101, "insufficient-two-component-charge", quote["id"]) is None
+
+
+@pytest.mark.asyncio
 async def test_pre_change_quote_is_rejected_before_debit(tmp_path):
     repo, _ = await build_repo(tmp_path)
     quote = await make_quote(repo)
