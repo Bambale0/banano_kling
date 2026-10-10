@@ -57,7 +57,9 @@ export interface Wan3PrimeGenerateRequest extends Wan3PrimeQuoteRequest {
 
 export interface Wan3PrimeGenerateResponse {
   ok: true
-  status: 'queued' | 'accepted' | 'unknown' | 'done'
+  status: 'queued' | 'accepted' | 'unknown' | 'done' | 'failed'
+  charged_cost?: number
+  refunded_cost?: number
   internal_task_id: string
   provider_task_id?: string | null
   credits?: number | null

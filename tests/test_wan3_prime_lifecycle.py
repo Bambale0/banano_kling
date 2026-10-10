@@ -336,7 +336,7 @@ async def test_callback_spoof_rejected_and_nonce_can_bind_after_accept_crash():
     # Spoofed task id does not match the stored provider id.
     payload = {"data": {"taskId": "evil", "model": "wan/3-0-video-prime"}}
     result, status = await lifecycle.handle_callback(payload, internal_task_id=launched["task_id"], nonce="wrong")
-    assert status == 200
+    assert status == 403
     assert result is None
 
     # Simulate post-accept binding loss: nonce alone is not enough to bind an

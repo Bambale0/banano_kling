@@ -140,9 +140,13 @@ class Wan3PrimeStorage:
                 )
                 """
             )
+            await execute_wan_ddl(db, "CREATE TABLE IF NOT EXISTS wan3_prime_storage_lock (id INTEGER PRIMARY KEY)")
+            await db.execute("INSERT INTO wan3_prime_storage_lock (id) VALUES (1) ON CONFLICT (id) DO NOTHING")
             await db.commit()
 
-    async def init_upload(self, actor, *, kind: str, filename: str, size: int, content_type: str | None = None) -> dict[str, Any]:
+    async def init_upload(self, actor, *, kind: str, filename: str, size: int, content_type: str | None = None, importing: bool = False) -> dict[str, Any]:
+        from bot.services.wan3_prime_storage_policy import ACTIVE_UPLOAD_STATES, assert_capacity, lock_storage
+
         await self.init_schema()
         kind = str(kind or "").strip().lower()
         if kind not in {"image", "video", "audio", "file"}:
@@ -153,26 +157,24 @@ class Wan3PrimeStorage:
         if Path(filename).suffix.lower() not in _allowed_ext(kind):
             raise Wan3PrimeValidationError("Upload extension is not allowed")
         async with db_backend.connect(_sqlite_path()) as db:
-            row = await (
-                await db.execute(
-                    "SELECT COUNT(*) FROM wan3_prime_upload_sessions WHERE user_id = ? AND status = 'open' AND expires_at > CURRENT_TIMESTAMP",
-                    (actor.user_id,),
-                )
-            ).fetchone()
+            await lock_storage(db)
+            await assert_capacity(db, actor.user_id, size)
+            row = await (await db.execute(
+                f"SELECT COUNT(*) FROM wan3_prime_upload_sessions WHERE user_id = ? AND status IN {ACTIVE_UPLOAD_STATES}",
+                (actor.user_id,),
+            )).fetchone()
             if int(row[0] or 0) >= MAX_UNFINISHED_SESSIONS:
-                raise Wan3PrimeValidationError("Too many unfinished Wan 3.0 uploads")
-            upload_id = uuid.uuid4().hex
+                raise Wan3PrimeValidationError("Too many unfinished Wan 3.0 uploads", status=429)
+            upload_id, expires_at = uuid.uuid4().hex, _expires()
             await db.execute(
-                """
-                INSERT INTO wan3_prime_upload_sessions
-                    (upload_id, user_id, telegram_id, kind, filename, content_type, declared_size, expires_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (upload_id, actor.user_id, actor.telegram_id, kind, filename, content_type or "", size, _expires()),
+                "INSERT INTO wan3_prime_upload_sessions "
+                "(upload_id, user_id, telegram_id, kind, filename, content_type, declared_size, expires_at, status) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (upload_id, actor.user_id, actor.telegram_id, kind, filename, content_type or "", size, expires_at, "importing" if importing else "open"),
             )
             await db.commit()
-        canonical_child_path(CHUNK_ROOT, upload_id).mkdir(parents=True, exist_ok=True)
-        return {"ok": True, "upload_id": upload_id, "chunk_size": CHUNK_SIZE, "expires_at": _expires()}
+        await asyncio.to_thread(canonical_child_path(CHUNK_ROOT, upload_id).mkdir, parents=True, exist_ok=True)
+        return {"ok": True, "upload_id": upload_id, "chunk_size": CHUNK_SIZE, "expires_at": expires_at}
 
     async def save_chunk(self, actor, *, upload_id: str, index: int, total: int, chunk: bytes) -> None:
         await self.init_schema()
@@ -212,21 +214,16 @@ class Wan3PrimeStorage:
                     "UPDATE wan3_prime_upload_sessions SET total_chunks = ?, received_chunks = received_chunks + 1, chunk_hashes = ?, updated_at = CURRENT_TIMESTAMP WHERE upload_id = ?",
                     (total, json.dumps(hashes, sort_keys=True), upload_id),
                 )
+            from bot.services.wan3_prime_files import write_chunk
+
             chunk_path = canonical_child_path(CHUNK_ROOT, f"{upload_id}/{index:06d}.part")
-            chunk_path.parent.mkdir(parents=True, exist_ok=True)
-            if not chunk_path.exists() or _sha256_file(chunk_path) != digest:
-                temporary = chunk_path.with_name(chunk_path.name + "." + uuid.uuid4().hex + ".tmp")
-                try:
-                    with open(temporary, "xb") as handle:
-                        handle.write(chunk)
-                        handle.flush()
-                        os.fsync(handle.fileno())
-                    os.replace(temporary, chunk_path)
-                finally:
-                    temporary.unlink(missing_ok=True)
+            await asyncio.to_thread(write_chunk, chunk_path, chunk, digest)
             await db.commit()
 
     async def complete_upload(self, actor, *, upload_id: str) -> dict[str, Any]:
+        from bot.services.wan3_prime_files import assemble_chunks
+        from bot.services.wan3_prime_storage_policy import positive_setting
+
         await self.init_schema()
         async with db_backend.connect(_sqlite_path()) as db:
             db.row_factory = db_backend.Row
@@ -239,129 +236,148 @@ class Wan3PrimeStorage:
                 raise Wan3PrimeValidationError("Upload session not found", status=404)
             if row["status"] == "completed" and row["completed_result"]:
                 return json.loads(row["completed_result"])
-            if row["status"] != "open":
-                raise Wan3PrimeValidationError("Upload is being finalized", status=409)
-            expires = datetime.fromisoformat(str(row["expires_at"]).replace("Z", "+00:00")).replace(tzinfo=None)
-            if expires < datetime.now(UTC).replace(tzinfo=None):
+            now = datetime.now(UTC).replace(tzinfo=None)
+            expires = datetime.fromisoformat(str(row["expires_at"]))
+            if expires.tzinfo is not None:
+                expires = expires.astimezone(UTC).replace(tzinfo=None)
+            if expires < now:
                 raise Wan3PrimeValidationError("Upload session expired", status=410)
+            if row["status"] == "assembling":
+                updated = datetime.fromisoformat(str(row["updated_at"]))
+                if updated.tzinfo is not None:
+                    updated = updated.astimezone(UTC).replace(tzinfo=None)
+                if (now - updated).total_seconds() < positive_setting("WAN3_ASSEMBLY_LEASE_SECONDS", 300):
+                    raise Wan3PrimeValidationError("Upload is being finalized", status=409)
+            elif row["status"] != "open":
+                raise Wan3PrimeValidationError("Upload session is not open", status=409)
             total = int(row["total_chunks"] or 0)
             expected_total = (int(row["declared_size"]) + CHUNK_SIZE - 1) // CHUNK_SIZE
             if total != expected_total or int(row["received_chunks"] or 0) != total:
                 raise Wan3PrimeValidationError("Upload is incomplete", status=409)
-            await db.execute("UPDATE wan3_prime_upload_sessions SET status = 'assembling', updated_at = CURRENT_TIMESTAMP WHERE upload_id = ?", (upload_id,))
+            stamp = _now()
+            await db.execute("UPDATE wan3_prime_upload_sessions SET status = 'assembling', updated_at = ? WHERE upload_id = ?", (stamp, upload_id))
             await db.commit()
         session_dir = canonical_child_path(CHUNK_ROOT, upload_id)
-        assembled = session_dir / ("assembled" + Path(row["filename"]).suffix.lower())
+        assembled = session_dir / ("assembled-" + uuid.uuid4().hex + Path(row["filename"]).suffix.lower())
         try:
-            hashes = json.loads(row["chunk_hashes"])
-            with open(assembled, "wb") as out:
-                for index in range(total):
-                    part = canonical_child_path(session_dir, f"{index:06d}.part")
-                    if not part.is_file() or _sha256_file(part) != hashes.get(str(index)):
-                        raise Wan3PrimeValidationError("Upload chunk is missing or incomplete", status=409)
-                    with open(part, "rb") as handle:
-                        shutil.copyfileobj(handle, out)
-            if assembled.stat().st_size != int(row["declared_size"]):
-                raise Wan3PrimeValidationError("Upload size mismatch", status=409)
+            await asyncio.to_thread(assemble_chunks, session_dir, assembled, json.loads(row["chunk_hashes"]), total, int(row["declared_size"]))
             saved = await self.save_owned_file(actor, kind=row["kind"], filename=row["filename"], path=assembled,
-                content_type=row["content_type"], source="miniapp_wan3_prime_upload")
-            async with db_backend.connect(_sqlite_path()) as db:
-                await db.execute("UPDATE wan3_prime_upload_sessions SET status = 'completed', completed_result = ?, updated_at = CURRENT_TIMESTAMP WHERE upload_id = ? AND user_id = ?",
-                    (json.dumps(saved), upload_id, actor.user_id))
-                await db.commit()
+                content_type=row["content_type"], source="miniapp_wan3_prime_upload", upload_id=upload_id, assembly_stamp=stamp)
             with contextlib.suppress(OSError):
-                shutil.rmtree(session_dir)
+                await asyncio.to_thread(shutil.rmtree, session_dir)
             return saved
-        except Exception:
+        except (Exception, asyncio.CancelledError):
             async with db_backend.connect(_sqlite_path()) as db:
-                await db.execute("UPDATE wan3_prime_upload_sessions SET status = 'open', updated_at = CURRENT_TIMESTAMP WHERE upload_id = ? AND status = 'assembling'", (upload_id,))
+                await db.execute("UPDATE wan3_prime_upload_sessions SET status = 'open', updated_at = CURRENT_TIMESTAMP "
+                                 "WHERE upload_id = ? AND status = 'assembling' AND updated_at = ?", (upload_id, stamp))
                 await db.commit()
             raise
 
-    async def save_owned_file(self, actor, *, kind: str, filename: str, path: Path, content_type: str | None = None, source: str = "miniapp_wan3_prime") -> dict[str, Any]:
+    async def save_owned_file(self, actor, *, kind: str, filename: str, path: Path, content_type: str | None = None,
+                              source: str = "miniapp_wan3_prime", upload_id: str | None = None, assembly_stamp: str | None = None) -> dict[str, Any]:
+        from bot.services.wan3_prime_files import copy_atomic
+        from bot.services.wan3_prime_media import _check_dimensions, _check_duration
+        from bot.services.wan3_prime_storage_policy import assert_capacity, lock_storage
+
         await self.init_schema()
         info = await ActualWan3PrimeProbe(storage=self).probe_file(str(path), kind=kind)
         if info.size_bytes is None or info.size_bytes <= 0 or info.size_bytes > _kind_limit(kind):
             raise Wan3PrimeValidationError("Stored media size is not allowed")
-        ext = Path(filename).suffix.lower() or (info.extension or "").lower()
+        ext = (info.extension or Path(filename).suffix).lower()
         if ext not in _allowed_ext(kind):
             raise Wan3PrimeValidationError("Stored media extension is not allowed")
-        info = replace(info, extension=ext)
-        media_id = uuid.uuid4().hex
-        dest = canonical_child_path(UPLOAD_ROOT, f"{actor.user_id}/{media_id}{ext}")
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        tmp = dest.with_suffix(dest.suffix + ".tmp")
-        shutil.copyfile(path, tmp)
-        os.replace(tmp, dest)
+        if kind in {"audio", "video"}:
+            _check_duration(info, kind=kind)
+        if kind == "video":
+            _check_dimensions(info, min_px=240, max_px=4096)
+        if info.pages is not None and info.pages > 50:
+            raise Wan3PrimeValidationError("reference file must be <= 50 pages")
+        media_key = upload_id or uuid.uuid4().hex
+        dest = canonical_child_path(UPLOAD_ROOT, f"{actor.user_id}/{media_key}{ext}")
         public_url = _public_url_for_path(dest)
-        digest = _sha256_file(dest)
         async with db_backend.connect(_sqlite_path()) as db:
+            db.row_factory = db_backend.Row
+            await lock_storage(db)
+            if upload_id:
+                session = await (await db.execute(
+                    "SELECT * FROM wan3_prime_upload_sessions WHERE upload_id = ? AND user_id = ?" + (" FOR UPDATE" if db_backend.is_postgres() else ""),
+                    (upload_id, actor.user_id),
+                )).fetchone()
+                if not session or session["kind"] != kind:
+                    raise Wan3PrimeValidationError("Upload session not found", status=404)
+                if session["status"] == "completed" and session["completed_result"]:
+                    return json.loads(session["completed_result"])
+                if session["status"] not in {"assembling", "importing"} or info.size_bytes > int(session["declared_size"]):
+                    raise Wan3PrimeValidationError("Upload reservation changed", status=409)
+                if assembly_stamp and str(session["updated_at"]) != assembly_stamp:
+                    raise Wan3PrimeValidationError("Upload assembly lease changed", status=409)
+            await assert_capacity(db, actor.user_id, info.size_bytes, exclude_upload_id=upload_id or "")
+            digest = await asyncio.to_thread(copy_atomic, path, dest)
             await db.execute(
-                """
-                INSERT INTO wan3_prime_media
-                    (user_id, telegram_id, kind, public_url, local_path, filename, content_type, size_bytes, sha256, media_info, source)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    actor.user_id,
-                    actor.telegram_id,
-                    kind,
-                    public_url,
-                    str(dest),
-                    filename,
-                    content_type or mimetypes.guess_type(filename)[0] or "",
-                    int(info.size_bytes),
-                    digest,
-                    json.dumps(asdict(info), sort_keys=True),
-                    source,
-                ),
+                "INSERT INTO wan3_prime_media "
+                "(user_id, telegram_id, kind, public_url, local_path, filename, content_type, size_bytes, sha256, media_info, source) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (actor.user_id, actor.telegram_id, kind, public_url, str(dest), filename,
+                 content_type or mimetypes.guess_type(str(dest))[0] or "", int(info.size_bytes), digest,
+                 json.dumps(asdict(info), sort_keys=True), source),
             )
+            media_row = await (await db.execute("SELECT id FROM wan3_prime_media WHERE public_url = ?", (public_url,))).fetchone()
+            saved = {"ok": True, "url": public_url, "kind": kind, "filename": filename, "size": int(info.size_bytes),
+                     "reference": {"id": media_row[0], "created_at": _now(), "source": source}}
+            if upload_id:
+                await db.execute("UPDATE wan3_prime_upload_sessions SET status = 'completed', completed_result = ?, "
+                                 "updated_at = CURRENT_TIMESTAMP WHERE upload_id = ?", (json.dumps(saved), upload_id))
             await db.commit()
-            media_id_row = await (
-                await db.execute("SELECT id FROM wan3_prime_media WHERE public_url = ?", (public_url,))
-            ).fetchone()
-        return {
-            "ok": True,
-            "url": public_url,
-            "kind": kind,
-            "filename": filename,
-            "size": int(info.size_bytes),
-            "reference": {"id": media_id_row[0] if media_id_row else None, "created_at": _now(), "source": source},
-        }
+        return saved
+
+    async def discard_import(self, actor, upload_id: str) -> None:
+        """Release a reservation only after its bounded temporary files are gone."""
+        from bot.services.wan3_prime_storage_policy import lock_storage
+
+        async with db_backend.connect(_sqlite_path()) as db:
+            await lock_storage(db)
+            row = await (await db.execute("SELECT status FROM wan3_prime_upload_sessions WHERE upload_id = ? AND user_id = ?", (upload_id, actor.user_id))).fetchone()
+            if not row or row[0] not in {"importing", "completed"}:
+                return
+            directory = canonical_child_path(CHUNK_ROOT, upload_id)
+            if directory.exists():
+                await asyncio.to_thread(shutil.rmtree, directory)
+            await db.execute("UPDATE wan3_prime_upload_sessions SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE upload_id = ? AND status = 'importing'", (upload_id,))
+            await db.commit()
 
     async def import_url(self, actor, *, kind: str, url: str) -> dict[str, Any]:
-        kind = str(kind or '').strip().lower()
-        if kind not in {'image', 'video', 'audio', 'file', 'link'}:
-            raise Wan3PrimeValidationError('Unsupported import kind')
-        await self.init_schema()
-        tmp_dir = canonical_child_path(CHUNK_ROOT, f'import-{uuid.uuid4().hex}')
-        tmp_dir.mkdir(parents=True, exist_ok=True)
-        temporary = tmp_dir / 'download'
+        kind = str(kind or "").strip().lower()
+        if kind not in {"image", "video", "audio", "file", "link"}:
+            raise Wan3PrimeValidationError("Unsupported import kind")
+        if kind == "link":
+            fetched = await fetch_public_asset(url, destination=None, max_bytes=2 * 1024 * 1024, webpage=True)
+            return {"ok": True, "url": fetched["url"], "kind": "link", "filename": None, "size": None}
+        initial_extension = {"image": ".jpg", "video": ".mp4", "audio": ".mp3", "file": ".txt"}[kind]
+        reservation = await self.init_upload(actor, kind=kind, filename="import" + initial_extension,
+                                             size=_kind_limit(kind), importing=True)
+        upload_id = reservation["upload_id"]
+        temporary = canonical_child_path(CHUNK_ROOT, f"{upload_id}/download")
         try:
-            fetched = await fetch_public_asset(url, destination=None if kind == 'link' else temporary,
-                max_bytes=2 * 1024 * 1024 if kind == 'link' else _kind_limit(kind), webpage=kind == 'link')
-            if kind == 'link':
-                return {'ok': True, 'url': fetched['url'], 'kind': 'link', 'filename': None, 'size': None}
-            filename = _safe_basename(Path(urlparse(fetched['url']).path).name)
+            fetched = await fetch_public_asset(url, destination=temporary, max_bytes=_kind_limit(kind))
+            filename = _safe_basename(Path(urlparse(fetched["url"]).path).name)
             extension = Path(filename).suffix.lower()
             if extension not in _allowed_ext(kind):
-                extension = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp',
-                    'image/bmp': '.bmp', 'video/mp4': '.mp4', 'video/quicktime': '.mov',
-                    'audio/mpeg': '.mp3', 'audio/wav': '.wav', 'audio/x-wav': '.wav',
-                    'application/pdf': '.pdf', 'text/plain': '.txt', 'text/markdown': '.md',
-                    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
-                    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
-                    'application/vnd.openxmlformats-officedocument.presentationml.presentation': '.pptx',
-                }.get(fetched['content_type'], '')
-                filename = 'import' + extension
+                extension = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/bmp": ".bmp",
+                    "video/mp4": ".mp4", "video/quicktime": ".mov", "audio/mpeg": ".mp3", "audio/wav": ".wav", "audio/x-wav": ".wav",
+                    "application/pdf": ".pdf", "text/plain": ".txt", "text/markdown": ".md",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+                    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+                }.get(fetched["content_type"], "")
+                filename = "import" + extension
             if extension not in _allowed_ext(kind):
-                raise Wan3PrimeValidationError('Cannot determine a supported file format; upload the file directly')
+                raise Wan3PrimeValidationError("Cannot determine a supported file format; upload the file directly")
             typed = temporary.with_suffix(extension)
-            os.replace(temporary, typed)
-            return await self.save_owned_file(actor, kind=kind, filename=filename, path=typed, source='miniapp_wan3_prime_import')
+            await asyncio.to_thread(os.replace, temporary, typed)
+            return await self.save_owned_file(actor, kind=kind, filename=filename, path=typed,
+                                              source="miniapp_wan3_prime_import", upload_id=upload_id)
         finally:
-            with contextlib.suppress(OSError):
-                shutil.rmtree(tmp_dir)
+            await self.discard_import(actor, upload_id)
 
 
 async def fetch_public_asset(url: str, *, destination: Path | None, max_bytes: int, webpage: bool = False, timeout_seconds: int = 90) -> dict[str, Any]:
@@ -447,7 +463,7 @@ class ActualWan3PrimeProbe:
                 info = await self.probe_file(str(local), kind=kind)
                 return replace(info, url=url, sha256=digest)
         if kind == "link":
-            await assert_public_url(url, resolve_dns=True)
+            await fetch_public_asset(url, destination=None, max_bytes=2 * 1024 * 1024, webpage=True)
             return MediaInfo(kind="link", url=url)
         raise Wan3PrimeValidationError("Media URL must be imported or uploaded before launch")
 

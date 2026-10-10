@@ -270,7 +270,7 @@ export function VideoTab() {
               // when provider acknowledgement is still unknown.
               addTask({ task_id: result.internal_task_id, type: 'video', model: 'wan_3_prime',
                 model_label: 'Wan 3.0 Video Prime', aspect_ratio: 'adaptive',
-                status: result.status === 'done' ? 'completed' : 'pending',
+                status: result.status === 'done' ? 'completed' : result.status === 'failed' ? 'failed' : 'pending',
                 created_at: new Date().toISOString(), prompt_preview: '', cost: result.reserve_cost })
             }}
           />

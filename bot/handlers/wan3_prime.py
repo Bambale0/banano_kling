@@ -204,6 +204,8 @@ def build_wan3_payload(draft: Wan3PrimeDraft) -> dict[str, Any]:
 
 
 def validate_wan3_draft(draft: Wan3PrimeDraft) -> None:
+    if draft.scenario == "edit" and (not draft.reference_video_urls or not draft.reference_video_urls[0]):
+        raise ValueError("Добавьте исходное видео Video1 перед расчётом")
     Wan3PrimeService._validate_scenario(
         scenario=draft.scenario,
         first_frame_url=draft.first_frame_url,
@@ -277,7 +279,7 @@ def dashboard_keyboard(draft: Wan3PrimeDraft) -> types.InlineKeyboardMarkup:
         [("Seed", "wan3_seed"), ("Seed Auto", "wan3_set:seed:auto")],
         [("Аудио вкл/выкл", "wan3_toggle:audio"), ("NSFW check", "wan3_toggle:nsfw")],
         [("Проверить стоимость", "wan3_quote")],
-        [("🔙 К моделям", "video_generation")],
+        [("🔙 К моделям", "video_change_model")],
     ])
     return _keyboard(rows)
 
@@ -333,7 +335,7 @@ def dashboard_text(draft: Wan3PrimeDraft) -> str:
 
 async def _show_dashboard(target: Any, state: FSMContext, draft: Wan3PrimeDraft) -> None:
     await state.set_state(Wan3PrimeStates.dashboard)
-    await state.update_data(**draft_to_state(draft))
+    await state.update_data(**draft_to_state(draft), v_model="wan_3_prime")
     text = dashboard_text(draft)
     if hasattr(target, "edit_text"):
         await target.edit_text(text, reply_markup=dashboard_keyboard(draft), parse_mode=None)
@@ -584,7 +586,10 @@ async def remove_wan3_media(callback: types.CallbackQuery, state: FSMContext):
         if kind == "image":
             draft.reference_image_urls = remove_ordered_slot(draft.reference_image_urls, index, label="Image")
         elif kind == "video":
-            draft.reference_video_urls = remove_ordered_slot(draft.reference_video_urls, index, label="Video")
+            if draft.scenario == "edit" and index == 0 and draft.reference_video_urls:
+                draft.reference_video_urls = ["", *draft.reference_video_urls[1:]]
+            else:
+                draft.reference_video_urls = remove_ordered_slot(draft.reference_video_urls, index, label="Video")
         elif kind == "audio":
             draft.reference_audio_urls = remove_ordered_slot(draft.reference_audio_urls, index, label="Audio")
         elif kind == "file":
@@ -777,7 +782,11 @@ async def restore_wan3_owner_recipe(callback: types.CallbackQuery, state: FSMCon
     runtime = await _runtime()
     try:
         response = await runtime.owner_telegram_wan3_prime_recipe(telegram_id=callback.from_user.id, task_id=task_id)
-        recipe = response.get("recipe") or {}
+        if not isinstance(response, dict):
+            raise ValueError("Invalid owner recipe")
+        recipe = response.get("recipe", response)
+        if not isinstance(recipe, dict) or not recipe.get("scenario"):
+            raise ValueError("Incomplete owner recipe")
     except Exception:  # noqa: BLE001 - FSM boundary preserves draft and reports safe failure
         await callback.answer("Не удалось восстановить рецепт.", show_alert=True)
         return

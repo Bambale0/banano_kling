@@ -80,3 +80,18 @@ test('settings change invalidates approved quote and network retry retains idemp
   await waitFor(() => expect(generateWan3Prime).toHaveBeenCalledTimes(2))
   expect((generateWan3Prime as jest.Mock).mock.calls[0][0].idempotency_key).toBe((generateWan3Prime as jest.Mock).mock.calls[1][0].idempotency_key)
 })
+
+
+test('confirmed provider rejection is shown as failed and refunded, never accepted', async () => {
+  ;(generateWan3Prime as jest.Mock).mockResolvedValue({ ok: true, status: 'failed', internal_task_id: 'wan3_failed',
+    reserve_cost: 60, charged_cost: 0, refunded_cost: 60 })
+  render(<Wan3PrimeForm credits={1000} />)
+  fireEvent.change(screen.getByLabelText('Инструкции Wan'), { target: { value: 'Рассвет.' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Рассчитать стоимость' }))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Запустить Wan' })).toBeEnabled())
+  fireEvent.click(screen.getByRole('button', { name: 'Запустить Wan' }))
+  await screen.findByText('wan3_failed')
+  expect(screen.queryByText('Видео принято в работу.')).not.toBeInTheDocument()
+  expect(screen.getByText(/Генерация не выполнена/)).toBeInTheDocument()
+  expect(screen.getByText(/Возвращено: 60/)).toBeInTheDocument()
+})

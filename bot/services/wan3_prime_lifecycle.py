@@ -300,6 +300,9 @@ class Wan3PrimeLifecycle:
                 "CREATE INDEX IF NOT EXISTS idx_wan3_prime_status ON wan3_prime_intents(status, updated_at)"
             )
             await db.commit()
+        from bot.services.wan3_prime_recovery import init_recovery_schema
+
+        await init_recovery_schema()
 
     async def startup(self) -> None:
         await self.init_schema()
@@ -512,6 +515,15 @@ class Wan3PrimeLifecycle:
                     await db.rollback()
                     raise Wan3PrimeLifecycleError("Insufficient credits", status=402, code="insufficient_credits")
 
+            from bot.partner_policy import generation_partner_snapshot
+
+            task_metadata = generation_partner_snapshot({
+                **recipe.raw_provider_args(),
+                "v_model": WAN3_MODEL_KEY,
+                "provider": "kie", "provider_model": WAN3_PROVIDER_MODEL,
+                "wan3_prime": True, "quote": server_quote.as_response(),
+                "delivery_status": "pending", "stable_task_id": internal_task_id,
+            }, accepted=False, invite_eligible=not actor.is_admin)
             await db.execute(
                 """
                 INSERT INTO generation_tasks
@@ -529,16 +541,7 @@ class Wan3PrimeLifecycle:
                     recipe.aspect_ratio,
                     recipe.prompt,
                     server_quote.reserve_credits,
-                    _json_dumps(
-                        {
-                            "provider": "kie",
-                            "provider_model": WAN3_PROVIDER_MODEL,
-                            "wan3_prime": True,
-                            "quote": server_quote.as_response(),
-                            "delivery_status": "pending",
-                            "stable_task_id": internal_task_id,
-                        }
-                    ),
+                    _json_dumps(task_metadata),
                 ),
             )
             await db.commit()
@@ -616,6 +619,9 @@ class Wan3PrimeLifecycle:
                 request_data = {}
             if not isinstance(request_data, dict):
                 request_data = {}
+            from bot.partner_policy import generation_partner_snapshot
+
+            request_data = generation_partner_snapshot(request_data, accepted=True, previous=request_data)
             request_data["provider_task_id"] = provider_task_id
             request_data["delivery_status"] = "pending"
             updated = await db.execute(
@@ -630,57 +636,54 @@ class Wan3PrimeLifecycle:
                 (_json_dumps(request_data), internal_task_id),
             )
             await db.commit()
+        from bot.partner_policy import mark_generation_accepted
+
+        await mark_generation_accepted(internal_task_id)
 
     async def handle_callback(self, payload: Any, *, internal_task_id: str | None = None, nonce: str | None = None) -> tuple[dict[str, Any] | None, int]:
-        await self.init_schema()
-        provider_task_id = None
-        model = None
-        if isinstance(payload, dict):
-            data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
-            provider_task_id = data.get("taskId") or data.get("task_id") or data.get("id")
-            model = data.get("model")
-        if not isinstance(provider_task_id, str) or not provider_task_id.strip():
+        # A public provider task id is not authentication. Validate the per-intent
+        # secret before any task lookup that could cause upstream traffic.
+        if not isinstance(internal_task_id, str) or not internal_task_id.startswith("wan3_") or not isinstance(nonce, str) or not 20 <= len(nonce) <= 200:
+            return None, 403
+        if not isinstance(payload, dict):
+            return None, 400
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+        provider_task_id = data.get("taskId") or data.get("task_id")
+        if not isinstance(provider_task_id, str) or not provider_task_id.strip() or len(provider_task_id) > 200:
             return None, 400
         provider_task_id = provider_task_id.strip()
-        if model and model != WAN3_PROVIDER_MODEL:
+        if data.get("model") and data["model"] != WAN3_PROVIDER_MODEL:
             return None, 200
-
         async with db_backend.connect(_database_path()) as db:
             db.row_factory = db_backend.Row
-            if internal_task_id and nonce:
-                cursor = await db.execute(
-                    "SELECT * FROM wan3_prime_intents WHERE internal_task_id = ? AND callback_nonce = ?",
-                    (internal_task_id, nonce),
-                )
-            else:
-                cursor = await db.execute(
-                    "SELECT * FROM wan3_prime_intents WHERE provider_task_id = ?",
-                    (provider_task_id,),
-                )
-            row = await cursor.fetchone()
+            row = await (await db.execute(
+                "SELECT * FROM wan3_prime_intents WHERE internal_task_id = ? AND callback_nonce = ?",
+                (internal_task_id, nonce),
+            )).fetchone()
         if not row:
             return None, 200
+        if row["settled"]:
+            return await self.result(internal_task_id, public=True), 200
         if row["provider_task_id"] and row["provider_task_id"] != provider_task_id:
             return None, 200
         if not row["provider_task_id"]:
-            # A callback nonce proves the URL belongs to this intent, not that an
-            # arbitrary taskId in the wake-up body belongs to the provider post.
-            # Without a pre-bound provider ID or stronger provider lineage, keep
-            # the intent unknown for operator reconciliation.
-            await self._mark_unknown(row["internal_task_id"], "callback_unbound_provider", "Provider callback arrived before provider id binding")
-            return None, 200
-        canonical = await self.transport.get_task_status(provider_task_id)
-        if (
-            not isinstance(canonical, dict)
-            or canonical.get("taskId") != provider_task_id
-            or (canonical.get("model") and canonical.get("model") != WAN3_PROVIDER_MODEL)
-        ):
-            return None, 503
-        await self.reconcile_once(provider_task_id=provider_task_id)
-        return await self.result(row["internal_task_id"], public=True), 200
+            from bot.services.wan3_prime_recovery import remember_candidate
 
-    async def reconcile_once(self, *, provider_task_id: str | None = None, limit: int = 50) -> int:
+            await remember_candidate(internal_task_id, provider_task_id)
+            await self._mark_unknown(internal_task_id, "callback_unbound_provider", "Provider callback requires canonical lineage reconciliation")
+            return None, 200
+        # The worker owns canonical GET + terminal transitions. Its lease/backoff
+        # also throttles callback replays; never poll once here and once there.
+        await self.reconcile_once(provider_task_id=provider_task_id, respect_backoff=True)
+        return await self.result(internal_task_id, public=True), 200
+
+    async def reconcile_once(self, *, provider_task_id: str | None = None, limit: int = 50, respect_backoff: bool = False) -> int:
         await self.init_schema()
+        if provider_task_id is None:
+            from bot.services.wan3_prime_recovery import recover_candidates, recover_expired_submissions
+
+            await recover_expired_submissions()
+            await recover_candidates(self, limit=limit)
         async with db_backend.connect(_database_path()) as db:
             db.row_factory = db_backend.Row
             if provider_task_id:
@@ -704,7 +707,7 @@ class Wan3PrimeLifecycle:
             rows = await cursor.fetchall()
         processed = 0
         for row in rows:
-            if not await self._claim_reconcile_lease(row["internal_task_id"]):
+            if not await self._claim_reconcile_lease(row["internal_task_id"], respect_backoff=respect_backoff):
                 continue
             try:
                 status = await self.transport.get_task_status(row["provider_task_id"])
@@ -853,17 +856,14 @@ class Wan3PrimeLifecycle:
             await db.commit()
             return lease_until if updated.rowcount == 1 else None
 
-    async def _claim_reconcile_lease(self, internal_task_id: str, seconds: int = 120) -> bool:
+    async def _claim_reconcile_lease(self, internal_task_id: str, seconds: int = 120, *, respect_backoff: bool = False) -> bool:
         lease_until = (datetime.now(UTC) + timedelta(seconds=seconds)).replace(tzinfo=None).isoformat(sep=" ")
+        schedule_clause = " AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP)" if respect_backoff else ""
         async with db_backend.connect(_database_path()) as db:
             updated = await db.execute(
-                """
-                UPDATE wan3_prime_intents
-                SET lease_until = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE internal_task_id = ?
-                  AND settled = 0
-                  AND (lease_until IS NULL OR lease_until <= CURRENT_TIMESTAMP)
-                """,
+                "UPDATE wan3_prime_intents SET lease_until = ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE internal_task_id = ? AND settled = 0 "
+                "AND (lease_until IS NULL OR lease_until <= CURRENT_TIMESTAMP)" + schedule_clause,
                 (lease_until, internal_task_id),
             )
             await db.commit()
@@ -985,7 +985,18 @@ class Wan3PrimeLifecycle:
             await db.commit()
         return True
 
-    async def _terminal_failure(self, internal_task_id: str, code: str, message: str) -> None:
+    async def resolve_unknown_refund(self, internal_task_id: str, *, admin_telegram_id: int, reason: str) -> None:
+        from bot.config import config
+
+        if not config.is_admin(admin_telegram_id):
+            raise Wan3PrimeLifecycleError("Administrator access required", status=403, code="admin_required")
+        if not isinstance(reason, str) or not 8 <= len(reason.strip()) <= 1000:
+            raise Wan3PrimeLifecycleError("Document the provider/operator finding before resolving", status=400, code="reason_required")
+        await self._terminal_failure(internal_task_id, "operator_resolved_unknown", "Operator confirmed resolution",
+                                     operator=(admin_telegram_id, reason.strip()))
+
+    async def _terminal_failure(self, internal_task_id: str, code: str, message: str,
+                                *, operator: tuple[int, str] | None = None) -> None:
         async with db_backend.connect(_database_path()) as db:
             db.row_factory = db_backend.Row
             await db.execute("BEGIN IMMEDIATE" if not _is_postgres() else "BEGIN")
@@ -1004,7 +1015,7 @@ class Wan3PrimeLifecycle:
                 WHERE internal_task_id = ?
                   AND settled = 0
                   AND status IN ('submitting', 'submitted', 'unknown', 'settlement_pending')
-                """,
+                """ + (" AND status = 'unknown' AND provider_task_id IS NULL" if operator else ""),
                 (internal_task_id,),
             )
             if claimed.rowcount != 1:
@@ -1034,6 +1045,10 @@ class Wan3PrimeLifecycle:
                 "UPDATE generation_tasks SET status = 'failed', cost = 0, updated_at = CURRENT_TIMESTAMP WHERE task_id = ?",
                 (internal_task_id,),
             )
+            if operator:
+                await db.execute("INSERT INTO wan3_prime_operator_audit "
+                                 "(internal_task_id, admin_telegram_id, action, reason, details) VALUES (?, ?, 'refund_unknown', ?, ?)",
+                                 (internal_task_id, operator[0], operator[1], _json_dumps({"refunded_credits": reserve})))
             await db.commit()
 
     async def _intent(self, internal_task_id: str, *, user_id: int | None = None) -> db_backend.Row | None:

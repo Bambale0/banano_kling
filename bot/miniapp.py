@@ -1795,7 +1795,7 @@ async def _notify_miniapp_image_task_queued(
 
 def _public_task_status(row) -> str:
     status = str(row["status"] or "pending")
-    if status == "processing" and str(row["task_id"] or "").startswith("video_repeat_receipt_"):
+    if status == "processing" and str(row["task_id"] or "").startswith(("video_repeat_receipt_", "wan3_")):
         return "pending"
     return status
 

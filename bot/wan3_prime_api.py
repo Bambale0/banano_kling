@@ -26,7 +26,11 @@ async def _actor_from_request(request: web.Request, body: dict[str, Any]) -> Wan
     from bot import miniapp
     from bot.config import config
 
+    from bot.database import is_user_banned
+
     telegram_id, context = await miniapp._get_user_context(request.app, init_data, start_param)
+    if await is_user_banned(int(telegram_id)):
+        raise Wan3PrimeLifecycleError("Доступ к генерации ограничен.", status=403, code="user_banned")
     user = context.get("user")
     user_id = int(getattr(user, "id", 0) or context.get("user_id") or 0)
     if not user_id:
@@ -308,6 +312,10 @@ async def _telegram_actor(telegram_id: int) -> Wan3PrimeActor:
     from bot.database import get_or_create_user
     if isinstance(telegram_id, bool) or not isinstance(telegram_id, int) or telegram_id <= 0:
         raise Wan3PrimeValidationError('Некорректный пользователь Telegram.')
+    from bot.database import is_user_banned
+
+    if await is_user_banned(telegram_id):
+        raise Wan3PrimeLifecycleError("Доступ к генерации ограничен.", status=403, code="user_banned")
     user = await get_or_create_user(telegram_id)
     return Wan3PrimeActor(user.id, telegram_id, is_admin=config.is_admin(telegram_id))
 
