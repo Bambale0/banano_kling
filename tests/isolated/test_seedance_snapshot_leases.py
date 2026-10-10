@@ -106,7 +106,7 @@ class SnapshotTests(unittest.IsolatedAsyncioTestCase):
         ns = {"receipt_store":AsyncMock(return_value=store),"database":SimpleNamespace(get_or_create_user=AsyncMock(return_value=SimpleNamespace(id=1))),
               "SimpleNamespace":SimpleNamespace,"effective_video_sources":lambda original,key,model:original[key],
               "authorize_video_sources":AsyncMock(side_effect=ValueError("foreign local source")),
-              "prepare_video_snapshots":copy,"QuoteConflict":QuoteConflict}
+              "prepare_video_snapshots":copy,"QuoteConflict":QuoteConflict,"launches_allowed":lambda:True}
         exec(compile(ast.Module(body=[node],type_ignores=[]),"prepare_guard","exec"),ns)  # noqa: S102
         with self.assertRaisesRegex(ValueError,"foreign local"):
             await ns["prepare_quote"](5000000001,"seedance_2",{"video_urls":["foreign"]},video_key="video_urls",duration=5,quality="720p")

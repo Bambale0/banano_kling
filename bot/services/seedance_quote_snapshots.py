@@ -46,7 +46,7 @@ def _copy_bounded(source: Path, destination: Path):
 
 async def _snapshot(actor, source: str, storage: Wan3PrimeStorage, *, occurrence: int = 0) -> dict:
     reservation = await storage.init_upload(actor, kind="video", filename="quote.mp4",
-                                             size=MAX_VIDEO_BYTES, importing=True)
+                                             size=MAX_VIDEO_BYTES, importing=True, seedance_snapshot=True)
     upload_id = reservation["upload_id"]
     staged = canonical_child_path(CHUNK_ROOT, f"{upload_id}/snapshot.mp4")
     persisted = False

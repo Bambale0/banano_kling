@@ -162,7 +162,7 @@ class Wan3PrimeStorage:
         return summary
 
     async def init_upload(self, actor, *, kind: str, filename: str, size: int, content_type: str | None = None, importing: bool = False,
-                          upload_id: str | None = None) -> dict[str, Any]:
+                          upload_id: str | None = None, seedance_snapshot: bool = False) -> dict[str, Any]:
         from bot.services.wan3_prime_storage_policy import (
             ACTIVE_UPLOAD_STATES,
             assert_capacity,
@@ -173,7 +173,12 @@ class Wan3PrimeStorage:
         kind = str(kind or "").strip().lower()
         if kind not in {"image", "video", "audio", "file"}:
             raise Wan3PrimeValidationError("Unsupported upload kind")
-        if isinstance(size, bool) or not isinstance(size, int) or size <= 0 or size > _kind_limit(kind):
+        # Server-only bounded import for Seedance's documented 200 MB source
+        # limit. Public WAN upload routes never forward this internal argument.
+        if seedance_snapshot and (seedance_snapshot is not True or not importing or kind != "video" or upload_id is not None):
+            raise Wan3PrimeValidationError("Invalid Seedance snapshot reservation")
+        maximum = 200 * 1024 * 1024 if seedance_snapshot else _kind_limit(kind)
+        if isinstance(size, bool) or not isinstance(size, int) or size <= 0 or size > maximum:
             raise Wan3PrimeValidationError("Upload size is not allowed")
         filename = _safe_basename(filename)
         if Path(filename).suffix.lower() not in _allowed_ext(kind):
