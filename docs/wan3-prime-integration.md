@@ -112,8 +112,10 @@ marker in the existing provider_state field before returning 200. This is an
 internal reconciliation signal, not a trusted provider outcome. It gives the
 worker one due canonical lookup beyond the automatic age window without skipping
 the existing backoff or lease. Repeated notifications coalesce on the same task;
-an older in-flight poll preserves a newer marker. A pending/unconfirmed lookup
+an older in-flight poll preserves a newer marker. A validated canonical pending lookup
 consumes that notification, leaving the task in operator attention after the age
-window unless another authenticated notification or explicit review arrives.
+window unless another authenticated notification or explicit review arrives. Transport
+errors, malformed responses and lineage mismatches preserve the marker and retry
+with the same bounded backoff until a valid canonical observation is available.
 Terminal success/failure still comes only from canonical provider status and the
 original settlement fence. No schema change or additional paid task is involved.

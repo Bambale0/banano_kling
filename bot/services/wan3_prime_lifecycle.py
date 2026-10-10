@@ -881,10 +881,10 @@ class Wan3PrimeLifecycle:
         async with db_backend.connect(_database_path()) as db:
             if row_data.get('status') == 'result_attention' and row_data.get('error_code') == 'provider_wait_timeout':
                 await db.execute("UPDATE wan3_prime_intents SET provider_state = CASE "
-                    "WHEN provider_state LIKE 'callback_pending:%' AND provider_state <> ? THEN provider_state ELSE ? END, "
+                    "WHEN provider_state LIKE 'callback_pending:%' AND (? = 'unconfirmed' OR provider_state <> ?) THEN provider_state ELSE ? END, "
                     'lease_until = NULL, last_checked_at = CURRENT_TIMESTAMP, next_attempt_at = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP '
                     "WHERE internal_task_id = ? AND settled = 0 AND status = 'result_attention' "
-                    "AND error_code = 'provider_wait_timeout'", (row_data.get('provider_state') or '', provider_state, attention_retry, attention_message, row['internal_task_id']))
+                    "AND error_code = 'provider_wait_timeout'", (provider_state, row_data.get('provider_state') or '', provider_state, attention_retry, attention_message, row['internal_task_id']))
             elif expired:
                 changed = await db.execute("UPDATE wan3_prime_intents SET status = 'result_attention', provider_state = ?, "
                     "error_code = 'provider_wait_timeout', error_message = ?, "
