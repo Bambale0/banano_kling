@@ -11,19 +11,25 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-node@v6
         with:
-          python-version: '3.11'
-      - name: Package tracked public source only
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/miniapp-v0/package-lock.json
+      - name: Fetch locked dependencies and browser for offline verification
+        working-directory: frontend/miniapp-v0
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/offline-browsers
         run: |
-          mkdir -p offline-validation/wheels
-          git archive --format=tar.gz HEAD AGENTS.md README.md .agents .github bot tests scripts frontend/miniapp-v0 docs data prompts requirements.txt pytest.ini ruff.toml Dockerfile compose.backend.yml .gitignore > offline-validation/source.tar.gz
-          git rev-parse HEAD > offline-validation/source-sha.txt
-      - name: Download wheels without application secrets or runtime data
+          npm ci
+          npx playwright install chromium
+      - name: Package dependency-only bundle
         run: |
-          pip download --only-binary=:all: --dest offline-validation/wheels -r requirements.txt pytest pytest-asyncio ruff pypdf
+          mkdir -p offline-validation
+          tar -czf offline-validation/frontend-dependencies.tar.gz -C frontend/miniapp-v0 node_modules
+          tar -czf offline-validation/browser-dependencies.tar.gz offline-browsers
       - uses: actions/upload-artifact@v4
         with:
-          name: wan-isolated-validation
+          name: wan-frontend-validation
           path: offline-validation
           retention-days: 1
