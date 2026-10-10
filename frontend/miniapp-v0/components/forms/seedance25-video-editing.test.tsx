@@ -2,11 +2,12 @@ import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { Seedance25PublicForm } from './seedance25-public-form'
 import { Seedance25AdminForm } from './seedance25-admin-form'
-import { generateSeedance25, quoteSeedance25Identity } from '@/lib/seedance25-api'
+import { generateSeedance25, quoteSeedance25Identity, seedance25QuoteStatus } from '@/lib/seedance25-api'
 
 jest.mock('@/lib/seedance25-api', () => ({
   ...jest.requireActual('@/lib/seedance25-api'),
   quoteSeedance25Identity: jest.fn(),
+  seedance25QuoteStatus: jest.fn(),
   SEEDANCE25_MAX_PROMPT_LENGTH: 30000,
   SEEDANCE25_IDENTITY_MAX_PROMPT_LENGTH: 20480,
   generateSeedance25: jest.fn().mockResolvedValue({ ok: true, task_id: 'editing-task', duration: -1, aspect_ratio: 'adaptive', admin_free: true }),
@@ -15,6 +16,8 @@ jest.mock('@/lib/seedance25-api', () => ({
 jest.mock('@/lib/api', () => ({ uploadFile: jest.fn(), getInitData: () => 'user=%7B%22id%22%3A1%7D' }))
 beforeEach(() => {
   jest.clearAllMocks(); localStorage.clear()
+  ;(seedance25QuoteStatus as jest.Mock).mockResolvedValue({ ok: true, status: 'outcome_unknown' })
+  ;(generateSeedance25 as jest.Mock).mockResolvedValue({ ok: true, task_id: 'editing-task', duration: -1, aspect_ratio: 'adaptive', admin_free: true })
   ;(quoteSeedance25Identity as jest.Mock).mockImplementation(async payload => {
     if (payload.videoEditing && payload.referenceVideos.length !== 1) throw new Error('Добавьте ровно одно исходное видео')
     const input = 7
@@ -68,10 +71,13 @@ it('uses the same editing contract from the legacy admin form', async () => {
   const { container } = render(<Seedance25AdminForm />)
   fireEvent.click(screen.getByRole('button', { name: /Мультимодально/ }))
   fireEvent.click(screen.getByLabelText('Редактировать видео'))
-  fireEvent.change(screen.getByPlaceholderText(/video refs/), { target: { value: 'asset://source-video' } })
+  fireEvent.change(screen.getByPlaceholderText(/video refs/), { target: { value: 'https://example.com/source.mp4' } })
   expect(container.querySelector('input[type="range"]')).toBeDisabled()
+  fireEvent.click(screen.getByRole('button', { name: /Рассчитать цену видео/ }))
+  await screen.findByText('56🍌')
+  expect(generateSeedance25).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('button', { name: /Запустить Seedance/ }))
-  await waitFor(() => expect(generateSeedance25).toHaveBeenCalledWith(expect.objectContaining({ videoEditing: true, duration: -1, ratio: 'adaptive', referenceVideos: ['asset://source-video'] })))
+  await waitFor(() => expect(generateSeedance25).toHaveBeenCalledWith(expect.objectContaining({ videoEditing: true, duration: -1, ratio: 'adaptive', referenceVideos: ['https://example.com/source.mp4'], videoQuoteId: 'a'.repeat(32), videoQuoteHash: 'b'.repeat(64) })))
 })
 
 it('quotes source-locked editing and preserves the remembered fixed duration', async () => {
@@ -89,15 +95,20 @@ it('quotes source-locked editing and preserves the remembered fixed duration', a
   expect(generateSeedance25).not.toHaveBeenCalled()
 })
 
-it('quotes video-reference multiplier in the legacy admin editing form', () => {
+it('requires a fresh measured quote after admin editing settings change', async () => {
   const model = { id: 'seedance_2_5', quality_costs: { '720p': 4 } } as any
   const { container } = render(<Seedance25AdminForm model={model} />)
   fireEvent.click(screen.getByRole('button', { name: /Мультимодально/ }))
   fireEvent.change(container.querySelector('input[type="range"]')!, { target: { value: '12' } })
-  fireEvent.change(screen.getByPlaceholderText(/video refs/), { target: { value: 'asset://source-video' } })
-  expect(screen.getByText('96🍌')).toBeInTheDocument()
+  fireEvent.change(screen.getByPlaceholderText(/video refs/), { target: { value: 'https://example.com/source.mp4' } })
+  fireEvent.click(screen.getByRole('button', { name: /Рассчитать цену видео/ }))
+  await screen.findByText('76🍌')
+  expect(generateSeedance25).not.toHaveBeenCalled()
   fireEvent.click(screen.getByLabelText('Редактировать видео'))
-  expect(screen.getByText('40🍌')).toBeInTheDocument()
+  expect(screen.queryByText('76🍌')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: /Рассчитать цену видео/ }))
+  await screen.findByText('56🍌')
+  expect(generateSeedance25).not.toHaveBeenCalled()
 })
 
 it('uses authenticated measured creator totals without a client multiplier', async () => {
@@ -112,4 +123,39 @@ it('uses authenticated measured creator totals without a client multiplier', asy
   expect(await screen.findByText('15🍌')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: /Не хватает 3/ })).toBeDisabled()
   expect(screen.queryByLabelText('Редактировать видео')).not.toBeInTheDocument()
+})
+
+
+it('does not accept a delayed admin quote for changed references', async () => {
+  let resolveQuote!: (value: any) => void
+  ;(quoteSeedance25Identity as jest.Mock).mockImplementationOnce(() => new Promise(resolve => { resolveQuote = resolve }))
+  render(<Seedance25AdminForm />)
+  fireEvent.click(screen.getByRole('button', { name: /Мультимодально/ }))
+  fireEvent.change(screen.getByPlaceholderText(/video refs/), { target: { value: 'https://example.com/old.mp4' } })
+  fireEvent.click(screen.getByRole('button', { name: /Рассчитать цену видео/ }))
+  fireEvent.change(screen.getByPlaceholderText(/video refs/), { target: { value: 'https://example.com/new.mp4' } })
+  resolveQuote({ quote_id: 'a'.repeat(32), quote_hash: 'b'.repeat(64), cost: 999, input_seconds: 7, selected_output_seconds: 5 })
+  await waitFor(() => expect(screen.getByRole('button', { name: /Рассчитать цену видео/ })).toBeEnabled())
+  expect(screen.queryByText('999🍌')).not.toBeInTheDocument()
+  expect(generateSeedance25).not.toHaveBeenCalled()
+})
+
+it('holds an uncertain admin submit across remount and recovers the original receipt', async () => {
+  ;(generateSeedance25 as jest.Mock).mockRejectedValueOnce(new Error('network timeout'))
+  const first = render(<Seedance25AdminForm />)
+  fireEvent.click(screen.getByRole('button', { name: /Мультимодально/ }))
+  fireEvent.change(screen.getByPlaceholderText(/video refs/), { target: { value: 'https://example.com/source.mp4' } })
+  fireEvent.click(screen.getByRole('button', { name: /Рассчитать цену видео/ }))
+  await screen.findByText('48🍌')
+  const button = screen.getByRole('button', { name: /Запустить Seedance/ })
+  fireEvent.click(button); fireEvent.click(button)
+  await screen.findByText('network timeout')
+  expect(generateSeedance25).toHaveBeenCalledTimes(1)
+  expect(localStorage.getItem('seedance25-pending:1')).toContain('a'.repeat(32))
+  first.unmount()
+  ;(seedance25QuoteStatus as jest.Mock).mockResolvedValue({ ok: true, status: 'queued', task_id: 'accepted-original', cost: 48 })
+  render(<Seedance25AdminForm />)
+  await screen.findByText('accepted-original')
+  expect(localStorage.getItem('seedance25-pending:1')).toBeNull()
+  expect(generateSeedance25).toHaveBeenCalledTimes(1)
 })

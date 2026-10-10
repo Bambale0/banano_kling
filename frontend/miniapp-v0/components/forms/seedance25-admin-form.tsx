@@ -1,9 +1,15 @@
 'use client'
 
-import { useMemo, useState } from 'react'
-import { uploadFile } from '@/lib/api'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { getInitData, uploadFile } from '@/lib/api'
+import { clearPendingSeedance, readPendingSeedance, seedancePendingKey, type PendingSeedanceLaunch } from '@/lib/seedance-pending'
 import {
   generateSeedance25,
+  quoteSeedance25Identity,
+  seedance25QuoteStatus,
+  SeedanceApiError,
+  type Seedance25GeneratePayload,
+  type Seedance25QuoteResponse,
   SEEDANCE25_MAX_PROMPT_LENGTH,
   type Seedance25GenerateResponse,
   type Seedance25OutputFormat,
@@ -211,6 +217,56 @@ export function Seedance25AdminForm({ model: rawModel, onQueued, onSavedReferenc
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [queued, setQueued] = useState<Seedance25GenerateResponse | null>(null)
+  const mounted = useRef(true)
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+  const pendingKey = typeof getInitData === 'function' ? seedancePendingKey(getInitData()) : null
+  const [pendingLaunch, setPendingLaunch] = useState<PendingSeedanceLaunch | null>(null)
+  useEffect(() => {
+    if (pendingKey) setPendingLaunch(readPendingSeedance(localStorage, pendingKey))
+  }, [pendingKey])
+  const finishPending = (quoteId: string) => {
+    if (!mounted.current) return
+    if (pendingKey && clearPendingSeedance(localStorage, pendingKey, quoteId)) {
+      setPendingLaunch((current) => current?.quoteId === quoteId ? null : current)
+    }
+  }
+  useEffect(() => {
+    if (!pendingLaunch || submitting) return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const recover = async () => {
+      try {
+        let result = await seedance25QuoteStatus(pendingLaunch.quoteId)
+        if (result.status === 'quoted') result = await generateSeedance25(pendingLaunch.payload)
+        if (cancelled) return
+        if ('task_id' in result) {
+          finishPending(pendingLaunch.quoteId)
+          setQueued(result as Seedance25GenerateResponse)
+          await onQueued?.(result as Seedance25GenerateResponse)
+          return
+        }
+        if (['rejected', 'provider_failed'].includes(result.status)) {
+          finishPending(pendingLaunch.quoteId)
+          setError('Провайдер отклонил задачу. Для нового запуска проверьте новый расчёт.')
+          return
+        }
+      } catch (value) {
+        if (cancelled) return
+        if (value instanceof SeedanceApiError && ['video_quote_changed', 'video_quote_missing', 'video_rejected', 'video_not_reserved', 'video_input_invalid'].includes(value.code || '')) {
+          finishPending(pendingLaunch.quoteId)
+          setError(value.message)
+          return
+        }
+      }
+      if (!cancelled) timer = setTimeout(() => void recover(), 3000)
+    }
+    void recover()
+    return () => { cancelled = true; if (timer) clearTimeout(timer) }
+  // Recovery owns the original immutable launch; form edits do not replace it.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingLaunch, submitting, pendingKey])
+  const [quoteState, setQuoteState] = useState<{ key: string; quote: Seedance25QuoteResponse } | null>(null)
+  const submittingRef = useRef(false)
 
   const totalKnownVideoDuration = useMemo(
     () => videos.reduce((sum, item) => sum + (item.duration || 0), 0),
@@ -224,7 +280,12 @@ export function Seedance25AdminForm({ model: rawModel, onQueued, onSavedReferenc
     const perSecond = Number(model?.quality_costs?.[resolution] ?? 0)
     return perSecond ? Math.round(perSecond * seconds * 2) / 2 : 0
   }, [duration, videoEditing, model?.quality_costs, model?.quality_duration_costs, resolution])
-  const priceQuote = hasVideoReference ? basePrice * 2 : basePrice
+  const needsMeasuredQuote = hasVideoReference && (videoEditing || duration > 0)
+  const formKey = JSON.stringify({ scenario, resolution, ratio, duration, videoEditing, outputFormat,
+    generateAudio, returnLastFrame, webSearch, nsfwChecker, prompt, firstFrame, lastFrame,
+    images, videos, audios, firstAsset, lastAsset, imageAssets, videoAssets, audioAssets })
+  const measuredQuote = quoteState?.key === formKey ? quoteState.quote : null
+  const priceQuote = needsMeasuredQuote ? measuredQuote?.cost : hasVideoReference ? basePrice * 2 : basePrice
 
   const uploadImage = async (file: File, target: 'first' | 'last' | 'refs') => {
     const ext = extension(file.name)
@@ -299,10 +360,13 @@ export function Seedance25AdminForm({ model: rawModel, onQueued, onSavedReferenc
   }
 
   const submit = async () => {
+    if (submittingRef.current || pendingLaunch) return
+    submittingRef.current = true
     setError(null)
     setQueued(null)
     if (promptLength > SEEDANCE25_MAX_PROMPT_LENGTH) {
       setError(`Промпт — максимум ${SEEDANCE25_MAX_PROMPT_LENGTH} символов`)
+      submittingRef.current = false
       return
     }
 
@@ -334,7 +398,7 @@ export function Seedance25AdminForm({ model: rawModel, onQueued, onSavedReferenc
         if (videos.some((item) => item.duration != null && (item.duration < 4 || item.duration > 30))) throw new Error('Исходное видео для редактирования должно длиться 4–30 секунд')
       }
       setSubmitting(true)
-      const result = await generateSeedance25({
+      const launchPayload: Seedance25GeneratePayload = {
         scenario,
         prompt: prompt.trim(),
         ratio: videoEditing ? 'adaptive' : ratio,
@@ -351,13 +415,34 @@ export function Seedance25AdminForm({ model: rawModel, onQueued, onSavedReferenc
         referenceImages: scenario === 'multimodal' ? refsImages : [],
         referenceVideos: scenario === 'multimodal' ? refsVideos : [],
         referenceAudios: scenario === 'multimodal' ? refsAudios : [],
-      })
+      }
+      if (needsMeasuredQuote) {
+        if (!measuredQuote?.quote_id || !measuredQuote.quote_hash) {
+          const quote = await quoteSeedance25Identity(launchPayload)
+          if (mounted.current) setQuoteState({ key: formKey, quote })
+          return
+        }
+        if (!pendingKey) throw new Error('Откройте Mini App из Telegram для безопасного запуска')
+        launchPayload.videoQuoteId = measuredQuote.quote_id
+        launchPayload.videoQuoteHash = measuredQuote.quote_hash
+        const pending = { quoteId: measuredQuote.quote_id, payload: launchPayload }
+        localStorage.setItem(pendingKey, JSON.stringify(pending))
+        setPendingLaunch(pending)
+      }
+      const result = await generateSeedance25(launchPayload)
+      if (!mounted.current) return
+      if (launchPayload.videoQuoteId) finishPending(launchPayload.videoQuoteId)
+      setQuoteState(null)
       setQueued(result)
       await onQueued?.(result)
     } catch (value) {
+      if (!mounted.current) return
+      if (value instanceof SeedanceApiError && ['video_quote_changed', 'video_quote_missing', 'video_rejected', 'video_not_reserved', 'video_input_invalid'].includes(value.code || '') && measuredQuote?.quote_id) finishPending(measuredQuote.quote_id)
+      setQuoteState(null)
       setError(value instanceof Error ? value.message : 'Не удалось запустить Seedance 2.5')
     } finally {
-      setSubmitting(false)
+      submittingRef.current = false
+      if (mounted.current) setSubmitting(false)
     }
   }
 
@@ -525,8 +610,8 @@ export function Seedance25AdminForm({ model: rawModel, onQueued, onSavedReferenc
       </section>
 
       <div className="rounded-xl border border-gold/20 bg-gold/5 p-3 text-xs">
-        <div className="flex items-center justify-between gap-3"><span className="text-muted-foreground">Цена по текущему админ-прайсу</span><strong>{priceQuote ? `${priceQuote}🍌` : 'из конфигурации'}</strong></div>
-        <p className="mt-1 text-muted-foreground">Admin preview запускается бесплатно. Для Auto показан ориентир за 5 секунд.</p>
+        <div className="flex items-center justify-between gap-3"><span className="text-muted-foreground">Цена по текущему админ-прайсу</span><strong>{priceQuote != null ? `${priceQuote}🍌` : 'Нужен расчёт видео'}</strong></div>
+        <p className="mt-1 text-muted-foreground">Admin preview запускается бесплатно. {needsMeasuredQuote ? measuredQuote ? `Вход ${measuredQuote.input_seconds} с + выход ${measuredQuote.selected_output_seconds} с. Цена зафиксирована до запуска.` : 'Рассчитайте входные и выходные секунды перед запуском.' : 'Для Auto показан ориентир за 5 секунд.'}</p>
       </div>
 
       {error ? <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</div> : null}
@@ -540,11 +625,11 @@ export function Seedance25AdminForm({ model: rawModel, onQueued, onSavedReferenc
 
       <button
         type="button"
-        disabled={submitting || uploading || promptLength > SEEDANCE25_MAX_PROMPT_LENGTH}
+        disabled={submitting || !!pendingLaunch || uploading || promptLength > SEEDANCE25_MAX_PROMPT_LENGTH}
         onClick={() => void submit()}
         className="w-full rounded-xl border border-cyan/50 bg-cyan/15 px-4 py-3 text-sm font-semibold text-cyan transition hover:bg-cyan/20 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {submitting ? 'Запускаю Seedance 2.5…' : uploading ? 'Загружаю медиа…' : '🚀 Запустить Seedance 2.5'}
+        {pendingLaunch && !submitting ? 'Проверяю принятый запуск…' : submitting ? needsMeasuredQuote && !measuredQuote ? 'Рассчитываю…' : 'Запускаю Seedance 2.5…' : uploading ? 'Загружаю медиа…' : needsMeasuredQuote && !measuredQuote ? 'Рассчитать цену видео' : '🚀 Запустить Seedance 2.5'}
       </button>
     </div>
   )
