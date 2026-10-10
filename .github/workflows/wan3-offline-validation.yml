@@ -17,7 +17,7 @@ jobs:
       - name: Package tracked public source only
         run: |
           mkdir -p offline-validation/wheels
-          git archive --format=tar.gz HEAD AGENTS.md README.md .agents .github bot tests scripts frontend/miniapp-v0 docs data prompts requirements.txt pytest.ini pyproject.toml ruff.toml Dockerfile docker-compose.yml .gitignore > offline-validation/source.tar.gz
+          git archive --format=tar.gz HEAD AGENTS.md README.md .agents .github bot tests scripts frontend/miniapp-v0 docs data prompts requirements.txt pytest.ini ruff.toml Dockerfile compose.backend.yml .gitignore > offline-validation/source.tar.gz
           git rev-parse HEAD > offline-validation/source-sha.txt
       - name: Download wheels without application secrets or runtime data
         run: |
