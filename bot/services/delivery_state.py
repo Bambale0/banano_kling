@@ -114,3 +114,20 @@ def telegram_delivery_retry_delay(error: Exception) -> int | None:
     if isinstance(error, TelegramRetryAfter):
         return max(1, int(error.retry_after))
     return None
+
+
+async def tracked_telegram_send(progress: dict, primary: bool, send, *args, **kwargs):
+    """Track acceptance separately from an in-flight request for this attempt."""
+    progress["_telegram_send_inflight"] = True
+    try:
+        response = await send(*args, **kwargs)
+    except Exception as exc:
+        if (telegram_delivery_is_definitely_rejected(exc)
+                or telegram_delivery_retry_delay(exc) is not None
+                or is_terminal_telegram_delivery_error(exc)):
+            progress["_telegram_send_inflight"] = False
+        raise
+    progress["_telegram_send_inflight"] = False
+    if primary:
+        progress["_telegram_primary_delivered"] = True
+    return response

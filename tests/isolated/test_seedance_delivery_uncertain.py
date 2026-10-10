@@ -59,6 +59,8 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
             "_mark_seedance25_delivery": self.mark,
         }
 
+        load_function("bot/services/delivery_state.py", "tracked_telegram_send", self.ns)
+
     async def asyncTearDown(self):
         if self.old_bot is None:
             sys.modules.pop("bot", None)
@@ -154,6 +156,34 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(await fn({"bot": self.bot}, {"task_id": "task", "telegram_id": 1},
                  {"_telegram_primary_delivered": True}))
             self.assertEqual(self.mark.call_args.args[:2], ("task", "delivered"))
+
+    async def test_actual_auxiliary_rejection_chain_preserves_primary(self):
+        self.ns.update(asyncio=asyncio, SEEDANCE25_DELIVERY_TIMEOUT_SECONDS=1,
+            _can_attempt_seedance25_result_delivery=AsyncMock(return_value=True),
+            _claim_seedance25_delivery=AsyncMock(return_value=True),
+            _stored_result_urls=lambda _: ["https://example.test/result.mp4"],
+            _classify_results=lambda *a: ("https://example.test/result.mp4", "frame"))
+        dispatcher = load_function("bot/handlers/seedance_25_fullstack.py", "_retry_seedance25_delivery", self.ns)
+        for path, name in [
+            ("bot/handlers/seedance_25_public_release.py", "_public_send_results"),
+            ("bot/handlers/seedance_25_fullstack.py", "_send_seedance25_results"),
+        ]:
+            self.bot.send_video.reset_mock()
+            self.bot.send_photo.side_effect = Rejected("bad photo")
+            self.bot.send_message.side_effect = Retryable(75)
+            self.ns["_send_seedance25_results"] = load_function(path, name, self.ns)
+            self.assertTrue(await dispatcher({"bot": self.bot},
+                {"task_id": "task", "telegram_id": 1}, {"return_last_frame": True}))
+            self.assertEqual(self.bot.send_video.await_count, 1)
+            self.assertEqual(self.mark.call_args.args[:2], ("task", "delivered"))
+
+    async def test_tracker_clears_each_confirmed_rejection(self):
+        for error in [Rejected("bad"), Retryable(75)]:
+            progress = {}
+            with self.assertRaises(type(error)):
+                await self.ns["tracked_telegram_send"](progress, False,
+                    AsyncMock(side_effect=error), 1)
+            self.assertFalse(progress["_telegram_send_inflight"])
 
     async def test_dispatcher_stores_uncertain_and_does_not_requeue(self):
         self.ns.update(asyncio=asyncio, SEEDANCE25_DELIVERY_TIMEOUT_SECONDS=1,
