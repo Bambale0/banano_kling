@@ -161,7 +161,8 @@ class Wan3PrimeStorage:
         summary['removed_results'] = await cleanup_results(limit=limit)
         return summary
 
-    async def init_upload(self, actor, *, kind: str, filename: str, size: int, content_type: str | None = None, importing: bool = False) -> dict[str, Any]:
+    async def init_upload(self, actor, *, kind: str, filename: str, size: int, content_type: str | None = None, importing: bool = False,
+                          upload_id: str | None = None) -> dict[str, Any]:
         from bot.services.wan3_prime_storage_policy import (
             ACTIVE_UPLOAD_STATES,
             assert_capacity,
@@ -177,8 +178,30 @@ class Wan3PrimeStorage:
         filename = _safe_basename(filename)
         if Path(filename).suffix.lower() not in _allowed_ext(kind):
             raise Wan3PrimeValidationError("Upload extension is not allowed")
+        if upload_id is not None and (not isinstance(upload_id, str) or not re.fullmatch(r"[0-9a-f]{32}", upload_id)):
+            raise Wan3PrimeValidationError("Invalid upload ID")
         async with db_backend.connect(_sqlite_path()) as db:
+            db.row_factory = db_backend.Row
             await lock_storage(db)
+            if upload_id is not None:
+                # The primary key is a durable fence for an init whose response
+                # was lost. A retry cannot consume another session/quota slot.
+                previous = await (await db.execute(
+                    "SELECT * FROM wan3_prime_upload_sessions WHERE upload_id = ?" + (" FOR UPDATE" if db_backend.is_postgres() else ""),
+                    (upload_id,),
+                )).fetchone()
+                if previous:
+                    expires = datetime.fromisoformat(str(previous["expires_at"]))
+                    if expires.tzinfo is not None:
+                        expires = expires.astimezone(UTC).replace(tzinfo=None)
+                    if (int(previous["user_id"]) != actor.user_id or previous["kind"] != kind
+                            or previous["filename"] != filename or int(previous["declared_size"]) != size
+                            or (previous["content_type"] or "") != (content_type or "")
+                            or importing or previous["status"] != "open"
+                            or expires <= datetime.now(UTC).replace(tzinfo=None)):
+                        raise Wan3PrimeValidationError("Upload session conflict", status=409)
+                    return {"ok": True, "upload_id": upload_id, "chunk_size": CHUNK_SIZE,
+                            "expires_at": str(previous["expires_at"])}
             await assert_capacity(db, actor.user_id, size)
             row = await (await db.execute(
                 f"SELECT COUNT(*) FROM wan3_prime_upload_sessions WHERE user_id = ? AND status IN {ACTIVE_UPLOAD_STATES}",
@@ -186,7 +209,7 @@ class Wan3PrimeStorage:
             )).fetchone()
             if int(row[0] or 0) >= MAX_UNFINISHED_SESSIONS:
                 raise Wan3PrimeValidationError("Too many unfinished Wan 3.0 uploads", status=429)
-            upload_id, expires_at = uuid.uuid4().hex, _expires()
+            upload_id, expires_at = upload_id or uuid.uuid4().hex, _expires()
             await db.execute(
                 "INSERT INTO wan3_prime_upload_sessions "
                 "(upload_id, user_id, telegram_id, kind, filename, content_type, declared_size, expires_at, status) "
@@ -196,6 +219,40 @@ class Wan3PrimeStorage:
             await db.commit()
         await asyncio.to_thread(canonical_child_path(CHUNK_ROOT, upload_id).mkdir, parents=True, exist_ok=True)
         return {"ok": True, "upload_id": upload_id, "chunk_size": CHUNK_SIZE, "expires_at": expires_at}
+
+    async def cancel_upload(self, actor, *, upload_id: str) -> dict[str, Any]:
+        """Cancel only owned temporary work; finalized media remains untouched."""
+        from bot.services.wan3_prime_storage_policy import lock_storage
+
+        await self.init_schema()
+        if not isinstance(upload_id, str) or not re.fullmatch(r"[0-9a-f]{32}", upload_id):
+            raise Wan3PrimeValidationError("Invalid upload ID")
+        async with db_backend.connect(_sqlite_path()) as db:
+            db.row_factory = db_backend.Row
+            # Use the same lock order as final persistence. Chunk writes hold
+            # the session row; assembly rechecks its status/lease before saving.
+            await lock_storage(db)
+            row = await (await db.execute(
+                "SELECT status FROM wan3_prime_upload_sessions WHERE upload_id = ? AND user_id = ?"
+                + (" FOR UPDATE" if db_backend.is_postgres() else ""),
+                (upload_id, actor.user_id),
+            )).fetchone()
+            if not row:
+                # A missing ID is not proof that an earlier init cannot still
+                # arrive. Clients must reconcile uncertain init before cancel.
+                return {"ok": True, "status": "not_found"}
+            if row["status"] == "completed":
+                return {"ok": True, "status": "completed"}
+            if row["status"] in {"open", "assembling", "importing", "rejected"}:
+                await db.execute(
+                    "UPDATE wan3_prime_upload_sessions SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP "
+                    "WHERE upload_id = ? AND user_id = ? AND status IN ('open', 'assembling', 'importing', 'rejected')",
+                    (upload_id, actor.user_id),
+                )
+            await db.commit()
+        # Release the unfinished slot now. Retention owns physical removal;
+        # reserved bytes continue counting until those files are actually gone.
+        return {"ok": True, "status": "cancelled"}
 
     async def save_chunk(self, actor, *, upload_id: str, index: int, total: int, chunk: bytes) -> None:
         await self.init_schema()
@@ -303,9 +360,7 @@ class Wan3PrimeStorage:
 
     async def save_owned_file(self, actor, *, kind: str, filename: str, path: Path, content_type: str | None = None,
                               source: str = "miniapp_wan3_prime", upload_id: str | None = None, assembly_stamp: str | None = None) -> dict[str, Any]:
-        from bot.services.wan3_prime_files import copy_atomic
         from bot.services.wan3_prime_media import _check_dimensions, _check_duration
-        from bot.services.wan3_prime_storage_policy import assert_capacity, lock_storage
 
         await self.init_schema()
         from bot.services.wan3_prime_probe_cache import probe_slot
@@ -329,6 +384,25 @@ class Wan3PrimeStorage:
             _check_dimensions(info, min_px=240, max_px=4096)
         if info.pages is not None and info.pages > 50:
             raise Wan3PrimeValidationError("reference file must be <= 50 pages")
+        # Every upload/import surface must keep the final transaction alive if
+        # its request is cancelled: copy_atomic continues in a thread and must
+        # not outlive a rollback that releases its row lock and byte reservation.
+        persistence = asyncio.create_task(self._persist_owned_file(actor, kind=kind, filename=filename, path=path,
+            info=info, content_type=content_type, source=source, upload_id=upload_id, assembly_stamp=assembly_stamp))
+        try:
+            return await asyncio.shield(persistence)
+        except asyncio.CancelledError:
+            await asyncio.shield(persistence)
+            raise
+
+    async def _persist_owned_file(self, actor, *, kind: str, filename: str, path: Path, info: MediaInfo,
+                                  content_type: str | None, source: str, upload_id: str | None,
+                                  assembly_stamp: str | None) -> dict[str, Any]:
+        """Persist inspected bytes while retaining the final owner/quota lock."""
+        from bot.services.wan3_prime_files import copy_atomic
+        from bot.services.wan3_prime_storage_policy import assert_capacity, lock_storage
+
+        ext = (info.extension or Path(filename).suffix).lower()
         media_key = upload_id or uuid.uuid4().hex
         dest = canonical_child_path(UPLOAD_ROOT, f"{actor.user_id}/{media_key}{ext}")
         public_url = _public_url_for_path(dest)

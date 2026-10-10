@@ -109,7 +109,7 @@ function MediaField({ title, label, prefix, kind, values, limit, offset = 1, dis
     } catch (error) {
       if (active.current === controller) {
         setRetryFiles(files.slice(index))
-        fail(`«${files[index].name}»: ${controller.signal.aborted ? 'Загрузка отменена. Можно повторить.' : error instanceof Error ? error.message : 'Не удалось загрузить файл.'}`)
+        fail(`«${files[index].name}»: ${error instanceof Error ? error.name === 'AbortError' ? 'Загрузка отменена. Можно повторить.' : error.message : 'Не удалось загрузить файл.'}`)
       }
     } finally { if (active.current === controller) { active.current = null; setProgress('') }; lock.current = false; onBusy(-1) }
   }
@@ -142,7 +142,9 @@ function MediaField({ title, label, prefix, kind, values, limit, offset = 1, dis
     </label> : null}
     {progress ? <div className="space-y-1">
       <p role="status" className="break-words text-xs">{progress}</p>
-      <Button type="button" variant="outline" size="sm" onClick={() => active.current?.abort()}>Отменить загрузку</Button>
+      <Button type="button" variant="outline" size="sm" disabled={active.current?.signal.aborted} onClick={() => {
+        active.current?.abort(); setProgress('Отменяю загрузку и освобождаю место…')
+      }}>Отменить загрузку</Button>
     </div> : null}
     {fieldError ? <p role="alert" className="break-words text-xs text-destructive">{fieldError}</p> : null}
     {retryFiles.length ? <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => { void upload(retryFiles) }}>Повторить загрузку</Button> : null}

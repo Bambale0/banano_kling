@@ -237,10 +237,11 @@ async def _upload_init_route(request: web.Request) -> web.Response:
             filename=str(body.get("filename") or ""),
             size=body.get("size"),
             content_type=str(body.get("content_type") or ""),
+            upload_id=body.get("upload_id"),
         )
         return _json_ok(result)
     except Wan3PrimeValidationError as exc:
-        return _json_error(str(exc), status=exc.status, code="validation_error")
+        return _json_error(str(exc), status=exc.status, code="upload_session_conflict" if exc.status == 409 else "validation_error")
     except Wan3PrimeLifecycleError as exc:
         return _json_error(str(exc), status=exc.status, code=exc.code)
 
@@ -292,6 +293,18 @@ async def _upload_complete_route(request: web.Request) -> web.Response:
         body = await _json_body(request)
         actor = await _actor_from_request(request, body)
         result = await wan3_prime_storage.complete_upload(actor, upload_id=str(body.get("upload_id") or ""))
+        return _json_ok(result)
+    except Wan3PrimeValidationError as exc:
+        return _json_error(str(exc), status=exc.status, code="validation_error")
+    except Wan3PrimeLifecycleError as exc:
+        return _json_error(str(exc), status=exc.status, code=exc.code)
+
+
+async def _upload_cancel_route(request: web.Request) -> web.Response:
+    try:
+        body = await _json_body(request)
+        actor = await _actor_from_request(request, body)
+        result = await wan3_prime_storage.cancel_upload(actor, upload_id=body.get("upload_id"))
         return _json_ok(result)
     except Wan3PrimeValidationError as exc:
         return _json_error(str(exc), status=exc.status, code="validation_error")
@@ -421,6 +434,7 @@ def setup_wan3_prime_routes(app: web.Application, miniapp_root: str = "/mini-app
     app.router.add_post(f"{miniapp_root}/api/wan3/upload/init", _http_boundary(_upload_init_route))
     app.router.add_post(f"{miniapp_root}/api/wan3/upload/chunk", _http_boundary(_upload_chunk_route))
     app.router.add_post(f"{miniapp_root}/api/wan3/upload/complete", _http_boundary(_upload_complete_route))
+    app.router.add_post(f"{miniapp_root}/api/wan3/upload/cancel", _http_boundary(_upload_cancel_route))
 
 
 async def _telegram_actor(telegram_id: int) -> Wan3PrimeActor:
@@ -501,3 +515,4 @@ async def store_telegram_wan3_prime_media(*, telegram_id: int, bot, file_id: str
             path=path, source='telegram_wan3', upload_id=upload_id)
     finally:
         await wan3_prime_storage.discard_import(actor, upload_id)
+
