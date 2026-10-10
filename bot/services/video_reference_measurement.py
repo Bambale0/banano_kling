@@ -49,7 +49,7 @@ def _file_hash(path: Path) -> str:
 async def _probe_seconds(path: Path) -> float:
     process = await asyncio.create_subprocess_exec(
         "ffprobe", "-v", "error", "-format_whitelist", "mov",
-        "-protocol_whitelist", "file,pipe",
+        "-protocol_whitelist", "file,pipe", "-enable_drefs", "0", "-use_absolute_path", "0",
         "-show_entries", "stream=codec_type,duration:format=duration",
         "-of", "json", str(path), stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
