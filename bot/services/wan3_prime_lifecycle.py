@@ -17,9 +17,10 @@ from urllib.parse import urlparse
 from bot import database
 from bot import db as db_backend
 from bot.services import preset_manager as preset_module
+from bot.services.wan3_billing import settlement_amounts
+from bot.services.wan3_models import wan3_model_spec, wan3_service_for_model
 from bot.services.wan3_prime_media import (
     WAN3_MODEL_KEY,
-    WAN3_PROVIDER_MODEL,
     MediaProbe,
     Wan3PrimeRecipe,
     Wan3PrimeValidationError,
@@ -83,6 +84,10 @@ class Wan3PrimeQuote:
 
     def as_response(self) -> dict[str, Any]:
         return {
+            "model": self.safe_request.get("model", WAN3_MODEL_KEY),
+            "provider_model": wan3_model_spec(self.safe_request.get("model")).provider_model,
+            "version": 2,
+            "billing_mode": "auto_reserve" if self.requested_output_seconds is None else "input_plus_selected_output",
             "quotehash": self.quote_hash,
             "quote_hash": self.quote_hash,
             "recipe_fingerprint": self.recipe_fingerprint,
@@ -102,6 +107,7 @@ class Wan3PrimeQuote:
 class LazyWan3PrimeTransport:
     def __init__(self) -> None:
         self._service = None
+        self._standard_service = None
 
     def _get_service(self):
         if self._service is None:
@@ -111,7 +117,12 @@ class LazyWan3PrimeTransport:
         return self._service
 
     async def create_task(self, recipe: Wan3PrimeRecipe, *, callback_url: str | None) -> dict[str, Any]:
-        service = self._get_service()
+        if recipe.model == WAN3_MODEL_KEY:
+            service = self._get_service()
+        else:
+            if self._standard_service is None:
+                self._standard_service = wan3_service_for_model(recipe.model)
+            service = self._standard_service
         if not recipe.prepared_input:
             raise Wan3PrimeValidationError("Provider input was not validated before reservation")
         return await service.submit_prepared(recipe.prepared_input, callback_url=callback_url)
@@ -122,9 +133,9 @@ class LazyWan3PrimeTransport:
         return await kie_market_service.get_task_status(provider_task_id)
 
     async def close(self) -> None:
-        service = self._service
-        if service is not None and hasattr(service, "close"):
-            await service.close()
+        for service in (self._service, self._standard_service):
+            if service is not None and hasattr(service, "close"):
+                await service.close()
 
 
 class LocalResultDownloader:
@@ -346,7 +357,7 @@ class Wan3PrimeLifecycle:
             await self.transport.close()
 
     def _rate_snapshot(self, recipe: Wan3PrimeRecipe, actor: Wan3PrimeActor) -> tuple[float, str, bool]:
-        costs = self.preset_manager.get_video_quality_costs(WAN3_MODEL_KEY)
+        costs = self.preset_manager.get_video_quality_costs(recipe.model)
         if not isinstance(costs, dict):
             costs = {}
         normalized = {str(k).strip().lower(): v for k, v in costs.items()}
@@ -362,8 +373,8 @@ class Wan3PrimeLifecycle:
         if actor.is_admin and not configured:
             return 0.0, "missing-admin-free", False
         if not math.isfinite(rate) or rate <= 0:
-            raise Wan3PrimeLifecycleError("Wan 3.0 Prime rate is not configured", status=503, code="missing_rate")
-        return rate, f"{WAN3_MODEL_KEY}:{key}:{rate}", True
+            raise Wan3PrimeLifecycleError("Wan 3.0 rate is not configured", status=503, code="missing_rate")
+        return rate, f"{recipe.model}:{key}:{rate}", True
 
     def _quote_from_recipe(self, actor: Wan3PrimeActor, recipe: Wan3PrimeRecipe) -> Wan3PrimeQuote:
         rate, revision, configured = self._rate_snapshot(recipe, actor)
@@ -376,9 +387,11 @@ class Wan3PrimeLifecycle:
             billable = float(recipe.input_video_seconds + recipe.duration)
         reserve = 0.0 if actor.is_admin else _round_half_credit(rate * billable)
         if not actor.is_admin and reserve <= 0:
-            raise Wan3PrimeLifecycleError("Wan 3.0 Prime reserve rounded to zero", status=503, code="missing_rate")
+            raise Wan3PrimeLifecycleError("Wan 3.0 reserve rounded to zero", status=503, code="missing_rate")
         fingerprint = recipe.fingerprint()
         quote_payload = {
+            "billing_version": 2,
+            "billing_mode": "auto_reserve" if requested is None else "input_plus_selected_output",
             # The editor template and exact final prompt are part of the user's quote.
             "prepared_input": recipe.prepared_input,
             "fingerprint": fingerprint,
@@ -406,7 +419,6 @@ class Wan3PrimeLifecycle:
 
     async def _validated_recipe(self, actor: Wan3PrimeActor, body: dict[str, Any]) -> Wan3PrimeRecipe:
         from bot.services.wan3_prime_repeat import client_recipe, compile_repeat
-        from bot.services.wan3_prime_service import wan3_prime_service
 
         request = client_recipe(body)
         context = {}
@@ -416,7 +428,7 @@ class Wan3PrimeLifecycle:
             effective, probe, context, request = await compile_repeat(actor, request, self.probe)
         recipe = await validate_wan3_recipe(effective, probe)
         try:
-            prepared = await wan3_prime_service.prepare_request(**recipe.raw_provider_args())
+            prepared = await wan3_service_for_model(recipe.model).prepare_request(**recipe.raw_provider_args())
         except ValueError as exc:
             raise Wan3PrimeValidationError(str(exc)) from exc
         return replace(recipe, prepared_input=prepared, client_request=request, repeat_context=context)
@@ -479,6 +491,9 @@ class Wan3PrimeLifecycle:
         if existing_before_quote:
             from bot.services.wan3_prime_repeat import client_recipe
 
+            requested_model = wan3_model_spec(body.get("model") or body.get("v_model")).provider_model
+            if existing_before_quote["provider_model"] != requested_model:
+                raise Wan3PrimeLifecycleError("Same key used for another Wan model", status=409, code="idempotency_conflict")
             persisted = json.loads(existing_before_quote["request_summary"])
             original = persisted.get("client_request")
             if original is not None:
@@ -535,9 +550,12 @@ class Wan3PrimeLifecycle:
                     server_quote.quote_hash,
                     _json_dumps(server_quote.as_response()),
                     _json_dumps(server_quote.safe_request),
-                    _json_dumps(recipe.client_request if recipe.repeat_context else recipe.raw_provider_args()),
+                    _json_dumps(recipe.client_request if recipe.repeat_context else (
+                        recipe.raw_provider_args() if recipe.model == WAN3_MODEL_KEY
+                        else dict(recipe.raw_provider_args(), model=recipe.model)
+                    )),
                     nonce,
-                    WAN3_PROVIDER_MODEL,
+                    recipe.provider_model,
                     server_quote.reserve_credits,
                     submission_lease_until,
                 ),
@@ -570,8 +588,8 @@ class Wan3PrimeLifecycle:
 
             task_metadata = generation_partner_snapshot({
                 **recipe.raw_provider_args(),
-                "v_model": WAN3_MODEL_KEY,
-                "provider": "kie", "provider_model": WAN3_PROVIDER_MODEL,
+                "v_model": recipe.model,
+                "provider": "kie", "provider_model": recipe.provider_model,
                 "wan3_prime": True, "quote": server_quote.as_response(),
                 "delivery_status": "pending", "stable_task_id": internal_task_id,
             }, accepted=False, invite_eligible=not actor.is_admin)
@@ -597,8 +615,8 @@ class Wan3PrimeLifecycle:
                     actor.user_id,
                     actor.telegram_id,
                     internal_task_id,
-                    WAN3_MODEL_KEY,
-                    WAN3_MODEL_KEY,
+                    recipe.model,
+                    recipe.model,
                     None if recipe.duration == -1 else recipe.duration,
                     recipe.aspect_ratio,
                     recipe.prompt,
@@ -621,7 +639,7 @@ class Wan3PrimeLifecycle:
             await db.commit()
 
         callback_url = self._callback_url(internal_task_id, nonce)
-        logger.info('Wan3 submit: task_id=%s model=%s scenario=%s reserve=%s', internal_task_id, WAN3_MODEL_KEY, recipe.scenario, server_quote.reserve_credits)
+        logger.info('Wan3 submit: task_id=%s model=%s scenario=%s reserve=%s', internal_task_id, recipe.model, recipe.scenario, server_quote.reserve_credits)
         try:
             result = await self.transport.create_task(recipe, callback_url=callback_url)
         except asyncio.CancelledError:
@@ -742,8 +760,6 @@ class Wan3PrimeLifecycle:
         allowed_nonce = nonce_callbacks_enabled() and isinstance(nonce, str) and 20 <= len(nonce) <= 200
         if not signed and not allowed_nonce:
             return None, 403
-        if data.get("model") and data["model"] != WAN3_PROVIDER_MODEL:
-            return None, 200
         async with db_backend.connect(_database_path()) as db:
             db.row_factory = db_backend.Row
             row = await (await db.execute(
@@ -751,6 +767,8 @@ class Wan3PrimeLifecycle:
                 (internal_task_id,) if signed else (internal_task_id, nonce),
             )).fetchone()
         if not row:
+            return None, 200
+        if data.get("model") and data["model"] != row["provider_model"]:
             return None, 200
         if row["settled"]:
             return await self.result(internal_task_id, public=True), 200
@@ -832,7 +850,7 @@ class Wan3PrimeLifecycle:
             if not isinstance(status, dict):
                 await self._defer_provider(row)
                 continue
-            if status.get("taskId") != row["provider_task_id"] or (status.get('model') and status.get('model') != WAN3_PROVIDER_MODEL):
+            if status.get("taskId") != row["provider_task_id"] or (status.get('model') and status.get('model') != row["provider_model"]):
                 await self._defer_provider(row)
                 continue
             state = str(status.get("state") or status.get("status") or "").lower()
@@ -1073,12 +1091,10 @@ class Wan3PrimeLifecycle:
             return False
 
         quote = json.loads(row["quote_json"])
-        rate = float(quote["rate_per_second"])
         input_seconds = float(quote["input_video_seconds"])
         actual_billable = input_seconds + float(result_seconds)
         reserve = float(row["reserve_credits"] or 0)
-        charge = min(reserve, _round_half_credit(rate * actual_billable))
-        refund = max(0.0, reserve - charge)
+        charge, refund = settlement_amounts(quote, reserve, float(result_seconds))
         async with db_backend.connect(_database_path()) as db:
             db.row_factory = db_backend.Row
             await db.execute("BEGIN IMMEDIATE" if not _is_postgres() else "BEGIN")
@@ -1124,8 +1140,9 @@ class Wan3PrimeLifecycle:
             request_data = json.loads(task['request_data'] or '{}')
             request_data.update({
                 "provider": "kie",
-                "provider_model": WAN3_PROVIDER_MODEL,
+                "provider_model": row["provider_model"],
                 "provider_task_id": row["provider_task_id"],
+                "model": wan3_model_spec(row["provider_model"]).key,
                 "wan3_prime": True,
                 "delivery_status": "result_ready",
                 "stable_task_id": row["internal_task_id"],
@@ -1249,6 +1266,8 @@ class Wan3PrimeLifecycle:
             "task_id": row["internal_task_id"],
             "internal_task_id": row["internal_task_id"],
             "provider_task_id": row["provider_task_id"],
+            "model": wan3_model_spec(row["provider_model"]).key,
+            "provider_model": row["provider_model"],
             "status": row["status"],
             "provider_state": row["provider_state"],
             "reserve_amount": float(row["reserve_credits"] or 0),
@@ -1267,6 +1286,8 @@ class Wan3PrimeLifecycle:
         payload = {
             "task_id": row["internal_task_id"],
             "provider_task_id": row["provider_task_id"],
+            "model": wan3_model_spec(row["provider_model"]).key,
+            "provider_model": row["provider_model"],
             "status": row["status"],
             "result_url": row["result_url"],
             "cost": row["charged_credits"],

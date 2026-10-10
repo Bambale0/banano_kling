@@ -529,15 +529,15 @@ export function TrendRunnerDialog({
     )
   }
 
-  if (trend?.model === 'wan_3_prime') return (
+  if (trend && (trend.model === 'wan_3_prime' || trend.model === 'wan_3')) return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[92vh] max-w-lg overflow-y-auto border-border/60 bg-background p-4">
         <DialogTitle>{trend.title}</DialogTitle>
-        {open ? <Wan3PrimeForm key={trend.id} trendId={trend.id} credits={state.user.credits} isAdmin={state.user.isAdmin}
+        {open ? <Wan3PrimeForm model={trend.model === 'wan_3' ? 'wan_3' : 'wan_3_prime'} key={trend.id} trendId={trend.id} credits={state.user.credits} isAdmin={state.user.isAdmin}
           onQueued={result => {
             if (typeof result.credits === 'number') setCredits(result.credits)
-            addTask({ task_id: result.internal_task_id, type: 'video', model: 'wan_3_prime',
-              model_label: 'Wan 3.0 Video Prime', aspect_ratio: 'adaptive', prompt_preview: '', cost: result.reserve_cost,
+            addTask({ task_id: result.internal_task_id, type: 'video', model: result.model || (trend.model === 'wan_3' ? 'wan_3' : 'wan_3_prime'),
+              model_label: result.model === 'wan_3' ? 'Wan 3.0 Video' : 'Wan 3.0 Video Prime', aspect_ratio: 'adaptive', prompt_preview: '', cost: result.reserve_cost,
               status: result.status === 'done' ? 'completed' : result.status === 'failed' ? 'failed' : 'pending', created_at: new Date().toISOString() })
           }} /> : null}
       </DialogContent>

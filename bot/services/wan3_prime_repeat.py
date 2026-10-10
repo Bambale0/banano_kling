@@ -11,8 +11,8 @@ from copy import deepcopy
 from types import SimpleNamespace
 from typing import Any
 
+from bot.services.wan3_models import wan3_model_spec
 from bot.services.wan3_prime_media import (
-    WAN3_MODEL_KEY,
     Wan3PrimeValidationError,
     normalize_wan3_body,
 )
@@ -43,13 +43,15 @@ def _json_object(value) -> dict:
 
 
 def source_recipe(source: dict[str, Any]) -> dict[str, Any]:
-    if source.get("model") != WAN3_MODEL_KEY:
-        raise Wan3PrimeValidationError("Откройте повтор с моделью исходной публикации", status=409)
+    try:
+        model = wan3_model_spec(source.get("model") or "invalid").key
+    except ValueError as exc:
+        raise Wan3PrimeValidationError("Откройте повтор с моделью исходной публикации", status=409) from exc
     data = normalize_wan3_body(_json_object(source.get("request_data")))
     if not data.get("scenario"):
         raise Wan3PrimeValidationError("Рецепт Wan сохранён не полностью", status=409)
     result = {key: deepcopy(data[key]) for key in RECIPE_FIELDS if key in data}
-    result["model"] = WAN3_MODEL_KEY
+    result["model"] = model
     result.setdefault("prompt", str(source.get("prompt") or ""))
     for name in ARRAY_FIELDS:
         values = result.setdefault(name, [])
@@ -110,7 +112,7 @@ def build_repeat_plan(source: dict[str, Any]) -> dict[str, Any]:
 def public_plan(plan: dict[str, Any]) -> dict[str, Any]:
     recipe = plan["recipe"]
     return {"ok": True, **({"trend_id": plan["trend_id"]} if plan.get("trend_id") else {"source_feed_gen_id": plan["source_id"]}), "repeat_plan_hash": plan["hash"],
-            "recipe": {"model": WAN3_MODEL_KEY, "scenario": recipe["scenario"], "prompt": "",
+            "recipe": {"model": recipe["model"], "scenario": recipe["scenario"], "prompt": "",
                        **{key: recipe[key] for key in OUTPUT_FIELDS if key in recipe}},
             "slots": [{key: slot[key] for key in ("key", "kind", "role", "index", "binding")} for slot in plan["slots"]]}
 
@@ -156,6 +158,8 @@ async def compile_repeat(actor, body: dict[str, Any], probe):
         plan = await get_repeat_plan(actor, source_id)
     if public_input.get("repeat_plan_hash") != plan["hash"]:
         raise Wan3PrimeValidationError("Разрешение изменилось. Откройте повтор заново", status=409)
+    if wan3_model_spec(public_input.get("model")).key != plan["recipe"]["model"]:
+        raise Wan3PrimeValidationError("Модель должна соответствовать исходной публикации", status=409)
     replacements = public_input.get("repeat_replacements", {})
     expected = {slot["key"] for slot in plan["slots"] if slot["binding"] == "upload"}
     if not isinstance(replacements, dict) or set(replacements) != expected:
@@ -221,6 +225,6 @@ def legacy_video_plan(source: dict[str, Any]) -> dict[str, Any]:
         groups[kind].append({"url": slot["url"], "index": len(groups[kind]), "kind": kind,
                              "role": slot["role"] if slot["role"] in {"first_frame", "last_frame"} else "reference",
                              "binding": slot["binding"]})
-    return {"version": 1, "model": WAN3_MODEL_KEY, "scenario": plan["recipe"]["scenario"],
+    return {"version": 1, "model": plan["recipe"]["model"], "scenario": plan["recipe"]["scenario"],
             "public_scenario": plan["recipe"]["scenario"], **groups,
             "audio": list(plan["recipe"].get("reference_audio_urls") or [])}

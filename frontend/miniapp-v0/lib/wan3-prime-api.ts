@@ -42,7 +42,7 @@ async function mediaRequest<T>(request: (signal: AbortSignal) => Promise<T>, sig
 }
 
 export interface Wan3PrimeRecipe {
-  model: 'wan_3_prime'
+  model: 'wan_3_prime' | 'wan_3'
   source_feed_gen_id?: number | null
   trend_id?: number | null
   repeat_plan_hash?: string
@@ -89,6 +89,8 @@ export interface Wan3PrimeGenerateRequest extends Wan3PrimeQuoteRequest {
 
 export interface Wan3PrimeGenerateResponse {
   ok: true
+  model?: 'wan_3_prime' | 'wan_3'
+  provider_model?: string
   status: 'queued' | 'accepted' | 'unknown' | 'done' | 'failed'
   charged_cost?: number
   refunded_cost?: number

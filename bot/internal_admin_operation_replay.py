@@ -167,7 +167,7 @@ async def _replay_video(
     user = await get_or_create_user(telegram_id)
 
     v_model = str(request_data.get("v_model") or source["model"] or "v3_std")
-    if v_model == "wan_3_prime":
+    if v_model in {"wan_3_prime", "wan_3"}:
         # This helper is reached only after internal-admin authentication and
         # explicit replay confirmation. Billing exemption never comes from a
         # public Mini App field. Preserve the recipient's media ownership.

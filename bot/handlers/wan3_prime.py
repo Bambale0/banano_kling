@@ -103,6 +103,7 @@ class Wan3PrimeDraft:
     repeat_plan_hash: str | None = None
     repeat_replacements: dict[str, str] = field(default_factory=dict)
     repeat_slots: list[dict[str, Any]] = field(default_factory=list)
+    model: str = "wan_3_prime"
 
     def __post_init__(self) -> None:
         # Explicit frame/edit recipes predate auto_mode. Their intent must remain
@@ -244,7 +245,7 @@ def remove_ordered_slot(values: list[str], index: int, *, label: str) -> list[st
 def build_wan3_payload(draft: Wan3PrimeDraft) -> dict[str, Any]:
     sync_auto_scenario(draft)
     return {
-        "model": "wan_3_prime",
+        "model": draft.model,
         **({**({"trend_id": draft.trend_id} if draft.trend_id else {"source_feed_gen_id": draft.source_feed_gen_id}),
             "repeat_plan_hash": draft.repeat_plan_hash, "repeat_replacements": dict(draft.repeat_replacements)}
            if draft.source_feed_gen_id or draft.trend_id else {}),
@@ -325,7 +326,7 @@ def _serialized_draft_edit(handler):
         async with _actor_lock(event.from_user.id):
             current_data = await state.get_data()
             left_flow = entered_wan and not await _wan_media_flow_active(state, current_data)
-            other_model = handler.__name__ != "open_wan3_prime" and current_data.get("v_model", "wan_3_prime") != "wan_3_prime"
+            other_model = handler.__name__ != "open_wan3_prime" and current_data.get("v_model", "wan_3_prime") not in {"wan_3_prime", "wan_3"}
             if _draft_identity(current_data) != identity or left_flow or other_model:
                 await event.answer("Задача изменилась. Повторите действие для новой задачи.")
                 return
@@ -441,7 +442,7 @@ def remove_keyboard(draft: Wan3PrimeDraft) -> types.InlineKeyboardMarkup:
 def build_review_text(draft: Wan3PrimeDraft, quote: dict[str, Any] | None = None) -> str:
     duration = "Auto" if draft.duration == -1 else f"{draft.duration}с"
     lines = [
-        "Wan 3.0 Video Prime",
+        "Wan 3.0 Video Prime" if draft.model == "wan_3_prime" else "Wan 3.0 Video",
         f"Режим: {WAN3_MODE_LABELS.get(draft.scenario, draft.scenario)}",
         f"Качество: {draft.resolution}; формат: {draft.aspect_ratio}; длительность: {duration}",
         f"Image {len(draft.reference_image_urls)}, Video {len(draft.reference_video_urls)}, Audio {len(draft.reference_audio_urls)}, File {len(draft.reference_file_urls)}, Link {len(draft.reference_link_urls)}",
@@ -460,8 +461,10 @@ def build_review_text(draft: Wan3PrimeDraft, quote: dict[str, Any] | None = None
         elif quote.get("admin_free"):
             lines.append("Стоимость: админский бесплатный запуск.")
         else:
-            lines.append(f"Резерв: {quote.get('reserve_cost')}🍌")
-        lines.append(f"Секунды: source {quote.get('source_video_duration_seconds', 0)} + billing {quote.get('billing_duration_seconds', '?')}")
+            lines.append(f"{'Максимальный резерв' if quote.get('auto_duration') else 'Стоимость'}: {quote.get('reserve_cost')}🍌")
+        input_seconds = float(quote.get("source_video_duration_seconds") or 0)
+        total_seconds = float(quote.get("billing_duration_seconds") or 0)
+        lines.append(f"Секунды: вход {input_seconds:g} + выход {total_seconds - input_seconds:g} = {total_seconds:g}")
         if quote.get("settlement_notice") or quote.get("auto_duration"):
             lines.append(str(quote.get("settlement_notice") or "Auto: резерв максимальный, после результата возможен возврат разницы."))
     return "\n".join(lines)
@@ -473,7 +476,7 @@ def dashboard_text(draft: Wan3PrimeDraft) -> str:
               ("аудио", len(draft.reference_audio_urls)), ("документ", len(draft.reference_file_urls)),
               ("ссылка", len(draft.reference_link_urls))]
     summary = ", ".join(f"{name}: {count}" for name, count in counts if count) or "пока нет"
-    lines = ["Wan 3.0 Video Prime", "Материалы: " + summary]
+    lines = ["Wan 3.0 Video Prime" if draft.model == "wan_3_prime" else "Wan 3.0 Video", "Материалы: " + summary]
     if draft.first_frame_url or draft.last_frame_url:
         lines.append(f"Первый кадр: {'есть' if draft.first_frame_url else 'нет'} · последний: {'есть' if draft.last_frame_url else 'нет'}")
     lines.append("Промпт: " + (draft.prompt[:700] if draft.prompt else "ещё не добавлен"))
@@ -491,7 +494,7 @@ def dashboard_text(draft: Wan3PrimeDraft) -> str:
 async def _show_dashboard(target: Any, state: FSMContext, draft: Wan3PrimeDraft) -> None:
     sync_auto_scenario(draft)
     await state.set_state(Wan3PrimeStates.dashboard)
-    await state.update_data(**draft_to_state(draft), v_model="wan_3_prime")
+    await state.update_data(**draft_to_state(draft), v_model=draft.model)
     text = dashboard_text(draft)
     from aiogram.exceptions import TelegramBadRequest
 
@@ -646,10 +649,13 @@ async def _store_or_import_media(message: types.Message, draft: Wan3PrimeDraft, 
     return str(stored["url"])
 
 
-@router.callback_query(F.data.in_({"wan3_open", "v_model_wan_3_prime", "wan3_dashboard"}))
+@router.callback_query(F.data.in_({"wan3_open", "v_model_wan_3_prime", "v_model_wan_3", "wan3_dashboard"}))
 @_serialized_draft_edit
 async def open_wan3_prime(callback: types.CallbackQuery, state: FSMContext):
     draft = draft_from_state(await state.get_data())
+    selected = {"v_model_wan_3": "wan_3", "v_model_wan_3_prime": "wan_3_prime"}.get(str(callback.data))
+    if selected and draft.model != selected:
+        draft = Wan3PrimeDraft(model=selected)
     await _show_dashboard(callback.message, state, draft)
     await callback.answer()
 
@@ -661,7 +667,8 @@ async def new_wan3_prime(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(wan3_reset_token=str(uuid.uuid4()))
     await callback.answer("Создаю новую Wan-задачу")
     async with _actor_lock(callback.from_user.id):
-        draft = Wan3PrimeDraft()
+        previous = draft_from_state(await state.get_data())
+        draft = Wan3PrimeDraft(model=previous.model)
         _new_ids(draft)
         await _show_dashboard(callback.message, state, draft)
 
@@ -762,7 +769,7 @@ def _detected_input_kind(message: types.Message) -> str:
 
 async def _wan_media_flow_active(state: FSMContext, data: dict[str, Any]) -> bool:
     current_state = await state.get_state()
-    return bool(current_state and current_state.startswith("Wan3PrimeStates:")) and data.get("v_model", "wan_3_prime") == "wan_3_prime"
+    return bool(current_state and current_state.startswith("Wan3PrimeStates:")) and data.get("v_model", "wan_3_prime") in {"wan_3_prime", "wan_3"}
 
 
 @router.callback_query(StateFilter(*Wan3PrimeStates.__all_states__), F.data == "video_change_model")
@@ -1190,6 +1197,7 @@ async def restore_wan3_owner_recipe(callback: types.CallbackQuery, state: FSMCon
             await callback.answer("Публикация или разрешение на повтор больше недоступны.", show_alert=True)
         return
     draft = Wan3PrimeDraft(
+        model=str(recipe.get("model") or "wan_3_prime"),
         auto_mode=str(recipe.get("scenario")) not in {"first_frame", "first_last", "edit"},
         scenario=str(recipe.get("scenario") or "text"),
         prompt=str(recipe.get("prompt") or ""),
@@ -1241,10 +1249,10 @@ def _repeat_slot_label(slot: dict[str, Any]) -> str:
 
 
 def _draft_from_repeat_plan(plan: dict, own_request: dict | None = None) -> Wan3PrimeDraft:
-    allowed = {"scenario", "prompt", "resolution", "aspect_ratio", "duration", "audio", "nsfw_checker", "seed"}
+    allowed = {"model", "scenario", "prompt", "resolution", "aspect_ratio", "duration", "audio", "nsfw_checker", "seed"}
     recipe = {key: value for key, value in plan["recipe"].items() if key in allowed}
     if own_request:
-        recipe.update({key: value for key, value in own_request.items() if key in allowed and key != "scenario"})
+        recipe.update({key: value for key, value in own_request.items() if key in allowed and key not in {"scenario", "model"}})
     draft = Wan3PrimeDraft(**recipe)
     draft.source_feed_gen_id = plan.get("source_feed_gen_id")
     draft.trend_id = plan.get("trend_id")

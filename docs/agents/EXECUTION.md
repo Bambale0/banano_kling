@@ -1891,6 +1891,17 @@ Reference cleanup reports how many generation snapshot refs are protected.
 
 - Delivery review follow-up: explicit Telegram 429 is retryable rejection with persisted retry_after deadline honored by atomic claim; it does not trigger immediate fallback or permanent uncertain. Timeout before any active send remains pending, while in-flight send timeout remains uncertain. Nine isolated behavior regressions pass and changed Python parses; database claim/deadline integration requires normal CI.
 
+## 2026-10-10 — Ordinary KIE WAN3 and fixed WAN retail quotes (review pending)
+
+- Ordinary wan_3 / wan/3-0-video is a separate immutable model using the existing shared WAN lifecycle and media contract (14 provider fields, all seven scenarios). No duplicate worker/table or storage split.
+- Model identity is preserved through quote, rate lookup, intent/task, provider submit/recovery, status, delivery, Telegram drafts, owner restore, public repeats and curated trends. Prime legacy recipe fingerprints preserved.
+- New WAN fixed-duration quote v2 freezes input measured video seconds + selected output seconds at current admin model/quality rate. Auto retains the documented 30-total-second reserve; old accepted quote snapshots retain legacy settlement.
+- Mini App recalculates eligible quotes after settings/reference edits; launch remains explicit. Separate ordinary admin quality selectors added without writing rates. Read-only production check found ordinary wan_3 rates absent; launch remains missing_rate until admin assigns rates.
+- Verified locally: nine isolated backend contract/identity/rate/legacy/settlement tests; full existing frontend Jest suite 393 passed before one additional ordinary-editor journey (targeted suite20 passed); TypeScript passed, ESLint zero errors (existing hook warnings). Full lifecycle tests added for CI, not locally run because restricted pool module must not be imported.
+- Independent exact-head review and full CI are required before publication release. No paid generation, real Telegram message, live checkout edit, secret read or history repricing.
+
+- WAN review follow-up: ordinary now enters full publication reference contract, Telegram continuity redirect, internal admin replay lifecycle, strict quality tariff, and trend editor guard. Added ordinary first/last/audio, own/public redirect and admin replay regressions. Actual Chromium against local production static build passed all 14 Prime+ordinary scenario journeys plus model navigation and unknown-ack retry. Start hit-test remains mandatory after quote layout settles; safe-area bottom padding added. Interrupted Prime upload -> ordinary switch component test passed.
+
 ## 2026-10-10 — Tanya Motion durable launch safety (review pending)
 
 - Scope: owner-bound measured source + locked output quote, atomic receipt/debit and proven-rejection refund; no historical balance changes.

@@ -268,8 +268,8 @@ export function VideoTab() {
               if (typeof result.credits === 'number') setCredits(result.credits)
               // Keep the composer and its idempotency key mounted, especially
               // when provider acknowledgement is still unknown.
-              addTask({ task_id: result.internal_task_id, type: 'video', model: 'wan_3_prime',
-                model_label: 'Wan 3.0 Video Prime', aspect_ratio: 'adaptive',
+              addTask({ task_id: result.internal_task_id, type: 'video', model: result.model || 'wan_3_prime',
+                model_label: result.model === 'wan_3' ? 'Wan 3.0 Video' : 'Wan 3.0 Video Prime', aspect_ratio: 'adaptive',
                 status: result.status === 'done' ? 'completed' : result.status === 'failed' ? 'failed' : 'pending',
                 created_at: new Date().toISOString(), prompt_preview: '', cost: result.reserve_cost })
             }}

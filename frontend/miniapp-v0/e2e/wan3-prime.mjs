@@ -40,7 +40,7 @@ async function setup(width = 375, behavior = {}) {
     if (url.pathname.includes('/mini-app/api/')) {
       const body = req.headers()['content-type']?.includes('application/json') ? req.postDataJSON() : {}
       let result = { ok: true }, status = 200
-      if (url.pathname.endsWith('/bootstrap')) result = bootstrap
+      if (url.pathname.endsWith('/bootstrap')) result = behavior.ordinary ? { ...bootstrap, video_models: [{ ...wan, id: 'wan_3', label: 'Wan 3.0 Video' }, ...extraModels] } : bootstrap
       else if (url.pathname.endsWith('/genjutsu')) result = body.action === 'recipe_list' ? { ok: true, items: [] } : { ok: true, visible: false }
       else if (url.pathname.endsWith('/feed')) result = { ok: true, feed: [] }
       else if (url.pathname.endsWith('/prompts')) result = { ok: true, prompts: [] }
@@ -94,8 +94,9 @@ try {
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   browser = await chromium.launch({ headless: true })
+  for (const ordinary of [false, true]) {
   for (const [mode, label] of cases) {
-    const qa = await setup(mode === 'edit' ? 320 : 375), { page } = qa
+    const qa = await setup(mode === 'edit' ? 320 : 375, { ordinary }), { page } = qa
     await page.getByRole('button', { name: label, exact: true }).click()
     if (mode === 'text' || mode === 'edit') await page.getByLabel('Инструкции Wan').fill('Изменить одежду по Image1; сохранить движение Video1.'.replace(mode === 'text' ? /по Image1; сохранить движение Video1/ : /UNUSED/, 'в кадре'))
     if (mode === 'first_frame' || mode === 'first_last') await upload(page, 'Загрузить первый кадр', 'first.png')
@@ -146,7 +147,11 @@ try {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false, 'Overflow in ' + mode)
     await page.getByRole('button', { name: 'Рассчитать стоимость', exact: true }).click()
     const start = page.getByRole('button', { name: 'Запустить Wan', exact: true })
-    await start.scrollIntoViewIfNeeded()
+    // Quote completion inserts the price/notice block above Start. Scrolling
+    // before that render can put the button under the persistent navigation.
+    await page.waitForFunction(() => Array.from(document.querySelectorAll('button')).some(button => button.textContent.trim() === 'Запустить Wan' && !button.disabled))
+    await start.evaluate(el => el.scrollIntoView({ block: 'center', behavior: 'instant' }))
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
     assert.equal(await start.evaluate(el => { const r = el.getBoundingClientRect(); return el.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)) }), true, 'Start obscured by navigation')
     if (mode === 'edit') {
       mkdirSync('.artifacts/wan3-prime', { recursive: true })
@@ -156,11 +161,12 @@ try {
     await page.getByText('wan3_browser_task', { exact: true }).waitFor()
     assert.equal(qa.generations.length, 1)
     const sent = qa.generations[0]
+    assert.equal(sent.recipe.model, ordinary ? 'wan_3' : 'wan_3_prime')
     assert.equal(sent.quote_hash, 'synthetic-quote'); assert.ok(sent.idempotency_key)
     assert.equal(sent.recipe.scenario, mode); assert.equal(sent.recipe.seed, 0); assert.equal(sent.recipe.audio, false)
     assert.equal(sent.recipe.nsfw_checker, true); assert.equal(sent.recipe.resolution, '720P'); assert.equal(sent.recipe.aspect_ratio, '9:16')
     assert.equal(sent.recipe.duration, mode === 'edit' ? -1 : 7)
-    assert.deepEqual(sent.recipe, qa.quotes[0].recipe)
+    assert.deepEqual(sent.recipe, qa.quotes.at(-1).recipe)
     if (mode === 'edit') {
       assert.deepEqual(sent.recipe.reference_video_urls, ['https://owned.test/source.mp4', 'https://owned.test/style.mp4'])
       assert.deepEqual(sent.recipe.reference_file_urls, ['https://owned.test/brief.pdf'])
@@ -168,7 +174,8 @@ try {
     }
     assert.deepEqual(qa.errors, [])
     await qa.context.close()
-    console.log(`PASS browser Wan ${mode}: all output fields, owned uploads/import, quote then explicit launch`)
+    console.log(`PASS browser Wan ${ordinary ? "ordinary" : "Prime"} ${mode}: all output fields, owned uploads/import, quote then explicit launch`)
+  }
   }
   const filter = await setup(430)
   await filter.page.locator('[data-testid="wan3-prime-form"] button[aria-expanded]').click()

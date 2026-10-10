@@ -597,6 +597,22 @@ VIDEO_MODELS = (
         "max_audio_references": get_max_audio_references("wan_3_prime"),
     },
     {
+        "id": "wan_3",
+        "label": "Wan 3.0 Video",
+        "description": "Полная KIE Wan 3.0: текст, кадры, референсы, edit, документы и ссылки",
+        "durations": [-1] + list(range(2, 31)),
+        "ratios": ["adaptive", "16:9", "4:3", "1:1", "3:4", "9:16"],
+        "supports": ["text", "imgtxt", "first_last", "video", "edit", "file", "link"],
+        "wan_resolutions": ["480P", "720P", "1080P"],
+        "supports_seed": True,
+        "supports_wan_audio": True,
+        "supports_nsfw_checker": True,
+        "requires_quality_pricing": True,
+        "max_image_references": 10,
+        "max_video_references": 5,
+        "max_audio_references": get_max_audio_references("wan_3"),
+    },
+    {
         "id": "gemini_omni",
         "label": "Gemini Omni",
         "description": "Единое меню для Gemini Omni Video, Audio ID и Character ID",
@@ -749,7 +765,7 @@ def _video_pricing_quality(
         return veo_resolution or "720p"
     if key == "gemini_omni_video":
         return omni_resolution or "720p"
-    if key == "wan_3_prime":
+    if key in {"wan_3_prime", "wan_3"}:
         return (veo_resolution or "1080P").lower()
     return None
 
@@ -2068,7 +2084,7 @@ async def _launch_video_generation_task(
     _launch_observation: dict[str, Any] | None = None,
     billing_quote: VideoQuote | None = None,
 ) -> dict[str, Any]:
-    if model == "wan_3_prime":
+    if model in {"wan_3_prime", "wan_3"}:
         raise ValueError("Wan requires its validated quote and idempotent lifecycle; open the Wan editor")
     from bot.services.gemini_omni_service import gemini_omni_service
     from bot.services.grok_service import grok_service
@@ -2102,7 +2118,7 @@ async def _launch_video_generation_task(
     if model == "gemini_omni_video":
         image_references = _clean_unique_values(image_references)
         video_references = _clean_unique_values(video_references)
-    elif model == "wan_3_prime":
+    elif model in {"wan_3_prime", "wan_3"}:
         image_references = _clean_ordered_values(image_references)
         video_references = _clean_ordered_values(video_references)
     else:
@@ -2114,7 +2130,7 @@ async def _launch_video_generation_task(
             video_references,
             max_count=get_max_video_references(model),
         )
-    if model == "wan_3_prime":
+    if model in {"wan_3_prime", "wan_3"}:
         audio_references = _clean_ordered_values(audio_references or [])
     else:
         audio_references = normalize_reference_urls(
@@ -4973,7 +4989,7 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
     source_feed_gen_id: int | None = None
     try:
         body = await request.json()
-        if isinstance(body, dict) and str(body.get('model') or body.get('v_model') or '') in {'wan_3_prime', 'wan3_prime', 'wan/3-0-video-prime'}:
+        if isinstance(body, dict) and str(body.get('model') or body.get('v_model') or '') in {'wan_3_prime', 'wan3_prime', 'wan/3-0-video-prime', 'wan_3', 'wan3', 'wan/3-0-video'}:
             from bot.wan3_prime_api import miniapp_generate_wan
             return await miniapp_generate_wan(request, body)
         init_data = body.get("init_data", "")
@@ -5034,7 +5050,7 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
             or (source_feed_task or {}).get("model")
             or "v3_pro"
         )
-        if model == "wan_3_prime":
+        if model in {"wan_3_prime", "wan_3"}:
             return web.json_response({"ok": False, "code": "wan3_editor_required",
                 "error": "Откройте публикацию в редакторе Wan для расчёта и замены референсов."}, status=409)
         generation_type = str(

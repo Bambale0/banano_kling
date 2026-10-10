@@ -412,3 +412,30 @@ test('cancellation stays busy until cleanup finishes and retains a cleanup failu
   expect(field.getByRole('button', { name: 'Повторить загрузку' })).toBeEnabled()
   expect(uploadWan3PrimeReference).toHaveBeenCalledTimes(1)
 })
+
+
+test('ordinary WAN keeps identity across modes and auto-refreshes fixed input-plus-output quote before explicit launch', async () => {
+  ;(quoteWan3Prime as jest.Mock).mockImplementation(async ({ recipe }) => ({
+    ...quote, auto_duration: false, source_video_duration_seconds: 7,
+    billing_duration_seconds: 7 + recipe.duration,
+    reserve_cost: 4 * (7 + recipe.duration), quote_hash: 'fixed-' + recipe.duration,
+    settlement_notice: 'Показанная стоимость фиксируется при запуске.',
+  }))
+  render(<Wan3PrimeForm model="wan_3" credits={1000} />)
+  expect(screen.getByText('Wan 3.0 Video')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'По референсам' }))
+  await upload('Загрузить видео-референсы', 'reference.mp4', 'video/mp4')
+  await screen.findByText('Стоимость: 48🍌')
+  expect(quoteWan3Prime).toHaveBeenLastCalledWith(expect.objectContaining({
+    recipe: expect.objectContaining({ model: 'wan_3', duration: 5 }),
+  }), expect.any(AbortSignal))
+  expect(generateWan3Prime).not.toHaveBeenCalled()
+  fireEvent.change(screen.getByRole('slider', { name: 'Длительность Wan' }), { target: { value: '6' } })
+  expect(screen.getByRole('button', { name: 'Запустить Wan' })).toBeDisabled()
+  await screen.findByText('Стоимость: 52🍌')
+  expect(generateWan3Prime).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: 'Запустить Wan' }))
+  await waitFor(() => expect(generateWan3Prime).toHaveBeenCalledWith(expect.objectContaining({
+    recipe: expect.objectContaining({ model: 'wan_3', duration: 6 }), quote_hash: 'fixed-6',
+  })))
+})
