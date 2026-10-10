@@ -5,11 +5,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, Router, types
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.methods import AnswerCallbackQuery, EditMessageText
 
-from bot.handlers import admin as admin_handlers
 from bot.handlers import partner_rate_admin, promo_admin
 
 
@@ -34,9 +33,16 @@ async def test_promo_history_and_draft_open_reach_promo_router(monkeypatch):
     monkeypatch.setattr(promo_admin, "_service", lambda: service)
     monkeypatch.setattr(promo_admin.config, "is_admin", lambda user_id: user_id == 999999999)
 
+    # Global routers may already belong to another dispatcher in the full suite.
+    # Reuse their real registered handlers/filters without reparenting globals.
+    def callback_router(source, name):
+        isolated = Router(name=name)
+        isolated.callback_query.handlers.extend(source.callback_query.handlers)
+        return isolated
+
     dispatcher = Dispatcher(storage=MemoryStorage())
-    dispatcher.include_router(partner_rate_admin.router)
-    dispatcher.include_router(admin_handlers.router)
+    dispatcher.include_router(callback_router(partner_rate_admin.router, "rates"))
+    dispatcher.include_router(callback_router(promo_admin.router, "promos"))
     bot = Bot("123456:TEST_TOKEN_FOR_CI_ONLY")
     user = types.User(id=999999999, is_bot=False, first_name="Admin")
     menu = types.Message(
