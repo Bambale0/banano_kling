@@ -207,6 +207,7 @@ def trend_metadata(trend):
     return {"trend_id": int(trend.trend_id), "action_type": "trend", "prompt_source_id": int(trend.trend_id),
             "reference_contract": trend.reference_contract or None, "prompt_hidden": True,
             "prompt_actions_allowed": False, "_launch_surface": "trend",
+            "_authorized_video_sources": list(getattr(trend, "template_video_urls", ())),
             "fixed_asset_counts": {kind: len(getattr(trend, f"template_{kind}_urls", ())) for kind in ("image", "video", "audio")}}
 
 

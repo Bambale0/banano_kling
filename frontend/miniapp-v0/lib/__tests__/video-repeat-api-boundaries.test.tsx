@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { bootstrapApp, fetchFeedItem, fetchTaskDetail, generateVideo, unpublishGeneration } from '../api'
 import { notifyFeedChanged, mergePendingPublication } from '../feed-events'
 import { hydrateSeedance25IdentityPreset } from '../seedance25-repeat'
@@ -13,7 +13,7 @@ const preset: VideoPromptPreset = { title: 'Repeat', prompt: '', promptHidden: t
   repeatReferenceSlots: { version: 1, available: true, cost_multiplier: 2, images: [], videos: [{ index: 0, role: 'reference', binding: 'fixed' }] } }
 const payload = { model: videoModel.id, scenario: 'video' as const, duration: 5, ratio: '16:9', sourceFeedGenId: preset.sourceFeedGenId, prompt: '', startImage: null, references: [], videoReferences: [] }
 const fetchMock = jest.fn()
-beforeEach(() => { fetchMock.mockReset(); global.fetch = fetchMock; window.sessionStorage.clear(); window.history.replaceState({}, '', '/mini-app/') })
+beforeEach(() => { fetchMock.mockReset(); global.fetch = fetchMock; window.sessionStorage.clear(); localStorage.clear(); window.Telegram!.WebApp!.initData = 'mock_init_data'; window.history.replaceState({}, '', '/mini-app/') })
 
 it('normalizes an actual Omni feed card to the available public model', async () => {
   fetchMock.mockResolvedValueOnce(respond({ ok: true, feed_item: { id: 41, task_id: 'source-omni', model: 'gemini_omni_video', gen_type: 'video', is_mine: false, scenario: 'video', repeat_reference_slots: { version: 1, available: true, cost_multiplier: 1, images: [{ index: 0, role: 'reference', binding: 'fixed' }], videos: [] } } }))
@@ -47,9 +47,12 @@ it('preserves accepted status and prevents duplicate HTTP submissions until the 
 })
 
 it('shows accepted status after real HTTP failure and keeps it after the form is reopened', async () => {
+  window.Telegram!.WebApp!.initData = 'user=%7B%22id%22%3A1%7D'
+  fetchMock.mockResolvedValueOnce(respond({ ok:true,quote_id:'a'.repeat(32),quote_hash:'b'.repeat(64),cost:10,charge_cost:10,input_seconds:5,selected_output_seconds:5 }))
   fetchMock.mockResolvedValueOnce(respond({ ok: false, code: 'video_status_pending', task_id: 'accepted-task', error: 'Accepted; awaiting status' }, false))
   const props = { models: [videoModel], promptPreset: preset, onSubmit: async (data: Parameters<typeof generateVideo>[0]) => { await generateVideo(data) }, isSubmitting: false, credits: 100 }
   const view = render(<VideoGeneratorForm {...props} />)
+  await waitFor(() => expect(screen.getByRole('button', { name: /Запустить видео/ })).toBeEnabled())
   fireEvent.click(screen.getByRole('button', { name: /Запустить видео/ }))
   await screen.findByText('Видео принято, ожидаем подтверждения статуса')
   expect(screen.queryByText(/Откройте публикацию заново/)).not.toBeInTheDocument()
@@ -58,7 +61,7 @@ it('shows accepted status after real HTTP failure and keeps it after the form is
   render(<VideoGeneratorForm {...props} promptPreset={{ ...preset }} />)
   expect(screen.getByText('Видео принято, ожидаем подтверждения статуса')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: /Запустить видео/ })).toBeDisabled()
-  expect(fetchMock).toHaveBeenCalledTimes(1)
+  expect(fetchMock).toHaveBeenCalledTimes(2)
 })
 
 
@@ -92,14 +95,19 @@ it('uses retained-quality server duration quotes from an actual Seedance feed re
   } } }))
   const item = await fetchFeedItem(480)
   const hydrated = await hydrateSeedance25IdentityPreset(item, { ...preset, model: 'seedance_2_5', sourceFeedGenId: 480 })
+  fetchMock.mockImplementation(async (_url, options) => {
+    const body = JSON.parse(options.body)
+    const output = body.v_duration
+    return respond({ ok:true, quote_id:'a'.repeat(32), quote_hash:'b'.repeat(64), cost: output === 5 ? 4 : 6,
+      charge_cost:output === 5 ? 4 : 6,input_seconds:5,selected_output_seconds:output })
+  })
   const onSubmit = jest.fn()
   render(<VideoGeneratorForm models={[{ ...videoModel, id: 'seedance_2_5', durations: [5, 10], costs: { '5': 5, '10': 10 } }]} promptPreset={hydrated} onSubmit={onSubmit} isSubmitting={false} credits={4} />)
-  expect(screen.getByRole('button', { name: /Запустить видео/ })).toBeEnabled()
+  await waitFor(() => expect(screen.getByRole('button', { name: /Запустить видео/ })).toBeEnabled())
   expect(screen.getByText('4', { exact: true })).toBeInTheDocument()
-  expect(screen.getByText('5 сек. • 16:9 • 0.8🍌/с')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: /10с.*0.8\/с/ })).toBeInTheDocument()
-  fireEvent.click(screen.getByRole('button', { name: /10с.*0.8\/с/ }))
-  expect(screen.getByText('8', { exact: true })).toBeInTheDocument()
+  expect(screen.getByText('Вход 5 с + результат 5 с')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: /10с/ }))
+  expect(await screen.findByText('6', { exact: true })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: /Запустить видео/ })).toBeDisabled()
   expect(onSubmit).not.toHaveBeenCalled()
 })

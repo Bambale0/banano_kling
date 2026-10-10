@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import json
 import os
+import uuid
 
 import psycopg
 import pytest
@@ -51,12 +52,13 @@ async def test_pg_simultaneous_authenticated_repeat_has_one_debit_and_provider(m
         # Only acquisition/probing is stubbed. Actual owned rows, hash checks,
         # quote claim, SQL debit, canonical binding and replay remain real.
         rows = []
+        batch = uuid.uuid4().hex
         async with db_backend.connect(database.DATABASE_PATH) as db:
             for index, _source in enumerate(sources):
-                path = tmp_path / f"owned-{actor.user_id}-{index}.mp4"
+                path = tmp_path / f"owned-{batch}-{actor.user_id}-{index}.mp4"
                 path.write_bytes(f"synthetic immutable video {index}".encode())
                 digest = hashlib.sha256(path.read_bytes()).hexdigest()
-                url = f"https://example.test/pinned/{actor.user_id}/{index}.mp4"
+                url = f"https://example.test/pinned/{batch}/{actor.user_id}/{index}.mp4"
                 cursor = await db.execute(
                     "INSERT INTO wan3_prime_media(user_id,telegram_id,kind,public_url,local_path,filename,size_bytes,sha256,media_info,source) "
                     "VALUES (?,?,'video',?,?,?, ?,?,'{}','seedance_quote_snapshot') RETURNING id",

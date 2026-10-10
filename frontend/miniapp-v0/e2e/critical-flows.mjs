@@ -227,7 +227,7 @@ try {
     window.__telegramEventHandlers = {}
     window.Telegram = {
       WebApp: {
-        initData: 'query_id=e2e',
+        initData: 'query_id=e2e&user=%7B%22id%22%3A22%7D',
         initDataUnsafe: {},
         ready() {},
         expand() {},
@@ -379,7 +379,20 @@ try {
     }
 
     if (path.endsWith('/generate-video')) {
-      seedanceGenerationPayload = JSON.parse(request.postData() || '{}')
+      const payload = JSON.parse(request.postData() || '{}')
+      if (payload.video_quote_only || payload.seedance25_quote_only) {
+        const output = payload.seedance25_video_editing ? 7 : payload.v_duration
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+          ok: true, status: 'quoted', quote_id: 'a'.repeat(32), quote_hash: 'b'.repeat(64),
+          cost: (7 + output) * 2, charge_cost: bootstrapPayload.is_admin ? 0 : (7 + output) * 2,
+          input_seconds: 7, selected_output_seconds: output, billable_seconds: 7 + output,
+          billing_version: 2, expires_at: '2099-01-01T00:00:00Z',
+        }) })
+        return
+      }
+      seedanceGenerationPayload = payload
+      assert.equal(payload.video_quote_id, 'a'.repeat(32))
+      assert.equal(payload.video_quote_hash, 'b'.repeat(64))
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
         ok: true, status: 'queued', task_id: 'seedance-edit-e2e', credits: 125,
         cost: 0, model_label: 'Seedance 2.5', admin_free: bootstrapPayload.is_admin,
@@ -787,7 +800,7 @@ try {
       assert.equal(await page.getByLabel('Редактировать видео', { exact: true }).count(), 0)
       assert.equal(await durationSlider.isEnabled(), true)
     }
-    const generationRequest = page.waitForResponse((response) => response.url().endsWith('/generate-video') && response.status() === 200)
+    const generationRequest = page.waitForResponse((response) => response.url().endsWith('/generate-video') && response.status() === 200 && !response.request().postDataJSON()?.video_quote_only && !response.request().postDataJSON()?.seedance25_quote_only)
     await page.getByRole('button', { name: /Создать видео/ }).click()
     await generationRequest
     assert.equal(seedanceGenerationPayload.seedance25_video_editing, editing)

@@ -904,6 +904,7 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
     payload.update(source_feed_gen_id=source_feed_gen_id, parent_generation_id=immediate_parent_id)
     payload["_launch_surface"] = "miniapp"
     payload["_private_repeat"] = bool(getattr(request, "_video_repeat_authorization", None))
+    payload["_authorized_video_sources"] = list(body.get("_private_repeat_reference_videos") or []) if payload["_private_repeat"] else []
     if _needs_measured_quote(payload):
         from bot.handlers.miniapp_video_continuity_compat import verify_video_repeat_before_charge
         from bot.services.seedance_quote_lifecycle import public_quote

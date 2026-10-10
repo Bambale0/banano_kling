@@ -69,8 +69,8 @@ async def prepare_quote(telegram_id: int, model: str, original: dict, *, video_k
     user = await database.get_or_create_user(telegram_id)
     actor = SimpleNamespace(user_id=user.id, telegram_id=telegram_id)
     sources = effective_video_sources(original, video_key, model)
-    server_authorized = bool(original.get("source_feed_gen_id") or original.get("trend_id") or original.get("_repeat_context"))
-    await authorize_video_sources(actor, sources, server_authorized=server_authorized)
+    authorized_sources = tuple(original.get("_authorized_video_sources") or ())
+    await authorize_video_sources(actor, sources, authorized_sources=authorized_sources)
     snapshots = await prepare_video_snapshots(actor, sources)
     provider = deepcopy(original)
     provider[video_key] = [item["url"] for item in snapshots]

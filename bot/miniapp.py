@@ -5436,7 +5436,8 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
                        "source_feed_gen_id": source_feed_gen_id,
                        "parent_generation_id": immediate_parent_id if source_feed_gen_id else None,
                        "action_type": "repeat" if source_feed_gen_id else None, "_launch_surface": "miniapp",
-                       "video_repeat_contract_version": 1 if private_repeat else None}
+                       "video_repeat_contract_version": 1 if private_repeat else None,
+                       "_authorized_video_sources": list(private_repeat_video_refs) if private_repeat else []}
             return await miniapp_measured_seedance2(request, body, telegram_id, payload)
         if body.get("video_quote_only") is True:
             return web.json_response({"ok": False, "error": "Добавьте видео для измеренного расчёта"}, status=400)

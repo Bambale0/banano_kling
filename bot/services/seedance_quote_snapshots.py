@@ -10,7 +10,10 @@ from pathlib import Path
 
 from bot import database
 from bot import db as db_backend
-from bot.services.media_input_utils import resolve_local_upload_path
+from bot.services.media_input_utils import (
+    canonicalize_local_upload_url,
+    resolve_local_upload_path,
+)
 from bot.services.video_reference_measurement import (
     MAX_VIDEO_BYTES,
     _file_hash,
@@ -117,16 +120,17 @@ async def _snapshot(actor, source: str, storage: Wan3PrimeStorage, *, occurrence
                 raise
 
 
-async def authorize_video_sources(actor, sources: list[str], *, server_authorized: bool = False):
+async def authorize_video_sources(actor, sources: list[str], *, authorized_sources: tuple[str, ...] = ()):
     """Public remote URLs are fetchable; local paths additionally need ownership.
 
     The caller may authorize retained private/trend sources only after rebuilding
-    their server-owned permission context; this flag is never client supplied.
+    their server-owned permission context; this allowlist is never client supplied.
     """
-    if server_authorized:
-        return
+    retained = {canonicalize_local_upload_url(value) for value in authorized_sources}
     own_root = (Path("static/uploads/refs/video") / str(actor.telegram_id)).resolve()
     for source in sources:
+        if canonicalize_local_upload_url(source) in retained:
+            continue
         local = resolve_local_upload_path(source)
         if not local:
             continue

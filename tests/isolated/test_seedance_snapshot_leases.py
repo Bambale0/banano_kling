@@ -75,7 +75,7 @@ class SnapshotTests(unittest.IsolatedAsyncioTestCase):
         @asynccontextmanager
         async def connect(_):
             yield SimpleNamespace(execute=execute)
-        ns = {"Path":Path,"resolve_local_upload_path":lambda value:value if value.startswith("static/") else None,
+        ns = {"Path":Path,"canonicalize_local_upload_url":lambda value:value,"resolve_local_upload_path":lambda value:value if value.startswith("static/") else None,
               "database":SimpleNamespace(DATABASE_PATH="fixture"),"db_backend":SimpleNamespace(connect=connect)}
         exec(compile(ast.Module(body=[node],type_ignores=[]),"ownership_guard","exec"),ns)  # noqa: S102
         authorize = ns["authorize_video_sources"]
@@ -86,6 +86,11 @@ class SnapshotTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(ValueError,"Загрузите своё"):
                 await authorize(actor,[source])
             self.assertEqual(execute.await_args.args[1][0],1)
+        retained = "static/uploads/refs/video/5000000002/retained.mp4"
+        foreign_replacement = "static/uploads/refs/video/5000000003/replacement.mp4"
+        with self.assertRaises(ValueError):
+            await authorize(actor,[retained,foreign_replacement],authorized_sources=(retained,))
+        await authorize(actor,[retained,"static/uploads/refs/video/5000000001/own.mp4"],authorized_sources=(retained,))
         cursor.fetchone.return_value = (1,)
         await authorize(actor,["static/uploads/wan3_prime/media/1/owned.mp4"])
         await authorize(actor,["https://public.example/source.mp4"])
@@ -108,7 +113,7 @@ class SnapshotTests(unittest.IsolatedAsyncioTestCase):
         copy.assert_not_awaited()
         store.create.assert_not_awaited()
         ns["authorize_video_sources"].assert_awaited_once()
-        self.assertFalse(ns["authorize_video_sources"].await_args.kwargs["server_authorized"])
+        self.assertEqual(ns["authorize_video_sources"].await_args.kwargs["authorized_sources"],())
 
     async def test_repeated_source_slots_have_distinct_provider_urls(self):
         import math
