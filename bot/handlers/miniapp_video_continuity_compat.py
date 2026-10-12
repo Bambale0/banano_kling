@@ -494,6 +494,7 @@ def _enrich_legacy_video_repeat_body(
                 source_images = _first_list(request_data, _REPEAT_LIST_ALIASES["reference_images"])
                 legacy_first_photo_edit = (
                     not source_task.get("_repeat_is_owner")
+                    and not source_task.get("feed_references_visible")
                     and str(source_task.get("model") or "") == "seedance_2_5"
                     and restored_scenario == "multimodal"
                     and str(body.get("v_type") or "").strip().lower() == "imgtxt"

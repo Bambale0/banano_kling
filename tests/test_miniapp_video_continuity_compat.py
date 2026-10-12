@@ -1061,3 +1061,26 @@ def test_legacy_seedance25_repeat_rejects_source_tail_alias_collapse():
             {"v_model": "seedance_2_5", "v_type": "imgtxt",
              "reference_images": ["https://example.test/viewer.png"]}, source,
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("replace_all", [False, True])
+async def test_visible_legacy_seedance25_repeat_accepts_multiple_photos_at_http_boundary(
+    video_repeat_entrypoint, replace_all,
+):
+    entry = video_repeat_entrypoint
+    originals = ["https://example.test/visible-face.png", "https://example.test/visible-style.png"]
+    images = ["https://example.test/new-face.png", "https://example.test/new-style.png"] if replace_all else originals
+    entry.source.return_value.update(
+        user_id=502, feed_references_visible=True, feed_reference_selection=None,
+        request_data={"seedance25_scenario": "multimodal", "reference_images": originals},
+    )
+    request = entry.request({
+        "source_feed_gen_id": 42, "v_model": "seedance_2_5",
+        "v_type": "imgtxt", "reference_images": images,
+    })
+    response = await entry.call(request)
+    assert response.status == 200
+    entry.delegate.assert_awaited_once()
+    assert (await request.json())["reference_images"] == images
+    assert request._video_repeat_guard["viewer_user_id"] == 501
