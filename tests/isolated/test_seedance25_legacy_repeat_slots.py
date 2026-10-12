@@ -84,6 +84,16 @@ class LegacyRepeatSlotsTests(unittest.TestCase):
         self.body["seedance25_identity_transfer"] = True
         self.assertEqual(self.restore()["reference_images"], [self.viewer])
 
+    def test_visible_legacy_repeat_accepts_all_displayed_images(self):
+        self.source["feed_references_visible"] = True
+        self.body["reference_images"] = [self.face, self.fixed]
+        self.assertEqual(self.restore()["reference_images"], [self.face, self.fixed])
+
+    def test_visible_legacy_repeat_keeps_existing_multi_photo_edit(self):
+        self.source["feed_references_visible"] = True
+        self.body["reference_images"] = [self.viewer, "https://example.test/new-style.png"]
+        self.assertEqual(self.restore()["reference_images"], self.body["reference_images"])
+
     def test_exact_repeat_keeps_all_source_slots(self):
         self.body["reference_images"] = []
         result = self.restore()

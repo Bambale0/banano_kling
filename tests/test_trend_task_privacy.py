@@ -203,3 +203,57 @@ async def test_seedance_trend_task_redacts_every_typed_private_reference(monkeyp
         assert key not in clean
     assert clean["fixed_asset_counts"] == {"image": 1, "video": 1, "audio": 1}
     assert clean["provider_model"] == "bytedance/seedance-2-5"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lookup_fails", [False, True])
+async def test_legacy_seedance_repeat_task_detail_http_redacts_retained_images(monkeypatch, lookup_fails):
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from bot import miniapp
+    from bot.handlers import seedance_25_public_release as public
+
+    hidden = "https://example.test/synthetic-hidden-author.png"
+    secret_prompt = "Synthetic private recipe @Image1 @Image2"
+    payload = {
+        "scenario": "multimodal", "duration": 9, "ratio": "9:16",
+        "first_frame": None, "last_frame": None,
+        "image_urls": ["https://example.test/viewer.png", hidden],
+        "video_urls": [], "audio_urls": [], "resolution": "720p",
+        "generate_audio": True, "return_last_frame": False,
+        "output_format": "mp4", "web_search": False, "nsfw_checker": True,
+    }
+    stored = public._request_data(payload, is_admin=False, quote=63, source="miniapp")
+    # Actual legacy launch persists lineage without the typed-contract marker.
+    stored.update(source_feed_gen_id=42, parent_generation_id=42, action_type="repeat")
+    assert "video_repeat_contract_version" not in stored
+    detail = {
+        "task_id": "synthetic-legacy-child", "prompt": secret_prompt,
+        "request_data": stored, "publication_reference_images": payload["image_urls"],
+        "publication_reference_image_indices": [0, 1],
+    }
+    fetch = AsyncMock(return_value=detail)
+    monkeypatch.setattr(miniapp, "_get_user_context", AsyncMock(return_value=(700001, {})))
+    monkeypatch.setattr(miniapp, "_fetch_task_detail", fetch)
+    lookup = AsyncMock(side_effect=RuntimeError("synthetic unavailable")) if lookup_fails else AsyncMock(return_value=set())
+    monkeypatch.setattr(trend_task_privacy, "_protected_task_ids", lookup)
+    request = SimpleNamespace(app={}, json=AsyncMock(return_value={
+        "init_data": "synthetic", "task_id": "synthetic-legacy-child",
+    }))
+
+    response = await miniapp.miniapp_task_detail(request)
+
+    assert response.status == 200
+    fetch.assert_awaited_once_with(700001, "synthetic-legacy-child")
+    result = json.loads(response.text)["task"]
+    assert hidden not in response.text
+    assert secret_prompt not in response.text
+    assert "publication_reference_images" not in result
+    assert "reference_images" not in result["request_data"]
+    assert result["prompt_hidden"] is True
+    assert result["prompt_actions_allowed"] is False
+    # Redaction must not destroy the server recipe required by future repeats.
+    assert stored["reference_images"] == payload["image_urls"]
+    assert detail["prompt"] == secret_prompt

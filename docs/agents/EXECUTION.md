@@ -1934,3 +1934,12 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Local tools: pure AST tests only, no application/database imports. Full HTTP/backend/browser regression runs require CI.
 - Guidance: local diagnosing-bugs (Bambale0/skills), debugger (Bambale0/claw), webapp-testing (anthropics/skills). Previously denied shared playbook refresh was not retried.
 - Rollout: draft PR to tanyapi; independent exact-head review and full required CI; parent sends pre-release report before merge/CD. No paid production smoke.
+
+## 2026-10-12: visible legacy repeat follow-up
+
+- Base fcea07bdd203dd446acdd09c60fcd4ee04d084c7. Review P2 reproduced: visible legacy publications with null selection submit all displayed images; the new hidden-slot guard rejected them.
+- Minimal correction: apply the first-photo-only protection only when the source references are hidden. Server-owned visibility is used; browser fields cannot bypass it. Existing visible legacy all-or-nothing behavior is preserved.
+- RED: 2 new visible cases errored / 10 prior hidden cases passed. Full installed HTTP-entry regression covers unchanged visible lists and complete visible edits.
+- Review P1 task-detail exposure was not reproduced on the actual HTTP path: miniapp_task_detail calls the existing privacy sanitizer, which recognizes persisted source_feed_gen_id and removes hidden links/prompt. Added actual HTTP handler tests using real S2.5 request-data assembly, with both successful and failed privacy lookup. No production privacy change needed for this reported path.
+- No database, pricing, media restoration or provider-call changes. Local verification uses isolated functions; full app tests run in CI without local forbidden-adapter imports.
+- Release gates remain independent review, exact-head full CI, parent pre-release report and guarded CD/runtime verification.
