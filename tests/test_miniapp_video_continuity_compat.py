@@ -1047,3 +1047,17 @@ def test_legacy_seedance25_repeat_rejects_retained_slot_collision(viewer):
             {"v_model": "seedance_2_5", "v_type": "imgtxt", "reference_images": [viewer]},
             source,
         )
+
+
+def test_legacy_seedance25_repeat_rejects_source_tail_alias_collapse():
+    source = {
+        "model": "seedance_2_5", "prompt": "Synthetic @Image1 @Image2 @Image3",
+        "request_data": {"seedance25_scenario": "multimodal",
+                         "reference_images": ["https://example.test/face.png", "/uploads/style.png",
+                                              "https://media.chillcreative.ru/uploads/style.png"]},
+    }
+    with pytest.raises(VideoRepeatReferenceError, match="неоднозначны"):
+        enrich_video_repeat_body(
+            {"v_model": "seedance_2_5", "v_type": "imgtxt",
+             "reference_images": ["https://example.test/viewer.png"]}, source,
+        )

@@ -505,6 +505,14 @@ def _enrich_legacy_video_repeat_body(
                     # The legacy generic picker edits Image1, not every hidden
                     # source slot. None is not a grant to replace Image2..N.
                     retained = source_images[1:]
+                    if any(
+                        _resolve_repeat_source(value, retained[:index]) is not None
+                        for index, value in enumerate(retained)
+                    ):
+                        raise VideoRepeatReferenceError(
+                            "Исходные слоты референсов неоднозначны. "
+                            "Попросите автора обновить публикацию."
+                        )
                     if len(explicit_reference_images) != 1 or _resolve_repeat_source(
                         explicit_reference_images[0], retained,
                     ) is not None:
