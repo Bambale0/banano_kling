@@ -1911,3 +1911,14 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Local checks: 27 isolated Python tests on synthetic SQLite/pure functions; 5 real PostgreSQL16 fixture transaction tests (BIGINT, concurrency, refund rollback, pending guard); 3 Jest pending-state tests; TypeScript and changed ESLint passed.
 - PostgreSQL fixture used a temporary network-disabled container and test-only asyncpg cursor shim, not application adapter/full application CI. Created container removed after tests. No provider calls, actual Telegram sends or production DB access.
 - Independent review and full exact-head CI required before merge/release.
+
+
+## 2026-10-12 — Protect author trend assets from generic upload cleanup
+
+- Baseline and deployed SHA: `87087c244bd11127c60f86e19c04e0fbc2b95659`; isolated branch `fix/tanya-protect-trend-assets-20261012`.
+- Incident evidence: the production generic cleanup logged deletion of 15 trend asset files on October 11. The managed author-template directory was absent from its excluded roots.
+- Narrow fix: add `trend-assets` to the existing generic upload-cleanup excluded roots. No TTL, billing, ownership, database, provider, restore, or deployment-script changes. Existing missing assets remain unavailable; this patch prevents further generic TTL deletion only.
+- TDD: the actual cleanup loop and removal function, extracted without application imports, run against temporary synthetic directories. Before the fix: one preservation regression failed, two ordinary-cleanup/protection regressions passed. After the fix: all three regressions passed; focused Ruff and whitespace checks passed.
+- Tests preserve aged image/video/audio assets and empty shards, existing refs/feed/WAN/public-result protection, remove expired ordinary uploads (including similarly named directories), and preserve recent ordinary uploads. Production cleanup is never invoked by the tests.
+- Fresh playbooks were read through GitHub connectors. Shared local playbook git refresh was denied and was not retried; no claim of a successful local refresh.
+- Release gates: independent exact-head review, required CI, user-facing pre-release report, guarded deployment and exact SHA/health verification. No recovery from unverified media backups; no PR294/helper changes included.

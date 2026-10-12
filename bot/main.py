@@ -2695,7 +2695,8 @@ async def _cleanup_loop():
                 "static/uploads",
                 max_age_seconds=UPLOAD_RETENTION_SECONDS,
                 skip_filenames=set(),
-                skip_dirnames={"refs", "feed", "wan3_prime"},
+                # Author template assets are durable inputs, not temporary uploads.
+                skip_dirnames={"refs", "feed", "wan3_prime", "trend-assets"},
                 protected_paths=public_feed_paths,
             )
             await _remove_old_files(
