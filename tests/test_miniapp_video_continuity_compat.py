@@ -972,3 +972,92 @@ async def test_video_repeat_keeps_distinct_alias_slots_unmerged(
         assert response.status == 200
         assert (await request.json())["reference_images"] == expected
         entry.delegate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["replacement", "too_many", "missing_fixed", "revoked", "owner"])
+async def test_legacy_seedance25_repeat_preserves_hidden_slots_at_http_boundary(
+    video_repeat_entrypoint, case,
+):
+    from bot.handlers import miniapp_video_continuity_compat as continuity
+    from bot.services.seedance_25_service import Seedance25Service
+
+    entry = video_repeat_entrypoint
+    face = "https://example.test/source-face.png"
+    fixed = "https://example.test/hidden-style.png"
+    viewer = "https://example.test/viewer.png"
+    source = {
+        "id": 42, "user_id": 501 if case == "owner" else 502,
+        "type": "video", "status": "completed", "is_public_feed": True,
+        "model": "seedance_2_5", "prompt": "Synthetic @Image1 and @Image2",
+        "feed_references_visible": False, "feed_reference_selection": None,
+        "request_data": {"v_type": "video", "seedance25_scenario": "multimodal",
+                         "reference_images": [face, fixed]},
+    }
+    entry.source.return_value = source
+    body = {"source_feed_gen_id": 42, "v_model": "seedance_2_5", "v_type": "imgtxt",
+            "reference_images": [viewer]}
+    if case == "too_many":
+        body["reference_images"].append("https://example.test/extra.png")
+    if case == "missing_fixed":
+        entry.availability.return_value = [fixed]
+    request = entry.request(body)
+    response = await entry.call(request)
+    assert fixed not in response.text
+    assert source["prompt"] not in response.text
+    if case in {"too_many", "missing_fixed"}:
+        assert response.status == 400
+        entry.delegate.assert_not_awaited()
+        return
+    assert response.status == 200
+    restored = await request.json()
+    if case == "owner":
+        assert restored["reference_images"] == [viewer]
+        assert not hasattr(request, "_video_repeat_guard")
+        return
+    assert restored["reference_images"] == [viewer, fixed]
+    assert restored["_private_repeat_reference_images"] == [fixed]
+    assert face not in restored["reference_images"]
+    assert request._video_repeat_guard["source_id"] == 42
+    assert request._video_repeat_guard["viewer_user_id"] == 501
+    assert Seedance25Service.prepare_prompt(
+        restored["prompt"], image_urls=restored["reference_images"],
+        video_urls=[], audio_urls=[],
+    ) == source["prompt"]
+    if case == "revoked":
+        entry.card.return_value = None
+        rejection = await continuity.verify_video_repeat_before_charge(request)
+        assert rejection.status == 400
+        assert fixed not in rejection.text
+        assert source["prompt"] not in rejection.text
+
+
+@pytest.mark.parametrize("viewer", [
+    "/uploads/hidden-style.png",
+    "https://media.chillcreative.ru/uploads/hidden-style.png?alias=1",
+])
+def test_legacy_seedance25_repeat_rejects_retained_slot_collision(viewer):
+    source = {
+        "model": "seedance_2_5", "prompt": "Synthetic @Image1 with @Image2",
+        "request_data": {"seedance25_scenario": "multimodal",
+                         "reference_images": ["https://example.test/face.png", "/uploads/hidden-style.png"]},
+    }
+    with pytest.raises(VideoRepeatReferenceError):
+        enrich_video_repeat_body(
+            {"v_model": "seedance_2_5", "v_type": "imgtxt", "reference_images": [viewer]},
+            source,
+        )
+
+
+def test_legacy_seedance25_repeat_rejects_source_tail_alias_collapse():
+    source = {
+        "model": "seedance_2_5", "prompt": "Synthetic @Image1 @Image2 @Image3",
+        "request_data": {"seedance25_scenario": "multimodal",
+                         "reference_images": ["https://example.test/face.png", "/uploads/style.png",
+                                              "https://media.chillcreative.ru/uploads/style.png"]},
+    }
+    with pytest.raises(VideoRepeatReferenceError, match="неоднозначны"):
+        enrich_video_repeat_body(
+            {"v_model": "seedance_2_5", "v_type": "imgtxt",
+             "reference_images": ["https://example.test/viewer.png"]}, source,
+        )

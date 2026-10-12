@@ -491,7 +491,39 @@ def _enrich_legacy_video_repeat_body(
             # the server-side slot-preserving merge above. Do not overwrite that
             # with only the browser-visible refs.
             if explicit_reference_images and publication_selection is None:
-                normalized["reference_images"] = explicit_reference_images
+                source_images = _first_list(request_data, _REPEAT_LIST_ALIASES["reference_images"])
+                legacy_first_photo_edit = (
+                    not source_task.get("_repeat_is_owner")
+                    and str(source_task.get("model") or "") == "seedance_2_5"
+                    and restored_scenario == "multimodal"
+                    and str(body.get("v_type") or "").strip().lower() == "imgtxt"
+                    and normalized.get("seedance25_identity_transfer") is not True
+                    and normalized.get("seedance25_video_editing") is not True
+                    and len(source_images) > 1
+                )
+                if legacy_first_photo_edit:
+                    # The legacy generic picker edits Image1, not every hidden
+                    # source slot. None is not a grant to replace Image2..N.
+                    retained = source_images[1:]
+                    if any(
+                        _resolve_repeat_source(value, retained[:index]) is not None
+                        for index, value in enumerate(retained)
+                    ):
+                        raise VideoRepeatReferenceError(
+                            "Исходные слоты референсов неоднозначны. "
+                            "Попросите автора обновить публикацию."
+                        )
+                    if len(explicit_reference_images) != 1 or _resolve_repeat_source(
+                        explicit_reference_images[0], retained,
+                    ) is not None:
+                        raise VideoRepeatReferenceError(
+                            "Для этого повтора загрузите одно своё фото для первого "
+                            "слота. Остальные референсы сохраняются из публикации."
+                        )
+                    normalized["reference_images"] = [explicit_reference_images[0], *retained]
+                    normalized["_private_repeat_reference_images"] = retained
+                else:
+                    normalized["reference_images"] = explicit_reference_images
             if explicit_reference_videos and publication_selection is None:
                 normalized["v_reference_videos"] = explicit_reference_videos
             if explicit_audio_references:
