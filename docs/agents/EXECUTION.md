@@ -1922,3 +1922,15 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Tests preserve aged image/video/audio assets and empty shards, existing refs/feed/WAN/public-result protection, remove expired ordinary uploads (including similarly named directories), and preserve recent ordinary uploads. Production cleanup is never invoked by the tests.
 - Fresh playbooks were read through GitHub connectors. Shared local playbook git refresh was denied and was not retried; no claim of a successful local refresh.
 - Release gates: independent exact-head review, required CI, user-facing pre-release report, guarded deployment and exact SHA/health verification. No recovery from unverified media backups; no PR294/helper changes included.
+
+## 2026-10-12: preserve legacy Seedance 2.5 repeat image slots
+
+- Baseline: tanyapi 1af61b3f1e275fdc2f0507ef03ba27ec7f5c5e2c; separate fix branch.
+- Confirmed synthetic defect: generic Photo+Text repeat with one viewer photo replaced the entire legacy multimodal image list. A retained Image2 prompt binding then failed validation.
+- Scope: non-owner, legacy selection=None, multimodal S2.5, generic imgtxt, source list with multiple images. Replace Image1 only; retain Image2..N on the server in canonical order and private provenance. Multiple replacement images and collisions with retained slots fail closed. Explicit grants, owner edits, identity/editing and frame scenarios keep their existing contracts.
+- No schema/config/rate/provider/payment changes. No restoration of missing assets. The author-specific live examples are not yet linked to this synthetic reproduction.
+- Existing authenticated restoration and before-charge permission recheck remain unchanged; no hidden references or author prompt are returned in response/errors.
+- TDD: isolated actual-function regression initially 3 failed / 3 passed. Added installed HTTP-entry tests for preservation, excessive replacements, unavailable retained input, owner editing and revocation; exact/known-host alias collisions covered in CI.
+- Local tools: pure AST tests only, no application/database imports. Full HTTP/backend/browser regression runs require CI.
+- Guidance: local diagnosing-bugs (Bambale0/skills), debugger (Bambale0/claw), webapp-testing (anthropics/skills). Previously denied shared playbook refresh was not retried.
+- Rollout: draft PR to tanyapi; independent exact-head review and full required CI; parent sends pre-release report before merge/CD. No paid production smoke.
