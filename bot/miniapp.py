@@ -3913,7 +3913,7 @@ async def _miniapp_publish_wan_trend(body: dict, telegram_id: int, user) -> web.
     settings = dict(raw) if isinstance(raw, dict) else {}
     try:
         settings = normalize_user_fields_settings(settings, prompt=prompt_text)
-        if len(json.dumps(settings, ensure_ascii=False)) > 12_000:
+        if len(json.dumps(settings, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > 64_000:
             raise Wan3PrimeValidationError("Слишком много настроек тренда")
         published = await publish_manual_trend(
             Wan3PrimeActor(user.id, telegram_id, is_admin=config.is_admin(telegram_id)),
@@ -3931,9 +3931,14 @@ async def _miniapp_publish_wan_trend(body: dict, telegram_id: int, user) -> web.
         return web.json_response({"ok": False, "error": "Проверьте режим, референсы и настройки Wan.",
                                   "code": "wan_publication_invalid"}, status=400)
     except Exception as exc:  # noqa: BLE001 - HTTP privacy boundary must hide arbitrary storage errors.
-        logger.warning("WAN trend publication failed: error_type=%s", type(exc).__name__)
+        from bot.services.wan3_public_errors import log_wan_publication_failure
+
+        error_id = log_wan_publication_failure(
+            logger, exc, actor_id=user.id, telegram_id=telegram_id,
+            model=str(body.get("model") or "").strip(),
+        )
         return web.json_response({"ok": False, "error": "Не удалось опубликовать тренд. Попробуйте позже.",
-                                  "code": "wan_publication_unavailable"}, status=500)
+                                  "code": "wan_publication_unavailable", "error_id": error_id}, status=500)
     return web.json_response({"ok": True, "prompt": prompt})
 
 
@@ -3950,6 +3955,9 @@ async def miniapp_prompt_submit(request: web.Request) -> web.Response:
         policy_error = detect_explicit_prompt_policy_violation(prompt_text)
         if policy_error:
             return web.json_response({"ok": False, "error": policy_error}, status=400)
+
+        if str(body.get("model") or "").strip() in {"wan_3", "wan_3_prime"}:
+            return await _miniapp_publish_wan_trend(body, telegram_id, user)
 
         raw_generation_settings = body.get("generation_settings")
         generation_settings = (
@@ -3983,9 +3991,6 @@ async def miniapp_prompt_submit(request: web.Request) -> web.Response:
                 {"ok": False, "error": f"Лимит активных промптов: {MAX_ACTIVE_PROMPTS_PER_USER}"},
                 status=400,
             )
-
-        if str(body.get("model") or "").strip() in {"wan_3", "wan_3_prime"}:
-            return await _miniapp_publish_wan_trend(body, telegram_id, user)
 
         prompt = await create_prompt(
             author_id=user.id,

@@ -43,6 +43,14 @@ def public_trend_settings(prompt: Mapping[str, Any]) -> dict[str, Any]:
         ratio = "16:9" if kind == "video" else "1:1"
 
     public_settings: dict[str, Any] = {"kind": kind, "ratio": ratio}
+    # Public routing discriminator only: model and executable recipe stay private.
+    if (
+        kind == "video"
+        and str(prompt.get("model") or "").strip() in {"wan_3", "wan_3_prime"}
+        and type(settings.get("wan3_recipe_version")) is int
+        and settings["wan3_recipe_version"] == 1
+    ):
+        public_settings["wan3_recipe_version"] = 1
     try:
         reference_count = int(settings.get("reference_count") or 0)
     except (TypeError, ValueError):

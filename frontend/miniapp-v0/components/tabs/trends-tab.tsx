@@ -155,8 +155,20 @@ export function TrendsTab() {
 
   const [wanDraft, setWanDraft] = useState<Wan3TrendDraft | null>(null)
   const isWanUpload = trendKind === 'video' && (model === 'wan_3' || model === 'wan_3_prime')
+  const wanMetadataIssue = isWanUpload
+    ? Array.from(title.trim()).length > 60 ? 'Название тренда Wan — максимум 60 символов.'
+      : Array.from(description.trim()).length > 200 ? 'Описание тренда Wan — максимум 200 символов.' : null
+    : null
   const captureWanDraft = useCallback((draft: Wan3TrendDraft) => setWanDraft(draft), [])
   const validWanDraft = isWanUpload && wanDraft?.recipe.model === model ? wanDraft : null
+  const wanGenerationSettings = useMemo<TrendGenerationSettings | null>(() => validWanDraft ? {
+    kind: 'video', model, preview_type: previewKind,
+    wan3_recipe: { ...validWanDraft.recipe, prompt: validWanDraft.recipe.prompt.trim() },
+    wan3_replacement_keys: validWanDraft.replacementKeys,
+  } : null, [validWanDraft, model, previewKind])
+  const wanSettingsIssue = useMemo(() => wanGenerationSettings && new Blob([JSON.stringify(wanGenerationSettings)]).size > 64_000
+    ? 'Рецепт Wan превышает 64 000 байт. Сократите инструкцию или число материалов; текст не обрезается.' : null, [wanGenerationSettings])
+  const wanPublicationIssue = wanMetadataIssue || wanSettingsIssue
   const isSeedanceUpload = trendKind === 'video' && (model === 'seedance_2' || model === 'seedance_2_5')
   const hasOwnReferences = isSeedanceUpload && (ownReferences.images.length + ownReferences.videos.length + ownReferences.audios.length > 0)
 
@@ -459,8 +471,8 @@ export function TrendsTab() {
   const handleCreate = async () => {
     if (!isAdmin || submittingRef.current || uploadingPreview || uploadingOwnReferences || validWanDraft?.busy) return
     const isGenjutsu = trendKind === 'video' && model === 'genjutsu'
-    if (isWanUpload && (!validWanDraft || validWanDraft.issue)) {
-      setError(validWanDraft?.issue || 'Заполните рецепт Wan перед публикацией')
+    if (isWanUpload && (wanPublicationIssue || !validWanDraft || validWanDraft.issue)) {
+      setError(wanPublicationIssue || validWanDraft?.issue || 'Заполните рецепт Wan перед публикацией')
       return
     }
     const hiddenPrompt = isWanUpload ? validWanDraft!.recipe.prompt.trim() : promptText.trim()
@@ -500,11 +512,8 @@ export function TrendsTab() {
         return
       }
 
-      const generationSettings: TrendGenerationSettings = isWanUpload && validWanDraft
-        ? {
-            kind: 'video', model, preview_type: previewKind,
-            wan3_recipe: { ...validWanDraft.recipe, prompt: hiddenPrompt }, wan3_replacement_keys: validWanDraft.replacementKeys,
-          }
+      const generationSettings: TrendGenerationSettings = wanGenerationSettings
+        ? wanGenerationSettings
         : isGenjutsu && selectedGenjutsuRecipe
         ? {
             kind: 'video',
@@ -858,7 +867,7 @@ export function TrendsTab() {
             value={title}
             onChange={(event) => setTitle(event.target.value)}
             placeholder="Название тренда"
-            maxLength={80}
+            maxLength={isWanUpload ? 60 : 80}
             className="h-11 w-full rounded-xl border border-border/50 bg-secondary/50 px-3 text-sm outline-none focus:border-gold/50"
           />
 
@@ -871,8 +880,9 @@ export function TrendsTab() {
                 : 'Что получится и какое фото лучше загрузить'
             }
             className="min-h-[76px] resize-none bg-secondary/50"
-            maxLength={240}
+            maxLength={isWanUpload ? 200 : 240}
           />
+          {wanPublicationIssue ? <p role="alert" className="text-xs text-destructive">{wanPublicationIssue}</p> : null}
 
           <label className="block space-y-2">
             <span className="text-xs font-medium text-muted-foreground">
@@ -1116,7 +1126,7 @@ export function TrendsTab() {
           <Button
             type="button"
             className="w-full bg-gold text-primary-foreground hover:bg-gold/90"
-            disabled={submitting || uploadingPreview || uploadingOwnReferences || (isWanUpload && (!validWanDraft || validWanDraft.busy || !!validWanDraft.issue || !validWanDraft.recipe.prompt.trim()))}
+            disabled={submitting || uploadingPreview || uploadingOwnReferences || (isWanUpload && (Boolean(wanPublicationIssue) || !validWanDraft || validWanDraft.busy || !!validWanDraft.issue || !validWanDraft.recipe.prompt.trim()))}
             onClick={() => void handleCreate()}
           >
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}

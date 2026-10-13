@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -69,27 +69,31 @@ function recipeIssue(recipe: Wan3PrimeRecipe): string | null {
 interface MediaFieldProps {
   title: string; label: string; prefix: string; kind: Wan3PrimeUploadKind | 'link'; values: string[]
   limit: number; offset?: number; disabled?: boolean; hint?: string; resetKey: string; resetRecipe?: Wan3PrimeRecipe | null
-  allowImport?: boolean
+  allowImport?: boolean; blockFailedUploads?: boolean
+  onUploadIssue: (fieldId: string, blocked: boolean) => void
   onChange: (values: string[]) => void; onBusy: (delta: number) => void; onError: (message: string) => void
 }
-function MediaField({ title, label, prefix, kind, values, limit, offset = 1, disabled, hint, resetKey, resetRecipe, allowImport = true, onChange, onBusy, onError }: MediaFieldProps) {
+function MediaField({ title, label, prefix, kind, values, limit, offset = 1, disabled, hint, resetKey, resetRecipe, allowImport = true, blockFailedUploads = false, onChange, onBusy, onError, onUploadIssue }: MediaFieldProps) {
+  const fieldId = useId()
   const [external, setExternal] = useState('')
   const [names, setNames] = useState<Record<string, string>>({})
   const [progress, setProgress] = useState('')
   const [fieldError, setFieldError] = useState('')
   const [retryFiles, setRetryFiles] = useState<File[]>([])
+  const blocked = Boolean(fieldError || retryFiles.length)
+  useEffect(() => () => onUploadIssue(fieldId, false), [fieldId, onUploadIssue])
   const lock = useRef(false)
   const active = useRef<AbortController | null>(null)
   useEffect(() => {
-    setFieldError(''); setRetryFiles([]); setProgress(''); setExternal('')
+    setFieldError(''); setRetryFiles([]); setProgress(''); setExternal(''); onUploadIssue(fieldId, false)
     return () => { const previous = active.current; active.current = null; previous?.abort() }
-  }, [resetKey, resetRecipe])
-  const fail = (message: string) => { setFieldError(message); onError(message) }
-  const upload = async (files: File[]) => {
-    if (!files.length || lock.current || disabled) return
+  }, [resetKey, resetRecipe, fieldId, onUploadIssue])
+  const fail = (message: string) => { onUploadIssue(fieldId, true); setFieldError(message); onError(message) }
+  const upload = async (files: File[], retry = false) => {
+    if (!files.length || lock.current || disabled || (blockFailedUploads && retryFiles.length > 0 && !retry)) return
     if (files.length + values.length > limit) { setRetryFiles([]); fail(`Можно добавить максимум ${limit}. Выбранные файлы не загружены.`); return }
     const controller = new AbortController(); active.current = controller
-    lock.current = true; onBusy(1); setFieldError(''); setRetryFiles([]); onError('')
+    lock.current = true; onBusy(1); onUploadIssue(fieldId, false); setFieldError(''); setRetryFiles([]); onError('')
     let next = [...values]
     let index = 0
     try {
@@ -118,7 +122,7 @@ function MediaField({ title, label, prefix, kind, values, limit, offset = 1, dis
     if (lock.current || disabled || !external.trim()) return
     if (values.length >= limit) { fail(`Сначала удалите один из ${limit} референсов.`); return }
     const controller = new AbortController(); active.current = controller
-    lock.current = true; onBusy(1); setFieldError(''); setRetryFiles([]); onError(''); setProgress('Проверяю и импортирую ссылку…')
+    lock.current = true; onBusy(1); onUploadIssue(fieldId, false); setFieldError(''); setRetryFiles([]); onError(''); setProgress('Проверяю и импортирую ссылку…')
     try {
       const stored = await importWan3PrimeReference(kind, external.trim(), controller.signal)
       if (controller.signal.aborted || active.current !== controller) return
@@ -137,7 +141,7 @@ function MediaField({ title, label, prefix, kind, values, limit, offset = 1, dis
       <button type="button" disabled={disabled} aria-label={`Удалить ${prefix}${offset + index}`} onClick={() => onChange(values.filter((_, i) => i !== index))} className="shrink-0 rounded px-2 py-1 hover:bg-secondary disabled:opacity-40">×</button>
     </div>)}
     {kind !== 'link' ? <label className="block space-y-1 text-xs">
-      <span>{label}</span><input type="file" aria-label={label} accept={ACCEPT[kind]} multiple={limit > 1} disabled={disabled || values.length >= limit}
+      <span>{label}</span><input type="file" aria-label={label} accept={ACCEPT[kind]} multiple={limit > 1} disabled={disabled || (blockFailedUploads && retryFiles.length > 0) || values.length >= limit}
         className="block w-full min-w-0 text-xs file:mr-2 file:rounded-lg file:border-0 file:bg-secondary file:px-3 file:py-2 file:text-foreground"
         onChange={event => { const files = Array.from(event.target.files || []); event.target.value = ''; void upload(files) }} />
     </label> : null}
@@ -148,10 +152,13 @@ function MediaField({ title, label, prefix, kind, values, limit, offset = 1, dis
       }}>Отменить загрузку</Button>
     </div> : null}
     {fieldError ? <p role="alert" className="break-words text-xs text-destructive">{fieldError}</p> : null}
-    {retryFiles.length ? <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => { void upload(retryFiles) }}>Повторить загрузку</Button> : null}
+    {retryFiles.length ? <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => { void upload(retryFiles, true) }}>Повторить загрузку</Button> : null}
+    {blockFailedUploads && blocked ? <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => {
+      setRetryFiles([]); setFieldError(''); onUploadIssue(fieldId, false); onError('')
+    }}>Удалить незагруженные файлы</Button> : null}
     {allowImport ? <details className="text-xs"><summary className="cursor-pointer py-1 text-muted-foreground">{kind === 'link' ? 'Добавить адрес страницы' : 'Импортировать по ссылке'}</summary>
       <div className="mt-2 flex min-w-0 gap-2"><Input aria-label={`Ссылка: ${title}`} value={external} onChange={e => setExternal(e.target.value)} placeholder="https://…" disabled={disabled} className="min-w-0 text-xs" />
-        <Button type="button" variant="outline" size="sm" disabled={disabled || !external.trim()} onClick={() => { void importUrl() }}>Добавить</Button></div>
+        <Button type="button" variant="outline" size="sm" disabled={disabled || (blockFailedUploads && retryFiles.length > 0) || !external.trim()} onClick={() => { void importUrl() }}>Добавить</Button></div>
     </details> : null}
   </section>
 }
@@ -186,6 +193,16 @@ function Wan3PrimeFormSession({ draftOnly = false, onDraftChange, expectedModel,
   const restoredRecipe = useRef(initialRecipe)
   const [requestId, setRequestId] = useState(newId)
   const [pending, setPending] = useState(0)
+  const [uploadIssues, setUploadIssues] = useState<Record<string, boolean>>({})
+  const onUploadIssue = useCallback((fieldId: string, blocked: boolean) => {
+    setUploadIssues(old => {
+      if (Boolean(old[fieldId]) === blocked) return old
+      const next = { ...old }
+      if (blocked) next[fieldId] = true
+      else delete next[fieldId]
+      return next
+    })
+  }, [])
   const [recipeLoading, setRecipeLoading] = useState(false)
   const [ownerReady, setOwnerReady] = useState(false)
   const [ownerError, setOwnerError] = useState('')
@@ -212,7 +229,8 @@ function Wan3PrimeFormSession({ draftOnly = false, onDraftChange, expectedModel,
   const missingRepeatInput = Boolean(sourceId && (!repeatPlan || (trendId ? repeatPlan.trend_id !== trendId : repeatPlan.source_feed_gen_id !== feedSourceId) ||
     repeatPlan.slots.some(slot => slot.binding === 'upload' && !recipe.repeat_replacements?.[slot.key])))
   const draftIssue = draftOnly && (recipe.scenario === 'link' || recipe.reference_link_urls?.length || recipe.source_feed_gen_id || recipe.trend_id) ? 'В ручном тренде доступны собственные файлы без ссылок и чужих рецептов.' : null
-  const issue = draftIssue || (missingRepeatInput ? 'Загрузите материалы для каждого заменяемого места.' : recipeIssue(recipe))
+  const uploadIssue = draftOnly && Object.values(uploadIssues).some(Boolean) ? 'Повторите загрузку или удалите незагруженные файлы.' : null
+  const issue = draftIssue || uploadIssue || (missingRepeatInput ? 'Загрузите материалы для каждого заменяемого места.' : recipeIssue(recipe))
   const working = pending > 0 || recipeLoading || planLoading || quoting || sending
   const locked = working || attempted || Boolean(disabledReason)
   const isFrames = !sourceId && (recipe.scenario === 'first_frame' || recipe.scenario === 'first_last')
@@ -319,7 +337,7 @@ function Wan3PrimeFormSession({ draftOnly = false, onDraftChange, expectedModel,
     try {
       const value = await generateWan3Prime(frozenRequest.current)
       setResult(value)
-      try { await onQueued?.(value) } catch { /* Accepted work stays accepted if history refresh fails. */ }
+      try { await onQueued?.({ ...value, model: value.model || frozenRequest.current?.recipe.model || recipe.model }) } catch { /* Accepted work stays accepted if history refresh fails. */ }
     } catch (error) {
       const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : ''
       if (['stale_quote', 'validation_error', 'missing_rate', 'insufficient_credits'].includes(code)) {
@@ -336,7 +354,7 @@ function Wan3PrimeFormSession({ draftOnly = false, onDraftChange, expectedModel,
     if (draftOnly) onDraftChange?.({ recipe, issue, busy: pending > 0 })
   }, [draftOnly, onDraftChange, recipe, issue, pending])
 
-  const mediaProps = { disabled: locked, allowImport: !draftOnly, onBusy, onError: setError,
+  const mediaProps = { disabled: locked, allowImport: !draftOnly, blockFailedUploads: draftOnly, onBusy, onError: setError, onUploadIssue,
     resetKey: JSON.stringify([ownerTaskId, repeatKey, recipe.scenario]), resetRecipe: initialRecipe }
   const videos = recipe.reference_video_urls || []
   const unknown = attempted && (!result || result.status === 'unknown')

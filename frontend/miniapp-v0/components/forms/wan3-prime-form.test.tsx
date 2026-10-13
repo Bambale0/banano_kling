@@ -444,3 +444,24 @@ test('ordinary WAN keeps identity across modes and auto-refreshes fixed input-pl
     recipe: expect.objectContaining({ model: 'wan_3', duration: 6 }), quote_hash: 'fixed-6',
   })))
 })
+
+
+test('draft upload rejection never emits a transient publishable snapshot before its error settles', async () => {
+  const onDraftChange = jest.fn()
+  let rejectUpload!: (error: Error) => void
+  ;(uploadWan3PrimeReference as jest.Mock).mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectUpload = reject }))
+  render(<Wan3PrimeForm credits={0} draftOnly onDraftChange={onDraftChange} initialRecipe={{
+    model: 'wan_3', scenario: 'reference', prompt: 'Use selected references', resolution: '720P', aspect_ratio: '16:9',
+    duration: 5, audio: true, nsfw_checker: false, reference_image_urls: ['https://owned.test/first.png'],
+  }} />)
+  onDraftChange.mockClear()
+  fireEvent.change(screen.getByLabelText('Загрузить фото-референсы'), { target: { files: [new File(['synthetic'], 'failed.png', { type: 'image/png' })] } })
+  await act(async () => rejectUpload(new Error('synthetic failure')))
+  await screen.findByRole('button', { name: 'Повторить загрузку' })
+  expect(onDraftChange.mock.calls.length).toBeGreaterThan(0)
+  // Reject all intermediate snapshots, not merely the eventual last state.
+  expect(onDraftChange.mock.calls.every(([draft]) => draft.busy || Boolean(draft.issue))).toBe(true)
+  onDraftChange.mockClear()
+  fireEvent.change(screen.getByLabelText('Инструкции Wan'), { target: { value: 'Unrelated edit' } })
+  expect(onDraftChange.mock.calls.every(([draft]) => draft.busy || Boolean(draft.issue))).toBe(true)
+})

@@ -155,3 +155,29 @@ async def test_manual_submit_unexpected_storage_error_is_not_public(monkeypatch)
     assert response.status == 500
     assert 'internal-provider-secret-location' not in response.text
     assert 'wan_publication_unavailable' in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('model', ['wan_3', 'wan_3_prime'])
+@pytest.mark.parametrize('prompt_size', [12001, 20000])
+async def test_manual_wan_full_prompt_budget_and_public_marker(monkeypatch, tmp_path, model, prompt_size):
+    from bot import miniapp
+    from bot.trend_visibility import sanitize_prompt_for_public
+
+    actor, kwargs = await setup_publication(monkeypatch, tmp_path, model)
+    user = await database.get_or_create_user(actor.telegram_id)
+    monkeypatch.setattr(miniapp.config, 'is_admin', lambda tid: tid == actor.telegram_id)
+    prompt = 'я' * prompt_size
+    kwargs['settings']['wan3_recipe']['prompt'] = prompt
+    response = await miniapp._miniapp_publish_wan_trend(
+        {'model': model, 'prompt_text': prompt, 'title': kwargs['title'],
+         'description': '', 'preview_url': kwargs['preview_url'], 'generation_settings': kwargs['settings']},
+        actor.telegram_id, user,
+    )
+    assert response.status == 200, response.text
+    import json
+    public = sanitize_prompt_for_public(json.loads(response.text)['prompt'])
+    assert public['generation_settings']['wan3_recipe_version'] == 1
+    assert public['model'] is None and public['prompt_text'] == ''
+    assert 'wan3_recipe' not in public['generation_settings']
+    assert prompt not in str(public)

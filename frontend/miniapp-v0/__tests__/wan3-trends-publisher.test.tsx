@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom'
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { TrendsTab } from '@/components/tabs/trends-tab'
 import * as api from '@/lib/api'
 import * as wanApi from '@/lib/wan3-prime-api'
@@ -203,4 +203,123 @@ test('a preview failure stays safe when upload starts before switching to WAN', 
   await act(async () => pending.reject(new Error('private provider detail')))
   expect(await screen.findByText('Не удалось загрузить превью. Повторите загрузку файла.')).toBeInTheDocument()
   expect(screen.queryByText(/private provider detail/)).not.toBeInTheDocument()
+})
+
+
+// An incomplete selection must never be published as a silently reduced recipe.
+test.each(['partial batch', 'additional upload'])('%s failure blocks publication across unrelated edits and uploads', async failure => {
+  await openWan()
+  fireEvent.click(screen.getByRole('button', { name: 'По референсам' }))
+  fireEvent.change(screen.getByLabelText('Инструкции Wan'), { target: { value: 'Use Image1 and Image2' } })
+  if (failure === 'additional upload') await upload('Загрузить фото-референсы', 'first.png')
+  wanMock.uploadWan3PrimeReference.mockImplementation(async (_kind, picked) => {
+    if (picked.name === 'failed.png') throw new Error('private upload details')
+    return { url: `https://owned/${picked.name}` } as any
+  })
+  fireEvent.change(screen.getByLabelText('Загрузить фото-референсы'), { target: {
+    files: failure === 'partial batch' ? [file('first.png'), file('failed.png')] : [file('failed.png')],
+  } })
+  const retry = await screen.findByRole('button', { name: 'Повторить загрузку' })
+  const publish = screen.getByRole('button', { name: 'Опубликовать тренд' })
+  expect(publish).toBeDisabled()
+  expect(screen.getByLabelText('Загрузить фото-референсы')).toBeDisabled()
+  fireEvent.change(screen.getByLabelText('Инструкции Wan'), { target: { value: 'An unrelated instruction edit' } })
+  await upload('Загрузить аудио-референсы', 'voice.mp3', 'audio/mpeg')
+  expect(publish).toBeDisabled()
+  fireEvent.click(publish)
+  expect(apiMock.submitPrompt).not.toHaveBeenCalled()
+  wanMock.uploadWan3PrimeReference.mockImplementation(async (_kind, picked) => ({ url: `https://owned/${picked.name}` } as any))
+  fireEvent.click(retry)
+  await waitFor(() => expect(publish).toBeEnabled())
+  fireEvent.click(publish)
+  expect(apiMock.submitPrompt.mock.calls[0][0].generationSettings?.wan3_recipe?.reference_image_urls).toEqual(['https://owned/first.png', 'https://owned/failed.png'])
+  expect(wanMock.generateWan3Prime).not.toHaveBeenCalled()
+  expect(wanMock.quoteWan3Prime).not.toHaveBeenCalled()
+})
+
+test('explicit discard clears only its failed field; mode reset clears discarded selections', async () => {
+  await openWan()
+  fireEvent.click(screen.getByRole('button', { name: 'По референсам' }))
+  fireEvent.change(screen.getByLabelText('Инструкции Wan'), { target: { value: 'Use selected references' } })
+  await upload('Загрузить фото-референсы', 'first.png')
+  wanMock.uploadWan3PrimeReference.mockRejectedValue(new Error('synthetic failure'))
+  fireEvent.change(screen.getByLabelText('Загрузить фото-референсы'), { target: { files: [file('second.png')] } })
+  await screen.findByRole('button', { name: 'Повторить загрузку' })
+  fireEvent.change(screen.getByLabelText('Загрузить аудио-референсы'), { target: { files: [file('voice.mp3', 'audio/mpeg')] } })
+  await waitFor(() => expect(screen.getAllByRole('button', { name: 'Повторить загрузку' })).toHaveLength(2))
+  const publish = screen.getByRole('button', { name: 'Опубликовать тренд' })
+  fireEvent.click(screen.getAllByRole('button', { name: 'Удалить незагруженные файлы' })[0])
+  expect(publish).toBeDisabled()
+  fireEvent.click(screen.getByRole('button', { name: 'Удалить незагруженные файлы' }))
+  await waitFor(() => expect(publish).toBeEnabled())
+  fireEvent.change(screen.getByLabelText('Загрузить фото-референсы'), { target: { files: [file('again.png')] } })
+  await screen.findByRole('button', { name: 'Повторить загрузку' })
+  fireEvent.click(screen.getByRole('button', { name: 'По тексту' }))
+  await waitFor(() => expect(publish).toBeEnabled())
+  expect(screen.queryByRole('button', { name: 'Повторить загрузку' })).not.toBeInTheDocument()
+})
+
+test.each(['wan_3', 'wan_3_prime'] as const)('%s metadata uses 60/200 limits and blocks retained oversized values', async model => {
+  await openWan(model)
+  const title = screen.getByPlaceholderText('Название тренда')
+  const description = screen.getByPlaceholderText('Что получится и какие исходники нужны')
+  const publish = screen.getByRole('button', { name: 'Опубликовать тренд' })
+  fireEvent.change(screen.getByLabelText('Инструкции Wan'), { target: { value: 'Animate' } })
+  expect(title).toHaveAttribute('maxlength', '60')
+  expect(description).toHaveAttribute('maxlength', '200')
+  fireEvent.change(title, { target: { value: 'T'.repeat(61) } })
+  expect(publish).toBeDisabled()
+  expect(screen.getByRole('alert')).toHaveTextContent('Название тренда Wan — максимум 60 символов.')
+  fireEvent.change(title, { target: { value: 'T'.repeat(60) } })
+  fireEvent.change(description, { target: { value: 'D'.repeat(201) } })
+  expect(publish).toBeDisabled()
+  expect(screen.getByRole('alert')).toHaveTextContent('Описание тренда Wan — максимум 200 символов.')
+  fireEvent.change(description, { target: { value: 'D'.repeat(200) } })
+  expect(publish).toBeEnabled()
+  fireEvent.change(screen.getByRole('combobox', { name: 'Видео-нейросеть' }), { target: { value: 'seedance_2' } })
+  expect(title).toHaveAttribute('maxlength', '80')
+  expect(description).toHaveAttribute('maxlength', '240')
+  fireEvent.change(title, { target: { value: 'T'.repeat(80) } })
+  fireEvent.change(description, { target: { value: 'D'.repeat(240) } })
+  fireEvent.change(screen.getByRole('combobox', { name: 'Видео-нейросеть' }), { target: { value: model } })
+  fireEvent.change(screen.getByLabelText('Инструкции Wan'), { target: { value: 'Animate' } })
+  expect(publish).toBeDisabled()
+  expect(screen.getByRole('alert')).toHaveTextContent('Название тренда Wan — максимум 60 символов.')
+})
+
+test('WAN publication enforces the exact 64,000 UTF-8 byte budget without truncating the prompt', async () => {
+  await openWan()
+  const instructions = screen.getByLabelText('Инструкции Wan')
+  const publish = screen.getByRole('button', { name: 'Опубликовать тренд' })
+  fireEvent.click(screen.getByRole('button', { name: 'По референсам' }))
+  // Material URL overhead shares the JSON budget with the instruction.
+  const ownedUrl = 'https://owned/' + 'a'.repeat(8000) + '.png'
+  wanMock.uploadWan3PrimeReference.mockResolvedValueOnce({ url: ownedUrl } as any)
+  await upload('Загрузить фото-референсы', 'first.png')
+  fireEvent.change(instructions, { target: { value: 'x' } })
+  fireEvent.click(publish)
+  const serialized = apiMock.submitPrompt.mock.calls[0][0].generationSettings!
+  const baseBytes = new Blob([JSON.stringify({ ...serialized, wan3_recipe: { ...serialized.wan3_recipe, prompt: '' } })]).size
+  // Reopen after the mocked pending submission to test both exact boundaries.
+  cleanup()
+  apiMock.submitPrompt.mockClear()
+  await openWan()
+  fireEvent.click(screen.getByRole('button', { name: 'По референсам' }))
+  wanMock.uploadWan3PrimeReference.mockResolvedValueOnce({ url: ownedUrl } as any)
+  await upload('Загрузить фото-референсы', 'first.png')
+  const input = screen.getByLabelText('Инструкции Wan')
+  const button = screen.getByRole('button', { name: 'Опубликовать тренд' })
+  const budget = 64_000 - baseBytes
+  const exact = '界'.repeat(Math.floor(budget / 3)) + 'x'.repeat(budget % 3)
+  expect(Array.from(exact).length).toBeLessThanOrEqual(20000)
+  fireEvent.change(input, { target: { value: exact + 'x' } })
+  expect(button).toBeDisabled()
+  expect(screen.getByRole('alert')).toHaveTextContent('Рецепт Wan превышает 64 000 байт')
+  expect(input).toHaveValue(exact + 'x')
+  fireEvent.change(input, { target: { value: exact } })
+  expect(button).toBeEnabled()
+  fireEvent.click(button)
+  const payload = apiMock.submitPrompt.mock.calls[0][0].generationSettings!
+  expect(new Blob([JSON.stringify(payload)]).size).toBe(64_000)
+  expect(payload.wan3_recipe?.prompt).toBe(exact)
 })
