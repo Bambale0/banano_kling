@@ -17,7 +17,11 @@ from aiogram.fsm.state import State, StatesGroup
 
 from bot import db as db_backend
 from bot.config import config
-from bot.creator_tariff import creator_tariff_status, validate_creator_tariff_config
+from bot.creator_tariff import (
+    GENJUTSU_QUALITIES,
+    creator_tariff_status,
+    validate_creator_tariff_config,
+)
 from bot.creator_tariff_membership import (
     get_creator_tariff_membership,
     record_creator_tariff_config_audit,
@@ -30,7 +34,28 @@ router = Router(name="creator_tariff_admin")
 PREFIX = "admin_ct"
 _LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
 _CONFIG_LOCK = asyncio.Lock()
-MODEL_LABELS = {"seedance_2": "Seedance 2.0", "seedance_2_5": "Seedance 2.5"}
+MODEL_LABELS = {
+    "seedance_2": "Seedance 2.0", "seedance_2_5": "Seedance 2.5",
+    "wan_3": "Wan 3.0", "wan_3_prime": "Wan 3.0 Prime",
+    "genjutsu/motion_transfer": "Genjutsu · Motion Transfer",
+    "genjutsu/object_swap": "Genjutsu · Object Swap",
+    "genjutsu/restyle": "Genjutsu · Restyle",
+}
+
+
+def _editable_qualities(status):
+    return {**status['required_qualities'], **{
+        f'genjutsu/{operation}': qualities for operation, qualities in GENJUTSU_QUALITIES.items()
+    }}
+
+
+def _rate_help(model):
+    if model.startswith('genjutsu/'):
+        return 'Целое число от 1 до 10000. Ставка шага умножается на его длительность и число вариантов.'
+    if model in {'wan_3', 'wan_3_prime'}:
+        return 'Ставка за сумму входных видеосекунд и выбранного результата; Auto резервирует 30 секунд.'
+    return 'Только положительное число; видео-референс автоматически ×2.'
+
 
 
 class CreatorTariffAdminStates(StatesGroup):
@@ -116,10 +141,10 @@ async def _home(event, state, notice=""):
     token = await _screen(state)
     active = bool(status["enabled"] and status["configured"])
     text = (
-        "🎬 <b>Тариф креатора · Seedance</b>\n\n"
+        "🎬 <b>Тариф креатора</b>\n\n"
         f"Статус: <b>{'включён' if active else 'выключен'}</b>\n"
         "Доступ назначается отдельно по Telegram ID. Права администратора и баланс не меняются.\n"
-        "Цены задаются отдельно для каждой модели и качества. Видео-референс: ×2.\n"
+        "Цены задаются отдельно для каждой модели и качества. Для незаданных WAN и Genjutsu действует обычная цена.\n"
     )
     if not active:
         text += "\nСейчас применяется обычная цена, даже для назначенных креаторов.\n"
@@ -177,11 +202,13 @@ async def _prices(event, state, notice=""):
     status = creator_tariff_status()
     raw = _raw_tariff()
     token = await _screen(state, creator_config_fingerprint=_fingerprint(raw))
-    lines = ["💰 <b>Цены креатора</b>", "Отдельные ставки в 🍌/сек, без видео-референса. С видео-референсом ×2.", ""]
+    lines = ["💰 <b>Цены креатора</b>", "Ставки в 🍌/сек. Seedance с видео: ×2. WAN: вход + результат. Genjutsu: сумма шагов и вариантов.", ""]
     rows = []
-    for model, qualities in status["required_qualities"].items():
-        model_data = status["video_models"].get(model, {})
-        rates = model_data.get("quality_costs", {})
+    for model, qualities in _editable_qualities(status).items():
+        if model.startswith('genjutsu/'):
+            rates = status.get('genjutsu', {}).get('prices', {}).get(model.split('/', 1)[1], {})
+        else:
+            rates = status['video_models'].get(model, {}).get('quality_costs', {})
         for quality in qualities:
             rate = rates.get(quality)
             label = f"{MODEL_LABELS.get(model, model)} · {quality}"
@@ -285,14 +312,14 @@ async def _handle_callback(callback, state, data, parts):
     if action == "rate" and len(args) == 2:
         model, quality = args
         status = creator_tariff_status()
-        if quality not in status["required_qualities"].get(model, []):
+        if quality not in _editable_qualities(status).get(model, []):
             raise ValueError("Неизвестная модель или качество.")
         expected = data.get("creator_config_fingerprint")
         if expected != _fingerprint(_raw_tariff()):
             raise CreatorTariffConfigConflict("Цены уже изменились. Откройте раздел заново.")
         token = await _screen(state, creator_model=model, creator_quality=quality, creator_config_fingerprint=expected)
         await state.set_state(CreatorTariffAdminStates.price)
-        prompt = await _present(callback, f"Введите цену {html.escape(MODEL_LABELS.get(model, model))} · {html.escape(quality)} в 🍌/сек.\nТолько положительное число; видео-референс автоматически ×2.", [_back(token)], fresh=True)
+        prompt = await _present(callback, f"Введите цену {html.escape(MODEL_LABELS.get(model, model))} · {html.escape(quality)} в 🍌/сек.\n{html.escape(_rate_help(model))}", [_back(token)], fresh=True)
         return await state.update_data(creator_prompt_id=getattr(prompt, "message_id", 0))
     if action == "confirm" and not args:
         pending = data.get("creator_pending", {})
@@ -354,11 +381,16 @@ async def creator_tariff_message(message: types.Message, state: FSMContext):
             if not math.isfinite(price) or price <= 0:
                 raise ValueError("Цена должна быть положительным конечным числом.")
             model, quality = data["creator_model"], data["creator_quality"]
-            if quality not in creator_tariff_status()["required_qualities"].get(model, []):
+            if quality not in _editable_qualities(creator_tariff_status()).get(model, []):
                 raise ValueError("Модель или качество изменились. Откройте раздел цен заново.")
             candidate = _raw_tariff()
             candidate.setdefault("enabled", False)
-            candidate.setdefault("video_models", {}).setdefault(model, {}).setdefault("quality_costs", {})[quality] = price
+            if model.startswith('genjutsu/'):
+                if not price.is_integer() or price > 10000:
+                    raise ValueError('Для Genjutsu нужна целая цена от 1 до 10000.')
+                candidate.setdefault('genjutsu', {}).setdefault('prices', {}).setdefault(model.split('/', 1)[1], {})[quality] = int(price)
+            else:
+                candidate.setdefault("video_models", {}).setdefault(model, {}).setdefault("quality_costs", {})[quality] = price
             await save_creator_tariff_config(message.from_user.id, candidate, expected_fingerprint=data["creator_config_fingerprint"])
         except (ValueError, PermissionError) as exc:
             return await message.answer(str(exc))

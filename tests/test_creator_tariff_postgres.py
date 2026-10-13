@@ -345,3 +345,109 @@ async def test_admin_free_locked_quote_never_refunds_nominal_price(priced_creato
     monkeypatch.setattr(config, "is_admin", lambda user_id: user_id == ADMIN)
     assert await force_fail_task(row["id"], row["user_id"], 999, expected_provider_task_id=row["task_id"])
     assert await balance(priced_creator) == 100
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('model', ['wan_3', 'wan_3_prime'])
+async def test_pg_creator_wan_one_reserve_and_accepted_retry_after_revocation(priced_creator, model):
+    from bot.services.wan3_prime_lifecycle import Wan3PrimeActor, Wan3PrimeLifecycle
+    from tests.test_wan3_prime_lifecycle import Probe, Provider, body
+
+    pg = priced_creator
+    user_id = (await pg.rows('SELECT id FROM users WHERE telegram_id = ?', (TARGET,)))[0]['id']
+    actor = Wan3PrimeActor(user_id=user_id, telegram_id=TARGET)
+    provider = Provider()
+    prices = SimpleNamespace(get_video_quality_costs=lambda _: {'720p': 8})
+    lifecycle = Wan3PrimeLifecycle(probe=Probe(), preset_manager=prices, transport=provider)
+    request = body(model=model)
+    quote = await lifecycle.quote(actor, request)
+    assert quote.reserve_credits == 7.5 and quote.rate_per_second == 1.5
+    results = await asyncio.gather(*(lifecycle.launch(actor, request, quote, 'creator-pg-wan') for _ in range(3)))
+    assert len({row['task_id'] for row in results}) == 1
+    assert provider.creates == 1
+    assert await balance(pg) == 92.5
+    rows = await pg.rows('SELECT quote_json,reserve_credits FROM wan3_prime_intents WHERE user_id = ?', (user_id,))
+    assert len(rows) == 1 and rows[0]['reserve_credits'] == 7.5
+    assert json.loads(rows[0]['quote_json'])['rate_per_second'] == 1.5
+    await membership.set_creator_tariff_membership(ADMIN, TARGET, False)
+    repeated = await lifecycle.launch(actor, request, quote, 'creator-pg-wan')
+    assert repeated['task_id'] == results[0]['task_id']
+    assert provider.creates == 1 and await balance(pg) == 92.5
+
+
+@pytest.mark.asyncio
+async def test_pg_creator_wan_final_transaction_detects_membership_change(priced_creator, monkeypatch):
+    from bot.services.wan3_prime_lifecycle import (
+        Wan3PrimeActor,
+        Wan3PrimeLifecycle,
+        Wan3PrimeLifecycleError,
+    )
+    from tests.test_wan3_prime_lifecycle import Probe, Provider, body
+
+    pg = priced_creator
+    user_id = (await pg.rows('SELECT id FROM users WHERE telegram_id = ?', (TARGET,)))[0]['id']
+    actor = Wan3PrimeActor(user_id=user_id, telegram_id=TARGET)
+    provider = Provider()
+    lifecycle = Wan3PrimeLifecycle(probe=Probe(), preset_manager=SimpleNamespace(get_video_quality_costs=lambda _: {'720p': 8}), transport=provider)
+    request = body(model='wan_3')
+    quote = await lifecycle.quote(actor, request)
+    original = lifecycle._recipe_and_quote
+
+    async def revoke_after_quote(*args, **kwargs):
+        prepared = await original(*args, **kwargs)
+        await membership.set_creator_tariff_membership(ADMIN, TARGET, False)
+        return prepared
+
+    monkeypatch.setattr(lifecycle, '_recipe_and_quote', revoke_after_quote)
+    with pytest.raises(Wan3PrimeLifecycleError) as caught:
+        await lifecycle.launch(actor, request, quote, 'creator-pg-revoked')
+    assert caught.value.code == 'stale_quote'
+    assert provider.creates == 0 and await balance(pg) == 100
+    assert await pg.rows('SELECT id FROM wan3_prime_intents WHERE user_id = ?', (user_id,)) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('change_before_start', [False, True])
+async def test_pg_genjutsu_creator_pipeline_reserve_and_revision(priced_creator, change_before_start):
+    from unittest.mock import AsyncMock
+
+    from bot.genjutsu.contract import PipelineError
+    from bot.genjutsu.pipeline import Pipeline
+    from bot.genjutsu.repository import Repository
+
+    pg = priced_creator
+    preset_manager._price_config['creator_tariff']['genjutsu'] = {'prices': {'motion_transfer': {'720p': 3}}}
+    repo = Repository(pg.connect)
+    await repo.migrate()
+    settings, version = await repo.settings()
+    settings['public_enabled'] = True
+    settings['verified_operations'] = ['motion_transfer']
+    for operation in settings['prices']:
+        settings['prices'][operation] = dict.fromkeys(settings['prices'][operation], 8)
+    await repo.update_settings(ADMIN, version, settings)
+    source = await repo.add_asset(TARGET, 'video', 'synthetic-source.mp4', {'duration_ms': 5000, 'size_bytes': 100, 'mime': 'video/mp4'})
+    image = await repo.add_asset(TARGET, 'image', 'synthetic-image.png', {'size_bytes': 10, 'mime': 'image/png'})
+    draft = {'source_asset_id': source['id'], 'steps': [{'operation': 'motion_transfer', 'resolution': '720p', 'prompt': '', 'preserve': '', 'references': [{'asset_id': image['id'], 'role': 'character', 'label': ''}], 'preset_id': None}], 'variants': 2, 'continuation': 'automatic'}
+    project = await repo.save_project(TARGET, 'Synthetic creator test', draft)
+    pipeline = Pipeline(repo, SimpleNamespace(), SimpleNamespace(ensure_asset=AsyncMock()))
+    quote = await pipeline.quote(TARGET, project['id'], project['revision'])
+    assert quote['total_credits'] == 60
+    assert [item['credits_per_second'] for item in quote['allocations']] == [3, 3]
+    if change_before_start:
+        await membership.set_creator_tariff_membership(ADMIN, TARGET, False)
+        with pytest.raises(PipelineError) as caught:
+            await repo.start(TARGET, 'creator-genjutsu', quote['id'])
+        assert caught.value.code == 'quote_changed'
+        assert await balance(pg) == 100
+        assert await pg.rows('SELECT id FROM genjutsu_runs WHERE owner = ?', (TARGET,)) == []
+        return
+    results = await asyncio.gather(*(repo.start(TARGET, 'creator-genjutsu', quote['id']) for _ in range(3)))
+    assert len({row['id'] for row in results}) == 1
+    assert await balance(pg) == 40
+    stored = await pg.rows('SELECT rate,reserved_credits FROM genjutsu_steps WHERE run_id = ?', (results[0]['id'],))
+    assert len(stored) == 2 and all(row['rate'] == 3 and row['reserved_credits'] == 30 for row in stored)
+    await membership.set_creator_tariff_membership(ADMIN, TARGET, False)
+    preset_manager._price_config['creator_tariff']['genjutsu']['prices']['motion_transfer']['720p'] = 99
+    repeated = await repo.start(TARGET, 'creator-genjutsu', quote['id'])
+    assert repeated['id'] == results[0]['id'] and await balance(pg) == 40
+    assert len(await pg.rows("SELECT id FROM genjutsu_finance WHERE kind = 'reserve'")) == 1

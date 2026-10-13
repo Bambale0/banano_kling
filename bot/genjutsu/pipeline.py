@@ -11,6 +11,8 @@ import logging
 import random
 import time
 
+from bot.creator_tariff import genjutsu_pricing_snapshot, get_actor_tariff
+
 from .contract import (
     CATALOG,
     PipelineError,
@@ -48,6 +50,11 @@ class Pipeline:
             self._presets = (time.monotonic() + settings['presets_ttl_seconds'], items)
             return items
 
+    async def pricing(self, owner: int, settings: dict) -> dict:
+        """Return viewer-specific rates without changing shared runtime settings."""
+        tariff = await get_actor_tariff(owner)
+        return genjutsu_pricing_snapshot(settings['prices'], tariff=tariff)
+
     async def quote(self, owner: int, project_id: str, revision: int) -> dict:
         project = await self.repository.get_project(owner, project_id)
         if project['revision'] != revision:
@@ -63,7 +70,11 @@ class Pipeline:
         if any(s.get('operation') == 'restyle' for s in draft.get('steps', [])):
             presets = {item['id'] for item in await self.presets(force=True)}
         plan = compile_plan(draft, assets, settings, presets=presets)
-        quote = quote_plan(plan, assets, settings)
+        pricing = await self.pricing(owner, settings)
+        quote = quote_plan(plan, assets, {**settings, 'prices': pricing['prices']})
+        quote['tariff'] = {key: pricing[key] for key in ('profile', 'revision')}
+        # Keep ordinary settings and their version/hash untouched. The immutable
+        # quote owns personal allocation rates; admission checks their revision.
         return await self.repository.create_quote(owner, project_id, revision, plan, quote,
                                                   version, settings, private_recipe=private)
 

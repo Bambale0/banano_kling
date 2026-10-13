@@ -11,6 +11,7 @@ import math
 from collections.abc import Iterable
 from copy import deepcopy
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 from bot.config import config
@@ -18,7 +19,11 @@ from bot.model_capabilities import get_video_capability
 from bot.services.preset_manager import preset_manager
 from bot.video_reference_policy import apply_video_reference_cost
 
-CREATOR_MODELS = ('seedance_2', 'seedance_2_5')
+LEGACY_CREATOR_MODELS = ('seedance_2', 'seedance_2_5')
+CREATOR_MODELS = (*LEGACY_CREATOR_MODELS, 'wan_3', 'wan_3_prime')
+GENJUTSU_QUALITIES = {key: tuple(value['resolutions']) for key, value in json.loads(
+    Path(__file__).with_name('genjutsu').joinpath('catalog.json').read_text()
+).items()}
 STRICT_QUALITY_PRICED_VIDEO_MODELS = {'wan_3_prime', 'wan_3'}
 
 
@@ -30,7 +35,7 @@ def _required_qualities(raw: dict[str, Any] | None = None) -> dict[str, list[str
     result = {}
     for model in CREATOR_MODELS:
         capability = get_video_capability(model)
-        keys = set(capability.resolutions or ('720p',)) if capability else {'720p'}
+        keys = {str(key).strip().lower() for key in (capability.resolutions or ('720p',))} if capability else {'720p'}
         for entry in (ordinary.get(model, {}), models.get(model, {})):
             rates = entry.get('quality_costs', {}) if isinstance(entry, dict) else {}
             if isinstance(rates, dict):
@@ -52,7 +57,7 @@ def _parse_config(raw: Any) -> tuple[dict[str, Any], list[str], list[str]]:
         invalid.append('video_models должен быть объектом')
         models = {}
     if set(models) - set(CREATOR_MODELS):
-        invalid.append('Креаторский тариф поддерживает только Seedance 2.0 и 2.5')
+        invalid.append('Неизвестная модель креаторского тарифа')
     normalized = {'enabled': enabled, 'video_models': {}}
     missing = []
     for model, qualities in _required_qualities(raw).items():
@@ -95,8 +100,26 @@ def _parse_config(raw: Any) -> tuple[dict[str, Any], list[str], list[str]]:
         if model in models:
             normalized['video_models'][model] = {'quality_costs': normalized_rates}
         for quality in qualities:
-            if quality not in normalized_rates:
+            if model in LEGACY_CREATOR_MODELS and quality not in normalized_rates:
                 missing.append(f'{model}/{quality}: цена не задана')
+    if 'genjutsu' in raw:
+        block = raw['genjutsu']
+        prices = block.get('prices', {}) if isinstance(block, dict) else None
+        clean = {}
+        if not isinstance(block, dict) or set(block) - {'prices'} or not isinstance(prices, dict):
+            invalid.append('Genjutsu: неверные настройки цен')
+        else:
+            for operation, rates in prices.items():
+                if operation not in GENJUTSU_QUALITIES or not isinstance(rates, dict):
+                    invalid.append('Genjutsu: неизвестная операция')
+                    continue
+                clean[operation] = {}
+                for quality, rate in rates.items():
+                    if quality not in GENJUTSU_QUALITIES[operation] or (rate is not None and (type(rate) is not int or not 1 <= rate <= 10000)):
+                        invalid.append(f'Genjutsu/{operation}/{quality}: нужна целая цена от 1 до 10000')
+                    else:
+                        clean[operation][quality] = rate
+        normalized['genjutsu'] = {'prices': clean}
     return normalized, missing, invalid
 
 
@@ -118,7 +141,7 @@ def creator_tariff_status() -> dict[str, Any]:
     }
 
 
-async def get_actor_tariff(telegram_id: int | None) -> str:
+async def get_actor_tariff(telegram_id: int | None, *, db: Any = None) -> str:
     """Resolve only from authenticated actor identity and server membership."""
     if telegram_id is None:
         return 'standard'
@@ -127,6 +150,12 @@ async def get_actor_tariff(telegram_id: int | None) -> str:
     status = creator_tariff_status()
     if not status['enabled'] or not status['configured']:
         return 'standard'
+    if db is not None:
+        from bot import db as db_backend
+        suffix = ' FOR UPDATE' if db_backend.is_postgres() else ''
+        await (await db.execute('SELECT id FROM users WHERE telegram_id = ?' + suffix, (int(telegram_id),))).fetchone()
+        row = await (await db.execute('SELECT enabled FROM creator_tariff_memberships WHERE telegram_id = ?', (int(telegram_id),))).fetchone()
+        return 'creator' if row and row[0] == 1 else 'standard'
     from bot.creator_tariff_membership import get_creator_tariff_membership
     return 'creator' if await get_creator_tariff_membership(int(telegram_id)) else 'standard'
 
@@ -136,8 +165,48 @@ def video_quality_rates(model: str, *, tariff: str = 'standard') -> dict[str, fl
     rates = preset_manager.get_video_quality_costs(model)
     status = creator_tariff_status()
     if tariff == 'creator' and model in CREATOR_MODELS and status['enabled'] and status['configured']:
-        rates.update(status['video_models'][model]['quality_costs'])
+        rates.update(status['video_models'].get(model, {}).get('quality_costs', {}))
     return rates
+
+
+def video_rate_snapshot(model: str, quality: str, ordinary_rates: dict, *, tariff: str = 'standard') -> dict:
+    """Rate-only contract for measured WAN billing; never applies a multiplier."""
+    if tariff not in {'standard', 'creator', 'admin'}:
+        raise ValueError('Unknown server price profile')
+    model = preset_manager.normalize_video_model_key(model)
+    key = str(quality).strip().lower()
+    rate = {str(k).strip().lower(): v for k, v in ordinary_rates.items()}.get(key)
+    profile = 'admin' if tariff == 'admin' else 'standard'
+    status = creator_tariff_status()
+    if tariff == 'creator' and status['enabled'] and status['configured']:
+        candidate = status['video_models'].get(model, {}).get('quality_costs', {}).get(key)
+        if candidate is not None:
+            rate, profile = candidate, 'creator'
+    snapshot = {'model': model, 'quality': key, 'rate': rate, 'profile': profile}
+    snapshot['revision'] = hashlib.sha256(json.dumps(snapshot, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+    return snapshot
+
+
+def genjutsu_pricing_snapshot(ordinary_prices: dict, *, tariff: str = 'standard') -> dict:
+    """Overlay only explicitly configured operation/resolution cells."""
+    if tariff not in {'standard', 'creator', 'admin'}:
+        raise ValueError('Unknown server price profile')
+    rates = deepcopy(ordinary_prices)
+    status = creator_tariff_status()
+    profile = 'standard'
+    if tariff == 'creator' and status['enabled'] and status['configured']:
+        for operation, overrides in status.get('genjutsu', {}).get('prices', {}).items():
+            for quality, rate in overrides.items():
+                if rate is not None and operation in rates and quality in rates[operation]:
+                    rates[operation][quality] = rate
+                    profile = 'creator'
+    snapshot = {'prices': rates, 'profile': profile}
+    snapshot['revision'] = hashlib.sha256(json.dumps(snapshot, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+    return snapshot
+
+
+def genjutsu_price_rates(ordinary_prices: dict, *, tariff: str = 'standard') -> dict:
+    return genjutsu_pricing_snapshot(ordinary_prices, tariff=tariff)['prices']
 
 
 @dataclass(frozen=True, slots=True)

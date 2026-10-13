@@ -356,13 +356,18 @@ class Wan3PrimeLifecycle:
         if hasattr(self.transport, "close"):
             await self.transport.close()
 
-    def _rate_snapshot(self, recipe: Wan3PrimeRecipe, actor: Wan3PrimeActor) -> tuple[float, str, bool]:
+    def _rate_snapshot(self, recipe: Wan3PrimeRecipe, actor: Wan3PrimeActor, *, tariff: str = "standard") -> tuple[float, str, bool]:
         costs = self.preset_manager.get_video_quality_costs(recipe.model)
         if not isinstance(costs, dict):
             costs = {}
-        normalized = {str(k).strip().lower(): v for k, v in costs.items()}
         key = recipe.resolution.lower()
-        raw = normalized.get(key)
+        raw = {str(k).strip().lower(): v for k, v in costs.items()}.get(key)
+        revision = None
+        if tariff == 'creator' and not actor.is_admin:
+            from bot.creator_tariff import video_rate_snapshot
+
+            snapshot = video_rate_snapshot(recipe.model, key, costs, tariff=tariff)
+            raw, revision = snapshot['rate'], snapshot['revision']
         configured = raw is not None
         try:
             if isinstance(raw, bool):
@@ -374,10 +379,10 @@ class Wan3PrimeLifecycle:
             return 0.0, "missing-admin-free", False
         if not math.isfinite(rate) or rate <= 0:
             raise Wan3PrimeLifecycleError("Wan 3.0 rate is not configured", status=503, code="missing_rate")
-        return rate, f"{recipe.model}:{key}:{rate}", True
+        return rate, revision or f"{recipe.model}:{key}:{rate}", True
 
-    def _quote_from_recipe(self, actor: Wan3PrimeActor, recipe: Wan3PrimeRecipe) -> Wan3PrimeQuote:
-        rate, revision, configured = self._rate_snapshot(recipe, actor)
+    def _quote_from_recipe(self, actor: Wan3PrimeActor, recipe: Wan3PrimeRecipe, *, tariff: str = "standard") -> Wan3PrimeQuote:
+        rate, revision, configured = self._rate_snapshot(recipe, actor, tariff=tariff)
         requested = None if recipe.duration == -1 else recipe.duration
         if recipe.duration == -1:
             billable = 30.0
@@ -433,9 +438,15 @@ class Wan3PrimeLifecycle:
             raise Wan3PrimeValidationError(str(exc)) from exc
         return replace(recipe, prepared_input=prepared, client_request=request, repeat_context=context)
 
+    async def _quote_for_actor(self, actor: Wan3PrimeActor, recipe: Wan3PrimeRecipe, *, db=None) -> Wan3PrimeQuote:
+        from bot.creator_tariff import get_actor_tariff
+
+        tariff = 'admin' if actor.is_admin else await get_actor_tariff(actor.telegram_id, db=db)
+        return self._quote_from_recipe(actor, recipe, tariff=tariff)
+
     async def quote(self, actor: Wan3PrimeActor, body: dict[str, Any]) -> Wan3PrimeQuote:
         recipe = await self._validated_recipe(actor, body)
-        return self._quote_from_recipe(actor, recipe)
+        return await self._quote_for_actor(actor, recipe)
 
     async def _recipe_and_quote(
         self, actor: Wan3PrimeActor, body: dict[str, Any], quote: Wan3PrimeQuote | dict[str, Any] | None
@@ -443,7 +454,7 @@ class Wan3PrimeLifecycle:
         if quote is None:
             raise Wan3PrimeLifecycleError("quote_hash is required", status=409, code="missing_quote")
         recipe = await self._validated_recipe(actor, body)
-        server_quote = self._quote_from_recipe(actor, recipe)
+        server_quote = await self._quote_for_actor(actor, recipe)
         supplied_hash = quote.quote_hash if isinstance(quote, Wan3PrimeQuote) else str(quote.get("quote_hash") or quote.get("quotehash") or "")
         if not supplied_hash:
             raise Wan3PrimeLifecycleError("quote_hash is required", status=409, code="missing_quote")
@@ -529,6 +540,11 @@ class Wan3PrimeLifecycle:
                         )).fetchone()
                         if not present or not Path(present["local_path"]).is_file():
                             raise Wan3PrimeValidationError("Media expired before launch; upload it again", status=409)
+            # Membership changes lock this same user row. Reprice after media
+            # validation and before the single reservation/debit transaction.
+            current_quote = await self._quote_for_actor(actor, recipe, db=db)
+            if current_quote.quote_hash != server_quote.quote_hash:
+                raise Wan3PrimeLifecycleError("Quote is stale", status=409, code="stale_quote")
             insert_prefix = "INSERT INTO" if _is_postgres() else "INSERT OR IGNORE INTO"
             insert_sql = f"""
                 {insert_prefix} wan3_prime_intents (

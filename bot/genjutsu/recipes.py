@@ -14,6 +14,7 @@ from uuid import uuid4
 
 import aiosqlite
 
+from bot.creator_tariff import genjutsu_price_rates, get_actor_tariff
 from bot.trend_user_fields import (
     TrendUserFieldsError,
     clean_submitted_user_values,
@@ -264,7 +265,7 @@ class RecipeStore:
                     raise
         return items
 
-    async def public(self, recipe_id: str) -> dict:
+    async def public(self, recipe_id: str, *, tariff: str = "standard") -> dict:
         row = await self._row(recipe_id)
         plan = row["plan"]
         source_binding = row.get("source_binding") or "fixed"
@@ -274,8 +275,9 @@ class RecipeStore:
             if source:
                 try:
                     settings, _ = await self.repository.settings()
+                    prices = genjutsu_price_rates(settings["prices"], tariff=tariff)
                     current_cost = quote_plan(
-                        plan, {plan["source_asset_id"]: source}, settings
+                        plan, {plan["source_asset_id"]: source}, {**settings, "prices": prices}
                     )["total_credits"]
                 except PipelineError:
                     current_cost = None
@@ -430,18 +432,20 @@ class RecipeStore:
             return {"card": card}
         if action == "recipe_get":
             api.fields(body, {"recipe_id"})
-            return {"recipe": await self.public(api.ident(body, "recipe_id"))}
+            tariff = await get_actor_tariff(owner)
+            return {"recipe": await self.public(api.ident(body, "recipe_id"), tariff=tariff)}
         if action == "recipe_costs":
             api.fields(body, {"recipe_ids"})
             raw_ids = body.get("recipe_ids")
             if not isinstance(raw_ids, list) or len(raw_ids) > 100:
                 raise PipelineError("invalid_recipe_ids")
+            tariff = await get_actor_tariff(owner)
             costs: dict[str, int | None] = {}
             for raw_id in raw_ids:
                 if not isinstance(raw_id, str) or raw_id in costs:
                     continue
                 try:
-                    recipe = await self.public(raw_id)
+                    recipe = await self.public(raw_id, tariff=tariff)
                 except PipelineError as exc:
                     if exc.code == "recipe_unavailable":
                         continue
@@ -503,6 +507,6 @@ class RecipeStore:
             return {
                 "quote": quote,
                 "admin_free": admin,
-                "recipe": await self.public(recipe_id),
+                "recipe": await self.public(recipe_id, tariff=await get_actor_tariff(owner)),
             }
         raise PipelineError("invalid_action")

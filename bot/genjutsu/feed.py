@@ -8,6 +8,8 @@ import shutil
 from pathlib import Path
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
+from bot.creator_tariff import get_actor_tariff
+
 from .contract import PipelineError, asset_ids, fingerprint, text
 from .repository import encode, one
 
@@ -145,7 +147,8 @@ class FeedPublisher:
         card = await get_feed_generation_card(task_id, viewer_user_id=user["id"])
         if not card:
             raise PipelineError("feed_storage_failed", status=503)
-        return {"card": card, "recipe": await self.recipes.public(recipe_id)}
+        tariff = await get_actor_tariff(owner)
+        return {"card": card, "recipe": await self.recipes.public(recipe_id, tariff=tariff)}
 
 
 async def redirect_legacy_repeat(callback, task) -> bool:

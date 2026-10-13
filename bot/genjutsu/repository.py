@@ -13,6 +13,8 @@ from contextlib import asynccontextmanager
 from typing import Any
 from uuid import uuid4
 
+from bot.creator_tariff import genjutsu_pricing_snapshot, get_actor_tariff
+
 from .contract import (
     CATALOG,
     GENJUTSU_PRICING_VERSION,
@@ -287,6 +289,14 @@ class Repository:
             plan, quote = json.loads(q['plan']), json.loads(q['quote'])
             if quote.get('pricing_version') != GENJUTSU_PRICING_VERSION:
                 raise PipelineError('quote_changed', status=409)
+            if 'tariff' in quote:
+                # Lock/read membership in this admission transaction. Existing
+                # runs returned above keep their accepted rates after changes.
+                tariff = await get_actor_tariff(owner, db=db)
+                pricing = genjutsu_pricing_snapshot(settings['prices'], tariff=tariff)
+                current = {key: pricing[key] for key in ('profile', 'revision')}
+                if quote['tariff'] != current:
+                    raise PipelineError('quote_changed', status=409)
             if not admin_free and any(s['operation'] not in settings['verified_operations'] for s in plan['steps']):
                 raise PipelineError('operation_not_verified', status=503)
             active = await one(db, "SELECT COUNT(*) AS count FROM genjutsu_runs WHERE owner=? AND state IN ('running','waiting','review')", (owner,))
