@@ -27,6 +27,8 @@ def price_video_model_metadata(
         from bot.services.preset_manager import preset_manager
 
         rates = video_quality_rates(model, tariff=tariff)
+        if tariff != 'creator' or rates == preset_manager.get_video_quality_costs(model):
+            return dict(metadata)
         totals = {
             quality: {
                 str(duration): preset_manager._format_cost(rate * (30 if int(duration) == -1 else int(duration)))

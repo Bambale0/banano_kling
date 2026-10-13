@@ -88,6 +88,20 @@ class PricingTests(unittest.TestCase):
             self.assertEqual(auto.reserve_credits, 60)
             self.assertEqual(auto.reserved_output_seconds, 22.5)
 
+    def test_wan_metadata_preserves_baseline_without_effective_override(self):
+        tree = ast.parse((ROOT / 'bot/creator_tariff_display.py').read_text())
+        fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'price_video_model_metadata')
+        ns = {'Any': object, 'video_quality_rates': self.module.video_quality_rates}
+        exec(compile(ast.Module(body=[fn], type_ignores=[]), '<actual-display>', 'exec'), ns)  # noqa: S102 - trusted pure public display seam
+        metadata = {'id': 'wan_3', 'durations': [5], 'costs': {'5': 77}}
+        with patch.dict(sys.modules, {'bot.services.preset_manager': types.SimpleNamespace(preset_manager=self.manager)}):
+            for tariff in ('standard', 'admin', 'creator'):
+                self.assertEqual(ns['price_video_model_metadata'](metadata, tariff=tariff), metadata)
+            self.prices['creator_tariff']['video_models']['wan_3'] = {'quality_costs': {'720p': 2}}
+            result = ns['price_video_model_metadata'](metadata, tariff='creator')
+            self.assertEqual(result['quality_duration_costs']['720p']['5'], 10)
+            self.assertEqual(metadata['costs'], {'5': 77})
+
     def test_genjutsu_partial_rates_copy_and_fallback(self):
         self.prices['creator_tariff']['genjutsu'] = {'prices': {'restyle': {'720p': 3}}}
         ordinary = {'restyle': {'480p': 5, '720p': 8}, 'object_swap': {'720p': 12}}
