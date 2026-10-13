@@ -37,6 +37,12 @@ function finiteNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null
 }
 
+/** Public WAN cards retain only this safe version marker; admin cards may carry a model. */
+export function isWanTrendItem(trend: PromptItem): boolean {
+  return trend.generation_settings?.wan3_recipe_version === 1
+    || trend.model === 'wan_3' || trend.model === 'wan_3_prime'
+}
+
 export function isVideoTrendItem(
   trend: PromptItem,
   videoModels: VideoModel[],

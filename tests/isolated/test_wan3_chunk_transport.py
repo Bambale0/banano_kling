@@ -50,9 +50,10 @@ class ChunkTransportTests(unittest.IsolatedAsyncioTestCase):
         tree = ast.parse(source.read_text())
         names = {'_json_ok', '_json_error', '_http_boundary', '_upload_chunk_route', '_read_upload_chunk'}
         selected = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in names]
+        self.owner = types.SimpleNamespace(user_id=7, telegram_id=17)
         namespace = {'web': web, 'Any': object, 'wraps': wraps, 'logger': logging.getLogger('wan-chunk-test'),
                      'Wan3PrimeValidationError': ValidationError, 'Wan3PrimeLifecycleError': LifecycleError,
-                     'wan3_prime_storage': self.storage, '_actor_from_request': AsyncMock(return_value='owner')}
+                     'wan3_prime_storage': self.storage, '_actor_from_request': AsyncMock(return_value=self.owner)}
         # Trusted repository AST only; avoids importing application/database modules.
         exec(compile(ast.Module(body=selected, type_ignores=[]), str(source), 'exec'), namespace)  # noqa: S102
         self.actor = namespace['_actor_from_request']
@@ -75,7 +76,7 @@ class ChunkTransportTests(unittest.IsolatedAsyncioTestCase):
     async def test_json_chunk_preserves_exact_bytes_and_owner(self):
         response = await self.post_json(self.payload())
         self.assertEqual(response.status, 200, await response.text())
-        self.storage.save_chunk.assert_awaited_once_with('owner', upload_id='a' * 32, index=0, total=1, chunk=b'synthetic-jpeg')
+        self.storage.save_chunk.assert_awaited_once_with(self.owner, upload_id='a' * 32, index=0, total=1, chunk=b'synthetic-jpeg')
 
     async def test_real_multipart_still_works(self):
         form = FormData()
@@ -84,7 +85,7 @@ class ChunkTransportTests(unittest.IsolatedAsyncioTestCase):
         form.add_field('chunk', b'synthetic-jpeg', filename='image.jpeg', content_type='image/jpeg')
         response = await self.client.post('/chunk', data=form, headers={'X-Telegram-Init-Data': 'synthetic'})
         self.assertEqual(response.status, 200, await response.text())
-        self.storage.save_chunk.assert_awaited_once_with('owner', upload_id='a' * 32, index=0, total=1, chunk=b'synthetic-jpeg')
+        self.storage.save_chunk.assert_awaited_once_with(self.owner, upload_id='a' * 32, index=0, total=1, chunk=b'synthetic-jpeg')
 
     async def test_broken_webkit_boundary_reproduces_upload_error(self):
         response = await self.client.post('/chunk', data=b'--different-boundary\r\n', headers={

@@ -23,6 +23,7 @@ import {
 } from '@/lib/trend-api'
 import { mediaAspectRatio, normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
 import { formatTrendRepeatCost } from '@/lib/trend-price'
+import { isWanTrendItem } from '@/lib/trend-settings'
 import type { PromptItem, TrendReferenceSlot, TrendUserField, UploadedFile } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Wan3PrimeForm } from '@/components/forms/wan3-prime-form'
@@ -529,11 +530,11 @@ export function TrendRunnerDialog({
     )
   }
 
-  if (trend && (trend.model === 'wan_3_prime' || trend.model === 'wan_3')) return (
+  if (trend && isWanTrendItem(trend)) return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[92vh] max-w-lg overflow-y-auto border-border/60 bg-background p-4">
         <DialogTitle>{trend.title}</DialogTitle>
-        {open ? <Wan3PrimeForm model={trend.model === 'wan_3' ? 'wan_3' : 'wan_3_prime'} key={trend.id} trendId={trend.id} credits={state.user.credits} isAdmin={state.user.isAdmin}
+        {open ? <Wan3PrimeForm model={trend.model === 'wan_3' || trend.model === 'wan_3_prime' ? trend.model : undefined} key={trend.id} trendId={trend.id} credits={state.user.credits} isAdmin={state.user.isAdmin}
           onQueued={result => {
             if (typeof result.credits === 'number') setCredits(result.credits)
             addTask({ task_id: result.internal_task_id, type: 'video', model: result.model || (trend.model === 'wan_3' ? 'wan_3' : 'wan_3_prime'),

@@ -238,3 +238,77 @@ async def test_postgres_publication_lock_excludes_concurrent_result_expiry(monke
         await publication.commit()
     await asyncio.wait_for(cleanup, timeout=5)
     assert path.exists() and await balance(actor.user_id) == 90
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('zone', ['UTC', 'Europe/London'])
+@pytest.mark.parametrize('instant', ['2026-01-15T12:00:00+00:00', '2026-07-15T12:00:00+00:00', '2026-10-25T00:30:00+00:00'])
+async def test_postgres_upload_utc_expiry_survives_session_timezone_and_dst(monkeypatch, zone, instant):
+    """Only disposable CI connections change timezone; production/schema are untouched."""
+    from contextlib import asynccontextmanager
+    from datetime import UTC, datetime, timedelta
+
+    from bot.services import wan3_prime_storage as storage_module
+    from tests.test_wan3_prime_storage import png_bytes
+
+    fixed = datetime.fromisoformat(instant)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed.astimezone(tz) if tz else fixed.replace(tzinfo=None)
+
+    monkeypatch.setattr(storage_module, 'datetime', Clock)
+    original_connect = db_backend.connect
+
+    @asynccontextmanager
+    async def zoned_connect(*args, **kwargs):
+        async with original_connect(*args, **kwargs) as db:
+            await db.execute('SELECT set_config(?, ?, false)', ('TimeZone', zone))
+            setting = await (await db.execute("SELECT current_setting('TimeZone')")).fetchone()
+            assert setting[0] == zone
+            await db.commit()
+            yield db
+
+    monkeypatch.setattr(db_backend, 'connect', zoned_connect)
+    actor = await user_actor(100, telegram_id=991284009)
+    raw = png_bytes()
+    storage = storage_module.wan3_prime_storage
+    session = await storage.init_upload(actor, kind='image', filename='timezone.png', size=len(raw))
+    async with db_backend.connect() as db:
+        row = await (await db.execute(
+            'SELECT created_at, updated_at, expires_at, EXTRACT(EPOCH FROM (expires_at - created_at)) '
+            'FROM wan3_prime_upload_sessions WHERE upload_id = ?', (session['upload_id'],),
+        )).fetchone()
+    assert 3599 <= float(row[3]) <= 3601
+    assert str(row[0]).startswith(fixed.astimezone(UTC).strftime('%Y-%m-%d %H:%M:%S'))
+    await storage.save_chunk(actor, upload_id=session['upload_id'], index=0, total=1, chunk=raw)
+    saved = await storage.complete_upload(actor, upload_id=session['upload_id'])
+    assert saved['kind'] == 'image'
+    assert await storage.complete_upload(actor, upload_id=session['upload_id']) == saved
+
+    from bot.services.wan3_prime_media import Wan3PrimeValidationError
+
+    monkeypatch.setenv('WAN3_UPLOAD_USER_QUOTA_BYTES', str(len(raw) * 2))
+    second = await storage.init_upload(actor, kind='image', filename='expires.png', size=len(raw))
+    await storage.save_chunk(actor, upload_id=second['upload_id'], index=0, total=1, chunk=raw)
+    with pytest.raises(Wan3PrimeValidationError) as quota_error:
+        await storage.init_upload(actor, kind='image', filename='over-quota.png', size=len(raw))
+    assert quota_error.value.status == 429
+    fixed += timedelta(hours=1)
+    with pytest.raises(Wan3PrimeValidationError) as missing_session:
+        await storage.save_chunk(actor, upload_id=second['upload_id'], index=0, total=1, chunk=raw)
+    assert missing_session.value.status == 404
+    with pytest.raises(Wan3PrimeValidationError) as expired_session:
+        await storage.complete_upload(actor, upload_id=second['upload_id'])
+    assert expired_session.value.status == 410
+    cleaned = await storage.cleanup_expired()
+    assert cleaned['removed_sessions'] >= 1
+    assert not (storage_module.CHUNK_ROOT / second['upload_id']).exists()
+    async with db_backend.connect() as db:
+        expired = await (await db.execute(
+            'SELECT status FROM wan3_prime_upload_sessions WHERE upload_id = ?', (second['upload_id'],),
+        )).fetchone()
+    assert expired[0] == 'expired'
+    renewed = await storage.init_upload(actor, kind='image', filename='quota-released.png', size=len(raw))
+    assert renewed['upload_id'] != second['upload_id']

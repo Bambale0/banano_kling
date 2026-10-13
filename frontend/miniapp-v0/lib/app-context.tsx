@@ -5,7 +5,7 @@ import type { AppState, BootstrapResponse, FeedDeepLink, FeedItem, PromptItem, P
 import { mockAppState, mockImageModels, mockVideoModels } from './mock-data'
 import { bootstrapApp, fetchFeedItem, fetchPromptDetail, fetchTaskDetail, getInitData, getStartParamFallback, hasTelegramInitData, waitForTelegramInitData } from './api'
 import { genjutsuRecipeStartParam, parseMiniAppStartParam, startParamFromLocation } from './start-params'
-import { isVideoTrendItem, resolveTrendSettings } from './trend-settings'
+import { isVideoTrendItem, isWanTrendItem, resolveTrendSettings } from './trend-settings'
 import { genjutsuCall, openGenjutsu } from './genjutsu-api'
 import { hydrateSeedance25IdentityPreset } from './seedance25-repeat'
 
@@ -506,6 +506,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
           if (genjutsuRecipeId) {
             setActiveTabState(5)
             openGenjutsu({ recipe_id: genjutsuRecipeId })
+            return
+          }
+
+          if (isTrend && isWanTrendItem(prompt)) {
+            setTrendToRun(prompt)
+            setActiveTabState(5)
             return
           }
 

@@ -41,11 +41,16 @@ CHUNK_ROOT = ROOT / "chunks"
 
 
 def _now() -> str:
+    """UTC-naive clock for the existing TIMESTAMP WITHOUT TIME ZONE columns.
+
+    Bind this value in SQL too: CURRENT_TIMESTAMP follows the PostgreSQL
+    session timezone when compared with those columns.
+    """
     return datetime.now(UTC).replace(tzinfo=None).isoformat(sep=" ")
 
 
-def _expires(minutes: int = 60) -> str:
-    return (datetime.now(UTC) + timedelta(minutes=minutes)).replace(tzinfo=None).isoformat(sep=" ")
+def _expires(minutes: int = 60, *, now: str | None = None) -> str:
+    return (datetime.fromisoformat(now if now is not None else _now()) + timedelta(minutes=minutes)).isoformat(sep=" ")
 
 
 def _safe_basename(filename: str) -> str:
@@ -198,7 +203,7 @@ class Wan3PrimeStorage:
                             or previous["filename"] != filename or int(previous["declared_size"]) != size
                             or (previous["content_type"] or "") != (content_type or "")
                             or importing or previous["status"] != "open"
-                            or expires <= datetime.now(UTC).replace(tzinfo=None)):
+                            or expires <= datetime.fromisoformat(_now())):
                         raise Wan3PrimeValidationError("Upload session conflict", status=409)
                     return {"ok": True, "upload_id": upload_id, "chunk_size": CHUNK_SIZE,
                             "expires_at": str(previous["expires_at"])}
@@ -209,12 +214,13 @@ class Wan3PrimeStorage:
             )).fetchone()
             if int(row[0] or 0) >= MAX_UNFINISHED_SESSIONS:
                 raise Wan3PrimeValidationError("Too many unfinished Wan 3.0 uploads", status=429)
-            upload_id, expires_at = upload_id or uuid.uuid4().hex, _expires()
+            stamp = _now()
+            upload_id, expires_at = upload_id or uuid.uuid4().hex, _expires(now=stamp)
             await db.execute(
                 "INSERT INTO wan3_prime_upload_sessions "
-                "(upload_id, user_id, telegram_id, kind, filename, content_type, declared_size, expires_at, status) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (upload_id, actor.user_id, actor.telegram_id, kind, filename, content_type or "", size, expires_at, "importing" if importing else "open"),
+                "(upload_id, user_id, telegram_id, kind, filename, content_type, declared_size, expires_at, status, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (upload_id, actor.user_id, actor.telegram_id, kind, filename, content_type or "", size, expires_at, "importing" if importing else "open", stamp, stamp),
             )
             await db.commit()
         await asyncio.to_thread(canonical_child_path(CHUNK_ROOT, upload_id).mkdir, parents=True, exist_ok=True)
@@ -245,9 +251,9 @@ class Wan3PrimeStorage:
                 return {"ok": True, "status": "completed"}
             if row["status"] in {"open", "assembling", "importing", "rejected"}:
                 await db.execute(
-                    "UPDATE wan3_prime_upload_sessions SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP "
+                    "UPDATE wan3_prime_upload_sessions SET status = 'cancelled', updated_at = ? "
                     "WHERE upload_id = ? AND user_id = ? AND status IN ('open', 'assembling', 'importing', 'rejected')",
-                    (upload_id, actor.user_id),
+                    (_now(), upload_id, actor.user_id),
                 )
             await db.commit()
         # Release the unfinished slot now. Retention owns physical removal;
@@ -265,8 +271,8 @@ class Wan3PrimeStorage:
             await db.execute("BEGIN IMMEDIATE")
             row = await (
                 await db.execute(
-                    "SELECT * FROM wan3_prime_upload_sessions WHERE upload_id = ? AND user_id = ? AND status = 'open' AND expires_at > CURRENT_TIMESTAMP" + (" FOR UPDATE" if db_backend.is_postgres() else ""),
-                    (upload_id, actor.user_id),
+                    "SELECT * FROM wan3_prime_upload_sessions WHERE upload_id = ? AND user_id = ? AND status = 'open' AND expires_at > ?" + (" FOR UPDATE" if db_backend.is_postgres() else ""),
+                    (upload_id, actor.user_id, _now()),
                 )
             ).fetchone()
             if not row:
@@ -289,8 +295,8 @@ class Wan3PrimeStorage:
             if key not in hashes:
                 hashes[key] = digest
                 await db.execute(
-                    "UPDATE wan3_prime_upload_sessions SET total_chunks = ?, received_chunks = received_chunks + 1, chunk_hashes = ?, updated_at = CURRENT_TIMESTAMP WHERE upload_id = ?",
-                    (total, json.dumps(hashes, sort_keys=True), upload_id),
+                    "UPDATE wan3_prime_upload_sessions SET total_chunks = ?, received_chunks = received_chunks + 1, chunk_hashes = ?, updated_at = ? WHERE upload_id = ?",
+                    (total, json.dumps(hashes, sort_keys=True), _now(), upload_id),
                 )
             from bot.services.wan3_prime_files import write_chunk
 
@@ -314,11 +320,11 @@ class Wan3PrimeStorage:
                 raise Wan3PrimeValidationError("Upload session not found", status=404)
             if row["status"] == "completed" and row["completed_result"]:
                 return json.loads(row["completed_result"])
-            now = datetime.now(UTC).replace(tzinfo=None)
+            now = datetime.fromisoformat(_now())
             expires = datetime.fromisoformat(str(row["expires_at"]))
             if expires.tzinfo is not None:
                 expires = expires.astimezone(UTC).replace(tzinfo=None)
-            if expires < now:
+            if expires <= now:
                 raise Wan3PrimeValidationError("Upload session expired", status=410)
             if row["status"] == "assembling":
                 updated = datetime.fromisoformat(str(row["updated_at"]))
@@ -350,8 +356,8 @@ class Wan3PrimeStorage:
             terminal = isinstance(exc, Wan3PrimeDocumentError)
             next_status = 'rejected' if terminal else 'open'
             async with db_backend.connect(_sqlite_path()) as db:
-                changed = await db.execute("UPDATE wan3_prime_upload_sessions SET status = ?, updated_at = CURRENT_TIMESTAMP "
-                    "WHERE upload_id = ? AND status = 'assembling' AND updated_at = ?", (next_status, upload_id, stamp))
+                changed = await db.execute("UPDATE wan3_prime_upload_sessions SET status = ?, updated_at = ? "
+                    "WHERE upload_id = ? AND status = 'assembling' AND updated_at = ?", (next_status, _now(), upload_id, stamp))
                 await db.commit()
             if terminal and changed.rowcount == 1:
                 # Retain quota until the actual rejected bytes are removed.
@@ -437,7 +443,7 @@ class Wan3PrimeStorage:
                      "reference": {"id": media_row[0], "created_at": _now(), "source": source}}
             if upload_id:
                 await db.execute("UPDATE wan3_prime_upload_sessions SET status = 'completed', completed_result = ?, "
-                                 "updated_at = CURRENT_TIMESTAMP WHERE upload_id = ?", (json.dumps(saved), upload_id))
+                                 "updated_at = ? WHERE upload_id = ?", (json.dumps(saved), _now(), upload_id))
             await db.commit()
         return saved
 
@@ -453,7 +459,7 @@ class Wan3PrimeStorage:
             directory = canonical_child_path(CHUNK_ROOT, upload_id)
             if directory.exists():
                 await asyncio.to_thread(shutil.rmtree, directory)
-            await db.execute("UPDATE wan3_prime_upload_sessions SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE upload_id = ? AND status IN ('importing', 'rejected')", (upload_id,))
+            await db.execute("UPDATE wan3_prime_upload_sessions SET status = 'failed', updated_at = ? WHERE upload_id = ? AND status IN ('importing', 'rejected')", (_now(), upload_id))
             await db.commit()
 
     async def import_url(self, actor, *, kind: str, url: str) -> dict[str, Any]:

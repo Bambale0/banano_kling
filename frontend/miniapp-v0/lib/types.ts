@@ -247,6 +247,8 @@ export interface TrendGenerationSettings {
   user_input?: 'photo'
   model: string
   ratio?: string
+  /** Safe dispatch marker; never includes the private recipe or model. */
+  wan3_recipe_version?: 1
   wan3_recipe?: Wan3PrimeRecipe
   wan3_replacement_keys?: string[]
   preview_type?: 'image' | 'video'

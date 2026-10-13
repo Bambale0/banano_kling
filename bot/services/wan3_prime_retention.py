@@ -23,19 +23,20 @@ async def _table_exists(db, name: str) -> bool:
 
 
 async def cleanup_expired(*, limit: int = 100) -> dict[str, int]:
-    from bot.services.wan3_prime_storage import CHUNK_ROOT, UPLOAD_ROOT
+    from bot.services.wan3_prime_storage import CHUNK_ROOT, UPLOAD_ROOT, _now
 
     removed_sessions = removed_media = 0
-    stale_lease = (datetime.now(UTC) - timedelta(seconds=positive_setting('WAN3_ASSEMBLY_LEASE_SECONDS', 300))).replace(tzinfo=None).isoformat(' ')
+    stamp = _now()
+    stale_lease = (datetime.fromisoformat(stamp) - timedelta(seconds=positive_setting('WAN3_ASSEMBLY_LEASE_SECONDS', 300))).isoformat(' ')
     cutoff = (datetime.now(UTC) - timedelta(seconds=positive_setting('WAN3_UNUSED_MEDIA_TTL_SECONDS', 86400))).replace(tzinfo=None).isoformat(' ')
     async with db_backend.connect(database.DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
         await lock_storage(db)
         sessions = await (await db.execute(
-            "SELECT upload_id FROM wan3_prime_upload_sessions WHERE ((expires_at <= CURRENT_TIMESTAMP "
+            "SELECT upload_id FROM wan3_prime_upload_sessions WHERE ((expires_at <= ? "
             "AND status IN ('open', 'assembling', 'importing', 'rejected', 'failed', 'completed')) OR status = 'cancelled') AND updated_at <= ? "
             "ORDER BY expires_at LIMIT ?" + (' FOR UPDATE' if db_backend.is_postgres() else ''),
-            (stale_lease, limit),
+            (stamp, stale_lease, limit),
         )).fetchall()
         for session in sessions:
             directory = canonical_child_path(CHUNK_ROOT, session['upload_id'])
@@ -45,8 +46,8 @@ async def cleanup_expired(*, limit: int = 100) -> dict[str, int]:
             except OSError:
                 logger.warning('Wan3 expired upload removal deferred: upload_id=%s', session['upload_id'])
                 continue
-            await db.execute("UPDATE wan3_prime_upload_sessions SET status = 'expired', updated_at = CURRENT_TIMESTAMP "
-                             "WHERE upload_id = ?", (session['upload_id'],))
+            await db.execute("UPDATE wan3_prime_upload_sessions SET status = 'expired', updated_at = ? "
+                             "WHERE upload_id = ?", (stamp, session['upload_id']))
             removed_sessions += 1
         optional_tables = [(table, column) for table, column in (('trend_reference_assets', 'file_url'),
             ('saved_references', 'file_url'), ('wan3_prime_trend_recipes', 'recipe_json')) if await _table_exists(db, table)]
