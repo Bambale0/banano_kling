@@ -23,6 +23,19 @@ def price_video_model_metadata(
     metadata: dict[str, Any], *, tariff: str = "standard",
 ) -> dict[str, Any]:
     model = str(metadata.get("id") or "")
+    if model in {'wan_3', 'wan_3_prime'}:
+        from bot.services.preset_manager import preset_manager
+
+        rates = video_quality_rates(model, tariff=tariff)
+        totals = {
+            quality: {
+                str(duration): preset_manager._format_cost(rate * (30 if int(duration) == -1 else int(duration)))
+                for duration in metadata.get('durations', [])
+            }
+            for quality, rate in rates.items()
+        }
+        default = totals.get('1080p') or totals.get('720p') or {}
+        return {**metadata, 'costs': default, 'quality_costs': rates, 'quality_duration_costs': totals}
     if model not in _SEEDANCE_MODELS:
         return dict(metadata)
     rates = video_quality_rates(model, tariff=tariff)

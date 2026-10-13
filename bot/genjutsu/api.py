@@ -210,7 +210,8 @@ class API:
         if action == 'bootstrap':
             self.fields(body, set())
             settings, version = await repo.settings()
-            return {'catalog':CATALOG, 'prices':settings['prices'], 'is_admin':admin,
+            pricing = await pipeline.pricing(owner, settings)
+            return {'catalog':CATALOG, 'prices':pricing['prices'], 'is_admin':admin,
                 'configured':pipeline.configured, 'provider_ready':pipeline.provider.configured,
                 'media_ready':pipeline.media.configured,
                 'enabled':settings['admin_enabled' if admin else 'public_enabled'],

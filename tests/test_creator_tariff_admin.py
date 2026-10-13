@@ -318,3 +318,32 @@ async def test_fresh_price_prompt_rejects_input_sent_before_it(editor):
     assert not writes
     await admin.creator_tariff_message(message("2", mid=151), state)
     assert len(writes) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('model,quality,value', [('wan_3','720p','2.5'), ('wan_3_prime','1080p','4'), ('genjutsu/restyle','480p','3')])
+async def test_extended_creator_editor_keeps_ordinary_and_existing_rates(editor, model, quality, value):
+    state, cb, writes, before = editor
+    await admin.open_creator_tariff(cb, state)
+    await click(state, cb, 'prices')
+    text = cb.message.edit_text.await_args.args[0]
+    assert 'Wan 3.0' in text and 'Genjutsu' in text
+    await click(state, cb, 'rate', model, quality)
+    await admin.creator_tariff_message(message(value), state)
+    assert len(writes) == 1
+    assert {key: val for key, val in writes[0].items() if key != 'creator_tariff'} == before
+    tariff = writes[0]['creator_tariff']
+    if model.startswith('genjutsu/'):
+        assert tariff['genjutsu']['prices']['restyle']['480p'] == 3
+    else:
+        assert tariff['video_models'][model]['quality_costs'][quality] == float(value)
+
+
+@pytest.mark.asyncio
+async def test_genjutsu_creator_editor_rejects_fractional_step_rate(editor):
+    state, cb, writes, _ = editor
+    await admin.open_creator_tariff(cb, state)
+    await click(state, cb, 'prices')
+    await click(state, cb, 'rate', 'genjutsu/restyle', '720p')
+    await admin.creator_tariff_message(message('1.5'), state)
+    assert not writes

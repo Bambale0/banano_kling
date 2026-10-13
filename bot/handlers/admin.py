@@ -418,7 +418,7 @@ def _admin_price_menu_keyboard() -> types.InlineKeyboardMarkup:
                 )
             ],
             [types.InlineKeyboardButton(
-                text="🎬 Тариф креатора · Seedance", callback_data="admin_creator_tariff"
+                text="🎬 Тариф креатора", callback_data="admin_creator_tariff"
             )],
             [types.InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back")],
         ]
