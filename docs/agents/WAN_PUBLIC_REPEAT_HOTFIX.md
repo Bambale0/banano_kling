@@ -27,3 +27,14 @@ The WAN JSON chunk reader now reuses aiohttp cached request bytes when present, 
 Eleven standalone actual-route tests passed after integration (cached/stream parity, exact limits and false/missing content length, malformed JSON/UTF-8/base64, duplicate keys, unauthorized requests, metadata privacy). Scoped Ruff passed. An independent reviewer repeated all eleven tests and found no blocker.
 
 This is defensive compatibility, not proof of the live incident's root cause. The actual production prereader remains unconfirmed. Real iPhone init/chunk/complete acceptance is still required after deployment; no generation is needed for that check.
+
+## Supplemental session clock correction
+Read-only metadata established that PostgreSQL session columns are TIMESTAMP WITHOUT TIME ZONE while its session timezone is Europe/London. Combining UTC-naive expiry with database-local creation/comparison caused summer sessions to appear immediately expired. This is distinct from the JSON parse error.
+
+All upload-session writes and expiry/lease comparisons now bind the existing UTC-naive application clock, including session-only retention. Creation and expiry derive from one instant. No schema/global timezone/media timestamp changes or historical rewrites occur. Old database-local status timestamps may conservatively retain old sessions longer until ordinary cleanup.
+
+Nine isolated actual-source tests pass (baseline was red). A six-case actual PostgreSQL regression covers UTC/London in winter, summer and the DST transition, checks the actual connection setting, first chunk/completion/replay, exact expiry status, physical GC and quota release. This application test is CI-only and must pass before release.
+
+Review ownership: the diagnostician wrote the clock source and isolated tests; the integrating writer independently reviewed those changes and ran the nine tests. The diagnostician independently reviewed the separately authored PostgreSQL regression. Earlier combined PR review remains bound to 30470e5.
+
+CI30470e5 found three old isolated transport fixture failures: the fixture returned a string actor while metadata logging expects the authenticated actor structure. The fixture now uses user_id/telegram_id and preserves exact owner/bytes assertions; all twelve original transport tests pass. No assertion was removed.
