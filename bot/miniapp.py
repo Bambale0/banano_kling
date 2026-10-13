@@ -3930,7 +3930,7 @@ async def _miniapp_publish_wan_trend(body: dict, telegram_id: int, user) -> web.
     except (ValueError, TrendUserFieldsError):
         return web.json_response({"ok": False, "error": "Проверьте режим, референсы и настройки Wan.",
                                   "code": "wan_publication_invalid"}, status=400)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - HTTP privacy boundary must hide arbitrary storage errors.
         logger.warning("WAN trend publication failed: error_type=%s", type(exc).__name__)
         return web.json_response({"ok": False, "error": "Не удалось опубликовать тренд. Попробуйте позже.",
                                   "code": "wan_publication_unavailable"}, status=500)
