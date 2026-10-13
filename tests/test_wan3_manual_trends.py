@@ -17,7 +17,7 @@ from bot.services.wan3_prime_trends import get_trend_plan, publish_manual_trend
 async def setup_publication(monkeypatch, tmp_path, model='wan_3'):
     from bot.config import config
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(config, 'static_base_url', 'https://owned.test')
+    monkeypatch.setattr(type(config), 'static_base_url', property(lambda _self: 'https://owned.test'))
     user = await database.get_or_create_user(717171)
     actor = Wan3PrimeActor(user.id, user.telegram_id, is_admin=True)
     urls = []
