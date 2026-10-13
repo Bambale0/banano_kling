@@ -1034,3 +1034,55 @@ async def test_canonical_source_audio_is_replaced_only_by_explicit_viewer_audio(
     assert source_audio not in json.dumps(payload)
     assert payload['seedance25_reference_audio_urls'] == [own_audio]
     assert '_private_repeat_reference_audios' not in payload
+
+
+@pytest.mark.asyncio
+async def test_legacy_visible_card_describes_two_uploads_and_two_fixed_without_new_grant():
+    owner = await database.get_or_create_user(880199)
+    images = [f"https://example.test/legacy-slot-{i}.png" for i in range(4)]
+    await database.add_generation_task(
+        owner.id, owner.telegram_id, "legacy-four-slot-source", "video", "seedance_2_5",
+        model="seedance_2_5", prompt="Synthetic @Image1 @Image2 @Image3 @Image4",
+        request_data={"seedance25_scenario": "multimodal", "v_type": "video", "reference_images": images},
+    )
+    await database.complete_video_task("legacy-four-slot-source", "https://example.test/result.mp4")
+    card = await database.share_to_feed(
+        "legacy-four-slot-source", owner.id, references_visible=True,
+        reference_image_indices=[2, 3], reference_video_indices=[],
+    )
+    before = await database.get_generation_task_payload(card["id"])
+    assert json.loads(before["feed_repeat_reference_selection"]) == {"images": []}
+    public = await database.get_feed_generation_card(card["id"])
+    slots = public["repeat_reference_slots"]
+    assert slots["available"] is True
+    assert slots["images"] == [
+        {"index": i, "role": "reference", "binding": "upload" if i < 2 else "fixed"}
+        for i in range(4)
+    ]
+    assert not any(url in json.dumps(slots) for url in images)
+    assert before["prompt"] not in json.dumps(slots)
+    after = await database.get_generation_task_payload(card["id"])
+    assert after["feed_repeat_reference_selection"] == before["feed_repeat_reference_selection"]
+    assert after["feed_reference_selection"] == before["feed_reference_selection"]
+
+
+def test_legacy_descriptor_aliases_keep_exact_source_positions():
+    source = {
+        "model": "seedance_2_5", "feed_references_visible": True,
+        "feed_repeat_reference_selection": {"images": []},
+        "feed_reference_selection": {
+            "images": ["https://media.chillcreative.ru/uploads/fixed-2.png",
+                       "https://media.chillcreative.ru/uploads/fixed-3.png"], "videos": [],
+        },
+        "request_data": {"seedance25_scenario": "multimodal", "reference_images": [
+            "https://example.test/face-0.png", "https://example.test/face-1.png",
+            "/uploads/fixed-2.png", "/uploads/fixed-3.png",
+        ]},
+    }
+    slots = video_repeat_descriptors(source)
+    assert slots["available"] is True
+    assert [slot["binding"] for slot in slots["images"]] == ["upload", "upload", "fixed", "fixed"]
+    assert "/uploads/" not in json.dumps(slots)
+    source["feed_repeat_reference_selection"] = {"version": 1, "images": [], "videos": []}
+    revoked = video_repeat_descriptors(source)
+    assert all(slot["binding"] == "upload" for slot in revoked["images"])

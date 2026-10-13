@@ -257,3 +257,59 @@ describe('video repeat slot lifecycle', () => {
     expect(screen.getByRole('button', { name: /Запустить видео/i })).toBeDisabled()
   })
 })
+
+
+describe('legacy publication repeat slot descriptors', () => {
+  it('requires both missing photos before launching a four-slot recipe with a retained tail', async () => {
+    const onSubmit = jest.fn().mockResolvedValue(undefined)
+    const secondPhoto: UploadedFile = {
+      ...savedFrame, id: 'legacy-second', name: 'second-person.jpg',
+      url: 'https://example.test/second-person.jpg',
+    }
+    const privateSource = 'https://example.test/private-retained-reference.jpg'
+    const legacyPreset: VideoPromptPreset = {
+      ...preset, prompt: '', promptHidden: true,
+      initialPhotoReferences: [{ ...savedFrame, url: privateSource }],
+      repeatReferenceSlots: {
+        version: 1, available: true, cost_multiplier: 1,
+        duration_costs: { '5': 5, '10': 10 }, pricing_quality: '720p',
+        images: [
+          { index: 0, role: 'reference', binding: 'upload' },
+          { index: 1, role: 'reference', binding: 'upload' },
+          { index: 2, role: 'reference', binding: 'fixed' },
+          { index: 3, role: 'reference', binding: 'fixed' },
+        ],
+        videos: [],
+      },
+    }
+    const { container } = render(
+      <VideoGeneratorForm models={models} onSubmit={onSubmit} isSubmitting={false} credits={100}
+        promptPreset={legacyPreset} savedImageReferences={[savedFrame, secondPhoto]} />,
+    )
+    const launch = screen.getByRole('button', { name: /Запустить видео/i })
+    expect(launch).toBeDisabled()
+    expect(screen.getByText('Сохранено автором: 2')).toBeInTheDocument()
+    expect(screen.getByText('Фото 3 · Сохранён автором')).toBeInTheDocument()
+    expect(screen.getByText('Фото 4 · Сохранён автором')).toBeInTheDocument()
+    expect(container.innerHTML).not.toContain(privateSource)
+
+    // Fill Image2 first: payload order must follow slots, not interaction order.
+    fireEvent.click(within(screen.getByRole('group', { name: 'Фото 2' }))
+      .getByRole('button', { name: secondPhoto.name }))
+    expect(launch).toBeDisabled()
+    fireEvent.click(launch)
+    expect(onSubmit).not.toHaveBeenCalled()
+
+    fireEvent.click(within(screen.getByRole('group', { name: 'Фото 1' }))
+      .getByRole('button', { name: savedFrame.name }))
+    expect(launch).toBeEnabled()
+    fireEvent.click(launch)
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
+    const submitted = onSubmit.mock.calls[0][0]
+    expect(submitted).toEqual(expect.objectContaining({
+      sourceFeedGenId: 42, prompt: '', startImage: null,
+      references: [savedFrame.url, secondPhoto.url], videoReferences: [],
+    }))
+    expect(JSON.stringify(submitted)).not.toContain(privateSource)
+  })
+})

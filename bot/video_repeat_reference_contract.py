@@ -223,11 +223,51 @@ def build_video_repeat_plan(
     return {"version": 1, "grant": grant, **recipe}
 
 
+def _legacy_selection_descriptor_plan(task: dict[str, Any]) -> dict[str, Any] | None:
+    # This is a display-only bridge. The launch still uses the original legacy
+    # grant/selection and its authenticated, before-charge permission checks.
+    if not task.get("feed_references_visible") or str(task.get("model") or "") != "seedance_2_5":
+        return None
+    selection = task.get("feed_reference_selection")
+    if selection is None:
+        return None
+    try:
+        selection = json.loads(selection) if isinstance(selection, str) else selection
+    except (TypeError, ValueError) as exc:
+        raise VideoRepeatContractError("Настройки референсов повреждены.") from exc
+    if not isinstance(selection, dict):
+        raise VideoRepeatContractError("Настройки референсов повреждены.")
+    data = source_request(task)
+    if data.get("seedance25_identity_transfer") or data.get("identityTransfer") or data.get("seedance25_video_editing"):
+        return None
+    recipe = active_video_recipe(task)
+    if recipe["audio"]:
+        return None
+    from bot.legacy_video_repeat_slots import legacy_selection_plan
+
+    try:
+        supported = legacy_selection_plan(recipe, selection, resolve=resolve_reference_source)
+    except ValueError as exc:
+        raise VideoRepeatContractError("Исходные референсы для повтора сохранены не полностью.") from exc
+    if supported is None:
+        return None
+    # Reuse validation, capability/rate metadata and alias safety. This temporary
+    # copy is never saved, returned as consent, or used to authorize a launch.
+    descriptor_task = {
+        **task, "feed_repeat_reference_selection": {
+            "version": 1, "images": selection.get("images", []), "videos": selection.get("videos", []),
+        },
+    }
+    return build_video_repeat_plan(descriptor_task)
+
+
 def video_repeat_descriptors(
     task: dict[str, Any], *, tariff: str = "standard",
 ) -> dict[str, Any] | None:
     try:
         plan = build_video_repeat_plan(task)
+        if plan is None:
+            plan = _legacy_selection_descriptor_plan(task)
         if plan is None:
             return None
         cost_multiplier = float(apply_video_reference_cost(plan["model"], 1, [slot["url"] for slot in plan["videos"]]))
