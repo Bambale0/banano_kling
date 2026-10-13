@@ -320,9 +320,35 @@ async function releaseUpload(scope: UploadScope, pending: PendingWanUpload, init
   } catch { throw new Wan3PrimeUploadCleanupError() }
 }
 
+function preferJsonChunks(): boolean {
+  if (typeof navigator === 'undefined') return false
+  return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
+    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+}
+
+function chunkToBase64(chunk: Blob, signal: AbortSignal): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    const cleanup = () => { signal.removeEventListener('abort', abort); reader.onload = reader.onerror = reader.onabort = null }
+    const abort = () => { cleanup(); reader.abort(); reject(new DOMException('Aborted', 'AbortError')) }
+    reader.onerror = () => { cleanup(); reject(new Error('Не удалось прочитать часть файла. Повторите загрузку.')) }
+    reader.onabort = () => { cleanup(); reject(new DOMException('Aborted', 'AbortError')) }
+    reader.onload = () => {
+      const encoded = String(reader.result || '').split(',', 2)[1]
+      cleanup()
+      if (encoded) resolve(encoded)
+      else reject(new Error('Не удалось подготовить часть файла. Повторите загрузку.'))
+    }
+    signal.addEventListener('abort', abort, { once: true })
+    if (signal.aborted) { abort(); return }
+    try { reader.readAsDataURL(chunk) } catch (error) { cleanup(); reject(error) }
+  })
+}
+
 // Chunked upload contract:
 // 1. POST /wan3/upload/init { upload_id, kind, filename, size, content_type }
 // 2. POST /wan3/upload/chunk multipart { upload_id, index, total, chunk }
+//    or bounded JSON { upload_id, index, total, chunk_base64 } for mobile WebViews.
 // 3. POST /wan3/upload/complete { upload_id }
 // 4. On interrupted work: reconcile uncertain init with the same ID, then
 //    POST /wan3/upload/cancel { upload_id }. Never remove completed media.
@@ -353,26 +379,43 @@ export async function uploadWan3PrimeReference(kind: Wan3PrimeUploadKind, file: 
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
     const chunkSize = Number.isFinite(init.chunk_size) && init.chunk_size > 0 ? init.chunk_size : WAN3_PRIME_CHUNK_BYTES
     const total = Math.ceil(file.size / chunkSize)
+    let jsonChunks = preferJsonChunks()
 
     for (let index = 0; index < total; index += 1) {
-      const form = new FormData()
-      form.append('init_data', initData)
-      form.append('start_param_fallback', getStartParamFallback())
-      form.append('upload_id', init.upload_id)
-      form.append('index', String(index))
-      form.append('total', String(total))
-      form.append('chunk', file.slice(index * chunkSize, Math.min(file.size, (index + 1) * chunkSize), contentType), file.name)
-      await mediaRequest(async activeSignal => {
-        const response = await fetch(`${getApiBasePath()}/wan3/upload/chunk`, {
-          method: 'POST',
-          headers: { Accept: 'application/json', 'X-Telegram-Init-Data': initData },
-          body: form,
-          cache: 'no-store',
-          credentials: 'same-origin',
-          signal: activeSignal,
-        })
-        return parseWan3Json<{ ok: true }>(response, 'Wan 3.0: не удалось загрузить часть файла.')
+      const chunk = file.slice(index * chunkSize, Math.min(file.size, (index + 1) * chunkSize), contentType)
+      const sendJsonChunk = () => mediaRequest(async activeSignal => {
+        const chunk_base64 = await chunkToBase64(chunk, activeSignal)
+        return wan3PostJson<{ ok: true }>('upload/chunk', { upload_id: init.upload_id, index, total, chunk_base64 }, activeSignal, initData)
       }, signal)
+      if (jsonChunks) await sendJsonChunk()
+      else {
+        const form = new FormData()
+        form.append('init_data', initData)
+        form.append('start_param_fallback', getStartParamFallback())
+        form.append('upload_id', init.upload_id)
+        form.append('index', String(index))
+        form.append('total', String(total))
+        form.append('chunk', chunk, file.name)
+        try {
+          await mediaRequest(async activeSignal => {
+            const response = await fetch(`${getApiBasePath()}/wan3/upload/chunk`, {
+              method: 'POST',
+              headers: { Accept: 'application/json', 'X-Telegram-Init-Data': initData },
+              body: form,
+              cache: 'no-store',
+              credentials: 'same-origin',
+              signal: activeSignal,
+            })
+            return parseWan3Json<{ ok: true }>(response, 'Wan 3.0: не удалось загрузить часть файла.')
+          }, signal)
+        } catch (error) {
+          if (!(error instanceof Wan3PrimeApiError) || error.status !== 400 || error.code !== 'invalid_upload_multipart') throw error
+          // Retry only a rejected parser transport, with the same owned session
+          // and chunk index. Ownership, size and digest checks remain server-side.
+          jsonChunks = true
+          await sendJsonChunk()
+        }
+      }
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
       onProgress?.(Math.min(file.size, (index + 1) * chunkSize), file.size)
     }
