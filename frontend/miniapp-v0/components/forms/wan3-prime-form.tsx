@@ -172,8 +172,10 @@ export function Wan3PrimeForm(props: Wan3PrimeFormProps) {
   // Source/model navigation creates a fresh privacy boundary. A same-source
   // recipe restore is handled inside the session so an unknown launch retains
   // its frozen request and idempotency key.
-  const session = JSON.stringify([model, props.ownerTaskId, props.publicationSourceId, props.trendId,
-    initialRecipe?.source_feed_gen_id, initialRecipe?.trend_id, props.draftOnly])
+  const effectiveTrend = props.trendId || initialRecipe?.trend_id || null
+  const effectiveFeed = props.publicationSourceId || initialRecipe?.source_feed_gen_id || null
+  const source = effectiveTrend ? ['trend', effectiveTrend] : effectiveFeed ? ['feed', effectiveFeed] : null
+  const session = JSON.stringify([model, props.ownerTaskId, source, props.draftOnly])
   return <Wan3PrimeFormSession key={session} {...props} model={model} expectedModel={props.model} initialRecipe={initialRecipe} />
 }
 

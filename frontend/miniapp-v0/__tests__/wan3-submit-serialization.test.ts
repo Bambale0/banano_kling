@@ -2,8 +2,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 import ts from 'typescript'
 
-// Load only the approved submitPrompt declaration; no application module imports.
-const source = ts.createSourceFile('api.ts', fs.readFileSync(path.join(process.cwd(), 'lib/api.ts'), 'utf8'), ts.ScriptTarget.Latest, true)
+// Official CI checks the live declaration; restricted local runs use the approved extracted fixture.
+const inputPath = process.env.WAN_SUBMIT_FIXTURE === '1'
+  ? '__tests__/fixtures/wan-submit-prompt.txt' : 'lib/api.ts'
+const source = ts.createSourceFile('api.ts', fs.readFileSync(path.join(process.cwd(), inputPath), 'utf8'), ts.ScriptTarget.Latest, true)
 const declarations = source.statements.filter((node): node is ts.FunctionDeclaration => ts.isFunctionDeclaration(node) && node.name?.text === 'submitPrompt')
 if (declarations.length !== 1) throw new Error('Expected exactly one submitPrompt declaration')
 const code = ts.transpileModule(declarations[0].getText(source).replace(/^export\s+/, ''), { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText

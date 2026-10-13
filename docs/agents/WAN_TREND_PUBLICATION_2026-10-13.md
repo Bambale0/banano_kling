@@ -18,12 +18,13 @@ Scope: ordinary WAN 3 and Prime manual publisher, owned durable recipe reference
 - SQLite transaction harness: 8 PASS (includes five contract cases)
 - Isolated actual chunk route: 12 PASS
 - Isolated ordinary WAN contract: 9 PASS
-- New rendered frontend suites: 27 PASS
+- Full frontend Jest: 447 PASS across 59 suites; TypeScript PASS
+- Local serialization tests use the previously approved extracted submitPrompt fixture (WAN_SUBMIT_FIXTURE=1); official CI checks the live declaration. No broader restricted source read is needed locally.
 - Full checkout TypeScript: PASS
 - Changed-line Ruff: 0 relevant violations; legacy violations excluded by the existing gate
 - Full application/HTTP and PostgreSQL checks run only in official CI. The protected database adapter was not read or imported locally.
 - Initial official CI exposed compatibility-handler dispatch and response-contract fixture failures. These were fixed with installer-parametrized tests; earlier focused green checks were not treated as end-to-end proof.
-- Existing form tests are being updated for safe errors and session remounts while preserving cancellation/retry assertions; final aggregate result must be recorded before release.
+- Existing upload cancellation/retry assertions remain intact. Same-context equal/changed preset restores during unknown launches preserve the exact frozen request; effective explicit source IDs take precedence over fallback IDs. All related regressions pass.
 
 ## Release constraints
 

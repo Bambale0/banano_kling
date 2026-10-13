@@ -183,3 +183,25 @@ test.each([false, true])('a same-source restore during an unknown launch preserv
   await waitFor(() => expect(mocked.generateWan3Prime).toHaveBeenCalledTimes(2))
   expect(mocked.generateWan3Prime.mock.calls[1][0]).toBe(frozen)
 })
+
+test('unchanged explicit trend source ignores fallback recipe ID changes during an unknown launch', async () => {
+  mocked.fetchWan3PrimeTrendPlan.mockResolvedValue(plan(41))
+  mocked.generateWan3Prime.mockResolvedValue({ ok: true, status: 'unknown', internal_task_id: 'task-explicit-trend', reserve_cost: 1 })
+  const initialRecipe = { ...recipe(), trend_id: 77, source_feed_gen_id: 88 }
+  const view = render(<Wan3PrimeForm credits={10} model="wan_3" trendId={41} initialRecipe={initialRecipe} />)
+  const launch = await screen.findByRole('button', { name: 'Запустить Wan' })
+  await waitFor(() => expect(launch).toBeEnabled())
+  fireEvent.click(launch)
+  await screen.findByText('Запуск ещё не подтверждён. Проверяем эту же задачу.')
+  const frozen = mocked.generateWan3Prime.mock.calls[0][0]
+  const quoted = mocked.quoteWan3Prime.mock.calls.length
+  expect(frozen.recipe.trend_id).toBe(41)
+  view.rerender(<Wan3PrimeForm credits={10} model="wan_3" trendId={41} initialRecipe={{ ...initialRecipe, trend_id: 99, source_feed_gen_id: 100 }} />)
+  expect(screen.getByRole('button', { name: 'Проверить запуск' })).toBeEnabled()
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 400)) })
+  expect(mocked.fetchWan3PrimeTrendPlan).toHaveBeenCalledTimes(1)
+  expect(mocked.quoteWan3Prime).toHaveBeenCalledTimes(quoted)
+  fireEvent.click(screen.getByRole('button', { name: 'Проверить запуск' }))
+  await waitFor(() => expect(mocked.generateWan3Prime).toHaveBeenCalledTimes(2))
+  expect(mocked.generateWan3Prime.mock.calls[1][0]).toBe(frozen)
+})
