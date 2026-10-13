@@ -20,3 +20,10 @@ Base: 299422e5170a475fae9db045e6c34b8e32fc22ef. Addresses PR301 post-release rev
 
 ## Limits
 No paid generation, production DB mutation, historical trend reactivation or customer-media access was performed. A separate mobile chunk parsing investigation remains open; these routing changes alone do not prove that real iPhone upload succeeds. The restricted generic API file was not locally read; serialization tests use the previously approved extracted fixture. The forbidden database adapter is excluded from this worktree and local application imports.
+
+## Supplemental bounded chunk compatibility
+The WAN JSON chunk reader now reuses aiohttp cached request bytes when present, instead of reading an exhausted stream. Actual raw-body, base64 and decoded 7 MiB caps remain enforced. Metadata-only accepted/rejected diagnostics help distinguish transport, cached/read lengths and exception class without logging content or auth.
+
+Eleven standalone actual-route tests passed after integration (cached/stream parity, exact limits and false/missing content length, malformed JSON/UTF-8/base64, duplicate keys, unauthorized requests, metadata privacy). Scoped Ruff passed. An independent reviewer repeated all eleven tests and found no blocker.
+
+This is defensive compatibility, not proof of the live incident's root cause. The actual production prereader remains unconfirmed. Real iPhone init/chunk/complete acceptance is still required after deployment; no generation is needed for that check.

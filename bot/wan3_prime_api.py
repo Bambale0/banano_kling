@@ -268,13 +268,24 @@ async def _read_upload_chunk(request: web.Request) -> tuple[dict[str, Any], byte
     if request.content_type == 'application/json':
         encoded_limit = 4 * ((CHUNK_SIZE + 2) // 3)
         body_limit = encoded_limit + 16 * 1024
+        cached = getattr(request, '_read_bytes', None)
+        request._wan3_chunk_cached_bytes = len(cached) if cached is not None else None
         if request.content_length is not None and request.content_length > body_limit:
             raise Wan3PrimeValidationError('Часть файла превышает допустимый размер.', status=413)
-        raw = bytearray()
-        async for block in request.content.iter_chunked(65536):
-            raw.extend(block)
+        if cached is not None:
+            # aiohttp caches bytes read by earlier middleware. Do not consume the
+            # exhausted stream again, and never trust Content-Length for this cap.
+            raw = cached
+            request._wan3_chunk_wire_bytes = len(raw)
             if len(raw) > body_limit:
                 raise Wan3PrimeValidationError('Часть файла превышает допустимый размер.', status=413)
+        else:
+            raw = bytearray()
+            async for block in request.content.iter_chunked(65536):
+                raw.extend(block)
+                request._wan3_chunk_wire_bytes = len(raw)
+                if len(raw) > body_limit:
+                    raise Wan3PrimeValidationError('Часть файла превышает допустимый размер.', status=413)
 
         def unique_fields(pairs):
             result = {}
@@ -342,6 +353,9 @@ async def _read_upload_chunk(request: web.Request) -> tuple[dict[str, Any], byte
 
 
 async def _upload_chunk_route(request: web.Request) -> web.Response:
+    actor = None
+    transport = 'json' if request.content_type == 'application/json' else (
+        'multipart' if request.content_type == 'multipart/form-data' else 'other')
     try:
         init_data = request.headers.get('X-Telegram-Init-Data')
         if not init_data:
@@ -355,8 +369,15 @@ async def _upload_chunk_route(request: web.Request) -> web.Response:
             raise Wan3PrimeValidationError('Неверный номер части файла.')
         await wan3_prime_storage.save_chunk(actor, upload_id=fields['upload_id'],
             index=int(fields['index']), total=int(fields['total']), chunk=chunk)
+        logger.info('Wan3 chunk accepted: telegram_id=%s transport=%s cached_bytes=%s wire_bytes=%s decoded_bytes=%s',
+                    actor.telegram_id, transport, getattr(request, '_wan3_chunk_cached_bytes', None),
+                    getattr(request, '_wan3_chunk_wire_bytes', None), len(chunk))
         return _json_ok({'ok': True})
     except Wan3PrimeValidationError as exc:
+        logger.warning('Wan3 chunk rejected: telegram_id=%s transport=%s cached_bytes=%s wire_bytes=%s content_length=%s status=%s error_type=%s',
+                       getattr(actor, 'telegram_id', None), transport, getattr(request, '_wan3_chunk_cached_bytes', None),
+                       getattr(request, '_wan3_chunk_wire_bytes', None), request.content_length, exc.status,
+                       type(exc.__cause__ or exc).__name__)
         return _json_error(str(exc), status=exc.status, code='validation_error')
     except Wan3PrimeLifecycleError as exc:
         return _json_error(str(exc), status=exc.status, code=exc.code)
