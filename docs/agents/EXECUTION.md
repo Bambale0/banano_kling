@@ -1943,3 +1943,15 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Review P1 task-detail exposure was not reproduced on the actual HTTP path: miniapp_task_detail calls the existing privacy sanitizer, which recognizes persisted source_feed_gen_id and removes hidden links/prompt. Added actual HTTP handler tests using real S2.5 request-data assembly, with both successful and failed privacy lookup. No production privacy change needed for this reported path.
 - No database, pricing, media restoration or provider-call changes. Local verification uses isolated functions; full app tests run in CI without local forbidden-adapter imports.
 - Release gates remain independent review, exact-head full CI, parent pre-release report and guarded CD/runtime verification.
+
+## 2026-10-13: legacy repeat required-slot descriptors
+
+- Base 730faded29c4bd047f27837c923587954a25880e. User-confirmed shape: four existing source images; visible legacy selection retains positions3 and4, while the viewer supplies only one image. Backend correctly requires two replacements. The old card omitted descriptors and the generic form misleadingly marked uploads optional.
+- Added display-only bridge for closed retained-tail S2.5 multimodal legacy selections. It reuses existing capability/alias/pricing validation and returns only index/role/binding. The temporary typed-shaped validation copy is never persisted and never authorizes launch. Original legacy grant, selection and before-charge checks remain unchanged.
+- Existing renderer now receives upload0/upload1/fixed2/fixed3 and cannot submit one upload. Optional trailing/no-retained layouts keep their existing UI rather than silently adding required uploads. Identity/editing/frame/audio scenarios are not promoted by this narrow bridge.
+- Additional independently reproduced hidden video-mode edge: one photo lost Image2 when v_type=video. Existing hidden first-photo protection now covers imgtxt and video, preserving frame/identity/editing exclusions.
+- Pure tests: video-mode regression RED2FAIL/12PASS before correction, GREEN14PASS after. New pure descriptor helper6PASS. Installed HTTP, real DB card/grant persistence, aliases and actual component upload-order regression added for CI.
+- UI test written separately; no local Jest dependency available in this sparse worktree. Full application tests are CI-only to avoid forbidden database-adapter imports.
+- Exact user source checked read-only: all four files present, no recovery needed for that source. No production data/rates/permissions/media changed; no paid requests.
+- Skills: evidence-first diagnosing-bugs, scoped debugger and actual-component testing. Unknown/cancelled reads were not bypassed; focused source access resumed only after explicit permission.
+- Rollout: separate draft PR, independent review, full CI, parent pre-release report, guarded release and exact runtime verification. Do not equate an unrelated synthetic fix with all user reports being resolved.

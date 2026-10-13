@@ -94,6 +94,24 @@ class LegacyRepeatSlotsTests(unittest.TestCase):
         self.body["reference_images"] = [self.viewer, "https://example.test/new-style.png"]
         self.assertEqual(self.restore()["reference_images"], self.body["reference_images"])
 
+    def test_video_reference_mode_preserves_image_and_video_bindings(self):
+        self.body["v_type"] = "video"
+        video = "https://example.test/author-motion.mp4"
+        self.source["request_data"]["v_reference_videos"] = [video]
+        self.source["prompt"] = "Synthetic @Image1 @Image2 @Video1"
+        result = self.restore()
+        self.assertEqual(result["reference_images"], [self.viewer, self.fixed])
+        self.assertEqual(result["v_reference_videos"], [video])
+        self.assertEqual(result["_private_repeat_reference_images"], [self.fixed])
+        self.assertEqual(result["_private_repeat_reference_videos"], [video])
+        self.assertEqual(result["prompt"], self.source["prompt"])
+
+    def test_video_mode_rejects_extra_replacement_of_hidden_slots(self):
+        self.body["v_type"] = "video"
+        self.body["reference_images"].append("https://example.test/extra.png")
+        with self.assertRaises(self.ns["VideoRepeatReferenceError"]):
+            self.restore()
+
     def test_exact_repeat_keeps_all_source_slots(self):
         self.body["reference_images"] = []
         result = self.restore()

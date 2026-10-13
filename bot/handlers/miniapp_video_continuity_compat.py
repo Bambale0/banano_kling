@@ -497,7 +497,7 @@ def _enrich_legacy_video_repeat_body(
                     and not source_task.get("feed_references_visible")
                     and str(source_task.get("model") or "") == "seedance_2_5"
                     and restored_scenario == "multimodal"
-                    and str(body.get("v_type") or "").strip().lower() == "imgtxt"
+                    and str(body.get("v_type") or "").strip().lower() in {"imgtxt", "video"}
                     and normalized.get("seedance25_identity_transfer") is not True
                     and normalized.get("seedance25_video_editing") is not True
                     and len(source_images) > 1
