@@ -583,7 +583,7 @@ VIDEO_MODELS = (
     {
         "id": "wan_3_prime",
         "label": "Wan 3.0 Video Prime",
-        "description": "Полная KIE Wan 3.0: текст, кадры, референсы, edit, документы и ссылки",
+        "description": "Wan 3.0: текст, кадры, референсы, edit, документы и ссылки",
         "durations": [-1] + list(range(2, 31)),
         "ratios": ["adaptive", "16:9", "4:3", "1:1", "3:4", "9:16"],
         "supports": ["text", "imgtxt", "first_last", "video", "edit", "file", "link"],
@@ -599,7 +599,7 @@ VIDEO_MODELS = (
     {
         "id": "wan_3",
         "label": "Wan 3.0 Video",
-        "description": "Полная KIE Wan 3.0: текст, кадры, референсы, edit, документы и ссылки",
+        "description": "Wan 3.0: текст, кадры, референсы, edit, документы и ссылки",
         "durations": [-1] + list(range(2, 31)),
         "ratios": ["adaptive", "16:9", "4:3", "1:1", "3:4", "9:16"],
         "supports": ["text", "imgtxt", "first_last", "video", "edit", "file", "link"],
@@ -3945,6 +3945,28 @@ async def miniapp_prompt_submit(request: web.Request) -> web.Response:
                 {"ok": False, "error": f"Лимит активных промптов: {MAX_ACTIVE_PROMPTS_PER_USER}"},
                 status=400,
             )
+
+        model = str(body.get("model", "") or "").strip()
+        if model in {"wan_3", "wan_3_prime"}:
+            from bot.services.wan3_prime_lifecycle import Wan3PrimeActor
+            from bot.services.wan3_prime_media import Wan3PrimeValidationError
+            from bot.services.wan3_prime_trends import publish_manual_trend
+
+            try:
+                published = await publish_manual_trend(
+                    Wan3PrimeActor(user.id, telegram_id, is_admin=config.is_admin(telegram_id)),
+                    model=model, prompt=prompt_text, settings=generation_settings,
+                    title=str(body.get("title") or "").strip(),
+                    description=str(body.get("description") or "").strip(),
+                    preview_url=str(body.get("preview_url") or "").strip(),
+                )
+            except Wan3PrimeValidationError as exc:
+                return web.json_response({"ok": False, "error": str(exc), "code": "wan_publication_invalid"}, status=exc.status)
+            except ValueError:
+                return web.json_response({"ok": False, "error": "Проверьте режим, референсы и настройки Wan.",
+                                          "code": "wan_publication_invalid"}, status=400)
+            prompt = await get_prompt_by_id(published["trend_id"])
+            return web.json_response({"ok": True, "prompt": prompt})
 
         prompt = await create_prompt(
             author_id=user.id,
