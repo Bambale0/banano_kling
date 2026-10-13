@@ -182,3 +182,44 @@ async def test_upload_signed_http_init_replay_owner_cancel_and_foreign_ids_are_s
     assert media_count[0] == 0
     assert await balance(owner.user_id) == await balance(foreign.user_id) == 100
 
+
+
+@pytest.mark.asyncio
+async def test_mobile_json_upload_roundtrip_uses_real_owned_storage_without_charge(monkeypatch, tmp_path):
+    import base64
+    from io import BytesIO
+
+    from PIL import Image
+
+    from bot.services.wan3_prime_storage import wan3_prime_probe
+
+    monkeypatch.chdir(tmp_path)
+    actor = await user_actor(100, telegram_id=971284090)
+    before = await balance(actor.user_id)
+    file = BytesIO()
+    Image.new('RGB', (320, 240), (20, 40, 60)).save(file, format='PNG')
+    raw = file.getvalue()
+    app = web.Application()
+    for name, handler in [('init', api._upload_init_route), ('chunk', api._upload_chunk_route),
+                          ('complete', api._upload_complete_route)]:
+        app.router.add_post('/' + name, api._http_boundary(handler))
+    async with TestClient(TestServer(app)) as client:
+        auth = signed_user(actor.telegram_id)
+        response = await client.post('/init', json={'init_data': auth, 'kind': 'image',
+            'filename': 'photo.png', 'size': len(raw), 'content_type': 'image/png'})
+        assert response.status == 200, await response.text()
+        upload_id = (await response.json())['upload_id']
+        chunk = {'upload_id': upload_id, 'index': 0, 'total': 1,
+                 'chunk_base64': base64.b64encode(raw).decode()}
+        for _ in range(2):
+            response = await client.post('/chunk', json=chunk, headers={'X-Telegram-Init-Data': auth})
+            assert response.status == 200, await response.text()
+        foreign = await client.post('/chunk', json=chunk,
+            headers={'X-Telegram-Init-Data': signed_user(actor.telegram_id + 1)})
+        assert foreign.status in {403, 404}
+        response = await client.post('/complete', json={'init_data': auth, 'upload_id': upload_id})
+        assert response.status == 200, await response.text()
+        uploaded = await response.json()
+        info = await wan3_prime_probe.for_actor(actor).probe_url(uploaded['url'], kind='image')
+        assert info.width == 320 and info.height == 240 and info.size_bytes == len(raw)
+    assert await balance(actor.user_id) == before
