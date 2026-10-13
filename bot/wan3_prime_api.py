@@ -256,13 +256,56 @@ async def _upload_init_route(request: web.Request) -> web.Response:
         return _json_error(str(exc), status=exc.status, code=exc.code)
 
 
-async def _upload_chunk_route(request: web.Request) -> web.Response:
+async def _read_upload_chunk(request: web.Request) -> tuple[dict[str, Any], bytes]:
+    """Bound both wire formats before the unchanged owned-storage transaction."""
+    import base64
+    import binascii
+    import json
+
+    from bot.services.wan3_prime_storage import CHUNK_SIZE
+
+    if request.content_type == 'application/json':
+        encoded_limit = 4 * ((CHUNK_SIZE + 2) // 3)
+        body_limit = encoded_limit + 16 * 1024
+        if request.content_length is not None and request.content_length > body_limit:
+            raise Wan3PrimeValidationError('Часть файла превышает допустимый размер.', status=413)
+        raw = bytearray()
+        async for block in request.content.iter_chunked(65536):
+            raw.extend(block)
+            if len(raw) > body_limit:
+                raise Wan3PrimeValidationError('Часть файла превышает допустимый размер.', status=413)
+
+        def unique_fields(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise Wan3PrimeValidationError('Повторяющееся поле загрузки.')
+                result[key] = value
+            return result
+
+        try:
+            fields = json.loads(raw, object_pairs_hook=unique_fields)
+        except (ValueError, UnicodeError) as exc:
+            raise Wan3PrimeValidationError('Некорректные данные части файла.') from exc
+        allowed = {'upload_id', 'index', 'total', 'chunk_base64', 'init_data', 'start_param_fallback'}
+        if not isinstance(fields, dict) or fields.keys() - allowed:
+            raise Wan3PrimeValidationError('Неизвестное поле загрузки.')
+        encoded = fields.pop('chunk_base64', None)
+        if not isinstance(encoded, str) or not encoded:
+            raise Wan3PrimeValidationError('Не хватает данных для загрузки.')
+        if len(encoded) > encoded_limit:
+            raise Wan3PrimeValidationError('Часть файла превышает допустимый размер.', status=413)
+        if any(isinstance(value, str) and len(value.encode('utf-8')) > 8192 for value in fields.values()):
+            raise Wan3PrimeValidationError('Поле загрузки превышает допустимый размер.', status=413)
+        try:
+            chunk = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise Wan3PrimeValidationError('Некорректное содержимое части файла.') from exc
+        if len(chunk) > CHUNK_SIZE:
+            raise Wan3PrimeValidationError('Часть файла превышает допустимый размер.', status=413)
+        return fields, chunk
+
     try:
-        from bot.services.wan3_prime_storage import CHUNK_SIZE
-        init_data = request.headers.get('X-Telegram-Init-Data')
-        if not init_data:
-            raise Wan3PrimeLifecycleError('Откройте Mini App из Telegram.', status=401, code='auth_required')
-        actor = await _actor_from_request(request, {'init_data': init_data})
         reader = await request.multipart()
         fields = {}
         chunk = None
@@ -285,9 +328,29 @@ async def _upload_chunk_route(request: web.Request) -> web.Response:
                 chunk = bytes(value)
             else:
                 fields[name] = value.decode('utf-8')
-        if chunk is None or not {'upload_id', 'index', 'total'} <= fields.keys():
+        if chunk is None:
             raise Wan3PrimeValidationError('Не хватает данных для загрузки.')
-        if not fields['index'].isdigit() or not fields['total'].isdigit():
+        return fields, chunk
+    except Wan3PrimeValidationError:
+        raise
+    except (ValueError, UnicodeError, AssertionError) as exc:
+        # Never log auth, body bytes, filenames or parser exception text.
+        logger.warning('Wan3 multipart rejected: error_type=%s', type(exc).__name__)
+        raise Wan3PrimeLifecycleError('Не удалось прочитать загрузку. Повторите попытку.',
+                                     status=400, code='invalid_upload_multipart') from exc
+
+
+async def _upload_chunk_route(request: web.Request) -> web.Response:
+    try:
+        init_data = request.headers.get('X-Telegram-Init-Data')
+        if not init_data:
+            raise Wan3PrimeLifecycleError('Откройте Mini App из Telegram.', status=401, code='auth_required')
+        actor = await _actor_from_request(request, {'init_data': init_data})
+        fields, chunk = await _read_upload_chunk(request)
+        if not {'upload_id', 'index', 'total'} <= fields.keys() or not isinstance(fields['upload_id'], str):
+            raise Wan3PrimeValidationError('Не хватает данных для загрузки.')
+        if any(isinstance(fields[key], bool) or not isinstance(fields[key], (str, int))
+               or not str(fields[key]).isascii() or not str(fields[key]).isdigit() for key in ('index', 'total')):
             raise Wan3PrimeValidationError('Неверный номер части файла.')
         await wan3_prime_storage.save_chunk(actor, upload_id=fields['upload_id'],
             index=int(fields['index']), total=int(fields['total']), chunk=chunk)

@@ -1955,3 +1955,8 @@ Reference cleanup reports how many generation snapshot refs are protected.
 - Exact user source checked read-only: all four files present, no recovery needed for that source. No production data/rates/permissions/media changed; no paid requests.
 - Skills: evidence-first diagnosing-bugs, scoped debugger and actual-component testing. Unknown/cancelled reads were not bypassed; focused source access resumed only after explicit permission.
 - Rollout: separate draft PR, independent review, full CI, parent pre-release report, guarded release and exact runtime verification. Do not equate an unrelated synthetic fix with all user reports being resolved.
+
+
+## 2026-10-13 WAN mobile chunk transport
+
+Base b0c77f579fbf7824846c98f59e5bbe2d2e88b8f2. Scoped diagnosis, implementation, test and release plan: [WAN chunk transport](WAN_CHUNK_TRANSPORT_2026-10-13.md). Shared playbook refresh remains blocked by the earlier access denial; existing relevant guidance was read. Candidate patch transferred with verified SHA256 9cb74dfbb25fd7e599ed6def4c7f97cf6f6577ffcbd005be2151b4aa1cb91958. Local actual-route isolated suite: 12 passed. Added a narrow documented S102 waiver for trusted AST extraction; no app/database import. Full CI and exact runtime verification remain release gates. Real iPhone upload confirmation remains necessary after deployment.
