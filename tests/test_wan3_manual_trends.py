@@ -16,6 +16,9 @@ from bot.services.wan3_prime_trends import get_trend_plan, publish_manual_trend
 
 async def setup_publication(monkeypatch, tmp_path, model='wan_3'):
     from bot.config import config
+    from bot.handlers import trend_success_compat
+
+    monkeypatch.setattr(trend_success_compat, 'DATABASE_PATH', database.DATABASE_PATH)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(type(config), 'static_base_url', property(lambda _self: 'https://owned.test'))
     user = await database.get_or_create_user(717171)

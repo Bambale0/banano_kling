@@ -61,7 +61,10 @@ async def test_all_modes_signed_quote_launch_idempotency_status_and_owner_recipe
         assert provider.recipe.seed == 0 and provider.recipe.audio is False
         assert provider.recipe.nsfw_checker is True
         state = await (await client.post('/status', json={**auth, 'task_id': result['task_id']})).json()
-        assert state['provider_task_id'] == 'provider_1'
+        assert 'provider_task_id' not in state and 'provider_model' not in state and 'provider_state' not in state
+        assert state['internal_task_id'] == result['task_id']
+        internal_state = await lifecycle.status(actor, result['task_id'])
+        assert internal_state['provider_task_id'] == 'provider_1'
         restore = await (await client.post('/recipe', json={**auth, 'task_id': result['task_id']})).json()
         assert restore['recipe']['scenario'] == scenario
         invalid = await client.post('/status', json={'init_data': 'user=spoof', 'task_id': result['task_id']})
