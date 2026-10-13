@@ -132,7 +132,7 @@ async def get_trend_plan(actor, trend_id: int) -> dict[str, Any]:
             WHERE recipe.trend_id = ? AND prompt.status = 'approved' AND prompt.is_public = 1
               AND prompt.model IN ('wan_3_prime', 'wan_3')''', (trend_id,))).fetchone()
     if not row:
-        raise Wan3PrimeValidationError('Trend is no longer available', status=404)
+        raise Wan3PrimeValidationError('Тренд недоступен для повтора. Попросите автора опубликовать его заново.', status=404)
     return _plan(row)
 
 
@@ -143,3 +143,90 @@ async def verify_trend_in_transaction(db, context: dict[str, Any]) -> None:
         ''' + (' FOR SHARE OF recipe, prompt' if db_backend.is_postgres() else ''), (context['trend_id'],))).fetchone()
     if not row or _plan(row)['hash'] != context['source_hash']:
         raise Wan3PrimeValidationError('Trend permission changed; open it again', status=409)
+
+
+async def publish_manual_trend(actor, *, model: str, prompt: str, settings: dict,
+                               title: str, description: str, preview_url: str) -> dict[str, Any]:
+    """Publish one complete owned recipe atomically; never fabricate a source task."""
+    from pathlib import Path
+
+    from bot.services.wan3_manual_publication import manual_publication_input
+    from bot.services.wan3_models import wan3_service_for_model
+    from bot.services.wan3_prime_media import assert_public_url, validate_wan3_recipe
+    from bot.services.wan3_prime_probe_cache import verified_metadata
+    from bot.services.wan3_prime_repeat import source_slots
+    from bot.services.wan3_prime_storage import (
+        UPLOAD_ROOT,
+        _sha256_file,
+        wan3_prime_storage,
+    )
+    from bot.services.wan3_prime_storage_policy import lock_storage
+
+    if not actor.is_admin:
+        raise Wan3PrimeValidationError('Публикация трендов доступна администратору.', status=403)
+    raw, replacement_keys = manual_publication_input(model, prompt, settings)
+    if not isinstance(title, str) or not 1 <= len(title.strip()) <= 60:
+        raise Wan3PrimeValidationError('Название должно содержать от 1 до 60 символов.')
+    if not isinstance(description, str) or len(description) > 200:
+        raise Wan3PrimeValidationError('Описание должно содержать не более 200 символов.')
+    if not isinstance(preview_url, str) or not preview_url.strip():
+        raise Wan3PrimeValidationError('Загрузите превью тренда.')
+    await assert_public_url(preview_url)
+    preview_type = settings.get('preview_type', 'video')
+    if preview_type not in {'image', 'video'}:
+        raise Wan3PrimeValidationError('Неверный тип превью.')
+    await wan3_prime_storage.init_schema()
+    await init_trend_schema()
+    async with db_backend.connect(database.DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
+        await lock_storage(db)
+
+        class OwnedPublicationProbe:
+            async def probe_url(self, url, *, kind):
+                row = await (await db.execute('SELECT * FROM wan3_prime_media WHERE public_url = ?', (url,))).fetchone()
+                if not row or int(row['user_id']) != actor.user_id or int(row['telegram_id']) != actor.telegram_id:
+                    raise Wan3PrimeValidationError('Загрузите собственные референсы в редакторе Wan.', status=403)
+                if row['kind'] != kind:
+                    raise Wan3PrimeValidationError('Тип файла не соответствует месту в рецепте.')
+                local = Path(row['local_path']).resolve()
+                if UPLOAD_ROOT.resolve() not in local.parents or not local.is_file():
+                    raise Wan3PrimeValidationError('Референс недоступен. Загрузите его заново.', status=409)
+                return await verified_metadata(row, local, _sha256_file)
+
+        # The same lock is used by upload persistence and retention. Validation,
+        # row insertion and durable recipe pinning cannot race file cleanup.
+        validated = await validate_wan3_recipe(raw, OwnedPublicationProbe())
+        await wan3_service_for_model(model).prepare_request(**validated.raw_provider_args())
+        recipe = {'model': model, **validated.raw_provider_args()}
+        keys = set(replacement_keys)
+        slots = [{**slot, 'binding': 'upload' if slot['key'] in keys else 'fixed'} for slot in source_slots(recipe)]
+        revision = {'manual_version': 1, 'owner': actor.user_id, 'recipe': recipe, 'slots': slots,
+                    'title': title.strip(), 'description': description.strip(), 'preview_url': preview_url,
+                    'preview_type': preview_type}
+        publication_key = hashlib.sha256(_json(revision).encode()).hexdigest()
+        existing = await (await db.execute('SELECT trend_id FROM wan3_prime_trend_recipes WHERE publication_key = ?',
+                                           (publication_key,))).fetchone()
+        if existing:
+            # A repeated submit must never reactivate an intentionally hidden trend.
+            return {'ok': True, 'trend_id': int(existing['trend_id']), 'replayed': True}
+        public_settings = {
+            'kind': 'video', 'model': model, 'scenario': recipe['scenario'],
+            'ratio': recipe['aspect_ratio'], 'duration': recipe['duration'], 'resolution': recipe['resolution'],
+            'preview_type': preview_type, 'wan3_recipe_version': 1, 'user_reference_count': len(keys),
+            'reference_slots': [{'media_type': slot['kind'], 'position': slot['index'] + 1,
+                                'label': slot['key'], 'role': 'user_upload' if slot['binding'] == 'upload' else 'fixed_hidden'}
+                               for slot in slots],
+        }
+        inserted = await db.execute('''INSERT INTO user_prompts
+            (author_id, title, description, category, prompt_text, preview_url, model, tags,
+             generation_settings, is_public, status, source_generation_id)
+            VALUES (?, ?, ?, 'video', 'Wan 3.0 curated recipe', ?, ?, ?, ?, 1, 'approved', NULL)''',
+            (actor.user_id, title.strip(), description.strip(), preview_url, model,
+             _json(['trend', 'trend-video', 'wan3-prime' if model == 'wan_3_prime' else 'wan3']), _json(public_settings)))
+        trend_id = int(inserted.lastrowid)
+        await db.execute('''INSERT INTO wan3_prime_trend_recipes
+            (trend_id, source_task_id, owner_id, owner_telegram_id, recipe_json, slots_json, publication_key)
+            VALUES (?, '', ?, ?, ?, ?, ?)''',
+            (trend_id, actor.user_id, actor.telegram_id, _json(recipe), _json(slots), publication_key))
+        await db.commit()
+    return {'ok': True, 'trend_id': trend_id, 'replayed': False}

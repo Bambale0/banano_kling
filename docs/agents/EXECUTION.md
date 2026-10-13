@@ -1960,3 +1960,11 @@ Reference cleanup reports how many generation snapshot refs are protected.
 ## 2026-10-13 WAN mobile chunk transport
 
 Base b0c77f579fbf7824846c98f59e5bbe2d2e88b8f2. Scoped diagnosis, implementation, test and release plan: [WAN chunk transport](WAN_CHUNK_TRANSPORT_2026-10-13.md). Shared playbook refresh remains blocked by the earlier access denial; existing relevant guidance was read. Candidate patch transferred with verified SHA256 9cb74dfbb25fd7e599ed6def4c7f97cf6f6577ffcbd005be2151b4aa1cb91958. Local actual-route isolated suite: 12 passed. Added a narrow documented S102 waiver for trusted AST extraction; no app/database import. Full CI and exact runtime verification remain release gates. Real iPhone upload confirmation remains necessary after deployment.
+
+## 2026-10-13 WAN manual trend publication
+
+Baseline ca3df2da85856ee593777a30555ee7e474fc6946. Observed generic prompt submission creates a WAN catalog row without a private recipe; repeat-plan then returns 404. No historical rows are changed or reactivated.
+
+Implementation: strict complete recipe and explicit replacement keys for both WAN models; administrator check; media ownership/type/hash validation and atomic public-card/private-recipe insertion under the same storage lock as retention. Existing retention pins recipe_json, so saved references remain protected without global TTL changes. Public cards contain only presentation and slot metadata. No generation, payment or provider request is used by publication. External link slots and template user fields are rejected explicitly rather than silently discarded. Existing generated-task publisher remains available.
+
+Coverage: pure contract tests and existing chunk HTTP regression run locally without application/database imports. Full application tests cover both models, public privacy, compiled replacement order, foreign/nonadmin rejection, rollback, retention and no reactivation. These require official CI. Frontend implementation and independent final review pending. Relevant previously read diagnosing-bugs/debugger/webapp-testing playbooks used; shared checkout refresh remains unavailable after prior denial. Release requires exact CI/review and a user-facing report before merge. Real user publishing/repeat UI smoke remains distinct from paid generation.

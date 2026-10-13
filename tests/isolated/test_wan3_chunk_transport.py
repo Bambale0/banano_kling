@@ -5,6 +5,7 @@ Only auth and owned-storage seams are mocked. aiohttp parsing is real.
 """
 import ast
 import base64
+import importlib.util
 import logging
 import sys
 import types
@@ -34,10 +35,15 @@ class ChunkTransportTests(unittest.IsolatedAsyncioTestCase):
         self.storage = types.ModuleType('bot.services.wan3_prime_storage')
         self.storage.CHUNK_SIZE = 7 * 1024 * 1024
         self.storage.save_chunk = AsyncMock()
+        error_path = Path(__file__).resolve().parents[2] / 'bot/services/wan3_public_errors.py'
+        spec = importlib.util.spec_from_file_location('wan_public_errors_test', error_path)
+        errors = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(errors)
         self.modules = patch.dict(sys.modules, {
             'bot': types.ModuleType('bot'),
             'bot.services': types.ModuleType('bot.services'),
             'bot.services.wan3_prime_storage': self.storage,
+            'bot.services.wan3_public_errors': errors,
         })
         self.modules.start()
         source = Path(__file__).resolve().parents[2] / 'bot/wan3_prime_api.py'

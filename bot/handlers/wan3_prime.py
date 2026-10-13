@@ -1103,7 +1103,7 @@ async def quote_wan3_prime(callback: types.CallbackQuery, state: FSMContext):
             recipe=build_wan3_payload(draft),
         )
     except (ValueError, RuntimeError) as exc:
-        await callback.message.answer(str(exc)[:1000], parse_mode=None)
+        await callback.message.answer("Не удалось проверить материалы и настройки. Проверьте файлы и попробуйте снова.", parse_mode=None)
         await callback.answer("Проверьте материалы и настройки", show_alert=True)
         return
     except Exception as exc:  # noqa: BLE001 - user boundary retains the draft on infrastructure errors
@@ -1156,10 +1156,10 @@ async def confirm_wan3_prime(callback: types.CallbackQuery, state: FSMContext):
     internal_task_id = result.get("internal_task_id") or "неизвестен"
     status_text = {
         "queued": "Поставлено в очередь",
-        "accepted": "Принято провайдером",
+        "accepted": "Видео принято в обработку",
         "unknown": "Статус отправки неизвестен; восстановление продолжится по ID",
         "done": "Уже готово",
-        "failed": "Провайдер отклонил или задача упала",
+        "failed": "Не удалось создать видео",
     }.get(status, f"Статус: {status}")
     await callback.message.edit_text(
         f"Wan 3.0\n{status_text}\nTask ID: {internal_task_id}\nClient ID: {draft.client_request_id}",

@@ -51,7 +51,9 @@ async def _actor_from_request(request: web.Request, body: dict[str, Any]) -> Wan
 
 
 def _json_error(message: str, *, status: int = 400, code: str = "wan3_error") -> web.Response:
-    response = web.json_response({"ok": False, "error": message, "code": code}, status=status)
+    from bot.services.wan3_public_errors import public_wan_error
+
+    response = web.json_response({"ok": False, "error": public_wan_error(message, code=code), "code": code}, status=status)
     response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -99,7 +101,6 @@ def _quote_response(quote) -> dict[str, Any]:
         "ok": True,
         "quote_hash": quote.quote_hash,
         "model": model.key,
-        "provider_model": model.provider_model,
         "reserve_cost": quote.reserve_credits,
         "estimated_final_cost": None if auto else quote.reserve_credits,
         "billing_duration_seconds": quote.billable_seconds_reserved,
@@ -121,9 +122,7 @@ async def _launch_response(actor, result):
     payload = {
         'ok': True, 'status': public_state,
         'task_id': result['task_id'], 'internal_task_id': result['internal_task_id'],
-        'provider_task_id': result.get('provider_task_id'),
         'model': result.get('model', 'wan_3_prime'),
-        'provider_model': result.get('provider_model', 'wan/3-0-video-prime'),
         'reserve_cost': result.get('reserve_amount', 0),
         'charged_cost': result.get('charged_credits', 0),
         'refunded_cost': result.get('refunded_credits', 0),
@@ -164,8 +163,8 @@ async def miniapp_generate_wan(request: web.Request, body: dict[str, Any] | None
         return _json_error(str(exc), status=exc.status, code="validation_error")
     except Wan3PrimeLifecycleError as exc:
         return _json_error(str(exc), status=exc.status, code=exc.code)
-    except PermissionError as exc:
-        return _json_error(str(exc), status=403, code="permission_denied")
+    except PermissionError:
+        return _json_error("Нет доступа к этой операции.", status=403, code="permission_denied")
     except web.HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001 - public boundary, preserve uncertain submissions and keep secrets out of responses
@@ -192,7 +191,9 @@ async def _status_route(request: web.Request) -> web.Response:
         actor = await _actor_from_request(request, body)
         task_id = str(body.get("task_id") or body.get("internal_task_id") or "")
         result = await _lifecycle(request).status(actor, task_id)
-        return _json_ok(result)
+        from bot.services.wan3_public_errors import public_wan_status
+
+        return _json_ok(public_wan_status(result))
     except Wan3PrimeLifecycleError as exc:
         return _json_error(str(exc), status=exc.status, code=exc.code)
 

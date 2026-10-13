@@ -633,6 +633,9 @@ def _install_miniapp_video_submit(miniapp_module: Any) -> None:
                     status=403,
                 )
 
+            if str(body.get("model") or "").strip() in {"wan_3", "wan_3_prime"}:
+                return await miniapp_module._miniapp_publish_wan_trend(body, telegram_id, ctx["user"])
+
             title = str(body.get("title", "") or "").strip()
             prompt_text = str(body.get("prompt_text", "") or body.get("prompt", "") or "").strip()
             preview_url = str(body.get("preview_url", "") or "").strip()

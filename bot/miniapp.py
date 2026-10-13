@@ -583,7 +583,7 @@ VIDEO_MODELS = (
     {
         "id": "wan_3_prime",
         "label": "Wan 3.0 Video Prime",
-        "description": "Полная KIE Wan 3.0: текст, кадры, референсы, edit, документы и ссылки",
+        "description": "Wan 3.0: текст, кадры, референсы, edit, документы и ссылки",
         "durations": [-1] + list(range(2, 31)),
         "ratios": ["adaptive", "16:9", "4:3", "1:1", "3:4", "9:16"],
         "supports": ["text", "imgtxt", "first_last", "video", "edit", "file", "link"],
@@ -599,7 +599,7 @@ VIDEO_MODELS = (
     {
         "id": "wan_3",
         "label": "Wan 3.0 Video",
-        "description": "Полная KIE Wan 3.0: текст, кадры, референсы, edit, документы и ссылки",
+        "description": "Wan 3.0: текст, кадры, референсы, edit, документы и ссылки",
         "durations": [-1] + list(range(2, 31)),
         "ratios": ["adaptive", "16:9", "4:3", "1:1", "3:4", "9:16"],
         "supports": ["text", "imgtxt", "first_last", "video", "edit", "file", "link"],
@@ -3899,6 +3899,44 @@ async def miniapp_prompt_link(request: web.Request) -> web.Response:
         return _miniapp_error_response(e, log_message="Mini App prompt link failed")
 
 
+async def _miniapp_publish_wan_trend(body: dict, telegram_id: int, user) -> web.Response:
+    """Shared by the base route and both installed trend-submit wrappers."""
+    from bot.services.wan3_prime_lifecycle import Wan3PrimeActor
+    from bot.services.wan3_prime_media import Wan3PrimeValidationError
+    from bot.services.wan3_prime_trends import publish_manual_trend
+
+    prompt_text = str(body.get("prompt_text") or body.get("prompt") or "").strip()
+    policy_error = detect_explicit_prompt_policy_violation(prompt_text)
+    if policy_error:
+        return web.json_response({"ok": False, "error": policy_error}, status=400)
+    raw = body.get("generation_settings")
+    settings = dict(raw) if isinstance(raw, dict) else {}
+    try:
+        settings = normalize_user_fields_settings(settings, prompt=prompt_text)
+        if len(json.dumps(settings, ensure_ascii=False)) > 12_000:
+            raise Wan3PrimeValidationError("Слишком много настроек тренда")
+        published = await publish_manual_trend(
+            Wan3PrimeActor(user.id, telegram_id, is_admin=config.is_admin(telegram_id)),
+            model=str(body.get("model") or "").strip(), prompt=prompt_text, settings=settings,
+            title=str(body.get("title") or "").strip(), description=str(body.get("description") or "").strip(),
+            preview_url=str(body.get("preview_url") or "").strip(),
+        )
+        prompt = await get_prompt_by_id(published["trend_id"])
+    except Wan3PrimeValidationError as exc:
+        from bot.services.wan3_public_errors import public_wan_error
+
+        return web.json_response({"ok": False, "error": public_wan_error(str(exc)),
+                                  "code": "wan_publication_invalid"}, status=exc.status)
+    except (ValueError, TrendUserFieldsError):
+        return web.json_response({"ok": False, "error": "Проверьте режим, референсы и настройки Wan.",
+                                  "code": "wan_publication_invalid"}, status=400)
+    except Exception as exc:  # noqa: BLE001 - HTTP privacy boundary must hide arbitrary storage errors.
+        logger.warning("WAN trend publication failed: error_type=%s", type(exc).__name__)
+        return web.json_response({"ok": False, "error": "Не удалось опубликовать тренд. Попробуйте позже.",
+                                  "code": "wan_publication_unavailable"}, status=500)
+    return web.json_response({"ok": True, "prompt": prompt})
+
+
 async def miniapp_prompt_submit(request: web.Request) -> web.Response:
     try:
         body = await _miniapp_payload(request)
@@ -3945,6 +3983,9 @@ async def miniapp_prompt_submit(request: web.Request) -> web.Response:
                 {"ok": False, "error": f"Лимит активных промптов: {MAX_ACTIVE_PROMPTS_PER_USER}"},
                 status=400,
             )
+
+        if str(body.get("model") or "").strip() in {"wan_3", "wan_3_prime"}:
+            return await _miniapp_publish_wan_trend(body, telegram_id, user)
 
         prompt = await create_prompt(
             author_id=user.id,

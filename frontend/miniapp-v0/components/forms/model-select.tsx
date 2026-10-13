@@ -19,6 +19,7 @@ interface ModelSelectProps {
 }
 
 const NEW_MODEL_IDS = new Set(['wan_3_prime', 'seedance_2_5'])
+const WAN_MODEL_IDS = new Set(['wan_3', 'wan_3_prime'])
 const PAGE_SIZE = 8
 
 const GROUP_LABELS: Record<string, string> = {
@@ -60,6 +61,9 @@ export function ModelSelect({ models, value, onChange }: ModelSelectProps) {
   const selectedIsNew = selected ? NEW_MODEL_IDS.has(selected.id) : false
   const groups = useMemo(() => orderedGroupIds(models), [models])
   const orderedModels = useMemo(() => [...models].sort((left, right) => {
+    // Keep both WAN variants together on the first page, regardless of NEW badges.
+    const wanDelta = Number(WAN_MODEL_IDS.has(right.id)) - Number(WAN_MODEL_IDS.has(left.id))
+    if (wanDelta) return wanDelta
     const newDelta = Number(NEW_MODEL_IDS.has(right.id)) - Number(NEW_MODEL_IDS.has(left.id))
     if (newDelta) return newDelta
     return modelGroup(left).localeCompare(modelGroup(right)) || left.label.localeCompare(right.label)
