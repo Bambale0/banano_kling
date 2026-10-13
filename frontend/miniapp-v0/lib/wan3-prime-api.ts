@@ -143,6 +143,30 @@ export class Wan3PrimeApiError extends Error {
   }
 }
 
+// User-facing copy must never expose upstream details, even for known error codes.
+export function wan3SafeError(error: unknown, fallback: string): string {
+  if (error instanceof Wan3PrimeApiError) {
+    if (error.status === 404) return fallback
+    const messages: Record<string, string> = {
+      wan_publication_invalid: 'Не удалось опубликовать тренд. Проверьте настройки и загруженные файлы, затем повторите.',
+      validation_error: 'Проверьте настройки и материалы Wan, затем повторите.',
+      stale_quote: 'Стоимость изменилась. Повторите расчёт перед запуском.',
+      insufficient_credits: 'Недостаточно бананов для запуска.',
+      missing_rate: 'Расчёт стоимости временно недоступен. Попробуйте позже.',
+    }
+    return messages[error.code] || fallback
+  }
+  if (error instanceof Error && error.name === 'AbortError') return 'Загрузка отменена. Можно повторить.'
+  // Keep actionable local upload validation; arbitrary network messages remain hidden.
+  if (error instanceof Error && (/^Wan 3\.0 принимает этот тип файла до \d+ MB\.$/.test(error.message) || [
+    'Файл пустой.', 'Откройте Mini App из Telegram и попробуйте снова.',
+    'Предыдущая загрузка ещё завершается. Дождитесь подтверждения отмены.',
+    'Сервер не ответил за 15 минут. Проверьте сеть и повторите загрузку.',
+  ].includes(error.message))) return error.message
+  if (error instanceof Wan3PrimeUploadCleanupError) return error.message
+  return fallback
+}
+
 async function parseWan3Json<T>(response: Response, fallback: string): Promise<T> {
   const text = await response.text()
   let data: any

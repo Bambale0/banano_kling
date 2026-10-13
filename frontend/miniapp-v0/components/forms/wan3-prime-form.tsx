@@ -7,7 +7,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Wan3DurationSelect } from './wan3-duration-select'
 import {
   fetchWan3PrimeOwnerRecipe, fetchWan3PrimeRepeatPlan, fetchWan3PrimeTrendPlan, generateWan3Prime, importWan3PrimeReference,
-  quoteWan3Prime, uploadWan3PrimeReference,
+  quoteWan3Prime, uploadWan3PrimeReference, wan3SafeError, Wan3PrimeApiError,
   type Wan3PrimeGenerateRequest, type Wan3PrimeGenerateResponse,
   type Wan3PrimeQuoteResponse, type Wan3PrimeRecipe, type Wan3PrimeScenario,
   type Wan3PrimeUploadKind, type Wan3PrimeRepeatPlan, type Wan3PrimeRepeatSlot,
@@ -69,9 +69,10 @@ function recipeIssue(recipe: Wan3PrimeRecipe): string | null {
 interface MediaFieldProps {
   title: string; label: string; prefix: string; kind: Wan3PrimeUploadKind | 'link'; values: string[]
   limit: number; offset?: number; disabled?: boolean; hint?: string; resetKey: string; resetRecipe?: Wan3PrimeRecipe | null
+  allowImport?: boolean
   onChange: (values: string[]) => void; onBusy: (delta: number) => void; onError: (message: string) => void
 }
-function MediaField({ title, label, prefix, kind, values, limit, offset = 1, disabled, hint, resetKey, resetRecipe, onChange, onBusy, onError }: MediaFieldProps) {
+function MediaField({ title, label, prefix, kind, values, limit, offset = 1, disabled, hint, resetKey, resetRecipe, allowImport = true, onChange, onBusy, onError }: MediaFieldProps) {
   const [external, setExternal] = useState('')
   const [names, setNames] = useState<Record<string, string>>({})
   const [progress, setProgress] = useState('')
@@ -109,7 +110,7 @@ function MediaField({ title, label, prefix, kind, values, limit, offset = 1, dis
     } catch (error) {
       if (active.current === controller) {
         setRetryFiles(files.slice(index))
-        fail(`«${files[index].name}»: ${error instanceof Error ? error.name === 'AbortError' ? 'Загрузка отменена. Можно повторить.' : error.message : 'Не удалось загрузить файл.'}`)
+        fail(`«${files[index].name}»: ${wan3SafeError(error, 'Не удалось загрузить файл. Повторите загрузку.')}`)
       }
     } finally { if (active.current === controller) { active.current = null; setProgress('') }; lock.current = false; onBusy(-1) }
   }
@@ -124,7 +125,7 @@ function MediaField({ title, label, prefix, kind, values, limit, offset = 1, dis
       onChange([...values, stored.url]); setExternal('')
       setNames(old => ({ ...old, [stored.url]: stored.filename || (kind === 'link' ? new URL(stored.url).hostname : fileName(stored.url)) }))
     } catch (error) {
-      if (active.current === controller) fail(controller.signal.aborted ? 'Импорт отменён. Ссылка сохранена для повтора.' : error instanceof Error ? error.message : 'Не удалось проверить ссылку.')
+      if (active.current === controller) fail(controller.signal.aborted ? 'Импорт отменён. Ссылка сохранена для повтора.' : wan3SafeError(error, 'Не удалось проверить ссылку.'))
     } finally { if (active.current === controller) { active.current = null; setProgress('') }; lock.current = false; onBusy(-1) }
   }
   return <section className={CARD} aria-label={title}>
@@ -148,27 +149,48 @@ function MediaField({ title, label, prefix, kind, values, limit, offset = 1, dis
     </div> : null}
     {fieldError ? <p role="alert" className="break-words text-xs text-destructive">{fieldError}</p> : null}
     {retryFiles.length ? <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => { void upload(retryFiles) }}>Повторить загрузку</Button> : null}
-    <details className="text-xs"><summary className="cursor-pointer py-1 text-muted-foreground">{kind === 'link' ? 'Добавить адрес страницы' : 'Импортировать по ссылке'}</summary>
+    {allowImport ? <details className="text-xs"><summary className="cursor-pointer py-1 text-muted-foreground">{kind === 'link' ? 'Добавить адрес страницы' : 'Импортировать по ссылке'}</summary>
       <div className="mt-2 flex min-w-0 gap-2"><Input aria-label={`Ссылка: ${title}`} value={external} onChange={e => setExternal(e.target.value)} placeholder="https://…" disabled={disabled} className="min-w-0 text-xs" />
         <Button type="button" variant="outline" size="sm" disabled={disabled || !external.trim()} onClick={() => { void importUrl() }}>Добавить</Button></div>
-    </details>
+    </details> : null}
   </section>
 }
 
+export interface Wan3DraftState { recipe: Wan3PrimeRecipe; issue: string | null; busy: boolean }
+
 interface Wan3PrimeFormProps {
+  draftOnly?: boolean
+  onDraftChange?: (draft: Wan3DraftState) => void
   model?: Wan3PrimeRecipe['model']
   credits: number; isAdmin?: boolean; modelSelector?: ReactNode; initialRecipe?: Wan3PrimeRecipe | null
   ownerTaskId?: string | null; publicationSourceId?: number | null; trendId?: number | null; disabledReason?: string
   onQueued?: (result: Wan3PrimeGenerateResponse) => void | Promise<void>
 }
-export function Wan3PrimeForm({ model = 'wan_3_prime', credits, isAdmin = false, modelSelector, initialRecipe, ownerTaskId, publicationSourceId, trendId: selectedTrendId, disabledReason: externalDisabledReason, onQueued }: Wan3PrimeFormProps) {
+export function Wan3PrimeForm(props: Wan3PrimeFormProps) {
+  const model = props.model || props.initialRecipe?.model || 'wan_3_prime'
+  const initialRecipe = props.initialRecipe?.model === model ? props.initialRecipe : undefined
+  // Source/model navigation creates a fresh privacy boundary. A same-source
+  // recipe restore is handled inside the session so an unknown launch retains
+  // its frozen request and idempotency key.
+  const session = JSON.stringify([model, props.ownerTaskId, props.publicationSourceId, props.trendId,
+    initialRecipe?.source_feed_gen_id, initialRecipe?.trend_id, props.draftOnly])
+  return <Wan3PrimeFormSession key={session} {...props} model={model} expectedModel={props.model} initialRecipe={initialRecipe} />
+}
+
+function Wan3PrimeFormSession({ draftOnly = false, onDraftChange, expectedModel, model = 'wan_3_prime', credits, isAdmin = false, modelSelector, initialRecipe, ownerTaskId, publicationSourceId, trendId: selectedTrendId, disabledReason: externalDisabledReason, onQueued }: Wan3PrimeFormProps & { expectedModel?: Wan3PrimeRecipe['model'] }) {
   const disabledReason = externalDisabledReason || ''
   const [recipe, setRecipe] = useState<Wan3PrimeRecipe>(() => initialRecipe ? { ...emptyRecipe('text', model), ...initialRecipe } : emptyRecipe('text', model))
   const drafts = useRef<Partial<Record<Wan3PrimeScenario, Wan3PrimeRecipe>>>({})
+  const restoredRecipe = useRef(initialRecipe)
   const [requestId, setRequestId] = useState(newId)
   const [pending, setPending] = useState(0)
   const [recipeLoading, setRecipeLoading] = useState(false)
+  const [ownerReady, setOwnerReady] = useState(false)
+  const [ownerError, setOwnerError] = useState('')
+  const [ownerRetry, setOwnerRetry] = useState(0)
   const [planLoading, setPlanLoading] = useState(false)
+  const [planError, setPlanError] = useState('')
+  const [planRetry, setPlanRetry] = useState(0)
   const [repeatPlan, setRepeatPlan] = useState<Wan3PrimeRepeatPlan | null>(null)
   const feedSourceId = publicationSourceId || recipe.source_feed_gen_id || null
   const trendId = selectedTrendId || recipe.trend_id || null
@@ -187,7 +209,8 @@ export function Wan3PrimeForm({ model = 'wan_3_prime', credits, isAdmin = false,
   const approved = quoteState?.snapshot === snapshot ? quoteState.quote : null
   const missingRepeatInput = Boolean(sourceId && (!repeatPlan || (trendId ? repeatPlan.trend_id !== trendId : repeatPlan.source_feed_gen_id !== feedSourceId) ||
     repeatPlan.slots.some(slot => slot.binding === 'upload' && !recipe.repeat_replacements?.[slot.key])))
-  const issue = missingRepeatInput ? 'Загрузите материалы для каждого заменяемого места.' : recipeIssue(recipe)
+  const draftIssue = draftOnly && (recipe.scenario === 'link' || recipe.reference_link_urls?.length || recipe.source_feed_gen_id || recipe.trend_id) ? 'В ручном тренде доступны собственные файлы без ссылок и чужих рецептов.' : null
+  const issue = draftIssue || (missingRepeatInput ? 'Загрузите материалы для каждого заменяемого места.' : recipeIssue(recipe))
   const working = pending > 0 || recipeLoading || planLoading || quoting || sending
   const locked = working || attempted || Boolean(disabledReason)
   const isFrames = !sourceId && (recipe.scenario === 'first_frame' || recipe.scenario === 'first_last')
@@ -197,25 +220,43 @@ export function Wan3PrimeForm({ model = 'wan_3_prime', credits, isAdmin = false,
   const patch = (value: Partial<Wan3PrimeRecipe>) => { setRecipe(old => ({ ...old, ...value })); setError('') }
 
   useEffect(() => {
-    if (!ownerTaskId) { setRecipeLoading(false); return }
+    if (draftOnly || !ownerTaskId) { setRecipeLoading(false); return }
     const abort = new AbortController()
-    setRecipeLoading(true)
+    setRecipeLoading(true); setOwnerReady(false); setOwnerError('')
     void fetchWan3PrimeOwnerRecipe(ownerTaskId, abort.signal).then(value => {
+      if (abort.signal.aborted) return
+      if (expectedModel && value.recipe.model !== expectedModel) {
+        setOwnerError('Настройки относятся к другой модели Wan. Откройте исходную задачу заново.'); return
+      }
+      setOwnerReady(true)
       if (!abort.signal.aborted) { setRecipe({ ...emptyRecipe('text', model), ...value.recipe }); setExtraSource(optionalSourceFor(value.recipe)); setQuoteState(null); setAttempted(false); setResult(null); frozenRequest.current = null; setRequestId(newId()) }
-    }).catch(error => { if (!abort.signal.aborted) setError(error instanceof Error ? error.message : 'Не удалось восстановить собственную задачу.') })
+    }).catch(error => { if (!abort.signal.aborted) setOwnerError(wan3SafeError(error, 'Не удалось восстановить собственную задачу. Повторите загрузку настроек.')) })
       .finally(() => { if (!abort.signal.aborted) setRecipeLoading(false) })
     return () => abort.abort()
-  }, [ownerTaskId, model])
-  useEffect(() => {
-    if (initialRecipe && !attempted) { setRecipe({ ...emptyRecipe('text', model), ...initialRecipe }); setExtraSource(optionalSourceFor(initialRecipe)) }
-  }, [initialRecipe, model]) // A new owner recipe is an explicit user selection, not a provider prompt.
+  }, [ownerTaskId, model, expectedModel, draftOnly, ownerRetry])
 
   useEffect(() => {
-    if (!sourceId) { setRepeatPlan(null); setPlanLoading(false); return }
+    if (restoredRecipe.current === initialRecipe) return
+    restoredRecipe.current = initialRecipe
+    // A new object denotes an explicit restore, including equal content.
+    // After launch, keep the exact request until its outcome is known.
+    if (!attempted) {
+      drafts.current = {}
+      const restored = { ...emptyRecipe('text', model), ...initialRecipe }
+      setRecipe(restored)
+      setExtraSource(optionalSourceFor(restored))
+      setQuoteState(null); setError('')
+    }
+  }, [initialRecipe, model, attempted])
+  useEffect(() => {
+    if (draftOnly || !sourceId) { setRepeatPlan(null); setPlanLoading(false); return }
     const abort = new AbortController()
-    setPlanLoading(true); setRepeatPlan(null)
+    setPlanLoading(true); setRepeatPlan(null); setPlanError(''); setQuoteState(null)
     void (trendId ? fetchWan3PrimeTrendPlan(trendId, abort.signal) : fetchWan3PrimeRepeatPlan(sourceId, abort.signal)).then(plan => {
       if (abort.signal.aborted) return
+      if (expectedModel && plan.recipe.model !== expectedModel) {
+        setPlanError('Рецепт относится к другой модели Wan. Откройте тренд заново.'); return
+      }
       setRepeatPlan(plan)
       setRecipe(old => {
         const sameSource = trendId ? old.trend_id === trendId : old.source_feed_gen_id === sourceId
@@ -227,21 +268,21 @@ export function Wan3PrimeForm({ model = 'wan_3_prime', credits, isAdmin = false,
           repeat_replacements: sameSource ? old.repeat_replacements || {} : {} }
       })
       setQuoteState(null)
-    }).catch(error => { if (!abort.signal.aborted) setError(error instanceof Error ? error.message : 'Повтор больше недоступен.') })
+    }).catch(error => { if (!abort.signal.aborted) setPlanError(wan3SafeError(error, error instanceof Wan3PrimeApiError && error.status === 404 ? 'Тренд недоступен для повтора. Попросите автора опубликовать его заново.' : 'Не удалось загрузить рецепт повтора. Попробуйте ещё раз.')) })
       .finally(() => { if (!abort.signal.aborted) setPlanLoading(false) })
     return () => abort.abort()
-  }, [repeatKey])
+  }, [repeatKey, sourceId, trendId, expectedModel, planRetry, draftOnly])
 
   const selectMode = (mode: Wan3PrimeScenario) => {
     if (locked || sourceId) return
-    drafts.current[recipe.scenario] = recipe
-    const next = drafts.current[mode] || { ...emptyRecipe(mode, recipe.model), prompt: recipe.prompt, resolution: recipe.resolution,
+    if (!draftOnly) drafts.current[recipe.scenario] = recipe
+    const next = (!draftOnly && drafts.current[mode]) || { ...emptyRecipe(mode, recipe.model), prompt: recipe.prompt, resolution: recipe.resolution,
       aspect_ratio: recipe.aspect_ratio, duration: recipe.duration, seed: recipe.seed, audio: recipe.audio, nsfw_checker: recipe.nsfw_checker }
     setRecipe(next); setQuoteState(null); setError('')
     setExtraSource(optionalSourceFor(next))
   }
   useEffect(() => {
-    if (attempted || pending > 0 || recipeLoading || planLoading || issue || disabledReason) return
+    if (draftOnly || (ownerTaskId && !ownerReady) || attempted || pending > 0 || recipeLoading || planLoading || issue || disabledReason) return
     const abort = new AbortController()
     const key = snapshot
     const timer = setTimeout(() => {
@@ -252,25 +293,25 @@ export function Wan3PrimeForm({ model = 'wan_3_prime', credits, isAdmin = false,
           if (!abort.signal.aborted && currentSnapshot.current === key) setQuoteState({ snapshot: key, quote: value })
         })
         .catch(error => {
-          if (!abort.signal.aborted && currentSnapshot.current === key) setError(error instanceof Error ? error.message : 'Не удалось рассчитать стоимость.')
+          if (!abort.signal.aborted && currentSnapshot.current === key) setError(wan3SafeError(error, 'Не удалось рассчитать стоимость. Повторите расчёт.'))
         })
         .finally(() => { if (!abort.signal.aborted) setQuoting(false) })
     }, 350)
     return () => { clearTimeout(timer); abort.abort(); setQuoting(false) }
-  }, [snapshot, requestId, attempted, pending, recipeLoading, planLoading, issue, disabledReason])
+  }, [snapshot, requestId, attempted, pending, recipeLoading, planLoading, issue, disabledReason, draftOnly, ownerTaskId, ownerReady])
 
   const calculate = async () => {
-    if (working || attempted || issue || disabledReason) return
+    if (draftOnly || working || attempted || issue || disabledReason) return
     const key = snapshot; setQuoting(true); setError('')
     try {
       const value = await quoteWan3Prime({ recipe, client_request_id: requestId })
       if (!value.quote_hash || !Number.isFinite(value.reserve_cost) || value.reserve_cost < 0) throw new Error('Сервер не подтвердил стоимость. Повторите расчёт.')
       if (currentSnapshot.current === key) setQuoteState({ snapshot: key, quote: value })
-    } catch (error) { if (currentSnapshot.current === key) setError(error instanceof Error ? error.message : 'Не удалось рассчитать стоимость.') }
+    } catch (error) { if (currentSnapshot.current === key) setError(wan3SafeError(error, 'Не удалось рассчитать стоимость. Повторите расчёт.')) }
     finally { setQuoting(false) }
   }
   const launch = async () => {
-    if (submitLock.current || working || disabledReason || (!frozenRequest.current && (!approved || issue))) return
+    if (draftOnly || submitLock.current || working || disabledReason || (!frozenRequest.current && (!approved || issue))) return
     if (!frozenRequest.current) frozenRequest.current = { recipe, client_request_id: requestId, idempotency_key: requestId, quote_hash: approved!.quote_hash }
     submitLock.current = true; setSending(true); setAttempted(true); setError('')
     try {
@@ -281,7 +322,7 @@ export function Wan3PrimeForm({ model = 'wan_3_prime', credits, isAdmin = false,
       const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : ''
       if (['stale_quote', 'validation_error', 'missing_rate', 'insufficient_credits'].includes(code)) {
         setAttempted(false); frozenRequest.current = null; setQuoteState(null)
-        setError(error instanceof Error ? error.message : 'Обновите расчёт перед запуском.')
+        setError(wan3SafeError(error, 'Обновите расчёт перед запуском.'))
       } else setError('Не удалось подтвердить запуск. Не создавайте новую задачу: кнопка «Проверить запуск» повторит запрос с тем же идентификатором без повторного списания.')
     } finally { submitLock.current = false; setSending(false) }
   }
@@ -289,16 +330,33 @@ export function Wan3PrimeForm({ model = 'wan_3_prime', credits, isAdmin = false,
     if (!result || result.status === 'unknown') return
     setRequestId(newId()); setAttempted(false); frozenRequest.current = null; setResult(null); setQuoteState(null); setError('')
   }
-  const mediaProps = { disabled: locked, onBusy, onError: setError,
+  useEffect(() => {
+    if (draftOnly) onDraftChange?.({ recipe, issue, busy: pending > 0 })
+  }, [draftOnly, onDraftChange, recipe, issue, pending])
+
+  const mediaProps = { disabled: locked, allowImport: !draftOnly, onBusy, onError: setError,
     resetKey: JSON.stringify([ownerTaskId, repeatKey, recipe.scenario]), resetRecipe: initialRecipe }
   const videos = recipe.reference_video_urls || []
   const unknown = attempted && (!result || result.status === 'unknown')
-  return <div className="min-w-0 space-y-4 pb-[calc(6rem+env(safe-area-inset-bottom))]" data-testid="wan3-prime-form">
+  if (!draftOnly && sourceId && (!repeatPlan || (trendId ? repeatPlan.trend_id !== trendId : repeatPlan.source_feed_gen_id !== feedSourceId))) {
+    return <section className={CARD} aria-label="Рецепт повтора Wan">
+      <h3 className="text-sm font-semibold">Повтор публикации Wan</h3>
+      {planError ? <><p role="alert" className="text-sm text-destructive">{planError}</p>
+        <Button type="button" disabled={planLoading} onClick={() => setPlanRetry(n => n + 1)}>Повторить загрузку рецепта</Button></>
+        : <p role="status">Загружаю рецепт повтора…</p>}
+    </section>
+  }
+  if (!draftOnly && ownerTaskId && !ownerReady) return <section className={CARD} aria-label="Настройки задачи Wan">
+    {ownerError ? <><p role="alert" className="text-sm text-destructive">{ownerError}</p>
+      <Button type="button" disabled={recipeLoading} onClick={() => setOwnerRetry(n => n + 1)}>Повторить загрузку настроек</Button></>
+      : <p role="status">Загружаю настройки задачи…</p>}
+  </section>
+  return <div className={draftOnly ? 'min-w-0 space-y-4' : 'min-w-0 space-y-4 pb-[calc(6rem+env(safe-area-inset-bottom))]'} data-testid="wan3-prime-form">
     {modelSelector ? <section className={CARD}><h3 className="text-sm font-medium">Модель</h3>{modelSelector}</section> : null}
     <section className={CARD}>
-      <div><h3 className="font-serif text-lg font-semibold">{recipe.model === 'wan_3' ? 'Wan 3.0 Video' : 'Wan 3.0 Video Prime'}</h3><p className="mt-1 text-xs text-muted-foreground">Выберите задачу. Черновики каждого режима сохраняются при переключении.</p></div>
+      <div><h3 className="font-serif text-lg font-semibold">{recipe.model === 'wan_3' ? 'Wan 3.0 Video' : 'Wan 3.0 Video Prime'}</h3><p className="mt-1 text-xs text-muted-foreground">{draftOnly ? 'Настройте скрытый рецепт тренда. Смена режима очищает материалы.' : 'Выберите задачу. Черновики каждого режима сохраняются при переключении.'}</p></div>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3" aria-label="Режим Wan">
-        {MODES.map(([mode, label]) => <button type="button" key={mode} disabled={locked || Boolean(sourceId)} aria-pressed={recipe.scenario === mode} onClick={() => selectMode(mode)}
+        {MODES.filter(([mode]) => !draftOnly || mode !== 'link').map(([mode, label]) => <button type="button" key={mode} disabled={locked || Boolean(sourceId)} aria-pressed={recipe.scenario === mode} onClick={() => selectMode(mode)}
           className={`rounded-xl border px-3 py-2.5 text-left text-xs transition disabled:opacity-50 ${recipe.scenario === mode ? 'border-cyan/60 bg-cyan/10 text-foreground' : 'border-border/50 text-muted-foreground hover:bg-secondary'}`}>{label}</button>)}
       </div>
       {recipe.scenario === 'edit' ? <p className="rounded-lg border border-cyan/20 bg-cyan/5 p-3 text-xs leading-relaxed">Video1 — исходник для правки. Опишите, что изменить и что сохранить. Фото и дополнительные видео задают нужные детали. Это генеративное редактирование: точное совпадение каждого кадра и лица не гарантируется.</p> : null}
@@ -330,7 +388,7 @@ export function Wan3PrimeForm({ model = 'wan_3_prime', credits, isAdmin = false,
       {['reference', 'edit'].includes(recipe.scenario) ? <label className="block space-y-1 text-sm">Дополнительный источник<select aria-label="Дополнительный источник" className={SELECT} disabled={locked} value={extraSource} onChange={event => {
         const kind = event.target.value as 'none' | 'file' | 'link'; setExtraSource(kind)
         patch({ reference_file_urls: kind === 'file' ? recipe.reference_file_urls : [], reference_link_urls: kind === 'link' ? recipe.reference_link_urls : [] })
-      }}><option value="none">Без документа и веб-страницы</option><option value="file">Документ</option><option value="link">Веб-страница</option></select></label> : null}
+      }}><option value="none">Без документа и веб-страницы</option><option value="file">Документ</option>{!draftOnly ? <option value="link">Веб-страница</option> : null}</select></label> : null}
       {recipe.scenario === 'file' || extraSource === 'file' ? <MediaField {...mediaProps} title="Документ" label="Загрузить документ" prefix="Файл " kind="file" limit={1} values={recipe.reference_file_urls || []} onChange={urls => patch({ reference_file_urls: urls, reference_link_urls: [] })} hint="PDF, Word, Excel, PowerPoint, Keynote, Pages, Numbers, TXT, MD. До 100 MB и до 50 страниц для страничных форматов." /> : null}
       {recipe.scenario === 'link' || extraSource === 'link' ? <MediaField {...mediaProps} title="Веб-страница" label="Добавить веб-страницу" prefix="Ссылка " kind="link" limit={1} values={recipe.reference_link_urls || []} onChange={urls => patch({ reference_link_urls: urls, reference_file_urls: [] })} hint="Одна публичная страница без входа в аккаунт. Фото, видео и аудио можно добавить выше." /> : null}
     </div> : null}
@@ -346,9 +404,9 @@ export function Wan3PrimeForm({ model = 'wan_3_prime', credits, isAdmin = false,
         <label className="flex items-center gap-2 text-xs"><input type="checkbox" aria-label="Аудио в результате" checked={recipe.audio} onChange={e => patch({ audio: e.target.checked })} />Аудио в результате</label>
         <label className="flex items-center gap-2 text-xs"><input type="checkbox" aria-label="Проверка контента" checked={recipe.nsfw_checker} onChange={e => patch({ nsfw_checker: e.target.checked })} />Проверка контента</label>
       </fieldset>
-      <p className="text-xs leading-relaxed text-muted-foreground">Исходные видеосекунды + длительность результата — не более 30 секунд. Сервер проверит файлы и рассчитает стоимость до запуска.</p>
+      <p className="text-xs leading-relaxed text-muted-foreground">{draftOnly ? 'Исходные видеосекунды + длительность результата — не более 30 секунд. Публикация сохраняет рецепт без запуска генерации.' : 'Исходные видеосекунды + длительность результата — не более 30 секунд. Сервер проверит файлы и рассчитает стоимость до запуска.'}</p>
     </section>
-    <section className={CARD} aria-label="Стоимость Wan">
+    {draftOnly ? <>{issue ? <p className="text-xs text-muted-foreground">{issue}</p> : null}{error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}</> : <section className={CARD} aria-label="Стоимость Wan">
       {disabledReason || issue ? <p className="text-xs text-muted-foreground">{disabledReason || issue}</p> : null}
       {pending > 0 ? <p role="status" className="text-xs">Загружаю и проверяю материалы…</p> : null}
       <Button type="button" variant="outline" disabled={working || attempted || !!issue || !!disabledReason} onClick={() => { void calculate() }}>{quoting ? 'Рассчитываю…' : 'Рассчитать стоимость'}</Button>
@@ -358,9 +416,9 @@ export function Wan3PrimeForm({ model = 'wan_3_prime', credits, isAdmin = false,
         <p className="text-xs text-muted-foreground">{approved.settlement_notice || (approved.auto_duration ? 'Неиспользованный резерв возвращается после результата.' : 'Показанная стоимость фиксируется при запуске.')}</p>
       </div> : <p className="text-xs text-muted-foreground">Запуск станет доступен после расчёта. Изменение материалов или настроек требует нового расчёта.</p>}
       {error ? <p role="alert" className="break-words text-sm text-destructive">{error}</p> : null}
-      {result ? <div role="status" className="space-y-1 rounded-lg border border-border p-3 text-sm"><p>{result.status === 'failed' ? `Генерация не выполнена. Возвращено: ${result.refunded_cost ?? result.reserve_cost}🍌.` : result.status === 'unknown' ? 'Провайдер ещё не подтвердил приём. Проверяем эту же задачу.' : result.status === 'done' ? 'Видео готово.' : 'Видео принято в работу.'}</p><code className="block break-all text-xs">{result.internal_task_id}</code><p className="text-xs text-muted-foreground">Результат появится в истории. Доставка в Telegram зависит от доступности чата.</p></div> : null}
+      {result ? <div role="status" className="space-y-1 rounded-lg border border-border p-3 text-sm"><p>{result.status === 'failed' ? `Генерация не выполнена. Возвращено: ${result.refunded_cost ?? result.reserve_cost}🍌.` : result.status === 'unknown' ? 'Запуск ещё не подтверждён. Проверяем эту же задачу.' : result.status === 'done' ? 'Видео готово.' : 'Видео принято в работу.'}</p><code className="block break-all text-xs">{result.internal_task_id}</code><p className="text-xs text-muted-foreground">Результат появится в истории. Доставка в Telegram зависит от доступности чата.</p></div> : null}
       <Button type="button" className="w-full" disabled={working || !!disabledReason || (attempted && !unknown) || (!attempted && (!approved || !!issue || (!isAdmin && !approved.admin_free && credits < approved.reserve_cost)))} onClick={() => { void launch() }}>{sending ? 'Проверяю…' : unknown ? 'Проверить запуск' : 'Запустить Wan'}</Button>
       {result && result.status !== 'unknown' ? <Button type="button" variant="outline" className="w-full" onClick={startNew}>Новая генерация с этими настройками</Button> : null}
-    </section>
+    </section>}
   </div>
 }

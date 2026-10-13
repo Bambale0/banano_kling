@@ -1,9 +1,10 @@
 import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { Wan3PrimeForm } from './wan3-prime-form'
-import { fetchWan3PrimeRepeatPlan, generateWan3Prime, importWan3PrimeReference, quoteWan3Prime, uploadWan3PrimeReference } from '@/lib/wan3-prime-api'
+import { Wan3PrimeUploadCleanupError, fetchWan3PrimeRepeatPlan, generateWan3Prime, importWan3PrimeReference, quoteWan3Prime, uploadWan3PrimeReference } from '@/lib/wan3-prime-api'
 
 jest.mock('@/lib/wan3-prime-api', () => ({
+  ...jest.requireActual('@/lib/wan3-prime-api'),
   quoteWan3Prime: jest.fn(), generateWan3Prime: jest.fn(),
   uploadWan3PrimeReference: jest.fn(), importWan3PrimeReference: jest.fn(),
   fetchWan3PrimeOwnerRecipe: jest.fn(), fetchWan3PrimeRepeatPlan: jest.fn(), fetchWan3PrimeTrendPlan: jest.fn(),
@@ -14,7 +15,8 @@ const quote = { ok: true, quote_hash: 'quote-1', reserve_cost: 60,
   settlement_notice: 'После генерации вернём неиспользованный резерв.' }
 
 beforeEach(() => {
-  jest.clearAllMocks()
+  // Reset implementations and queued mockOnce results so a failed test cannot contaminate the next one.
+  jest.resetAllMocks()
   ;(quoteWan3Prime as jest.Mock).mockResolvedValue(quote)
   ;(generateWan3Prime as jest.Mock).mockResolvedValue({ ok: true, status: 'queued', internal_task_id: 'wan3_test', reserve_cost: 60 })
   ;(uploadWan3PrimeReference as jest.Mock).mockImplementation(async (kind, file) => ({
@@ -206,7 +208,7 @@ test('repeated initial recipe restoration switches the visible optional source a
   rerender(<Wan3PrimeForm credits={1000} initialRecipe={{
     ...base, reference_link_urls: [], reference_file_urls: ['https://owned.test/replacement.pdf'],
   }} />)
-  await waitFor(() => expect(selector).toHaveValue('file'))
+  await waitFor(() => expect(screen.getByRole('combobox', { name: 'Дополнительный источник' })).toHaveValue('file'))
   expect(screen.getByText('replacement.pdf')).toBeInTheDocument()
   expect(screen.queryByText('saved-page')).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Рассчитать стоимость' }))
@@ -246,23 +248,25 @@ test('restored Auto and manual durations remain reviewable and failed-start retr
   expect(automatic).toBeChecked()
   expect(slider).toBeDisabled()
   rerender(<Wan3PrimeForm credits={1000} initialRecipe={{ ...base, duration: 7 }} />)
-  expect(automatic).not.toBeChecked()
-  expect(slider).toHaveValue('7')
-  fireEvent.click(automatic); fireEvent.click(automatic)
-  expect(slider).toHaveValue('7')
+  const restoredSlider = screen.getByRole('slider', { name: 'Длительность Wan' })
+  const restoredAutomatic = screen.getByRole('switch', { name: 'Auto: длительность Wan' })
+  expect(restoredAutomatic).not.toBeChecked()
+  expect(restoredSlider).toHaveValue('7')
+  fireEvent.click(restoredAutomatic); fireEvent.click(restoredAutomatic)
+  expect(restoredSlider).toHaveValue('7')
   ;(generateWan3Prime as jest.Mock).mockRejectedValueOnce(new TypeError('Network interrupted'))
   fireEvent.click(screen.getByRole('button', { name: 'Рассчитать стоимость' }))
   await waitFor(() => expect(screen.getByRole('button', { name: 'Запустить Wan' })).toBeEnabled())
   fireEvent.click(screen.getByRole('button', { name: 'Запустить Wan' }))
   await screen.findByRole('button', { name: 'Проверить запуск' })
-  expect(slider).toBeDisabled()
-  expect(automatic).toBeDisabled()
+  expect(restoredSlider).toBeDisabled()
+  expect(restoredAutomatic).toBeDisabled()
   fireEvent.click(screen.getByRole('button', { name: 'Проверить запуск' }))
   await screen.findByText('wan3_test')
   expect((generateWan3Prime as jest.Mock).mock.calls[1][0]).toEqual((generateWan3Prime as jest.Mock).mock.calls[0][0])
   fireEvent.click(screen.getByRole('button', { name: 'Новая генерация с этими настройками' }))
-  expect(slider).toBeEnabled()
-  expect(slider).toHaveValue('7')
+  expect(restoredSlider).toBeEnabled()
+  expect(restoredSlider).toHaveValue('7')
 })
 
 test('photo failure and retry stay visible beside the input with the original Cyrillic filename', async () => {
@@ -274,7 +278,7 @@ test('photo failure and retry stay visible beside the input with the original Cy
   fireEvent.change(field.getByLabelText('Загрузить фото-референсы'), { target: { files: [new File(['synthetic'], 'Фото.jpg', { type: 'image/jpeg' })] } })
   expect(field.getByRole('status')).toHaveTextContent('Фото.jpg')
   expect(await field.findByRole('alert')).toHaveTextContent('Фото.jpg')
-  expect(field.getByRole('alert')).toHaveTextContent('Не удалось загрузить часть файла.')
+  expect(field.getByRole('alert')).toHaveTextContent('Не удалось загрузить файл. Повторите загрузку.')
   fireEvent.click(field.getByRole('button', { name: 'Повторить загрузку' }))
   await field.findByText('Фото.jpg')
   expect(field.queryByRole('alert')).not.toBeInTheDocument()
@@ -348,6 +352,7 @@ test.each([false, true])('recipe replacement (equal content: %s) and unmount dis
   const nextRecipe = equalContent ? { ...originalRecipe } : { ...originalRecipe, prompt: 'Новая инструкция' }
   rerender(<Wan3PrimeForm credits={1000} initialRecipe={nextRecipe} />)
   expect(signal?.aborted).toBe(true)
+  expect(within(screen.getByRole('region', { name: 'Фото-референсы' })).queryByRole('status')).not.toBeInTheDocument()
   await act(async () => finish({ url: 'https://owned.test/old.jpg' }))
   expect(screen.getByText('new.jpg')).toBeInTheDocument()
   expect(screen.queryByText('Старое.jpg')).not.toBeInTheDocument()
@@ -406,7 +411,7 @@ test('cancellation stays busy until cleanup finishes and retains a cleanup failu
   expect(field.getByRole('button', { name: 'Отменить загрузку' })).toBeDisabled()
   expect(input).toBeDisabled()
   expect(field.queryByRole('button', { name: 'Повторить загрузку' })).not.toBeInTheDocument()
-  await act(async () => rejectCleanup(Object.assign(new Error('Не удалось подтвердить отмену предыдущей загрузки. Повтор сначала проверит и освободит её.'), { name: 'Wan3PrimeUploadCleanupError' })))
+  await act(async () => rejectCleanup(new Wan3PrimeUploadCleanupError()))
   expect(field.getByRole('alert')).toHaveTextContent('Не удалось подтвердить отмену')
   expect(field.getByRole('alert')).not.toHaveTextContent('Загрузка отменена. Можно повторить.')
   expect(field.getByRole('button', { name: 'Повторить загрузку' })).toBeEnabled()

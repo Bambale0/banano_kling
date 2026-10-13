@@ -9,6 +9,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { deactivatePrompt, fetchPromptLink, fetchPrompts, submitPrompt, uploadFile } from '@/lib/api'
 import { publishSeedanceTrendUpload } from '@/lib/seedance-trend-admin-api'
 import { SeedanceTrendUploadReferences, emptySeedanceUploadReferences, type SeedanceUploadReference } from '@/components/seedance-trend-upload-references'
+import { Wan3TrendDraftEditor, type Wan3TrendDraft } from '@/components/wan3-trend-draft-editor'
+import { wan3SafeError } from '@/lib/wan3-prime-api'
 import { updateTrendPreview } from '@/lib/trend-admin-api'
 import { mediaAspectRatio, normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
 import { formatTrendRepeatCost } from '@/lib/trend-price'
@@ -151,6 +153,10 @@ export function TrendsTab() {
   const [videoPreviewReady, setVideoPreviewReady] = useState<Record<number, boolean>>({})
   const [videoPreviewFailed, setVideoPreviewFailed] = useState<Record<number, boolean>>({})
 
+  const [wanDraft, setWanDraft] = useState<Wan3TrendDraft | null>(null)
+  const isWanUpload = trendKind === 'video' && (model === 'wan_3' || model === 'wan_3_prime')
+  const captureWanDraft = useCallback((draft: Wan3TrendDraft) => setWanDraft(draft), [])
+  const validWanDraft = isWanUpload && wanDraft?.recipe.model === model ? wanDraft : null
   const isSeedanceUpload = trendKind === 'video' && (model === 'seedance_2' || model === 'seedance_2_5')
   const hasOwnReferences = isSeedanceUpload && (ownReferences.images.length + ownReferences.videos.length + ownReferences.audios.length > 0)
 
@@ -275,6 +281,7 @@ export function TrendsTab() {
   useEffect(() => {
     setOwnReferences(emptySeedanceUploadReferences())
     setUploadingOwnReferences(false)
+    setWanDraft(null)
   }, [model, trendKind])
 
   const clearPreview = () => {
@@ -303,6 +310,7 @@ export function TrendsTab() {
     clearPreview()
     setOwnReferences(emptySeedanceUploadReferences())
     setUploadingOwnReferences(false)
+    setWanDraft(null)
     setTrendKind('image')
     setPreviewKind('image')
     setTitle('')
@@ -359,10 +367,10 @@ export function TrendsTab() {
       file,
     )
       .then((uploaded) => uploaded.url)
-      .catch((e) => {
+      .catch(() => {
         if (previewUploadAttemptRef.current === attemptId) {
           setPreviewUrl((current) => current === localPreviewUrl ? '' : current)
-          setError(e instanceof Error ? e.message : 'Не удалось загрузить preview')
+          setError('Не удалось загрузить превью. Повторите загрузку файла.')
         }
         return null
       })
@@ -449,9 +457,14 @@ export function TrendsTab() {
   }
 
   const handleCreate = async () => {
-    if (!isAdmin || submittingRef.current || uploadingPreview || uploadingOwnReferences) return
+    if (!isAdmin || submittingRef.current || uploadingPreview || uploadingOwnReferences || validWanDraft?.busy) return
     const isGenjutsu = trendKind === 'video' && model === 'genjutsu'
-    if (!title.trim() || !previewUrl || !model || (!isGenjutsu && !promptText.trim())) {
+    if (isWanUpload && (!validWanDraft || validWanDraft.issue)) {
+      setError(validWanDraft?.issue || 'Заполните рецепт Wan перед публикацией')
+      return
+    }
+    const hiddenPrompt = isWanUpload ? validWanDraft!.recipe.prompt.trim() : promptText.trim()
+    if (!title.trim() || !previewUrl || !model || (!isGenjutsu && !hiddenPrompt.trim())) {
       setError(isGenjutsu ? 'Заполните название, preview и выберите рецепт Genjutsu' : 'Заполните название, preview, нейросеть и скрытый prompt')
       return
     }
@@ -459,7 +472,7 @@ export function TrendsTab() {
       setError('Сначала создайте и выберите приватный рецепт Genjutsu')
       return
     }
-    if (!isGenjutsu && userFields.some((field) => !field.key.trim())) {
+    if (!isGenjutsu && !isWanUpload && userFields.some((field) => !field.key.trim())) {
       setError('Укажите название поля шаблона')
       return
     }
@@ -487,7 +500,12 @@ export function TrendsTab() {
         return
       }
 
-      const generationSettings: TrendGenerationSettings = isGenjutsu && selectedGenjutsuRecipe
+      const generationSettings: TrendGenerationSettings = isWanUpload && validWanDraft
+        ? {
+            kind: 'video', model, preview_type: previewKind,
+            wan3_recipe: { ...validWanDraft.recipe, prompt: hiddenPrompt }, wan3_replacement_keys: validWanDraft.replacementKeys,
+          }
+        : isGenjutsu && selectedGenjutsuRecipe
         ? {
             kind: 'video',
             user_input: 'photo',
@@ -573,7 +591,7 @@ export function TrendsTab() {
         : await submitPrompt({
         title: title.trim(),
         description: description.trim(),
-        promptText: isGenjutsu && selectedGenjutsuRecipe ? `Genjutsu recipe ${selectedGenjutsuRecipe.id}` : promptText.trim(),
+        promptText: isGenjutsu && selectedGenjutsuRecipe ? `Genjutsu recipe ${selectedGenjutsuRecipe.id}` : hiddenPrompt,
         previewUrl: finalPreviewUrl,
         model,
         tags: trendKind === 'video'
@@ -585,7 +603,7 @@ export function TrendsTab() {
       resetForm()
       setIsCreateOpen(false)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Не удалось опубликовать тренд')
+      setError(isWanUpload ? wan3SafeError(e, 'Не удалось опубликовать тренд. Проверьте настройки и файлы, затем повторите.') : e instanceof Error ? e.message : 'Не удалось опубликовать тренд')
     } finally {
       submittingRef.current = false
       setSubmitting(false)
@@ -786,6 +804,7 @@ export function TrendsTab() {
             onClick={() => {
               if (submittingRef.current) return
               if (isCreateOpen) {
+                setWanDraft(null)
                 setOwnReferences(emptySeedanceUploadReferences())
                 setUploadingOwnReferences(false)
                 if (uploadingPreview) clearPreview()
@@ -860,6 +879,7 @@ export function TrendsTab() {
               {trendKind === 'video' ? 'Видео-нейросеть' : 'Нейросеть для фото'}
             </span>
             <select
+              aria-label={trendKind === 'video' ? 'Видео-нейросеть' : 'Нейросеть для фото'}
               value={model}
               onChange={(event) => setModel(event.target.value)}
               className="h-11 w-full rounded-xl border border-border/50 bg-secondary/70 px-3 text-sm text-foreground outline-none focus:border-gold/50"
@@ -867,7 +887,7 @@ export function TrendsTab() {
               {trendKind === 'video' && <option value="genjutsu">Higgsfield Genjutsu</option>}
               {availableModels.map((item) => (
                 <option key={item.id} value={item.id}>
-                  {item.label.replace('🔥 НОВИНКА', '').trim()}
+                  {item.id === 'wan_3' ? 'Wan 3.0 Video' : item.id === 'wan_3_prime' ? 'Wan 3.0 Video Prime' : item.label.replace('🔥 НОВИНКА', '').trim()}
                 </option>
               ))}
             </select>
@@ -884,6 +904,8 @@ export function TrendsTab() {
               </label>
               {selectedGenjutsuRecipe ? <p className="text-xs text-muted-foreground">Шагов: {selectedGenjutsuRecipe.steps.length}. Поля и роли берутся из рецепта автоматически; скрытый prompt в карточку тренда не попадает.</p> : <p className="text-xs text-muted-foreground">Создайте рецепт в Higgsfield Genjutsu, затем выберите его здесь.</p>}
             </div>
+          ) : isWanUpload ? (
+            <Wan3TrendDraftEditor key={model} model={model as 'wan_3' | 'wan_3_prime'} disabled={submitting} onChange={captureWanDraft} />
           ) : trendKind === 'video' ? (
             <div className="grid grid-cols-2 gap-3">
               <label className="block space-y-2">
@@ -1009,7 +1031,7 @@ export function TrendsTab() {
             disabled={submitting}
           />}
 
-          {model !== 'genjutsu' && <div className="space-y-3 rounded-2xl border border-border/50 bg-secondary/25 p-3">
+          {model !== 'genjutsu' && !isWanUpload && <div className="space-y-3 rounded-2xl border border-border/50 bg-secondary/25 p-3">
             <div>
               <p className="text-xs font-semibold text-foreground">Поля шаблона</p>
               <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
@@ -1083,7 +1105,7 @@ export function TrendsTab() {
             )}
           </div>}
 
-          {model !== 'genjutsu' ? <Textarea
+          {isWanUpload ? null : model !== 'genjutsu' ? <Textarea
             value={promptText}
             onChange={(event) => setPromptText(event.target.value)}
             placeholder="Скрытый prompt, который подставится при повторе"
@@ -1094,7 +1116,7 @@ export function TrendsTab() {
           <Button
             type="button"
             className="w-full bg-gold text-primary-foreground hover:bg-gold/90"
-            disabled={submitting || uploadingPreview || uploadingOwnReferences}
+            disabled={submitting || uploadingPreview || uploadingOwnReferences || (isWanUpload && (!validWanDraft || validWanDraft.busy || !!validWanDraft.issue || !validWanDraft.recipe.prompt.trim()))}
             onClick={() => void handleCreate()}
           >
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}

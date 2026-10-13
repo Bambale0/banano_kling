@@ -19,6 +19,8 @@ async def setup_publication(monkeypatch, tmp_path, model='wan_3'):
     from bot.handlers import trend_success_compat
 
     monkeypatch.setattr(trend_success_compat, 'DATABASE_PATH', database.DATABASE_PATH)
+    monkeypatch.setattr(trend_success_compat, '_SCHEMA_READY', False)
+    monkeypatch.setattr(trend_success_compat, '_SCHEMA_LOCK', None)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(type(config), 'static_base_url', property(lambda _self: 'https://owned.test'))
     user = await database.get_or_create_user(717171)
@@ -45,7 +47,10 @@ async def test_manual_publish_plan_and_replacement_keep_private_recipe(monkeypat
     again = await publish_manual_trend(actor, **kwargs)
     assert again['trend_id'] == created['trend_id'] and again['replayed']
     prompt = await database.get_prompt_by_id(created['trend_id'])
-    assert prompt['model'] == model and prompt['source_generation_id'] is None
+    assert prompt['model'] == model
+    async with database.db_backend.connect(database.DATABASE_PATH) as db:
+        original = await (await db.execute('SELECT source_generation_id FROM user_prompts WHERE id = ?', (created['trend_id'],))).fetchone()
+    assert original[0] is None
     assert 'PRIVATE' not in str(prompt) and 'input-' not in str(prompt)
     plan = await get_trend_plan(actor, created['trend_id'])
     public = public_plan(plan)
@@ -99,19 +104,28 @@ async def test_recipe_insert_failure_rolls_back_public_prompt(monkeypatch, tmp_p
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('model', ['wan_3', 'wan_3_prime'])
-async def test_generic_submit_routes_wan_before_legacy_create(monkeypatch, tmp_path, model):
+@pytest.mark.parametrize('installer', ['active', 'video', 'legacy'])
+async def test_generic_submit_routes_wan_before_legacy_create(monkeypatch, tmp_path, model, installer):
     from bot import miniapp
     actor, kwargs = await setup_publication(monkeypatch, tmp_path, model)
     user = await database.get_or_create_user(actor.telegram_id)
     monkeypatch.setattr(miniapp.config, 'is_admin', lambda tid: tid == actor.telegram_id)
     monkeypatch.setattr(miniapp, '_get_user_context', AsyncMock(return_value=(actor.telegram_id, {'user': user})))
-    body = {'init_data': 'synthetic', 'model': model, 'prompt_text': kwargs['prompt'], 'title': kwargs['title'],
+    body = {'init_data': 'synthetic', 'model': model, 'prompt_text': '  ' + kwargs['prompt'] + '  ', 'title': kwargs['title'],
             'description': '', 'preview_url': kwargs['preview_url'], 'tags': ['trend', 'trend-video'],
             'generation_settings': kwargs['settings']}
+    body['generation_settings']['wan3_recipe']['prompt'] = '  ' + kwargs['prompt'] + '  '
     monkeypatch.setattr(miniapp, '_miniapp_payload', AsyncMock(return_value=body))
     legacy = AsyncMock(side_effect=AssertionError('WAN cannot create a generic orphan'))
     monkeypatch.setattr(miniapp, 'create_prompt', legacy)
-    response = await miniapp.miniapp_prompt_submit(SimpleNamespace(app={}))
+    module = SimpleNamespace(**vars(miniapp))
+    if installer == 'video':
+        from bot.handlers.trend_video_compat import _install_miniapp_video_submit
+        _install_miniapp_video_submit(module)
+    elif installer == 'legacy':
+        from bot.handlers.trends_compat import _install_miniapp_trends
+        _install_miniapp_trends(module)
+    response = await module.miniapp_prompt_submit(SimpleNamespace(app={}))
     assert response.status == 200, response.text
     import json
     published = json.loads(response.text)['prompt']
@@ -120,6 +134,24 @@ async def test_generic_submit_routes_wan_before_legacy_create(monkeypatch, tmp_p
     broken = deepcopy(body)
     broken['generation_settings'].pop('wan3_recipe')
     monkeypatch.setattr(miniapp, '_miniapp_payload', AsyncMock(return_value=broken))
-    response = await miniapp.miniapp_prompt_submit(SimpleNamespace(app={}))
+    module._miniapp_payload = miniapp._miniapp_payload
+    response = await module.miniapp_prompt_submit(SimpleNamespace(app={}))
     assert response.status == 400
     legacy.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_manual_submit_unexpected_storage_error_is_not_public(monkeypatch):
+    from bot import miniapp
+    from bot.services import wan3_prime_trends
+
+    monkeypatch.setattr(miniapp.config, 'is_admin', lambda _tid: True)
+    monkeypatch.setattr(wan3_prime_trends, 'publish_manual_trend',
+                        AsyncMock(side_effect=RuntimeError('internal-provider-secret-location')))
+    response = await miniapp._miniapp_publish_wan_trend(
+        {'model': 'wan_3', 'prompt_text': 'A landscape', 'generation_settings': {}},
+        717171, SimpleNamespace(id=1),
+    )
+    assert response.status == 500
+    assert 'internal-provider-secret-location' not in response.text
+    assert 'wan_publication_unavailable' in response.text

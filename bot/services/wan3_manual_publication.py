@@ -15,7 +15,8 @@ def manual_publication_input(model, prompt, settings):
         raise Wan3PrimeValidationError('Для публикации нужен полный рецепт Wan.')
     if raw.get('model') != model or settings.get('model') != model:
         raise Wan3PrimeValidationError('Модель рецепта не совпадает с моделью тренда.')
-    if raw.get('prompt') != prompt or not isinstance(prompt, str) or not prompt.strip():
+    if (not isinstance(raw.get('prompt'), str) or not isinstance(prompt, str) or not prompt.strip()
+            or raw['prompt'].strip() != prompt.strip()):
         raise Wan3PrimeValidationError('Текст рецепта не совпадает с промптом тренда.')
     if settings.get('user_fields'):
         raise Wan3PrimeValidationError('Поля подстановки пока не поддерживаются в трендах Wan. Удалите их перед публикацией.')
@@ -32,6 +33,7 @@ def manual_publication_input(model, prompt, settings):
         if raw.get(field) is not None and not isinstance(raw[field], str):
             raise Wan3PrimeValidationError('Кадр должен быть загруженным изображением.')
     recipe = deepcopy(raw)
+    recipe['prompt'] = prompt.strip()
     keys = settings.get('wan3_replacement_keys')
     if (not isinstance(keys, list) or any(not isinstance(key, str) for key in keys)
             or len(set(keys)) != len(keys)):

@@ -1,3 +1,5 @@
+import type { Wan3PrimeRecipe } from './wan3-prime-api'
+
 export type TaskStatus = 'pending' | 'completed' | 'failed'
 export type TaskType = 'image' | 'video' | 'audio' | 'character'
 export type AppMode = 'locked' | 'live'
@@ -241,9 +243,12 @@ export interface TrendUserField {
 
 export interface TrendGenerationSettings {
   kind: 'image' | 'video'
-  user_input: 'photo'
+  // Manual WAN recipes supply their own input roles and aspect ratio.
+  user_input?: 'photo'
   model: string
-  ratio: string
+  ratio?: string
+  wan3_recipe?: Wan3PrimeRecipe
+  wan3_replacement_keys?: string[]
   preview_type?: 'image' | 'video'
   reference_count?: number
   reference_labels?: string[]

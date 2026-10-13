@@ -38,6 +38,13 @@ class ManualPublicationTests(unittest.TestCase):
             recipe['reference_image_urls'].clear()
             self.assertEqual(len(self.recipe['reference_image_urls']), 2)
 
+    def test_whitespace_is_normalized_but_different_prompt_is_rejected(self):
+        self.recipe['prompt'] = '  Image1 beside Image2  '
+        recipe, _ = self.validate('wan_3', 'Image1 beside Image2', self.settings)
+        self.assertEqual(recipe['prompt'], 'Image1 beside Image2')
+        with self.assertRaises(ValueError):
+            self.validate('wan_3', 'a different instruction', self.settings)
+
     def test_generic_legacy_payload_cannot_create_orphan(self):
         with self.assertRaises(ValueError):
             self.validate('wan_3', 'prompt', {'model': 'wan_3', 'scenario': 'imgtxt'})
