@@ -24,6 +24,7 @@ beforeEach(() => {
  Object.defineProperty(window.Telegram!.WebApp!, 'platform', { configurable: true, value: 'web' })
  Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: scrollRecovery })
  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+ Object.defineProperty(navigator, 'share', { configurable: true, value: undefined })
  Object.defineProperty(document, 'execCommand', { configurable: true, value: execCopy })
  writeText.mockRejectedValue(new DOMException('Denied', 'NotAllowedError'))
  execCopy.mockReturnValue(false)
@@ -166,4 +167,39 @@ it('never exposes the share-sheet action for a non-web unsafe deep link', async 
  ;(shareFeedItem as jest.Mock).mockResolvedValueOnce({ item, link: 'javascript:alert(1)' })
  await share()
  expect(screen.queryByRole('link', { name: 'Поделиться в Telegram' })).not.toBeInTheDocument()
+})
+
+it('temporarily enables a read-only iOS field during synchronous copy and restores it', async () => {
+ Object.defineProperty(window.Telegram!.WebApp!, 'platform', { configurable: true, value: 'ios' })
+ execCopy.mockImplementation(() => {
+   const field = screen.getByRole('textbox', { name: 'Ссылка на публикацию' }) as HTMLInputElement
+   expect(field.readOnly).toBe(false)
+   expect(field.selectionStart).toBe(0)
+   expect(field.selectionEnd).toBe(link.length)
+   return true
+ })
+ await share()
+ const field = screen.getByRole('textbox', { name: 'Ссылка на публикацию' }) as HTMLInputElement
+ expect(field.readOnly).toBe(true)
+ fireEvent.click(screen.getByRole('button', { name: 'Скопировать ссылку' }))
+ expect(execCopy).toHaveBeenCalledTimes(1)
+ expect(field.readOnly).toBe(true)
+ expect(await screen.findByText('Ссылка скопирована')).toBeInTheDocument()
+})
+
+it('provides an honest native copy/share option after WebView denies both clipboard methods', async () => {
+ Object.defineProperty(window.Telegram!.WebApp!, 'platform', { configurable: true, value: 'ios' })
+ const nativeShare = jest.fn().mockResolvedValue(undefined)
+ Object.defineProperty(navigator, 'share', { configurable: true, value: nativeShare })
+ await share()
+ expect(screen.queryByRole('button', { name: 'Через меню телефона' })).not.toBeInTheDocument()
+ fireEvent.click(screen.getByRole('button', { name: 'Скопировать ссылку' }))
+ await screen.findByText(/Telegram не разрешил запись в буфер/)
+ expect(execCopy).toHaveBeenCalledTimes(2) // visible input, then temporary editable textarea
+ const recovery = screen.getByRole('button', { name: 'Через меню телефона' })
+ fireEvent.click(recovery)
+ expect(nativeShare).toHaveBeenCalledWith({ url: link })
+ expect(screen.queryByText('Ссылка скопирована')).not.toBeInTheDocument()
+ expect(shareFeedItem).toHaveBeenCalledTimes(1)
+ expect(screen.getByRole('textbox', { name: 'Ссылка на публикацию' })).toHaveValue(link)
 })

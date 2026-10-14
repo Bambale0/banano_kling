@@ -7,10 +7,14 @@ function tryCopySelection(value: string, visibleField?: HTMLInputElement | null)
   if (typeof document.execCommand !== 'function') return false
   const useVisibleField = Boolean(visibleField?.isConnected && visibleField.value === value)
   const field = useVisibleField ? visibleField! : document.createElement('textarea')
+  // WKWebView sometimes reports success only for a focused *editable* field.
+  // Temporarily lift readOnly inside the same tap, then restore it.
+  const oldReadOnly = field.readOnly
+  if (useVisibleField) field.readOnly = false
   if (!useVisibleField) {
     const area = field as HTMLTextAreaElement
     area.value = value
-    area.readOnly = true
+    area.readOnly = false
     area.dataset.clipboardFallback = 'true'
     area.style.position = 'fixed'
     area.style.left = '0px'
@@ -30,7 +34,8 @@ function tryCopySelection(value: string, visibleField?: HTMLInputElement | null)
   } catch {
     return false
   } finally {
-    if (!useVisibleField) field.remove()
+    if (useVisibleField) field.readOnly = oldReadOnly
+    else field.remove()
   }
 }
 
@@ -46,7 +51,13 @@ export async function copyTextToClipboard(
     || (typeof navigator !== 'undefined' && /iPhone|iPad|iPod/i.test(navigator.userAgent))
   // A visible share input is also selected synchronously on Android; copying
   // still works when Telegram grants only a short-lived tap permission.
-  if ((isIOS || visibleField) && tryCopySelection(value, visibleField)) return
+  // Prefer selecting the on-screen field while the browser still has the
+  // user's tap activation. If Telegram disallows copying a visible input,
+  // retry with a temporary editable textarea before awaiting a permission API.
+  if (isIOS || visibleField) {
+    if (tryCopySelection(value, visibleField)) return
+    if (visibleField && tryCopySelection(value)) return
+  }
 
   if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
     try {
