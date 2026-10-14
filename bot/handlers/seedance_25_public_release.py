@@ -770,6 +770,14 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
     billing_quote = await _payload_quote(telegram_id, payload)
     quote, charge_cost = billing_quote.cost, billing_quote.charge_cost
     is_admin = billing_quote.profile == "admin"
+    source_seconds = float(billing_quote.input_video_seconds)
+    quote_hash = hashlib.sha256(json.dumps({
+        "version": 2, "model": MODEL_KEY, "telegram_id": telegram_id,
+        "reference_videos": payload["video_urls"],
+        "source_seconds": source_seconds, "output_seconds": billing_quote.duration,
+        "cost": quote, "revision": billing_quote.revision,
+        "source_feed_gen_id": source_feed_gen_id,
+    }, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
     if payload.get("seedance25_identity_transfer"):
         current_quote = _identity_quote(payload, cost=quote)
         if body.get("seedance25_quote_only") is True:
@@ -779,7 +787,18 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
         if not is_admin and body.get("seedance25_identity_quote") != current_quote:
             return web.json_response({"ok": False, "error": "Цена или исходное видео изменились. Обновите расчёт перед запуском."}, status=400)
     elif body.get("seedance25_quote_only") is True:
-        return web.json_response({"ok": False, "error": "Расчёт доступен для переноса персонажа"}, status=400)
+        return web.json_response({
+            "ok": True, "quote_only": True, "quote_hash": quote_hash,
+            "cost": quote, "source_video_duration_seconds": source_seconds,
+            "output_seconds": billing_quote.duration,
+            "billable_seconds": billing_quote.billable_seconds,
+            "admin_free": is_admin,
+        }, headers={"Cache-Control": "no-store"})
+    elif payload["video_urls"] and not is_admin and body.get("seedance25_reference_quote_hash") != quote_hash:
+        return web.json_response({
+            "ok": False, "code": "stale_quote",
+            "error": "Проверьте стоимость видео-референсов и подтвердите цену перед запуском.",
+        }, status=409)
     if charge_cost > 0 and not await miniapp_module.check_can_afford(telegram_id, charge_cost):
         fresh = await miniapp_module.get_or_create_user(telegram_id)
         return web.json_response(
