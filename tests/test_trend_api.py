@@ -349,7 +349,7 @@ def test_repeat_cost_uses_saved_video_duration_and_quality(monkeypatch):
     assert seen == {"model": "seedance_2_5", "duration": 12, "quality": "720p"}
 
 
-def test_catalog_cost_includes_replaceable_video_reference_multiplier(monkeypatch):
+def test_catalog_cost_is_unknown_until_replaceable_reference_duration_measured(monkeypatch):
     from bot.services.preset_manager import preset_manager
 
     monkeypatch.setattr(
@@ -370,7 +370,7 @@ def test_catalog_cost_includes_replaceable_video_reference_multiplier(monkeypatc
         ],
     }
 
-    assert estimate_trend_repeat_cost(trend) == 20.0
+    assert estimate_trend_repeat_cost(trend) is None
 
 
 def _private_seedance_trend(**overrides):
@@ -503,8 +503,8 @@ def test_seedance25_editing_trend_prices_actual_hidden_video_duration(monkeypatc
         )
     )
 
-    assert cost == 20.0
-    assert seen == {"model": "seedance_2_5", "duration": 13, "quality": "720p"}
+    assert cost is None
+    assert seen == {}
 
 
 @pytest.mark.asyncio

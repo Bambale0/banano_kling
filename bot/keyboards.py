@@ -635,7 +635,7 @@ def get_create_video_keyboard(
         # configured output rate; precise source seconds are verified at quote.
         total_cost = resolve_video_quote(current_model, current_duration, pricing_quality, tariff=tariff).cost
         per_second_cost = total_cost / max(1, current_duration)
-    rate_label = f"Цена: {per_second_cost:g}🍌/с"
+    rate_label = f"Цена: {per_second_cost}🍌/с"
     if current_video_references:
         rate_label += " · входящие видео оплачиваются по секундам"
     builder.button(text=rate_label, callback_data="ignore")

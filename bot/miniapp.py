@@ -5459,7 +5459,8 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
             )
         except ValueError as exc:
             detail = str(exc)
-            message = (detail if "видео-референс" in detail or "длительност" in detail
+            normalized_detail = detail.lower()
+            message = (detail if "видео-референс" in normalized_detail or "длительност" in normalized_detail
                        else "Для выбранной модели администратор ещё не настроил цену.")
             return web.json_response({"ok": False, "error": message}, status=400)
         cost = billing_quote.cost

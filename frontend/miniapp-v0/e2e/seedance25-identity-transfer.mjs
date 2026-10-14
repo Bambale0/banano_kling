@@ -132,7 +132,7 @@ try {
     await page.getByLabel(/Аудио — по одному URL/).fill('asset://preserved-audio')
     await addUploads(page, uploads)
     await page.getByRole('button', { name: /Замена персонажа/ }).click()
-    await page.getByText(/к оплате 11с/).waitFor()
+    await page.getByText(/генерация: 11 с/).waitFor()
     assert.equal(await slider.isDisabled(), true)
     assert.equal(await page.getByRole('button', { name: '16:9', exact: true }).isDisabled(), true)
     assert.equal(await page.getByLabel(/Аудио — по одному URL/).count(), 0)

@@ -33,7 +33,10 @@ class PricingTests(unittest.TestCase):
             'bot.config': types.SimpleNamespace(config=types.SimpleNamespace(is_admin=lambda x: False)),
             'bot.model_capabilities': types.SimpleNamespace(get_video_capability=capability),
             'bot.services.preset_manager': types.SimpleNamespace(preset_manager=self.manager),
-            'bot.video_reference_policy': types.SimpleNamespace(apply_video_reference_cost=lambda *x: 1),
+            'bot.video_reference_policy': types.SimpleNamespace(
+                apply_video_reference_cost=lambda _model, base, *_refs, **_kw: base,
+                measure_video_reference_seconds=lambda refs: 0,
+            ),
         }
         spec = importlib.util.spec_from_file_location('creator_under_test', ROOT / 'bot/creator_tariff.py')
         self.module = importlib.util.module_from_spec(spec)
