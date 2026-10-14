@@ -169,7 +169,7 @@ try {
         assert.ok(beforeBounds && beforeBounds.y < 0, 'Test really starts down the feed')
         await lastShare.click()
         const fallback = page.getByRole('region', { name: 'Ссылка на публикацию' })
-        await fallback.getByText(/Автоматическое копирование недоступно/).waitFor()
+        await fallback.getByText(/Telegram не разрешил запись в буфер/).waitFor()
         // No locator click/scroll on recovery: the application must reveal it.
         const recoveryBounds = await fallback.boundingBox()
         assert.ok(recoveryBounds && recoveryBounds.y >= 0 && recoveryBounds.y + recoveryBounds.height <= 820, 'Copy recovery visible without test auto-scroll')

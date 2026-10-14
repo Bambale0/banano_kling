@@ -21,6 +21,7 @@ const scrollRecovery = jest.fn()
 beforeEach(() => {
  jest.clearAllMocks()
  window.Telegram!.WebApp!.openTelegramLink = jest.fn()
+ Object.defineProperty(window.Telegram!.WebApp!, 'platform', { configurable: true, value: 'web' })
  Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: scrollRecovery })
  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
  Object.defineProperty(document, 'execCommand', { configurable: true, value: execCopy })
@@ -44,7 +45,7 @@ it('retains the exact server link when both clipboard methods fail; retries on a
  const field = await screen.findByRole('textbox', { name: 'Ссылка на публикацию' })
  expect(field).toHaveValue(link)
  expect(screen.queryByText('PRIVATE_RECIPE')).not.toBeInTheDocument()
- await screen.findByText(/Автоматическое копирование недоступно/)
+ await screen.findByText(/Telegram не разрешил запись в буфер/)
  expect(scrollRecovery).toHaveBeenCalledWith({ block: 'center' })
  writeText.mockResolvedValueOnce(undefined)
  const previous = writeText.mock.calls.length
@@ -52,7 +53,7 @@ it('retains the exact server link when both clipboard methods fail; retries on a
  // Clipboard is invoked synchronously in this fresh event, before any await.
  expect(writeText.mock.calls.length).toBe(previous + 1)
  expect(await screen.findByText('Ссылка скопирована')).toBeInTheDocument()
- expect(screen.queryByText(/Автоматическое копирование недоступно/)).not.toBeInTheDocument()
+ expect(screen.queryByText(/Telegram не разрешил запись в буфер/)).not.toBeInTheDocument()
  expect(shareFeedItem).toHaveBeenCalledTimes(1)
  expect(writeText).toHaveBeenLastCalledWith(link)
 })
@@ -126,4 +127,43 @@ it.each(['javascript:alert(1)', 'data:text/html,unsafe', '//t.me/fixture_bot', '
  await share()
  expect(screen.queryByRole('link', { name: 'Открыть ссылку' })).not.toBeInTheDocument()
  expect(screen.getByRole('textbox', { name: 'Ссылка на публикацию' })).toHaveValue(unsafe.replace(/\n/g, ''))
+})
+
+it('iOS Telegram exposes a fresh-tap copy action and selects the visible URL synchronously', async () => {
+ Object.defineProperty(window.Telegram!.WebApp!, 'platform', { configurable: true, value: 'ios' })
+ execCopy.mockImplementation(() => {
+   const field = screen.getByRole('textbox', { name: 'Ссылка на публикацию' }) as HTMLInputElement
+   expect(document.activeElement).toBe(field)
+   expect(field.selectionStart).toBe(0)
+   expect(field.selectionEnd).toBe(link.length)
+   return true
+ })
+ await share()
+ expect(await screen.findByText(/Ссылка готова/)).toBeInTheDocument()
+ expect(writeText).not.toHaveBeenCalled() // never try auto-copy after fetching the URL
+ expect(execCopy).not.toHaveBeenCalled()
+ const retry = screen.getByRole('button', { name: 'Скопировать ссылку' })
+ fireEvent.click(retry)
+ expect(execCopy).toHaveBeenCalledTimes(1) // inside the user's fresh tap
+ expect(writeText).not.toHaveBeenCalled()
+ expect(await screen.findByText('Ссылка скопирована')).toBeInTheDocument()
+ expect(shareFeedItem).toHaveBeenCalledTimes(1)
+})
+
+it('provides a native Telegram share-sheet fallback with the exact encoded remix URL', async () => {
+ await share()
+ const forwarded = screen.getByRole('link', { name: 'Поделиться в Telegram' })
+ const native = 'https://t.me/share/url?url=' + encodeURIComponent(link)
+ expect(forwarded).toHaveAttribute('href', native)
+ expect(new URL(forwarded.getAttribute('href')!).searchParams.get('url')).toBe(link)
+ expect(forwarded).toHaveAttribute('rel', 'noopener noreferrer')
+ expect(fireEvent.click(forwarded)).toBe(false)
+ expect(window.Telegram!.WebApp!.openTelegramLink).toHaveBeenCalledWith(native)
+ expect(shareFeedItem).toHaveBeenCalledTimes(1)
+})
+
+it('never exposes the share-sheet action for a non-web unsafe deep link', async () => {
+ ;(shareFeedItem as jest.Mock).mockResolvedValueOnce({ item, link: 'javascript:alert(1)' })
+ await share()
+ expect(screen.queryByRole('link', { name: 'Поделиться в Telegram' })).not.toBeInTheDocument()
 })
