@@ -1,5 +1,17 @@
 # Execution ledger
 
+## 2026-10-14 — WAN 3.0 / Prime doubled quote with video references
+
+- Baseline: `tanyapi` / production `a1b1ce4ae6f8c6b52cea06c7527fa61c645339c5`. Branch: `fix/tanyapi-wan3-output-only-billing-20261014`.
+- User-visible symptom: Wan quotes for a 7s video reference and selected 5s output billed 12s instead of 5s. Both the Mini App display and actual reservation used `(reference + output) × rate`; this was not just a frontend issue. Non-video-reference requests already billed the selected output duration correctly.
+- New customer policy: existing admin-configured rate multiplied by **generated/output seconds only** for both Wan 3.0 models and Creator tariffs. Provider combined reference+output limit (30s) and source metadata remain validated unchanged. Fixed output duration reserves exactly selected seconds. Auto reserves the max output budget `30 − input_seconds` and refunds unused output seconds based on actual measured result.
+- Migration/invariants: frozen v3 quote hash and immutable accepted charge; accepted v1/v2 fixed and Auto quotes keep previous settlement semantics. Preserve balance idempotency, full failure refunds, prompt-repeat rewards, task cost and settlement telemetry. No new DB schema, prices, provider request fields, runtime config writes, historical backfill, or paid provider request.
+- API/UI: retain combined `billing_duration_seconds` response for backwards-compatible old clients; add `billable_output_seconds` to distinguish amount charged from supplier duration cap. Update Telegram and Mini App price copy; admin rates remain configurable.
+- RED reproduction: read-only production pure calculator `settlement_amounts({version:3, mode:auto_output_reserve, input_video_seconds:7, rate:4}, reserve=92, result=4)` returned 44 credits rather than 16. New lifecycle and browser-visible tests assert 5s output at 4 credits/s = 20 credits even when reference lasts 7s; creator/ordinary and legacy accepted runs covered.
+- Verification/deploy: feature branch PR to protected `tanyapi` → required safe regressions, Mini App tests/browser E2E, PostgreSQL, normal squash auto-merge, production autodeploy exact SHA, health and read-only quote smoke. Preserve dirty production `data/price.json` and unrelated runtime files. No live paid generation or unrequested balance adjustments.
+- Skills consulted: `Bambale0/skills` diagnosing-bugs + tdd + code-review, `anthropics/skills` webapp-testing, repository AGENTS.md.
+
+
 ## 2026-10-10 — Higgsfield Genjutsu reference + generation seconds billing
 
 - Baseline: `tanyapi` `fb499599112c630e43ebb0c5b87c66d5b409c075`. Task branch: `fix/tanyapi-genjutsu-reference-plus-generation-seconds`. Draft PR #290.
