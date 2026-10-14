@@ -975,7 +975,9 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
             ? 'Загружаю файлы…'
             : identityTransfer && !identityQuote
               ? identityRefs.issue ? 'Добавьте фото и исходное видео' : quoteError ? 'Не удалось рассчитать стоимость' : 'Рассчитываю стоимость…'
-            : !canAfford
+            : !quoteReady
+              ? 'Проверяем длительность видеореференсов и цену…'
+              : !canAfford
               ? `Не хватает ${Math.max(0, price - credits)}🍌`
               : isAdmin
                 ? '🚀 Создать видео'
