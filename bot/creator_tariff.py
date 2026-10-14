@@ -284,8 +284,19 @@ def resolve_video_quote(
             profile = 'creator'
     sources = tuple(str(url).strip() for url in video_references or [] if str(url).strip())
     input_seconds = float(reference_video_seconds or 0.0)
+    # Use the configured unrounded per-second tariff for input seconds; do
+    # not extrapolate from an already rounded five-second output subtotal.
+    quality_rates = ordinary_model.get('quality_costs', {}) if isinstance(ordinary_model, dict) else {}
+    ordinary_rate = {
+        str(key).strip().lower(): value for key, value in quality_rates.items()
+    }.get(quality or '') if isinstance(quality_rates, dict) else None
+    applied_rate = rate if profile == 'creator' else ordinary_rate
+    if sources and applied_rate is not None:
+        raw_base = float(applied_rate) * billable_duration
+    else:
+        raw_base = base_cost
     raw_cost = apply_video_reference_cost(
-        model, base_cost, sources, output_seconds=billable_duration,
+        model, raw_base, sources, output_seconds=billable_duration,
         reference_seconds=reference_video_seconds,
     )
     cost = float(preset_manager._format_cost(raw_cost)) if sources else base_cost
