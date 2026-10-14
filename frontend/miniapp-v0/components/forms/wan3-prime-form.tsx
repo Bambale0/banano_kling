@@ -424,7 +424,7 @@ function Wan3PrimeFormSession({ draftOnly = false, onDraftChange, expectedModel,
         <label className="flex items-center gap-2 text-xs"><input type="checkbox" aria-label="Аудио в результате" checked={recipe.audio} onChange={e => patch({ audio: e.target.checked })} />Аудио в результате</label>
         <label className="flex items-center gap-2 text-xs"><input type="checkbox" aria-label="Проверка контента" checked={recipe.nsfw_checker} onChange={e => patch({ nsfw_checker: e.target.checked })} />Проверка контента</label>
       </fieldset>
-      <p className="text-xs leading-relaxed text-muted-foreground">{draftOnly ? 'Исходные видеосекунды + длительность результата — не более 30 секунд. Публикация сохраняет рецепт без запуска генерации.' : 'Исходные видеосекунды + длительность результата — не более 30 секунд. Сервер проверит файлы и рассчитает стоимость до запуска.'}</p>
+      <p className="text-xs leading-relaxed text-muted-foreground">{draftOnly ? 'Исходное видео + длительность результата — не более 30 секунд. В стоимость входят только секунды результата. Публикация сохраняет рецепт без запуска генерации.' : 'Исходное видео + длительность результата — не более 30 секунд. Оплачиваются только секунды генерации; сервер проверит файлы и рассчитает стоимость до запуска.'}</p>
     </section>
     {draftOnly ? <>{issue ? <p className="text-xs text-muted-foreground">{issue}</p> : null}{error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}</> : <section className={CARD} aria-label="Стоимость Wan">
       {disabledReason || issue ? <p className="text-xs text-muted-foreground">{disabledReason || issue}</p> : null}
@@ -432,7 +432,7 @@ function Wan3PrimeFormSession({ draftOnly = false, onDraftChange, expectedModel,
       <Button type="button" variant="outline" disabled={working || attempted || !!issue || !!disabledReason} onClick={() => { void calculate() }}>{quoting ? 'Рассчитываю…' : 'Рассчитать стоимость'}</Button>
       {approved ? <div className="space-y-1 text-sm" role="status">
         <p className="text-xl font-semibold">{approved.admin_free ? 'Без списания бананов для администратора' : `${approved.auto_duration ? 'Максимальный резерв' : 'Стоимость'}: ${approved.reserve_cost}🍌`}</p>
-        <p className="text-xs text-muted-foreground">Вход: {approved.source_video_duration_seconds} с + выход: {approved.billing_duration_seconds - approved.source_video_duration_seconds} с · {approved.auto_duration ? 'максимум' : 'всего'} {approved.billing_duration_seconds} с.</p>
+        <p className="text-xs text-muted-foreground">Видеореференсы: {approved.source_video_duration_seconds} с (без доплаты) · Генерация: {approved.billable_output_seconds ?? approved.billing_duration_seconds - approved.source_video_duration_seconds} с {approved.auto_duration ? '(максимальный резерв)' : '(к оплате)'} · Лимит: {approved.billing_duration_seconds} с.</p>
         <p className="text-xs text-muted-foreground">{approved.settlement_notice || (approved.auto_duration ? 'Неиспользованный резерв возвращается после результата.' : 'Показанная стоимость фиксируется при запуске.')}</p>
       </div> : <p className="text-xs text-muted-foreground">Запуск станет доступен после расчёта. Изменение материалов или настроек требует нового расчёта.</p>}
       {error ? <p role="alert" className="break-words text-sm text-destructive">{error}</p> : null}
