@@ -12,8 +12,8 @@ from bot import db as db_backend
 from bot.handlers import seedance_25_public_release as public
 from bot.services import task_watchdog
 from bot.services.seedance_service import seedance_service
-from tests.test_video_repeat_private_contract import REAL_GENERIC
 from tests.test_video_repeat_private_contract import (
+    REAL_GENERIC,
     typed_video_entrypoint as typed_video_entrypoint,  # noqa: PLC0414 - pytest fixture re-export
 )
 from bot.services.task_watchdog import force_fail_task, get_stuck_tasks
