@@ -101,6 +101,7 @@ export type ShowcaseAdminAction =
   | { op: 'move_item'; trend_id: number; source_id: number; target_id: number; source_revision: number; target_revision: number }
   | { op: 'set_badge'; category_id: number; trend_id: number; revision: number; badge: 'new' | ''; badge_until?: string | null }
   | { op: 'search_trends'; query?: string; page?: number; limit?: number }
+  | { op: 'history'; limit?: number }
 
 export async function adminShowcaseAction<T = unknown>(action: ShowcaseAdminAction): Promise<T> {
   const result = await call<{ ok: true; result: T }>('/admin/trends/categories', action)
@@ -145,4 +146,16 @@ export async function resolveGenjutsuCatalogPrices(categories: ShowcaseCategory[
     items: category.items.map((item) => priceById.has(item.id)
       ? { ...item, repeat_cost: priceById.get(item.id) } : item),
   }))
+}
+
+
+export interface ShowcaseAuditEvent {
+  id: string
+  action: string
+  actor_telegram_id: number
+  category_id: number | null
+  trend_id: number | null
+  before: unknown
+  after: unknown
+  created_at: string
 }

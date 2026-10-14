@@ -6,7 +6,7 @@ import logging
 
 from aiohttp import web
 
-from bot import trend_catalog
+from bot import trend_catalog, trend_catalog_audit
 from bot.config import config
 
 logger = logging.getLogger(__name__)
@@ -105,9 +105,15 @@ async def miniapp_admin_trend_categories(request: web.Request) -> web.Response:
                 text="Управление витриной доступно только администратору"
             )
         op = str(payload.get("op") or "").strip().lower()
-        if op == "create":
+        if op == "history":
+            result = await trend_catalog_audit.list_history(
+                limit=payload.get("limit", 30)
+            )
+        elif op == "create":
             result = await trend_catalog.create_category(
-                payload.get("title"), payload.get("emoji", "")
+                payload.get("title"),
+                payload.get("emoji", ""),
+                actor_id=actor_id,
             )
         elif op == "update":
             result = await trend_catalog.update_category(
@@ -116,24 +122,32 @@ async def miniapp_admin_trend_categories(request: web.Request) -> web.Response:
                 title=payload.get("title"),
                 emoji=payload.get("emoji"),
                 is_visible=payload.get("is_visible"),
+                actor_id=actor_id,
             )
         elif op == "delete":
             await trend_catalog.delete_category(
-                payload.get("category_id"), payload.get("revision")
+                payload.get("category_id"),
+                payload.get("revision"),
+                actor_id=actor_id,
             )
             result = {"deleted": True}
         elif op == "reorder":
-            result = await trend_catalog.reorder_categories(payload.get("categories"))
+            result = await trend_catalog.reorder_categories(
+                payload.get("categories"),
+                actor_id=actor_id,
+            )
         elif op == "set_items":
             result = await trend_catalog.replace_category_items(
                 payload.get("category_id"),
                 payload.get("trend_ids"),
                 revision=payload.get("revision"),
+                actor_id=actor_id,
             )
         elif op == "set_trend_categories":
             await trend_catalog.set_trend_categories(
                 payload.get("trend_id"),
                 payload.get("category_ids"),
+                actor_id=actor_id,
             )
             result = {"saved": True}
         elif op == "move_item":
@@ -143,6 +157,7 @@ async def miniapp_admin_trend_categories(request: web.Request) -> web.Response:
                 payload.get("target_id"),
                 source_revision=payload.get("source_revision"),
                 target_revision=payload.get("target_revision"),
+                actor_id=actor_id,
             )
             result = {"moved": True}
         elif op == "set_badge":
@@ -152,6 +167,7 @@ async def miniapp_admin_trend_categories(request: web.Request) -> web.Response:
                 payload.get("revision"),
                 badge=payload.get("badge", ""),
                 badge_until=payload.get("badge_until"),
+                actor_id=actor_id,
             )
         elif op == "search_trends":
             result = await trend_catalog.search_admin_trends(
@@ -163,7 +179,7 @@ async def miniapp_admin_trend_categories(request: web.Request) -> web.Response:
             raise trend_catalog.CatalogValidationError(
                 "Неизвестное действие редактора витрины"
             )
-        if op != "search_trends":
+        if op not in {"search_trends", "history"}:
             logger.info(
                 "Trend showcase admin mutation: op=%s actor=%s category=%s trend=%s",
                 op,

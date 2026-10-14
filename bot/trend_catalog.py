@@ -13,6 +13,7 @@ from typing import Any
 
 from bot import database
 from bot import db as db_backend
+from bot import trend_catalog_audit as audit
 from bot.trend_visibility import sanitize_prompt_for_public
 
 
@@ -288,7 +289,9 @@ async def category_page(
         }
 
 
-async def create_category(title: str, emoji: str = "") -> dict[str, Any]:
+async def create_category(
+    title: str, emoji: str = "", *, actor_id: int = 0
+) -> dict[str, Any]:
     name, marker = _title(title), _emoji(emoji)
     async with db_backend.connect(database.DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
@@ -301,6 +304,14 @@ async def create_category(title: str, emoji: str = "") -> dict[str, Any]:
             (name, marker, position),
         )
         new_id = int((await cursor.fetchone())[0])
+        await audit.append(
+            db,
+            actor_id=actor_id,
+            action="create",
+            category_id=new_id,
+            before=None,
+            after=await audit.category_snapshot(db, new_id),
+        )
         await db.commit()
         return _meta(await _category_row(db, new_id))
 
@@ -312,6 +323,7 @@ async def update_category(
     title: str | None = None,
     emoji: str | None = None,
     is_visible: bool | None = None,
+    actor_id: int = 0,
 ) -> dict[str, Any]:
     key = _positive_id(category_id)
     version = _revision(revision)
@@ -320,6 +332,7 @@ async def update_category(
     async with db_backend.connect(database.DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
         current = await _category_row(db, key)
+        before = await audit.category_snapshot(db, key)
         title_value = _title(title) if title is not None else current["title"]
         emoji_value = _emoji(emoji) if emoji is not None else current["emoji"]
         visible_value = (
@@ -334,24 +347,45 @@ async def update_category(
             raise CatalogConflict(
                 "Категория была изменена другим администратором. Обновите страницу"
             )
+        await audit.append(
+            db,
+            actor_id=actor_id,
+            action="update",
+            category_id=key,
+            before=before,
+            after=await audit.category_snapshot(db, key),
+        )
         await db.commit()
         return _meta(await _category_row(db, key))
 
 
-async def delete_category(category_id: int, revision: int) -> None:
+async def delete_category(
+    category_id: int, revision: int, *, actor_id: int = 0
+) -> None:
     key = _positive_id(category_id)
     async with db_backend.connect(database.DATABASE_PATH) as db:
         await _category_row(db, key)
+        before = await audit.category_snapshot(db, key, include_items=True)
         cursor = await db.execute(
             "DELETE FROM trend_categories WHERE id = ? AND revision = ?",
             (key, _revision(revision)),
         )
         if cursor.rowcount != 1:
             raise CatalogConflict("Категория была изменена. Обновите страницу")
+        await audit.append(
+            db,
+            actor_id=actor_id,
+            action="delete",
+            category_id=key,
+            before=before,
+            after=None,
+        )
         await db.commit()
 
 
-async def reorder_categories(ordered: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
+async def reorder_categories(
+    ordered: list[Mapping[str, Any]], *, actor_id: int = 0
+) -> list[dict[str, Any]]:
     if not isinstance(ordered, list) or not ordered or len(ordered) > 1000:
         raise CatalogValidationError("Нужен непустой порядок категорий")
     if any(not isinstance(item, Mapping) for item in ordered):
@@ -363,6 +397,7 @@ async def reorder_categories(ordered: list[Mapping[str, Any]]) -> list[dict[str,
         rows = await (await db.execute("SELECT id FROM trend_categories")).fetchall()
         if set(ids) != {int(row[0]) for row in rows}:
             raise CatalogConflict("Список категорий изменился. Обновите страницу")
+        before = await audit.categories_snapshot(db)
         result = []
         for position, (key, version) in enumerate(zip(ids, versions)):
             cursor = await db.execute(
@@ -373,6 +408,13 @@ async def reorder_categories(ordered: list[Mapping[str, Any]]) -> list[dict[str,
             if cursor.rowcount != 1:
                 raise CatalogConflict("Порядок уже изменился. Обновите страницу")
             result.append(_meta(await _category_row(db, key)))
+        await audit.append(
+            db,
+            actor_id=actor_id,
+            action="reorder",
+            before=before,
+            after=await audit.categories_snapshot(db),
+        )
         await db.commit()
         return result
 
@@ -395,13 +437,14 @@ async def _verify_trends(db: Any, ids: list[int]) -> None:
 
 
 async def replace_category_items(
-    category_id: int, trend_ids: list[int], *, revision: int
+    category_id: int, trend_ids: list[int], *, revision: int, actor_id: int = 0
 ) -> dict[str, Any]:
     key = _positive_id(category_id)
     ids = _unique_ids(trend_ids)
     async with db_backend.connect(database.DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
         await _category_row(db, key)
+        before = await audit.category_snapshot(db, key, include_items=True)
         cursor = await db.execute(
             "UPDATE trend_categories SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP "
             "WHERE id = ? AND revision = ?",
@@ -430,11 +473,21 @@ async def replace_category_items(
                 "VALUES (?, ?, ?, ?, ?)",
                 (key, prompt_id, order, badge, expiry),
             )
+        await audit.append(
+            db,
+            actor_id=actor_id,
+            action="set_items",
+            category_id=key,
+            before=before,
+            after=await audit.category_snapshot(db, key, include_items=True),
+        )
         await db.commit()
         return _meta(await _category_row(db, key))
 
 
-async def set_trend_categories(trend_id: int, category_ids: list[int]) -> None:
+async def set_trend_categories(
+    trend_id: int, category_ids: list[int], *, actor_id: int = 0
+) -> None:
     """Atomically replace one existing trend's folder memberships, preserving item order."""
     key, wanted = _positive_id(trend_id), _unique_ids(category_ids)
     async with db_backend.connect(database.DATABASE_PATH) as db:
@@ -449,6 +502,7 @@ async def set_trend_categories(trend_id: int, category_ids: list[int]) -> None:
         else:
             await db.execute("BEGIN IMMEDIATE")
         await _verify_trends(db, [key])
+        before = await audit.memberships_snapshot(db, key)
         if wanted:
             placeholders = ",".join("?" for _ in wanted)
             present = await (
@@ -493,6 +547,14 @@ async def set_trend_categories(trend_id: int, category_ids: list[int]) -> None:
                 "INSERT INTO trend_category_items (category_id, prompt_id, sort_order) VALUES (?, ?, ?)",
                 (cat_id, key, int(next_position[0])),
             )
+        await audit.append(
+            db,
+            actor_id=actor_id,
+            action="set_trend_categories",
+            trend_id=key,
+            before=before,
+            after=await audit.memberships_snapshot(db, key),
+        )
         await db.commit()
 
 
@@ -503,6 +565,7 @@ async def move_trend_between_categories(
     *,
     source_revision: int,
     target_revision: int,
+    actor_id: int = 0,
 ) -> None:
     """Atomic move; revisions are locked in category-id order to avoid deadlocks."""
     key, source, target = (
@@ -515,6 +578,7 @@ async def move_trend_between_categories(
     versions = {source: _revision(source_revision), target: _revision(target_revision)}
     async with db_backend.connect(database.DATABASE_PATH) as db:
         await _verify_trends(db, [key])
+        before = await audit.memberships_snapshot(db, key)
         for cat_id in sorted(versions):
             await _category_row(db, cat_id)
             cursor = await db.execute(
@@ -548,6 +612,18 @@ async def move_trend_between_categories(
             "DELETE FROM trend_category_items WHERE category_id = ? AND prompt_id = ?",
             (source, key),
         )
+        await audit.append(
+            db,
+            actor_id=actor_id,
+            action="move_item",
+            category_id=source,
+            trend_id=key,
+            before={"target_category_id": target, "memberships": before},
+            after={
+                "target_category_id": target,
+                "memberships": await audit.memberships_snapshot(db, key),
+            },
+        )
         await db.commit()
 
 
@@ -558,6 +634,7 @@ async def set_badge(
     *,
     badge: str = "",
     badge_until: str | None = None,
+    actor_id: int = 0,
 ) -> dict[str, Any]:
     key, item_id = _positive_id(category_id), _positive_id(trend_id)
     if badge not in {"", "new"}:
@@ -574,6 +651,7 @@ async def set_badge(
     async with db_backend.connect(database.DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
         await _category_row(db, key)
+        before = await audit.category_snapshot(db, key, include_items=True)
         cursor = await db.execute(
             "UPDATE trend_categories SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP "
             "WHERE id = ? AND revision = ?",
@@ -588,6 +666,15 @@ async def set_badge(
         )
         if cursor.rowcount != 1:
             raise CatalogNotFound("Тренд больше не находится в этой категории")
+        await audit.append(
+            db,
+            actor_id=actor_id,
+            action="set_badge",
+            category_id=key,
+            trend_id=item_id,
+            before=before,
+            after=await audit.category_snapshot(db, key, include_items=True),
+        )
         await db.commit()
         return _meta(await _category_row(db, key))
 

@@ -144,3 +144,79 @@ test('changing to an unavailable folder never exposes stale items for destructiv
   expect(add).toBeDisabled()
   expect(adminAction).not.toHaveBeenCalledWith(expect.objectContaining({ op: 'set_items' }))
 })
+
+
+test('legacy video preview without a file extension uses catalog kind rather than an image tag', () => {
+  const signedVideo = {
+    ...makeCard(55, 'Подписанное видео', 'video'),
+    preview_url: 'https://cdn.example/preview/55?signature=valid',
+    generation_settings: { kind: 'video' },
+  } as ShowcaseTrend
+  const folder = { ...catalog[0], items: [signedVideo], total: 1 }
+  render(<TrendShowcase categories={[folder]} onRepeat={jest.fn()} onShare={jest.fn()} />)
+  const tile = screen.getByRole('button', { name: 'Открыть тренд Подписанное видео' })
+  expect(tile.querySelector('video')).toBeInTheDocument()
+  expect(tile.querySelector('img')).not.toBeInTheDocument()
+  fireEvent.click(tile)
+  expect(within(screen.getByRole('dialog')).getByText('Подписанное видео')).toBeInTheDocument()
+  expect(screen.getByRole('dialog').querySelector('video')).toBeInTheDocument()
+})
+
+test('category-specific draft dates and move targets do not bleed between shared trend placements', async () => {
+  const sharedA = { ...image, badge: 'new' as const, badge_until: '2027-01-03' }
+  const sharedB = { ...image, badge: 'new' as const, badge_until: '2028-02-04' }
+  const folderA = { ...catalog[0], items: [sharedA], total: 1 }
+  const folderB = { ...catalog[0], id: 8, title: 'Вторая папка', emoji: '🎵', revision: 7, items: [sharedB], total: 1 }
+  categoryFetch.mockImplementation(async (id) => ({
+    category: id === 7 ? folderA : folderB,
+    items: id === 7 ? [sharedA] : [sharedB],
+    total: 1, page: 1, has_more: false,
+  }))
+  adminAction.mockImplementation(async (action) => action.op === 'search_trends'
+    ? { items: [], total: 0, page: 1, has_more: false }
+    : { revision: 8 })
+  render(<TrendCategoryManager open={true} onOpenChange={jest.fn()} categories={[folderA, folderB]}
+    onRefresh={jest.fn().mockResolvedValue(undefined)} />)
+  fireEvent.click(screen.getByRole('button', { name: /^🧁 Видео на День рождения/ }))
+  const dateA = await screen.findByLabelText('Новинка до для Свечи в торте')
+  expect(dateA).toHaveValue('2027-01-03')
+  fireEvent.change(dateA, { target: { value: '2030-03-03' } })
+  fireEvent.change(screen.getByRole('combobox', { name: 'Переместить Свечи в торте в категорию' }), {
+    target: { value: '8' },
+  })
+  expect(screen.getByRole('button', { name: 'Перенести' })).toBeInTheDocument()
+
+  fireEvent.click(screen.getByRole('button', { name: /^🎵 Вторая папка/ }))
+  const dateB = await screen.findByLabelText('Новинка до для Свечи в торте')
+  expect(dateB).toHaveValue('2028-02-04')
+  expect(screen.getByRole('combobox', { name: 'Переместить Свечи в торте в категорию' })).toHaveValue('')
+  expect(screen.queryByRole('button', { name: 'Перенести' })).not.toBeInTheDocument()
+
+  fireEvent.click(screen.getByRole('button', { name: 'Сохранить новинку' }))
+  await waitFor(() => expect(adminAction).toHaveBeenCalledWith({
+    op: 'set_badge', category_id: 8, trend_id: 21, revision: 7,
+    badge: 'new', badge_until: '2028-02-04',
+  }))
+})
+
+
+test('admin can inspect durable history with signed actor and before/after state', async () => {
+  adminAction.mockImplementation(async (action) => action.op === 'history' ? [{
+    id: 'audit-1',
+    action: 'update',
+    actor_telegram_id: 999999999,
+    category_id: 7,
+    trend_id: null,
+    before: { title: 'Старое название' },
+    after: { title: 'Новое название' },
+    created_at: '2026-10-15 10:30:00',
+  }] : { items: [], total: 0, page: 1, has_more: false })
+  render(<TrendCategoryManager open={true} onOpenChange={jest.fn()} categories={catalog}
+    onRefresh={jest.fn().mockResolvedValue(undefined)} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Показать историю' }))
+  await waitFor(() => expect(adminAction).toHaveBeenCalledWith({ op: 'history', limit: 30 }))
+  expect(await screen.findByText(/update · Telegram 999999999/)).toBeInTheDocument()
+  fireEvent.click(screen.getByText('Посмотреть до и после'))
+  expect(screen.getByText(/Старое название/)).toBeInTheDocument()
+  expect(screen.getByText(/Новое название/)).toBeInTheDocument()
+})

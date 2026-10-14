@@ -568,6 +568,8 @@ async def _ensure_prompt_feed_schema(db: db_backend.Connection) -> None:
     await ddl("CREATE INDEX IF NOT EXISTS idx_trend_categories_order ON trend_categories(sort_order, id)")
     await ddl("CREATE INDEX IF NOT EXISTS idx_trend_category_items_order ON trend_category_items(category_id, sort_order, prompt_id)")
     await ddl("CREATE INDEX IF NOT EXISTS idx_trend_category_items_prompt ON trend_category_items(prompt_id)")
+    from bot.trend_catalog_audit import ensure_schema as ensure_trend_catalog_audit_schema
+    await ensure_trend_catalog_audit_schema(db)
     await db.execute("""
         CREATE TABLE IF NOT EXISTS trend_reference_assets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

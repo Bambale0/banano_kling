@@ -24,11 +24,17 @@ const video = {
   generation_settings:{kind:'video',ratio:'9:16',preview_type:'video',reference_count:1},
   badge:'new'
 }
+const legacyVideo = {
+  ...video, id:1404, title:'Видео без расширения',
+  preview_url:'/uploads/legacy-video?auth=synthetic',
+  generation_settings:{kind:'video', ratio:'9:16', reference_count:1},
+  badge:undefined
+}
 let legacyPromptRequests = 0
 let adminMode = false
 const category = {
   id: 101, title:'День рождения', emoji:'🧁', sort_order:0, revision:3,
-  is_visible:true, total:3, items:[photo,video]
+  is_visible:true, total:4, items:[photo,video,legacyVideo]
 }
 const reels = {
   id: 102, title:'Липсинги', emoji:'🎵', sort_order:1,revision:1,
@@ -59,7 +65,7 @@ try {
     const url=new URL(route.request().url())
     if(url.pathname.endsWith('/telegram-web-app.js'))
       return route.fulfill({contentType:'application/javascript',body:'// test fixture'})
-    if(url.pathname.endsWith('/uploads/motion.mp4'))
+    if(url.pathname.endsWith('/uploads/motion.mp4') || url.pathname.endsWith('/uploads/legacy-video'))
       return route.fulfill({contentType:'video/mp4',body:readFileSync('e2e/fixtures/seedance25-source.mp4')})
     if(url.pathname.endsWith('/uploads/photo.jpg'))
       return route.fulfill({contentType:'image/jpeg',body:Buffer.from([255,216,255,224,0,16,74,70,73,70])})
@@ -75,8 +81,17 @@ try {
         body={ok:true,categories:[category,reels]}
       }else if(url.pathname.endsWith('/trends/category')){
         const p=route.request().postDataJSON()
-        body={ok:true, category:{...category,items:undefined},page:p.page,total:3,has_more:p.page===1,
-          items:p.page===1?[photo,video]:[{...photo,id:1403,title:'Другой праздник'}]}
+        body={ok:true, category:{...category,items:undefined},page:p.page,total:4,has_more:p.page===1,
+          items:p.page===1?[photo,video,legacyVideo]:[{...photo,id:1403,title:'Другой праздник'}]}
+      }else if(url.pathname.endsWith('/admin/trends/categories')){
+        const p=route.request().postDataJSON()
+        if(p.op==='history') body={ok:true,result:[{
+          id:'test-history',actor_telegram_id:999999999,action:'create',
+          category_id:101,trend_id:null,created_at:'2026-10-15 09:00:00',
+          before:null,after:{id:101,title:'День рождения',emoji:'🧁'}
+        }]}
+        else if(p.op==='search_trends') body={ok:true,result:{items:[],page:1,total:0,has_more:false}}
+        else throw new Error('Unexpected mutation in read-only browser E2E: '+p.op)
       }else if(url.pathname.endsWith('/prompts')){
         legacyPromptRequests += 1
         body={ok:true,prompts:[photo,video]}
@@ -102,6 +117,8 @@ try {
   const videoTag=live.locator('video')
   await videoTag.waitFor()
   assert.equal(await videoTag.evaluate(video => video.muted), true)
+  const noExtension=page.getByRole('button',{name:'Открыть тренд Видео без расширения'}).first()
+  await noExtension.locator('video').waitFor()
   await page.getByRole('button',{name:'Все тренды категории День рождения'}).click()
   await page.getByRole('button',{name:'Показать ещё'}).click()
   await page.getByRole('button',{name:'Открыть тренд Другой праздник'}).waitFor()
@@ -125,9 +142,16 @@ try {
   await page.getByRole('dialog').getByRole('button',{name:'Close'}).click()
   await page.getByRole('button',{name:'Открыть тренд Свечи с возрастом'}).click()
   await page.getByRole('dialog').getByRole('button',{name:'Убрать тренд'}).waitFor()
+  await page.getByRole('dialog').getByRole('button',{name:'Close'}).click()
+  await page.getByRole('button',{name:'Категории',exact:true}).click()
+  const manager=page.getByRole('dialog')
+  await manager.getByRole('button',{name:'Показать историю'}).click()
+  await manager.getByText('create · Telegram 999999999').waitFor()
+  await manager.getByText('Посмотреть до и после').click()
+  await manager.getByText(/День рождения/).first().waitFor()
   assert.equal(legacyPromptRequests, 0, 'Admin catalog must not trigger hidden legacy prompt reads')
   assert.deepEqual(errors,[])
-  console.log('PASS: mobile dynamic categories, lazy video, paginated repeat, admin edit/remove controls, no heavy legacy fetch')
+  console.log('PASS: mobile categories, extensionless video, paginated repeat, admin edit/deactivate and audited history')
 }finally{
   if(browser)await browser.close()
   server.kill('SIGTERM')

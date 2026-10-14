@@ -6,10 +6,13 @@ import { Button } from './ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog'
 import {
   adminShowcaseAction, fetchTrendCategory, type ShowcaseCategory,
-  type ShowcaseTrend, type ShowcaseSearchResult,
+  type ShowcaseTrend, type ShowcaseSearchResult, type ShowcaseAuditEvent,
 } from '@/lib/trend-catalog-api'
 
 type EditableCategory = ShowcaseCategory & { id: number }
+
+// Draft values belong to a placement in one category, not to the shared trend.
+const placementKey = (categoryId: number, trendId: number): string => String(categoryId) + ':' + String(trendId)
 
 function reorder<T>(items: T[], origin: number, destination: number): T[] {
   if (origin < 0 || destination < 0 || origin >= items.length || destination >= items.length || origin === destination) {
@@ -40,8 +43,11 @@ export function TrendCategoryManager({ open, onOpenChange, categories, onRefresh
   const [query, setQuery] = useState('')
   const [searchResult, setSearchResult] = useState<ShowcaseSearchResult | null>(null)
   const [searchLoading, setSearchLoading] = useState(false)
-  const [targetById, setTargetById] = useState<Record<number, number>>({})
-  const [badgeExpiry, setBadgeExpiry] = useState<Record<number, string>>({})
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [history, setHistory] = useState<ShowcaseAuditEvent[]>([])
+  const [targetById, setTargetById] = useState<Record<string, number>>({})
+  const [badgeExpiry, setBadgeExpiry] = useState<Record<string, string>>({})
   const dragItem = useRef<number | null>(null)
   const itemRequest = useRef(0)
   const searchRequest = useRef(0)
@@ -119,6 +125,20 @@ export function TrendCategoryManager({ open, onOpenChange, categories, onRefresh
       await onRefresh().catch(() => undefined)
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function loadHistory() {
+    if (historyLoading) return
+    setHistoryLoading(true)
+    setHistoryOpen(true)
+    setError('')
+    try {
+      setHistory(await adminShowcaseAction<ShowcaseAuditEvent[]>({ op: 'history', limit: 30 }))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось загрузить историю изменений')
+    } finally {
+      setHistoryLoading(false)
     }
   }
 
@@ -294,7 +314,7 @@ export function TrendCategoryManager({ open, onOpenChange, categories, onRefresh
                     <button type="button" disabled={busy} className="rounded-md border border-gold/40 px-2 py-1 text-gold" onClick={() => void run({
                       op: 'set_badge', category_id: selected.id, trend_id: item.id,
                       revision: selected.revision, badge: 'new',
-                      badge_until: badgeExpiry[item.id] ?? item.badge_until ?? null,
+                      badge_until: badgeExpiry[placementKey(selected.id, item.id)] ?? item.badge_until ?? null,
                     })}>
                       {item.badge === 'new' ? 'Сохранить новинку' : '+ Новинка'}
                     </button>
@@ -311,8 +331,8 @@ export function TrendCategoryManager({ open, onOpenChange, categories, onRefresh
                       <input
                         type="date"
                         aria-label={'Новинка до для ' + item.title}
-                        value={badgeExpiry[item.id] ?? item.badge_until ?? ''}
-                        onChange={(e) => setBadgeExpiry((current) => ({ ...current, [item.id]: e.target.value }))}
+                        value={badgeExpiry[placementKey(selected.id, item.id)] ?? item.badge_until ?? ''}
+                        onChange={(e) => setBadgeExpiry((current) => ({ ...current, [placementKey(selected.id, item.id)]: e.target.value }))}
                         className="h-8 rounded-md border border-border bg-background px-1 text-xs"
                       />
                     </label>
@@ -324,14 +344,14 @@ export function TrendCategoryManager({ open, onOpenChange, categories, onRefresh
                         <select
                           aria-label={'Переместить ' + item.title + ' в категорию'}
                           className="h-8 min-w-0 max-w-[145px] rounded-md border border-border bg-background px-1"
-                          value={targetById[item.id] || ''}
-                          onChange={(e) => setTargetById((current) => ({ ...current, [item.id]: Number(e.target.value) }))}
+                          value={targetById[placementKey(selected.id, item.id)] || ''}
+                          onChange={(e) => setTargetById((current) => ({ ...current, [placementKey(selected.id, item.id)]: Number(e.target.value) }))}
                         >
                           <option value="">Переместить в…</option>
                           {realCategories.filter((cat) => cat.id !== selected.id).map((cat) => <option key={cat.id} value={cat.id}>{cat.emoji} {cat.title}</option>)}
                         </select>
-                        {targetById[item.id] && targetById[item.id] !== selected.id ? (
-                          <button disabled={busy} className="rounded-md border border-gold/50 px-2 py-1 text-gold" onClick={() => void moveItem(item, targetById[item.id])}>Перенести</button>
+                        {targetById[placementKey(selected.id, item.id)] && targetById[placementKey(selected.id, item.id)] !== selected.id ? (
+                          <button disabled={busy} className="rounded-md border border-gold/50 px-2 py-1 text-gold" onClick={() => void moveItem(item, targetById[placementKey(selected.id, item.id)])}>Перенести</button>
                         ) : null}
                       </>
                     ) : null}
@@ -366,6 +386,43 @@ export function TrendCategoryManager({ open, onOpenChange, categories, onRefresh
             Выберите категорию выше для настройки её трендов.
           </div>
         )}
+
+        <section aria-label="История изменений витрины" className="space-y-2 rounded-xl border border-border/60 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold">История изменений</h3>
+            <Button type="button" variant="secondary" size="sm" disabled={historyLoading}
+              onClick={() => { if (historyOpen) setHistoryOpen(false); else void loadHistory() }}>
+              {historyOpen ? 'Свернуть' : 'Показать историю'}
+            </Button>
+          </div>
+          {historyOpen ? (
+            <div className="space-y-2">
+              <Button type="button" variant="ghost" size="sm" disabled={historyLoading} onClick={() => void loadHistory()}>
+                {historyLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                Обновить историю
+              </Button>
+              {!historyLoading && history.length === 0 ? (
+                <p className="text-xs text-muted-foreground">Записей пока нет.</p>
+              ) : null}
+              {history.map((event) => (
+                <div key={event.id} className="rounded-lg border border-border/40 bg-background/50 p-2 text-xs">
+                  <div className="font-medium">{event.action} · {event.actor_telegram_id ? 'Telegram ' + event.actor_telegram_id : 'Система'}</div>
+                  <div className="text-muted-foreground">
+                    {event.created_at}
+                    {event.category_id ? ' · папка ' + event.category_id : ''}
+                    {event.trend_id ? ' · тренд ' + event.trend_id : ''}
+                  </div>
+                  <details className="mt-2">
+                    <summary className="cursor-pointer text-muted-foreground">Посмотреть до и после</summary>
+                    <pre className="mt-1 max-h-44 overflow-auto whitespace-pre-wrap break-all text-[10px]">
+                      {JSON.stringify({ before: event.before, after: event.after }, null, 2)}
+                    </pre>
+                  </details>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </section>
       </DialogContent>
     </Dialog>
   )

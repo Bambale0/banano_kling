@@ -10,12 +10,18 @@ import { fetchTrendCategory, resolveGenjutsuPrices, type ShowcaseCategory, type 
 // Avoid decoding a dozen videos at once in Telegram's constrained mobile WebView.
 const activePreviews = new Set<HTMLVideoElement>()
 const MAX_PLAYING_PREVIEWS = 2
-const VIDEO_EXTENSIONS = /\.(mp4|m4v|mov|webm)(?:[?#]|$)/i
+const VIDEO_EXTENSIONS = /\.(mp4|m4v|mov|webm|mkv|avi)(?:[?#]|$)/i
 
 function isVideoPreview(trend: ShowcaseTrend): boolean {
   const type = trend.generation_settings?.preview_type
   if (type === 'video') return true
   if (type === 'image') return false
+  // A signed or extensionless CDN URL does not tell us its media type.
+  // Explicit media kind and the legacy trend-video marker are authoritative
+  // when preview_type is absent; never infer from the domain or URL alone.
+  if (trend.generation_settings?.kind === 'video') return true
+  if (trend.category === 'video') return true
+  if ((trend.tags || []).some((tag) => String(tag).toLowerCase() === 'trend-video')) return true
   return VIDEO_EXTENSIONS.test(String(trend.preview_url || ''))
 }
 

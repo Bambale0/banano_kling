@@ -240,3 +240,36 @@ async def test_legacy_get_preserves_signed_admin_prompt_but_redacts_viewer():
         )
         assert viewer.status == 200
         assert (await viewer.json())["prompt"]["prompt_text"] == ""
+
+
+@pytest.mark.asyncio
+async def test_history_requires_admin_and_records_authenticated_actor(catalog_client):
+    administrator = signed_init_data(999999999)
+    ordinary = signed_init_data(8311170)
+    created = await catalog_client.post(
+        "/mini-app/api/admin/trends/categories",
+        json={
+            "init_data": administrator,
+            "op": "create",
+            "title": "Фото",
+            "emoji": "📸",
+        },
+    )
+    assert created.status == 200
+    viewer = await catalog_client.post(
+        "/mini-app/api/admin/trends/categories",
+        json={"init_data": ordinary, "op": "history"},
+    )
+    assert viewer.status == 403
+    response = await catalog_client.post(
+        "/mini-app/api/admin/trends/categories",
+        json={"init_data": administrator, "op": "history", "limit": 20},
+    )
+    assert response.status == 200
+    assert response.headers["Cache-Control"] == "no-store"
+    events = (await response.json())["result"]
+    assert len(events) == 1
+    assert events[0]["action"] == "create"
+    assert events[0]["actor_telegram_id"] == 999999999
+    assert events[0]["before"] is None
+    assert events[0]["after"]["title"] == "Фото"
