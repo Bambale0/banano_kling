@@ -187,7 +187,19 @@ async def test_video_permission_is_rechecked_immediately_before_debit(monkeypatc
         async def json(self):
             return json.loads(self._read_bytes)
 
-    response = await miniapp.miniapp_generate_video(Request())
+    preview = Request()
+    preview_body = await preview.json()
+    preview._read_bytes = json.dumps({
+        **preview_body, "pricing_quote_only": True, "seedance25_quote_only": True,
+    }).encode()
+    estimated = await miniapp.miniapp_generate_video(preview)
+    assert estimated.status == 200, estimated.body
+    hash_key = "seedance25_reference_quote_hash" if model == "seedance_2_5" else "pricing_quote_hash"
+    request = Request()
+    request._read_bytes = json.dumps({
+        **(await request.json()), hash_key: json.loads(estimated.body)["quote_hash"],
+    }).encode()
+    response = await miniapp.miniapp_generate_video(request)
     miniapp.check_can_afford.assert_awaited_once()
     if change.startswith("provider"):
         assert response.status in (500, 502)
