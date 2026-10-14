@@ -213,8 +213,8 @@ try {
       await launch.click()
       const costSummary = page.getByText('Стоимость', { exact: true }).locator('..').locator('..')
       assert.equal(await costSummary.getByText('15', { exact: true }).count(), 1)
-      await page.getByText(/Видеореференсы: 10 с \\+ генерация: 5 с = 15 с/).waitFor()
-      await page.getByText(/15 сек\\. \\(вход \\+ результат\\).*1🍌\\/с/).waitFor()
+      await page.getByText(/Видеореференсы: 10 с \+ генерация: 5 с = 15 с/).waitFor()
+      await page.getByText(/15 сек\. \(вход \+ результат\).*1🍌\/с/).waitFor()
       assert.equal(await launch.isEnabled(), true)
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
       if (width === 390 && surface === 'deep-link') {
