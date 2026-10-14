@@ -52,7 +52,8 @@ async def test_feed_repeat_preserves_video1_and_hides_author_materials():
     assert task['source_feed_gen_id'] == source_id
     clean = await trend_task_privacy.sanitize_task_api_payload({'task':task})
     assert SECRET not in json.dumps(clean) and FIXED not in json.dumps(clean) and VIDEO not in json.dumps(clean)
-    assert await balance(actor.user_id) == 80
+    assert quote.reserve_credits == 10  # Existing reference adds no extra retail charge.
+    assert await balance(actor.user_id) == 90
     again = await lifecycle.launch(actor, recipe, quote, 'repeat-once')
     assert again['task_id'] == launched['task_id'] and provider.creates == 1
 
