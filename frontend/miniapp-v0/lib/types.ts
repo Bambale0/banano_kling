@@ -232,6 +232,8 @@ export interface BootstrapResponse {
 export interface TrendUserField {
   key: string
   label: string
+  /** Admin-only matching text inside the private source prompt; removed from public API. */
+  original_value?: string
   type: 'text' | 'number' | 'date'
   required?: boolean
   placeholder?: string

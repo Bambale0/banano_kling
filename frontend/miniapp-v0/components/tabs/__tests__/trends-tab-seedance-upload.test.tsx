@@ -53,8 +53,9 @@ beforeEach(() => {
 it('publishes own hidden multimodal references separately from the public preview', async () => {
   await openSeedance()
   fireEvent.change(screen.getByPlaceholderText('Название тренда'), { target: { value: 'Own refs' } })
-  fireEvent.change(screen.getByPlaceholderText('Скрытый prompt, который подставится при повторе'), { target: { value: 'Use @Image1 and @Image2 with @Video1; age {Возраст}' } })
+  fireEvent.change(screen.getByPlaceholderText('Скрытый prompt, который подставится при повторе'), { target: { value: 'Use @Image1 and @Image2 with @Video1; age 30' } })
   fireEvent.click(screen.getByRole('button', { name: '+ Возраст' }))
+  fireEvent.change(screen.getByRole('textbox', { name: 'Исходное значение для Возраст' }), { target: { value: '30' } })
   await addFiles('Фото-референсы тренда', [image('face.jpg'), image('scene.jpg')])
   await addFiles('Видео-референсы тренда', [new File(['video'], 'motion.mp4', { type: 'video/mp4' })])
   await addFiles('Аудио-референсы тренда', [new File(['audio'], 'music.mp3', { type: 'audio/mpeg' })])
@@ -69,7 +70,7 @@ it('publishes own hidden multimodal references separately from the public previe
     videoUrls: ['https://media.example/motion.mp4'], audioUrls: ['https://media.example/music.mp3'],
     identityImageIndex: 1, fixedImageIndices: [], replaceableImageIndices: [2],
     fixedVideoIndices: [1], replaceableVideoIndices: [], fixedAudioIndices: [], replaceableAudioIndices: [],
-    userFields: [expect.objectContaining({ key: 'Возраст', type: 'number' })],
+    userFields: [expect.objectContaining({ key: 'Возраст', type: 'number', original_value: '30' })],
     duration: 5, aspectRatio: '16:9',
   }))
   expect(submitPrompt).not.toHaveBeenCalled()
