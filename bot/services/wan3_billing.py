@@ -9,12 +9,23 @@ def settlement_amounts(quote: dict, reserve: float, result_seconds: float) -> tu
     result_seconds = float(result_seconds)
     if not math.isfinite(reserve) or reserve < 0 or not math.isfinite(result_seconds) or result_seconds <= 0:
         raise ValueError("Invalid Wan settlement measurement")
-    if quote.get("version") == 2 and quote.get("billing_mode") == "input_plus_selected_output":
-        # Immutable accepted amount, including admin zero charge. Actual output
-        # is validated independently and retained as supplier/quality telemetry.
+    version = quote.get("version")
+    mode = quote.get("billing_mode")
+    if version == 3:
+        if mode == "output_only":
+            # Fixed-price v3 quotes remain immutable even if the provider's
+            # measured output differs from the selected duration.
+            charge = reserve
+        elif mode == "auto_output_reserve":
+            # New Auto tariffs charge actual generated seconds, not references.
+            charge = min(reserve, round(float(quote["rate_per_second"]) * result_seconds * 2) / 2)
+        else:
+            raise ValueError("Unknown Wan retail billing mode")
+    elif version == 2 and mode == "input_plus_selected_output":
+        # Keep accepted v2 fixed quotes and admin-free charges untouched.
         charge = reserve
     else:
-        # Preserve legacy accepted snapshots and proven-cap Auto reserve policy.
+        # Preserve accepted legacy and v2 Auto reference-plus-output quotes.
         seconds = float(quote["input_video_seconds"]) + result_seconds
         charge = min(reserve, round(float(quote["rate_per_second"]) * seconds * 2) / 2)
     return charge, max(0.0, reserve - charge)
