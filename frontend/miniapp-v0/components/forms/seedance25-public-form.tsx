@@ -7,8 +7,10 @@ import { uploadFile } from '@/lib/api'
 import {
   generateSeedance25,
   quoteSeedance25Identity,
+  quoteSeedance25Reference,
   type Seedance25GeneratePayload,
   type Seedance25QuoteResponse,
+  type Seedance25ReferenceQuote,
   SEEDANCE25_MAX_PROMPT_LENGTH,
   SEEDANCE25_IDENTITY_MAX_PROMPT_LENGTH,
   uploadSeedance25Video,
@@ -355,6 +357,44 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
     [videos],
   )
   const hasVideoReference = referenceScenario && (videos.length > 0 || videoSources.trim().length > 0)
+  const normalReferencePayload = useMemo<Seedance25GeneratePayload | null>(() => {
+    if (!hasVideoReference || identityTransfer) return null
+    try {
+      return {
+        scenario: 'multimodal', prompt: prompt.trim(), ratio: videoEditing ? 'adaptive' : ratio,
+        duration: videoEditing ? -1 : duration, videoEditing, identityTransfer: false,
+        sourceFeedGenId: null, resolution, outputFormat, generateAudio, returnLastFrame,
+        webSearch, nsfwChecker, firstFrameUrl: null, lastFrameUrl: null,
+        referenceImages: [...new Set([...images.map(item => item.file.url), ...splitSources(imageSources, 30)])],
+        referenceVideos: [...new Set([...videos.map(item => item.file.url), ...splitSources(videoSources, 10)])],
+        referenceAudios: [...new Set([...audios.map(item => item.file.url), ...splitSources(audioSources, 10)])],
+      }
+    } catch { return null }
+  }, [hasVideoReference, identityTransfer, prompt, videoEditing, ratio, duration, resolution,
+      outputFormat, generateAudio, returnLastFrame, webSearch, nsfwChecker,
+      images, imageSources, videos, videoSources, audios, audioSources])
+  const normalReferenceKey = JSON.stringify(normalReferencePayload)
+  const [normalQuoteState, setNormalQuoteState] = useState<{
+    key: string; quote?: Seedance25ReferenceQuote; error?: string
+  } | null>(null)
+  const [normalQuoteAttempt, setNormalQuoteAttempt] = useState(0)
+  const regularQuote = normalReferencePayload && normalQuoteState?.key === normalReferenceKey ? normalQuoteState.quote : undefined
+  const regularQuoteError = normalReferencePayload && normalQuoteState?.key === normalReferenceKey ? normalQuoteState.error : undefined
+  useEffect(() => {
+    if (!normalReferencePayload || !normalReferencePayload.referenceVideos?.length) return
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      void quoteSeedance25Reference(normalReferencePayload).then(quote => {
+        if (!cancelled) setNormalQuoteState({ key: normalReferenceKey, quote })
+      }).catch(value => {
+        if (!cancelled) setNormalQuoteState({
+          key: normalReferenceKey,
+          error: value instanceof Error ? value.message : 'Не удалось измерить видеореференсы',
+        })
+      })
+    }, 300)
+    return () => { cancelled = true; window.clearTimeout(timer) }
+  }, [normalReferencePayload, normalReferenceKey, normalQuoteAttempt])
   const basePrice = useMemo(() => {
     const seconds = videoEditing || duration === -1 ? 5 : duration
     const quotedCost = model?.quality_duration_costs?.[resolution]?.[seconds.toString()]
@@ -362,8 +402,9 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
     const perSecond = Number(model?.quality_costs?.[resolution] || 0)
     return perSecond ? Math.round(perSecond * seconds * 2) / 2 : 0
   }, [duration, videoEditing, model?.quality_costs, model?.quality_duration_costs, resolution])
-  const price = identityTransfer ? identityQuote?.cost ?? 0 : hasVideoReference ? basePrice * 2 : basePrice
-  const canAfford = isAdmin || !price || credits >= price
+  const price = identityTransfer ? identityQuote?.cost ?? 0 : hasVideoReference ? regularQuote?.cost ?? 0 : basePrice
+  const quoteReady = identityTransfer ? Boolean(identityQuote) : !hasVideoReference || Boolean(regularQuote)
+  const canAfford = quoteReady && (isAdmin || !price || credits >= price)
   const promptStep = scenario === 'text' ? 2 : 3
   const settingsStep = promptStep + 1
   const promptPlaceholder = identityTransfer
@@ -485,6 +526,8 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
       if (identityTransfer) {
         if (identityRefs.issue) throw new Error(identityRefs.issue)
         if (!identityQuote) throw new Error(quoteError || 'Дождитесь расчёта стоимости по исходному видео')
+      } else if (refVideos.length && !regularQuote) {
+        throw new Error(regularQuoteError || 'Дождитесь проверки длительности видео-референсов')
       }
       if (videoEditing) {
         if (scenario !== 'multimodal' || new Set(refVideos).size !== 1) throw new Error('Для редактирования добавьте ровно одно исходное видео')
@@ -498,6 +541,7 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
         identityTransfer,
         sourceFeedGenId: identityTransfer ? sourceFeedGenId : null,
         identityQuote: identityQuote?.seedance25_identity_quote,
+        referenceQuoteHash: regularQuote?.quote_hash,
         prompt: prompt.trim(),
         ratio: sourceSettings ? 'adaptive' : ratio,
         duration: sourceSettings ? -1 : duration,
@@ -702,7 +746,7 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
                 }}
               />
               <div className="rounded-lg border border-gold/20 bg-gold/5 px-2.5 py-2 text-[11px] leading-relaxed text-gold">
-                Видео-референс увеличивает стоимость генерации ×2
+                В стоимость входят секунды видеореференсов и секунды результата, без дополнительного ×2.
               </div>
               <div className="text-[10px] leading-relaxed text-muted-foreground">
                 {identityTransfer ? 'MP4/MOV · до 200 MB · 4–30с · одно видео' : 'MP4/MOV · до 200 MB · 2–30с · суммарно до 30с'}
@@ -885,7 +929,7 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
         <div className="flex items-end justify-between gap-4">
           <div>
             <div className="text-xs text-muted-foreground">Стоимость генерации</div>
-            <div className="mt-1 text-2xl font-bold text-foreground">{identityTransfer && !identityQuote ? 'После проверки видео' : `${price || 0}🍌`}</div>
+            <div className="mt-1 text-2xl font-bold text-foreground">{!quoteReady ? 'После проверки видео' : `${price || 0}🍌`}</div>
           </div>
           {!isAdmin ? <div className="text-right text-xs text-muted-foreground">Баланс<br /><span className="font-semibold text-foreground">{credits}🍌</span></div> : <div className="text-right text-xs text-cyan">Для админа<br /><span className="font-semibold">без списания</span></div>}
         </div>
@@ -894,12 +938,16 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
             {identityRefs.issue ? <p>{identityRefs.issue}</p> : quoteError ? (
               <><p className="text-destructive">{quoteError}</p><button type="button" className="text-cyan underline" onClick={() => setQuoteAttempt((value) => value + 1)}>Повторить расчёт</button></>
             ) : identityQuote ? (
-              <p>Исходное видео: {identityQuote.source_video_duration_seconds.toFixed(2)}с · к оплате {identityQuote.billing_duration}с (округление вверх). Цена уже включает коэффициент видео ×2.</p>
+              <p>Видеореференс: {identityQuote.source_video_duration_seconds.toFixed(2)} с + генерация: {identityQuote.billing_duration} с. Цена учитывает обе длительности без отдельного множителя.</p>
             ) : <p>Проверяем длительность и рассчитываем стоимость…</p>}
           </div>
         ) : hasVideoReference ? (
-          <div className="mt-3 rounded-xl border border-gold/20 bg-background/25 px-3 py-2 text-xs text-gold">
-            🎬 Видео-референс: базовая цена {basePrice}🍌 × 2 = {price}🍌
+          <div className="mt-3 rounded-xl border border-gold/20 bg-background/25 px-3 py-2 text-xs text-gold" aria-live="polite">
+            {regularQuoteError ? (
+              <><p className="text-destructive">{regularQuoteError}</p><button type="button" className="underline" onClick={() => setNormalQuoteAttempt(value => value + 1)}>Повторить расчёт</button></>
+            ) : regularQuote ? (
+              <>🎬 Видеореференсы: {regularQuote.source_video_duration_seconds} с + генерация: {regularQuote.output_seconds} с = {regularQuote.billable_seconds} с · {regularQuote.cost}🍌.</>
+            ) : <>🎬 Сервер измеряет видео-референсы и рассчитывает стоимость без коэффициента ×2…</>}
           </div>
         ) : (
           <div className="mt-2 text-[11px] text-muted-foreground">Цена зависит от качества и длительности ролика</div>
