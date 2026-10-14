@@ -67,7 +67,8 @@ async def test_curated_wan_edit_preserves_all_media_and_uses_same_lifecycle(monk
     provider.statuses['provider_2'] = {'taskId': 'provider_2', 'state': 'success', 'resultUrls': ['https://owned.test/done.mp4']}
     await lifecycle.reconcile_once(provider_task_id='provider_2')
     await lifecycle.reconcile_once(provider_task_id='provider_2')
-    assert await balance(viewer.user_id) == 80
+    assert quote.reserve_credits == 10  # Trend video reference seconds do not double the retail price.
+    assert await balance(viewer.user_id) == 90
     async with database.db_backend.connect(database.DATABASE_PATH) as db:
         count = await (await db.execute('SELECT COUNT(*) FROM prompt_repeat_events WHERE source_type = ? AND source_id = ?', ('prompt', created['trend_id']))).fetchone()
         runs = await (await db.execute('SELECT COUNT(*) FROM trend_generation_runs WHERE trend_id = ?', (created['trend_id'],))).fetchone()
