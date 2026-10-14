@@ -38,7 +38,7 @@ async def test_standard_fixed_quote_remains_frozen_and_metadata_distinct(actual_
     )
     request = body(model="wan_3", scenario="reference", reference_video_urls=[source])
     quote = await lifecycle.quote(actor, request)
-    assert quote.reserve_credits == 48
+    assert quote.reserve_credits == 20
     assert quote.as_response()["model"] == "wan_3"
     result = await lifecycle.launch(actor, request, quote, "ordinary-fixed")
     assert result["model"] == "wan_3"
@@ -49,9 +49,9 @@ async def test_standard_fixed_quote_remains_frozen_and_metadata_distinct(actual_
     }
     await lifecycle.reconcile_once(provider_task_id="provider_1")
     status = await lifecycle.status(actor, result["task_id"])
-    assert status["charged_credits"] == 48
+    assert status["charged_credits"] == 20
     assert status["refunded_credits"] == 0
-    assert await balance(actor.user_id) == 52
+    assert await balance(actor.user_id) == 80
     saved = await database.get_generation_task_payload(result["task_id"], user_id=actor.user_id)
     assert saved["model"] == "wan_3"
 
