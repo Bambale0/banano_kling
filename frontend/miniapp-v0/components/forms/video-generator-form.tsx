@@ -18,6 +18,7 @@ import { UploadArea } from './upload-area'
 import { ScenarioSelect } from './scenario-select'
 import { DurationSelect } from './duration-select'
 import { getStorageItem, removeStorageItem } from '@/hooks/browser-storage'
+import type { VideoGenerationQuote } from '@/lib/api'
 import {
   AlertCircle,
   Banana,
@@ -64,6 +65,7 @@ interface VideoGeneratorFormProps {
     ratio: string
     duration: number
     sourceFeedGenId?: number | null
+    pricingQuoteHash?: string
     grokMode: string
     grokResolution: string
     veoGenerationType: string
@@ -98,6 +100,7 @@ interface VideoGeneratorFormProps {
     audioReference: string | null
     audioReferences: string[]
   }) => Promise<void>
+  onQuote?: (data: Parameters<VideoGeneratorFormProps['onSubmit']>[0]) => Promise<VideoGenerationQuote>
   onUploadImageReference?: (file: File) => Promise<UploadedFile>
   onUploadVideoReference?: (file: File, typedRepeatModel?: string) => Promise<UploadedFile>
   onUploadAudioReference?: (file: File) => Promise<UploadedFile>
@@ -117,6 +120,7 @@ interface VideoGeneratorFormProps {
 export function VideoGeneratorForm({ 
   models, 
   onSubmit, 
+  onQuote,
   onUploadImageReference,
   onUploadVideoReference,
   onUploadAudioReference,
@@ -187,6 +191,9 @@ export function VideoGeneratorForm({
   const [startImage, setStartImage] = useState<UploadedFile[]>([])
   const [photoReferences, setPhotoReferences] = useState<UploadedFile[]>([])
   const [videoReferences, setVideoReferences] = useState<UploadedFile[]>([])
+  const [approvedVideoQuote, setApprovedVideoQuote] = useState<{ key: string; quote: VideoGenerationQuote } | null>(null)
+  const [videoQuoteBusy, setVideoQuoteBusy] = useState(false)
+  const [videoQuoteError, setVideoQuoteError] = useState('')
   const [audioReference, setAudioReference] = useState<UploadedFile[]>([])
 
   const regularVideoModels = useMemo(
@@ -244,9 +251,7 @@ export function VideoGeneratorForm({
     && (!modelRequiresConfiguredQuality || (typeof modelQualityPrice === 'number' && Number.isFinite(modelQualityPrice) && modelQualityPrice > 0))
   // Normal Seedance 2 submits retained video refs even after switching scenario.
   // Repeat descriptors already include all retained/replacement source inputs.
-  const repeatCostMultiplier = repeatSlots?.cost_multiplier ?? (
-    selectedModel === 'seedance_2' && (model?.max_video_references ?? 0) > 0 && videoReferences.length > 0 ? 2 : 1
-  )
+  const repeatCostMultiplier = 1
   const durationCosts = useMemo(
     () => requiresDurationQuote ? retainedDurationCosts || {} : priceAvailable
       ? Object.fromEntries(
@@ -260,13 +265,20 @@ export function VideoGeneratorForm({
   const baseCost = requiresDurationQuote
     ? retainedDurationCost ?? 0
     : getVideoModelCost(model, selectedDuration, selectedQuality, repeatCostMultiplier)
-  const cost = isOmniAudio
+  const hasAttachedVideo = Boolean(videoReferences.length || repeatSlots?.videos.length)
+  const priceKey = JSON.stringify([
+    selectedModel, selectedScenario, selectedDuration, selectedQuality, sourceFeedGenId,
+    videoReferences.map(item => item.url), repeatSlots?.videos, repeatUploads,
+    prompt, photoReferences.map(item => item.url),
+  ])
+  const confirmedVideoQuote = approvedVideoQuote?.key === priceKey ? approvedVideoQuote.quote : null
+  const cost = confirmedVideoQuote?.cost ?? (isOmniAudio
     ? model?.omni_audio_cost ?? 3
     : isOmniCharacter
       ? model?.omni_character_cost ?? 5
-      : baseCost
+      : baseCost)
   const perSecondCost = cost / Math.max(selectedDuration, 1)
-  const canAfford = priceAvailable && credits >= cost
+  const canAfford = priceAvailable && (hasAttachedVideo && !confirmedVideoQuote ? true : credits >= cost)
   const parseAssetIds = (value: string) =>
     value
       .split(/[\s,;]+/)
@@ -545,12 +557,12 @@ export function VideoGeneratorForm({
   }
 
   const handleSubmit = async () => {
-    if (!isValid || isSubmitting || submittingRef.current) return
+    if (!isValid || isSubmitting || submittingRef.current || videoQuoteBusy) return
     submittingRef.current = true
     const submittedSession = repeatSession.current
     const submitDuration = isOmniAudio || isOmniCharacter ? 6 : selectedDuration
     try {
-    await onSubmit({
+    const request: Parameters<VideoGeneratorFormProps['onSubmit']>[0] = {
       model: selectedModel,
       scenario: selectedScenario,
       ratio: selectedRatio,
@@ -597,8 +609,24 @@ export function VideoGeneratorForm({
       videoReferences: repeatSlots ? typedSlots.filter((slot) => slot.type === 'video' && slot.binding === 'upload').map((slot) => repeatUploads[slot.key][0].url) : isOmniVideo || (model?.max_video_references ?? 0) > 0 ? videoReferences.map(r => r.url) : [],
       audioReference: selectedScenario === 'avatar' ? audioReference[0]?.url || null : null,
       audioReferences: isWanPrime ? audioReference.map((item) => item.url) : [],
-    })
+    }
+    if (hasAttachedVideo && !confirmedVideoQuote) {
+      if (!onQuote) throw new Error('Невозможно проверить стоимость видео-референсов.')
+      setVideoQuoteBusy(true)
+      try {
+        const quote = await onQuote(request)
+        if (submittedSession === repeatSession.current) {
+          setApprovedVideoQuote({ key: priceKey, quote })
+          setVideoQuoteError('')
+        }
+      } finally {
+        setVideoQuoteBusy(false)
+      }
+      return
+    }
+    await onSubmit({ ...request, ...(hasAttachedVideo ? { pricingQuoteHash: confirmedVideoQuote?.quote_hash } : {}) })
     } catch (error) {
+      setVideoQuoteError(error instanceof Error ? error.message : 'Не удалось рассчитать цену видео.')
       if (submittedSession === repeatSession.current) {
         if (isVideoStatusPending(error)) setRepeatPending(getPendingVideoRepeat(sourceFeedGenId))
         else if (repeatSlots) setRepeatError(true)
@@ -1392,7 +1420,11 @@ export function VideoGeneratorForm({
           </div>
         </div>
 
-        {!priceAvailable ? <p className="text-sm text-muted-foreground">Стоимость недоступна</p> : <div className="flex items-center justify-between">
+        {!priceAvailable ? <p className="text-sm text-muted-foreground">Стоимость недоступна</p> : hasAttachedVideo && !confirmedVideoQuote ? (
+          <p className="text-sm text-muted-foreground" role="status">
+            Точная стоимость входящих видеореференсов появится после проверки файлов на сервере. Цена не умножается на два.
+          </p>
+        ) : <div className="flex items-center justify-between">
           <div>
             <span className="text-sm text-muted-foreground">Стоимость</span>
             <p className="text-xs text-muted-foreground/70">
@@ -1409,6 +1441,12 @@ export function VideoGeneratorForm({
           </div>
         </div>}
 
+        {hasAttachedVideo && confirmedVideoQuote ? (
+          <p className="text-xs text-muted-foreground" role="status">
+            Видеореференсы: {confirmedVideoQuote.source_video_seconds} с + генерация: {confirmedVideoQuote.output_seconds} с = {confirmedVideoQuote.billable_seconds} с. К оплате: {confirmedVideoQuote.cost}🍌.
+          </p>
+        ) : null}
+        {videoQuoteError ? <p role="alert" className="text-xs text-destructive">{videoQuoteError}</p> : null}
         {priceAvailable && !canAfford && (
           <div className="flex items-center gap-2 p-3 rounded-xl bg-destructive/10 border border-destructive/30">
             <AlertCircle className="w-4 h-4 text-destructive flex-shrink-0" />
@@ -1481,21 +1519,22 @@ export function VideoGeneratorForm({
 
         <Button
           onClick={handleSubmit}
-          disabled={!isValid || isSubmitting}
+          disabled={!isValid || isSubmitting || videoQuoteBusy}
           className={cn(
             "w-full h-12 text-base font-semibold",
             "bg-cyan hover:bg-cyan/90 text-background",
             "disabled:opacity-50 disabled:cursor-not-allowed"
           )}
         >
-          {isSubmitting ? (
+          {isSubmitting || videoQuoteBusy ? (
             <>
               <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-              Запускаю...
+              {videoQuoteBusy ? 'Проверяю секунды…' : 'Запускаю...'}
             </>
           ) : (
             <>
               <Clapperboard className="w-5 h-5 mr-2" />
+              {hasAttachedVideo && !confirmedVideoQuote ? 'Рассчитать точную стоимость' : hasAttachedVideo ? 'Подтвердить цену и запустить' : ''}
               {isOmniAudio ? 'Создать Audio ID' : isOmniCharacter ? 'Создать Character ID' : 'Запустить видео'}
             </>
           )}
