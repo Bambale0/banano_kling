@@ -24,6 +24,7 @@ export const Wand2 = createIcon('Wand2')
 export const History = createIcon('History')
 export const Plus = createIcon('Plus')
 export const X = createIcon('X')
+export const XIcon = X
 export const ChevronLeft = createIcon('ChevronLeft')
 export const ChevronRight = createIcon('ChevronRight')
 export const ChevronDown = createIcon('ChevronDown')

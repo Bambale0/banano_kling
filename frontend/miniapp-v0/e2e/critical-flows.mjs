@@ -541,11 +541,16 @@ try {
 
   // Copy the server-owned personal link unchanged, including template and referrer.
   await page.getByRole('button', { name: 'Ссылка', exact: true }).first().click()
-  await page.getByRole('button', { name: 'Скопировано', exact: true }).waitFor()
+  const trendShareDialog = page.getByRole('dialog', { name: 'Ссылка на тренд' })
+  await trendShareDialog.getByRole('textbox', { name: 'Ссылка на тренд' }).waitFor()
+  await trendShareDialog.getByText('Ссылка скопирована', { exact: true }).first().waitFor()
   assert.equal(copiedTrendPayload?.prompt_id, curatedTrend.id)
   assert.equal(copiedTrendPayload?.referral_code, undefined)
+  assert.equal(await trendShareDialog.getByRole('textbox', { name: 'Ссылка на тренд' }).inputValue(),
+    `https://t.me/test_bot?startapp=prompt_${curatedTrend.id}_ref_E2EADMIN`)
   assert.equal(await page.evaluate(() => window.__copiedText),
     `https://t.me/test_bot?startapp=prompt_${curatedTrend.id}_ref_E2EADMIN`)
+  await trendShareDialog.getByRole('button', { name: 'Close' }).click()
 
   // Returning from a bot Start link must not reset an in-progress form.
   // Trends remains the first-launch default; later navigation is explicit.
