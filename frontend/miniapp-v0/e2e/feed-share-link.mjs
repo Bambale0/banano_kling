@@ -39,12 +39,16 @@ try {
       let shareCalls = 0, exactLink = links[bridge === 'present' ? 0 : 1]
       page.on('pageerror', error => errors.push(error.message))
       await context.addInitScript(({ bridge, platform }) => {
-        window.__copied = []; window.__opened = []; window.__copyAllowed = false
+        window.__copied = []; window.__opened = []; window.__copyAllowed = false; window.__nativeShares = []
         window.__legacyCopies = []; window.__legacyCopyAllowed = false
         Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async value => {
           window.__copied.push(value)
           if (!window.__copyAllowed) throw new DOMException('Synthetic clipboard denial', 'NotAllowedError')
         } } })
+        if (platform === 'ios') Object.defineProperty(navigator, 'share', { configurable: true, value: payload => {
+          window.__nativeShares.push(payload)
+          return Promise.resolve()
+        } })
         document.execCommand = command => {
           if (command !== 'copy') return false
           const field = document.activeElement
@@ -126,8 +130,15 @@ try {
       assert.equal(shareCalls, 1)
       assert.equal(await page.evaluate(() => window.__copied.length), name === 'ios' ? 0 : 1)
       if (name === 'ios') {
-        // Native clipboard denied; immediate textarea selection in the user's
-        // second tap must work before any async permission request.
+        // Model the actual WKWebView failure first: both native Clipboard API
+        // and execCommand are denied. The OS menu remains a usable copy path.
+        await panel.getByRole('button', { name: 'Скопировать ссылку', exact: true }).click()
+        await panel.getByText(/Telegram не разрешил запись в буфер/).waitFor()
+        await panel.getByRole('button', { name: 'Через меню телефона', exact: true }).click()
+        assert.deepEqual(await page.evaluate(() => window.__nativeShares), [{ url: exactLink }])
+        assert.equal(await panel.getByText('Ссылка скопирована', { exact: true }).count(), 0)
+        // A fresh copy tap also works if native legacy permissions become
+        // available again after returning from system sharing.
         await page.evaluate(() => { window.__legacyCopyAllowed = true })
       } else {
         await page.evaluate(() => { window.__copyAllowed = true })
@@ -135,8 +146,12 @@ try {
       await panel.getByRole('button', { name: 'Скопировать ссылку', exact: true }).click()
       await panel.getByText('Ссылка скопирована', { exact: true }).waitFor()
       if (name === 'ios') {
-        assert.deepEqual(await page.evaluate(() => window.__copied), [])
-        assert.deepEqual(await page.evaluate(() => window.__legacyCopies), [{ text: exactLink, selected: true }])
+        // One denied navigator.clipboard fallback was attempted before the
+        // native share recovery. The eventual successful tap used execCommand.
+        assert.deepEqual(await page.evaluate(() => window.__copied), [exactLink])
+        const copyAttempts = await page.evaluate(() => window.__legacyCopies)
+        assert.equal(copyAttempts.length, 3)
+        assert.deepEqual(copyAttempts[2], { text: exactLink, selected: true })
       } else {
         assert.deepEqual(await page.evaluate(() => window.__copied), [exactLink, exactLink])
       }
