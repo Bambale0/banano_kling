@@ -14,6 +14,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
   addFeedComment,
   fetchFeedComments,
+  fetchTaskDetail,
   fetchMyFeed,
   fetchPartnerOverview,
   fetchProfileFeed,
@@ -38,6 +39,7 @@ import {
   Radio,
   Repeat2,
   Save,
+  Settings2,
   Send,
   Share2,
   Sparkles,
@@ -174,6 +176,7 @@ export function ProfileTab() {
     feedDeepLink,
     consumeFeedDeepLink,
     setActiveTab,
+    selectTask,
     setPromptPreset,
     setVideoPromptPreset,
   } = useApp()
@@ -505,6 +508,22 @@ export function ProfileTab() {
       await copyText(kind === 'remix' ? remixLink : postLink, marker)
     } catch (e) {
       setError(getErrorMessage(e, 'Не удалось создать ссылку на публикацию'))
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  async function handleEditPublication(item: FeedItem) {
+    if (!isLive || !isOwnProfile || !item.is_mine || !item.task_id) return
+    setBusyId(item.id)
+    try {
+      // Resolve from the owner's authenticated task API, never from a public
+      // feed card (which intentionally lacks private publication settings).
+      const detail = await fetchTaskDetail(item.task_id)
+      dismissPreview()
+      selectTask(detail)
+    } catch (e) {
+      setError(getErrorMessage(e, 'Не удалось открыть настройки публикации'))
     } finally {
       setBusyId(null)
     }
@@ -1071,6 +1090,18 @@ export function ProfileTab() {
               >
                 {copied === `remix_${previewItem.id}` ? <Check className="h-4 w-4" /> : <Link2 className="h-4 w-4" />}
                 <span>{copied === `remix_${previewItem.id}` ? 'Скопировано' : 'Ссылка ремикса'}</span>
+              </Button>
+            ) : null}
+            {isOwnProfile && previewItem.is_mine && previewItem.task_id ? (
+              <Button
+                type="button"
+                variant="secondary"
+                className="h-10 rounded-full px-4"
+                disabled={!isLive || busyId === previewItem.id}
+                onClick={() => void handleEditPublication(previewItem)}
+              >
+                <Settings2 className="h-4 w-4" />
+                <span>Настроить публикацию</span>
               </Button>
             ) : null}
             {previewItem.can_blur || previewItem.is_mine ? (

@@ -8121,11 +8121,19 @@ async def share_to_feed(
             or row["type"] not in FEED_PUBLIC_TYPES
             or row["status"] != "completed"
             or not row["result_url"]
-            or row["source_feed_gen_id"] is not None
             or not _feed_result_urls(row)
         ):
             return None
 
+        # Publishing an owned derivative is allowed, but it never transfers
+        # the source author's prompt or private reference permissions.
+        if generation_has_private_recipe(row):
+            prompt_visible = False
+            references_visible = False
+            reference_image_indices = []
+            reference_video_indices = []
+            repeat_reference_image_indices = []
+            repeat_reference_video_indices = []
         request_data = _parse_json_dict(row["request_data"])
         image_candidates = _feed_reference_image_candidates(request_data)
         video_candidates = _feed_reference_video_candidates(request_data)

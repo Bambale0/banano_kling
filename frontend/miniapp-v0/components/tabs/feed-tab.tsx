@@ -20,6 +20,7 @@ import {
   addFeedComment,
   fetchFeed,
   fetchFeedComments,
+  fetchTaskDetail,
   likeFeedItem,
   removeFeedItem,
   setFeedItemBlurred,
@@ -34,6 +35,7 @@ import {
   MessageCircle,
   Play,
   Repeat2,
+  Settings2,
   Send,
   Share2,
   Trash2,
@@ -201,6 +203,7 @@ export function FeedTab() {
     feedDeepLink,
     consumeFeedDeepLink,
     setActiveTab,
+    selectTask,
     setPromptPreset,
     setVideoPromptPreset,
     openProfile,
@@ -534,6 +537,20 @@ export function FeedTab() {
       setCommentsItem((prev) => (prev?.id === updated.id ? updated : prev))
     } catch (e) {
       setError(getErrorMessage(e, 'Не удалось обновить blur'))
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  const handleEditPublication = async (item: FeedItem) => {
+    if (!isLive || !item.is_mine || !item.task_id) return
+    setBusyId(item.id)
+    try {
+      const detail = await fetchTaskDetail(item.task_id)
+      dismissPreview()
+      selectTask(detail)
+    } catch (e) {
+      setError(getErrorMessage(e, 'Не удалось открыть настройки публикации'))
     } finally {
       setBusyId(null)
     }
@@ -1022,7 +1039,19 @@ export function FeedTab() {
               </div>
             </div>
           ) : null}
-          <div className="absolute bottom-4 left-3 right-3 flex justify-center gap-2">
+          <div className="absolute bottom-4 left-3 right-3 flex flex-wrap justify-center gap-2">
+            {previewItem.is_mine && previewItem.task_id ? (
+              <Button
+                type="button"
+                variant="secondary"
+                className="h-10 rounded-full px-4"
+                disabled={!isLive || busyId === previewItem.id}
+                onClick={() => void handleEditPublication(previewItem)}
+              >
+                <Settings2 className="h-4 w-4" />
+                <span>Настроить публикацию</span>
+              </Button>
+            ) : null}
             <Button
               type="button"
               variant="secondary"

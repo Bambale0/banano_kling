@@ -73,7 +73,7 @@ from bot.keyboards import (
     get_video_result_keyboard,
     get_video_type_label,
 )
-from bot.miniapp_links import feed_bot_link, feed_link
+from bot.miniapp_links import feed_bot_link, feed_link, task_link
 from bot.partner_policy import generation_partner_snapshot, mark_generation_accepted
 from bot.quality_pricing import QUALITY_COSTS, SEEDREAM_5_PRO_QUALITY_COSTS
 from bot.services.gemini_omni_service import gemini_omni_service
@@ -1947,9 +1947,11 @@ def _published_feed_bot_link(bot_username: str | None, card: dict) -> str:
 def _published_feed_link_keyboard(
     url: str,
     bot_url: str,
+    *,
+    task_id: str | None = None,
+    bot_username: str | None = None,
 ) -> types.InlineKeyboardMarkup:
-    return types.InlineKeyboardMarkup(
-        inline_keyboard=[
+    rows = [
             [
                 types.InlineKeyboardButton(
                     text="📋 Скопировать ссылку",
@@ -1969,7 +1971,14 @@ def _published_feed_link_keyboard(
                 )
             ]
         ]
-    )
+    if task_id and bot_username:
+        rows.append([
+            types.InlineKeyboardButton(
+                text="⚙️ Настроить публикацию в Студии",
+                url=task_link(bot_username, task_id),
+            )
+        ])
+    return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _publication_disclaimer_text(kind: str) -> str:
@@ -2237,6 +2246,8 @@ async def confirm_publish_image_result_to_feed(
         reply_markup=_published_feed_link_keyboard(
             publication_url,
             publication_bot_url,
+            task_id=str(task.task_id),
+            bot_username=me.username,
         ),
         disable_web_page_preview=True,
     )

@@ -461,6 +461,70 @@ describe('TaskDetailPanel private image-repeat permission', () => {
     expect(mockedPublish).toHaveBeenCalledWith('image-task', expect.objectContaining({ repeatReferenceImageIndices: [] }))
   })
 
+  it.each(['image', 'video'] as const)('restores safe published %s settings after a Telegram publication', async (kind) => {
+    const original = kind === 'image' ? imageTask : videoTask
+    const task = original({
+      prompt_hidden: true,
+      prompt_actions_allowed: false,
+      prompt: '',
+      is_public_feed: true,
+      is_profile_visible: true,
+      publication_scope: 'feed',
+      feed_prompt_visible: true,
+      feed_references_visible: true,
+      feed_repeat_reference_selection: { images: [2], videos: [5] },
+    })
+    useTask(task)
+    render(<TaskDetailPanel />)
+    expect(screen.getByRole('button', { name: 'Настроить публикацию' })).toBeInTheDocument()
+    openPublicationEditor()
+    expect(screen.getByText(/Промпт и исходные референсы чужого повтора/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Prompt$/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('group', { name: 'Референсы для повторов' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Blur' }))
+    savePublication()
+    await waitFor(() => expect(mockedPublish).toHaveBeenCalledTimes(1))
+    expect(mockedPublish).toHaveBeenCalledWith(task.task_id, expect.objectContaining({
+      promptVisible: false,
+      referencesVisible: false,
+      referenceImageIndices: [],
+      referenceVideoIndices: [],
+      repeatReferenceImageIndices: [],
+      ...(kind === 'video' ? { repeatReferenceVideoIndices: [] } : {}),
+      blurred: true,
+    }))
+    expect(screen.getByRole('button', { name: 'Настроить публикацию' })).toBeInTheDocument()
+    expect(updateTask).toHaveBeenCalledWith(task.task_id, expect.objectContaining({
+      feed_prompt_visible: false,
+      feed_references_visible: false,
+      feed_repeat_reference_selection: { images: [], ...(kind === 'video' ? { videos: [] } : {}) },
+    }))
+  })
+
+  it('allows publishing a completed own repeat with hidden recipe without exposing controls', async () => {
+    useTask(imageTask({
+      task_id: 'repeat-owner',
+      prompt_hidden: true,
+      prompt_actions_allowed: false,
+      prompt: '',
+      is_public_feed: false,
+      is_profile_visible: false,
+      publication_scope: 'private',
+    }))
+    render(<TaskDetailPanel />)
+    expect(screen.getByRole('button', { name: /^Опубликовать$/ })).toBeInTheDocument()
+    openPublicationEditor()
+    expect(screen.queryByRole('button', { name: 'Prompt' })).not.toBeInTheDocument()
+    savePublication()
+    await waitFor(() => expect(mockedPublish).toHaveBeenCalledWith(
+      'repeat-owner', expect.objectContaining({
+        promptVisible: false,
+        referencesVisible: false,
+        repeatReferenceImageIndices: [],
+      }),
+    ))
+  })
+
   it('honors server-side revocation without losing other explicit draft choices', async () => {
     useTask(imageTask({ feed_repeat_reference_selection: { images: [1] } }))
     const { rerender } = render(<TaskDetailPanel />)
