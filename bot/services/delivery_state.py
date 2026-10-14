@@ -11,12 +11,13 @@ TASK_DELIVERY_STATUSES = frozenset(
         "failed",
         "pending",
         "link_sent",
+        "link_only",
         "unavailable",
         "uncertain",
     }
 )
 TERMINAL_TASK_DELIVERY_STATUSES = frozenset(
-    {"delivered", "failed", "unavailable", "uncertain"}
+    {"delivered", "failed", "unavailable", "uncertain", "link_only"}
 )
 
 _TERMINAL_TELEGRAM_DELIVERY_REASONS = (
@@ -48,6 +49,37 @@ def is_terminal_telegram_delivery_error(error: Exception | str | None) -> bool:
 RETRYABLE_TASK_DELIVERY_STATUSES = frozenset(
     {"result_ready", "pending", "delivering", "link_sent"}
 )
+
+
+# Historical delivery_attempts increments on both the lease claim and status
+# updates. Twenty metadata transitions allow several actual send attempts,
+# while making endless retries impossible even for legacy/poller handlers.
+MAX_DELIVERY_ATTEMPTS = 20
+
+
+def telegram_media_too_large(error: Exception | str | None) -> bool:
+    """Recognize explicit permanent Telegram/CDN size rejections."""
+    message = str(error or "").casefold()
+    return any(
+        text in message
+        for text in (
+            "request entity too large",
+            "entity too large",
+            "file is too big",
+            "file is too large",
+            "file too big",
+            "payload too large",
+            "telegram_media_too_large",
+            "413 request",
+            "http 413",
+            "status=413",
+        )
+    )
+
+
+def exhausted_delivery_status(*, has_link: bool) -> str:
+    """A sent link is a terminal partial delivery; else request manual review."""
+    return "link_only" if has_link else "uncertain"
 
 
 def has_retryable_result(task) -> bool:

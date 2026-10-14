@@ -2071,3 +2071,13 @@ Coverage: pure contract tests and existing chunk HTTP regression run locally wit
 - Follow-up Codex review on functional commit 59b5676: security review clean; reviewer identified reverse-order PostgreSQL row-lock deadlock for concurrent category reorder (P2).
 - Fix: PostgreSQL now locks category rows ORDER BY id FOR UPDATE prior to position updates; SQLite takes BEGIN IMMEDIATE before reading revisions. Added disposable PostgreSQL concurrent opposite-reorder test requiring exactly one revision-conflict and one success, rather than deadlock/500.
 - Final local focused regression: 20 tests passed, Ruff clean. Pending GitHub PostgreSQL concurrent CI, entire CI and code review final disposition.
+
+## Delivery issue 313 — 2026-10-15
+
+- Production-only read audit identified endless Telegram HTTP 413 retries for one completed Kling Motion 2.6 video with a sent result link.
+- Dedicated branch: fix/delivery-oversize-audit-313, based on tanyapi b1ee0ce.
+- Repro: pytest tests/test_delivery_oversize_313.py, three initial assertions failed before changes; now green.
+- Resolution: terminal link_only after confirmed result link, uncertain for oversize without link, bounded retry budget, optimistic CAS and protected provider-completed results.
+- Audit: last available container logs contained 10 repeated size failures; most campaign #29 blocked messages were terminal delivery outcomes, not generation errors. Full evidence in docs/DELIVERY_AUDIT_313.md.
+- Expanded local regression: 236 tests passed. Dedicated PostgreSQL test awaits CI. No changes to live prices, balances, or generations.
+- Release protocol: branch PR into tanyapi, review, full CI, then protected auto-deploy and SHA/health/error checks.
