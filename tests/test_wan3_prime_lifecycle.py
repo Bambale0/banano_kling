@@ -273,7 +273,7 @@ async def test_late_opposite_terminal_events_do_not_mutate_money(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_launch_requires_client_quote_hash_and_auto_fraction_reserves_total_30():
+async def test_launch_requires_client_quote_hash_and_auto_fraction_reserves_output_only():
     actor = await user_actor(credits=100)
     probe = Probe(url_durations={"https://cdn.example.com/source.mp4": 2.5})
     lifecycle = Wan3PrimeLifecycle(probe=probe, preset_manager=Prices({"720p": 2}), transport=Provider())
@@ -284,11 +284,52 @@ async def test_launch_requires_client_quote_hash_and_auto_fraction_reserves_tota
         reference_video_urls=["https://cdn.example.com/source.mp4"],
     )
     quote = await lifecycle.quote(actor, request)
-    assert quote.billable_seconds_reserved == 30
+    assert quote.billable_seconds_reserved == 27.5
     assert quote.reserved_output_seconds == 27.5
+    assert quote.reserve_credits == 55
+    assert quote.as_response()['version'] == 3
+    assert quote.as_response()['billing_mode'] == 'auto_output_reserve'
     with pytest.raises(Wan3PrimeLifecycleError) as exc:
         await lifecycle.launch(actor, request, None, "missing-quote")
     assert exc.value.code == "missing_quote"
+
+
+
+@pytest.mark.asyncio
+async def test_video_reference_is_not_billed_twice_on_fixed_wan_quote():
+    """Seven seconds of video reference must not turn five generated seconds into twelve charged seconds."""
+    actor = await user_actor(credits=100)
+    source = "https://cdn.example.com/seven-second-source.mp4"
+    lifecycle = Wan3PrimeLifecycle(
+        probe=Probe(url_durations={source: 7}), preset_manager=Prices({"720p": 4}),
+        transport=Provider(),
+    )
+    request = body(scenario="reference", prompt="", reference_video_urls=[source], duration=5)
+    quote = await lifecycle.quote(actor, request)
+    assert quote.input_video_seconds == 7
+    assert quote.requested_output_seconds == 5
+    assert quote.billable_seconds_reserved == 5
+    assert quote.reserve_credits == 20
+    assert quote.as_response()["version"] == 3
+    assert quote.as_response()["billing_mode"] == "output_only"
+    await lifecycle.launch(actor, request, quote, "five-seconds-only")
+    assert await balance(actor.user_id) == 80
+
+
+def test_wan_billing_old_accepted_quotes_keep_frozen_reserves_and_auto_refunds():
+    from bot.services.wan3_billing import settlement_amounts
+
+    old = {"version": 2, "billing_mode": "input_plus_selected_output",
+           "input_video_seconds": 7, "rate_per_second": 4}
+    assert settlement_amounts(old, 48, 4) == (48, 0)
+    old_auto = {**old, "billing_mode": "auto_reserve"}
+    assert settlement_amounts(old_auto, 120, 4) == (44, 76)
+
+    fixed = {**old, "version": 3, "billing_mode": "output_only"}
+    assert settlement_amounts(fixed, 20, 8) == (20, 0)
+    auto = {**old, "version": 3, "billing_mode": "auto_output_reserve"}
+    assert settlement_amounts(auto, 92, 4) == (16, 76)
+    assert settlement_amounts(auto, 92, 30) == (92, 0)
 
 
 @pytest.mark.asyncio
