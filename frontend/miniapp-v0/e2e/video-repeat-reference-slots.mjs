@@ -290,8 +290,14 @@ try {
     credits = 100
     generationPending = true
     const beforePending = generations.length
+    const beforeQuote = quotes.length
     await page.goto(baseUrl + '?startapp=remix_777')
-    await page.getByRole('button', { name: /Рассчитать точную стоимость|Подтвердить цену и запустить|Запустить видео/ }).click()
+    const pendingLaunch = page.getByRole('button', { name: /Рассчитать точную стоимость|Подтвердить цену и запустить|Запустить видео/ })
+    await pendingLaunch.click()
+    await page.getByText(/Видеореференсы: 10 с/).waitFor()
+    assert.equal(quotes.length, beforeQuote + 1)
+    assert.equal(generations.length, beforePending, 'Checking the tariff must not launch or debit')
+    await pendingLaunch.click()
     await page.getByText('Видео принято, ожидаем подтверждения статуса', { exact: true }).waitFor()
     assert.equal(await page.getByRole('button', { name: /Рассчитать точную стоимость|Подтвердить цену и запустить|Запустить видео/ }).isDisabled(), true)
     assert.equal(generations.length, beforePending + 1)
