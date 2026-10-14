@@ -9,10 +9,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+from pathlib import Path
 
 from bot import db as db_backend
 from bot.services.media_input_utils import resolve_local_upload_path
 from bot.services.trend_preview_service import (
+    VIDEO_PREVIEW_EXTENSIONS,
     cached_trend_preview_assets,
     ensure_trend_preview_assets,
 )
@@ -23,10 +25,19 @@ logger = logging.getLogger(__name__)
 async def run(*, limit: int, before_id: int | None, execute: bool) -> dict[str, int]:
     from bot import database
 
-    args: list[int] = []
-    where = """WHERE status = 'approved'
+    # Filter at SQL level BEFORE LIMIT, so recent image templates cannot
+    # consume the entire video-conversion batch.
+    patterns = tuple("%" + suffix + "%" for suffix in sorted(VIDEO_PREVIEW_EXTENSIONS))
+    placeholders = " OR ".join("LOWER(preview_url) LIKE ?" for _ in patterns)
+    args: list[int] = list(patterns)
+    where = (
+        """WHERE status = 'approved'
         AND LOWER(COALESCE(tags, '')) LIKE '%"trend"%'
-        AND preview_url IS NOT NULL AND preview_url <> ''"""
+        AND preview_url IS NOT NULL AND preview_url <> ''
+        AND ("""
+        + placeholders
+        + ")"
+    )
     if before_id is not None:
         where += " AND id < ?"
         args.append(before_id)
@@ -43,7 +54,8 @@ async def run(*, limit: int, before_id: int | None, execute: bool) -> dict[str, 
     outcome = {"checked": 0, "cached": 0, "created": 0, "failed": 0, "skipped": 0}
     for row in rows:
         url = str(row[1] or "")
-        if not resolve_local_upload_path(url):
+        source = resolve_local_upload_path(url)
+        if not source or Path(source).suffix.lower() not in VIDEO_PREVIEW_EXTENSIONS:
             outcome["skipped"] += 1
             continue
         outcome["checked"] += 1

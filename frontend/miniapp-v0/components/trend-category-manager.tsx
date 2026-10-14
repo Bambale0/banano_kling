@@ -36,6 +36,7 @@ export function TrendCategoryManager({ open, onOpenChange, categories, onRefresh
   const [loadingItems, setLoadingItems] = useState(false)
   const [error, setError] = useState('')
   const [items, setItems] = useState<ShowcaseTrend[]>([])
+  const [itemsReady, setItemsReady] = useState(false)
   const [query, setQuery] = useState('')
   const [searchResult, setSearchResult] = useState<ShowcaseSearchResult | null>(null)
   const [searchLoading, setSearchLoading] = useState(false)
@@ -48,6 +49,9 @@ export function TrendCategoryManager({ open, onOpenChange, categories, onRefresh
   const loadItems = useCallback(async (categoryId: number) => {
     const request = ++itemRequest.current
     setLoadingItems(true)
+    setItemsReady(false)
+    setItems([])
+    setError('')
     try {
       let page = 1
       let all: ShowcaseTrend[] = []
@@ -56,15 +60,20 @@ export function TrendCategoryManager({ open, onOpenChange, categories, onRefresh
         const result = await fetchTrendCategory(categoryId, page, 100)
         all = all.concat(result.items)
         hasMore = result.has_more
-        if (all.length > 2000) throw new Error('Категория слишком большая для ручной сортировки. Обратитесь к администратору.')
+        if (all.length > 1000) throw new Error('В категории более 1000 трендов — ручная сортировка недоступна. Обратитесь к администратору.')
         page += 1
       } while (hasMore)
       if (request === itemRequest.current) {
         setItems(all)
+        setItemsReady(true)
         setError('')
       }
     } catch (e) {
-      if (request === itemRequest.current) setError(e instanceof Error ? e.message : 'Не удалось загрузить тренды папки')
+      if (request === itemRequest.current) {
+        setItems([])
+        setItemsReady(false)
+        setError(e instanceof Error ? e.message : 'Не удалось загрузить тренды папки')
+      }
     } finally {
       if (request === itemRequest.current) setLoadingItems(false)
     }
@@ -120,7 +129,7 @@ export function TrendCategoryManager({ open, onOpenChange, categories, onRefresh
   }
 
   async function saveItems(ordered: ShowcaseTrend[]) {
-    if (!selected || loadingItems) return
+    if (!selected || loadingItems || !itemsReady) return
     await run({
       op: 'set_items', category_id: selected.id, revision: selected.revision,
       trend_ids: ordered.map((item) => item.id),
@@ -128,12 +137,12 @@ export function TrendCategoryManager({ open, onOpenChange, categories, onRefresh
   }
 
   async function addItem(item: ShowcaseTrend) {
-    if (!selected || items.some((old) => old.id === item.id)) return
+    if (!selected || !itemsReady || items.some((old) => old.id === item.id)) return
     await saveItems([...items, item])
   }
 
   async function moveItem(item: ShowcaseTrend, targetId: number) {
-    if (!selected || targetId === selected.id) return
+    if (!selected || !itemsReady || targetId === selected.id) return
     const dest = realCategories.find((cat) => cat.id === targetId)
     if (!dest) return
     await run({
@@ -344,7 +353,7 @@ export function TrendCategoryManager({ open, onOpenChange, categories, onRefresh
               {(searchResult?.items || []).filter((trend) => !items.some((item) => item.id === trend.id)).map((trend) => (
                 <div key={trend.id} className="flex items-center justify-between gap-2 rounded-lg border border-border/50 p-2 text-xs">
                   <span className="min-w-0 flex-1 truncate">{trend.title}</span>
-                  <Button type="button" size="sm" variant="secondary" disabled={busy || loadingItems} onClick={() => void addItem(trend)}>
+                  <Button type="button" size="sm" variant="secondary" disabled={busy || loadingItems || !itemsReady} onClick={() => void addItem(trend)}>
                     <Plus className="h-3.5 w-3.5" /> Добавить
                   </Button>
                 </div>

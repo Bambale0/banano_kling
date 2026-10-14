@@ -191,3 +191,52 @@ async def isolated_trend_metrics_database(isolated_database, monkeypatch):
 
     monkeypatch.setattr(trend_success_compat, "DATABASE_PATH", database.DATABASE_PATH)
     monkeypatch.setattr(trend_success_compat, "_SCHEMA_READY", False)
+
+
+@pytest.mark.asyncio
+async def test_required_channel_denial_is_actionable_for_catalog(
+    catalog_client, monkeypatch
+):
+    from bot import trend_catalog_api
+
+    async def no_subscription(request, payload):
+        raise PermissionError(
+            "Подпишитесь на @fixture_channel, чтобы пользоваться ботом."
+        )
+
+    monkeypatch.setattr(trend_catalog_api, "_context", no_subscription)
+    response = await catalog_client.post(
+        "/mini-app/api/trends/catalog",
+        json={"init_data": signed_init_data(8311099)},
+    )
+    assert response.status == 403
+    body = await response.json()
+    assert body["code"] == "catalog_auth_error"
+    assert "@fixture_channel" in body["error"]
+
+
+@pytest.mark.asyncio
+async def test_legacy_get_preserves_signed_admin_prompt_but_redacts_viewer():
+    item = await make_trend()
+    app = web.Application(middlewares=[trend_prompt_privacy_middleware])
+    app["trend_prompt_privacy_root"] = "/mini-app"
+
+    async def raw(_request):
+        return web.json_response(
+            {"ok": True, "prompt": await database.get_prompt_by_id(item["id"])}
+        )
+
+    app.router.add_get("/api/v1/prompts/1", raw)
+    async with TestClient(TestServer(app)) as client:
+        admin = await client.get(
+            "/api/v1/prompts/1",
+            headers={"X-Telegram-Init-Data": signed_init_data(999999999)},
+        )
+        assert admin.status == 200
+        assert (await admin.json())["prompt"]["prompt_text"].startswith("Private scene")
+        viewer = await client.get(
+            "/api/v1/prompts/1",
+            headers={"X-Telegram-Init-Data": signed_init_data(8311098)},
+        )
+        assert viewer.status == 200
+        assert (await viewer.json())["prompt"]["prompt_text"] == ""

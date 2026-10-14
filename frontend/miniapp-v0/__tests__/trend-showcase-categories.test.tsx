@@ -8,6 +8,7 @@ import { fetchTrendCategory, adminShowcaseAction } from '@/lib/trend-catalog-api
 jest.mock('@/lib/trend-catalog-api', () => ({
   fetchTrendCategory: jest.fn(),
   adminShowcaseAction: jest.fn(),
+  resolveGenjutsuPrices: jest.fn(async (items) => items),
 }))
 
 const categoryFetch = fetchTrendCategory as jest.MockedFunction<typeof fetchTrendCategory>
@@ -108,4 +109,38 @@ test('category editor allows adding and sorting existing published trend', async
   await waitFor(() => expect(adminAction).toHaveBeenCalledWith({
     op: 'set_items', category_id: 7, revision: 2, trend_ids: [21, 22, 99],
   }))
+})
+
+
+test('admin keeps existing preview edit and deactivate actions in the showcase', () => {
+  const edit = jest.fn()
+  const remove = jest.fn()
+  render(<TrendShowcase categories={catalog} onRepeat={jest.fn()} onShare={jest.fn()} onEdit={edit} onRemove={remove} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Открыть тренд Свечи в торте' }))
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Редактировать' }))
+  expect(edit).toHaveBeenCalledWith(image)
+  fireEvent.click(screen.getByRole('button', { name: 'Открыть тренд Свечи в торте' }))
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Убрать тренд' }))
+  expect(remove).toHaveBeenCalledWith(image)
+})
+
+test('changing to an unavailable folder never exposes stale items for destructive mutations', async () => {
+  adminAction.mockResolvedValue({ items: [makeCard(99, 'Search suggestion')], has_more: false, total: 1, page: 1 })
+  const other = { ...catalog[0], id: 8, title: 'Другой раздел', emoji: '🎵', revision: 1, items: [] }
+  categoryFetch.mockImplementation(async (id) => {
+    if (id === 8) throw new Error('База временно недоступна')
+    return { category: catalog[0], items: [image, video], page: 1, total: 2, has_more: false }
+  })
+  render(<TrendCategoryManager open={true} onOpenChange={jest.fn()} categories={[catalog[0], other]}
+    onRefresh={jest.fn().mockResolvedValue(undefined)} />)
+  fireEvent.click(screen.getByRole('button', { name: /^🧁 Видео на День рождения/ }))
+  await screen.findByText('Свечи в торте')
+  fireEvent.click(screen.getByRole('button', { name: /^🎵 Другой раздел/ }))
+  await screen.findByRole('alert')
+  expect(screen.queryByText('Свечи в торте')).not.toBeInTheDocument()
+  expect(screen.getByText('База временно недоступна')).toBeInTheDocument()
+  await screen.findByText('Search suggestion')
+  const add = screen.getByRole('button', { name: /Добавить/ })
+  expect(add).toBeDisabled()
+  expect(adminAction).not.toHaveBeenCalledWith(expect.objectContaining({ op: 'set_items' }))
 })

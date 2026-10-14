@@ -439,6 +439,15 @@ async def set_trend_categories(trend_id: int, category_ids: list[int]) -> None:
     key, wanted = _positive_id(trend_id), _unique_ids(category_ids)
     async with db_backend.connect(database.DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
+        # Serialize full-set replacement on a stable parent row before reading
+        # memberships. Locking individual category rows is insufficient: two
+        # concurrent replacements may otherwise leave a union of both sets.
+        if db_backend.is_postgres():
+            await db.execute(
+                "SELECT id FROM user_prompts WHERE id = ? FOR UPDATE", (key,)
+            )
+        else:
+            await db.execute("BEGIN IMMEDIATE")
         await _verify_trends(db, [key])
         if wanted:
             placeholders = ",".join("?" for _ in wanted)

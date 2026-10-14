@@ -1,11 +1,11 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowLeft, Film, Flame, Loader2, Repeat2, Share2, Sparkles } from 'lucide-react'
+import { ArrowLeft, Film, Flame, Loader2, Pencil, Repeat2, Share2, Sparkles, Trash2 } from 'lucide-react'
 import { Button } from './ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog'
 import { normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
-import { fetchTrendCategory, type ShowcaseCategory, type ShowcaseTrend } from '@/lib/trend-catalog-api'
+import { fetchTrendCategory, resolveGenjutsuPrices, type ShowcaseCategory, type ShowcaseTrend } from '@/lib/trend-catalog-api'
 
 // Avoid decoding a dozen videos at once in Telegram's constrained mobile WebView.
 const activePreviews = new Set<HTMLVideoElement>()
@@ -141,10 +141,13 @@ function LiveTile({ trend, onPreview, className = '' }: {
   )
 }
 
-export function TrendShowcase({ categories, onRepeat, onShare }: {
+export function TrendShowcase({ categories, onRepeat, onShare, onEdit, onRemove, removingId }: {
   categories: ShowcaseCategory[]
   onRepeat: (trend: ShowcaseTrend) => void
   onShare: (trend: ShowcaseTrend) => void
+  onEdit?: (trend: ShowcaseTrend) => void
+  onRemove?: (trend: ShowcaseTrend) => void
+  removingId?: number | null
 }) {
   const [selected, setSelected] = useState<ShowcaseTrend | null>(null)
   const [categoryId, setCategoryId] = useState<number | 'unassigned' | null>(null)
@@ -169,6 +172,11 @@ export function TrendShowcase({ categories, onRepeat, onShare }: {
       ])
       setPage(result.page)
       setHasMore(result.has_more)
+      void resolveGenjutsuPrices(result.items).then((priced) => {
+        if (requestId.current !== activeRequest) return
+        const pricedById = new Map(priced.map((trend) => [trend.id, trend]))
+        setPageItems((current) => current.map((trend) => pricedById.get(trend.id) || trend))
+      })
     } catch (error) {
       if (requestId.current === activeRequest) {
         setPageError(error instanceof Error ? error.message : 'Не удалось загрузить категорию')
@@ -287,6 +295,26 @@ export function TrendShowcase({ categories, onRepeat, onShare }: {
               }}>
                 <Share2 className="h-4 w-4" /> Поделиться трендом
               </Button>
+              {onEdit || onRemove ? (
+                <div className="grid grid-cols-2 gap-2 border-t border-border/50 pt-3">
+                  {onEdit ? (
+                    <Button type="button" variant="secondary" className="min-h-11" onClick={() => {
+                      setSelected(null)
+                      onEdit(selected)
+                    }}>
+                      <Pencil className="h-4 w-4" /> Редактировать
+                    </Button>
+                  ) : null}
+                  {onRemove ? (
+                    <Button type="button" variant="destructive" className="min-h-11" disabled={removingId === selected.id} onClick={() => {
+                      setSelected(null)
+                      onRemove(selected)
+                    }}>
+                      <Trash2 className="h-4 w-4" /> Убрать тренд
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           ) : null}
         </DialogContent>

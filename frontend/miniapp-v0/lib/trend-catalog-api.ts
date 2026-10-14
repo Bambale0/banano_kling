@@ -1,6 +1,7 @@
 'use client'
 
 import { getApiBasePath, getInitData, getStartParamFallback } from './api'
+import { genjutsuCall } from './genjutsu-api'
 import type { PromptItem } from './types'
 
 export interface ShowcaseTrend extends PromptItem {
@@ -111,4 +112,37 @@ export interface ShowcaseSearchResult {
   total: number
   page: number
   has_more: boolean
+}
+
+
+/** An existing server quote, not a model-price guess, for the private recipe. */
+export async function resolveGenjutsuPrices(items: ShowcaseTrend[]): Promise<ShowcaseTrend[]> {
+  const recipeIds = Array.from(new Set(items.map((item) => item.generation_settings?.genjutsu_recipe_id)
+    .filter((value): value is string => Boolean(value))))
+  if (!recipeIds.length) return items
+  try {
+    const { costs } = await genjutsuCall<{ costs: Record<string, number | null> }>('recipe_costs', { recipe_ids: recipeIds })
+    if (!costs || typeof costs !== 'object') return items
+    return items.map((item) => {
+      const recipeId = item.generation_settings?.genjutsu_recipe_id
+      if (!recipeId || !Object.prototype.hasOwnProperty.call(costs, recipeId)) return item
+      const value = costs[recipeId]
+      if (value !== null && (typeof value !== 'number' || !Number.isFinite(value) || value < 0)) return item
+      return { ...item, repeat_cost: value }
+    })
+  } catch {
+    // No request should be blocked just because the optional quote failed.
+    // Existing Genjutsu flow always computes its own authoritative quote.
+    return items
+  }
+}
+
+export async function resolveGenjutsuCatalogPrices(categories: ShowcaseCategory[]): Promise<ShowcaseCategory[]> {
+  const priced = await resolveGenjutsuPrices(categories.flatMap((category) => category.items))
+  const priceById = new Map(priced.map((item) => [item.id, item.repeat_cost]))
+  return categories.map((category) => ({
+    ...category,
+    items: category.items.map((item) => priceById.has(item.id)
+      ? { ...item, repeat_cost: priceById.get(item.id) } : item),
+  }))
 }

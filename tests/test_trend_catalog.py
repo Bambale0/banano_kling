@@ -1,8 +1,11 @@
 """Category showcase lives beside, not inside, the private trend recipes."""
 
+import asyncio
+
 import pytest
 
 from bot import database, trend_catalog
+from bot import db as db_backend
 
 
 async def make_trend(number, *, kind="image"):
@@ -219,3 +222,24 @@ async def test_repeated_schema_initialization_preserves_editorial_data():
         )["title"]
         == "Осторожная миграция"
     )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_membership_replacement_keeps_one_complete_requested_set():
+    item = await make_trend(89)
+    first = await trend_catalog.create_category("Первая", "✨")
+    second = await trend_catalog.create_category("Вторая", "🎬")
+    for _ in range(4):
+        await asyncio.gather(
+            trend_catalog.set_trend_categories(item["id"], [first["id"]]),
+            trend_catalog.set_trend_categories(item["id"], [second["id"]]),
+        )
+        async with db_backend.connect(database.DATABASE_PATH) as db:
+            cursor = await db.execute(
+                "SELECT category_id FROM trend_category_items WHERE prompt_id = ?",
+                (item["id"],),
+            )
+            assigned = {int(row[0]) for row in await cursor.fetchall()}
+        assert assigned in ({first["id"]}, {second["id"]}), (
+            "Do not union two replacements"
+        )

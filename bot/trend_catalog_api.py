@@ -39,6 +39,8 @@ def _failure(exc: Exception) -> web.Response:
         status, code = 404, "catalog_not_found"
     elif isinstance(exc, (trend_catalog.CatalogValidationError, TypeError, ValueError)):
         status, code = 400, "catalog_validation_error"
+    elif isinstance(exc, PermissionError):
+        status, code = 403, "catalog_auth_error"
     elif isinstance(exc, web.HTTPException):
         status, code = int(exc.status), "catalog_auth_error"
     else:

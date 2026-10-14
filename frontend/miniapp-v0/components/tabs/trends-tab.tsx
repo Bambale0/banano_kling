@@ -19,7 +19,7 @@ import { genjutsuCall, openGenjutsu, type Recipe } from '@/lib/genjutsu-api'
 import { TrendRunnerDialog } from '@/components/trend-runner-dialog'
 import { TrendShowcase } from '@/components/trend-showcase'
 import { TrendCategoryManager } from '@/components/trend-category-manager'
-import { adminShowcaseAction, fetchTrendCatalog, type ShowcaseCategory } from '@/lib/trend-catalog-api'
+import { adminShowcaseAction, fetchTrendCatalog, resolveGenjutsuCatalogPrices, ShowcaseApiError, type ShowcaseCategory } from '@/lib/trend-catalog-api'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import {
   Film,
@@ -127,6 +127,7 @@ export function TrendsTab() {
   const [items, setItems] = useState<PromptItem[]>([])
   const [catalog, setCatalog] = useState<ShowcaseCategory[] | null>(null)
   const [catalogLoading, setCatalogLoading] = useState(true)
+  const catalogRequestRef = useRef(0)
   const [categoryManagerOpen, setCategoryManagerOpen] = useState(false)
   const [newTrendCategories, setNewTrendCategories] = useState<number[]>([])
   const [loading, setLoading] = useState(false)
@@ -192,6 +193,7 @@ export function TrendsTab() {
   const isAdmin = state.user.isAdmin
 
   const refreshCatalog = useCallback(async () => {
+    const request = ++catalogRequestRef.current
     if (!isLive) {
       setCatalog([])
       setCatalogLoading(false)
@@ -199,12 +201,25 @@ export function TrendsTab() {
     }
     setCatalogLoading(true)
     try {
-      setCatalog(await fetchTrendCatalog(6))
-    } catch {
-      // Legacy grids remain available during partial deploys or an API outage.
-      setCatalog(null)
+      const loaded = await fetchTrendCatalog(6)
+      if (request !== catalogRequestRef.current) return
+      setCatalog(loaded)
+      // Catalog cards are usable immediately. Private Genjutsu recipe costs
+      // are resolved by the existing actor-specific quote API in the background.
+      void resolveGenjutsuCatalogPrices(loaded).then((priced) => {
+        if (request === catalogRequestRef.current) setCatalog(priced)
+      })
+    } catch (e) {
+      if (request !== catalogRequestRef.current) return
+      if (e instanceof ShowcaseApiError && e.status === 403) {
+        setCatalog([])
+        setError(e.message)
+      } else {
+        // Only transport/unavailable API failures can enter the legacy fallback.
+        setCatalog(null)
+      }
     } finally {
-      setCatalogLoading(false)
+      if (request === catalogRequestRef.current) setCatalogLoading(false)
     }
   }, [isLive])
 
@@ -272,12 +287,14 @@ export function TrendsTab() {
   }, [isLive])
 
   useEffect(() => {
-    void loadTrends()
-  }, [loadTrends])
-
-  useEffect(() => {
     void refreshCatalog()
   }, [refreshCatalog])
+
+  useEffect(() => {
+    // Large legacy result lists can convert historical videos via FFmpeg.
+    // Fetch them only when the smaller cached catalog endpoint is unavailable.
+    if (!catalogLoading && catalog === null) void loadTrends()
+  }, [catalog, catalogLoading, loadTrends])
 
   useEffect(() => {
     if (!isAdmin) return
@@ -482,6 +499,7 @@ export function TrendsTab() {
         setEditPreviewUrl(result.uploadedUrl)
         setEditingTrend(result.updated)
         setItems((prev) => prev.map((item) => item.id === result.updated.id ? result.updated : item))
+        await refreshCatalog()
       }
     } finally {
       if (editUploadAttemptRef.current === attemptId) {
@@ -1333,6 +1351,9 @@ export function TrendsTab() {
           categories={catalog.filter((cat) => cat.is_visible)}
           onRepeat={applyTrend}
           onShare={openShareLink}
+          onEdit={isAdmin ? openEditTrend : undefined}
+          onRemove={isAdmin ? (trend) => { void handleRemove(trend) } : undefined}
+          removingId={removingId}
         />
       ) : loading || catalogLoading ? (
         <div className="flex justify-center py-12 text-muted-foreground">
