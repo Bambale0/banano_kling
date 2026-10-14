@@ -1534,8 +1534,9 @@ export function VideoGeneratorForm({
           ) : (
             <>
               <Clapperboard className="w-5 h-5 mr-2" />
-              {hasAttachedVideo && !confirmedVideoQuote ? 'Рассчитать точную стоимость' : hasAttachedVideo ? 'Подтвердить цену и запустить' : ''}
-              {isOmniAudio ? 'Создать Audio ID' : isOmniCharacter ? 'Создать Character ID' : 'Запустить видео'}
+              {hasAttachedVideo
+                ? confirmedVideoQuote ? 'Подтвердить цену и запустить' : 'Рассчитать точную стоимость'
+                : isOmniAudio ? 'Создать Audio ID' : isOmniCharacter ? 'Создать Character ID' : 'Запустить видео'}
             </>
           )}
         </Button>
