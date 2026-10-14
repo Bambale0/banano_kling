@@ -3,11 +3,13 @@
 The taxonomy is independent from user_prompts.category (generation media kind).
 Existing prompt ids, referral links, private assets and billing remain unchanged.
 """
+
 from __future__ import annotations
 
 import re
-from datetime import date
-from typing import Any, Mapping
+from collections.abc import Mapping
+from datetime import UTC, date, datetime
+from typing import Any
 
 from bot import database
 from bot import db as db_backend
@@ -35,15 +37,21 @@ _PUBLIC_TREND_WHERE = """
     AND LOWER(COALESCE(p.tags, '')) NOT LIKE '%"repeat-pinterest"%'
     AND LOWER(COALESCE(p.title, '')) NOT LIKE '%pinterest%'
 """
-_UNASSIGNED_FROM = """
+_UNASSIGNED_FROM = (
+    """
     FROM user_prompts p LEFT JOIN trend_category_items ti ON ti.prompt_id = p.id
     WHERE ti.prompt_id IS NULL AND
-""" + _PUBLIC_TREND_WHERE
-_MEMBER_FROM = """
+"""
+    + _PUBLIC_TREND_WHERE
+)
+_MEMBER_FROM = (
+    """
     FROM trend_category_items ti
     JOIN user_prompts p ON p.id = ti.prompt_id
     WHERE ti.category_id = ? AND
-""" + _PUBLIC_TREND_WHERE
+"""
+    + _PUBLIC_TREND_WHERE
+)
 
 
 def _title(value: Any) -> str:
@@ -65,7 +73,12 @@ def _unique_ids(values: Any, *, maximum: int = 1000) -> list[int]:
         raise CatalogValidationError("Передайте список идентификаторов")
     result: list[int] = []
     for value in values:
-        if isinstance(value, bool) or not isinstance(value, int) or value <= 0 or value in result:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value <= 0
+            or value in result
+        ):
             raise CatalogValidationError("Некорректный или повторяющийся идентификатор")
         result.append(value)
     return result
@@ -89,14 +102,19 @@ def _revision(value: Any) -> int:
 
 def _meta(row: Mapping[str, Any]) -> dict[str, Any]:
     return {
-        "id": int(row["id"]), "title": str(row["title"]), "emoji": str(row["emoji"] or ""),
-        "sort_order": int(row["sort_order"]), "is_visible": bool(row["is_visible"]),
+        "id": int(row["id"]),
+        "title": str(row["title"]),
+        "emoji": str(row["emoji"] or ""),
+        "sort_order": int(row["sort_order"]),
+        "is_visible": bool(row["is_visible"]),
         "revision": int(row["revision"]),
     }
 
 
 async def _category_row(db: Any, category_id: int) -> Any:
-    cursor = await db.execute("SELECT * FROM trend_categories WHERE id = ?", (category_id,))
+    cursor = await db.execute(
+        "SELECT * FROM trend_categories WHERE id = ?", (category_id,)
+    )
     row = await cursor.fetchone()
     if not row:
         raise CatalogNotFound("Категория не найдена")
@@ -116,9 +134,17 @@ def _card(row: Any, *, tariff: str, is_admin: bool = False) -> dict[str, Any]:
     media = cached_trend_preview_assets(public.get("preview_url"))
     public["preview_url"] = media["preview_url"]
     public["preview_poster_url"] = media["preview_poster_url"]
-    badge = str(row["showcase_badge"] or "") if "showcase_badge" in row.keys() else ""
-    expiry = str(row["showcase_badge_until"] or "") if "showcase_badge_until" in row.keys() else ""
-    if badge == "new" and (is_admin or not expiry or expiry >= date.today().isoformat()):
+    # sqlite3.Row.__contains__ checks VALUES, not keys: use column names explicitly.
+    columns = set(row.keys())
+    badge = str(row["showcase_badge"] or "") if "showcase_badge" in columns else ""
+    expiry = (
+        str(row["showcase_badge_until"] or "")
+        if "showcase_badge_until" in columns
+        else ""
+    )
+    if badge == "new" and (
+        is_admin or not expiry or expiry >= datetime.now(UTC).date().isoformat()
+    ):
         public["badge"] = badge
     if is_admin:
         public["badge_until"] = expiry or None
@@ -126,8 +152,13 @@ def _card(row: Any, *, tariff: str, is_admin: bool = False) -> dict[str, Any]:
 
 
 async def _list_page(
-    db: Any, *, category_id: int | None,
-    limit: int, offset: int, tariff: str, is_admin: bool = False,
+    db: Any,
+    *,
+    category_id: int | None,
+    limit: int,
+    offset: int,
+    tariff: str,
+    is_admin: bool = False,
 ) -> tuple[int, list[dict[str, Any]]]:
     clause = _UNASSIGNED_FROM if category_id is None else _MEMBER_FROM
     args: tuple[Any, ...] = () if category_id is None else (category_id,)
@@ -137,56 +168,102 @@ async def _list_page(
     if not total:
         return 0, []
 
-    sort = "p.created_at DESC, p.id DESC" if category_id is None else "ti.sort_order ASC, p.id ASC"
-    badge_cols = "'' AS showcase_badge, '' AS showcase_badge_until" if category_id is None else "ti.badge AS showcase_badge, ti.badge_until AS showcase_badge_until"
+    sort = (
+        "p.created_at DESC, p.id DESC"
+        if category_id is None
+        else "ti.sort_order ASC, p.id ASC"
+    )
+    badge_cols = (
+        "'' AS showcase_badge, '' AS showcase_badge_until"
+        if category_id is None
+        else "ti.badge AS showcase_badge, ti.badge_until AS showcase_badge_until"
+    )
     cursor = await db.execute(
-        "SELECT p.*, " + badge_cols + " " + clause
-        + " ORDER BY " + sort + " LIMIT ? OFFSET ?",
+        "SELECT p.*, "
+        + badge_cols
+        + " "
+        + clause
+        + " ORDER BY "
+        + sort
+        + " LIMIT ? OFFSET ?",
         (*args, limit, offset),
     )
     rows = await cursor.fetchall()
     return total, [_card(item, tariff=tariff, is_admin=is_admin) for item in rows]
 
 
-async def list_catalog(*, is_admin: bool = False, per_category: int = 6, tariff: str = "standard") -> list[dict[str, Any]]:
+async def list_catalog(
+    *, is_admin: bool = False, per_category: int = 6, tariff: str = "standard"
+) -> list[dict[str, Any]]:
     limit = min(12, max(1, int(per_category)))
     async with db_backend.connect(database.DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
         if is_admin:
-            cursor = await db.execute("SELECT * FROM trend_categories ORDER BY sort_order ASC, id ASC")
+            cursor = await db.execute(
+                "SELECT * FROM trend_categories ORDER BY sort_order ASC, id ASC"
+            )
         else:
-            cursor = await db.execute("SELECT * FROM trend_categories WHERE is_visible = 1 ORDER BY sort_order ASC, id ASC")
+            cursor = await db.execute(
+                "SELECT * FROM trend_categories WHERE is_visible = 1 ORDER BY sort_order ASC, id ASC"
+            )
         categories = await cursor.fetchall()
         result = []
         for row in categories:
             total, items = await _list_page(
-                db, category_id=int(row["id"]), limit=limit, offset=0, tariff=tariff, is_admin=is_admin
+                db,
+                category_id=int(row["id"]),
+                limit=limit,
+                offset=0,
+                tariff=tariff,
+                is_admin=is_admin,
             )
             if not total and not is_admin:
                 continue
             result.append({**_meta(row), "total": total, "items": items})
-        total, items = await _list_page(db, category_id=None, limit=limit, offset=0, tariff=tariff, is_admin=is_admin)
+        total, items = await _list_page(
+            db,
+            category_id=None,
+            limit=limit,
+            offset=0,
+            tariff=tariff,
+            is_admin=is_admin,
+        )
         if total:
-            result.append({
-                "id": "unassigned",
-                "title": "Без категории" if is_admin else "Другие тренды",
-                "emoji": "✨", "sort_order": 2147483647,
-                "is_visible": True, "revision": 0, "total": total, "items": items,
-            })
+            result.append(
+                {
+                    "id": "unassigned",
+                    "title": "Без категории" if is_admin else "Другие тренды",
+                    "emoji": "✨",
+                    "sort_order": 2147483647,
+                    "is_visible": True,
+                    "revision": 0,
+                    "total": total,
+                    "items": items,
+                }
+            )
     return result
 
 
 async def category_page(
-    category_id: int | str, *, is_admin: bool = False,
-    page: int = 1, limit: int = 24, tariff: str = "standard",
+    category_id: int | str,
+    *,
+    is_admin: bool = False,
+    page: int = 1,
+    limit: int = 24,
+    tariff: str = "standard",
 ) -> dict[str, Any]:
     safe_page = min(10000, max(1, int(page)))
     safe_limit = min(100, max(1, int(limit)))
     async with db_backend.connect(database.DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
         if category_id == "unassigned":
-            meta = {"id": "unassigned", "title": "Без категории" if is_admin else "Другие тренды",
-                    "emoji": "✨", "is_visible": True, "revision": 0}
+            meta = {
+                "id": "unassigned",
+                "title": "Без категории" if is_admin else "Другие тренды",
+                "emoji": "✨",
+                "is_visible": True,
+                "revision": 0,
+            }
             key: int | None = None
         else:
             row = await _category_row(db, _positive_id(category_id))
@@ -195,12 +272,19 @@ async def category_page(
             meta = _meta(row)
             key = int(row["id"])
         total, items = await _list_page(
-            db, category_id=key, limit=safe_limit,
-            offset=(safe_page - 1) * safe_limit, tariff=tariff, is_admin=is_admin,
+            db,
+            category_id=key,
+            limit=safe_limit,
+            offset=(safe_page - 1) * safe_limit,
+            tariff=tariff,
+            is_admin=is_admin,
         )
         return {
-            "category": meta, "items": items, "total": total,
-            "page": safe_page, "has_more": safe_page * safe_limit < total,
+            "category": meta,
+            "items": items,
+            "total": total,
+            "page": safe_page,
+            "has_more": safe_page * safe_limit < total,
         }
 
 
@@ -208,7 +292,9 @@ async def create_category(title: str, emoji: str = "") -> dict[str, Any]:
     name, marker = _title(title), _emoji(emoji)
     async with db_backend.connect(database.DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
-        cursor = await db.execute("SELECT COALESCE(MAX(sort_order), -1) FROM trend_categories")
+        cursor = await db.execute(
+            "SELECT COALESCE(MAX(sort_order), -1) FROM trend_categories"
+        )
         position = int((await cursor.fetchone())[0]) + 1
         cursor = await db.execute(
             "INSERT INTO trend_categories (title, emoji, sort_order) VALUES (?, ?, ?) RETURNING id",
@@ -220,8 +306,12 @@ async def create_category(title: str, emoji: str = "") -> dict[str, Any]:
 
 
 async def update_category(
-    category_id: int, revision: int, *,
-    title: str | None = None, emoji: str | None = None, is_visible: bool | None = None,
+    category_id: int,
+    revision: int,
+    *,
+    title: str | None = None,
+    emoji: str | None = None,
+    is_visible: bool | None = None,
 ) -> dict[str, Any]:
     key = _positive_id(category_id)
     version = _revision(revision)
@@ -232,14 +322,18 @@ async def update_category(
         current = await _category_row(db, key)
         title_value = _title(title) if title is not None else current["title"]
         emoji_value = _emoji(emoji) if emoji is not None else current["emoji"]
-        visible_value = int(is_visible) if is_visible is not None else int(current["is_visible"])
+        visible_value = (
+            int(is_visible) if is_visible is not None else int(current["is_visible"])
+        )
         cursor = await db.execute(
             "UPDATE trend_categories SET title = ?, emoji = ?, is_visible = ?, "
             "revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND revision = ?",
             (title_value, emoji_value, visible_value, key, version),
         )
         if cursor.rowcount != 1:
-            raise CatalogConflict("Категория была изменена другим администратором. Обновите страницу")
+            raise CatalogConflict(
+                "Категория была изменена другим администратором. Обновите страницу"
+            )
         await db.commit()
         return _meta(await _category_row(db, key))
 
@@ -288,14 +382,21 @@ async def _verify_trends(db: Any, ids: list[int]) -> None:
         return
     markers = ",".join("?" for _ in ids)
     cursor = await db.execute(
-        "SELECT COUNT(*) FROM user_prompts p WHERE p.id IN (" + markers + ") AND " + _PUBLIC_TREND_WHERE,
+        "SELECT COUNT(*) FROM user_prompts p WHERE p.id IN ("
+        + markers
+        + ") AND "
+        + _PUBLIC_TREND_WHERE,
         tuple(ids),
     )
     if int((await cursor.fetchone())[0]) != len(ids):
-        raise CatalogValidationError("Выбраны удалённые, неопубликованные или недоступные тренды")
+        raise CatalogValidationError(
+            "Выбраны удалённые, неопубликованные или недоступные тренды"
+        )
 
 
-async def replace_category_items(category_id: int, trend_ids: list[int], *, revision: int) -> dict[str, Any]:
+async def replace_category_items(
+    category_id: int, trend_ids: list[int], *, revision: int
+) -> dict[str, Any]:
     key = _positive_id(category_id)
     ids = _unique_ids(trend_ids)
     async with db_backend.connect(database.DATABASE_PATH) as db:
@@ -309,12 +410,19 @@ async def replace_category_items(category_id: int, trend_ids: list[int], *, revi
         if cursor.rowcount != 1:
             raise CatalogConflict("Состав категории уже изменился. Обновите страницу")
         await _verify_trends(db, ids)
-        existing = await (await db.execute(
-            "SELECT prompt_id, badge, badge_until FROM trend_category_items WHERE category_id = ?",
-            (key,),
-        )).fetchall()
-        badges = {int(item["prompt_id"]): (item["badge"], item["badge_until"]) for item in existing}
-        await db.execute("DELETE FROM trend_category_items WHERE category_id = ?", (key,))
+        existing = await (
+            await db.execute(
+                "SELECT prompt_id, badge, badge_until FROM trend_category_items WHERE category_id = ?",
+                (key,),
+            )
+        ).fetchall()
+        badges = {
+            int(item["prompt_id"]): (item["badge"], item["badge_until"])
+            for item in existing
+        }
+        await db.execute(
+            "DELETE FROM trend_category_items WHERE category_id = ?", (key,)
+        )
         for order, prompt_id in enumerate(ids):
             badge, expiry = badges.get(prompt_id, ("", None))
             await db.execute(
@@ -334,17 +442,28 @@ async def set_trend_categories(trend_id: int, category_ids: list[int]) -> None:
         await _verify_trends(db, [key])
         if wanted:
             placeholders = ",".join("?" for _ in wanted)
-            present = await (await db.execute(
-                "SELECT id FROM trend_categories WHERE id IN (" + placeholders + ")", tuple(wanted)
-            )).fetchall()
+            present = await (
+                await db.execute(
+                    "SELECT id FROM trend_categories WHERE id IN ("
+                    + placeholders
+                    + ")",
+                    tuple(wanted),
+                )
+            ).fetchall()
             if len(present) != len(wanted):
                 raise CatalogValidationError("Одна из категорий больше не существует")
-        existing = await (await db.execute(
-            "SELECT category_id FROM trend_category_items WHERE prompt_id = ?", (key,)
-        )).fetchall()
+        existing = await (
+            await db.execute(
+                "SELECT category_id FROM trend_category_items WHERE prompt_id = ?",
+                (key,),
+            )
+        ).fetchall()
         current = {int(row[0]) for row in existing}
         for cat_id in sorted(current - set(wanted)):
-            await db.execute("DELETE FROM trend_category_items WHERE category_id = ? AND prompt_id = ?", (cat_id, key))
+            await db.execute(
+                "DELETE FROM trend_category_items WHERE category_id = ? AND prompt_id = ?",
+                (cat_id, key),
+            )
             await db.execute(
                 "UPDATE trend_categories SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (cat_id,),
@@ -355,10 +474,12 @@ async def set_trend_categories(trend_id: int, category_ids: list[int]) -> None:
                 "UPDATE trend_categories SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (cat_id,),
             )
-            next_position = await (await db.execute(
-                "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM trend_category_items WHERE category_id = ?",
-                (cat_id,),
-            )).fetchone()
+            next_position = await (
+                await db.execute(
+                    "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM trend_category_items WHERE category_id = ?",
+                    (cat_id,),
+                )
+            ).fetchone()
             await db.execute(
                 "INSERT INTO trend_category_items (category_id, prompt_id, sort_order) VALUES (?, ?, ?)",
                 (cat_id, key, int(next_position[0])),
@@ -367,11 +488,19 @@ async def set_trend_categories(trend_id: int, category_ids: list[int]) -> None:
 
 
 async def move_trend_between_categories(
-    trend_id: int, source_id: int, target_id: int, *,
-    source_revision: int, target_revision: int,
+    trend_id: int,
+    source_id: int,
+    target_id: int,
+    *,
+    source_revision: int,
+    target_revision: int,
 ) -> None:
     """Atomic move; revisions are locked in category-id order to avoid deadlocks."""
-    key, source, target = _positive_id(trend_id), _positive_id(source_id), _positive_id(target_id)
+    key, source, target = (
+        _positive_id(trend_id),
+        _positive_id(source_id),
+        _positive_id(target_id),
+    )
     if source == target:
         raise CatalogValidationError("Выберите другую категорию")
     versions = {source: _revision(source_revision), target: _revision(target_revision)}
@@ -414,14 +543,20 @@ async def move_trend_between_categories(
 
 
 async def set_badge(
-    category_id: int, trend_id: int, revision: int, *,
-    badge: str = "", badge_until: str | None = None,
+    category_id: int,
+    trend_id: int,
+    revision: int,
+    *,
+    badge: str = "",
+    badge_until: str | None = None,
 ) -> dict[str, Any]:
     key, item_id = _positive_id(category_id), _positive_id(trend_id)
     if badge not in {"", "new"}:
         raise CatalogValidationError("Поддерживается только бейдж Новинка")
     if badge_until:
-        if not isinstance(badge_until, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", badge_until):
+        if not isinstance(badge_until, str) or not re.fullmatch(
+            r"\d{4}-\d{2}-\d{2}", badge_until
+        ):
             raise CatalogValidationError("Дата должна быть в формате ГГГГ-ММ-ДД")
         try:
             date.fromisoformat(badge_until)
@@ -448,7 +583,9 @@ async def set_badge(
         return _meta(await _category_row(db, key))
 
 
-async def search_admin_trends(query: str = "", *, page: int = 1, limit: int = 24, tariff: str = "standard") -> dict[str, Any]:
+async def search_admin_trends(
+    query: str = "", *, page: int = 1, limit: int = 24, tariff: str = "standard"
+) -> dict[str, Any]:
     page = min(10000, max(1, int(page)))
     limit = min(60, max(1, int(limit)))
     query = str(query or "").strip()[:100]
@@ -456,16 +593,35 @@ async def search_admin_trends(query: str = "", *, page: int = 1, limit: int = 24
     params: list[Any] = []
     if query:
         # Escape SQL wildcards so a search is literal, not an accidental full-table scan.
-        escaped = query.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        escaped = (
+            query.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        )
         where += " AND (LOWER(p.title) LIKE ? ESCAPE '\\' OR p.id = ?)"
-        params.extend(["%" + escaped + "%", int(query) if query.isdecimal() and len(query) < 19 else -1])
+        params.extend(
+            [
+                "%" + escaped + "%",
+                int(query) if query.isdecimal() and len(query) < 19 else -1,
+            ]
+        )
     async with db_backend.connect(database.DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
-        result = await (await db.execute("SELECT COUNT(*) FROM user_prompts p WHERE " + where, tuple(params))).fetchone()
+        result = await (
+            await db.execute(
+                "SELECT COUNT(*) FROM user_prompts p WHERE " + where, tuple(params)
+            )
+        ).fetchone()
         total = int(result[0] or 0)
-        rows = await (await db.execute(
-            "SELECT p.*, '' AS showcase_badge, '' AS showcase_badge_until FROM user_prompts p WHERE "
-            + where + " ORDER BY p.created_at DESC, p.id DESC LIMIT ? OFFSET ?",
-            (*params, limit, (page - 1) * limit),
-        )).fetchall()
-        return {"items": [_card(row, tariff=tariff) for row in rows], "total": total, "page": page, "has_more": page * limit < total}
+        rows = await (
+            await db.execute(
+                "SELECT p.*, '' AS showcase_badge, '' AS showcase_badge_until FROM user_prompts p WHERE "
+                + where
+                + " ORDER BY p.created_at DESC, p.id DESC LIMIT ? OFFSET ?",
+                (*params, limit, (page - 1) * limit),
+            )
+        ).fetchall()
+        return {
+            "items": [_card(row, tariff=tariff) for row in rows],
+            "total": total,
+            "page": page,
+            "has_more": page * limit < total,
+        }

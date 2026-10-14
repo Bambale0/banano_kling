@@ -1,8 +1,8 @@
 """Category showcase lives beside, not inside, the private trend recipes."""
+
 import pytest
 
-from bot import database
-from bot import trend_catalog
+from bot import database, trend_catalog
 
 
 async def make_trend(number, *, kind="image"):
@@ -14,8 +14,11 @@ async def make_trend(number, *, kind="image"):
         category="video" if kind == "video" else "photo",
         model="seedance_2_5" if kind == "video" else "banana_pro",
         generation_settings={
-            "kind": kind, "model": "seedance_2_5" if kind == "video" else "banana_pro",
-            "user_fields": [{"key": "Возраст", "label": "Возраст", "original_value": "37"}],
+            "kind": kind,
+            "model": "seedance_2_5" if kind == "video" else "banana_pro",
+            "user_fields": [
+                {"key": "Возраст", "label": "Возраст", "original_value": "37"}
+            ],
         },
         tags=["trend", "trend-video"] if kind == "video" else ["trend"],
         is_public=True,
@@ -55,13 +58,19 @@ async def test_create_assign_reorder_and_reuse_same_trend_without_cloning():
         birthday["id"], [c["id"], a["id"], b["id"]], revision=catalog[0]["revision"]
     )
     assert update["revision"] > catalog[0]["revision"]
-    result = await trend_catalog.category_page(birthday["id"], is_admin=False, page=1, limit=2)
+    result = await trend_catalog.category_page(
+        birthday["id"], is_admin=False, page=1, limit=2
+    )
     assert [item["id"] for item in result["items"]] == [c["id"], a["id"]]
     assert result["has_more"]
-    result2 = await trend_catalog.category_page(birthday["id"], is_admin=False, page=2, limit=2)
+    result2 = await trend_catalog.category_page(
+        birthday["id"], is_admin=False, page=2, limit=2
+    )
     assert [item["id"] for item in result2["items"]] == [b["id"]]
     with pytest.raises(trend_catalog.CatalogConflict):
-        await trend_catalog.replace_category_items(birthday["id"], [a["id"]], revision=catalog[0]["revision"])
+        await trend_catalog.replace_category_items(
+            birthday["id"], [a["id"]], revision=catalog[0]["revision"]
+        )
 
 
 @pytest.mark.asyncio
@@ -86,10 +95,15 @@ async def test_hidden_category_is_admin_only_and_restorable_without_deleting_tre
 async def test_category_reorder_is_revision_guarded():
     first = await trend_catalog.create_category("Первый", "1️⃣")
     second = await trend_catalog.create_category("Второй", "2️⃣")
-    order = [{"id": second["id"], "revision": second["revision"]},
-             {"id": first["id"], "revision": first["revision"]}]
+    order = [
+        {"id": second["id"], "revision": second["revision"]},
+        {"id": first["id"], "revision": first["revision"]},
+    ]
     await trend_catalog.reorder_categories(order)
-    assert [c["id"] for c in await trend_catalog.list_catalog(is_admin=True)] == [second["id"], first["id"]]
+    assert [c["id"] for c in await trend_catalog.list_catalog(is_admin=True)] == [
+        second["id"],
+        first["id"],
+    ]
     with pytest.raises(trend_catalog.CatalogConflict):
         await trend_catalog.reorder_categories(order)
 
@@ -102,12 +116,22 @@ async def test_badges_can_expire_and_item_membership_is_idempotent():
     await trend_catalog.set_trend_categories(trend["id"], [category["id"]])
     result = (await trend_catalog.list_catalog(is_admin=True))[0]
     assert result["total"] == 1
-    await trend_catalog.set_badge(category["id"], trend["id"], result["revision"], badge="new", badge_until="2000-01-01")
+    await trend_catalog.set_badge(
+        category["id"],
+        trend["id"],
+        result["revision"],
+        badge="new",
+        badge_until="2000-01-01",
+    )
     card = (await trend_catalog.list_catalog(is_admin=False))[0]["items"][0]
     assert not card.get("badge")
     current = (await trend_catalog.list_catalog(is_admin=True))[0]
-    await trend_catalog.set_badge(category["id"], trend["id"], current["revision"], badge="new", badge_until=None)
-    assert (await trend_catalog.list_catalog(is_admin=False))[0]["items"][0]["badge"] == "new"
+    await trend_catalog.set_badge(
+        category["id"], trend["id"], current["revision"], badge="new", badge_until=None
+    )
+    assert (await trend_catalog.list_catalog(is_admin=False))[0]["items"][0][
+        "badge"
+    ] == "new"
 
 
 @pytest.mark.asyncio
@@ -138,7 +162,6 @@ async def test_reject_invalid_title_and_non_trend_membership():
         await trend_catalog.create_category("a" * 90, "✗")
 
 
-
 @pytest.mark.asyncio
 async def test_atomic_move_preserves_trend_identity_and_rejects_stale_revisions():
     trend = await make_trend(77)
@@ -149,16 +172,25 @@ async def test_atomic_move_preserves_trend_identity_and_rejects_stale_revisions(
     original = next(cat for cat in categories if cat["id"] == source["id"])
     destination = next(cat for cat in categories if cat["id"] == target["id"])
     await trend_catalog.move_trend_between_categories(
-        trend["id"], source["id"], target["id"],
-        source_revision=original["revision"], target_revision=destination["revision"],
+        trend["id"],
+        source["id"],
+        target["id"],
+        source_revision=original["revision"],
+        target_revision=destination["revision"],
     )
     updated = await trend_catalog.list_catalog(is_admin=True)
     assert next(cat for cat in updated if cat["id"] == source["id"])["total"] == 0
-    assert next(cat for cat in updated if cat["id"] == target["id"])["items"][0]["id"] == trend["id"]
+    assert (
+        next(cat for cat in updated if cat["id"] == target["id"])["items"][0]["id"]
+        == trend["id"]
+    )
     with pytest.raises(trend_catalog.CatalogConflict):
         await trend_catalog.move_trend_between_categories(
-            trend["id"], target["id"], source["id"],
-            source_revision=destination["revision"], target_revision=original["revision"],
+            trend["id"],
+            target["id"],
+            source["id"],
+            source_revision=destination["revision"],
+            target_revision=original["revision"],
         )
 
 
@@ -170,13 +202,20 @@ async def isolated_trend_metrics_database(isolated_database, monkeypatch):
     catalog test receives its own SQLite database via isolated_database.
     """
     from bot.handlers import trend_success_compat
+
     monkeypatch.setattr(trend_success_compat, "DATABASE_PATH", database.DATABASE_PATH)
     monkeypatch.setattr(trend_success_compat, "_SCHEMA_READY", False)
-
 
 
 @pytest.mark.asyncio
 async def test_repeated_schema_initialization_preserves_editorial_data():
     created = await trend_catalog.create_category("Осторожная миграция", "📁")
     await database.init_db()
-    assert next(cat for cat in await trend_catalog.list_catalog(is_admin=True) if cat["id"] == created["id"])["title"] == "Осторожная миграция"
+    assert (
+        next(
+            cat
+            for cat in await trend_catalog.list_catalog(is_admin=True)
+            if cat["id"] == created["id"]
+        )["title"]
+        == "Осторожная миграция"
+    )

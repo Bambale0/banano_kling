@@ -3,6 +3,7 @@
 Run from /app inside the bot container. Read-only until --execute is supplied.
 Never rewrites originals or publishes any private provider reference URLs.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -30,10 +31,14 @@ async def run(*, limit: int, before_id: int | None, execute: bool) -> dict[str, 
         where += " AND id < ?"
         args.append(before_id)
     async with db_backend.connect(database.DATABASE_PATH) as db:
-        rows = await (await db.execute(
-            "SELECT id, preview_url FROM user_prompts " + where + " ORDER BY id DESC LIMIT ?",
-            (*args, limit),
-        )).fetchall()
+        rows = await (
+            await db.execute(
+                "SELECT id, preview_url FROM user_prompts "
+                + where
+                + " ORDER BY id DESC LIMIT ?",
+                (*args, limit),
+            )
+        ).fetchall()
 
     outcome = {"checked": 0, "cached": 0, "created": 0, "failed": 0, "skipped": 0}
     for row in rows:
@@ -66,14 +71,18 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--before-id", type=int)
-    parser.add_argument("--execute", action="store_true", help="Without this, only count pending assets")
+    parser.add_argument(
+        "--execute", action="store_true", help="Without this, only count pending assets"
+    )
     args = parser.parse_args()
     if not 1 <= args.limit <= 200:
         parser.error("--limit must be between 1 and 200")
     if args.before_id is not None and args.before_id <= 0:
         parser.error("--before-id must be positive")
     logging.basicConfig(level=logging.INFO)
-    result = asyncio.run(run(limit=args.limit, before_id=args.before_id, execute=args.execute))
+    result = asyncio.run(
+        run(limit=args.limit, before_id=args.before_id, execute=args.execute)
+    )
     print(result)
 
 
