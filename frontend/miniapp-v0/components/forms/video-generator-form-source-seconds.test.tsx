@@ -35,6 +35,8 @@ test('video reference must be quoted as input + output seconds and explicitly co
   fireEvent.click(quoteButton)
   await waitFor(() => expect(onQuote).toHaveBeenCalledTimes(1))
   await screen.findByText(/Видеореференсы: 7 с \+ генерация: 5 с = 12 с/)
+  // 48 / (7 + 5) is 4 credits per billable second, not a fake 9.6x output rate.
+  expect(screen.getByText(/12 сек\. \(вход \+ результат\).*4🍌\/с/)).toBeInTheDocument()
   expect(onSubmit).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('button', { name: 'Подтвердить цену и запустить' }))
   await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
