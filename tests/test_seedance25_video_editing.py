@@ -81,7 +81,7 @@ async def test_miniapp_edit_entitlement_and_effective_response(admin, flag, expe
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("duration, editing, valid", [(3, True, False), (4, True, True), (30, True, True), (31, True, False), (3, False, True), (None, True, True)])
+@pytest.mark.parametrize("duration, editing, valid", [(3, True, False), (4, True, True), (30, True, True), (31, True, False), (3, False, True), (None, True, False)])
 async def test_edit_source_duration_preserves_regular_reference_limits(duration, editing, valid):
     data = state_data()
     data["seedance25_video_editing"] = editing
