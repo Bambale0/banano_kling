@@ -45,7 +45,7 @@ it('retains the exact server link when both clipboard methods fail; retries on a
  const field = await screen.findByRole('textbox', { name: 'Ссылка на публикацию' })
  expect(field).toHaveValue(link)
  expect(screen.queryByText('PRIVATE_RECIPE')).not.toBeInTheDocument()
- await screen.findByText(/Автоматическое копирование недоступно/)
+ await screen.findByText(/Telegram не разрешил запись в буфер/)
  expect(scrollRecovery).toHaveBeenCalledWith({ block: 'center' })
  writeText.mockResolvedValueOnce(undefined)
  const previous = writeText.mock.calls.length
@@ -53,7 +53,7 @@ it('retains the exact server link when both clipboard methods fail; retries on a
  // Clipboard is invoked synchronously in this fresh event, before any await.
  expect(writeText.mock.calls.length).toBe(previous + 1)
  expect(await screen.findByText('Ссылка скопирована')).toBeInTheDocument()
- expect(screen.queryByText(/Автоматическое копирование недоступно/)).not.toBeInTheDocument()
+ expect(screen.queryByText(/Telegram не разрешил запись в буфер/)).not.toBeInTheDocument()
  expect(shareFeedItem).toHaveBeenCalledTimes(1)
  expect(writeText).toHaveBeenLastCalledWith(link)
 })
