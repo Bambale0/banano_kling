@@ -248,7 +248,10 @@ async def force_fail_task(
             locked_quote = request_data.get("motion_quote")
         has_locked_quote = (
             isinstance(locked_quote, dict)
-            and locked_quote.get("version") == (2 if motion_receipt_id else 1)
+            # Ordinary video quotes gained v2 for verified input seconds.
+            # Freeze their accepted charge exactly like v1. Motion v2 is
+            # governed by its own receipt comparison below.
+            and locked_quote.get("version") in ((2,) if motion_receipt_id else (1, 2))
             and isinstance(locked_quote.get("charge_cost"), (int, float))
             and not isinstance(locked_quote.get("charge_cost"), bool)
             and math.isfinite(locked_quote["charge_cost"])
