@@ -70,15 +70,15 @@ async def test_owner_can_publish_edit_and_unpublish_derived_result_safely(
     await database.complete_video_task("own-derived", result)
 
     # An attacker may send reference toggles from an old or modified client.
-    options = dict(
-        prompt_visible=True,
-        references_visible=True,
-        reference_image_indices=[0],
-        reference_video_indices=[0],
-        repeat_reference_image_indices=[0],
-        repeat_reference_video_indices=[0] if kind == "video" else [],
-        blurred=False,
-    )
+    options = {
+        "prompt_visible": True,
+        "references_visible": True,
+        "reference_image_indices": [0],
+        "reference_video_indices": [0],
+        "repeat_reference_image_indices": [0],
+        "repeat_reference_video_indices": [0] if kind == "video" else [],
+        "blurred": False,
+    }
     card = await scope.share_to_feed_scoped("own-derived", derivative_author.id, **options)
     assert card is not None
     assert card["task_id"] == "own-derived"
