@@ -5,8 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-import bot.database as database
-from bot import main
+from bot import database, main
 from bot.services import task_watchdog
 
 
