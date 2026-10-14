@@ -435,8 +435,12 @@ async def _validate_public_payload(
         if scenario != "multimodal" or len(payload["video_urls"]) != 1:
             raise ValueError("Для редактирования выберите режим по референсам и одно исходное видео 4–30 секунд")
         duration = await fullstack._validate_local_source(payload["video_urls"][0], "video")
-        if duration is not None and not 4 <= duration <= 30:
-            raise ValueError("Для редактирования исходное видео должно быть 4–30 секунд")
+        if duration is None or not math.isfinite(duration) or not 4 <= duration <= 30:
+            raise ValueError("Для редактирования исходное видео должно быть 4–30 секунд и проверено сервером")
+        # The provider chooses the output length from the original clip.
+        # Auto's legacy five-second estimate would undercharge long edits.
+        payload["billing_duration"] = math.ceil(duration)
+        payload["source_video_duration_seconds"] = duration
     if len(payload["prompt"]) > seedance_25_service.MAX_PROMPT_LENGTH:
         raise ValueError(f"Промпт Seedance 2.5 — максимум {seedance_25_service.MAX_PROMPT_LENGTH} символов")
     if scenario == "text" and not payload["prompt"]:
