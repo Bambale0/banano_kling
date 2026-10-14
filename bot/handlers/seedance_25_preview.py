@@ -391,9 +391,11 @@ async def _run_seedance_25_message(message: types.Message, state: FSMContext, pr
         return
 
     try:
-        quote_label = f"{_price_quote(data):g}🍌"
-    except ValueError:
-        quote_label = "после проверки секунд референсов"
+        quote = _price_quote(data)
+    except ValueError as exc:
+        await message.answer(f"❌ {exc}")
+        return
+    quote_label = f"{quote:g}🍌"
     processing = await message.answer(
         "🧪 <b>Seedance 2.5 — admin preview</b>\n"
         f"Сценарий: <code>{scenario}</code> · цена по прайсу: <code>{quote_label}</code>\n"
