@@ -65,7 +65,19 @@ async function setup(width, isAdmin = false, credits = 1000) {
         assert.ok(uploads.length, 'Unexpected upload')
         response = { ok: true, ...uploads.shift(), reference: null }
       } else if (url.pathname.endsWith('/generate-video')) {
-        if (body.seedance25_quote_only) {
+        if (body.seedance25_quote_only && body.seedance25_identity_transfer !== true) {
+          // Ordinary video-reference quotes are now required and measured
+          // independently of the character-replacement workflow.
+          const sourceSeconds = 10.04
+          const outputSeconds = Number(body.v_duration)
+          response = {
+            ok: true, quote_only: true, quote_hash: 'measured-source-' + outputSeconds,
+            cost: Math.round((sourceSeconds + outputSeconds) * 4 * 2) / 2,
+            source_video_duration_seconds: sourceSeconds,
+            output_seconds: outputSeconds, billable_seconds: sourceSeconds + outputSeconds,
+            admin_free: isAdmin,
+          }
+        } else if (body.seedance25_quote_only) {
           quotes.push(body)
           assert.equal(body.seedance25_identity_transfer, true)
           assert.equal(body.seedance25_video_editing, false)
@@ -77,7 +89,7 @@ async function setup(width, isAdmin = false, credits = 1000) {
             status = 400
             response = { ok: false, error: 'Загрузите исходное видео в приложение для проверки длительности и стоимости' }
           } else {
-            const cost = behavior.quoteCost ?? (body.seedance25_resolution === '720p' ? 88 : 66)
+            const cost = behavior.quoteCost ?? (body.seedance25_resolution === '720p' ? 84 : 63)
             response = { ok: true, quote_only: true, cost, billing_duration: 11, source_video_duration_seconds: 10.04,
               seedance25_identity_quote: { cost, billing_duration: 11, source_video_url: sourceUrl, resolution: body.seedance25_resolution, ...(body.source_feed_gen_id ? { source_feed_gen_id: body.source_feed_gen_id, parent_generation_id: body.source_feed_gen_id } : {}) } }
           }
@@ -88,7 +100,7 @@ async function setup(width, isAdmin = false, credits = 1000) {
             return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ ok: false, error: 'Стоимость изменилась. Обновите расчёт' }) })
           }
           response = { ok: true, status: 'queued', task_id: 'identity-mocked-' + generation.length, credits,
-            cost: body.seedance25_identity_transfer ? 88 : 120, model_label: 'Seedance 2.5', admin_free: isAdmin,
+            cost: body.seedance25_identity_transfer ? 84 : 100, model_label: 'Seedance 2.5', admin_free: isAdmin,
             resolution: '720p', duration: body.v_duration, aspect_ratio: body.v_ratio, scenario: body.seedance25_scenario }
         }
       } else if (/generate|repeat|remix|payment|trends\/run|prompts\/submit/.test(url.pathname)) {
@@ -144,7 +156,7 @@ try {
     mkdirSync('.artifacts/seedance-identity', { recursive: true })
     await page.getByText('Фото человека + исходное видео', { exact: true }).scrollIntoViewIfNeeded()
     await page.locator('section').filter({ has: page.getByText('Фото человека + исходное видео', { exact: true }) }).screenshot({ path: '.artifacts/seedance-identity/inputs-' + width + '.png' })
-    const create = page.getByRole('button', { name: '🚀 Создать видео · 88🍌', exact: true })
+    const create = page.getByRole('button', { name: '🚀 Создать видео · 84🍌', exact: true })
     await create.scrollIntoViewIfNeeded()
     assert.equal(await create.evaluate(el => {
       const r = el.getBoundingClientRect()
@@ -177,7 +189,7 @@ try {
     assert.deepEqual(identity.seedance25_reference_audio_urls, [])
     assert.equal(identity.seedance25_first_frame_url, null)
     assert.equal(identity.seedance25_last_frame_url, null)
-    assert.deepEqual(identity.seedance25_identity_quote, { cost: 88, billing_duration: 11, source_video_url: sourceUrl, resolution: '720p' })
+    assert.deepEqual(identity.seedance25_identity_quote, { cost: 84, billing_duration: 11, source_video_url: sourceUrl, resolution: '720p' })
     assert.ok(quotes.length > 0)
     // The existing shell refresh remounts forms after queueing. Open a fresh
     // ordinary-reference request to verify its independent fixed-duration path.
@@ -191,7 +203,7 @@ try {
     await page.getByLabel(/Видео — по одному URL/).fill(sourceUrl)
     await page.getByLabel(/Аудио — по одному URL/).fill('asset://preserved-audio')
     const ordinaryResponse = page.waitForResponse(r => r.url().endsWith('/generate-video') && !r.request().postDataJSON()?.seedance25_quote_only)
-    await page.getByRole('button', { name: '🚀 Создать видео · 120🍌', exact: true }).click()
+    await page.getByRole('button', { name: '🚀 Создать видео · 100🍌', exact: true }).click()
     assert.equal((await ordinaryResponse).status(), 200)
     const ordinary = generation[1]
     assert.equal(ordinary.seedance25_identity_transfer, false)
@@ -250,10 +262,10 @@ try {
   const stale = await setup(390)
   await addUploads(stale.page, stale.uploads)
   await stale.page.getByRole('button', { name: /Замена персонажа/ }).click()
-  await stale.page.getByRole('button', { name: '🚀 Создать видео · 88🍌', exact: true }).waitFor()
+  await stale.page.getByRole('button', { name: '🚀 Создать видео · 84🍌', exact: true }).waitFor()
   stale.behavior.rejectNext = true
   stale.behavior.quoteCost = 96
-  await stale.page.getByRole('button', { name: '🚀 Создать видео · 88🍌', exact: true }).click()
+  await stale.page.getByRole('button', { name: '🚀 Создать видео · 84🍌', exact: true }).click()
   await stale.page.getByText('Стоимость изменилась. Обновите расчёт', { exact: true }).waitFor()
   await stale.page.getByRole('button', { name: '🚀 Создать видео · 96🍌', exact: true }).waitFor()
   assert.equal(stale.generation.length, 1, 'Requote must never auto-launch')
@@ -285,14 +297,14 @@ try {
       await repeat.page.getByRole('button', { name: 'Повторить', exact: true }).click()
     }
     if (mode === 'own' || mode === 'deeplink') {
-      await repeat.page.getByRole('button', { name: '🚀 Создать видео · 88🍌', exact: true }).waitFor()
+      await repeat.page.getByRole('button', { name: '🚀 Создать видео · 84🍌', exact: true }).waitFor()
       assert.equal(await repeat.page.getByLabel('Промпт для Seedance 2.5', { exact: true }).inputValue(), '')
       assert.equal((await repeat.page.locator('body').innerText()).includes('Hidden original instruction'), false)
       assert.equal(repeat.detailRequests.length, 1)
       assert.equal(repeat.quotes.at(-1).source_feed_gen_id, 77)
       assert.deepEqual(repeat.quotes.at(-1).reference_images, photoUrls)
       const response = repeat.page.waitForResponse(r => r.url().endsWith('/generate-video') && !r.request().postDataJSON()?.seedance25_quote_only)
-      await repeat.page.getByRole('button', { name: '🚀 Создать видео · 88🍌', exact: true }).click()
+      await repeat.page.getByRole('button', { name: '🚀 Создать видео · 84🍌', exact: true }).click()
       assert.equal((await response).status(), 200)
       assert.equal(repeat.generation[0].source_feed_gen_id, 77)
       assert.equal(repeat.generation[0].seedance25_identity_quote.source_feed_gen_id, 77)

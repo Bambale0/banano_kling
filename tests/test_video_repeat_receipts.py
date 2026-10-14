@@ -1,11 +1,21 @@
 """Durable typed-repeat reservation and existing task lifecycle invariants."""
 import asyncio
 import json
+from copy import deepcopy
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
-from bot import database
+from bot import creator_tariff, database, miniapp
+from bot import db as db_backend
+from bot.handlers import seedance_25_public_release as public
 from bot.services import task_watchdog
+from bot.services.seedance_service import seedance_service
+from tests.test_video_repeat_private_contract import REAL_GENERIC
+from tests.test_video_repeat_private_contract import (
+    typed_video_entrypoint as typed_video_entrypoint,  # noqa: PLC0414 - pytest fixture re-export
+)
 from bot.services.task_watchdog import force_fail_task, get_stuck_tasks
 
 
@@ -73,19 +83,6 @@ async def test_unknown_receipt_cannot_be_timed_out_or_taken_over():
     assert not (await reserve(user))['created']
 
 
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
-
-from bot import db as db_backend
-from bot import miniapp
-from bot.handlers import seedance_25_public_release as public
-from bot.services.seedance_service import seedance_service
-from tests.test_video_repeat_private_contract import (
-    REAL_GENERIC,
-)
-from tests.test_video_repeat_private_contract import (
-    typed_video_entrypoint as typed_video_entrypoint,  # noqa: PLC0414 - pytest fixture re-export
-)
 
 
 async def configure_actual_entry(monkeypatch, entry, model):
@@ -103,8 +100,6 @@ async def configure_actual_entry(monkeypatch, entry, model):
     monkeypatch.setattr(miniapp, 'missing_local_upload_sources', lambda _: [])
     monkeypatch.setattr(miniapp, 'touch_saved_references', AsyncMock())
     monkeypatch.setattr(miniapp.preset_manager, 'get_video_cost_with_quality', lambda *_: 1)
-    from copy import deepcopy
-    from bot import creator_tariff
     prices = deepcopy(miniapp.preset_manager.get_price_config())
     video_models = prices.setdefault('costs_reference', {}).setdefault('video_models', {})
     for key in ('seedance_2', 'seedance_2_5'):
