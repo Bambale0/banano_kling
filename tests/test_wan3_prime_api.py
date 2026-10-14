@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from aiohttp import web
 
@@ -22,6 +24,7 @@ class Quote:
     reserve_credits = 4
     requested_output_seconds = 5
     billable_seconds_reserved = 5
+    reserved_output_seconds = 5
     input_video_seconds = 0
     price_configured = True
     admin_free = False
@@ -76,6 +79,12 @@ async def test_miniapp_generate_wan_quoteonly_and_launch_use_owned_lifecycle(mon
         Request({"quoteOnly": True, "recipe": {"prompt": "x", "scenario": "text"}})
     )
     assert quote_response.status == 200
+    quoted = json.loads(quote_response.body)
+    assert quoted['billing_version'] == 3
+    assert quoted['billing_mode'] == 'output_only'
+    assert quoted['billable_output_seconds'] == 5
+    assert quoted['billing_duration_seconds'] == 5
+    assert quoted['reserve_cost'] == 4
     assert lifecycle.launch_calls == 0
 
     launch_response = await wan3_prime_api.miniapp_generate_wan(
