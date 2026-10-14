@@ -146,7 +146,9 @@ try {
       await panel.getByRole('button', { name: 'Скопировать ссылку', exact: true }).click()
       await panel.getByText('Ссылка скопирована', { exact: true }).waitFor()
       if (name === 'ios') {
-        assert.deepEqual(await page.evaluate(() => window.__copied), [])
+        // One denied navigator.clipboard fallback was attempted before the
+        // native share recovery. The eventual successful tap used execCommand.
+        assert.deepEqual(await page.evaluate(() => window.__copied), [exactLink])
         const copyAttempts = await page.evaluate(() => window.__legacyCopies)
         assert.equal(copyAttempts.length, 3)
         assert.deepEqual(copyAttempts[2], { text: exactLink, selected: true })
