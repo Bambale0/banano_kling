@@ -204,3 +204,17 @@ def test_public_genjutsu_trend_exposes_only_recipe_handle() -> None:
     assert payload["generation_settings"]["reference_labels"] == ["Ваше фото", "Товар"]
     assert "model" not in payload["generation_settings"]
     assert "duration" not in payload["generation_settings"]
+
+
+
+def test_implicit_description_must_not_leak_secret_recipe():
+    from bot.trend_visibility import sanitize_prompt_for_public
+    original = "Secret unpublished scene with a hidden camera motion."
+    payload = {
+        **_trend(),
+        "prompt_text": original,
+        "description": original,
+    }
+    safe = sanitize_prompt_for_public(payload)
+    assert safe["description"] == ""
+    assert original not in str(safe)

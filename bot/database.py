@@ -538,6 +538,36 @@ async def _ensure_prompt_feed_schema(db: db_backend.Connection) -> None:
         )
     except db_backend.OperationalError:
         pass
+    # Editorial folders are independent from user_prompts.category (photo/video).
+    # PostgreSQL's SQLite adapter intentionally skips regular CREATE statements,
+    # so use its native DDL hook for this owned, idempotent migration.
+    ddl = db.execute_native_ddl if db_backend.is_postgres() else db.execute
+    category_pk = "BIGSERIAL PRIMARY KEY" if db_backend.is_postgres() else "INTEGER PRIMARY KEY AUTOINCREMENT"
+    await ddl(f"""
+        CREATE TABLE IF NOT EXISTS trend_categories (
+            id {category_pk},
+            title TEXT NOT NULL,
+            emoji TEXT NOT NULL DEFAULT '',
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            is_visible INTEGER NOT NULL DEFAULT 1,
+            revision INTEGER NOT NULL DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP
+        )
+    """)
+    await ddl("""
+        CREATE TABLE IF NOT EXISTS trend_category_items (
+            category_id BIGINT NOT NULL REFERENCES trend_categories(id) ON DELETE CASCADE,
+            prompt_id BIGINT NOT NULL REFERENCES user_prompts(id) ON DELETE CASCADE,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            badge TEXT NOT NULL DEFAULT '',
+            badge_until TEXT,
+            PRIMARY KEY (category_id, prompt_id)
+        )
+    """)
+    await ddl("CREATE INDEX IF NOT EXISTS idx_trend_categories_order ON trend_categories(sort_order, id)")
+    await ddl("CREATE INDEX IF NOT EXISTS idx_trend_category_items_order ON trend_category_items(category_id, sort_order, prompt_id)")
+    await ddl("CREATE INDEX IF NOT EXISTS idx_trend_category_items_prompt ON trend_category_items(prompt_id)")
     await db.execute("""
         CREATE TABLE IF NOT EXISTS trend_reference_assets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

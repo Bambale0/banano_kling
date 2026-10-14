@@ -17,6 +17,9 @@ import { formatTrendRepeatCost } from '@/lib/trend-price'
 import { isNavigableShareLink, telegramForwardLink, tryOpenTelegramShareLink } from '@/lib/share-link-navigation'
 import { genjutsuCall, openGenjutsu, type Recipe } from '@/lib/genjutsu-api'
 import { TrendRunnerDialog } from '@/components/trend-runner-dialog'
+import { TrendShowcase } from '@/components/trend-showcase'
+import { TrendCategoryManager } from '@/components/trend-category-manager'
+import { adminShowcaseAction, fetchTrendCatalog, type ShowcaseCategory } from '@/lib/trend-catalog-api'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import {
   Film,
@@ -122,6 +125,10 @@ export function TrendsTab() {
   const editUploadAttemptRef = useRef(0)
   const editUploadPromiseRef = useRef<Promise<string | null> | null>(null)
   const [items, setItems] = useState<PromptItem[]>([])
+  const [catalog, setCatalog] = useState<ShowcaseCategory[] | null>(null)
+  const [catalogLoading, setCatalogLoading] = useState(true)
+  const [categoryManagerOpen, setCategoryManagerOpen] = useState(false)
+  const [newTrendCategories, setNewTrendCategories] = useState<number[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isCreateOpen, setIsCreateOpen] = useState(false)
@@ -183,6 +190,24 @@ export function TrendsTab() {
 
   const isLive = state.mode === 'live'
   const isAdmin = state.user.isAdmin
+
+  const refreshCatalog = useCallback(async () => {
+    if (!isLive) {
+      setCatalog([])
+      setCatalogLoading(false)
+      return
+    }
+    setCatalogLoading(true)
+    try {
+      setCatalog(await fetchTrendCatalog(6))
+    } catch {
+      // Legacy grids remain available during partial deploys or an API outage.
+      setCatalog(null)
+    } finally {
+      setCatalogLoading(false)
+    }
+  }, [isLive])
+
   const availableModels = trendKind === 'video'
     ? state.videoModels.filter((item) => item.supports.includes('imgtxt'))
     : state.imageModels
@@ -249,6 +274,10 @@ export function TrendsTab() {
   useEffect(() => {
     void loadTrends()
   }, [loadTrends])
+
+  useEffect(() => {
+    void refreshCatalog()
+  }, [refreshCatalog])
 
   useEffect(() => {
     if (!isAdmin) return
@@ -617,9 +646,28 @@ export function TrendsTab() {
           : [TREND_TAG],
         generationSettings,
       })
+      // Publication and folder placement are separate transactions. A folder
+      // failure must not entice an admin to publish the same paid template again.
+      let categoriesSaved = true
+      if (newTrendCategories.length) {
+        try {
+          await adminShowcaseAction({
+            op: 'set_trend_categories',
+            trend_id: created.id,
+            category_ids: newTrendCategories,
+          })
+        } catch {
+          categoriesSaved = false
+        }
+      }
       setItems((prev) => [created, ...prev.filter((item) => item.id !== created.id)])
       resetForm()
+      setNewTrendCategories([])
       setIsCreateOpen(false)
+      await refreshCatalog()
+      if (!categoriesSaved) {
+        setError('Тренд опубликован, но не удалось назначить папки. Откройте «Категории» и разместите его вручную. Повторно публиковать не нужно.')
+      }
     } catch (e) {
       setError(isWanUpload ? wan3SafeError(e, 'Не удалось опубликовать тренд. Проверьте настройки и файлы, затем повторите.') : e instanceof Error ? e.message : 'Не удалось опубликовать тренд')
     } finally {
@@ -635,6 +683,7 @@ export function TrendsTab() {
     try {
       await deactivatePrompt(trend.id)
       setItems((prev) => prev.filter((item) => item.id !== trend.id))
+      await refreshCatalog()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось убрать тренд')
     } finally {
@@ -895,6 +944,10 @@ export function TrendsTab() {
           </p>
         </div>
         {isAdmin ? (
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          <Button type="button" size="sm" variant="secondary" onClick={() => setCategoryManagerOpen(true)}>
+            Категории
+          </Button>
           <Button
             type="button"
             size="sm"
@@ -915,6 +968,7 @@ export function TrendsTab() {
             {isCreateOpen ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
             {isCreateOpen ? 'Закрыть' : 'Добавить'}
           </Button>
+          </div>
         ) : null}
       </div>
 
@@ -1231,6 +1285,30 @@ export function TrendsTab() {
             maxLength={30000}
           /> : <div className="rounded-xl border border-border/50 bg-secondary/25 p-3 text-xs text-muted-foreground">Скрытый prompt, пользовательские поля и fixed-референсы берутся из приватного Genjutsu-рецепта.</div>}
 
+          {catalog && catalog.some((cat) => typeof cat.id === 'number') ? (
+            <fieldset className="space-y-2 rounded-xl border border-border/50 bg-secondary/25 p-3">
+              <legend className="text-xs font-semibold">Разместить в категориях</legend>
+              <div className="flex flex-wrap gap-2">
+                {catalog.filter((cat): cat is ShowcaseCategory & { id: number } => typeof cat.id === 'number').map((cat) => (
+                  <label key={cat.id} className="flex min-h-10 items-center gap-2 rounded-lg border border-border/60 bg-background/50 px-3 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={newTrendCategories.includes(cat.id)}
+                      onChange={(e) => setNewTrendCategories((current) =>
+                        e.target.checked
+                          ? [...current, cat.id]
+                          : current.filter((value) => value !== cat.id),
+                      )}
+                      className="accent-amber-400"
+                    />
+                    {cat.emoji} {cat.title}
+                  </label>
+                ))}
+              </div>
+              <p className="text-[11px] text-muted-foreground">Тренд можно разместить в нескольких папках.</p>
+            </fieldset>
+          ) : null}
+
           <Button
             type="button"
             className="w-full bg-gold text-primary-foreground hover:bg-gold/90"
@@ -1250,7 +1328,13 @@ export function TrendsTab() {
         </div>
       ) : null}
 
-      {loading ? (
+      {catalog !== null ? (
+        <TrendShowcase
+          categories={catalog.filter((cat) => cat.is_visible)}
+          onRepeat={applyTrend}
+          onShare={openShareLink}
+        />
+      ) : loading || catalogLoading ? (
         <div className="flex justify-center py-12 text-muted-foreground">
           <Loader2 className="h-6 w-6 animate-spin" />
         </div>
@@ -1357,6 +1441,15 @@ export function TrendsTab() {
           ) : null}
         </DialogContent>
       </Dialog>
+
+      {isAdmin ? (
+        <TrendCategoryManager
+          open={categoryManagerOpen}
+          onOpenChange={setCategoryManagerOpen}
+          categories={catalog || []}
+          onRefresh={refreshCatalog}
+        />
+      ) : null}
 
       <TrendRunnerDialog
         trend={trendToRun}

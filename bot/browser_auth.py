@@ -219,8 +219,10 @@ async def trend_prompt_privacy_middleware(
     prompt_api_root = f"{miniapp_root}/api/prompts"
     task_detail_path = f"{miniapp_root}/api/task-detail"
     bootstrap_path = f"{miniapp_root}/api/bootstrap"
+    legacy_prompt_root = "/api/v1/prompts"
     is_prompt_api = bool(miniapp_root) and (
         request.path == prompt_api_root or request.path.startswith(prompt_api_root + "/")
+        or request.path == legacy_prompt_root or request.path.startswith(legacy_prompt_root + "/")
     )
     is_task_api = bool(miniapp_root) and request.path in {
         task_detail_path,
@@ -243,7 +245,7 @@ async def trend_prompt_privacy_middleware(
     try:
         raw_body = await request.json()
         request_body = raw_body if isinstance(raw_body, dict) else {}
-        init_data = str(request_body.get("init_data") or "")
+        init_data = str(request_body.get("init_data") or request.headers.get("X-Telegram-Init-Data") or "")
         telegram_id = verified_telegram_id_from_init_data(init_data, config.BOT_TOKEN)
         viewer_is_admin = bool(telegram_id and config.is_admin(telegram_id))
         if telegram_id:
