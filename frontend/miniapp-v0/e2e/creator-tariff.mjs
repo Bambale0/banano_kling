@@ -29,7 +29,7 @@ try {
     for (const model of ['seedance_2', 'seedance_2_5']) {
       const context = await browser.newContext({ viewport: { width: 390, height: 900 } })
       const page = await context.newPage()
-      const errors = [], requests = []
+      const errors = [], requests = [], quoteRequests = []
       page.on('pageerror', error => errors.push(error.message))
       await page.addInitScript(() => {
         window.Telegram = { WebApp: { initData: 'query_id=creator-browser-synthetic', initDataUnsafe: {}, ready() {}, expand() {}, onEvent() {}, offEvent() {} } }
@@ -57,8 +57,29 @@ try {
           else if (url.pathname.endsWith('/feed')) data = { ok: true, feed: [], models: [] }
           else if (url.pathname.endsWith('/prompts')) data = { ok: true, prompts: [] }
           else if (url.pathname.endsWith('/generate-video')) {
-            requests.push(route.request().postDataJSON())
-            status = 400; data = { ok: false, error: 'Synthetic rejection: no provider request' }
+            const payload = route.request().postDataJSON()
+            if (payload.pricing_quote_only === true || payload.seedance25_quote_only === true) {
+              // Read-only server quote: charge exactly measured input + requested output seconds.
+              quoteRequests.push(payload)
+              const outputSeconds = Number(payload.v_duration === -1 ? 5 : payload.v_duration)
+              const sourceSeconds = 18 // one source of 7 s plus another of 11 s.
+              const rate = model === 'seedance_2'
+                ? rates[profile].seedance_2 : rates[profile][payload.seedance25_resolution || '720p']
+              const cost = Math.round(rate * (outputSeconds + sourceSeconds) * 2) / 2
+              data = {
+                ok: true, quote_only: true,
+                quote_hash: `synthetic-measured-quote:${payload.prompt || ''}`,
+                cost, output_seconds: outputSeconds,
+                billable_seconds: outputSeconds + sourceSeconds,
+                source_video_seconds: sourceSeconds,
+                source_video_duration_seconds: sourceSeconds,
+                admin_free: false,
+              }
+            } else {
+              requests.push(payload)
+              status = 400
+              data = { ok: false, error: 'Synthetic rejection: no provider request' }
+            }
           } else if (/generate|repeat|remix|payment|trends\/run/.test(url.pathname)) throw new Error(`Unexpected mutation ${url.pathname}`)
           return route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) })
         }
@@ -72,13 +93,17 @@ try {
         await summary.getByText(String(totals[profile].seedance_2[5]), { exact: true }).waitFor()
         await page.getByRole('button', { name: 'Видео + Текст', exact: true }).click()
         await page.getByRole('button', { name: 'synthetic-one.mp4', exact: true }).click()
-        await summary.getByText(String(totals[profile].seedance_2[5] * 2), { exact: true }).waitFor()
         await page.getByRole('button', { name: 'synthetic-two.mp4', exact: true }).click()
-        await summary.getByText(String(totals[profile].seedance_2[5] * 2), { exact: true }).waitFor()
         await page.getByRole('button', { name: /10с/ }).click()
-        await summary.getByText(String(totals[profile].seedance_2[10] * 2), { exact: true }).waitFor()
         await page.locator('textarea').fill('Synthetic motion')
-        await page.getByRole('button', { name: /Запустить видео/ }).click()
+        assert.equal(quoteRequests.length, 0, 'No charges or unconfirmed quotes on reference selection')
+        const expectedCost = Math.round(rates[profile].seedance_2 * (10 + 18) * 2) / 2
+        await page.getByRole('button', { name: /Рассчитать точную стоимость/ }).click()
+        await summary.getByText(String(expectedCost), { exact: true }).waitFor()
+        await page.getByText(/Видеореференсы: 18 с/).waitFor()
+        assert.equal(quoteRequests.length, 1)
+        assert.equal(requests.length, 0, 'Read-only quote must not launch generation')
+        await page.getByRole('button', { name: /Подтвердить цену и запустить/ }).click()
       } else {
         const summary = page.getByText('Стоимость генерации', { exact: true }).locator('..')
         await summary.getByText(`${totals[profile]['720p'][5]}🍌`, { exact: true }).waitFor()
@@ -91,12 +116,29 @@ try {
         await summary.getByText(`${totals[profile]['720p'][6]}🍌`, { exact: true }).waitFor()
         await page.getByText('Для продвинутых: добавить URL или Asset ID', { exact: true }).click()
         await page.getByLabel('Видео — по одному URL / asset:// на строку', { exact: true }).fill('asset://synthetic-one\nasset://synthetic-two')
-        await summary.getByText(`${totals[profile]['720p'][6] * 2}🍌`, { exact: true }).waitFor()
+        const expectedCost = Math.round(rates[profile]['720p'] * (6 + 18) * 2) / 2
+        await summary.getByText(`${expectedCost}🍌`, { exact: true }).waitFor()
+        await page.getByText(/Видеореференсы: 18 с/).waitFor()
+        assert.equal(quoteRequests.length, 1)
+        assert.equal(requests.length, 0, 'Ordinary Seedance reference quote must be read-only')
+        const refreshedQuote = page.waitForResponse(response =>
+          new URL(response.url()).pathname.endsWith('/generate-video')
+          && response.request().postDataJSON()?.seedance25_quote_only === true
+          && response.request().postDataJSON()?.prompt === 'Synthetic motion',
+        )
         await page.getByLabel('Промпт для Seedance 2.5', { exact: true }).fill('Synthetic motion')
-        await page.getByRole('button', { name: /Создать видео ·/ }).click()
+        await refreshedQuote
+        const approve = page.getByRole('button', { name: /Создать видео ·/ })
+        await approve.waitFor()
+        await approve.click()
       }
-      await page.getByText('Synthetic rejection: no provider request', { exact: true }).waitFor()
+      await page.getByText('Synthetic rejection: no provider request', { exact: true }).first().waitFor()
       assert.equal(requests.length, 1)
+      assert.equal(quoteRequests.length, model === 'seedance_2' ? 1 : 2)
+      assert.equal(quoteRequests.at(-1).prompt, 'Synthetic motion')
+      assert.equal(quoteRequests.at(-1).v_reference_videos.length, 2)
+      assert.equal(quoteRequests.at(-1).v_duration, model === 'seedance_2' ? 10 : 6)
+      assert.equal(requests[0][model === 'seedance_2' ? 'pricing_quote_hash' : 'seedance25_reference_quote_hash'], 'synthetic-measured-quote:Synthetic motion')
       for (const key of ['tariff', 'profile', 'creator_tariff', 'billing_quote', 'charge_cost', 'cost_multiplier']) {
         assert.equal(Object.hasOwn(requests[0], key), false, `Client must not choose ${key}`)
       }
@@ -107,7 +149,7 @@ try {
       // Leaving and reopening resets the compose state; prices remain this viewer's.
       await page.getByRole('button', { name: 'Студия', exact: true }).click()
       await page.getByRole('button', { name: 'Видео', exact: true }).click()
-      console.log(`PASS ${profile} ${model}: personal rounded quote, quality/duration, ×2 once, no client tariff, rejected launch and navigation`)
+      console.log(`PASS ${profile} ${model}: input 18 s + requested output, exact server quote, explicit confirmation, no client tariff, safe rejection and navigation`)
       await context.close()
     }
   }

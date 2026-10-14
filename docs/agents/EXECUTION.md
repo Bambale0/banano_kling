@@ -2009,3 +2009,11 @@ Coverage: pure contract tests and existing chunk HTTP regression run locally wit
 - GitHub TG CI 1894 failed only in safe regression suite: 3721 passed, 110 skipped, 10 failed. Two were private Seedance trend contract tests that bypassed the new mandatory preview-and-approval request; eight were isolated pure pricing tests whose module stub did not implement the existing normalization dependency.
 - Regression repair (test-only; production code unchanged): update the isolated reference-policy stub to deduplicate and trim as the real public interface does; for valid private video trend tests obtain the server's quote first, assert preview does not launch or debit, then explicitly pass the hash. Invalid/oversize videos remain fail-closed. Do not bypass the actual approval gate.
 - Host Python unittest of isolated pricing tests: 8/8 passed; compileall passed. GitHub Python CI rerun is authoritative for full bot tests. Existing dirty production price.json and diagnostics remain untouched.
+
+
+### 2026-10-14 CI 1895 final browser regression
+
+- Safe backend regression passed: 3731 passed, 110 skipped; standalone Mini App browser E2E and other checks passed.
+- GitHub CI job 115898452976 failed only in e2e/creator-tariff.mjs:75: it still asserted the deleted presence multiplier (40 bananas) instead of a server-measured reference video quote.
+- Updated synthetic creator tariff browser test to quote 18 input seconds plus output with model/viewer rate, check read-only quote produces no launch, require hash on launch, refresh quote when prompt changes, and assert no client-controlled tariff. Local Chromium E2E passed all four combinations (standard/creator with Seedance 2/2.5).
+- Production remains on 177cf068 until protected branch checks pass, native squash merges PR305 and exact deploy is verified. No paid generation and no runtime price.json changes.
