@@ -270,7 +270,9 @@ def video_repeat_descriptors(
             plan = _legacy_selection_descriptor_plan(task)
         if plan is None:
             return None
-        cost_multiplier = float(apply_video_reference_cost(plan["model"], 1, [slot["url"] for slot in plan["videos"]]))
+        # Presence-only ×2 has been retired. Input duration is measured by the
+        # server when a repeater provides their actual video reference files.
+        cost_multiplier = 1.0
         if not isfinite(cost_multiplier) or cost_multiplier <= 0:
             raise VideoRepeatContractError("Не удалось определить стоимость повтора.")
         price_metadata = {}
