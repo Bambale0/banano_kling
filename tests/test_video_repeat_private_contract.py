@@ -1038,9 +1038,19 @@ async def test_typed_seedance_duration_quote_matches_actual_restored_quality_deb
     miniapp._get_repeat_source_card.return_value.update(model='seedance_2_5')
     monkeypatch.setattr(miniapp.preset_manager, 'get_video_cost_with_quality',
         lambda _model, duration, resolution: duration * (2 if resolution == '480p' else 5))
+    from copy import deepcopy
+
+    from bot import creator_tariff
+
+    rate = 2 if quality == '480p' else 5
+    prices = deepcopy(miniapp.preset_manager.get_price_config())
+    prices.setdefault('costs_reference', {}).setdefault('video_models', {}).setdefault('seedance_2_5', {}).setdefault('quality_costs', {})[quality] = rate
+    monkeypatch.setattr(miniapp.preset_manager, '_price_config', prices)
+    monkeypatch.setattr(creator_tariff, 'measure_video_reference_seconds', AsyncMock(return_value=10.0))
     descriptor = video_repeat_descriptors(entry.source)
     assert descriptor['pricing_quality'] == quality
-    assert descriptor['duration_costs']['6'] == (24 if quality == '480p' else 60)
+    assert descriptor['duration_costs']['6'] == 6 * rate
+    assert descriptor['reference_seconds_pending'] is True
     assert FIXED not in json.dumps(descriptor) and STYLE not in json.dumps(descriptor)
     async def delegate(request):
         return await public._public_miniapp_generate(request, await request.json())
@@ -1057,7 +1067,7 @@ async def test_typed_seedance_duration_quote_matches_actual_restored_quality_deb
         'v_duration': 6, 'v_ratio': '9:16', 'seedance25_resolution': '720p',
         'reference_images': ['https://example.test/own.png'], 'v_reference_videos': ['https://example.test/own.mp4']}))
     assert response.status == 200, response.text
-    miniapp.deduct_credits.assert_awaited_once_with(880102, descriptor['duration_costs']['6'])
+    miniapp.deduct_credits.assert_awaited_once_with(880102, 16 * rate)
     assert public.seedance_25_service.generate_video.await_args.kwargs['resolution'] == quality
 
 
