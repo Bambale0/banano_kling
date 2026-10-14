@@ -89,6 +89,7 @@ def identity_body(**overrides):
 
 @pytest.fixture
 def public_mocks(monkeypatch):
+    from copy import deepcopy
     from types import SimpleNamespace
 
     from bot import creator_tariff, miniapp
@@ -102,6 +103,11 @@ def public_mocks(monkeypatch):
     monkeypatch.setattr(public.fullstack, "_validate_seedance_sources", AsyncMock())
     # Synthetic retail rate: 4 bananas/sec, with 12.2s source and 13s output.
     monkeypatch.setattr(public.preset_manager, "get_video_cost_with_quality", lambda _m, d, _q: d * 4)
+    prices = deepcopy(public.preset_manager.get_price_config())
+    qualities = prices.setdefault('costs_reference', {}).setdefault('video_models', {}).setdefault('seedance_2_5', {}).setdefault('quality_costs', {})
+    qualities['720p'] = 4
+    qualities['480p'] = 4
+    monkeypatch.setattr(public.preset_manager, '_price_config', prices)
     for name, value in (("check_can_afford", True), ("deduct_credits", None), ("add_credits", None), ("get_or_create_user", user)):
         monkeypatch.setattr(miniapp, name, AsyncMock(return_value=value))
     monkeypatch.setattr(public, "_launch_provider", AsyncMock(return_value={"task_id": "paid-identity"}))
@@ -177,7 +183,7 @@ async def test_stale_or_missing_quote_cannot_charge(public_mocks, monkeypatch, c
     quote = json.loads((await public._public_miniapp_generate(request, body)).body)["seedance25_identity_quote"]
     body.update(seedance25_quote_only=False, seedance25_identity_quote=quote)
     if changed == "price":
-        monkeypatch.setattr(public.preset_manager, "get_video_cost_with_quality", lambda *_: 99)
+        public.preset_manager.get_price_config()['costs_reference']['video_models']['seedance_2_5']['quality_costs']['720p'] = 99
     elif changed == "duration":
         public.fullstack._validate_local_source.return_value = 15
     elif changed == "source":
