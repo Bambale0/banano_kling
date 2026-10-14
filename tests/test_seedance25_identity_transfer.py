@@ -183,7 +183,10 @@ async def test_stale_or_missing_quote_cannot_charge(public_mocks, monkeypatch, c
     quote = json.loads((await public._public_miniapp_generate(request, body)).body)["seedance25_identity_quote"]
     body.update(seedance25_quote_only=False, seedance25_identity_quote=quote)
     if changed == "price":
-        public.preset_manager.get_price_config()['costs_reference']['video_models']['seedance_2_5']['quality_costs']['720p'] = 99
+        # get_price_config() intentionally returns a deep copy. Change the
+        # backing fixture as a real tariff edit would, so the immutable quote
+        # is rejected before any debit.
+        public.preset_manager._price_config['costs_reference']['video_models']['seedance_2_5']['quality_costs']['720p'] = 99
     elif changed == "duration":
         public.fullstack._validate_local_source.return_value = 15
     elif changed == "source":
