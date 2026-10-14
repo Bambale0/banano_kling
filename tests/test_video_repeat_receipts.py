@@ -103,6 +103,14 @@ async def configure_actual_entry(monkeypatch, entry, model):
     monkeypatch.setattr(miniapp, 'missing_local_upload_sources', lambda _: [])
     monkeypatch.setattr(miniapp, 'touch_saved_references', AsyncMock())
     monkeypatch.setattr(miniapp.preset_manager, 'get_video_cost_with_quality', lambda *_: 1)
+    from copy import deepcopy
+    from bot import creator_tariff
+    prices = deepcopy(miniapp.preset_manager.get_price_config())
+    video_models = prices.setdefault('costs_reference', {}).setdefault('video_models', {})
+    for key in ('seedance_2', 'seedance_2_5'):
+        video_models.setdefault(key, {}).setdefault('quality_costs', {})['720p'] = 0.2
+    monkeypatch.setattr(miniapp.preset_manager, '_price_config', prices)
+    monkeypatch.setattr(creator_tariff, 'measure_video_reference_seconds', AsyncMock(return_value=5.0))
     monkeypatch.setattr(public.preview_module, '_price_quote', lambda _: 2)
     monkeypatch.setattr(public, '_validate_public_payload', AsyncMock())
     monkeypatch.setattr(miniapp, 'check_can_afford', AsyncMock(return_value=True))
