@@ -90,7 +90,7 @@ try {
       await page.getByRole('button', { name: 'Ссылка', exact: true }).click()
       const panel = page.getByRole('region', { name: 'Ссылка на публикацию', exact: true })
       if (name === 'ios') await panel.getByText(/Ссылка готова/).waitFor()
-      else await panel.getByText(/Автоматическое копирование недоступно/).waitFor()
+      else await panel.getByText(/Telegram не разрешил запись в буфер/).waitFor()
       const open = panel.getByRole('link', { name: 'Открыть ссылку', exact: true })
       const field = panel.getByRole('textbox', { name: 'Ссылка на публикацию', exact: true })
       assert.equal(await field.inputValue(), exactLink)
