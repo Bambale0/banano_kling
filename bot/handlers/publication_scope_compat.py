@@ -322,11 +322,19 @@ async def share_to_profile(
             or row["type"] not in database.FEED_PUBLIC_TYPES
             or row["status"] != "completed"
             or not row["result_url"]
-            or row["source_feed_gen_id"] is not None
             or not database._feed_result_urls(row)
         ):
             return None
 
+        # A derivative belongs to the paying user, not the source recipe.
+        # Never publish or grant repeat rights to private source references.
+        if database.generation_has_private_recipe(row):
+            prompt_visible = False
+            references_visible = False
+            reference_image_indices = []
+            reference_video_indices = []
+            repeat_reference_image_indices = []
+            repeat_reference_video_indices = []
         request_data = database._parse_json_dict(row["request_data"])
         image_candidates = database._feed_reference_image_candidates(request_data)
         video_candidates = database._feed_reference_video_candidates(request_data)
@@ -501,7 +509,7 @@ def _replace_publication_button(
     # Publication state is edited through one stable action.  Showing the
     # current scope as a second action made the result keyboard look as if it
     # could create another publication instead of updating the existing one.
-    label = "📤 Опубликовать"
+    label = "⚙️ Настроить публикацию" if scope != "private" else "📤 Опубликовать"
 
     rows: list[list[InlineKeyboardButton]] = []
     replaced = False
@@ -641,18 +649,47 @@ def _profile_blur_keyboard(task_id: str) -> InlineKeyboardMarkup:
 
 def _feed_confirmation_components(
     task_id: str,
+    *,
+    private_recipe: bool = False,
+    blurred: bool = False,
+    prompt_visible: bool = False,
+    references_visible: bool = False,
 ) -> tuple[str, InlineKeyboardMarkup]:
-    """Build the mandatory feed privacy confirmation with safe defaults."""
+    """Only allow safe publication controls for protected source recipes."""
+    if private_recipe:
+        from bot.handlers.generation import _publication_disclaimer_text
+
+        return (
+            _publication_disclaimer_text("feed") + "\n\n"
+            "Исходный промпт и референсы чужой работы или защищённого тренда "
+            "не публикуются и не передаются другим пользователям.\n\n"
+            f"Blur: <code>{'включён' if blurred else 'выключен'}</code>",
+            InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="👁 Убрать blur" if blurred else "🙈 Включить blur",
+                    callback_data=f"pubblur_{int(not blurred)}_{task_id}",
+                )],
+                [InlineKeyboardButton(
+                    text="✅ Опубликовать только результат",
+                    callback_data=f"feedpubok_{task_id}_0_0_{int(blurred)}",
+                )],
+                [InlineKeyboardButton(text="❌ Отмена", callback_data="ignore")],
+            ]),
+        )
     from bot.handlers.generation import (
         _feed_publication_keyboard,
         _feed_publication_text,
     )
 
-    return _feed_publication_text(), _feed_publication_keyboard(
+    return _feed_publication_text(
+        prompt_visible=prompt_visible,
+        references_visible=references_visible,
+        blurred=blurred,
+    ), _feed_publication_keyboard(
         task_id,
-        prompt_visible=False,
-        references_visible=False,
-        blurred=False,
+        prompt_visible=prompt_visible,
+        references_visible=references_visible,
+        blurred=blurred,
     )
 
 
@@ -666,8 +703,12 @@ async def choose_publication_scope(callback: types.CallbackQuery):
     scope = await get_publication_scope(task_id, user.id)
 
     rows: list[list[InlineKeyboardButton]] = []
-    if scope != "feed":
-        rows.append([InlineKeyboardButton(text="🌐 В общую ленту", callback_data=f"feedpub_{task_id}")])
+    rows.append([
+        InlineKeyboardButton(
+            text="⚙️ Настроить публикацию в ленте" if scope == "feed" else "🌐 В общую ленту",
+            callback_data=f"feedpub_{task_id}",
+        )
+    ])
     rows.append([InlineKeyboardButton(text="👤 Только в мой профиль", callback_data=f"profilepub_{task_id}")])
     if scope != "private":
         rows.append([InlineKeyboardButton(text="🗑 Убрать публикацию", callback_data=f"profilehide_{task_id}")])
@@ -684,13 +725,37 @@ async def publish_to_public_feed(callback: types.CallbackQuery):
     if not task:
         await callback.answer("Генерация не найдена", show_alert=True)
         return
-    text, markup = _feed_confirmation_components(task_id)
+    text, markup = _feed_confirmation_components(
+        task_id,
+        private_recipe=database.generation_has_private_recipe(task),
+        blurred=bool(task.get("feed_blurred")),
+        prompt_visible=bool(task.get("feed_prompt_visible")),
+        references_visible=bool(task.get("feed_references_visible")),
+    )
     await callback.message.answer(
         text,
         parse_mode="HTML",
         reply_markup=markup,
     )
     await callback.answer("Настройте видимость и подтвердите публикацию")
+
+
+@router.callback_query(F.data.startswith("pubblur_"))
+async def toggle_private_publication_blur(callback: types.CallbackQuery):
+    payload = (callback.data or "").replace("pubblur_", "", 1)
+    value, separator, task_id = payload.partition("_")
+    if not separator or value not in {"0", "1"} or not task_id:
+        await callback.answer("Некорректные настройки", show_alert=True)
+        return
+    _user, task = await _task_and_user(callback, task_id)
+    if not task or not database.generation_has_private_recipe(task):
+        await callback.answer("Публикация недоступна", show_alert=True)
+        return
+    text, markup = _feed_confirmation_components(
+        task_id, private_recipe=True, blurred=value == "1",
+    )
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=markup)
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("profilepub_"))
@@ -741,6 +806,8 @@ async def publish_only_to_profile_with_blur(callback: types.CallbackQuery):
         reply_markup=_published_feed_link_keyboard(
             publication_url,
             publication_bot_url,
+            task_id=str(task.get("task_id") or task_id),
+            bot_username=me.username,
         ),
         disable_web_page_preview=True,
     )

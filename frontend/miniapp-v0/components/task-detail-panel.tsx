@@ -177,6 +177,8 @@ export function TaskDetailPanel() {
   }
 
   const isPublished = Boolean(taskDetail?.is_profile_visible || taskDetail?.is_public_feed)
+  // Publishing a newly generated result does not grant access to its source recipe.
+  const canExposeRecipe = taskDetail?.prompt_actions_allowed !== false && !taskDetail?.prompt_hidden
   const canCopyPrompt = Boolean(taskDetail?.prompt && !taskDetail?.prompt_hidden)
 
   const handlePublish = async () => {
@@ -186,13 +188,13 @@ export function TaskDetailPanel() {
     setPublishBusy(true)
     try {
       const published = await publishGeneration(taskDetail.task_id, {
-          promptVisible: feedPromptVisible,
-          referencesVisible: feedReferencesVisible,
-          referenceImageIndices: [...selectedReferenceImages].sort((left, right) => left - right),
-          referenceVideoIndices: [...selectedReferenceVideos].sort((left, right) => left - right),
-          repeatReferenceImageIndices: [...selectedRepeatReferenceImages].sort((left, right) => left - right),
+          promptVisible: canExposeRecipe && feedPromptVisible,
+          referencesVisible: canExposeRecipe && feedReferencesVisible,
+          referenceImageIndices: canExposeRecipe ? [...selectedReferenceImages].sort((left, right) => left - right) : [],
+          referenceVideoIndices: canExposeRecipe ? [...selectedReferenceVideos].sort((left, right) => left - right) : [],
+          repeatReferenceImageIndices: canExposeRecipe ? [...selectedRepeatReferenceImages].sort((left, right) => left - right) : [],
           ...(taskDetail.type === 'video' ? {
-            repeatReferenceVideoIndices: [...selectedRepeatReferenceVideos].sort((left, right) => left - right),
+            repeatReferenceVideoIndices: canExposeRecipe ? [...selectedRepeatReferenceVideos].sort((left, right) => left - right) : [],
           } : {}),
           blurred: feedBlurred,
           publicationScope,
@@ -204,16 +206,16 @@ export function TaskDetailPanel() {
           publication_scope: published.publication_scope,
           is_adult_content: Boolean(published.is_adult_content),
           feed_interactions_enabled: published.feed_interactions_enabled,
-          feed_prompt_visible: feedPromptVisible,
-          feed_references_visible: Boolean(published.feed_references_visible),
+          feed_prompt_visible: canExposeRecipe && feedPromptVisible,
+          feed_references_visible: canExposeRecipe && Boolean(published.feed_references_visible),
           feed_reference_selection: {
-            images: [...selectedReferenceImages].sort((left, right) => left - right),
-            videos: [...selectedReferenceVideos].sort((left, right) => left - right),
+            images: canExposeRecipe ? [...selectedReferenceImages].sort((left, right) => left - right) : [],
+            videos: canExposeRecipe ? [...selectedReferenceVideos].sort((left, right) => left - right) : [],
           },
           feed_repeat_reference_selection: {
-            images: [...selectedRepeatReferenceImages].sort((left, right) => left - right),
+            images: canExposeRecipe ? [...selectedRepeatReferenceImages].sort((left, right) => left - right) : [],
             ...(taskDetail.type === 'video' ? {
-              videos: [...selectedRepeatReferenceVideos].sort((left, right) => left - right),
+              videos: canExposeRecipe ? [...selectedRepeatReferenceVideos].sort((left, right) => left - right) : [],
             } : {}),
           },
           feed_blurred: Boolean(published.feed_blurred),
@@ -292,8 +294,8 @@ export function TaskDetailPanel() {
   const canPublishToFeed = Boolean(
     taskDetail &&
       (taskDetail.type === 'image' || taskDetail.type === 'video') &&
-      taskDetail.prompt_actions_allowed !== false &&
-      !taskDetail.prompt_hidden
+      taskDetail.status === 'completed' &&
+      Boolean(taskDetail.result_url)
   )
   const canSavePrompt = Boolean(
     taskDetail &&
@@ -637,7 +639,14 @@ export function TaskDetailPanel() {
                     </button>
                   ) : null}
                   <h3 className="mb-2 text-xs font-semibold text-foreground">Что показать в публикации</h3>
-                  <div className="grid grid-cols-3 gap-2">
+                  {!canExposeRecipe ? (
+                    <p className="mb-3 rounded-lg border border-cyan/25 bg-cyan/5 p-3 text-xs text-muted-foreground">
+                      Можно публиковать и редактировать свой готовый результат. Промпт и исходные референсы чужого повтора или защищённого тренда останутся скрыты.
+                    </p>
+                  ) : null}
+                  <div className={cn('grid gap-2', canExposeRecipe ? 'grid-cols-3' : 'grid-cols-1')}>
+                        {canExposeRecipe ? (
+                          <>
                         <button
                           type="button"
                           onClick={() => setFeedPromptVisible((prev) => !prev)}
@@ -665,6 +674,8 @@ export function TaskDetailPanel() {
                           {feedReferencesVisible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
                           Рефы {referenceCount ? `(${feedReferencesVisible ? selectedReferenceCount : referenceCount})` : ''}
                         </button>
+                          </>
+                        ) : null}
                         <button
                           type="button"
                           onClick={() => setFeedBlurred((prev) => !prev)}
@@ -679,7 +690,7 @@ export function TaskDetailPanel() {
                           Blur
                         </button>
                       </div>
-                  {feedReferencesVisible && referenceCount > 0 ? (
+                  {canExposeRecipe && feedReferencesVisible && referenceCount > 0 ? (
                     <div className="mt-3 rounded-lg border border-border/50 bg-background/30 p-2.5">
                       <div className="mb-2 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
                         <span>Референсы в публикации</span>
@@ -725,7 +736,7 @@ export function TaskDetailPanel() {
                       </div>
                     </div>
                   ) : null}
-                  {(taskDetail.type === 'image' || taskDetail.type === 'video') ? (
+                  {canExposeRecipe && (taskDetail.type === 'image' || taskDetail.type === 'video') ? (
                     <div
                       role="group"
                       aria-labelledby="repeat-reference-permission-heading"

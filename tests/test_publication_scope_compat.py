@@ -78,7 +78,9 @@ def test_publication_result_uses_one_stable_publish_action(scope):
         if str(button.callback_data or "").startswith("pubscope_")
     ]
     assert len(publication_buttons) == 1
-    assert publication_buttons[0].text == "📤 Опубликовать"
+    assert publication_buttons[0].text == (
+        "📤 Опубликовать" if scope == "private" else "⚙️ Настроить публикацию"
+    )
     assert publication_buttons[0].callback_data == "pubscope_task-1"
 
 

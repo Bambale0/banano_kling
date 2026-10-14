@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { FeedTab } from '@/components/tabs/feed-tab'
 import { useApp } from '@/lib/app-context'
-import { fetchFeed, repeatFeedVideo } from '@/lib/api'
+import { fetchFeed, fetchTaskDetail, repeatFeedVideo } from '@/lib/api'
 import { openGenjutsu } from '@/lib/genjutsu-api'
 
 jest.mock('@/lib/genjutsu-api', () => ({ openGenjutsu: jest.fn() }))
@@ -11,6 +11,7 @@ jest.mock('@/lib/app-context', () => ({ useApp: jest.fn() }))
 jest.mock('@/lib/api', () => ({
   addFeedComment: jest.fn(),
   fetchFeed: jest.fn(),
+  fetchTaskDetail: jest.fn(),
   fetchFeedComments: jest.fn(),
   likeFeedItem: jest.fn(),
   removeFeedItem: jest.fn(),
@@ -131,6 +132,31 @@ describe('FeedTab editable video repeat', () => {
     expect(setActiveTab).not.toHaveBeenCalled()
     expect(mockedRepeatFeedVideo).not.toHaveBeenCalled()
   })
+  it('opens authenticated publication settings from own video in the feed, not for foreign posts', async () => {
+    const selectTask = jest.fn()
+    const task = {
+      task_id: 'owned-feed-video', type: 'video', model: 'seedance_2_5',
+      model_label: 'Seedance 2.5', status: 'completed', result_url: 'https://example.test/source.mp4',
+      is_public_feed: true, prompt_hidden: true, prompt_actions_allowed: false, prompt: '',
+    }
+    mockedUseApp.mockReturnValue({
+      state: { mode: 'live', user: { credits: 100, isAdmin: false }, imageModels: [], videoModels: [] },
+      feedDeepLink: null, consumeFeedDeepLink: jest.fn(), setActiveTab: jest.fn(),
+      selectTask, setPromptPreset: jest.fn(), setVideoPromptPreset: jest.fn(), openProfile: jest.fn(),
+    } as unknown as ReturnType<typeof useApp>)
+    mockedFetchFeed.mockResolvedValue({
+      feed: [{ ...videoItem, task_id: task.task_id, is_mine: true }],
+      models: [{ id: 'seedance_2_5', label: 'Seedance 2.5' }],
+    } as Awaited<ReturnType<typeof fetchFeed>>)
+    ;(fetchTaskDetail as jest.Mock).mockResolvedValue(task)
+    render(<FeedTab />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Открыть видео' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Настроить публикацию' }))
+    await waitFor(() => expect(fetchTaskDetail).toHaveBeenCalledWith('owned-feed-video'))
+    expect(selectTask).toHaveBeenCalledWith(task)
+    expect(screen.queryByText('SOURCE_AUTHOR_SECRET_PROMPT')).not.toBeInTheDocument()
+  })
+
   it('does not fall back to an unrelated model if Genjutsu linkage is missing', async () => {
     const setVideoPromptPreset = jest.fn()
     mockedUseApp.mockReturnValue({
