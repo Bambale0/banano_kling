@@ -91,15 +91,16 @@ def identity_body(**overrides):
 def public_mocks(monkeypatch):
     from types import SimpleNamespace
 
-    from bot import miniapp
+    from bot import creator_tariff, miniapp
     from bot.handlers import seedance_25_public_release as public
     user = SimpleNamespace(id=1, credits=1000)
     monkeypatch.setattr(miniapp, "_get_user_context", AsyncMock(return_value=(123, {"user": user})))
     monkeypatch.setattr(public.config, "is_admin", lambda _: False)
     monkeypatch.setattr(public, "_identity_local_path", lambda *_: "mock-owned-path")
     monkeypatch.setattr(public.fullstack, "_validate_local_source", AsyncMock(return_value=12.2))
+    monkeypatch.setattr(creator_tariff, "measure_video_reference_seconds", AsyncMock(return_value=12.2))
     monkeypatch.setattr(public.fullstack, "_validate_seedance_sources", AsyncMock())
-    # Current configured rate: 4 bananas/second; existing video-reference factor = 2.
+    # Synthetic retail rate: 4 bananas/sec, with 12.2s source and 13s output.
     monkeypatch.setattr(public.preset_manager, "get_video_cost_with_quality", lambda _m, d, _q: d * 4)
     for name, value in (("check_can_afford", True), ("deduct_credits", None), ("add_credits", None), ("get_or_create_user", user)):
         monkeypatch.setattr(miniapp, name, AsyncMock(return_value=value))
@@ -116,7 +117,7 @@ async def test_paid_identity_quote_debit_and_persistence_match(public_mocks):
     response = await public._public_miniapp_generate(request, body)
     assert response.status == 200
     quote = json.loads(response.body)
-    assert quote["cost"] == 104  # ceil(12.2) * 4 * 2
+    assert quote["cost"] == 101  # (ceil(12.2) output + 12.2 input) * 4, rounded
     assert quote["billing_duration"] == 13
     assert quote["source_video_duration_seconds"] == 12.2
     miniapp.deduct_credits.assert_not_awaited()
@@ -125,12 +126,12 @@ async def test_paid_identity_quote_debit_and_persistence_match(public_mocks):
     body.update(seedance25_quote_only=False, seedance25_identity_quote=quote["seedance25_identity_quote"])
     response = await public._public_miniapp_generate(request, body)
     assert response.status == 200
-    miniapp.deduct_credits.assert_awaited_once_with(123, 104)
+    miniapp.deduct_credits.assert_awaited_once_with(123, 101)
     payload = public._launch_provider.call_args.args[0]
     assert (payload["duration"], payload["ratio"], payload["billing_duration"]) == (-1, "adaptive", 13)
     record = public.generation_module.add_generation_task.call_args.kwargs
     assert record["prompt"] == "Keep the dance"
-    assert record["cost"] == record["request_data"]["charged_cost"] == 104
+    assert record["cost"] == record["request_data"]["charged_cost"] == 101
     assert record["request_data"]["seedance25_identity_role_version"] == "direct-edit-v1"
     assert record["request_data"]["seedance25_video_editing"] is True
     assert record["request_data"]["seedance25_identity_transfer"] is True
@@ -257,11 +258,11 @@ async def test_telegram_shows_current_quote_and_uses_callback_actor(public_mocks
     monkeypatch.setattr(public.generation_module, "deduct_credits", AsyncMock())
     monkeypatch.setattr(public.generation_module, "get_or_create_user", AsyncMock(return_value=SimpleNamespace(id=1)))
     await public._public_show_screen(bot_message, state, edit=False, actor_id=123)
-    assert "104" in bot_message.answer.call_args.args[0]
+    assert "101" in bot_message.answer.call_args.args[0]
     assert "Замена персонажа" in bot_message.answer.call_args.args[0]
-    assert data["seedance25_identity_quote"]["cost"] == 104
+    assert data["seedance25_identity_quote"]["cost"] == 101
     await public._public_message_launch(bot_message, state, "Keep the dance", actor_id=123)
-    public.generation_module.deduct_credits.assert_awaited_once_with(123, 104)
+    public.generation_module.deduct_credits.assert_awaited_once_with(123, 101)
     assert all(call.args[2] == 123 for call in owner_check.call_args_list)
 
 
@@ -335,7 +336,7 @@ async def test_paid_launch_captures_exact_kie_contract(public_mocks, monkeypatch
     assert payload["input"]["omni_reference_task_type"] == "edit"
     assert "identity_transfer" not in payload["input"] and "video_editing" not in payload["input"]
     assert "billing_duration" not in payload["input"]
-    miniapp.deduct_credits.assert_awaited_once_with(123, 104)
+    miniapp.deduct_credits.assert_awaited_once_with(123, 101)
 
 
 @pytest.mark.asyncio
@@ -482,7 +483,7 @@ async def test_explicit_identity_repeat_quotes_only_required_current_media(
         assert response.status == 200
         result = json.loads(response.body)
         assert result["quote_only"] is True
-        assert result["cost"] == 104
+        assert result["cost"] == 101
         restored = await request.json()
         assert restored["reference_images"] == body["reference_images"]
         assert restored["v_reference_videos"] == body["v_reference_videos"]
