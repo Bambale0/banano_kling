@@ -5841,10 +5841,12 @@ async def mark_task_delivery_status(
         old_json = task.request_data or "{}"
         request_data = _parse_json_dict(old_json)
         current_status = str(request_data.get("delivery_status") or "").strip().lower()
-        if current_status in TERMINAL_TASK_DELIVERY_STATUSES:
-            # Explicit confirmation of a real file send can upgrade link-only.
-            if current_status != "link_only" or normalized_status != "delivered":
-                return current_status == normalized_status
+        # Explicit confirmation of a real file send can upgrade link-only.
+        if (
+            current_status in TERMINAL_TASK_DELIVERY_STATUSES
+            and (current_status != "link_only" or normalized_status != "delivered")
+        ):
+            return current_status == normalized_status
 
         effective_status = normalized_status
         # Historical count increments on claims as well as status transitions.
@@ -5852,9 +5854,10 @@ async def mark_task_delivery_status(
         if normalized_status != "result_ready":
             attempts += 1
         has_link = bool(request_data.get("delivery_link_sent"))
-        if normalized_status == "pending":
-            if telegram_media_too_large(error) or attempts >= MAX_DELIVERY_ATTEMPTS:
-                effective_status = exhausted_delivery_status(has_link=has_link)
+        if normalized_status == "pending" and (
+            telegram_media_too_large(error) or attempts >= MAX_DELIVERY_ATTEMPTS
+        ):
+            effective_status = exhausted_delivery_status(has_link=has_link)
         if effective_status == "link_only" and not has_link:
             effective_status = "uncertain"
 
