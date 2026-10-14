@@ -1992,3 +1992,13 @@ Baseline ca3df2da85856ee593777a30555ee7e474fc6946. Observed generic prompt submi
 Implementation: strict complete recipe and explicit replacement keys for both WAN models; administrator check; media ownership/type/hash validation and atomic public-card/private-recipe insertion under the same storage lock as retention. Existing retention pins recipe_json, so saved references remain protected without global TTL changes. Public cards contain only presentation and slot metadata. No generation, payment or provider request is used by publication. External link slots and template user fields are rejected explicitly rather than silently discarded. Existing generated-task publisher remains available.
 
 Coverage: pure contract tests and existing chunk HTTP regression run locally without application/database imports. Full application tests cover both models, public privacy, compiled replacement order, foreign/nonadmin rejection, rollback, retention and no reactivation. These require official CI. Frontend implementation and independent final review pending. Relevant previously read diagnosing-bugs/debugger/webapp-testing playbooks used; shared checkout refresh remains unavailable after prior denial. Release requires exact CI/review and a user-facing report before merge. Real user publishing/repeat UI smoke remains distinct from paid generation.
+
+
+## 2026-10-14 PR305 release verification
+
+- Isolated worktree at /root/tanya-workspaces/video-billing-pr305; live tanyapi checkout and data/price.json untouched. PR source head 1d7e0916; tanyapi later incorporated PR308.
+- Resolved review findings: M4V/WebM local duration measurement; duplicate video normalization; stale quote refresh in Mini App; Telegram repeat missing-reference handling; explicit trend video quote-only and second-click approval to prevent unconfirmed debits.
+- Trend hash binds actor, trend, saved recipe, resolved hidden and uploaded references, quote seconds/rate revision. A missing/stale hash fails 409 before balance deduction and finalizes an idempotency claim.
+- Verified local Next.js static production build, TypeScript, targeted Jest and all 62 Jest suites / 476 tests, and Playwright repeat references flow at 320/390/430 px. Added backend hash, no-debit, format and dedup regression tests.
+- Host pytest blocked by missing aiogram: required Python CI must prove backend. No production price/config/migration/provider changes, no paid generation.
+- Remaining: exact-PR CI (including browser, PostgreSQL, bot, Docker), review, native squash auto-merge to tanyapi, exact-SHA deploy and postdeploy health/telemetry smoke. Do not claim deployed before checks.

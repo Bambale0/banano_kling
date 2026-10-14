@@ -1,11 +1,11 @@
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { Seedance25PublicForm } from './seedance25-public-form'
-import { generateSeedance25, quoteSeedance25Identity } from '@/lib/seedance25-api'
+import { generateSeedance25, quoteSeedance25Identity, quoteSeedance25Reference } from '@/lib/seedance25-api'
 import type { VideoPromptPreset } from '@/lib/types'
 
 jest.mock('@/lib/seedance25-api', () => ({
-  SEEDANCE25_MAX_PROMPT_LENGTH: 30000, SEEDANCE25_IDENTITY_MAX_PROMPT_LENGTH: 20480, generateSeedance25: jest.fn(), quoteSeedance25Identity: jest.fn(), uploadSeedance25Video: jest.fn(),
+  SEEDANCE25_MAX_PROMPT_LENGTH: 30000, SEEDANCE25_IDENTITY_MAX_PROMPT_LENGTH: 20480, generateSeedance25: jest.fn(), quoteSeedance25Identity: jest.fn(), quoteSeedance25Reference: jest.fn(), uploadSeedance25Video: jest.fn(),
 }))
 jest.mock('@/lib/api', () => ({ uploadFile: jest.fn() }))
 const quote = { ok: true, quote_only: true, cost: 88, billing_duration: 11, source_video_duration_seconds: 10.04,
@@ -19,6 +19,10 @@ const preset: VideoPromptPreset = {
 beforeEach(() => {
   jest.resetAllMocks()
   ;(quoteSeedance25Identity as jest.Mock).mockResolvedValue(quote)
+  ;(quoteSeedance25Reference as jest.Mock).mockResolvedValue({
+    ok: true, quote_only: true, quote_hash: 'normal-reference-quote', cost: 60,
+    source_video_duration_seconds: 10, output_seconds: 15, billable_seconds: 25, admin_free: false,
+  })
   ;(generateSeedance25 as jest.Mock).mockResolvedValue({ ok: true, task_id: 'mock', cost: 88, admin_free: false })
 })
 it('restores identity repeat with ordered roles and fresh quote before an explicit launch', async () => {
@@ -46,7 +50,7 @@ it('clears repeat lineage when returning to ordinary references without losing p
   fireEvent.click(screen.getByRole('button', { name: /По референсам Использовать/ }))
   expect(screen.getByText('front.png')).toBeInTheDocument()
   fireEvent.change(screen.getByLabelText('Длительность видео'), { target: { value: '15' } })
-  fireEvent.click(screen.getByRole('button', { name: /Создать видео/ }))
+  fireEvent.click(await screen.findByRole('button', { name: /Создать видео/ }))
   await waitFor(() => expect(generateSeedance25).toHaveBeenCalledWith(expect.objectContaining({
     sourceFeedGenId: null, identityTransfer: false, duration: 15, identityQuote: undefined,
   })))

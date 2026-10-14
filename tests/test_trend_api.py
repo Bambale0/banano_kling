@@ -1050,3 +1050,110 @@ async def test_seedance2_private_repeat_validates_actual_video_before_charge(
         launch.assert_awaited_once()
         assert launch.await_args.kwargs["trend"].provider_video_urls == tuple(videos)
     assert all(Path("static" + relative).is_file() for relative in relative_videos)
+
+
+def test_video_trend_confirmation_hash_tracks_actor_reference_and_price():
+    from dataclasses import replace
+    from bot.creator_tariff import resolve_video_quote
+    from bot.trend_api import TrustedTrendRun, _trend_video_quote_hash
+
+    trend = TrustedTrendRun(
+        trend_id=71,
+        kind="video",
+        prompt="Hidden admin prompt",
+        model="seedance_2",
+        ratio="9:16",
+        reference_urls=("https://example.test/me.jpg",),
+        settings={"kind": "video", "duration": 5, "quality": "720p"},
+        template_video_urls=("https://example.test/source.mp4",),
+    )
+    quote = resolve_video_quote(
+        "seedance_2", 5, "720p",
+        video_references=list(trend.provider_video_urls),
+        reference_video_seconds=6,
+    )
+    token = _trend_video_quote_hash(100, trend, quote)
+    assert token == _trend_video_quote_hash(100, trend, quote)
+    assert token != _trend_video_quote_hash(101, trend, quote)
+    assert token != _trend_video_quote_hash(100, replace(
+        trend, template_video_urls=("https://example.test/new-source.mp4",),
+    ), quote)
+    assert token != _trend_video_quote_hash(100, trend, replace(quote, cost=quote.cost + 1))
+
+
+@pytest.mark.asyncio
+async def test_video_trend_quote_is_read_only_and_requires_exact_price_approval(monkeypatch):
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from aiohttp import web
+
+    from bot import miniapp as miniapp_module
+    from bot import trend_api as service
+    from bot.creator_tariff import resolve_video_quote
+
+    trend = service.TrustedTrendRun(
+        trend_id=71, kind="video", prompt="Admin video recipe",
+        model="seedance_2", ratio="9:16",
+        reference_urls=("https://example.test/user.jpg",),
+        settings={"kind": "video", "scenario": "imgtxt", "duration": 5},
+        template_video_urls=("https://example.test/source.mp4",),
+    )
+    measured = resolve_video_quote(
+        "seedance_2", 5, "720p", ["https://example.test/source.mp4"],
+        reference_video_seconds=8.0,
+    )
+    monkeypatch.setattr(miniapp_module, "_get_user_context", AsyncMock(
+        return_value=(123, {"user": SimpleNamespace(id=9, credits=100)}),
+    ))
+    monkeypatch.setattr(service, "get_prompt_by_id", AsyncMock(
+        return_value={"id": 71, "model": "seedance_2", "generation_settings": {}},
+    ))
+    monkeypatch.setattr(service, "trusted_trend_run", lambda *_args, **_kwargs: trend)
+    quote = AsyncMock(return_value=measured)
+    launch = AsyncMock(return_value=web.json_response({"ok": True, "task_id": "test-video"}))
+    claim = AsyncMock(return_value={"claimed": True, "status": "processing"})
+    finish = AsyncMock(return_value=True)
+    monkeypatch.setattr(service, "_quote_trend_video", quote)
+    monkeypatch.setattr(service, "_run_video_trend", launch)
+    monkeypatch.setattr(service, "reserve_trend_run_claim", claim)
+    monkeypatch.setattr(service, "complete_trend_run_claim", finish)
+
+    class Request:
+        app = {}
+        def __init__(self, **fields):
+            self.fields = fields
+        async def json(self):
+            return {
+                "init_data": "synthetic", "trend_id": 71,
+                "reference_urls": ["https://example.test/user.jpg"],
+                **self.fields,
+            }
+
+    preview = await service.miniapp_run_trend(Request(pricing_quote_only=True))
+    preview_payload = json.loads(preview.text)
+    assert preview.status == 200
+    assert preview_payload["quote_only"] is True
+    assert preview_payload["source_video_seconds"] == 8
+    assert preview_payload["output_seconds"] == 5
+    assert preview_payload["billable_seconds"] == 13
+    assert preview_payload["cost"] == measured.cost
+    claim.assert_not_awaited()
+    launch.assert_not_awaited()
+
+    denied = await service.miniapp_run_trend(Request(
+        client_request_id="synthetic_denied",
+    ))
+    assert denied.status == 409
+    assert json.loads(denied.text)["code"] == "stale_quote"
+    launch.assert_not_awaited()
+    finish.assert_awaited_once()
+    assert finish.await_args.kwargs["status"] == "failed"
+
+    approved = await service.miniapp_run_trend(Request(
+        client_request_id="synthetic_approved",
+        pricing_quote_hash=preview_payload["quote_hash"],
+    ))
+    assert approved.status == 200
+    launch.assert_awaited_once()
+    assert launch.await_args.kwargs["billing_quote"] == measured

@@ -214,3 +214,51 @@ describe('runTrend', () => {
     expect(source).not.toContain('<QualitySelect')
   })
 })
+
+
+describe('trend video quote confirmation', () => {
+  it('quotes typed references without reserving an id or starting generation', async () => {
+    const { quoteTrendVideo } = await import('../trend-api')
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify({
+        ok: true, quote_only: true, cost: 15, quote_hash: 'measured-quote',
+        source_video_seconds: 10, output_seconds: 5, billable_seconds: 15,
+        admin_free: false,
+      }),
+    })
+    global.fetch = fetchMock as unknown as typeof fetch
+    const result = await quoteTrendVideo(
+      71, ['https://example.test/face.jpg', 'https://example.test/clip.mp4'], {},
+      [
+        { media_type: 'image', position: 1, url: 'https://example.test/face.jpg' },
+        { media_type: 'video', position: 1, url: 'https://example.test/clip.mp4' },
+      ],
+    )
+    expect(result.cost).toBe(15)
+    const payload = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))
+    expect(payload.pricing_quote_only).toBe(true)
+    expect(payload).not.toHaveProperty('client_request_id')
+    expect(payload).not.toHaveProperty('pricing_quote_hash')
+    expect(payload.reference_inputs).toHaveLength(2)
+  })
+
+  it('sends only an approved hash on an idempotent paid launch', async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify({
+        ok: true, status: 'queued', task_id: 'confirmed-trend',
+        task_type: 'video', credits: 9, cost: 15,
+        model: 'seedance_2', model_label: 'Seedance 2',
+        aspect_ratio: '9:16', duration: 5, prompt_hidden: true,
+        prompt_actions_allowed: false, trend_id: 71,
+      }),
+    })
+    global.fetch = fetchMock as unknown as typeof fetch
+    await runTrend(71, ['https://example.test/me.jpg'], {}, 'stable-request-id', [], 'approved-quote')
+    const payload = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))
+    expect(payload.pricing_quote_hash).toBe('approved-quote')
+    expect(payload.client_request_id).toBe('stable-request-id')
+    expect(payload).not.toHaveProperty('cost')
+  })
+})

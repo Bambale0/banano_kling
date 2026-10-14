@@ -16,6 +16,8 @@ import { useApp } from '@/lib/app-context'
 import { uploadFile } from '@/lib/api'
 import {
   createTrendRunRequestId,
+  quoteTrendVideo,
+  type TrendVideoQuote,
   runPinterestRepeatTrend,
   runTrend as runTrendApi,
   type TrendReferenceInput,
@@ -116,6 +118,7 @@ export function TrendRunnerDialog({
   const [pinterestModel, setPinterestModel] = useState<PinterestModel>('banana_pro')
   const [userValues, setUserValues] = useState<Record<string, string>>({})
   const [trendPreviewFailed, setTrendPreviewFailed] = useState(false)
+  const [approvedTrendQuote, setApprovedTrendQuote] = useState<{ fingerprint: string; quote: TrendVideoQuote } | null>(null)
 
   const pinterestRepeat = isPinterestRepeatItem(trend)
   const repeatCost = formatTrendRepeatCost(trend?.repeat_cost)
@@ -156,6 +159,12 @@ export function TrendRunnerDialog({
   const completedReferences = uploadedReferences.filter(
     (reference): reference is UploadedFile => Boolean(reference),
   )
+  const currentTrendQuoteFingerprint = trend
+    ? trendRunFingerprint(trend.id, completedReferences.map((reference) => reference.url), userValues)
+    : ''
+  const confirmedTrendQuote = approvedTrendQuote?.fingerprint === currentTrendQuoteFingerprint
+    ? approvedTrendQuote.quote
+    : null
   const parsedHeight = parseOptionalNumber(heightCm)
   const parsedWeight = parseOptionalNumber(weightKg)
   const validHeight = parsedHeight !== null && parsedHeight >= 120 && parsedHeight <= 230
@@ -179,6 +188,7 @@ export function TrendRunnerDialog({
 
   const resetRunner = useCallback(() => {
     trendRunRequestRef.current = null
+    setApprovedTrendQuote(null)
     setPhase('idle')
     setError(null)
     setHeightCm('')
@@ -430,10 +440,19 @@ export function TrendRunnerDialog({
       refs: string[],
       values: Record<string, string>,
     ) => typedSlots
-      ? runTrendApi(trendId, refs, values, clientRequestId, referenceInputs)
-      : runTrendApi(trendId, refs, values, clientRequestId)
+      ? runTrendApi(trendId, refs, values, clientRequestId, referenceInputs, confirmedTrendQuote?.quote_hash)
+      : runTrendApi(trendId, refs, values, clientRequestId, [], confirmedTrendQuote?.quote_hash)
 
     try {
+      if (!pinterestRepeat && isVideoTrend && !confirmedTrendQuote) {
+        const quote = await quoteTrendVideo(trend.id, referenceUrls, userValues, referenceInputs)
+        setApprovedTrendQuote({
+          fingerprint: trendRunFingerprint(trend.id, referenceUrls, userValues),
+          quote,
+        })
+        setPhase('idle')
+        return
+      }
       const result = pinterestRepeat
         ? await runPinterestRepeatTrend(trend.id, referenceUrls, {
             heightCm: parseOptionalNumber(heightCm) as number,
@@ -442,12 +461,14 @@ export function TrendRunnerDialog({
           })
         : await runTrend(trend.id, referenceUrls, userValues)
       trendRunRequestRef.current = null
+      setApprovedTrendQuote(null)
       addTask(result.task)
       setCredits(result.credits)
       if (result.detail) setTaskDetail(result.detail)
       selectTask(result.task)
       onOpenChange(false)
     } catch (cause) {
+      setApprovedTrendQuote(null)
       if (
         !pinterestRepeat &&
         (!(cause instanceof TrendRunRequestError) || !cause.retrySameRequest)
@@ -923,6 +944,12 @@ export function TrendRunnerDialog({
           </p>
         ) : null}
 
+        {isVideoTrend && confirmedTrendQuote && !pinterestRepeat ? (
+          <p role="status" className="rounded-xl border border-gold/30 bg-gold/5 p-3 text-sm text-foreground">
+            Видеореференсы: {confirmedTrendQuote.source_video_seconds} с + генерация: {confirmedTrendQuote.output_seconds} с.
+            Итого {confirmedTrendQuote.billable_seconds} с; списание {confirmedTrendQuote.cost}🍌.
+          </p>
+        ) : null}
         <Button
           type="button"
           disabled={busy || !readyToGenerate}
@@ -938,9 +965,13 @@ export function TrendRunnerDialog({
             ? 'Генерирую…'
             : pinterestRepeat
               ? 'Создать →'
-              : repeatCost
-                ? 'Сгенерировать · ' + repeatCost + '🍌'
-                : 'Сгенерировать'}
+              : isVideoTrend
+                ? confirmedTrendQuote
+                  ? 'Подтвердить ' + confirmedTrendQuote.cost + '🍌 и запустить'
+                  : 'Рассчитать точную стоимость'
+                : repeatCost
+                  ? 'Сгенерировать · ' + repeatCost + '🍌'
+                  : 'Сгенерировать'}
         </Button>
 
         {pinterestRepeat && !readyToGenerate ? (

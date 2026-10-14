@@ -6,6 +6,7 @@ import { useApp } from '@/lib/app-context'
 import { uploadFile } from '@/lib/api'
 import {
   createTrendRunRequestId,
+  quoteTrendVideo,
   runTrend,
   TrendRunRequestError,
 } from '@/lib/trend-api'
@@ -37,6 +38,7 @@ jest.mock('@/lib/trend-api', () => {
   return {
     createTrendRunRequestId: jest.fn(() => 'trend-request-stable'),
     runTrend: jest.fn(),
+    quoteTrendVideo: jest.fn(),
     runPinterestRepeatTrend: jest.fn(),
     TrendRunRequestError: MockTrendRunRequestError,
   }
@@ -45,6 +47,7 @@ jest.mock('@/lib/trend-api', () => {
 const mockedUseApp = useApp as jest.MockedFunction<typeof useApp>
 const mockedUploadFile = uploadFile as jest.MockedFunction<typeof uploadFile>
 const mockedRunTrend = runTrend as jest.MockedFunction<typeof runTrend>
+const mockedQuoteTrendVideo = quoteTrendVideo as jest.MockedFunction<typeof quoteTrendVideo>
 const mockedCreateTrendRunRequestId = createTrendRunRequestId as jest.MockedFunction<
   typeof createTrendRunRequestId
 >
@@ -110,6 +113,10 @@ describe('TrendRunnerDialog user fields', () => {
       type: 'image',
       size: 123,
     })
+    mockedQuoteTrendVideo.mockResolvedValue({
+      ok: true, quote_only: true, cost: 20, quote_hash: 'verified-video-trend',
+      source_video_seconds: 0, output_seconds: 5, billable_seconds: 5, admin_free: false,
+    })
     mockedRunTrend.mockResolvedValue({
       task: {
         task_id: 'trend-task-1',
@@ -139,7 +146,7 @@ describe('TrendRunnerDialog user fields', () => {
     expect(screen.getByText('Возраст *')).toBeInTheDocument()
     expect(screen.getByText(/Скрытый prompt останется скрытым/)).toBeInTheDocument()
     expect(screen.getByText(/Одежда, украшения, предметы.*применятся автоматически/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Сгенерировать · 20🍌/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Рассчитать точную стоимость' })).toBeInTheDocument()
 
     const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement
     fireEvent.change(fileInput, {
@@ -148,8 +155,11 @@ describe('TrendRunnerDialog user fields', () => {
     await waitFor(() => expect(mockedUploadFile).toHaveBeenCalledTimes(1))
 
     fireEvent.change(ageInput, { target: { value: '31' } })
-    const generateButton = screen.getByRole('button', { name: /Сгенерировать/ })
+    const generateButton = screen.getByRole('button', { name: /Рассчитать точную стоимость|Подтвердить 20🍌 и запустить/ })
     await waitFor(() => expect(generateButton).toBeEnabled())
+    fireEvent.click(generateButton)
+    expect(mockedRunTrend).not.toHaveBeenCalled()
+    await screen.findByRole('button', { name: /Подтвердить 20🍌 и запустить/ })
     fireEvent.click(generateButton)
 
     await waitFor(() =>
@@ -158,6 +168,8 @@ describe('TrendRunnerDialog user fields', () => {
         ['https://example.test/portrait.jpg'],
         { Возраст: '31' },
         expect.any(String),
+        [],
+        'verified-video-trend',
       ),
     )
     expect(screen.queryByText(/Birthday scene|Happy birthday/)).not.toBeInTheDocument()
@@ -196,12 +208,16 @@ describe('TrendRunnerDialog user fields', () => {
       target: { value: '31' },
     })
 
-    const generateButton = screen.getByRole('button', { name: /Сгенерировать/ })
+    const generateButton = screen.getByRole('button', { name: /Рассчитать точную стоимость|Подтвердить 20🍌 и запустить/ })
     await waitFor(() => expect(generateButton).toBeEnabled())
+    fireEvent.click(generateButton)
+    await screen.findByRole('button', { name: /Подтвердить 20🍌 и запустить/ })
     fireEvent.click(generateButton)
     expect(await screen.findByText('Временная ошибка')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: /Сгенерировать/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Рассчитать точную стоимость/ }))
+    await screen.findByRole('button', { name: /Подтвердить 20🍌 и запустить/ })
+    fireEvent.click(screen.getByRole('button', { name: /Подтвердить 20🍌 и запустить/ }))
     await waitFor(() => expect(mockedRunTrend).toHaveBeenCalledTimes(2))
 
     const firstId = mockedRunTrend.mock.calls[0][3]
@@ -252,8 +268,10 @@ describe('TrendRunnerDialog user fields', () => {
     })
     await waitFor(() => expect(mockedUploadFile).toHaveBeenCalledWith('video_reference', expect.any(File)))
 
-    const generateButton = screen.getByRole('button', { name: /Сгенерировать/ })
+    const generateButton = screen.getByRole('button', { name: /Рассчитать точную стоимость|Подтвердить 20🍌 и запустить/ })
     await waitFor(() => expect(generateButton).toBeEnabled())
+    fireEvent.click(generateButton)
+    await screen.findByRole('button', { name: /Подтвердить 20🍌 и запустить/ })
     fireEvent.click(generateButton)
 
     await waitFor(() => expect(mockedRunTrend).toHaveBeenCalledWith(
@@ -265,6 +283,7 @@ describe('TrendRunnerDialog user fields', () => {
         { media_type: 'image', position: 1, url: 'https://example.test/face.jpg' },
         { media_type: 'video', position: 1, url: 'https://example.test/motion.mp4' },
       ],
+      'verified-video-trend',
     ))
   })
 })

@@ -566,6 +566,9 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
         // A changed tariff or source must be reviewed before another explicit launch.
         setQuoteState(null)
         setQuoteAttempt((value) => value + 1)
+      } else if (hasVideoReference) {
+        setNormalQuoteState(null)
+        setNormalQuoteAttempt((value) => value + 1)
       }
     } finally {
       setSubmitting(false)

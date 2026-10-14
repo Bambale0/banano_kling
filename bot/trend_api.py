@@ -741,11 +741,51 @@ async def _run_image_trend(
         raise
 
 
+async def _quote_trend_video(telegram_id: int, trend: TrustedTrendRun):
+    """Price the exact server-assembled recipe before a trend video can debit."""
+    from bot import miniapp as miniapp_module
+
+    model = miniapp_module._resolve_gemini_omni_model(
+        trend.model, str(trend.settings.get("scenario") or "imgtxt"),
+    )
+    duration = _int_setting(trend.settings, "duration", 5)
+    return await quote_video_for_actor(
+        telegram_id, model, duration,
+        miniapp_module._video_pricing_quality(
+            model,
+            str(trend.settings.get("veo_resolution") or "720p"),
+            str(trend.settings.get("omni_resolution") or "720p"),
+        ),
+        trend.provider_video_urls,
+    )
+
+
+def _trend_video_quote_hash(
+    telegram_id: int, trend: TrustedTrendRun, billing_quote: Any,
+) -> str:
+    """Bind approval to the actor, template, resolved inputs and current tariff."""
+    snapshot = {
+        "actor": telegram_id,
+        "trend_id": trend.trend_id,
+        "prompt": trend.prompt,
+        "settings": trend.settings,
+        "image_urls": trend.provider_image_urls,
+        "video_urls": trend.provider_video_urls,
+        "audio_urls": trend.provider_audio_urls,
+        "quote": billing_quote.to_dict(),
+    }
+    return hashlib.sha256(json.dumps(
+        snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")).hexdigest()
+
+
 async def _run_video_trend(
     *,
     telegram_id: int,
     user: Any,
     trend: TrustedTrendRun,
+    billing_quote: Any | None = None,
 ) -> web.Response:
     from bot import miniapp as miniapp_module
 
@@ -824,11 +864,8 @@ async def _run_video_trend(
     )
     veo_resolution = str(trend.settings.get("veo_resolution") or "720p")
     omni_resolution = str(trend.settings.get("omni_resolution") or "720p")
-    billing_quote = await quote_video_for_actor(
-        telegram_id, effective_model, duration,
-        miniapp_module._video_pricing_quality(effective_model, veo_resolution, omni_resolution),
-        trend.provider_video_urls,
-    )
+    if billing_quote is None:
+        billing_quote = await _quote_trend_video(telegram_id, trend)
     cost = billing_quote.cost
 
     debited, debit_error = await _debit_for_generation(telegram_id, user, cost)
@@ -1022,6 +1059,7 @@ async def miniapp_run_trend(request: web.Request) -> web.Response:
     try:
         body = await request.json()
         parsed = parse_trend_run_request(body)
+        quote_only = body.get("pricing_quote_only") is True
 
         from bot import miniapp as miniapp_module
 
@@ -1043,7 +1081,7 @@ async def miniapp_run_trend(request: web.Request) -> web.Response:
                 "error": "Откройте тренд в обновлённом редакторе Wan: он сохраняет все референсы и рассчитывает стоимость перед запуском.",
                 "retry_same_request": False}, status=409)
 
-        if parsed.client_request_id:
+        if parsed.client_request_id and not quote_only:
             claim_context = (int(user.id), parsed.trend_id, parsed.client_request_id)
             claim = await reserve_trend_run_claim(
                 user_id=claim_context[0],
@@ -1142,11 +1180,46 @@ async def miniapp_run_trend(request: web.Request) -> web.Response:
             except TrendReferenceStorageError as exc:
                 raise TrendRunValidationError(str(exc)) from exc
 
+        if quote_only and trend.kind != "video":
+            raise TrendRunValidationError("Точная видеокотировка доступна только для видео-тренда")
+
         if trend.kind == "video":
+            try:
+                billing_quote = await _quote_trend_video(telegram_id, trend)
+            except ValueError as error:
+                raise TrendRunValidationError(str(error)) from error
+            quote_hash = _trend_video_quote_hash(telegram_id, trend, billing_quote)
+            if quote_only:
+                return web.json_response({
+                    "ok": True,
+                    "quote_only": True,
+                    "cost": billing_quote.cost,
+                    "quote_hash": quote_hash,
+                    "source_video_seconds": billing_quote.input_video_seconds,
+                    "output_seconds": billing_quote.duration,
+                    "billable_seconds": billing_quote.billable_seconds,
+                    "admin_free": billing_quote.charge_cost == 0,
+                })
+            if trend.provider_video_urls and str(body.get("pricing_quote_hash") or "") != quote_hash:
+                response = web.json_response({
+                    "ok": False,
+                    "code": "stale_quote",
+                    "error": "Стоимость или референсы изменились. Рассчитайте цену заново.",
+                    "retry_same_request": False,
+                }, status=409)
+                if claim_reserved and claim_context:
+                    await _safe_complete_trend_run_claim(
+                        claim_context=claim_context,
+                        status="failed",
+                        http_status=409,
+                        response_payload=_trend_response_payload(response),
+                    )
+                return response
             response = await _run_video_trend(
                 telegram_id=telegram_id,
                 user=user,
                 trend=trend,
+                billing_quote=billing_quote,
             )
         else:
             response = await _run_image_trend(

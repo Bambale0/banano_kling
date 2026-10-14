@@ -49,6 +49,11 @@ const savedFrame: UploadedFile = {
   size: 0,
 }
 
+const measuredVideoQuote = {
+  quote_hash: 'test-measured-quote', cost: 15, source_video_seconds: 10,
+  output_seconds: 5, billable_seconds: 15, admin_free: false,
+}
+
 describe('VideoGeneratorForm repeat photo references', () => {
   it('uses a saved photo reference without a separate start-image field', async () => {
     const onSubmit = jest.fn().mockResolvedValue(undefined)
@@ -82,7 +87,7 @@ describe('VideoGeneratorForm repeat photo references', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: /Запустить видео/i }))
+    fireEvent.click(screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость|Подтвердить цену и запустить/i }))
     await waitFor(() => expect(onSubmit).toHaveBeenCalled())
     expect(onSubmit.mock.calls[0][0].startImage).toBeNull()
     expect(onSubmit.mock.calls[0][0].references).toEqual([savedFrame.url])
@@ -113,7 +118,7 @@ describe('VideoGeneratorForm repeat photo references', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'saved-frame.jpg' }))
     expect(screen.queryByText('Загрузите видео-референс')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: /Запустить видео/i }))
+    fireEvent.click(screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость|Подтвердить цену и запустить/i }))
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalled())
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
@@ -140,7 +145,7 @@ describe('private video repeat prompt boundary', () => {
     fireEvent.change(textbox, { target: { value: 'My additional instruction' } })
     view.rerender(<VideoGeneratorForm {...props} promptPreset={hidden} onPromptPresetConsumed={() => undefined} />)
     expect(textbox).toHaveValue('My additional instruction')
-    fireEvent.click(screen.getByRole('button', { name: /Запустить видео/i }))
+    fireEvent.click(screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость|Подтвердить цену и запустить/i }))
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'My additional instruction', sourceFeedGenId: 42 })))
     view.rerender(<VideoGeneratorForm {...props} promptPreset={{ ...hidden, sourceFeedGenId: 43 }} />)
     expect(textbox).toHaveValue('')
@@ -173,9 +178,10 @@ describe('video repeat replacement slots', () => {
   it('requires typed replacements and submits them in slot order, never the hidden source refs', async () => {
     const onSubmit = jest.fn().mockResolvedValue(undefined)
     const { container } = render(<VideoGeneratorForm models={models} onSubmit={onSubmit} isSubmitting={false} credits={100}
+      onQuote={jest.fn().mockResolvedValue(measuredVideoQuote)}
       promptPreset={{ ...descriptorPreset, initialPhotoReferences: [{ ...savedFrame, url: 'https://example.test/private-source.jpg' }] }}
       savedImageReferences={[savedFrame, secondFrame]} savedVideoReferences={[savedVideo]} />)
-    const launch = screen.getByRole('button', { name: /Запустить видео/i })
+    const launch = screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость|Подтвердить цену и запустить/i })
     expect(launch).toBeDisabled()
     expect(screen.getByText('Сохранено автором: 2')).toBeInTheDocument()
     expect(container.innerHTML).not.toContain('private-source.jpg')
@@ -184,6 +190,9 @@ describe('video repeat replacement slots', () => {
     expect(launch).toBeDisabled()
     fireEvent.click(within(screen.getByRole('group', { name: 'Первый кадр · Фото 1' })).getByRole('button', { name: 'saved-frame.jpg' }))
     expect(launch).toBeEnabled()
+    fireEvent.click(launch)
+    await screen.findByText(/Видеореференсы: 10 с/)
+    expect(onSubmit).not.toHaveBeenCalled()
     fireEvent.click(launch)
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
       sourceFeedGenId: 42, prompt: '', startImage: null,
@@ -201,12 +210,15 @@ describe('video repeat slot lifecycle', () => {
   it('can repeat all-fixed inputs without extra uploads and prevents duplicate clicks', async () => {
     let finish!: () => void
     const onSubmit = jest.fn(() => new Promise<void>((resolve) => { finish = resolve }))
-    render(<VideoGeneratorForm models={models} onSubmit={onSubmit} isSubmitting={false} credits={100} promptPreset={fixed} />)
-    const launch = screen.getByRole('button', { name: /Запустить видео/i })
+    render(<VideoGeneratorForm models={models} onSubmit={onSubmit} onQuote={jest.fn().mockResolvedValue(measuredVideoQuote)} isSubmitting={false} credits={100} promptPreset={fixed} />)
+    const launch = screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость|Подтвердить цену и запустить/i })
     expect(launch).toBeEnabled()
     fireEvent.click(launch)
+    await screen.findByText(/Видеореференсы: 10 с/)
+    expect(onSubmit).not.toHaveBeenCalled()
     fireEvent.click(launch)
-    expect(onSubmit).toHaveBeenCalledTimes(1)
+    fireEvent.click(launch)
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ references: [], videoReferences: [] }))
     finish()
     await waitFor(() => expect(screen.queryByRole('group', { name: 'Референсы повтора' })).not.toBeInTheDocument())
@@ -215,29 +227,31 @@ describe('video repeat slot lifecycle', () => {
     const props = { models, onSubmit: jest.fn(), isSubmitting: false, credits: 100 }
     const view = render(<VideoGeneratorForm {...props} promptPreset={{ ...fixed, repeatReferenceSlots: { ...fixed.repeatReferenceSlots!, available: false } }} />)
     expect(screen.getByRole('alert')).toHaveTextContent('Откройте публикацию заново')
-    expect(screen.getByRole('button', { name: /Запустить видео/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость|Подтвердить цену и запустить/i })).toBeDisabled()
     view.rerender(<VideoGeneratorForm {...props} promptPreset={fixed} />)
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Запустить видео/i })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость|Подтвердить цену и запустить/i })).toBeEnabled()
     view.rerender(<VideoGeneratorForm {...props} promptPreset={{ ...fixed, repeatReferenceSlots: { ...fixed.repeatReferenceSlots!, version: 2 } as never }} />)
-    expect(screen.getByRole('button', { name: /Запустить видео/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость|Подтвердить цену и запустить/i })).toBeDisabled()
   })
   it('blocks a typed repeat when its source model is unavailable', () => {
     render(<VideoGeneratorForm models={models} onSubmit={jest.fn()} isSubmitting={false} credits={100} promptPreset={{ ...fixed, model: 'missing-model' }} />)
     expect(screen.getByRole('alert')).toHaveTextContent('Откройте публикацию заново')
-    expect(screen.getByRole('button', { name: /Запустить видео/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость|Подтвердить цену и запустить/i })).toBeDisabled()
   })
   it('blocks a rejected stale recipe until it is reopened and keeps user prompt edits', async () => {
-    const props = { models, onSubmit: jest.fn().mockRejectedValue(new Error('Permission changed')), isSubmitting: false, credits: 100 }
+    const props = { models, onSubmit: jest.fn().mockRejectedValue(new Error('Permission changed')), onQuote: jest.fn().mockResolvedValue(measuredVideoQuote), isSubmitting: false, credits: 100 }
     const view = render(<VideoGeneratorForm {...props} promptPreset={fixed} />)
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'My adjustment' } })
-    fireEvent.click(screen.getByRole('button', { name: /Запустить видео/i }))
-    await screen.findByRole('alert')
+    fireEvent.click(screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость|Подтвердить цену и запустить/i }))
+    await screen.findByText(/Видеореференсы: 10 с/)
+    fireEvent.click(screen.getByRole('button', { name: /Подтвердить цену и запустить/i }))
+    await screen.findByText('Permission changed')
     expect(screen.getByRole('textbox')).toHaveValue('My adjustment')
-    expect(screen.getByRole('button', { name: /Запустить видео/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость|Подтвердить цену и запустить/i })).toBeDisabled()
     view.rerender(<VideoGeneratorForm {...props} promptPreset={{ ...fixed }} />)
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Запустить видео/i })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость|Подтвердить цену и запустить/i })).toBeEnabled()
   })
   it('ignores an upload finishing after a newer repeat opens', async () => {
     let finish!: (file: UploadedFile) => void
@@ -250,11 +264,11 @@ describe('video repeat slot lifecycle', () => {
     const input = view.container.querySelector('input[type="file"]')!
     fireEvent.change(input, { target: { files: [new File(['image'], 'old.jpg', { type: 'image/jpeg' })] } })
     expect(upload).toHaveBeenCalledTimes(1)
-    expect(screen.getByRole('button', { name: /Запустить видео/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость|Подтвердить цену и запустить/i })).toBeDisabled()
     view.rerender(<VideoGeneratorForm {...props} promptPreset={{ ...oneSlot, sourceFeedGenId: 43 }} />)
     finish({ ...savedFrame, name: 'old.jpg' })
     await waitFor(() => expect(screen.queryByText('old.jpg')).not.toBeInTheDocument())
-    expect(screen.getByRole('button', { name: /Запустить видео/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость|Подтвердить цену и запустить/i })).toBeDisabled()
   })
 })
 
@@ -286,7 +300,7 @@ describe('legacy publication repeat slot descriptors', () => {
       <VideoGeneratorForm models={models} onSubmit={onSubmit} isSubmitting={false} credits={100}
         promptPreset={legacyPreset} savedImageReferences={[savedFrame, secondPhoto]} />,
     )
-    const launch = screen.getByRole('button', { name: /Запустить видео/i })
+    const launch = screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость|Подтвердить цену и запустить/i })
     expect(launch).toBeDisabled()
     expect(screen.getByText('Сохранено автором: 2')).toBeInTheDocument()
     expect(screen.getByText('Фото 3 · Сохранён автором')).toBeInTheDocument()

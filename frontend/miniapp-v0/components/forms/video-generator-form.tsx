@@ -389,6 +389,8 @@ export function VideoGeneratorForm({
       ? { version: 1, available: false, images: [], videos: [] } : slots)
     setRepeatUploads({})
     setRepeatError(false)
+    setVideoQuoteError('')
+    setApprovedVideoQuote(null)
     setRepeatPending(getPendingVideoRepeat(promptPreset.sourceFeedGenId))
     if (promptPreset.model && models.some((item) => item.id === promptPreset.model)) {
       setSelectedModel(promptPreset.model)
@@ -628,6 +630,7 @@ export function VideoGeneratorForm({
     }
     await onSubmit({ ...request, ...(hasAttachedVideo ? { pricingQuoteHash: confirmedVideoQuote?.quote_hash } : {}) })
     } catch (error) {
+      if (hasAttachedVideo && confirmedVideoQuote) setApprovedVideoQuote(null)
       setVideoQuoteError(error instanceof Error ? error.message : 'Не удалось рассчитать цену видео.')
       if (submittedSession === repeatSession.current) {
         if (isVideoStatusPending(error)) setRepeatPending(getPendingVideoRepeat(sourceFeedGenId))

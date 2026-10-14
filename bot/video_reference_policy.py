@@ -100,7 +100,7 @@ def _local_video_duration(source: str) -> float:
         raise ValueError("Видео-референс недоступен для проверки секунд; загрузите видео заново")
     root = (Path.cwd() / "static" / "uploads").resolve()
     path = Path(local).resolve()
-    if not path.is_relative_to(root) or path.suffix.lower() not in {".mp4", ".mov"} or not path.is_file():
+    if not path.is_relative_to(root) or path.suffix.lower() not in {".mp4", ".mov", ".m4v", ".webm"} or not path.is_file():
         raise ValueError("Видео-референс недоступен для проверки секунд; загрузите видео заново")
     stat = path.stat()
     if not 0 < stat.st_size <= 200 * 1024 * 1024:

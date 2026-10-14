@@ -2,12 +2,16 @@ import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { Seedance25PublicForm } from './seedance25-public-form'
 import { Seedance25AdminForm } from './seedance25-admin-form'
-import { generateSeedance25 } from '@/lib/seedance25-api'
+import { generateSeedance25, quoteSeedance25Reference } from '@/lib/seedance25-api'
 
 jest.mock('@/lib/seedance25-api', () => ({
   SEEDANCE25_MAX_PROMPT_LENGTH: 30000,
   SEEDANCE25_IDENTITY_MAX_PROMPT_LENGTH: 20480,
   generateSeedance25: jest.fn().mockResolvedValue({ ok: true, task_id: 'editing-task', duration: -1, aspect_ratio: 'adaptive', admin_free: true }),
+  quoteSeedance25Reference: jest.fn().mockResolvedValue({
+    ok: true, quote_only: true, quote_hash: 'measured-reference-quote', cost: 60,
+    source_video_duration_seconds: 10, output_seconds: 5, billable_seconds: 15, admin_free: false,
+  }),
   uploadSeedance25Video: jest.fn(),
 }))
 jest.mock('@/lib/api', () => ({ uploadFile: jest.fn() }))
@@ -23,7 +27,7 @@ it('sends editing settings, locks controls, and restores generation choices', as
   expect(screen.getByRole('button', { name: '16:9' })).toBeDisabled()
   expect(screen.getByText(/4–30 секунд/)).toBeInTheDocument()
   fireEvent.change(screen.getByLabelText('Промпт для Seedance 2.5'), { target: { value: 'Replace the background' } })
-  fireEvent.click(screen.getByRole('button', { name: /Создать видео/ }))
+  fireEvent.click(await screen.findByRole('button', { name: /Создать видео/ }))
   await waitFor(() => expect(generateSeedance25).toHaveBeenCalledWith(expect.objectContaining({ videoEditing: true, duration: -1, ratio: 'adaptive' })))
   fireEvent.click(screen.getByLabelText('Редактировать видео'))
   expect(screen.getByLabelText('Длительность видео')).toHaveValue('12')
@@ -33,7 +37,7 @@ it('requires exactly one source video in editing mode', async () => {
   render(<Seedance25PublicForm credits={1000} isAdmin />)
   fireEvent.click(screen.getByLabelText('Редактировать видео'))
   fireEvent.change(screen.getByLabelText(/Видео — по одному/), { target: { value: 'https://example.com/a.mp4\nhttps://example.com/b.mp4' } })
-  fireEvent.click(screen.getByRole('button', { name: /Создать видео/ }))
+  fireEvent.click(await screen.findByRole('button', { name: /Создать видео/ }))
   expect(await screen.findByText(/ровно одно исходное видео/)).toBeInTheDocument()
   expect(generateSeedance25).not.toHaveBeenCalled()
 })
@@ -48,7 +52,7 @@ it('preserves fixed duration for ordinary public reference generation', async ()
   fireEvent.change(screen.getByLabelText('Длительность видео'), { target: { value: '12' } })
   fireEvent.click(screen.getByRole('button', { name: '16:9' }))
   fireEvent.change(screen.getByLabelText(/Видео — по одному/), { target: { value: 'https://example.com/source.mp4' } })
-  fireEvent.click(screen.getByRole('button', { name: /Создать видео/ }))
+  fireEvent.click(await screen.findByRole('button', { name: /Создать видео/ }))
   await waitFor(() => expect(generateSeedance25).toHaveBeenCalledWith(expect.objectContaining({ videoEditing: false, duration: 12, ratio: '16:9' })))
 })
 
@@ -63,16 +67,19 @@ it('uses the same editing contract from the legacy admin form', async () => {
   await waitFor(() => expect(generateSeedance25).toHaveBeenCalledWith(expect.objectContaining({ videoEditing: true, duration: -1, ratio: 'adaptive', referenceVideos: ['asset://source-video'] })))
 })
 
-it('quotes the existing Auto estimate while preserving the remembered fixed duration', () => {
+it('quotes measured reference seconds while preserving the remembered fixed duration', async () => {
   const model = { id: 'seedance_2_5', quality_costs: { '720p': 4 } } as any
   render(<Seedance25PublicForm model={model} credits={1000} isAdmin />)
   fireEvent.change(screen.getByLabelText('Длительность видео'), { target: { value: '12' } })
   fireEvent.change(screen.getByLabelText(/Видео — по одному/), { target: { value: 'https://example.com/source.mp4' } })
-  expect(screen.getByText(/базовая цена 48🍌 × 2 = 96🍌/)).toBeInTheDocument()
+  expect(screen.queryByText(/базовая цена .* × 2/)).not.toBeInTheDocument()
+  await screen.findByText(/Видеореференсы: 10 с/)
   fireEvent.click(screen.getByLabelText('Редактировать видео'))
-  expect(screen.getByText(/базовая цена 20🍌 × 2 = 40🍌/)).toBeInTheDocument()
+  expect(screen.getByLabelText('Длительность видео')).toBeDisabled()
+  await waitFor(() => expect(quoteSeedance25Reference).toHaveBeenLastCalledWith(expect.objectContaining({ videoEditing: true })))
   fireEvent.click(screen.getByLabelText('Редактировать видео'))
-  expect(screen.getByText(/базовая цена 48🍌 × 2 = 96🍌/)).toBeInTheDocument()
+  expect(screen.getByLabelText('Длительность видео')).toHaveValue('12')
+  await waitFor(() => expect(quoteSeedance25Reference).toHaveBeenLastCalledWith(expect.objectContaining({ videoEditing: false, duration: 12 })))
 })
 
 it('quotes video-reference multiplier in the legacy admin editing form', () => {
@@ -86,7 +93,7 @@ it('quotes video-reference multiplier in the legacy admin editing form', () => {
   expect(screen.getByText('40🍌')).toBeInTheDocument()
 })
 
-it('uses authenticated server-rounded creator totals and doubles video references once', () => {
+it('uses authenticated measured seconds instead of doubling creator totals', async () => {
   const model = {
     id: 'seedance_2_5', quality_costs: { '720p': 1.25 },
     quality_duration_costs: { '720p': { '5': 6 } },
@@ -94,6 +101,8 @@ it('uses authenticated server-rounded creator totals and doubles video reference
   render(<Seedance25PublicForm model={model} credits={12} isAdmin={false} />)
   fireEvent.change(screen.getByLabelText('Длительность видео'), { target: { value: '5' } })
   fireEvent.change(screen.getByLabelText(/Видео — по одному/), { target: { value: 'https://example.com/source.mp4' } })
-  expect(screen.getByText(/базовая цена 6🍌 × 2 = 12🍌/)).toBeInTheDocument()
+  expect(screen.queryByText(/базовая цена .* × 2/)).not.toBeInTheDocument()
+  await screen.findByText(/Видеореференсы: 10 с/)
+  expect(quoteSeedance25Reference).toHaveBeenCalledWith(expect.objectContaining({ duration: 5, resolution: '720p' }))
   expect(screen.queryByLabelText('Редактировать видео')).not.toBeInTheDocument()
 })

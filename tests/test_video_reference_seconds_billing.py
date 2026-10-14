@@ -95,3 +95,39 @@ def test_unhandled_model_cannot_bill_video_references():
     with pytest.raises(ValueError, match="не принимает"):
         apply_video_reference_cost("grok_imagine", 20, ["clip.mp4"],
                                    output_seconds=5, reference_seconds=7)
+
+
+@pytest.mark.asyncio
+async def test_identical_reference_urls_are_measured_and_billed_once(monkeypatch):
+    import bot.creator_tariff as pricing
+
+    calls = []
+
+    async def measure(urls):
+        calls.append(tuple(urls))
+        return 7.0
+
+    async def tariff(_actor):
+        return "standard"
+
+    monkeypatch.setattr(pricing, "measure_video_reference_seconds", measure)
+    monkeypatch.setattr(pricing, "get_actor_tariff", tariff)
+    quote = await pricing.quote_video_for_actor(
+        123, "seedance_2", 5, "720p", ["clip.mp4", "clip.mp4"],
+    )
+    assert calls == [("clip.mp4",)]
+    assert quote.input_video_seconds == 7
+    assert quote.billable_seconds == 12
+
+
+@pytest.mark.parametrize("extension", [".mp4", ".mov", ".m4v", ".webm"])
+def test_duration_probe_accepts_all_uploader_video_formats(monkeypatch, tmp_path, extension):
+    from bot import video_reference_policy as policy
+
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / "static" / "uploads" / ("input" + extension)
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"synthetic-media")
+    monkeypatch.setattr(policy, "resolve_local_upload_path", lambda source: str(path))
+    monkeypatch.setattr(policy, "_probe_local_video_seconds", lambda *_args: 9.5)
+    assert policy._local_video_duration("synthetic-source") == 9.5

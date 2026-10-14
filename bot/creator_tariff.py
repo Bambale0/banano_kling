@@ -20,6 +20,7 @@ from bot.services.preset_manager import preset_manager
 from bot.video_reference_policy import (
     apply_video_reference_cost,
     measure_video_reference_seconds,
+    normalize_reference_urls,
 )
 
 LEGACY_CREATOR_MODELS = ('seedance_2', 'seedance_2_5')
@@ -282,7 +283,7 @@ def resolve_video_quote(
         if math.isfinite(candidate) and candidate > 0:
             base_cost = candidate
             profile = 'creator'
-    sources = tuple(str(url).strip() for url in video_references or [] if str(url).strip())
+    sources = tuple(normalize_reference_urls(video_references, max_count=30))
     input_seconds = float(reference_video_seconds or 0.0)
     # Use the configured unrounded per-second tariff for input seconds; do
     # not extrapolate from an already rounded five-second output subtotal.
@@ -319,7 +320,7 @@ async def quote_video_for_actor(
     quality: str | None = None,
     video_references: Iterable[str] | None = None,
 ) -> VideoQuote:
-    sources = tuple(str(url).strip() for url in video_references or [] if str(url).strip())
+    sources = tuple(normalize_reference_urls(video_references, max_count=30))
     measured = await measure_video_reference_seconds(sources) if sources else 0.0
     return resolve_video_quote(
         model, duration, quality, sources,
