@@ -2002,3 +2002,10 @@ Coverage: pure contract tests and existing chunk HTTP regression run locally wit
 - Verified local Next.js static production build, TypeScript, targeted Jest and all 62 Jest suites / 476 tests, and Playwright repeat references flow at 320/390/430 px. Added backend hash, no-debit, format and dedup regression tests.
 - Host pytest blocked by missing aiogram: required Python CI must prove backend. No production price/config/migration/provider changes, no paid generation.
 - Remaining: exact-PR CI (including browser, PostgreSQL, bot, Docker), review, native squash auto-merge to tanyapi, exact-SHA deploy and postdeploy health/telemetry smoke. Do not claim deployed before checks.
+
+
+### 2026-10-14: final Python CI gate after 9561e8d
+
+- GitHub TG CI 1894 failed only in safe regression suite: 3721 passed, 110 skipped, 10 failed. Two were private Seedance trend contract tests that bypassed the new mandatory preview-and-approval request; eight were isolated pure pricing tests whose module stub did not implement the existing normalization dependency.
+- Regression repair (test-only; production code unchanged): update the isolated reference-policy stub to deduplicate and trim as the real public interface does; for valid private video trend tests obtain the server's quote first, assert preview does not launch or debit, then explicitly pass the hash. Invalid/oversize videos remain fail-closed. Do not bypass the actual approval gate.
+- Host Python unittest of isolated pricing tests: 8/8 passed; compileall passed. GitHub Python CI rerun is authoritative for full bot tests. Existing dirty production price.json and diagnostics remain untouched.

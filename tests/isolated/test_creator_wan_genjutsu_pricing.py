@@ -36,6 +36,11 @@ class PricingTests(unittest.TestCase):
             'bot.video_reference_policy': types.SimpleNamespace(
                 apply_video_reference_cost=lambda _model, base, *_refs, **_kw: base,
                 measure_video_reference_seconds=lambda refs: 0,
+                # Keep this pure-module test double aligned with the real
+                # reference policy: stable order, trimmed URLs and deduplication.
+                normalize_reference_urls=lambda urls, *, max_count: list(dict.fromkeys(
+                    str(url).strip() for url in urls or [] if str(url).strip()
+                ))[:max_count],
             ),
         }
         spec = importlib.util.spec_from_file_location('creator_under_test', ROOT / 'bot/creator_tariff.py')

@@ -983,6 +983,7 @@ def test_legacy_trend_runner_fails_closed_for_genjutsu_recipe():
 async def test_seedance2_private_repeat_validates_actual_video_before_charge(
     monkeypatch, tmp_path, replaceable, duration, expected_status
 ):
+    import json
     from pathlib import Path
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
@@ -1029,21 +1030,32 @@ async def test_seedance2_private_repeat_validates_actual_video_before_charge(
     monkeypatch.setattr(api, "_debit_for_generation", debit)
 
     class Request:
-        def __init__(self):
+        def __init__(self, **fields):
             self.app = {}
+            self.fields = fields
 
         async def json(self):
             return {
                 "init_data": "signed", "trend_id": 77,
                 "reference_urls": [item["url"] for item in inputs],
                 "reference_inputs": inputs,
+                **self.fields,
             }
 
-    response = await api.miniapp_run_trend(Request())
+    if expected_status == 200:
+        preview = await api.miniapp_run_trend(Request(pricing_quote_only=True))
+        assert preview.status == 200, preview.text
+        assert json.loads(preview.text)["quote_only"] is True
+        debit.assert_not_awaited()
+        launch.assert_not_awaited()
+        response = await api.miniapp_run_trend(Request(
+            pricing_quote_hash=json.loads(preview.text)["quote_hash"],
+        ))
+    else:
+        response = await api.miniapp_run_trend(Request())
     assert response.status == expected_status, response.text
     debit.assert_not_awaited()
     if expected_status == 400:
-        import json
         assert "секунд" in json.loads(response.text)["error"]
         launch.assert_not_awaited()
     else:
