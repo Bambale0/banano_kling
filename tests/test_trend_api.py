@@ -1054,6 +1054,7 @@ async def test_seedance2_private_repeat_validates_actual_video_before_charge(
 
 def test_video_trend_confirmation_hash_tracks_actor_reference_and_price():
     from dataclasses import replace
+
     from bot.creator_tariff import resolve_video_quote
     from bot.trend_api import TrustedTrendRun, _trend_video_quote_hash
 
@@ -1086,6 +1087,7 @@ async def test_video_trend_quote_is_read_only_and_requires_exact_price_approval(
     import json
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
+
     from aiohttp import web
 
     from bot import miniapp as miniapp_module
@@ -1120,8 +1122,8 @@ async def test_video_trend_quote_is_read_only_and_requires_exact_price_approval(
     monkeypatch.setattr(service, "complete_trend_run_claim", finish)
 
     class Request:
-        app = {}
         def __init__(self, **fields):
+            self.app = {}
             self.fields = fields
         async def json(self):
             return {
