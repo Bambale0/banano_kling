@@ -10,7 +10,6 @@ from bot.video_reference_policy import apply_video_reference_cost
 @pytest.mark.parametrize("model", [
     "seedance_2", "seedance_2_5", "seedance_2_mini",
     "seedance_2_fast", "gemini_omni_video", "glow",
-    "wan_3", "wan_3_prime", "motion_control_v26", "motion_control_v30",
 ])
 def test_reference_price_uses_actual_seconds_for_every_video_capable_model(model):
     # Base is 20 bananas for 5 output seconds (4 per second).
@@ -82,6 +81,14 @@ async def test_refs_without_local_ownership_are_not_silently_undercounted():
     from bot.video_reference_policy import measure_video_reference_seconds
     with pytest.raises(ValueError, match="загрузите видео заново"):
         await measure_video_reference_seconds(["https://untrusted.example/video.mp4"])
+
+
+def test_already_metered_wan_and_motion_are_not_billed_twice():
+    for model in ("wan_3", "wan_3_prime", "motion_control_v26", "motion_control_v30"):
+        assert apply_video_reference_cost(model, 20, ["clip.mp4"]) == 20
+        assert apply_video_reference_cost(
+            model, 20, ["clip.mp4"], output_seconds=5, reference_seconds=7,
+        ) == 20
 
 
 def test_unhandled_model_cannot_bill_video_references():
