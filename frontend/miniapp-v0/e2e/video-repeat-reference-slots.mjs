@@ -14,7 +14,7 @@ symlinkSync(resolve('out'), join(root, 'mini-app'), 'dir')
 const server = spawn('python3', ['-m', 'http.server', String(port), '--bind', '127.0.0.1', '--directory', root], { stdio: 'ignore' })
 const media = readFileSync(new URL('./fixtures/genjutsu-result.mp4', import.meta.url))
 const secret = 'SYNTHETIC_PRIVATE_VIDEO_RECIPE'
-const slots = { version: 1, available: true, cost_multiplier: 2, duration_costs: { '5': 10 }, pricing_quality: '720p', images: [
+const slots = { version: 1, available: true, cost_multiplier: 1, duration_costs: { '5': 5 }, pricing_quality: '720p', images: [
   { index: 0, role: 'first_frame', binding: 'upload' },
   { index: 1, role: 'last_frame', binding: 'fixed' },
   { index: 2, role: 'reference', binding: 'upload' },
@@ -50,7 +50,7 @@ try {
   for (const width of [320, 390, 430]) {
     const context = await browser.newContext({ viewport: { width, height: 900 } })
     const page = await context.newPage()
-    const errors = [], publications = [], generations = [], sourceRequests = [], uploadKinds = [], receiptLookups = []
+    const errors = [], publications = [], generations = [], quotes = [], sourceRequests = [], uploadKinds = [], receiptLookups = []
     let currentCard = card
     let currentTask = { ...task }
     let credits = bootstrap.credits
@@ -105,11 +105,26 @@ try {
           response = { ok: true, url: 'https://example.test/replacement.mp4', kind: 'video', filename: 'replacement.mp4' }
         }
         else if (url.pathname.endsWith('/generate-video')) {
-          generations.push(route.request().postDataJSON())
-          status = 409
-          response = generationPending
-            ? { ok: false, code: 'video_status_pending', task_id: 'video_repeat_receipt_browser', error: 'Видео принято провайдером. Ожидаем подтверждения.' }
-            : { ok: false, error: 'Разрешения автора изменились. Откройте публикацию заново.' }
+          const data = route.request().postDataJSON()
+          if (data.pricing_quote_only === true) {
+            const incoming = (data.v_reference_videos || []).length * 5
+            const output = data.v_duration || 5
+            const quality = currentCard.repeat_reference_slots?.pricing_quality || '720p'
+            const rate = quality === '480p' ? 0.4 : 1
+            const cost = Number(((incoming + output) * rate).toFixed(2))
+            response = {
+              ok: true, quote_only: true, quote_hash: 'verified-' + quality + '-' + (incoming + output),
+              cost, source_video_seconds: incoming, output_seconds: output,
+              billable_seconds: incoming + output, admin_free: false,
+            }
+            quotes.push({ data, response })
+          } else {
+            generations.push(data)
+            status = 409
+            response = generationPending
+              ? { ok: false, code: 'video_status_pending', task_id: 'video_repeat_receipt_browser', error: 'Видео принято провайдером. Ожидаем подтверждения.' }
+              : { ok: false, error: 'Разрешения автора изменились. Откройте публикацию заново.' }
+          }
         } else if (/generate|repeat|remix|start/.test(url.pathname)) throw new Error('Unexpected generation request: ' + url.pathname)
         return route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(response) })
       }
@@ -185,7 +200,7 @@ try {
       for (const button of await page.getByRole('group', { name: 'Сценарий', exact: true }).getByRole('button').all()) assert.equal(await button.isDisabled(), true)
       assert.equal((await page.locator('body').innerText()).includes(secret), false)
       assert.equal(await page.locator('textarea').first().inputValue(), '')
-      const launch = page.getByRole('button', { name: /Запустить видео/ })
+      const launch = page.getByRole('button', { name: /Рассчитать точную стоимость|Подтвердить цену и запустить|Запустить видео/ })
       assert.equal(await launch.isDisabled(), true)
       await page.getByRole('group', { name: 'Фото 3', exact: true }).getByRole('button', { name: 'third.jpg', exact: true }).click()
       await page.getByRole('group', { name: 'Видео 2', exact: true }).getByRole('button', { name: 'clip.mp4', exact: true }).click()
@@ -219,7 +234,7 @@ try {
     await page.goto(baseUrl + '?startapp=remix_777')
     await page.getByRole('group', { name: 'Референсы повтора', exact: true }).waitFor()
     assert.equal(await page.getByRole('group', { name: 'Референсы повтора', exact: true }).locator('input[type=file]').count(), 0)
-    assert.equal(await page.getByRole('button', { name: /Запустить видео/ }).isDisabled(), true)
+    assert.equal(await page.getByRole('button', { name: /Рассчитать точную стоимость|Подтвердить цену и запустить|Запустить видео/ }).isDisabled(), true)
     await page.getByText('Недостаточно бананов. Пополните баланс.', { exact: true }).waitFor()
     const fixedCost = page.getByText('Стоимость', { exact: true }).locator('..').locator('..')
     assert.equal(await fixedCost.getByText('10', { exact: true }).count(), 1)
@@ -228,7 +243,7 @@ try {
     await page.evaluate(() => window.dispatchEvent(new Event('focus')))
     await repriced
     await page.getByText('Недостаточно бананов. Пополните баланс.', { exact: true }).waitFor({ state: 'hidden' })
-    assert.equal(await page.getByRole('button', { name: /Запустить видео/ }).isEnabled(), true)
+    assert.equal(await page.getByRole('button', { name: /Рассчитать точную стоимость|Подтвердить цену и запустить|Запустить видео/ }).isEnabled(), true)
     // Retained480p final quote wins over bootstrap720p costs and includes its multiplier once.
     currentCard = { ...card, repeat_reference_slots: { version: 1, available: true, cost_multiplier: 2,
       duration_costs: { '5': 4 }, pricing_quality: '480p', images: [], videos: [{ index: 0, role: 'reference', binding: 'upload' }],
@@ -240,18 +255,18 @@ try {
     const retainedCost = page.getByText('Стоимость', { exact: true }).locator('..').locator('..')
     assert.equal(await retainedCost.getByText('4', { exact: true }).count(), 1)
     assert.equal(await page.getByText('5 сек. • 16:9 • 0.8🍌/с', { exact: true }).count(), 1)
-    assert.equal(await page.getByRole('button', { name: /Запустить видео/ }).isDisabled(), true)
+    assert.equal(await page.getByRole('button', { name: /Рассчитать точную стоимость|Подтвердить цену и запустить|Запустить видео/ }).isDisabled(), true)
     await page.getByRole('group', { name: 'Видео 1', exact: true }).locator('input[type=file]').setInputFiles({ name: 'replacement.mp4', mimeType: 'video/mp4', buffer: media })
     await page.getByText('replacement.mp4', { exact: true }).waitFor()
     await page.waitForFunction(() => ![...document.querySelectorAll('button')].find(button => button.textContent.includes('Запустить видео'))?.disabled)
-    assert.equal(await page.getByRole('button', { name: /Запустить видео/ }).isEnabled(), true)
+    assert.equal(await page.getByRole('button', { name: /Рассчитать точную стоимость|Подтвердить цену и запустить|Запустить видео/ }).isEnabled(), true)
     assert.deepEqual(uploadKinds, ['seedance25_video_reference'])
     assert.equal(generations.length, beforeUpload, 'Uploading never launches a paid generation')
 
     currentCard = { ...card, repeat_reference_slots: { version: 1, available: false, images: [], videos: [] } }
     await page.goto(baseUrl + '?startapp=remix_777')
     await page.getByRole('alert').filter({ hasText: 'Повтор недоступен' }).waitFor()
-    assert.equal(await page.getByRole('button', { name: /Запустить видео/ }).isDisabled(), true)
+    assert.equal(await page.getByRole('button', { name: /Рассчитать точную стоимость|Подтвердить цену и запустить|Запустить видео/ }).isDisabled(), true)
     // Accepted/pending goes through real HTTP parsing, the tab, and the form.
     currentCard = { ...card, repeat_reference_slots: { ...slots,
       images: slots.images.map(slot => ({ ...slot, binding: 'fixed' })), videos: slots.videos.map(slot => ({ ...slot, binding: 'fixed' })),
@@ -260,9 +275,9 @@ try {
     generationPending = true
     const beforePending = generations.length
     await page.goto(baseUrl + '?startapp=remix_777')
-    await page.getByRole('button', { name: /Запустить видео/ }).click()
+    await page.getByRole('button', { name: /Рассчитать точную стоимость|Подтвердить цену и запустить|Запустить видео/ }).click()
     await page.getByText('Видео принято, ожидаем подтверждения статуса', { exact: true }).waitFor()
-    assert.equal(await page.getByRole('button', { name: /Запустить видео/ }).isDisabled(), true)
+    assert.equal(await page.getByRole('button', { name: /Рассчитать точную стоимость|Подтвердить цену и запустить|Запустить видео/ }).isDisabled(), true)
     assert.equal(generations.length, beforePending + 1)
     await page.getByRole('button', { name: 'Проверить в истории', exact: true }).click()
     for (const surface of ['Лента', 'Профиль', 'deep-link']) {
@@ -274,7 +289,7 @@ try {
         await page.getByRole('button', { name: /^Повторить(?: · [0-9]+)?$/ }).click()
       }
       await page.getByText('Видео принято, ожидаем подтверждения статуса', { exact: true }).waitFor()
-      assert.equal(await page.getByRole('button', { name: /Запустить видео/ }).isDisabled(), true)
+      assert.equal(await page.getByRole('button', { name: /Рассчитать точную стоимость|Подтвердить цену и запустить|Запустить видео/ }).isDisabled(), true)
       assert.equal(await page.getByRole('alert').filter({ hasText: 'Откройте публикацию заново' }).count(), 0)
       assert.equal(generations.length, beforePending + 1)
     }
@@ -284,7 +299,7 @@ try {
     await page.evaluate(() => window.dispatchEvent(new Event('focus')))
     await reconciled
     await page.getByText('Видео принято, ожидаем подтверждения статуса', { exact: true }).waitFor({ state: 'hidden' })
-    assert.equal(await page.getByRole('button', { name: /Запустить видео/ }).isEnabled(), true)
+    assert.equal(await page.getByRole('button', { name: /Рассчитать точную стоимость|Подтвердить цену и запустить|Запустить видео/ }).isEnabled(), true)
     assert.equal(generations.length, beforePending + 1)
 
     assert.equal(sourceRequests.some(path => path.includes('private')), false)
