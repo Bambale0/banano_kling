@@ -289,7 +289,7 @@ def resolve_video_quote(
     quality_rates = ordinary_model.get('quality_costs', {}) if isinstance(ordinary_model, dict) else {}
     ordinary_rate = {
         str(key).strip().lower(): value for key, value in quality_rates.items()
-    }.get(quality or '') if isinstance(quality_rates, dict) else None
+    }.get((quality or '720p' if model in {'seedance_2', 'seedance_2_5'} else quality or '').lower()) if isinstance(quality_rates, dict) else None
     applied_rate = rate if profile == 'creator' else ordinary_rate
     if sources and applied_rate is not None:
         raw_base = float(applied_rate) * billable_duration
