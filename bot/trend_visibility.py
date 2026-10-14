@@ -145,9 +145,21 @@ def sanitize_prompt_for_public(
         return payload
 
     public_settings = public_trend_settings(payload)
+    # Legacy authors could publish without a description. create_prompt then
+    # derives one from the SECRET recipe; redacting only prompt_text is not enough.
+    private_text = " ".join(str(payload.get("prompt_text") or "").split())
+    inferred = private_text[:197] + "..." if len(private_text) > 200 else private_text
+    if private_text and str(payload.get("description") or "") == inferred:
+        payload["description"] = ""
     payload["prompt_text"] = ""
     payload["model"] = None
-    payload.pop("source_generation_id", None)
+    for internal_key in (
+        "source_generation_id", "reject_reason",
+        "ai_moderation_decision", "ai_moderation_risk",
+        "ai_moderation_reason", "ai_moderation_recommendation",
+        "ai_moderation_raw", "ai_moderated_at",
+    ):
+        payload.pop(internal_key, None)
     payload["generation_settings"] = public_settings
     payload["prompt_hidden"] = True
     payload["prompt_actions_allowed"] = False

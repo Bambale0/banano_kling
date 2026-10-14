@@ -143,6 +143,30 @@ def _run_ffmpeg_poster(source: Path, output_path: Path) -> None:
     tmp_path.replace(output_path)
 
 
+def cached_trend_preview_assets(preview_url: str | None) -> dict[str, str | None]:
+    """Resolve only existing small MP4/poster derivatives.
+
+    Catalog reads must not launch ffmpeg for dozens of rows. The normal preview
+    pipeline or an explicit backfill can populate the deterministic cache.
+    """
+    result = {"preview_url": preview_url, "preview_poster_url": None}
+    if not preview_url:
+        return result
+    source_name = resolve_local_upload_path(preview_url)
+    if not source_name:
+        return result
+    source = Path(source_name)
+    if not source.is_file() or not _is_video_preview_source(source):
+        return result
+    mp4 = _preview_output_path(source, preview_url)
+    poster = _poster_output_path(source, preview_url)
+    if mp4.is_file() and mp4.stat().st_size > 0:
+        result["preview_url"] = _preview_public_url(mp4)
+    if poster.is_file() and poster.stat().st_size > 0:
+        result["preview_poster_url"] = _preview_public_url(poster)
+    return result
+
+
 async def ensure_trend_preview_assets(preview_url: str | None) -> dict[str, str | None]:
     """Return card-friendly video preview assets for local trend videos."""
 

@@ -722,6 +722,9 @@ try {
   await weightInput.fill('64')
 
   await pinterestRunner.getByText('Источник', { exact: true }).waitFor()
+  // Upload completion is asynchronous. Trial-click waits for React to enable
+  // the control without ever submitting a paid generation request.
+  await createButton.click({ trial: true })
   assert.equal(await createButton.isDisabled(), false)
   assert.equal(pinterestGenerationPayload, null, 'Two references must still require explicit Create')
 

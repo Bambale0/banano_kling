@@ -247,6 +247,7 @@ jobs:
         id: browser_e2e
         run: |
           node e2e/critical-flows.mjs
+          node e2e/trend-category-showcase.mjs
           node e2e/trend-share-clipboard.mjs
           node e2e/hidden-repeat-prompt.mjs
           node e2e/video-repeat-reference-slots.mjs

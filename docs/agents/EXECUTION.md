@@ -2032,3 +2032,42 @@ Coverage: pure contract tests and existing chunk HTTP regression run locally wit
 - Admin can set private original_value for ambiguous or text fields. Public user_fields sanitizer strips original_value; viewers only see labels/inputs. Legacy {{token}} stays compatible, unbound nonnumeric fields retain original prompt with appended authoritative change instructions.
 - Found independent prod HTTP 500 after /trends/run pricing: Seedance 2.5 wrapper rejected billing_quote kwarg; now accepts and forwards verified quote, without duplicate price calculation. Seedance 2.5 quote uses own resolution and edit duration.
 - Synthetic tests for prompt renderer, wrapper/provider payload, pricing, privacy and existing trend integrations; full Mini App Jest, TypeScript, ESLint, and production export build. No paid calls, DB updates or production price modifications.
+
+
+---
+
+## 2026-10-15 — PR #312 trend showcase release hardening
+
+- **Baseline:** feature bc1aeb1cb1c2623754e5728718134545e40b78b6, tanyapi production b938e8b924837d0a2af22ddf3b11f0d7b5c7dffe.
+- **Goal:** finish editor-managed trend folders and live video tiles; merge safely and verify exact backend/Mini App release revision.
+- **Audit:** PR #312 all prior CI gates pass; latest code review found three unfixed issues: shared trend draft state crosses folders, extensionless videos rendered as images, no durable admin catalog audit. Existing user_prompts.category, Seedance/WAN pipelines, referral, prices and private recipes must not change.
+- **Reuse:** trend_catalog SQLite/PG migrations, bot/trend_catalog_api signed Mini App auth, existing append-only creator/partner audits, TrendShowcase, TrendCategoryManager.
+- **Risks:** concurrent admin changes; leaking hidden recipe in audit; PostgreSQL DDL triggers; category delete losing history; stale draft changing another folder. Existing prod data/price.json is mutable and must be preserved.
+- **Implementation:** 1. partition draft state by (category_id, trend_id); 2. resolve video media by safe public kind+legacy tags; 3. add independent append-only trend_catalog_audit with signed Telegram actor, action, before/after snapshot, stored in the same DB transaction for every mutation; 4. expose authenticated admin history; 5. regression/CI/code review; 6. merge to tanyapi; 7. verify exact SHA and production smoke.
+- **No hardcode:** editorial category names/order/badges are admin-controlled DB data; audit stores only IDs, public category metadata and membership positions, never executable prompts or private refs.
+- **Observability:** read-only history list with event ID and actor, signed request logs, deployment SHA/health and HTTP endpoints, check errors after release.
+- **Test plan:** SQLite unit/HTTP atomicity and append-only guard; PG migration via existing CI; Jest category switching and no-extension video; browser E2E; CI suite, Docker image, deployed SHA, endpoint guards.
+- **Status 2026-10-15:** implementation in progress; production deliberately unchanged until green checks and review.
+
+
+### 2026-10-15 hardening implementation checkpoints
+
+- Folder+trend scoped draft keys, including move targets and badge expiry, verified in React/Jest.
+- Video cards honor public preview_type, then public generation kind/category/trend-video and local extension including MKV/AVI.
+- New additive trend_catalog_audit schema with SQLite and PostgreSQL append-only guards; eight service mutations insert signed actor and before/after metadata on the mutation connection before commit.
+- Authenticated admin history API/UI; read-only and no prompt or private media in snapshots; timestamps include microseconds.
+- Tests: 20 focused backend passed; 12 frontend Jest passed; PostgreSQL acceptance appended to isolated creator test suite (requires disposable GitHub service).
+- Remaining: full regressions, Next build, browser tests, CI/second code review, merge and production SHA/health/log smoke.
+
+
+### 2026-10-15 pre-PR gate evidence
+
+- 160 backend regressions passed (including immutable SQLite audit, rollback, signed admin-history HTTP, variable binding, Seedance/WAN/Pinterest/privacy).
+- 57 Jest regressions passed, TypeScript and ESLint clean.
+- Production Next.js static export generated; Chrome mobile E2E passed extensionless video, category pagination, existing repeat dialog, admin editing and signed history.
+- Disposable PostgreSQL trigger/atomicity case added to creator PostgreSQL workflow tests, awaiting GitHub runner.
+- No live customer generations, price changes, DB edits or direct production deploy performed.
+
+- Follow-up Codex review on functional commit 59b5676: security review clean; reviewer identified reverse-order PostgreSQL row-lock deadlock for concurrent category reorder (P2).
+- Fix: PostgreSQL now locks category rows ORDER BY id FOR UPDATE prior to position updates; SQLite takes BEGIN IMMEDIATE before reading revisions. Added disposable PostgreSQL concurrent opposite-reorder test requiring exactly one revision-conflict and one success, rather than deadlock/500.
+- Final local focused regression: 20 tests passed, Ruff clean. Pending GitHub PostgreSQL concurrent CI, entire CI and code review final disposition.

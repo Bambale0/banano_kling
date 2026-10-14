@@ -371,6 +371,63 @@ CREATE TABLE IF NOT EXISTS trend_run_claims (
 CREATE INDEX IF NOT EXISTS idx_trend_run_claims_status_updated
     ON trend_run_claims(status, updated_at);
 
+-- Trend showcase folders (independent from generation media category).
+CREATE TABLE IF NOT EXISTS trend_categories (
+    id BIGSERIAL PRIMARY KEY,
+    title TEXT NOT NULL,
+    emoji TEXT NOT NULL DEFAULT '',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    is_visible INTEGER NOT NULL DEFAULT 1,
+    revision INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_trend_categories_order ON trend_categories(sort_order, id);
+CREATE TABLE IF NOT EXISTS trend_category_items (
+    category_id BIGINT NOT NULL REFERENCES trend_categories(id) ON DELETE CASCADE,
+    prompt_id BIGINT NOT NULL REFERENCES user_prompts(id) ON DELETE CASCADE,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    badge TEXT NOT NULL DEFAULT '',
+    badge_until TEXT,
+    PRIMARY KEY (category_id, prompt_id)
+);
+CREATE INDEX IF NOT EXISTS idx_trend_category_items_order
+    ON trend_category_items(category_id, sort_order, prompt_id);
+CREATE INDEX IF NOT EXISTS idx_trend_category_items_prompt ON trend_category_items(prompt_id);
+
+-- Immutable history of catalog configuration edits (no secret trend content).
+CREATE TABLE IF NOT EXISTS trend_catalog_audit (
+    id TEXT PRIMARY KEY,
+    actor_telegram_id BIGINT NOT NULL,
+    action TEXT NOT NULL,
+    category_id BIGINT,
+    trend_id BIGINT,
+    before_state TEXT NOT NULL,
+    after_state TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_trend_catalog_audit_category
+    ON trend_catalog_audit(category_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_trend_catalog_audit_actor
+    ON trend_catalog_audit(actor_telegram_id, created_at);
+CREATE OR REPLACE FUNCTION trend_catalog_audit_append_only()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'trend catalog audit is append-only';
+END;
+$$;
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgname = 'trend_catalog_audit_append_only_guard'
+          AND tgrelid = 'trend_catalog_audit'::regclass
+    ) THEN
+        CREATE TRIGGER trend_catalog_audit_append_only_guard
+        BEFORE UPDATE OR DELETE OR TRUNCATE ON trend_catalog_audit
+        FOR EACH STATEMENT EXECUTE FUNCTION trend_catalog_audit_append_only();
+    END IF;
+END $$;
+
 -- ============================================================
 -- PROMPT LIKES
 -- ============================================================

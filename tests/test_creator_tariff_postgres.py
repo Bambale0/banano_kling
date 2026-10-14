@@ -451,3 +451,94 @@ async def test_pg_genjutsu_creator_pipeline_reserve_and_revision(priced_creator,
     repeated = await repo.start(TARGET, 'creator-genjutsu', quote['id'])
     assert repeated['id'] == results[0]['id'] and await balance(pg) == 40
     assert len(await pg.rows("SELECT id FROM genjutsu_finance WHERE kind = 'reserve'")) == 1
+
+
+
+async def test_trend_showcase_history_is_atomic_append_only_in_postgres(creator_db):
+    """The catalog uses the same disposable creator PG and its random schema."""
+    from bot import trend_catalog
+    from bot import trend_catalog_audit as catalog_audit
+
+    async with creator_db.connect() as connection:
+        await catalog_audit.ensure_schema(connection)
+        await catalog_audit.ensure_schema(connection)
+        await connection.commit()
+    guard = await creator_db.rows(
+        "SELECT tgname FROM pg_trigger WHERE "
+        "tgrelid = 'trend_catalog_audit'::regclass AND NOT tgisinternal"
+    )
+    assert [entry["tgname"] for entry in guard] == [
+        "trend_catalog_audit_append_only_guard"
+    ]
+    created = await trend_catalog.create_category("Праздник", "🎂", actor_id=ADMIN)
+    updated = await trend_catalog.update_category(
+        created["id"], created["revision"], title="День рождения", actor_id=ADMIN
+    )
+    events = await creator_db.rows(
+        "SELECT action, actor_telegram_id, before_state, after_state "
+        "FROM trend_catalog_audit ORDER BY created_at, action"
+    )
+    assert len(events) == 2
+    assert {e["action"] for e in events} == {"create", "update"}
+    assert all(e["actor_telegram_id"] == ADMIN for e in events)
+    assert next(e for e in events if e["action"] == "create")["before_state"] == "null"
+    after = json.loads(next(e for e in events if e["action"] == "update")["after_state"])
+    assert after["title"] == "День рождения"
+    with pytest.raises(db_backend.OperationalError, match="append-only"):
+        async with creator_db.connect() as connection:
+            await connection.execute("DELETE FROM trend_catalog_audit")
+            await connection.commit()
+    assert len(await creator_db.rows("SELECT id FROM trend_catalog_audit")) == 2
+
+    async with creator_db.connect() as connection:
+        await connection.execute_native_ddl("""CREATE FUNCTION reject_test_catalog_audit()
+            RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN RAISE EXCEPTION 'synthetic catalog audit insert failure'; END; $$""")
+        await connection.execute_native_ddl("""CREATE TRIGGER reject_test_catalog_audit
+            BEFORE INSERT ON trend_catalog_audit FOR EACH STATEMENT
+            EXECUTE FUNCTION reject_test_catalog_audit()""")
+        await connection.commit()
+    with pytest.raises(db_backend.OperationalError, match="synthetic catalog audit insert failure"):
+        await trend_catalog.update_category(
+            created["id"], updated["revision"], title="Must roll back", actor_id=ADMIN
+        )
+    after_failed = await creator_db.rows(
+        "SELECT title, revision FROM trend_categories WHERE id = ?", (created["id"],)
+    )
+    assert after_failed[0]["title"] == "День рождения"
+    assert after_failed[0]["revision"] == updated["revision"]
+    assert len(await creator_db.rows("SELECT id FROM trend_catalog_audit")) == 2
+
+async def test_concurrent_opposite_catalog_orders_are_revision_conflicts_not_deadlocks(
+    creator_db,
+):
+    """All category locks are taken by primary key even when requested order differs."""
+    from bot import trend_catalog
+
+    first = await trend_catalog.create_category("Первая", "1️⃣", actor_id=ADMIN)
+    second = await trend_catalog.create_category("Вторая", "2️⃣", actor_id=ADMIN)
+    normal = [
+        {"id": first["id"], "revision": first["revision"]},
+        {"id": second["id"], "revision": second["revision"]},
+    ]
+    reverse = list(reversed(normal))
+
+    outcome = await asyncio.wait_for(
+        asyncio.gather(
+            trend_catalog.reorder_categories(normal, actor_id=ADMIN),
+            trend_catalog.reorder_categories(reverse, actor_id=ADMIN),
+            return_exceptions=True,
+        ),
+        timeout=10,
+    )
+    assert sum(isinstance(row, list) for row in outcome) == 1
+    assert sum(isinstance(row, trend_catalog.CatalogConflict) for row in outcome) == 1
+    events = await creator_db.rows(
+        "SELECT action FROM trend_catalog_audit WHERE action = 'reorder'"
+    )
+    assert len(events) == 1
+    categories = await creator_db.rows(
+        "SELECT id, revision FROM trend_categories ORDER BY sort_order ASC, id ASC"
+    )
+    assert len(categories) == 2
+    assert all(item["revision"] == 2 for item in categories)

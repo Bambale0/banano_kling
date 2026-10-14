@@ -51,6 +51,7 @@ try {
         let response = { ok: true }
         if (path === 'bootstrap') response = { ...bootstrap, telegram_chat_available: started, telegram_bot_start_required: !started }
         else if (path === 'prompts/detail') response = { ok: true, prompt: { id: 77, title: 'Recipe link', model: 'genjutsu', category: 'video', tags: ['trend'], generation_settings: { genjutsu_recipe_id: recipe.id } } }
+        else if (path === 'trends/catalog') { assert.equal(request.method(),'POST'); response = { ok: true, categories: [] } }
         else if (path === 'prompts') response = { ok: true, prompts: [] }
         else if (path === 'genjutsu' && body.action === 'availability') response = { ok: true, visible: true }
         else if (path === 'genjutsu' && body.action === 'bootstrap') response = { ok: true, catalog: { motion_transfer: capability, object_swap: capability, restyle: capability }, configured: true, enabled: true, is_admin: false, provider_ready: true, media_ready: true, credits: 125, config_version: 1, limits: { max_steps: 3, max_variants: 4, poll_seconds: 5 }, prices: {}, projects: [], runs: [], assets: [] }
