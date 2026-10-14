@@ -519,6 +519,10 @@ def estimate_trend_repeat_cost(
             if fixed_video_count > 0 or has_replaceable_video
             else ()
         )
+        # Public trend cards cannot know the duration of replaceable videos.
+        # Never show a guessed double or a base-only price as the final total.
+        if pricing_video_refs:
+            return None
         if model == "seedance_2_5":
             resolution = str(
                 settings.get("seedance25_resolution") or "720p"
