@@ -13,7 +13,7 @@ import {
   videoPreviewFrameUrl,
 } from '@/lib/media-url'
 import { copyTextToClipboard } from '@/lib/clipboard'
-import { isNavigableShareLink, tryOpenTelegramShareLink } from '@/lib/share-link-navigation'
+import { isNavigableShareLink, telegramForwardLink, tryOpenTelegramShareLink } from '@/lib/share-link-navigation'
 import { mergePendingPublication } from '@/lib/feed-events'
 import { Button } from '@/components/ui/button'
 import {
@@ -216,10 +216,11 @@ export function FeedTab() {
   useEffect(() => () => { repeatRequest.current += 1 }, [])
   const [error, setError] = useState<string | null>(null)
   const [shareLink, setShareLink] = useState<string | null>(null)
-  const [copyStatus, setCopyStatus] = useState<'copying' | 'copied' | 'manual' | null>(null)
+  const [copyStatus, setCopyStatus] = useState<'ready' | 'copying' | 'copied' | 'manual' | null>(null)
+  const shareInput = useRef<HTMLInputElement | null>(null)
   const shareRecovery = useRef<HTMLElement | null>(null)
   useEffect(() => {
-    if (copyStatus === 'manual') shareRecovery.current?.scrollIntoView?.({ block: 'center' })
+    if (copyStatus === 'manual' || copyStatus === 'ready') shareRecovery.current?.scrollIntoView?.({ block: 'center' })
   }, [copyStatus])
   const shareRequest = useRef(0)
   useEffect(() => () => { shareRequest.current += 1 }, [])
@@ -418,7 +419,7 @@ export function FeedTab() {
     setCopyStatus('copying')
     try {
       // Invoked directly by the retry button: no network await before clipboard.
-      await copyTextToClipboard(link)
+      await copyTextToClipboard(link, shareInput.current)
       if (request === shareRequest.current) setCopyStatus('copied')
     } catch {
       if (request === shareRequest.current) setCopyStatus('manual')
@@ -439,7 +440,14 @@ export function FeedTab() {
       setItems((prev) => prev.map((feedItem) => (feedItem.id === updated.id ? updated : feedItem)))
       // Keep the server-owned deep/referral URL unchanged for manual recovery.
       setShareLink(link)
-      await copyShareLink(link, request)
+      // A server request has already consumed the iOS WebView tap activation.
+      // Offer a fresh, immediate button gesture instead of a doomed auto-copy.
+      const platform = window.Telegram?.WebApp?.platform
+      if (platform === 'ios' || /iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+        setCopyStatus('ready')
+      } else {
+        await copyShareLink(link, request)
+      }
     } catch (e) {
       if (request === shareRequest.current) setError(getErrorMessage(e, 'Не удалось создать ссылку'))
     } finally {
@@ -649,10 +657,13 @@ export function FeedTab() {
             {copyStatus === 'copied'
               ? 'Ссылка скопирована'
               : copyStatus === 'manual'
-                ? 'Автоматическое копирование недоступно. Нажмите «Скопировать ссылку» ещё раз или выделите ссылку ниже и скопируйте вручную.'
-                : 'Копируем ссылку…'}
+                ? 'Telegram не разрешил запись в буфер. Попробуйте ещё раз, отправьте ссылку через Telegram или выделите её вручную.'
+                : copyStatus === 'ready'
+                  ? 'Ссылка готова. Нажмите «Скопировать ссылку» — iPhone требует отдельного нажатия.'
+                  : 'Копируем ссылку…'}
           </p>
           <input
+            ref={shareInput}
             aria-label="Ссылка на публикацию"
             readOnly
             value={shareLink}
@@ -672,6 +683,21 @@ export function FeedTab() {
                   }}
                 >
                   Открыть ссылку
+                </a>
+              </Button>
+            )}
+            {telegramForwardLink(shareLink) && (
+              <Button asChild variant="outline" className="min-h-11 w-full sm:w-auto">
+                <a
+                  href={telegramForwardLink(shareLink)!}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(event) => {
+                    if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey
+                      && tryOpenTelegramShareLink(telegramForwardLink(shareLink)!)) event.preventDefault()
+                  }}
+                >
+                  Поделиться в Telegram
                 </a>
               </Button>
             )}
