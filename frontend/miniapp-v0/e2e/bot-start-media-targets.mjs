@@ -77,6 +77,7 @@ try {
         else if(path==='prompts/detail') {assert.equal(body.prompt_id,c.id);data={ok:true,prompt}}
         else if(path==='feed/item') {assert.equal(body.gen_id,c.id);data={ok:true,feed_item:feed}}
         else if(path==='feed/profile') {assert.equal(body.referral_code,'AUTHOR');data={ok:true,profile:{referral_code:'AUTHOR',display_name:'Target Author',username:'target_author',photo_url:'',posts_count:0,likes_count:0,shares_count:0,remixes_count:0},feed:[]}}
+        else if(path==='trends/catalog') { assert.equal(req.method(),'POST'); data={ok:true,categories:[]} }
         else if(path==='prompts') data={ok:true,prompts:[]}
         else if(path==='feed') data={ok:true,feed:[],models:[]}
         else if(path==='genjutsu'&&body.action==='availability') data={ok:true,visible:false}

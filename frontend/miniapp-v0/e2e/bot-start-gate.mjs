@@ -171,6 +171,9 @@ try {
           const body = JSON.parse(request.postData() || '{}')
           assert.ok(generatedTasks.has(body.task_id), 'Only synthetic generated tasks may be read')
           await route.fulfill(json({ ok: true, task: generatedTasks.get(body.task_id) }))
+        } else if (url.pathname === '/mini-app/api/trends/catalog') {
+          assert.equal(request.method(), 'POST')
+          await route.fulfill(json({ ok: true, categories: [] }))
         } else if (endpoint === 'prompts') {
           await route.fulfill(json({ ok: true, prompts: [], items: [], has_more: false }))
         } else if (endpoint === 'feed') {
