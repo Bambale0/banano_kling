@@ -6,7 +6,7 @@ import { copyTextToClipboard } from '@/lib/clipboard'
 import type { PromptItem, TrendGenerationSettings, TrendUserField } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { deactivatePrompt, fetchPromptLink, fetchPrompts, submitPrompt, uploadFile } from '@/lib/api'
+import { deactivatePrompt, fetchPromptLink, fetchPrompts, sendMiniAppClientLog, submitPrompt, uploadFile } from '@/lib/api'
 import { publishSeedanceTrendUpload } from '@/lib/seedance-trend-admin-api'
 import { SeedanceTrendUploadReferences, emptySeedanceUploadReferences, type SeedanceUploadReference } from '@/components/seedance-trend-upload-references'
 import { Wan3TrendDraftEditor, type Wan3TrendDraft } from '@/components/wan3-trend-draft-editor'
@@ -14,6 +14,7 @@ import { wan3SafeError } from '@/lib/wan3-prime-api'
 import { updateTrendPreview } from '@/lib/trend-admin-api'
 import { mediaAspectRatio, normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
 import { formatTrendRepeatCost } from '@/lib/trend-price'
+import { isNavigableShareLink, telegramForwardLink, tryOpenTelegramShareLink } from '@/lib/share-link-navigation'
 import { genjutsuCall, openGenjutsu, type Recipe } from '@/lib/genjutsu-api'
 import { TrendRunnerDialog } from '@/components/trend-runner-dialog'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
@@ -144,6 +145,14 @@ export function TrendsTab() {
   const [uploadingOwnReferences, setUploadingOwnReferences] = useState(false)
   const [removingId, setRemovingId] = useState<number | null>(null)
   const [copiedId, setCopiedId] = useState<number | null>(null)
+  const [sharingTrend, setSharingTrend] = useState<{ id: number; title: string } | null>(null)
+  const [shareLink, setShareLink] = useState('')
+  const [shareLoading, setShareLoading] = useState(false)
+  const [shareError, setShareError] = useState<string | null>(null)
+  const [shareCopyStatus, setShareCopyStatus] = useState<'ready' | 'copying' | 'copied' | 'manual'>('ready')
+  const shareInputRef = useRef<HTMLInputElement | null>(null)
+  const shareRequestRef = useRef(0)
+  useEffect(() => () => { shareRequestRef.current += 1 }, [])
   const [editingTrend, setEditingTrend] = useState<PromptItem | null>(null)
   const [editPreviewUrl, setEditPreviewUrl] = useState('')
   const [uploadingEditPreview, setUploadingEditPreview] = useState(false)
@@ -649,15 +658,96 @@ export function TrendsTab() {
     }
   }
 
-  const handleCopyLink = async (trend: PromptItem) => {
+  const markCopied = (trendId: number) => {
+    setCopiedId(trendId)
+    window.setTimeout(() => setCopiedId((current) => current === trendId ? null : current), 1800)
+  }
+
+  const reportDeniedClipboard = () => {
+    // Never send the actual link or referral token to telemetry.
+    sendMiniAppClientLog('trend-share-clipboard-denied', {
+      message: `platform=${window.Telegram?.WebApp?.platform || 'unknown'}; native_share=${typeof navigator.share === 'function'}`,
+    })
+  }
+
+  const loadShareLink = async (trend: { id: number; title: string }, request: number) => {
+    setShareLink('')
+    setShareLoading(true)
+    setShareError(null)
+    setShareCopyStatus('ready')
     try {
+      // The authenticated referral URL is owned by the backend; never
+      // reconstruct its query parameters from the catalog or client profile.
       const link = await fetchPromptLink(trend.id)
-      await copyTextToClipboard(link)
-      setCopiedId(trend.id)
-      window.setTimeout(() => setCopiedId((current) => current === trend.id ? null : current), 1800)
+      if (request !== shareRequestRef.current) return
+      if (!isNavigableShareLink(link)) throw new Error('Сервер вернул некорректную ссылку на тренд')
+      setShareLink(link)
+
+      const platform = window.Telegram?.WebApp?.platform
+      const isIOS = platform === 'ios' || /iPhone|iPad|iPod/i.test(navigator.userAgent)
+      if (isIOS) {
+        // The POST above consumes the original iOS WKWebView tap activation.
+        // Copy must be a separate, direct user gesture against a visible field.
+        setShareCopyStatus('ready')
+      } else {
+        setShareCopyStatus('copying')
+        try {
+          await copyTextToClipboard(link)
+          if (request === shareRequestRef.current) {
+            setShareCopyStatus('copied')
+            markCopied(trend.id)
+          }
+        } catch {
+          if (request === shareRequestRef.current) {
+            setShareCopyStatus('manual')
+            reportDeniedClipboard()
+          }
+        }
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Не удалось скопировать ссылку')
+      if (request === shareRequestRef.current) {
+        setShareError(e instanceof Error ? e.message : 'Не удалось получить ссылку на тренд')
+      }
+    } finally {
+      if (request === shareRequestRef.current) setShareLoading(false)
     }
+  }
+
+  const openShareLink = (trend: PromptItem) => {
+    const request = ++shareRequestRef.current
+    setError(null)
+    setSharingTrend({ id: trend.id, title: trend.title })
+    void loadShareLink(trend, request)
+  }
+
+  const copyShareLink = async () => {
+    const link = shareLink
+    const trendId = sharingTrend?.id
+    if (!link || !trendId || shareLoading) return
+    const request = shareRequestRef.current
+    setShareCopyStatus('copying')
+    try {
+      // No network await before this call; iOS selection occurs inside the tap.
+      await copyTextToClipboard(link, shareInputRef.current)
+      if (request === shareRequestRef.current) {
+        setShareCopyStatus('copied')
+        markCopied(trendId)
+      }
+    } catch {
+      if (request === shareRequestRef.current) {
+        setShareCopyStatus('manual')
+        reportDeniedClipboard()
+      }
+    }
+  }
+
+  const closeShareLink = () => {
+    shareRequestRef.current += 1
+    setSharingTrend(null)
+    setShareLink('')
+    setShareError(null)
+    setShareCopyStatus('ready')
+    setShareLoading(false)
   }
 
   const rememberVideoAspectRatio = (trendId: number, video: HTMLVideoElement) => {
@@ -779,7 +869,7 @@ export function TrendsTab() {
                   <div className="truncate rounded-lg bg-secondary/55 px-2 py-1.5 text-[10px] text-muted-foreground">{modelLabel || trend.model}</div>
                   <Button type="button" size="sm" className="w-full bg-gold text-primary-foreground hover:bg-gold/90" onClick={() => applyTrend(trend)}><Repeat2 className="h-3.5 w-3.5" />{repeatCost ? 'Повторить · ' + repeatCost + '🍌' : 'Повторить'}</Button>
                   <div className={isAdmin ? 'grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2' : 'grid'}>
-                    <Button type="button" size="sm" variant="secondary" onClick={() => void handleCopyLink(trend)}>{copiedId === trend.id ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}{copiedId === trend.id ? 'Скопировано' : 'Ссылка'}</Button>
+                    <Button type="button" size="sm" variant="secondary" onClick={() => openShareLink(trend)}>{copiedId === trend.id ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}{copiedId === trend.id ? 'Скопировано' : 'Ссылка'}</Button>
                     {isAdmin ? <Button type="button" variant="secondary" size="sm" className="min-w-0 px-2 text-xs" onClick={() => openEditTrend(trend)} aria-label="Редактировать тренд"><Pencil className="h-3.5 w-3.5" /><span className="truncate">Редактировать</span></Button> : null}
                     {isAdmin ? <Button type="button" variant="secondary" size="icon" onClick={() => void handleRemove(trend)} disabled={removingId === trend.id} aria-label="Убрать тренд">{removingId === trend.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}</Button> : null}
                   </div>
@@ -1158,6 +1248,97 @@ export function TrendsTab() {
           <p className="mt-1 text-xs text-muted-foreground">{isAdmin ? 'Нажмите «Добавить», чтобы опубликовать первый шаблон.' : 'Команда NEUROMIX скоро добавит новые шаблоны.'}</p>
         </div>
       )}
+
+      <Dialog open={Boolean(sharingTrend)} onOpenChange={(open) => { if (!open) closeShareLink() }}>
+        <DialogContent className="max-h-[90dvh] max-w-lg space-y-3 overflow-y-auto border-border/60 bg-background p-4">
+          <DialogTitle className="pr-8 text-base">Ссылка на тренд</DialogTitle>
+          <p className="line-clamp-2 text-sm text-muted-foreground">{sharingTrend?.title}</p>
+          {shareLoading ? (
+            <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Получаем ссылку…
+            </p>
+          ) : null}
+          {shareError ? (
+            <div className="space-y-3">
+              <p role="alert" className="text-sm text-destructive">{shareError}</p>
+              <Button type="button" className="min-h-11 w-full" onClick={() => {
+                if (!sharingTrend) return
+                void loadShareLink(sharingTrend, ++shareRequestRef.current)
+              }}>
+                Повторить загрузку
+              </Button>
+            </div>
+          ) : null}
+          {shareLink ? (
+            <div className="space-y-3">
+              <p role="status" className="text-sm">
+                {shareCopyStatus === 'copied'
+                  ? 'Ссылка скопирована'
+                  : shareCopyStatus === 'manual'
+                    ? 'Telegram не разрешил запись в буфер. Выделите ссылку долгим нажатием или используйте меню телефона.'
+                    : shareCopyStatus === 'ready'
+                      ? 'Ссылка готова. Для копирования на iPhone нажмите кнопку ниже.'
+                      : 'Копируем ссылку…'}
+              </p>
+              <input
+                ref={shareInputRef}
+                aria-label="Ссылка на тренд"
+                type="text"
+                readOnly
+                value={shareLink}
+                onFocus={(event) => event.currentTarget.select()}
+                className="block w-full min-w-0 select-text rounded-lg border border-border bg-background p-3 text-base"
+              />
+              <p className="text-xs text-muted-foreground">
+                Если автоматическое копирование недоступно, нажмите на поле, удерживайте ссылку и выберите «Скопировать».
+              </p>
+              <Button
+                type="button"
+                className="min-h-11 w-full"
+                disabled={shareCopyStatus === 'copying'}
+                onClick={() => void copyShareLink()}
+              >
+                {shareCopyStatus === 'copied' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                {shareCopyStatus === 'copied' ? 'Ссылка скопирована' : 'Скопировать ссылку'}
+              </Button>
+              {typeof navigator !== 'undefined' && typeof navigator.share === 'function' ? (
+                <Button type="button" variant="outline" className="min-h-11 w-full" onClick={() => {
+                  // Native sheet needs this direct tap too. Opening the share sheet
+                  // is never reported as a successful clipboard copy.
+                  try {
+                    void navigator.share({ url: shareLink }).catch(() => setShareCopyStatus('manual'))
+                  } catch {
+                    setShareCopyStatus('manual')
+                  }
+                }}>
+                  Через меню телефона
+                </Button>
+              ) : null}
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <Button asChild variant="outline" className="min-h-11">
+                  <a href={shareLink} target="_blank" rel="noopener noreferrer"
+                    onClick={(event) => {
+                      if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey
+                        && tryOpenTelegramShareLink(shareLink)) event.preventDefault()
+                    }}>
+                    Открыть ссылку
+                  </a>
+                </Button>
+                <Button asChild variant="outline" className="min-h-11">
+                  <a href={telegramForwardLink(shareLink) || '#'} target="_blank" rel="noopener noreferrer"
+                    onClick={(event) => {
+                      const forward = telegramForwardLink(shareLink)
+                      if (forward && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey
+                        && tryOpenTelegramShareLink(forward)) event.preventDefault()
+                    }}>
+                    Поделиться в Telegram
+                  </a>
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
 
       <TrendRunnerDialog
         trend={trendToRun}

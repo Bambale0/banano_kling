@@ -43,8 +43,8 @@ jobs:
       - name: Build production Mini App
         run: npm run build
 
-      - name: Install locked Chromium runtime
-        run: npx playwright install --with-deps chromium
+      - name: Install Chromium and WebKit runtimes
+        run: npx playwright install --with-deps chromium webkit
 
       - name: Prepare mounted static export
         run: |
@@ -52,8 +52,10 @@ jobs:
           mkdir -p .e2e-server/mini-app
           cp -R out/. .e2e-server/mini-app/
 
-      - name: Run critical browser flows
-        run: node e2e/critical-flows.mjs
+      - name: Run critical browser and iOS share flows
+        run: |
+          node e2e/critical-flows.mjs
+          node e2e/trend-share-clipboard.mjs
 
       - name: Capture locked dependency audit report
         if: always()
