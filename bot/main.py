@@ -4863,96 +4863,106 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
 
             bot_instance = request.app["bot"]
             try:
+                from bot.services.delivery_state import is_telegram_media_too_large
+
                 sent_media = False
+                claimed_task = await get_task_by_id(task_id)
+                if claimed_task is None:
+                    return web.Response(status=503)
+                delivery_metadata = _extract_task_request_data(claimed_task)
+                media_too_large = bool(delivery_metadata.get('delivery_media_too_large'))
                 if is_video:
-                    video_kb = get_video_result_keyboard(
-                        result_url,
-                        task_id=_task_callback_id(task, task_id),
-                        model=task.model if task else None,
-                        is_public_feed=task.is_public_feed if task else False,
-                    )
-                    try:
-                        await bot_instance.send_video(
-                            chat_id=telegram_id,
-                            video=result_url,
-                            caption=_build_single_result_caption(_with_original_link(full_caption, result_url), task, reference_preview_urls),
-                            parse_mode="HTML",
-                            supports_streaming=True,
-                            reply_markup=video_kb,
-                        )
-                        logger.info(
-                            "%s video sent via URL to user %s",
-                            service_name,
-                            telegram_id,
-                        )
-                        sent_media = True
-                    except Exception as e:
-                        if await _finish_result_with_unavailable_telegram(
-                            task_id,
+                    if not media_too_large:
+                        video_kb = get_video_result_keyboard(
                             result_url,
-                            e,
-                            event="generation_video_url",
-                            telegram_id=telegram_id,
-                        ):
-                            return web.Response(status=200)
-                        logger.warning(
-                            "Video URL send failed (%s), trying file upload",
-                            e,
+                            task_id=_task_callback_id(task, task_id),
+                            model=task.model if task else None,
+                            is_public_feed=task.is_public_feed if task else False,
                         )
-                        tmp_file = None
                         try:
-                            import os
-                            import tempfile
-
-                            import aiohttp
-
-                            async with aiohttp.ClientSession() as session:
-                                async with session.get(result_url, timeout=60) as resp:
-                                    if resp.status != 200:
-                                        raise RuntimeError(
-                                            f"Download failed: {resp.status}"
-                                        )
-                                    tmp = tempfile.NamedTemporaryFile(
-                                        delete=False, suffix=".mp4"
-                                    )
-                                    tmp_file = tmp.name
-                                    with open(tmp_file, "wb") as f:
-                                        async for chunk in resp.content.iter_chunked(
-                                            1024 * 64
-                                        ):
-                                            if chunk:
-                                                f.write(chunk)
-                            from aiogram.types import FSInputFile
-
-                            video_file = FSInputFile(tmp_file)
                             await bot_instance.send_video(
                                 chat_id=telegram_id,
-                                video=video_file,
+                                video=result_url,
                                 caption=_build_single_result_caption(_with_original_link(full_caption, result_url), task, reference_preview_urls),
                                 parse_mode="HTML",
                                 supports_streaming=True,
                                 reply_markup=video_kb,
                             )
                             logger.info(
-                                f"{service_name} video sent as file to user {telegram_id}"
+                                "%s video sent via URL to user %s",
+                                service_name,
+                                telegram_id,
                             )
                             sent_media = True
-                        except Exception as dl_e:
+                        except Exception as e:
                             if await _finish_result_with_unavailable_telegram(
                                 task_id,
                                 result_url,
-                                dl_e,
-                                event="generation_video_file",
+                                e,
+                                event="generation_video_url",
                                 telegram_id=telegram_id,
                             ):
                                 return web.Response(status=200)
-                            logger.error(f"Video file upload failed: {dl_e}")
-                        finally:
-                            if tmp_file and os.path.exists(tmp_file):
-                                try:
-                                    os.remove(tmp_file)
-                                except Exception:
-                                    pass
+                            logger.warning(
+                                "Video URL send failed (%s), trying file upload",
+                                e,
+                            )
+                            tmp_file = None
+                            try:
+                                import os
+                                import tempfile
+
+                                import aiohttp
+
+                                async with aiohttp.ClientSession() as session:
+                                    async with session.get(result_url, timeout=60) as resp:
+                                        if resp.status != 200:
+                                            raise RuntimeError(
+                                                f"Download failed: {resp.status}"
+                                            )
+                                        tmp = tempfile.NamedTemporaryFile(
+                                            delete=False, suffix=".mp4"
+                                        )
+                                        tmp_file = tmp.name
+                                        with open(tmp_file, "wb") as f:
+                                            async for chunk in resp.content.iter_chunked(
+                                                1024 * 64
+                                            ):
+                                                if chunk:
+                                                    f.write(chunk)
+                                from aiogram.types import FSInputFile
+
+                                video_file = FSInputFile(tmp_file)
+                                await bot_instance.send_video(
+                                    chat_id=telegram_id,
+                                    video=video_file,
+                                    caption=_build_single_result_caption(_with_original_link(full_caption, result_url), task, reference_preview_urls),
+                                    parse_mode="HTML",
+                                    supports_streaming=True,
+                                    reply_markup=video_kb,
+                                )
+                                logger.info(
+                                    f"{service_name} video sent as file to user {telegram_id}"
+                                )
+                                sent_media = True
+                            except Exception as dl_e:
+                                if await _finish_result_with_unavailable_telegram(
+                                    task_id,
+                                    result_url,
+                                    dl_e,
+                                    event="generation_video_file",
+                                    telegram_id=telegram_id,
+                                ):
+                                    return web.Response(status=200)
+                                if is_telegram_media_too_large(dl_e):
+                                    media_too_large = True
+                                logger.error(f"Video file upload failed: {dl_e}")
+                            finally:
+                                if tmp_file and os.path.exists(tmp_file):
+                                    try:
+                                        os.remove(tmp_file)
+                                    except Exception:
+                                        pass
                 else:
                     # Image
                     image_bytes = await _download_remote_bytes(result_url, timeout_seconds=30)
@@ -5050,7 +5060,13 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                                     prompt_e,
                                 )
                 else:
-                    delivery_metadata = _extract_task_request_data(task)
+                    if is_video and media_too_large:
+                        if not await mark_task_delivery_status(task_id, 'pending', error='telegram_media_too_large'):
+                            return web.Response(status=503)
+                        # The database atomically finalizes an already-confirmed
+                        # link after recording the permanent media rejection.
+                        if delivery_metadata.get('delivery_link_sent'):
+                            return web.Response(status=200)
                     if not delivery_metadata.get("delivery_link_sent"):
                         await _send_plain_result_link(
                             bot_instance,
@@ -5061,7 +5077,11 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                             result_url=result_url,
                             reply_markup=kb_link,
                         )
-                        await mark_task_delivery_status(task_id, "link_sent")
+                        if not await mark_task_delivery_status(task_id, "link_sent"):
+                            return web.Response(status=503)
+                        if is_video and media_too_large:
+                            logger.info("Telegram oversize result delivered by link: task=%s", task_id)
+                            return web.Response(status=200)
                         logger.info(
                             "%s fallback link sent to user %s; media delivery remains pending",
                             service_name,

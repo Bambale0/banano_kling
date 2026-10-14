@@ -11,12 +11,13 @@ TASK_DELIVERY_STATUSES = frozenset(
         "failed",
         "pending",
         "link_sent",
+        "link_delivered",
         "unavailable",
         "uncertain",
     }
 )
 TERMINAL_TASK_DELIVERY_STATUSES = frozenset(
-    {"delivered", "failed", "unavailable", "uncertain"}
+    {"delivered", "link_delivered", "failed", "unavailable", "uncertain"}
 )
 
 _TERMINAL_TELEGRAM_DELIVERY_REASONS = (
@@ -131,3 +132,14 @@ async def tracked_telegram_send(progress: dict, primary: bool, send, *args, **kw
     if primary:
         progress["_telegram_primary_delivered"] = True
     return response
+
+
+def is_telegram_media_too_large(error: Exception) -> bool:
+    """Only Telegram's explicit size rejection proves media cannot be attached."""
+    from aiogram.exceptions import TelegramBadRequest, TelegramEntityTooLarge
+
+    if isinstance(error, TelegramEntityTooLarge):
+        return True
+    return isinstance(error, TelegramBadRequest) and any(
+        text in str(error).lower() for text in ('file is too big', 'file is too large', 'request entity too large')
+    )
