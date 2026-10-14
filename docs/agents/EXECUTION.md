@@ -1,5 +1,16 @@
 # Execution ledger
 
+## 2026-10-14 — iOS Telegram Mini App cannot copy Feed share URL
+
+- Baseline `tanyapi`: `a1b1ce4ae6f8c6b52cea06c7527fa61c645339c5`. Branch: `fix/tanyapi-ios-feed-share-copy-20261014`.
+- Symptom (user screenshot, iOS Telegram): Feed produced a valid exact `startapp=remix_…_ref_…` URL but copy recovery kept showing `Автоматическое копирование недоступно` after retry. Link generation, signature and ownership are separate and unchanged.
+- Root cause: initial copy awaited `feed/share`, losing clipboard transient user activation; retry tried asynchronous `navigator.clipboard.writeText` first, and after rejection attempted `execCommand` too late and on an element positioned at -9999px (fragile in iOS WKWebView).
+- Fix: preserve server URL byte-for-byte. On iOS wait for an explicit copy tap after resolving the share link; the shared clipboard helper immediately selects the already visible readonly input and calls synchronous legacy copy while user activation is alive, before trying standard Clipboard API. For other browsers retain existing automatic copy and fallback.
+- Add a user-activated `https://t.me/share/url?url=<encoded exact URL>` link, using existing Telegram native opener with normal secure anchor fallback. Do not navigate automatically or send data without a click. Unsafe URLs do not render share/navigation links. Retain manual selection when all clipboard methods reject.
+- Tests: add helper Jest regression for iOS selection, deny and empty link; feed DOM tests for click-time selection, exact referral URL and native share; mobile Chromium/WebKit E2E mocking clipboard denial and native copy, no live Telegram sessions. E2E and CI must pass before squash auto-merge. No DB, pricing, refs, payments, provider, env or production file change.
+- Release gate: dedicated PR into `tanyapi`, required green CI, squash auto-merge, verified production SHA, static Mini App and health smoke; preserve concurrent draft PR #305.
+
+
 ## 2026-10-10 — Higgsfield Genjutsu reference + generation seconds billing
 
 - Baseline: `tanyapi` `fb499599112c630e43ebb0c5b87c66d5b409c075`. Task branch: `fix/tanyapi-genjutsu-reference-plus-generation-seconds`. Draft PR #290.
