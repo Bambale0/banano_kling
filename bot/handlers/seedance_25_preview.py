@@ -224,7 +224,10 @@ async def _show_seedance_25_screen(target, state: FSMContext, *, edit: bool = Tr
     videos = len(data.get("v_reference_videos") or [])
     audios = len(data.get("seedance25_reference_audio_urls") or [])
     duration = int(data.get("v_duration", 5))
-    quote = _price_quote(data)
+    try:
+        quote_label = f"{_price_quote(data):g}🍌"
+    except ValueError:
+        quote_label = "после проверки секунд референсов"
 
     if scenario == "first_frame":
         media_hint = f"Загрузите <b>1 фото</b> как первый кадр. Сейчас: {'✅' if first else '—'}"
@@ -257,7 +260,7 @@ async def _show_seedance_25_screen(target, state: FSMContext, *, edit: bool = Tr
         f"{media_hint}\n\n"
         "🎥 <b>Dynamic Camera</b>: отдельного API-поля в опубликованной схеме нет; "
         "движение камеры и lock объектива задавайте в промпте.\n\n"
-        f"💰 Текущая цена из админ-прайса: <code>{quote}</code>🍌{auto_note}.\n"
+        f"💰 Текущая цена из админ-прайса: <code>{quote_label}</code>{auto_note}.\n"
         "Администратору списание не производится.\n\n"
         f"После настройки просто отправьте промпт (до {seedance_25_service.MAX_PROMPT_LENGTH} символов)."
     )
@@ -387,10 +390,13 @@ async def _run_seedance_25_message(message: types.Message, state: FSMContext, pr
         await message.answer(f"❌ Промпт Seedance 2.5 — максимум {seedance_25_service.MAX_PROMPT_LENGTH} символов.")
         return
 
-    quote = _price_quote(data)
+    try:
+        quote_label = f"{_price_quote(data):g}🍌"
+    except ValueError:
+        quote_label = "после проверки секунд референсов"
     processing = await message.answer(
         "🧪 <b>Seedance 2.5 — admin preview</b>\n"
-        f"Сценарий: <code>{scenario}</code> · цена по прайсу: <code>{quote}</code>🍌\n"
+        f"Сценарий: <code>{scenario}</code> · цена по прайсу: <code>{quote_label}</code>\n"
         "Задача отправляется в Kie.ai…",
         parse_mode="HTML",
     )
