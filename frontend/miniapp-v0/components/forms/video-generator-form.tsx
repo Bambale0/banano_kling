@@ -277,7 +277,9 @@ export function VideoGeneratorForm({
     : isOmniCharacter
       ? model?.omni_character_cost ?? 5
       : baseCost)
-  const perSecondCost = cost / Math.max(selectedDuration, 1)
+  // A verified quote includes incoming video seconds. Dividing by the
+  // generated length alone would display a fake 2x per-second tariff.
+  const perSecondCost = cost / Math.max(confirmedVideoQuote?.billable_seconds ?? selectedDuration, 1)
   const canAfford = priceAvailable && (hasAttachedVideo && !confirmedVideoQuote ? true : credits >= cost)
   const parseAssetIds = (value: string) =>
     value
@@ -1432,7 +1434,9 @@ export function VideoGeneratorForm({
                 ? `${model?.label} • ${cost}🍌`
                 : omniHasVideoReference
                   ? `видео-реф • ${selectedRatio} • ${formatPerSecondCost(perSecondCost)}🍌/с`
-                  : `${selectedDuration} сек. • ${selectedRatio} • ${formatPerSecondCost(perSecondCost)}🍌/с`}
+                  : confirmedVideoQuote
+                    ? `${confirmedVideoQuote.billable_seconds} сек. (вход + результат) • ${selectedRatio} • ${formatPerSecondCost(perSecondCost)}🍌/с`
+                    : `${selectedDuration} сек. • ${selectedRatio} • ${formatPerSecondCost(perSecondCost)}🍌/с`}
             </p>
           </div>
           <div className="flex items-center gap-1.5">
