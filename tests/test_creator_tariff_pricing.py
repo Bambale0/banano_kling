@@ -33,12 +33,17 @@ def test_creator_rates_are_per_model_quality_and_duration(price_config):
     assert resolve_video_quote('seedance-2.5', 6, '480p', tariff='creator').cost == 9
 
 
-def test_creator_video_reference_multiplier_applies_exactly_once(price_config):
+def test_creator_video_reference_seconds_are_additive_not_doubled(price_config):
     from bot.creator_tariff import resolve_video_quote
-    quote = resolve_video_quote('seedance_2_5', 10, '720p', ['one', 'two'], tariff='creator')
-    assert quote.cost == 40
-    assert quote.charge_cost == 40
-    assert quote.to_dict()['reference_multiplier'] == 2
+
+    quote = resolve_video_quote(
+        'seedance_2_5', 10, '720p', ['one', 'two'],
+        tariff='creator', reference_video_seconds=7,
+    )
+    assert quote.cost == 34  # (10s generated + 7s video) × creator 2🍌/s
+    assert quote.charge_cost == 34
+    assert quote.to_dict()['reference_multiplier'] == 1
+    assert quote.billable_seconds == 17
 
 
 def test_standard_and_admin_are_preserved(price_config):
