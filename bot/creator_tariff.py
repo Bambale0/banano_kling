@@ -17,7 +17,10 @@ from typing import Any
 from bot.config import config
 from bot.model_capabilities import get_video_capability
 from bot.services.preset_manager import preset_manager
-from bot.video_reference_policy import apply_video_reference_cost, measure_video_reference_seconds
+from bot.video_reference_policy import (
+    apply_video_reference_cost,
+    measure_video_reference_seconds,
+)
 
 LEGACY_CREATOR_MODELS = ('seedance_2', 'seedance_2_5')
 CREATOR_MODELS = (*LEGACY_CREATOR_MODELS, 'wan_3', 'wan_3_prime')
