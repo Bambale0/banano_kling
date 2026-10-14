@@ -494,6 +494,12 @@ async def test_typed_generic_failure_has_single_correct_financial_outcome(monkey
     monkeypatch.setattr(miniapp, "missing_local_upload_sources", lambda _: [])
     monkeypatch.setattr(miniapp, "touch_saved_references", AsyncMock())
     monkeypatch.setattr(miniapp.preset_manager, "get_video_cost_with_quality", lambda *_: 1)
+    from copy import deepcopy
+    prices = deepcopy(miniapp.preset_manager.get_price_config())
+    prices.setdefault("costs_reference", {}).setdefault("video_models", {}).setdefault(
+        "seedance_2", {},
+    ).setdefault("quality_costs", {})["720p"] = 0.2
+    monkeypatch.setattr(miniapp.preset_manager, "_price_config", prices)
     afford = AsyncMock(return_value=True)
     if case == "predebit_error":
         afford.side_effect = RuntimeError("synthetic balance-read failure")
