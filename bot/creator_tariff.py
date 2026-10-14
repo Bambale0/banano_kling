@@ -17,7 +17,7 @@ from typing import Any
 from bot.config import config
 from bot.model_capabilities import get_video_capability
 from bot.services.preset_manager import preset_manager
-from bot.video_reference_policy import apply_video_reference_cost
+from bot.video_reference_policy import apply_video_reference_cost, measure_video_reference_seconds
 
 LEGACY_CREATOR_MODELS = ('seedance_2', 'seedance_2_5')
 CREATOR_MODELS = (*LEGACY_CREATOR_MODELS, 'wan_3', 'wan_3_prime')
@@ -221,6 +221,8 @@ class VideoQuote:
     reference_multiplier: float
     revision: str
     version: int = 1
+    input_video_seconds: float = 0.0
+    billable_seconds: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -233,6 +235,7 @@ def resolve_video_quote(
     video_references: Iterable[str] | None = None,
     *,
     tariff: str = 'standard',
+    reference_video_seconds: float | None = None,
 ) -> VideoQuote:
     """Pure quote seam. ``tariff`` is supplied only by authenticated server code."""
     if tariff not in {'standard', 'creator', 'admin'}:
@@ -276,13 +279,23 @@ def resolve_video_quote(
         if math.isfinite(candidate) and candidate > 0:
             base_cost = candidate
             profile = 'creator'
-    multiplier = float(apply_video_reference_cost(model, 1.0, video_references))
-    cost = base_cost * multiplier
+    sources = tuple(str(url).strip() for url in video_references or [] if str(url).strip())
+    input_seconds = float(reference_video_seconds or 0.0)
+    raw_cost = apply_video_reference_cost(
+        model, base_cost, sources, output_seconds=billable_duration,
+        reference_seconds=reference_video_seconds,
+    )
+    cost = float(preset_manager._format_cost(raw_cost)) if sources else base_cost
     if not math.isfinite(cost) or cost <= 0:
         raise ValueError('Generation price must be finite and positive')
     revision_data = {'profile': profile, 'model': model, 'ordinary': ordinary_model, 'creator': creator_model if profile == 'creator' else None}
     revision = hashlib.sha256(json.dumps(revision_data, sort_keys=True, separators=(',', ':')).encode()).hexdigest()[:16]
-    return VideoQuote(model, billable_duration, quality, cost, 0.0 if profile == 'admin' else cost, profile, base_cost, multiplier, revision)
+    return VideoQuote(
+        model, billable_duration, quality, cost,
+        0.0 if profile == 'admin' else cost, profile, base_cost,
+        1.0, revision, 2 if sources else 1, input_seconds,
+        float(billable_duration) + input_seconds,
+    )
 
 
 async def quote_video_for_actor(
@@ -292,4 +305,10 @@ async def quote_video_for_actor(
     quality: str | None = None,
     video_references: Iterable[str] | None = None,
 ) -> VideoQuote:
-    return resolve_video_quote(model, duration, quality, video_references, tariff=await get_actor_tariff(telegram_id))
+    sources = tuple(str(url).strip() for url in video_references or [] if str(url).strip())
+    measured = await measure_video_reference_seconds(sources) if sources else 0.0
+    return resolve_video_quote(
+        model, duration, quality, sources,
+        tariff=await get_actor_tariff(telegram_id),
+        reference_video_seconds=measured,
+    )
