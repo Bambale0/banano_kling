@@ -140,6 +140,14 @@ def apply_video_reference_cost(
     urls = [str(url).strip() for url in video_references or [] if str(url).strip()]
     if not urls:
         return float(base_cost)
+    # Wan, Motion and Genjutsu already include measured input seconds in
+    # their own quote/settlement lifecycles. Applying a second surcharge here
+    # would double-bill the reference.
+    if normalize_video_model_key(model) in {
+        "wan_3", "wan_3_prime", "motion_control_v26",
+        "motion_control_v30", "motion_control", "genjutsu",
+    }:
+        return float(base_cost)
     if not supports_video_reference(model):
         raise ValueError("Выбранная модель не принимает видеореференсы")
     if output_seconds is None or reference_seconds is None:
