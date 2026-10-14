@@ -75,7 +75,10 @@ export interface Wan3PrimeQuoteResponse {
   reserve_cost: number
   estimated_final_cost?: number | null
   billing_duration_seconds: number
+  billable_output_seconds?: number
   source_video_duration_seconds: number
+  billing_version?: number
+  billing_mode?: 'output_only' | 'auto_output_reserve' | 'input_plus_selected_output' | 'auto_reserve'
   tariff_missing: boolean
   admin_free: boolean
   auto_duration: boolean
