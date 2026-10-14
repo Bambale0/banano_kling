@@ -10,7 +10,7 @@ jest.mock('@/lib/wan3-prime-api', () => ({
   fetchWan3PrimeOwnerRecipe: jest.fn(), fetchWan3PrimeRepeatPlan: jest.fn(), fetchWan3PrimeTrendPlan: jest.fn(),
 }))
 const quote = { ok: true, quote_hash: 'quote-1', reserve_cost: 60,
-  billing_duration_seconds: 30, source_video_duration_seconds: 2.5,
+  billing_duration_seconds: 30, source_video_duration_seconds: 0, billable_output_seconds: 30,
   tariff_missing: false, admin_free: false, auto_duration: true,
   settlement_notice: 'После генерации вернём неиспользованный резерв.' }
 
@@ -419,25 +419,26 @@ test('cancellation stays busy until cleanup finishes and retains a cleanup failu
 })
 
 
-test('ordinary WAN keeps identity across modes and auto-refreshes fixed input-plus-output quote before explicit launch', async () => {
+test('ordinary WAN shows generated-seconds-only price and refreshes fixed quotes before launch', async () => {
   ;(quoteWan3Prime as jest.Mock).mockImplementation(async ({ recipe }) => ({
     ...quote, auto_duration: false, source_video_duration_seconds: 7,
-    billing_duration_seconds: 7 + recipe.duration,
-    reserve_cost: 4 * (7 + recipe.duration), quote_hash: 'fixed-' + recipe.duration,
+    billing_duration_seconds: 7 + recipe.duration, billable_output_seconds: recipe.duration,
+    reserve_cost: 4 * recipe.duration, quote_hash: 'fixed-' + recipe.duration,
     settlement_notice: 'Показанная стоимость фиксируется при запуске.',
   }))
   render(<Wan3PrimeForm model="wan_3" credits={1000} />)
   expect(screen.getByText('Wan 3.0 Video')).toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'По референсам' }))
   await upload('Загрузить видео-референсы', 'reference.mp4', 'video/mp4')
-  await screen.findByText('Стоимость: 48🍌')
+  await screen.findByText('Стоимость: 20🍌')
+  expect(screen.getByText(/Видеореференсы: 7 с.*Генерация: 5 с/)).toBeInTheDocument()
   expect(quoteWan3Prime).toHaveBeenLastCalledWith(expect.objectContaining({
     recipe: expect.objectContaining({ model: 'wan_3', duration: 5 }),
   }), expect.any(AbortSignal))
   expect(generateWan3Prime).not.toHaveBeenCalled()
   fireEvent.change(screen.getByRole('slider', { name: 'Длительность Wan' }), { target: { value: '6' } })
   expect(screen.getByRole('button', { name: 'Запустить Wan' })).toBeDisabled()
-  await screen.findByText('Стоимость: 52🍌')
+  await screen.findByText('Стоимость: 24🍌')
   expect(generateWan3Prime).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('button', { name: 'Запустить Wan' }))
   await waitFor(() => expect(generateWan3Prime).toHaveBeenCalledWith(expect.objectContaining({
