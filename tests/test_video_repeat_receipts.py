@@ -1,22 +1,12 @@
 """Durable typed-repeat reservation and existing task lifecycle invariants."""
 import asyncio
 import json
-from copy import deepcopy
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 
-from bot import creator_tariff, database, miniapp
-from bot import db as db_backend
-from bot.handlers import seedance_25_public_release as public
+from bot import database
 from bot.services import task_watchdog
-from bot.services.seedance_service import seedance_service
 from bot.services.task_watchdog import force_fail_task, get_stuck_tasks
-from tests.test_video_repeat_private_contract import (
-    REAL_GENERIC,
-    typed_video_entrypoint as typed_video_entrypoint,  # noqa: PLC0414 - pytest fixture re-export
-)
 
 
 @pytest.fixture(autouse=True)
@@ -82,10 +72,26 @@ async def test_unknown_receipt_cannot_be_timed_out_or_taken_over():
     assert not any(item['task_id'] == receipt['task_id'] for item in await get_stuck_tasks(minutes=0))
     assert not (await reserve(user))['created']
 
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
+from bot import db as db_backend
+from bot import miniapp
+from bot.handlers import seedance_25_public_release as public
+from bot.services.seedance_service import seedance_service
+from tests.test_video_repeat_private_contract import (
+    REAL_GENERIC,
+)
+from tests.test_video_repeat_private_contract import (
+    typed_video_entrypoint as typed_video_entrypoint,  # noqa: PLC0414 - pytest fixture re-export
+)
 
 
 async def configure_actual_entry(monkeypatch, entry, model):
+    from copy import deepcopy
+
+    from bot import creator_tariff
+
     owner = await database.get_or_create_user(882101)
     viewer = await database.get_or_create_user(882102)
     async with db_backend.connect(database.DATABASE_PATH) as db:
