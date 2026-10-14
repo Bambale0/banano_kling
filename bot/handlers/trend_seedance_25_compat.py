@@ -31,6 +31,7 @@ async def _run_seedance25_trend(
     telegram_id: int,
     user: Any,
     trend: Any,
+    billing_quote: Any | None = None,
 ) -> web.Response:
     import bot.miniapp as miniapp_module
     from bot import trend_api
@@ -199,9 +200,19 @@ async def _run_seedance25_trend(
         trend_api._int_setting(pricing_trend.settings, "source_video_duration_seconds", 5)
         if video_editing else duration
     )
-    billing_quote = await quote_video_for_actor(
-        telegram_id, MODEL_KEY, pricing_duration, resolution, video_references,
-    )
+    # Reuse the quote bound by the protected /trends/run launch handshake.
+    # It must be the same actor/model/duration/quality/refs on both requests.
+    if billing_quote is None:
+        billing_quote = await quote_video_for_actor(
+            telegram_id, MODEL_KEY, pricing_duration, resolution, video_references,
+        )
+    elif (
+        getattr(billing_quote, "duration", pricing_duration) != pricing_duration
+        or str(getattr(billing_quote, "quality", resolution) or resolution).lower() != resolution
+    ):
+        raise trend_api.TrendRunValidationError(
+            "Референсы или тариф изменились. Рассчитайте стоимость заново."
+        )
     cost = billing_quote.cost
     is_admin = billing_quote.charge_cost == 0
     debited, debit_error = await trend_api._debit_for_generation(telegram_id, user, cost)
@@ -312,17 +323,20 @@ def install_trend_seedance_25_compat() -> None:
         telegram_id: int,
         user: Any,
         trend: Any,
+        billing_quote: Any | None = None,
     ) -> web.Response:
         if str(trend.model or "").strip() != MODEL_KEY:
             return await current_run_video_trend(
                 telegram_id=telegram_id,
                 user=user,
                 trend=trend,
+                billing_quote=billing_quote,
             )
         return await _run_seedance25_trend(
             telegram_id=telegram_id,
             user=user,
             trend=trend,
+            billing_quote=billing_quote,
         )
 
     trend_api._run_video_trend = run_video_trend_with_seedance25

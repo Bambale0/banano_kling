@@ -1184,7 +1184,8 @@ export function TrendsTab() {
             {userFields.length ? (
               <div className="space-y-2">
                 {userFields.map((field) => (
-                  <div key={field.key} className="flex items-center justify-between gap-3 rounded-xl border border-border/50 bg-background/45 p-3">
+                  <div key={field.key} className="space-y-2 rounded-xl border border-border/50 bg-background/45 p-3">
+                    <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Название поля</p>
                       <p className="mt-0.5 truncate text-sm font-medium text-foreground">{field.label}</p>
@@ -1197,6 +1198,23 @@ export function TrendsTab() {
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
+                    </div>
+                    <label className="block space-y-1 text-xs text-muted-foreground">
+                      <span>Исходное значение в скрытом промпте (необязательно)</span>
+                      <input
+                        aria-label={'Исходное значение для ' + field.label}
+                        value={field.original_value || ''}
+                        maxLength={160}
+                        onChange={(event) => setUserFields((current) => current.map((item) =>
+                          item.key === field.key ? { ...item, original_value: event.target.value } : item,
+                        ))}
+                        placeholder="Например, 37"
+                        className="h-10 w-full rounded-lg border border-border/60 bg-background/55 px-3 text-base text-foreground outline-none focus:border-gold/50"
+                      />
+                    </label>
+                    <p className="text-[10px] leading-relaxed text-muted-foreground">
+                      Введите значение, которое написано в исходном сценарии. Пользователь увидит только название поля и введёт своё число или текст.
+                    </p>
                   </div>
                 ))}
               </div>

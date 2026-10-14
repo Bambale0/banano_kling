@@ -119,7 +119,12 @@ def public_trend_settings(prompt: Mapping[str, Any]) -> dict[str, Any]:
     except TrendUserFieldsError:
         user_fields = []
     if user_fields:
-        public_settings["user_fields"] = user_fields
+        # A source anchor is a substring of the private author's recipe.
+        # Return only user-facing labels and validation metadata to viewers.
+        public_settings["user_fields"] = [
+            {key: value for key, value in field.items() if key != "original_value"}
+            for field in user_fields
+        ]
 
     preview_type = str(settings.get("preview_type") or "").strip().lower()
     if preview_type in {"image", "video"}:

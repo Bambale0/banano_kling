@@ -749,6 +749,19 @@ async def _quote_trend_video(telegram_id: int, trend: TrustedTrendRun):
         trend.model, str(trend.settings.get("scenario") or "imgtxt"),
     )
     duration = _int_setting(trend.settings, "duration", 5)
+    if model == "seedance_2_5":
+        # Price the dedicated Seedance runtime instead of unrelated Veo/Omni
+        # quality settings. Editing uses the source clip duration.
+        resolution = str(trend.settings.get("seedance25_resolution") or "720p").lower()
+        if resolution not in {"480p", "720p"}:
+            resolution = "720p"
+        if bool(trend.settings.get("seedance25_video_editing", False)):
+            duration = _int_setting(
+                trend.settings, "source_video_duration_seconds", 5,
+            )
+        return await quote_video_for_actor(
+            telegram_id, model, duration, resolution, trend.provider_video_urls,
+        )
     return await quote_video_for_actor(
         telegram_id, model, duration,
         miniapp_module._video_pricing_quality(
