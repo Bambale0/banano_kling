@@ -94,22 +94,25 @@ def _quote_response(quote) -> dict[str, Any]:
     retention_days = positive_setting('WAN3_RESULT_RETENTION_SECONDS', 30 * 86400) / 86400
     notice = f'Неопубликованный оригинал хранится на сервере {retention_days:g} дн. после генерации; скачайте его. Опубликованные и ещё не доставленные работы сохраняются.'
     if not auto:
-        notice = 'Цена фиксируется за входное видео и выбранную длительность результата. ' + notice
+        notice = 'Цена фиксируется только за выбранную длительность результата; видеореференс не оплачивается отдельно. ' + notice
     if auto:
-        notice = 'Auto резервирует максимум 30 суммарных видеосекунд; неиспользованная часть возвращается после проверки результата. ' + notice
+        notice = f'Auto резервирует до {quote.reserved_output_seconds:g} секунд генерации (общий лимит вход + выход — 30 секунд); неиспользованная часть возвращается после проверки результата. ' + notice
     return {
         "ok": True,
         "quote_hash": quote.quote_hash,
         "model": model.key,
         "reserve_cost": quote.reserve_credits,
         "estimated_final_cost": None if auto else quote.reserve_credits,
-        "billing_duration_seconds": quote.billable_seconds_reserved,
+        # Keep the historical total-duration field stable for older Mini App
+        # bundles. The new field is the actual customer-billed output budget.
+        "billing_duration_seconds": quote.input_video_seconds + quote.reserved_output_seconds,
+        "billable_output_seconds": quote.billable_seconds_reserved,
         "source_video_duration_seconds": quote.input_video_seconds,
         "tariff_missing": not quote.price_configured,
         "admin_free": quote.admin_free,
         "auto_duration": auto,
-        "billing_version": 2,
-        "billing_mode": "auto_reserve" if auto else "input_plus_selected_output",
+        "billing_version": 3,
+        "billing_mode": "auto_output_reserve" if auto else "output_only",
         "settlement_notice": notice,
     }
 
