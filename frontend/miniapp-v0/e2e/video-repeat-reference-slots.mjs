@@ -236,36 +236,46 @@ try {
     currentCard = { ...card, repeat_reference_slots: { ...slots,
       images: slots.images.map(slot => ({ ...slot, binding: 'fixed' })), videos: slots.videos.map(slot => ({ ...slot, binding: 'fixed' })),
     } }
+
     credits = 7
     await page.goto(baseUrl + '?startapp=remix_777')
     await page.getByRole('group', { name: 'Референсы повтора', exact: true }).waitFor()
     assert.equal(await page.getByRole('group', { name: 'Референсы повтора', exact: true }).locator('input[type=file]').count(), 0)
-    assert.equal(await page.getByRole('button', { name: /Рассчитать точную стоимость|Подтвердить цену и запустить|Запустить видео/ }).isDisabled(), true)
+    const fixedLaunch = page.getByRole('button', { name: /Рассчитать точную стоимость|Подтвердить цену и запустить|Запустить видео/ })
+    assert.equal(await fixedLaunch.isEnabled(), true)
+    await fixedLaunch.click()
     await page.getByText('Недостаточно бананов. Пополните баланс.', { exact: true }).waitFor()
+    assert.equal(await fixedLaunch.isDisabled(), true)
     const fixedCost = page.getByText('Стоимость', { exact: true }).locator('..').locator('..')
-    assert.equal(await fixedCost.getByText('10', { exact: true }).count(), 1)
-    credits = 10
+    assert.equal(await fixedCost.getByText('15', { exact: true }).count(), 1)
+    credits = 15
     const repriced = page.waitForResponse(response => response.url().endsWith('/bootstrap'))
     await page.evaluate(() => window.dispatchEvent(new Event('focus')))
     await repriced
     await page.getByText('Недостаточно бананов. Пополните баланс.', { exact: true }).waitFor({ state: 'hidden' })
-    assert.equal(await page.getByRole('button', { name: /Рассчитать точную стоимость|Подтвердить цену и запустить|Запустить видео/ }).isEnabled(), true)
-    // Retained480p final quote wins over bootstrap720p costs and includes its multiplier once.
-    currentCard = { ...card, repeat_reference_slots: { version: 1, available: true, cost_multiplier: 2,
-      duration_costs: { '5': 4 }, pricing_quality: '480p', images: [], videos: [{ index: 0, role: 'reference', binding: 'upload' }],
+    assert.equal(await fixedLaunch.isEnabled(), true)
+    // Retained 480p quality is the server's authoritative per-second rate;
+    // total cost also includes the newly uploaded video seconds.
+    currentCard = { ...card, repeat_reference_slots: { version: 1, available: true, cost_multiplier: 1,
+      duration_costs: { '5': 2 }, pricing_quality: '480p', images: [], videos: [{ index: 0, role: 'reference', binding: 'upload' }],
     } }
     credits = 4
     const beforeUpload = generations.length
     await page.goto(baseUrl + '?startapp=remix_777')
     await page.getByText('Качество исходного видео: 480p', { exact: true }).waitFor()
-    const retainedCost = page.getByText('Стоимость', { exact: true }).locator('..').locator('..')
-    assert.equal(await retainedCost.getByText('4', { exact: true }).count(), 1)
-    assert.equal(await page.getByText('5 сек. • 16:9 • 0.8🍌/с', { exact: true }).count(), 1)
-    assert.equal(await page.getByRole('button', { name: /Рассчитать точную стоимость|Подтвердить цену и запустить|Запустить видео/ }).isDisabled(), true)
+
+    await page.getByText(/Точная стоимость входящих видеореференсов/).waitFor()
+    const retainedLaunch = page.getByRole('button', { name: /Рассчитать точную стоимость|Подтвердить цену и запустить|Запустить видео/ })
+    assert.equal(await retainedLaunch.isDisabled(), true)
     await page.getByRole('group', { name: 'Видео 1', exact: true }).locator('input[type=file]').setInputFiles({ name: 'replacement.mp4', mimeType: 'video/mp4', buffer: media })
     await page.getByText('replacement.mp4', { exact: true }).waitFor()
-    await page.waitForFunction(() => ![...document.querySelectorAll('button')].find(button => button.textContent.includes('Запустить видео'))?.disabled)
-    assert.equal(await page.getByRole('button', { name: /Рассчитать точную стоимость|Подтвердить цену и запустить|Запустить видео/ }).isEnabled(), true)
+    assert.equal(await retainedLaunch.isEnabled(), true)
+    await retainedLaunch.click()
+    const retainedCost = page.getByText('Стоимость', { exact: true }).locator('..').locator('..')
+    assert.equal(await retainedCost.getByText('4', { exact: true }).count(), 1)
+    await page.getByText(/Видеореференсы: 5 с \+ генерация: 5 с = 10 с/).waitFor()
+    await page.getByText(/10 сек\. \(вход \+ результат\).*0.4🍌\/с/).waitFor()
+    assert.equal(await retainedLaunch.isEnabled(), true)
     assert.deepEqual(uploadKinds, ['seedance25_video_reference'])
     assert.equal(generations.length, beforeUpload, 'Uploading never launches a paid generation')
 
