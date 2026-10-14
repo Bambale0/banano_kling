@@ -52,7 +52,7 @@ async def test_creator_wan_reserve_and_settlement_use_frozen_personal_rate(creat
     request = body(model=model, scenario='reference', reference_video_urls=[source], duration=duration)
     quote = await lifecycle.quote(actor, request)
     assert quote.rate_per_second == rate
-    assert quote.reserve_credits == rate * (30 if duration == -1 else 12)
+    assert quote.reserve_credits == rate * (23 if duration == -1 else 5)
     result = await lifecycle.launch(actor, request, quote, 'creator-wan')
     assert await balance(actor.user_id) == 500 - quote.reserve_credits
     creator_prices['creator_tariff']['video_models'][model]['quality_costs']['720p'] = 99
@@ -62,7 +62,7 @@ async def test_creator_wan_reserve_and_settlement_use_frozen_personal_rate(creat
     provider.statuses['provider_1'] = {'taskId': 'provider_1', 'model': provider.recipe.provider_model, 'state': 'success', 'resultJson': '{"resultUrls":["https://example.test/result.mp4"]}'}
     await lifecycle.reconcile_once(provider_task_id='provider_1')
     status = await lifecycle.status(actor, result['task_id'])
-    expected = rate * (11 if duration == -1 else 12)
+    expected = rate * (4 if duration == -1 else 5)
     assert status['charged_credits'] == expected
     assert await balance(actor.user_id) == 500 - expected
 
