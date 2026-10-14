@@ -200,3 +200,26 @@ async def test_pg_startup_adds_private_repeat_grants_without_backfill(monkeypatc
     assert database.generation_repeat_reference_selection(payload) == [
         "https://example.test/explicit-private.png"
     ]
+
+
+
+@pytest.mark.asyncio
+async def test_pg_telegram_oversized_video_delivery_is_terminal_link_only():
+    await create_delivery_task()
+    task_id = "durability-pg"
+    result_url = "https://cdn.example/oversized.mp4"
+    assert await database.store_task_result_ready(task_id, result_url)
+    assert await database.mark_task_delivery_status(task_id, "link_sent")
+    assert await database.mark_task_delivery_status(
+        task_id, "pending", error="HTTP Client says - Request Entity Too Large"
+    )
+    result = await database.get_task_by_id(task_id)
+    metadata = json.loads(result.request_data)
+    assert result.status == "completed"
+    assert result.result_url == result_url
+    assert metadata["delivery_link_sent"] is True
+    assert metadata["delivery_status"] == "link_only"
+    assert not await database.claim_task_delivery(task_id)
+    assert await database.store_task_result_ready(task_id, result_url)
+    assert json.loads((await database.get_task_by_id(task_id)).request_data) == metadata
+    assert not await get_stuck_tasks(minutes=0)
