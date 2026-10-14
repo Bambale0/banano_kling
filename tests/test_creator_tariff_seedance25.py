@@ -37,6 +37,11 @@ def launch_env(monkeypatch):
         monkeypatch.setattr(module, "add_credits", AsyncMock(return_value=True))
     monkeypatch.setattr(public.fullstack, "_validate_seedance_sources", AsyncMock())
     monkeypatch.setattr(public.fullstack, "_validate_local_source", AsyncMock(return_value=12.2))
+    async def measured_references(urls):
+        # Real billing counts every attached reference; source auto-editing has
+        # a separate server-measured 12.2-second original video.
+        return 12.2 if any("source.mp4" in url for url in urls) else 5.0 * len(urls)
+    monkeypatch.setattr(creator_tariff, "measure_video_reference_seconds", AsyncMock(side_effect=measured_references))
     monkeypatch.setattr(public, "_identity_local_path", lambda *_args: "owned-upload")
     monkeypatch.setattr(public, "_launch_provider", AsyncMock(return_value={"task_id": "creator-seedance"}))
     monkeypatch.setattr(public.generation_module, "add_generation_task", AsyncMock(return_value=True))
@@ -64,8 +69,8 @@ def message(actor_id=123):
 
 
 @pytest.mark.parametrize("member,reference_count,expected", [
-    (True, 0, 10), (True, 1, 20), (True, 2, 20),
-    (False, 0, 20), (False, 1, 40), (False, 2, 40),
+    (True, 0, 10), (True, 1, 20), (True, 2, 30),
+    (False, 0, 20), (False, 1, 40), (False, 2, 60),
 ])
 async def test_miniapp_prices_authenticated_actor_and_references_once(launch_env, member, reference_count, expected):
     launch_env.membership.return_value = member
@@ -74,17 +79,25 @@ async def test_miniapp_prices_authenticated_actor_and_references_once(launch_env
         v_reference_videos=[f"https://example.test/{index}.mp4" for index in range(reference_count)],
         tariff="admin", creator_tariff=True, billing_quote={"charge_cost": 0},
     )
+    if reference_count:
+        data["seedance25_quote_only"] = True
+        estimated = await public._public_miniapp_generate(launch_env.request, data)
+        assert estimated.status == 200
+        data["seedance25_quote_only"] = False
+        data["seedance25_reference_quote_hash"] = json.loads(estimated.body)["quote_hash"]
     response = await public._public_miniapp_generate(launch_env.request, data)
     assert response.status == 200
     assert json.loads(response.body)["cost"] == expected
     miniapp.deduct_credits.assert_awaited_once_with(123, expected)
-    launch_env.membership.assert_awaited_once_with(123)
+    assert launch_env.membership.await_count == (2 if reference_count else 1)
+    assert all(call.args == (123,) for call in launch_env.membership.await_args_list)
     record = public.generation_module.add_generation_task.await_args.kwargs
     assert record["cost"] == record["request_data"]["charged_cost"] == expected
     snapshot = record["request_data"]["billing_quote"]
     assert snapshot["cost"] == snapshot["charge_cost"] == expected
     assert snapshot["profile"] == ("creator" if member else "standard")
-    assert snapshot["reference_multiplier"] == (2 if reference_count else 1)
+    assert snapshot["reference_multiplier"] == 1
+    assert snapshot["input_video_seconds"] == 5 * reference_count
 
 
 async def test_inactive_scenario_references_cannot_inflate_screen_or_launch(launch_env):
@@ -172,13 +185,13 @@ async def test_creator_identity_uses_measured_duration_and_quote_acknowledgement
                 seedance25_quote_only=True)
     response = await public._public_miniapp_generate(launch_env.request, data)
     displayed = json.loads(response.body)
-    assert displayed["cost"] == 52  # ceil(12.2) * synthetic creator 2 * reference 2
+    assert displayed["cost"] == 50.5  # (ceil(12.2) output + 12.2 ref) × creator 2
     assert displayed["billing_duration"] == 13
     miniapp.deduct_credits.assert_not_awaited()
     data.update(seedance25_quote_only=False, seedance25_identity_quote=displayed["seedance25_identity_quote"])
     response = await public._public_miniapp_generate(launch_env.request, data)
     assert response.status == 200
-    miniapp.deduct_credits.assert_awaited_once_with(123, 52)
+    miniapp.deduct_credits.assert_awaited_once_with(123, 50.5)
     record = public.generation_module.add_generation_task.await_args.kwargs
     assert record["duration"] == -1
     assert record["request_data"]["billing_quote"]["duration"] == 13
@@ -190,9 +203,9 @@ async def test_telegram_identity_screen_uses_callback_actor_and_current_tariff(l
                 v_reference_videos=["https://example.test/source.mp4"])
     state, msg = telegram_state(data), message(actor_id=999)
     await public._public_show_screen(msg, state, edit=False, actor_id=123)
-    assert data["seedance25_identity_quote"]["cost"] == 52
+    assert data["seedance25_identity_quote"]["cost"] == 50.5
     await public._public_message_launch(msg, state, "Keep the dance", actor_id=123)
-    public.generation_module.deduct_credits.assert_awaited_once_with(123, 52)
+    public.generation_module.deduct_credits.assert_awaited_once_with(123, 50.5)
     assert all(call.args == (123,) for call in launch_env.membership.await_args_list)
 
 
@@ -216,10 +229,10 @@ async def test_auto_editing_preserves_existing_five_second_estimate(launch_env, 
         v_reference_videos=["https://example.test/source.mp4"], v_duration=20,
     ))
     assert response.status == 200
-    assert json.loads(response.body)["cost"] == 40  # existing Auto 5 * retail 4 * 2
+    assert json.loads(response.body)["cost"] == 101  # (13 output + 12.2 input) * 4, rounded
     record = public.generation_module.add_generation_task.await_args.kwargs
     assert record["duration"] == -1
-    assert record["request_data"]["billing_quote"]["duration"] == 5
+    assert record["request_data"]["billing_quote"]["duration"] == 13
 
 
 async def test_async_failure_refunds_snapshot_once_after_membership_changes(launch_env, monkeypatch):
