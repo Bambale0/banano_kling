@@ -86,8 +86,8 @@ class Wan3PrimeQuote:
         return {
             "model": self.safe_request.get("model", WAN3_MODEL_KEY),
             "provider_model": wan3_model_spec(self.safe_request.get("model")).provider_model,
-            "version": 2,
-            "billing_mode": "auto_reserve" if self.requested_output_seconds is None else "input_plus_selected_output",
+            "version": 3,
+            "billing_mode": "auto_output_reserve" if self.requested_output_seconds is None else "output_only",
             "quotehash": self.quote_hash,
             "quote_hash": self.quote_hash,
             "recipe_fingerprint": self.recipe_fingerprint,
@@ -385,18 +385,19 @@ class Wan3PrimeLifecycle:
         rate, revision, configured = self._rate_snapshot(recipe, actor, tariff=tariff)
         requested = None if recipe.duration == -1 else recipe.duration
         if recipe.duration == -1:
-            billable = 30.0
+            # Wan's 30-second limit still includes references, but their time
+            # must not multiply the configured retail price per output second.
             reserved_output = max(0.0, 30.0 - float(recipe.input_video_seconds))
         else:
             reserved_output = float(recipe.duration)
-            billable = float(recipe.input_video_seconds + recipe.duration)
+        billable = reserved_output
         reserve = 0.0 if actor.is_admin else _round_half_credit(rate * billable)
         if not actor.is_admin and reserve <= 0:
             raise Wan3PrimeLifecycleError("Wan 3.0 reserve rounded to zero", status=503, code="missing_rate")
         fingerprint = recipe.fingerprint()
         quote_payload = {
-            "billing_version": 2,
-            "billing_mode": "auto_reserve" if requested is None else "input_plus_selected_output",
+            "billing_version": 3,
+            "billing_mode": "auto_output_reserve" if requested is None else "output_only",
             # The editor template and exact final prompt are part of the user's quote.
             "prepared_input": recipe.prepared_input,
             "fingerprint": fingerprint,
@@ -1108,7 +1109,12 @@ class Wan3PrimeLifecycle:
 
         quote = json.loads(row["quote_json"])
         input_seconds = float(quote["input_video_seconds"])
-        actual_billable = input_seconds + float(result_seconds)
+        # Preserve the historical accounting unit for accepted v1/v2 tasks.
+        # New v3 retail quotes charge only the requested output seconds.
+        actual_billable = (
+            float(result_seconds) if quote.get("version") == 3
+            else input_seconds + float(result_seconds)
+        )
         reserve = float(row["reserve_credits"] or 0)
         charge, refund = settlement_amounts(quote, reserve, float(result_seconds))
         async with db_backend.connect(_database_path()) as db:
