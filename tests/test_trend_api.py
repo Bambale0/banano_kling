@@ -512,9 +512,10 @@ async def test_seedance20_private_trend_launches_typed_hidden_references(monkeyp
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
-    from bot import creator_tariff
     from bot import miniapp as miniapp_module
     from bot import trend_api as trend_api_module
+
+    from bot import creator_tariff
 
     monkeypatch.setattr(creator_tariff, 'measure_video_reference_seconds', AsyncMock(return_value=5.0))
     run = trusted_trend_run(
@@ -912,9 +913,10 @@ async def test_seedance20_private_trend_persists_reference_contract_metadata(mon
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
-    from bot import creator_tariff
     from bot import miniapp as miniapp_module
     from bot.services.seedance_service import seedance_service
+
+    from bot import creator_tariff
 
     monkeypatch.setattr(creator_tariff, 'measure_video_reference_seconds', AsyncMock(return_value=5.0))
     monkeypatch.setattr(
