@@ -156,7 +156,8 @@ async def test_postgres_curated_edit_keeps_roles_and_settles_reward_once():
     assert provider.recipe.seed == 0 and provider.recipe.audio is False
     provider.statuses['provider_repeat'] = {'taskId': 'provider_repeat', 'state': 'success', 'resultUrls': ['https://owned.test/result.mp4']}
     await asyncio.gather(*(lifecycle.reconcile_once(provider_task_id='provider_repeat') for _ in range(3)))
-    assert await balance(viewer.user_id) == 80
+    assert quote.reserve_credits == 10  # Only generated seconds; the video reference is not charged.
+    assert await balance(viewer.user_id) == 90
     async with db_backend.connect() as db:
         events = await (await db.execute('SELECT COUNT(*) FROM prompt_repeat_events WHERE source_type = ? AND source_id = ?', ('prompt', trend['trend_id']))).fetchone()
         runs = await (await db.execute('SELECT COUNT(*) FROM trend_generation_runs WHERE trend_id = ?', (trend['trend_id'],))).fetchone()
