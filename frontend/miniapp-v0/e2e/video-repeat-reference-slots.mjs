@@ -207,10 +207,15 @@ try {
       assert.equal(await launch.isDisabled(), true)
       await page.getByRole('group', { name: 'Первый кадр · Фото 1', exact: true }).getByRole('button', { name: 'first.jpg', exact: true }).click()
       assert.equal(await launch.isEnabled(), true)
+      // Server quote accounts for two 5s video references plus 5s output:
+      // 15 seconds at 1🍌/s, without the old presence-only ×2.
+      await page.getByText(/Точная стоимость входящих видеореференсов/).waitFor()
+      await launch.click()
       const costSummary = page.getByText('Стоимость', { exact: true }).locator('..').locator('..')
-      assert.equal(await costSummary.getByText('10', { exact: true }).count(), 1)
-      assert.equal(await page.getByRole('button', { name: /5с.*2\/с/ }).count(), 1)
-      assert.equal(await page.getByText('5 сек. • 16:9 • 2🍌/с', { exact: true }).count(), 1)
+      assert.equal(await costSummary.getByText('15', { exact: true }).count(), 1)
+      await page.getByText(/Видеореференсы: 10 с \\+ генерация: 5 с = 15 с/).waitFor()
+      await page.getByText(/15 сек\\. \\(вход \\+ результат\\).*1🍌\\/с/).waitFor()
+      assert.equal(await launch.isEnabled(), true)
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
       if (width === 390 && surface === 'deep-link') {
         mkdirSync('test-results', { recursive: true })
@@ -223,6 +228,7 @@ try {
       assert.equal(await launch.isDisabled(), true)
       const sent = generations.at(-1)
       assert.equal(sent.source_feed_gen_id, 777)
+      assert.equal(sent.pricing_quote_hash, quotes.at(-1).response.quote_hash)
       assert.equal(sent.prompt, '')
       assert.deepEqual(sent.reference_images, ['https://example.test/first.jpg', 'https://example.test/third.jpg'])
       assert.deepEqual(sent.v_reference_videos, ['https://example.test/clip.mp4'])
