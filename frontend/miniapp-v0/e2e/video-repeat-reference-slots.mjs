@@ -107,7 +107,11 @@ try {
         else if (url.pathname.endsWith('/generate-video')) {
           const data = route.request().postDataJSON()
           if (data.pricing_quote_only === true) {
-            const incoming = (data.v_reference_videos || []).length * 5
+            // Hidden fixed media never leave the server; count their seconds
+            // in the quote without exposing their URLs to the consumer.
+            const fixed = (currentCard.repeat_reference_slots?.videos || [])
+              .filter(slot => slot.binding === 'fixed').length
+            const incoming = ((data.v_reference_videos || []).length + fixed) * 5
             const output = data.v_duration || 5
             const quality = currentCard.repeat_reference_slots?.pricing_quality || '720p'
             const rate = quality === '480p' ? 0.4 : 1
