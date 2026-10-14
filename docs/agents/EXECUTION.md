@@ -2067,3 +2067,7 @@ Coverage: pure contract tests and existing chunk HTTP regression run locally wit
 - Production Next.js static export generated; Chrome mobile E2E passed extensionless video, category pagination, existing repeat dialog, admin editing and signed history.
 - Disposable PostgreSQL trigger/atomicity case added to creator PostgreSQL workflow tests, awaiting GitHub runner.
 - No live customer generations, price changes, DB edits or direct production deploy performed.
+
+- Follow-up Codex review on functional commit 59b5676: security review clean; reviewer identified reverse-order PostgreSQL row-lock deadlock for concurrent category reorder (P2).
+- Fix: PostgreSQL now locks category rows ORDER BY id FOR UPDATE prior to position updates; SQLite takes BEGIN IMMEDIATE before reading revisions. Added disposable PostgreSQL concurrent opposite-reorder test requiring exactly one revision-conflict and one success, rather than deadlock/500.
+- Final local focused regression: 20 tests passed, Ruff clean. Pending GitHub PostgreSQL concurrent CI, entire CI and code review final disposition.

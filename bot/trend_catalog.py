@@ -394,7 +394,18 @@ async def reorder_categories(
     versions = [_revision(item.get("revision")) for item in ordered]
     async with db_backend.connect(database.DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
-        rows = await (await db.execute("SELECT id FROM trend_categories")).fetchall()
+        if db_backend.is_postgres():
+            # The incoming order differs between editors. Acquire all row
+            # locks in a stable primary-key order BEFORE updating positions to
+            # prevent reverse-order transactions from deadlocking.
+            cursor = await db.execute(
+                "SELECT id FROM trend_categories ORDER BY id ASC FOR UPDATE"
+            )
+        else:
+            # SQLite has a single writer: lock before reading category revisions.
+            await db.execute("BEGIN IMMEDIATE")
+            cursor = await db.execute("SELECT id FROM trend_categories ORDER BY id ASC")
+        rows = await cursor.fetchall()
         if set(ids) != {int(row[0]) for row in rows}:
             raise CatalogConflict("Список категорий изменился. Обновите страницу")
         before = await audit.categories_snapshot(db)

@@ -26,7 +26,7 @@
 | /trends/category | Полная категория с page и limit |
 | /admin/trends/categories | Управление категориями, размещением и бейджами |
 
-Admin op: create, update, delete, reorder, set_items, move_item, set_trend_categories, set_badge, search_trends. Модификации защищены проверкой revision; stale-операция возвращает HTTP 409. При полном переназначении категорий одного тренда PostgreSQL блокирует строку самого тренда (FOR UPDATE), SQLite использует BEGIN IMMEDIATE, чтобы параллельные запросы не объединяли два противоречивых набора. Админский поиск возвращает только опубликованные тренды.
+Admin op: create, update, delete, reorder, set_items, move_item, set_trend_categories, set_badge, search_trends. Модификации защищены проверкой revision; stale-операция возвращает HTTP 409. При полном переназначении категорий одного тренда PostgreSQL блокирует строку самого тренда (FOR UPDATE), SQLite использует BEGIN IMMEDIATE, чтобы параллельные запросы не объединяли два противоречивых набора. Для перестановки всех категорий PostgreSQL предварительно блокирует строки в порядке ID (FOR UPDATE), а SQLite берёт writer-lock до чтения: противоположные запросы двух администраторов завершаются нормальным revision conflict вместо deadlock. Админский поиск возвращает только опубликованные тренды.
 
 Все карточки проходят sanitize_prompt_for_public: скрытые тексты, приватные настройки модели, исходные значения пользовательских полей и внутренние данные модерации не попадают в ответы.
 
