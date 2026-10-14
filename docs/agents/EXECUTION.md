@@ -11,6 +11,19 @@
 - Release gate: dedicated PR into `tanyapi`, required green CI, squash auto-merge, verified production SHA, static Mini App and health smoke; preserve concurrent draft PR #305.
 
 
+## 2026-10-14 — All-model additive video-reference pricing, no presence ×2
+
+- Baseline: `tanyapi` and prod `a1b1ce4ae6f8c6b52cea06c7527fa61c645339c5`. PR #305 `fix/tanyapi-all-video-reference-seconds-no-multiplier-20261014` (draft until CI verified).
+- Supersedes incorrect output-only WAN PR #304, which was closed without merge. Clarified retail requirement: for all supported video models, **configured rate × (measured input video seconds summed over attached video references + selected output seconds)**; do not add another presence-based ×2.
+- Audit: WAN 3/Prime, Motion and Genjutsu already used input plus generated video accounting; Seedance 2/2.5 and generic quote/UI used an incorrect ×2 if any video reference. Multiple references were indistinguishable. Mini App ordinary and Seedance public UIs displayed doubled prices and lacked precise quote confirmation.
+- New accounting: bounded server-owned ffprobe of locally retained source video, independently measured and summed, fail-closed on unresolvable/expired URLs; source duration never inferred from count or guessed. Shared `quote_video_for_actor` and `resolve_video_quote` apply rate once with existing rounding; actor tariff/admin-free retained. No new provider parameter or upstream rate change.
+- Mini App: new quote-only authenticated mode on the existing generation API validates the same recipe/media as launch; returns source/output/billable seconds, cost and quote hash, and requires current price acknowledgement before debit. Generic Studio uses two-click quote/launch. Separate Seedance 2.5 public screen uses its existing quote endpoint for all source-bearing generations and preserves its identity quote gate. All old clients submitting paid video refs without a confirmed quote get a safe stale-quote response.
+- Feed and repeat: remove presence multiplier in descriptors and creator metadata; prompt-repeat and trend cards with unresolved video references show no invented final price. Normalized repeat references resolve on the backend before charging. Telegram keyboard displays base per-second rate while real quote counts source seconds.
+- Risk policy: no migration of historic tasks or direct balance adjustment; previous reserves/refunds remain frozen. No production config/price writes, paid video generations or provider payload changes. Preserve dirty production `data/price.json`.
+- Verification: RED production read-only test confirmed old Seedance 2 quote 20→40 for a single video despite unknown length. Added deterministic pure and actor tests for 5s generated + 7s refs at 4/s = 48 and 5s + 13s at 4/s = 72; full project CI and browser E2E required before marking ready. `Bambale0/skills` diagnosing-bugs, TDD/code-review, `Bambale0/claw` backend integration and Anthropic webapp-testing consulted.
+- Release: required CI checks → ready-for-review/native auto-merge to protected `tanyapi` → exact prod SHA backend health and Mini App revision verification; **not yet deployed**.
+
+
 ## 2026-10-10 — Higgsfield Genjutsu reference + generation seconds billing
 
 - Baseline: `tanyapi` `fb499599112c630e43ebb0c5b87c66d5b409c075`. Task branch: `fix/tanyapi-genjutsu-reference-plus-generation-seconds`. Draft PR #290.
@@ -1979,3 +1992,28 @@ Baseline ca3df2da85856ee593777a30555ee7e474fc6946. Observed generic prompt submi
 Implementation: strict complete recipe and explicit replacement keys for both WAN models; administrator check; media ownership/type/hash validation and atomic public-card/private-recipe insertion under the same storage lock as retention. Existing retention pins recipe_json, so saved references remain protected without global TTL changes. Public cards contain only presentation and slot metadata. No generation, payment or provider request is used by publication. External link slots and template user fields are rejected explicitly rather than silently discarded. Existing generated-task publisher remains available.
 
 Coverage: pure contract tests and existing chunk HTTP regression run locally without application/database imports. Full application tests cover both models, public privacy, compiled replacement order, foreign/nonadmin rejection, rollback, retention and no reactivation. These require official CI. Frontend implementation and independent final review pending. Relevant previously read diagnosing-bugs/debugger/webapp-testing playbooks used; shared checkout refresh remains unavailable after prior denial. Release requires exact CI/review and a user-facing report before merge. Real user publishing/repeat UI smoke remains distinct from paid generation.
+
+
+## 2026-10-14 PR305 release verification
+
+- Isolated worktree at /root/tanya-workspaces/video-billing-pr305; live tanyapi checkout and data/price.json untouched. PR source head 1d7e0916; tanyapi later incorporated PR308.
+- Resolved review findings: M4V/WebM local duration measurement; duplicate video normalization; stale quote refresh in Mini App; Telegram repeat missing-reference handling; explicit trend video quote-only and second-click approval to prevent unconfirmed debits.
+- Trend hash binds actor, trend, saved recipe, resolved hidden and uploaded references, quote seconds/rate revision. A missing/stale hash fails 409 before balance deduction and finalizes an idempotency claim.
+- Verified local Next.js static production build, TypeScript, targeted Jest and all 62 Jest suites / 476 tests, and Playwright repeat references flow at 320/390/430 px. Added backend hash, no-debit, format and dedup regression tests.
+- Host pytest blocked by missing aiogram: required Python CI must prove backend. No production price/config/migration/provider changes, no paid generation.
+- Remaining: exact-PR CI (including browser, PostgreSQL, bot, Docker), review, native squash auto-merge to tanyapi, exact-SHA deploy and postdeploy health/telemetry smoke. Do not claim deployed before checks.
+
+
+### 2026-10-14: final Python CI gate after 9561e8d
+
+- GitHub TG CI 1894 failed only in safe regression suite: 3721 passed, 110 skipped, 10 failed. Two were private Seedance trend contract tests that bypassed the new mandatory preview-and-approval request; eight were isolated pure pricing tests whose module stub did not implement the existing normalization dependency.
+- Regression repair (test-only; production code unchanged): update the isolated reference-policy stub to deduplicate and trim as the real public interface does; for valid private video trend tests obtain the server's quote first, assert preview does not launch or debit, then explicitly pass the hash. Invalid/oversize videos remain fail-closed. Do not bypass the actual approval gate.
+- Host Python unittest of isolated pricing tests: 8/8 passed; compileall passed. GitHub Python CI rerun is authoritative for full bot tests. Existing dirty production price.json and diagnostics remain untouched.
+
+
+### 2026-10-14 CI 1895 final browser regression
+
+- Safe backend regression passed: 3731 passed, 110 skipped; standalone Mini App browser E2E and other checks passed.
+- GitHub CI job 115898452976 failed only in e2e/creator-tariff.mjs:75: it still asserted the deleted presence multiplier (40 bananas) instead of a server-measured reference video quote.
+- Updated synthetic creator tariff browser test to quote 18 input seconds plus output with model/viewer rate, check read-only quote produces no launch, require hash on launch, refresh quote when prompt changes, and assert no client-controlled tariff. Local Chromium E2E passed all four combinations (standard/creator with Seedance 2/2.5).
+- Production remains on 177cf068 until protected branch checks pass, native squash merges PR305 and exact deploy is verified. No paid generation and no runtime price.json changes.

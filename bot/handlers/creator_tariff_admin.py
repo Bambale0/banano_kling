@@ -54,7 +54,7 @@ def _rate_help(model):
         return 'Целое число от 1 до 10000. Ставка шага умножается на его длительность и число вариантов.'
     if model in {'wan_3', 'wan_3_prime'}:
         return 'Ставка за сумму входных видеосекунд и выбранного результата; Auto резервирует 30 секунд.'
-    return 'Только положительное число; видео-референс автоматически ×2.'
+    return 'Положительная ставка 🍌/сек; длительность каждого входящего видео добавляется к секундам результата, без ×2.'
 
 
 
@@ -202,7 +202,7 @@ async def _prices(event, state, notice=""):
     status = creator_tariff_status()
     raw = _raw_tariff()
     token = await _screen(state, creator_config_fingerprint=_fingerprint(raw))
-    lines = ["💰 <b>Цены креатора</b>", "Ставки в 🍌/сек. Seedance с видео: ×2. WAN: вход + результат. Genjutsu: сумма шагов и вариантов.", ""]
+    lines = ["💰 <b>Цены креатора</b>", "Ставки в 🍌/сек. Видеореференсы + результат по секундам, без ×2. Genjutsu: сумма шагов и вариантов.", ""]
     rows = []
     for model, qualities in _editable_qualities(status).items():
         if model.startswith('genjutsu/'):

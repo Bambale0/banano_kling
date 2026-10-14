@@ -1361,12 +1361,23 @@ export async function executeMiniAppAction(action: string): Promise<void> {
   })
 }
 
+export interface VideoGenerationQuote {
+  quote_hash: string
+  cost: number
+  source_video_seconds: number
+  output_seconds: number
+  billable_seconds: number
+  admin_free: boolean
+}
+
 export async function generateVideo(payload: {
   model: string
   scenario: ScenarioType
   ratio: string
   duration: number
   sourceFeedGenId?: number | null
+  pricingQuoteOnly?: boolean
+  pricingQuoteHash?: string
   grokMode?: string
   grokResolution?: string
   veoGenerationType?: string
@@ -1429,6 +1440,12 @@ export async function generateVideo(payload: {
     prompt_hidden?: boolean
     prompt_actions_allowed?: boolean
     source_feed_gen_id?: number | null
+    quote_only?: boolean
+    quote_hash?: string
+    source_video_seconds?: number
+    output_seconds?: number
+    billable_seconds?: number
+    admin_free?: boolean
   }>('generate-video', {
     init_data: initData,
     v_model: payload.model,
@@ -1436,6 +1453,8 @@ export async function generateVideo(payload: {
     v_ratio: payload.ratio,
     v_duration: payload.duration,
     source_feed_gen_id: payload.sourceFeedGenId || null,
+    pricing_quote_only: payload.pricingQuoteOnly === true,
+    pricing_quote_hash: payload.pricingQuoteHash,
     grok_mode: payload.grokMode,
     grok_resolution: payload.grokResolution,
     veo_generation_type: payload.veoGenerationType,
@@ -1475,6 +1494,16 @@ export async function generateVideo(payload: {
     }
     throw error
   })
+
+  if (payload.pricingQuoteOnly) {
+    if (response.quote_only !== true || !response.quote_hash || typeof response.cost !== 'number') {
+      throw new Error('Сервер не подтвердил стоимость видео с референсами.')
+    }
+    return { quote: response as VideoGenerationQuote } as unknown as {
+      task: Task
+      credits: number
+    }
+  }
 
   const task: Task = {
     task_id: response.task_id,
@@ -1516,6 +1545,15 @@ export async function generateVideo(payload: {
         : null,
     credits: response.credits,
   }
+}
+
+export async function quoteVideoGeneration(payload: Parameters<typeof generateVideo>[0]): Promise<VideoGenerationQuote> {
+  const reply = await generateVideo({ ...payload, pricingQuoteOnly: true })
+  const quote = (reply as unknown as { quote?: VideoGenerationQuote }).quote
+  if (!quote || !Number.isFinite(quote.cost) || quote.cost < 0 || !quote.quote_hash) {
+    throw new Error('Не удалось подтвердить цену с видеореференсами.')
+  }
+  return quote
 }
 
 export async function repeatFeedVideo(sourceFeedGenId: number): Promise<{

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from bot import creator_tariff_membership, database, miniapp, trend_api
+from bot import creator_tariff, creator_tariff_membership, database, miniapp, trend_api
 from bot.config import config
 from bot.handlers import generation
 from bot.services import task_watchdog
@@ -40,12 +40,17 @@ async def ordinary_actor(monkeypatch):
     )))
     provider = AsyncMock(return_value={'task_id': 'ordinary-seedance2-test'})
     monkeypatch.setattr(seedance_service, 'generate_video', provider)
+    monkeypatch.setattr(creator_tariff, 'measure_video_reference_seconds', AsyncMock(return_value=5.0))
     return SimpleNamespace(prices=prices, role=role, membership=membership,
                            provider=provider, user=user, initial=user.credits)
 
 
 async def launch(surface, body):
     if surface == 'miniapp':
+        if body.get('v_reference_videos'):
+            preview = await miniapp.miniapp_generate_video(request({**body, 'pricing_quote_only': True}))
+            assert preview.status == 200, preview.body
+            body['pricing_quote_hash'] = json.loads(preview.body)['quote_hash']
         response = await miniapp.miniapp_generate_video(request(body))
         assert response.status == 200, response.body
         return json.loads(response.body)
@@ -67,7 +72,7 @@ async def test_public_launch_quotes_debits_persists_and_refunds_once(
 ):
     actor = ordinary_actor
     actor.role.member, actor.role.admin = member, admin
-    display_cost = duration * rate * (2 if has_video_reference else 1)
+    display_cost = (duration + (5 if has_video_reference else 0)) * rate
     charge_cost = 0 if admin else display_cost
     references = ['https://example.test/reference.mp4'] if has_video_reference else []
     body = data(v_duration=duration, v_reference_videos=references,
@@ -87,7 +92,8 @@ async def test_public_launch_quotes_debits_persists_and_refunds_once(
     assert quote['profile'] == profile
     assert quote['quality'] == '720p'
     assert quote['duration'] == duration
-    assert quote['reference_multiplier'] == (2 if has_video_reference else 1)
+    assert quote['reference_multiplier'] == 1
+    assert quote['input_video_seconds'] == (5 if has_video_reference else 0)
     assert (await database.get_or_create_user(123)).credits == actor.initial - charge_cost
     if admin:
         actor.membership.assert_not_awaited()
@@ -214,7 +220,10 @@ async def test_trend_display_matches_launch_and_refund(
     expected = 5 * rate * (2 if has_video_reference else 1)
     charge = 0 if admin else expected
     monkeypatch.setattr(trend_api, '_record_trend_use', AsyncMock())
-    assert trend_api.estimate_trend_repeat_cost(recipe, tariff=profile) == expected
+    if has_video_reference:
+        assert trend_api.estimate_trend_repeat_cost(recipe, tariff=profile) is None
+    else:
+        assert trend_api.estimate_trend_repeat_cost(recipe, tariff=profile) == expected
     response = await trend_api._run_video_trend(telegram_id=123, user=actor.user, trend=recipe)
     assert response.status == 200, response.body
     assert json.loads(response.body)['cost'] == expected

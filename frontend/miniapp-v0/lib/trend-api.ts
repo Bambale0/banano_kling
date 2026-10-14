@@ -222,12 +222,51 @@ export async function runPinterestRepeatTrend(
   return toRunResult(data, referenceUrls)
 }
 
+export interface TrendVideoQuote {
+  ok: true
+  quote_only: true
+  cost: number
+  quote_hash: string
+  source_video_seconds: number
+  output_seconds: number
+  billable_seconds: number
+  admin_free: boolean
+}
+
+export async function quoteTrendVideo(
+  trendId: number,
+  referenceUrls: string[],
+  userValues: Record<string, string> = {},
+  referenceInputs: TrendReferenceInput[] = [],
+): Promise<TrendVideoQuote> {
+  const payload = authorizedPayload()
+  payload.trend_id = trendId
+  payload.reference_urls = referenceUrls.map(providerReferenceUrl)
+  if (referenceInputs.length) {
+    payload.reference_inputs = referenceInputs.map((input) => ({
+      ...input,
+      url: providerReferenceUrl(input.url),
+    }))
+  }
+  if (Object.keys(userValues).length) payload.user_values = userValues
+  payload.pricing_quote_only = true
+  const response = await fetch(`${getApiBasePath()}/trends/run`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    cache: 'no-store',
+    credentials: 'same-origin',
+  })
+  return parseJson<TrendVideoQuote>(response, 'Не удалось рассчитать стоимость видео-тренда')
+}
+
 export async function runTrend(
   trendId: number,
   referenceUrls: string[],
   userValues: Record<string, string> = {},
   clientRequestId: string = createTrendRunRequestId(),
   referenceInputs: TrendReferenceInput[] = [],
+  pricingQuoteHash?: string,
 ): Promise<RunTrendResult> {
   const payload = authorizedPayload()
   payload.trend_id = trendId
@@ -239,6 +278,7 @@ export async function runTrend(
     }))
   }
   payload.client_request_id = clientRequestId
+  if (pricingQuoteHash) payload.pricing_quote_hash = pricingQuoteHash
   if (Object.keys(userValues).length) payload.user_values = userValues
 
   let response: Response

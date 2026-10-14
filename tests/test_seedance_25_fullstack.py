@@ -61,14 +61,16 @@ def test_seedance25_release_removes_new_markers_from_other_models():
     assert _clean_other_new_markers("Nano Banana 2 Lite НОВИНКА") == "Nano Banana 2 Lite"
 
 
-def test_seedance25_video_reference_doubles_price_once():
+def test_seedance25_video_reference_bills_measured_seconds_without_multiplier():
     assert apply_video_reference_cost("seedance_2_5", 20, []) == 20
-    assert apply_video_reference_cost("seedance_2_5", 20, ["https://example.com/ref.mp4"]) == 40
     assert apply_video_reference_cost(
-        "seedance_2_5",
-        20,
-        ["https://example.com/a.mp4", "https://example.com/b.mp4"],
-    ) == 40
+        "seedance_2_5", 20, ["https://example.com/ref.mp4"],
+        output_seconds=5, reference_seconds=7,
+    ) == 48
+    assert apply_video_reference_cost(
+        "seedance_2_5", 20, ["https://example.com/a.mp4", "https://example.com/b.mp4"],
+        output_seconds=5, reference_seconds=11,
+    ) == 64
 
 
 def test_seedance25_classifies_video_and_returned_last_frame():

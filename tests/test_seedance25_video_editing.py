@@ -12,8 +12,10 @@ from bot.video_generation_contract import normalize_video_request
 
 
 @pytest.fixture(autouse=True)
-def isolated_database():
-    """Launch dependencies are mocked; no real database is required."""
+def isolated_database(monkeypatch):
+    """All source clips here are synthetic 12-second videos, never file-backed."""
+    from bot import creator_tariff
+    monkeypatch.setattr(creator_tariff, "measure_video_reference_seconds", AsyncMock(return_value=12.0))
     yield
 
 
@@ -79,7 +81,7 @@ async def test_miniapp_edit_entitlement_and_effective_response(admin, flag, expe
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("duration, editing, valid", [(3, True, False), (4, True, True), (30, True, True), (31, True, False), (3, False, True), (None, True, True)])
+@pytest.mark.parametrize("duration, editing, valid", [(3, True, False), (4, True, True), (30, True, True), (31, True, False), (3, False, True), (None, True, False)])
 async def test_edit_source_duration_preserves_regular_reference_limits(duration, editing, valid):
     data = state_data()
     data["seedance25_video_editing"] = editing
@@ -115,6 +117,11 @@ async def test_public_normal_reference_launch_keeps_selected_settings_and_charge
          patch.object(miniapp, "get_or_create_user", AsyncMock(return_value=user)), \
          patch.object(public, "_launch_provider", AsyncMock(return_value={"task_id": "normal-test"})) as launch, \
          patch.object(public.generation_module, "add_generation_task", AsyncMock()) as store:
+        estimate = await public._public_miniapp_generate(SimpleNamespace(app={}), {
+            **body, "seedance25_quote_only": True,
+        })
+        assert estimate.status == 200
+        body["seedance25_reference_quote_hash"] = json.loads(estimate.body)["quote_hash"]
         response = await public._public_miniapp_generate(SimpleNamespace(app={}), body)
     assert response.status == 200
     debit.assert_awaited_once_with(123, 96)

@@ -3177,9 +3177,13 @@ async def quick_repeat_video_result(callback: types.CallbackQuery, state: FSMCon
     billing_quote = None
     if preset_manager.normalize_video_model_key(v_model) in {"seedance_2", "seedance_2_5"}:
         pricing_quality = request_data.get("seedance25_resolution", "720p") if v_model == "seedance_2_5" else None
-        billing_quote = await quote_video_for_actor(
-            callback.from_user.id, v_model, v_duration, pricing_quality, reference_videos,
-        )
+        try:
+            billing_quote = await quote_video_for_actor(
+                callback.from_user.id, v_model, v_duration, pricing_quality, reference_videos,
+            )
+        except ValueError:
+            await callback.answer('Видеореференс устарел или недоступен. Загрузите видео заново.', show_alert=True)
+            return
     unit_cost = billing_quote.cost if billing_quote else (task.cost or 0)
     is_admin = billing_quote.charge_cost == 0 if billing_quote else config.is_admin(callback.from_user.id)
     if unit_cost > 0 and not is_admin:

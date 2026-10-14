@@ -254,10 +254,14 @@ async def repeat_advanced_video_result(callback: types.CallbackQuery, state: FSM
     billing_quote = None
     if normalize_video_model_key(model) in {"seedance_2", "seedance_2_5"}:
         quality = restored.get("seedance25_resolution", "720p") if model == "seedance_2_5" else None
-        billing_quote = await quote_video_for_actor(
-            callback.from_user.id, model, restored['v_duration'], quality,
-            restored['v_reference_videos'],
-        )
+        try:
+            billing_quote = await quote_video_for_actor(
+                callback.from_user.id, model, restored['v_duration'], quality,
+                restored['v_reference_videos'],
+            )
+        except ValueError:
+            await callback.answer('Видеореференс устарел или недоступен. Загрузите видео заново.', show_alert=True)
+            return
     unit_cost = billing_quote.cost if billing_quote else int(task.cost or 0)
     is_admin = billing_quote.charge_cost == 0 if billing_quote else config.is_admin(callback.from_user.id)
     if unit_cost > 0 and not is_admin:

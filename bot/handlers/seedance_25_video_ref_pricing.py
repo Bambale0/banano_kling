@@ -1,8 +1,8 @@
 """Seedance 2.5 video-reference retail pricing compatibility.
 
 The product rule is simple and server-authoritative: when a Seedance generation
-contains at least one video reference, charge the configured base price once at
-x2. Multiple video references do not stack the multiplier.
+contains video references, charge their measured seconds plus the selected
+output seconds at the same rate. Do not multiply prices by presence.
 """
 
 from __future__ import annotations
@@ -28,13 +28,20 @@ def install_seedance_25_video_ref_pricing() -> None:
     @wraps(original)
     def priced(data: dict) -> float:
         base_cost = float(original(data))
-        return float(
-            apply_video_reference_cost(
-                MODEL_KEY,
-                base_cost,
-                data.get("v_reference_videos") or [],
-            )
-        )
+        references = list(data.get("v_reference_videos") or [])
+        if not references:
+            return base_cost
+        durations = list(data.get("seedance25_reference_video_durations") or [])
+        if len(durations) != len(references) or any(float(item) <= 0 for item in durations):
+            raise ValueError("Длительность видео-референсов ещё не проверена")
+        seconds = 5 if data.get("seedance25_video_editing") is True else int(data.get("v_duration", 5))
+        if seconds == -1:
+            seconds = 5  # Established admin Auto estimate.
+        from bot.services.preset_manager import preset_manager
+        return float(preset_manager._format_cost(apply_video_reference_cost(
+            MODEL_KEY, base_cost, references, output_seconds=seconds,
+            reference_seconds=sum(float(item) for item in durations),
+        )))
 
     preview_module._price_quote = priced
     _installed = True

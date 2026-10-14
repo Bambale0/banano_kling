@@ -459,7 +459,22 @@ try {
     }
 
     if (path.endsWith('/trends/run')) {
-      trendGenerationPayload = JSON.parse(request.postData() || '{}')
+      const trendRequest = JSON.parse(request.postData() || '{}')
+      if (trendRequest.pricing_quote_only === true) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            ok: true, quote_only: true,
+            quote_hash: 'trend-e2e-approved-price',
+            cost: 10, source_video_seconds: 5,
+            output_seconds: 5, billable_seconds: 10, admin_free: false,
+          }),
+        })
+        return
+      }
+      assert.equal(trendRequest.pricing_quote_hash, 'trend-e2e-approved-price')
+      trendGenerationPayload = trendRequest
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -608,14 +623,20 @@ try {
     mimeType: 'image/jpeg',
     buffer: Buffer.from([255, 216, 255, 224, 0, 16, 74, 70, 73, 70]),
   })
-  await trendRunner.getByText('Сгенерировать · 10🍌', { exact: true }).waitFor()
+  await trendRunner.getByText('Рассчитать точную стоимость', { exact: true }).waitFor()
   await page.waitForTimeout(100)
   assert.equal(trendGenerationPayload, null, 'Uploading a trend reference must not auto-run')
-
+  const quoteResponse = page.waitForResponse((response) =>
+    new URL(response.url()).pathname.endsWith('/trends/run'),
+  )
+  await trendRunner.getByRole('button', { name: 'Рассчитать точную стоимость', exact: true }).click()
+  await quoteResponse
+  await trendRunner.getByRole('button', { name: 'Подтвердить 10🍌 и запустить', exact: true }).waitFor()
+  assert.equal(trendGenerationPayload, null, 'Measuring the reference must not launch or charge')
   const generatedResponse = page.waitForResponse((response) =>
     new URL(response.url()).pathname.endsWith('/trends/run'),
   )
-  await trendRunner.getByRole('button', { name: 'Сгенерировать · 10🍌', exact: true }).click()
+  await trendRunner.getByRole('button', { name: 'Подтвердить 10🍌 и запустить', exact: true }).click()
   await generatedResponse
 
   assert.equal(trendGenerationPayload?.trend_id, curatedTrend.id)

@@ -233,26 +233,24 @@ def test_seedance_transport_preserves_all_photo_reference_order() -> None:
     assert videos == ["https://cdn.test/dance.mp4"]
 
 
-def test_seedance_video_reference_doubles_price_once() -> None:
+def test_seedance_video_reference_adds_verified_input_seconds() -> None:
     assert apply_video_reference_cost(
-        "seedance_2",
-        7,
-        ["https://cdn.test/a.mp4"],
-    ) == 14
+        "seedance_2", 7, ["https://cdn.test/a.mp4"],
+        output_seconds=5, reference_seconds=7,
+    ) == 16.8
     assert apply_video_reference_cost(
-        "bytedance/seedance-2",
-        7,
+        "bytedance/seedance-2", 7,
         ["https://cdn.test/a.mp4", "https://cdn.test/b.mp4"],
-    ) == 14
+        output_seconds=5, reference_seconds=10,
+    ) == 21
 
 
 def test_seedance_without_video_reference_keeps_base_price() -> None:
     assert apply_video_reference_cost("seedance_2", 7, []) == 7
     assert apply_video_reference_cost(
-        "gemini_omni_video",
-        7,
-        ["https://cdn.test/a.mp4"],
-    ) == 7
+        "gemini_omni_video", 7, ["https://cdn.test/a.mp4"],
+        output_seconds=5, reference_seconds=3,
+    ) == 11.2
 
 
 def test_seedance_blocks_prompt_when_video_tag_has_no_video_reference() -> None:

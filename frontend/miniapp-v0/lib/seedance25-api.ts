@@ -25,6 +25,7 @@ export interface Seedance25GeneratePayload {
   identityTransfer?: boolean
   sourceFeedGenId?: number | null
   identityQuote?: Seedance25IdentityQuote
+  referenceQuoteHash?: string
   resolution: Seedance25Resolution
   outputFormat: Seedance25OutputFormat
   generateAudio: boolean
@@ -66,6 +67,17 @@ export interface Seedance25QuoteResponse {
   billing_duration: number
   source_video_duration_seconds: number
   seedance25_identity_quote: Seedance25IdentityQuote
+}
+
+export interface Seedance25ReferenceQuote {
+  ok: true
+  quote_only: true
+  quote_hash: string
+  cost: number
+  source_video_duration_seconds: number
+  output_seconds: number
+  billable_seconds: number
+  admin_free: boolean
 }
 
 interface Seedance25UploadAssemblyResponse {
@@ -196,6 +208,7 @@ async function requestSeedance25<T>(
       ...(quoteOnly ? { seedance25_quote_only: true } : {}),
       seedance25_identity_transfer: payload.identityTransfer === true,
       ...(payload.identityQuote ? { seedance25_identity_quote: payload.identityQuote } : {}),
+      ...(payload.referenceQuoteHash ? { seedance25_reference_quote_hash: payload.referenceQuoteHash } : {}),
       prompt: payload.prompt,
       v_ratio: payload.videoEditing || payload.identityTransfer ? 'adaptive' : payload.ratio,
       v_duration: payload.videoEditing || payload.identityTransfer ? -1 : payload.duration,
@@ -226,4 +239,8 @@ export async function generateSeedance25(payload: Seedance25GeneratePayload): Pr
 
 export async function quoteSeedance25Identity(payload: Seedance25GeneratePayload): Promise<Seedance25QuoteResponse> {
   return requestSeedance25<Seedance25QuoteResponse>(payload, true)
+}
+
+export async function quoteSeedance25Reference(payload: Seedance25GeneratePayload): Promise<Seedance25ReferenceQuote> {
+  return requestSeedance25<Seedance25ReferenceQuote>(payload, true)
 }

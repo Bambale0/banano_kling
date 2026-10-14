@@ -34,7 +34,7 @@ def fake_quotes(monkeypatch):
         calls.append((model, duration, quality, bool(video_references), tariff))
         rate = {"standard": 4, "creator": 1, "admin": 4}[tariff]
         rate *= 2 if quality == "1080p" else 1
-        return SimpleNamespace(cost=duration * rate * (2 if video_references else 1))
+        return SimpleNamespace(cost=duration * rate)
 
     monkeypatch.setattr(display, "resolve_video_quote", quote)
     monkeypatch.setattr(display, "video_quality_rates", lambda model, *, tariff="standard": {
@@ -67,11 +67,12 @@ def test_repeat_descriptor_requotes_viewer_and_preserves_actual_historical_cost(
     before = deepcopy(card)
     creator = display.price_feed_api_payload({"ok": True, "feed": [card]}, tariff="creator")
     ordinary = display.price_feed_api_payload({"ok": True, "feed_item": card})
-    assert creator["feed"][0]["repeat_reference_slots"]["duration_costs"]["5"] == 20
-    assert ordinary["feed_item"]["repeat_reference_slots"]["duration_costs"]["5"] == 80
+    assert creator["feed"][0]["repeat_reference_slots"]["duration_costs"]["5"] == 10
+    assert ordinary["feed_item"]["repeat_reference_slots"]["duration_costs"]["5"] == 40
+    assert creator["feed"][0]["repeat_reference_slots"]["reference_seconds_pending"] is True
     assert creator["feed"][0]["cost"] == 99
     assert card == before
-    assert all(call[2:4] == ("1080p", True) for call in fake_quotes)
+    assert all(call[2:4] == ("1080p", False) for call in fake_quotes)
 
 
 @pytest.mark.parametrize("route", ["miniapp_feed", "miniapp_feed_item", "miniapp_feed_like", "miniapp_feed_share"])
@@ -180,10 +181,11 @@ async def test_feed_detail_reprices_same_cached_source_for_each_viewer(monkeypat
     monkeypatch.setattr(miniapp, "_get_user_context", AsyncMock(return_value=(101, {"user": SimpleNamespace(id=7)})))
     monkeypatch.setattr(miniapp, "get_profile_generation_card", AsyncMock(return_value=source))
     monkeypatch.setattr(display, "get_actor_tariff", AsyncMock(side_effect=["creator", "standard"]))
-    for expected in (10, 40):
+    for expected in (5, 20):
         response = await miniapp.miniapp_feed_item(Request({"gen_id": 22, "tariff": "admin"}))
         card = json.loads(response.text)["feed_item"]
         assert card["repeat_reference_slots"]["duration_costs"]["5"] == expected
+        assert card["repeat_reference_slots"]["reference_seconds_pending"] is True
         assert card["cost"] == 45
     assert source == before
 

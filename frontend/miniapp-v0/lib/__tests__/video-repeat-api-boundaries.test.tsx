@@ -13,6 +13,11 @@ const preset: VideoPromptPreset = { title: 'Repeat', prompt: '', promptHidden: t
   repeatReferenceSlots: { version: 1, available: true, cost_multiplier: 2, images: [], videos: [{ index: 0, role: 'reference', binding: 'fixed' }] } }
 const payload = { model: videoModel.id, scenario: 'video' as const, duration: 5, ratio: '16:9', sourceFeedGenId: preset.sourceFeedGenId, prompt: '', startImage: null, references: [], videoReferences: [] }
 const fetchMock = jest.fn()
+const trustedVideoQuote = {
+  quote_hash: 'server-verified-price', cost: 15,
+  source_video_seconds: 10, output_seconds: 5,
+  billable_seconds: 15, admin_free: false,
+}
 beforeEach(() => { fetchMock.mockReset(); global.fetch = fetchMock; window.sessionStorage.clear(); window.history.replaceState({}, '', '/mini-app/') })
 
 it('normalizes an actual Omni feed card to the available public model', async () => {
@@ -21,7 +26,7 @@ it('normalizes an actual Omni feed card to the available public model', async ()
   const hydrated = await hydrateSeedance25IdentityPreset(item, { ...preset, sourceFeedGenId: 41, model: 'gemini_omni' })
   expect(hydrated.model).toBe('gemini_omni')
   render(<VideoGeneratorForm models={[{ ...videoModel, id: 'gemini_omni' }]} promptPreset={hydrated} onSubmit={jest.fn()} isSubmitting={false} credits={100} />)
-  expect(screen.getByRole('button', { name: /Запустить видео/ })).toBeEnabled()
+  expect(screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость|Подтвердить цену и запустить/ })).toBeEnabled()
 })
 
 it('withdraws the full publication through the installed scope endpoint', async () => {
@@ -48,16 +53,22 @@ it('preserves accepted status and prevents duplicate HTTP submissions until the 
 
 it('shows accepted status after real HTTP failure and keeps it after the form is reopened', async () => {
   fetchMock.mockResolvedValueOnce(respond({ ok: false, code: 'video_status_pending', task_id: 'accepted-task', error: 'Accepted; awaiting status' }, false))
-  const props = { models: [videoModel], promptPreset: preset, onSubmit: async (data: Parameters<typeof generateVideo>[0]) => { await generateVideo(data) }, isSubmitting: false, credits: 100 }
+  const props = { models: [videoModel], promptPreset: preset,
+    onQuote: jest.fn().mockResolvedValue(trustedVideoQuote),
+    onSubmit: async (data: Parameters<typeof generateVideo>[0]) => { await generateVideo(data) },
+    isSubmitting: false, credits: 100 }
   const view = render(<VideoGeneratorForm {...props} />)
-  fireEvent.click(screen.getByRole('button', { name: /Запустить видео/ }))
+  fireEvent.click(screen.getByRole('button', { name: /Рассчитать точную стоимость/ }))
+  await screen.findByText(/Видеореференсы: 10 с/)
+  expect(fetchMock).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: /Подтвердить цену и запустить/ }))
   await screen.findByText('Видео принято, ожидаем подтверждения статуса')
   expect(screen.queryByText(/Откройте публикацию заново/)).not.toBeInTheDocument()
-  expect(screen.getByRole('button', { name: /Запустить видео/ })).toBeDisabled()
+  expect(screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость|Подтвердить цену и запустить/ })).toBeDisabled()
   view.unmount()
   render(<VideoGeneratorForm {...props} promptPreset={{ ...preset }} />)
   expect(screen.getByText('Видео принято, ожидаем подтверждения статуса')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: /Запустить видео/ })).toBeDisabled()
+  expect(screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость|Подтвердить цену и запустить/ })).toBeDisabled()
   expect(fetchMock).toHaveBeenCalledTimes(1)
 })
 
@@ -81,7 +92,7 @@ it('keeps acceptance without a task ID through empty or pending history refreshe
   render(<VideoGeneratorForm models={[videoModel]} promptPreset={{ ...preset, sourceFeedGenId: unknown.sourceFeedGenId }} onSubmit={jest.fn()} isSubmitting={false} credits={100} />)
   expect(screen.getByText('Видео принято, ожидаем подтверждения статуса')).toBeInTheDocument()
   expect(screen.queryByText(/Откройте публикацию заново/)).not.toBeInTheDocument()
-  expect(screen.getByRole('button', { name: /Запустить видео/ })).toBeDisabled()
+  expect(screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость|Подтвердить цену и запустить/ })).toBeDisabled()
 })
 
 
@@ -94,13 +105,11 @@ it('uses retained-quality server duration quotes from an actual Seedance feed re
   const hydrated = await hydrateSeedance25IdentityPreset(item, { ...preset, model: 'seedance_2_5', sourceFeedGenId: 480 })
   const onSubmit = jest.fn()
   render(<VideoGeneratorForm models={[{ ...videoModel, id: 'seedance_2_5', durations: [5, 10], costs: { '5': 5, '10': 10 } }]} promptPreset={hydrated} onSubmit={onSubmit} isSubmitting={false} credits={4} />)
-  expect(screen.getByRole('button', { name: /Запустить видео/ })).toBeEnabled()
-  expect(screen.getByText('4', { exact: true })).toBeInTheDocument()
-  expect(screen.getByText('5 сек. • 16:9 • 0.8🍌/с')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость|Подтвердить цену и запустить/ })).toBeEnabled()
+  expect(screen.getByText('Точная стоимость входящих видеореференсов появится после проверки файлов на сервере. Цена не умножается на два.')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: /10с.*0.8\/с/ })).toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: /10с.*0.8\/с/ }))
-  expect(screen.getByText('8', { exact: true })).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: /Запустить видео/ })).toBeDisabled()
+  expect(screen.getByRole('button', { name: /Рассчитать точную стоимость/ })).toBeEnabled()
   expect(onSubmit).not.toHaveBeenCalled()
 })
 
@@ -108,6 +117,6 @@ it('uses retained-quality server duration quotes from an actual Seedance feed re
 it.each([undefined, {}, { '10': 8 }, { '5': 0 }, { '5': -1 }, { '5': '4' }])('blocks missing or unusable retained-quality quote %s', (duration_costs) => {
   const unpriced = { ...preset, model: 'seedance_2_5', repeatReferenceSlots: { ...preset.repeatReferenceSlots!, duration_costs } } as VideoPromptPreset
   render(<VideoGeneratorForm models={[{ ...videoModel, id: 'seedance_2_5' }]} promptPreset={unpriced} onSubmit={jest.fn()} isSubmitting={false} credits={100} />)
-  expect(screen.getByRole('button', { name: /Запустить видео/ })).toBeDisabled()
+  expect(screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость|Подтвердить цену и запустить/ })).toBeDisabled()
   expect(screen.getByText('Стоимость недоступна')).toBeInTheDocument()
 })

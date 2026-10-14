@@ -7,7 +7,7 @@ import { Seedance25PublicForm } from '../forms/seedance25-public-form'
 import { ResultCard } from '../result-card'
 import type { Task, ScenarioType, UploadedFile } from '@/lib/types'
 import { uploadSeedance25Video, type Seedance25GenerateResponse } from '@/lib/seedance25-api'
-import { generateVideo, uploadFile } from '@/lib/api'
+import { generateVideo, quoteVideoGeneration, uploadFile } from '@/lib/api'
 import { isVideoStatusPending } from '@/lib/video-repeat-pending'
 import { GenjutsuButton } from '../genjutsu-entry'
 
@@ -72,6 +72,7 @@ export function VideoTab() {
     ratio: string
     duration: number
     sourceFeedGenId?: number | null
+    pricingQuoteHash?: string
     grokMode: string
     grokResolution: string
     veoGenerationType: string
@@ -252,6 +253,7 @@ export function VideoTab() {
           <VideoGeneratorForm
             models={formVideoModels}
             onSubmit={handleSubmit}
+            onQuote={quoteVideoGeneration}
             onCheckPendingVideo={() => { void refreshTasks(); setActiveTab(0) }}
             onUploadImageReference={handleUploadImageReference}
             onUploadVideoReference={handleUploadVideoReference}
