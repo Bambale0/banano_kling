@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from bot import creator_tariff_membership, database, miniapp
+from bot import creator_tariff, creator_tariff_membership, database, miniapp
 from bot.config import config
 from bot.handlers import generation
 from bot.services import task_watchdog
@@ -32,6 +32,7 @@ async def actor(monkeypatch):
     monkeypatch.setattr(miniapp, '_get_user_context', AsyncMock(return_value=(123, {'user': user})))
     provider = AsyncMock(return_value={'task_id': 's2-creator-test'})
     monkeypatch.setattr(seedance_service, 'generate_video', provider)
+    monkeypatch.setattr(creator_tariff, 'measure_video_reference_seconds', AsyncMock(return_value=5.0))
     return SimpleNamespace(prices=prices, member=member, user=user, provider=provider, initial=user.credits)
 
 
@@ -62,6 +63,10 @@ async def test_actor_quote_matches_debit_and_immutable_task(actor, surface, memb
     actor.member.return_value = member
     body = data(v_reference_videos=refs, tariff='admin', creator_tariff=False, billing_quote={'charge_cost': 0})
     if surface == 'miniapp':
+        if refs:
+            preview = await miniapp.miniapp_generate_video(request({**body, 'pricing_quote_only': True}))
+            assert preview.status == 200, preview.body
+            body['pricing_quote_hash'] = json.loads(preview.body)['quote_hash']
         response = await miniapp.miniapp_generate_video(request(body))
         assert response.status == 200, response.body
         assert json.loads(response.body)['cost'] == expected
