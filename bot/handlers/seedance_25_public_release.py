@@ -315,7 +315,11 @@ def _identity_local_path(source: str, kind: str, telegram_id: int) -> str:
 def _identity_quote(payload: dict[str, Any], *, cost: float | None = None) -> dict[str, Any]:
     duration = payload["billing_duration"]
     return {
-        "cost": float(cost) if cost is not None else float(apply_video_reference_cost(MODEL_KEY, preset_manager.get_video_cost_with_quality(MODEL_KEY, duration, payload["resolution"]), payload["video_urls"])),
+        "cost": float(cost) if cost is not None else float(preset_manager._format_cost(apply_video_reference_cost(
+            MODEL_KEY, preset_manager.get_video_cost_with_quality(MODEL_KEY, duration, payload["resolution"]),
+            payload["video_urls"], output_seconds=duration,
+            reference_seconds=payload.get("source_video_duration_seconds"),
+        ))),
         "billing_duration": duration,
         "source_video_url": payload["video_urls"][0],
         "source_feed_gen_id": payload.get("source_feed_gen_id"),
@@ -336,7 +340,10 @@ async def _payload_quote(telegram_id: int | None, payload: dict[str, Any]) -> Vi
         "video_references": payload["video_urls"],
     }
     if telegram_id is None:
-        return resolve_video_quote(MODEL_KEY, **kwargs)
+        from bot.video_reference_policy import measure_video_reference_seconds
+
+        seconds = await measure_video_reference_seconds(payload["video_urls"])
+        return resolve_video_quote(MODEL_KEY, **kwargs, reference_video_seconds=seconds)
     return await quote_video_for_actor(telegram_id, MODEL_KEY, **kwargs)
 
 
