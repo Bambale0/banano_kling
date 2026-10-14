@@ -25,3 +25,9 @@ export function tryOpenTelegramShareLink(value: string): boolean {
     return false
   }
 }
+
+/** Construct a Telegram share-sheet link without changing the signed remix URL. */
+export function telegramForwardLink(value: string): string | null {
+  if (!isNavigableShareLink(value)) return null
+  return `https://t.me/share/url?url=${encodeURIComponent(value)}`
+}
