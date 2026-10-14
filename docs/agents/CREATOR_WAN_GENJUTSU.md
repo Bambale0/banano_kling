@@ -5,7 +5,7 @@ Scope: existing authenticated Creator membership, separate administrator-edited 
 
 ## Audit and decisions
 - Existing Seedance creator config has an all-required-quality gate. New optional prices must not invalidate an already configured Seedance tariff.
-- WAN uses a shared Telegram/MiniApp/trend/repeat lifecycle. Fixed charge is rate times measured input-video seconds plus selected output seconds; Auto reserves 30 seconds and settles against the accepted rate.
+- Historical pre-2026-10-14 WAN behavior: shared Telegram/MiniApp/trend/repeat lifecycle charged input-video seconds plus selected output seconds; Auto reserved 30 combined seconds. As of the 2026-10-14 v3 retail correction, **new** ordinary and creator Wan quotes charge only generated seconds. Auto reserves up to `30 − video-reference seconds` of generated output. Previously accepted quotes retain their old settlement rules.
 - Genjutsu stores per-step rates, variants and reservations independently of published feed tasks. Personal overrides must retain original operational settings and config hashes, with a separate rate/profile revision.
 - Missing new cells retain each model's ordinary rate. Genjutsu rates remain integer credits/second as required by its existing ledger.
 - Existing retries return accepted receipts before repricing. Fresh admissions revalidate membership in the debit transaction; historical settlement remains frozen.
