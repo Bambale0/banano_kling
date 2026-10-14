@@ -181,10 +181,11 @@ async def test_feed_detail_reprices_same_cached_source_for_each_viewer(monkeypat
     monkeypatch.setattr(miniapp, "_get_user_context", AsyncMock(return_value=(101, {"user": SimpleNamespace(id=7)})))
     monkeypatch.setattr(miniapp, "get_profile_generation_card", AsyncMock(return_value=source))
     monkeypatch.setattr(display, "get_actor_tariff", AsyncMock(side_effect=["creator", "standard"]))
-    for expected in (10, 40):
+    for expected in (5, 20):
         response = await miniapp.miniapp_feed_item(Request({"gen_id": 22, "tariff": "admin"}))
         card = json.loads(response.text)["feed_item"]
         assert card["repeat_reference_slots"]["duration_costs"]["5"] == expected
+        assert card["repeat_reference_slots"]["reference_seconds_pending"] is True
         assert card["cost"] == 45
     assert source == before
 
