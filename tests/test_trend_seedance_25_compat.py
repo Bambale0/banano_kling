@@ -150,6 +150,7 @@ async def test_seedance25_tagged_single_image_trend_uses_multimodal_binding(monk
 
 @pytest.mark.asyncio
 async def test_seedance25_private_trend_keeps_user_identity_first_and_hidden_media_typed(monkeypatch) -> None:
+    from bot import creator_tariff
     from bot import miniapp as miniapp_module
     from bot import trend_api
 
@@ -175,6 +176,7 @@ async def test_seedance25_private_trend_keeps_user_identity_first_and_hidden_med
         },
     )
     user = SimpleNamespace(id=101, credits=170)
+    monkeypatch.setattr(creator_tariff, 'measure_video_reference_seconds', AsyncMock(return_value=12.0))
 
     monkeypatch.setattr(
         compat.public_release,
