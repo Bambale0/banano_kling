@@ -464,7 +464,11 @@ def build_review_text(draft: Wan3PrimeDraft, quote: dict[str, Any] | None = None
             lines.append(f"{'Максимальный резерв' if quote.get('auto_duration') else 'Стоимость'}: {quote.get('reserve_cost')}🍌")
         input_seconds = float(quote.get("source_video_duration_seconds") or 0)
         total_seconds = float(quote.get("billing_duration_seconds") or 0)
-        lines.append(f"Секунды: вход {input_seconds:g} + выход {total_seconds - input_seconds:g} = {total_seconds:g}")
+        billed_output = quote.get("billable_output_seconds")
+        if billed_output is not None:
+            lines.append(f"Видеореференсы: {input_seconds:g} с (без доплаты); генерация: {float(billed_output):g} с (к оплате). Общий лимит: {total_seconds:g} с")
+        else:
+            lines.append(f"Секунды: вход {input_seconds:g} + выход {total_seconds - input_seconds:g} = {total_seconds:g}")
         if quote.get("settlement_notice") or quote.get("auto_duration"):
             lines.append(str(quote.get("settlement_notice") or "Auto: резерв максимальный, после результата возможен возврат разницы."))
     return "\n".join(lines)
