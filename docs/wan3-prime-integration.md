@@ -36,6 +36,14 @@ Telegram media download/import is intentionally a bridge seam for the lifecycle/
 
 Wan paid launches require a positive admin-configured quality rate for `480p`, `720p`, or `1080p`. Admin-free launches can quote zero while rates are missing. Admin video prices are grouped and paginated; unknown/future configured models remain in `Другое`.
 
+### Customer billing revision (2026-10-14)
+
+For all **new Wan 3.0 and Wan 3.0 Prime retail quotes**, charge only **selected generated/output seconds × the existing configured credits/second rate**. Reference-video seconds are validated and count against the upstream combined 30-second limit but are **not an additional retail multiplier**. For Auto, reserve `(30 − measured input video seconds) × rate`, then settle on actual generated output seconds, limited to the accepted reserve. Provider-side usage/pricing may still account for input video; margin must therefore be reviewed separately. The administered rate values and provider payload stay unchanged.
+
+Persisted quote version `3` records `output_only` (fixed) or `auto_output_reserve`. Old already-accepted v1/v2 quotes retain their original fixed charge/Auto reconciliation and refunds; new quote hashes invalidate stale pre-change estimates. No balance migration or forced recredit of already completed tasks is part of this correction.
+
+The authenticated quote response returns `billable_output_seconds` (actual customer-billed seconds) and continues returning `source_video_duration_seconds` and the historical **combined** `billing_duration_seconds` for existing Mini App clients and provider duration limits. Telegram, Mini App and repeat/trend screens must show customer pricing and charged seconds consistently.
+
 ## Release hardening and unified repeats (2026-10-10)
 
 The public Telegram picker now has family tabs and six models per page. All seven Wan modes remain available; mode drafts preserve inputs. Editing keeps Video1 as the source, including a missing-source placeholder after its removal. Native voice messages are converted in full to MP3 before the same media validation.
