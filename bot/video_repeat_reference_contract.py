@@ -13,7 +13,6 @@ from bot.services.media_input_utils import (
     canonicalize_local_upload_url,
     resolve_reference_source,
 )
-from bot.video_reference_policy import apply_video_reference_cost
 
 IMAGE_LIST_KEYS = ("reference_images", "reference_image_urls")
 VIDEO_LIST_KEYS = ("v_reference_videos", "reference_videos", "reference_video_urls", "video_references")
