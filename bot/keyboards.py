@@ -631,9 +631,14 @@ def get_create_video_keyboard(
     total_cost = preset_manager.get_video_cost_with_quality(current_model, current_duration, pricing_quality)
     per_second_cost = preset_manager.get_video_cost_per_second(current_model, current_duration, pricing_quality)
     if current_model in {"seedance_2", "seedance_2_5"}:
-        total_cost = resolve_video_quote(current_model, current_duration, pricing_quality, current_video_references, tariff=tariff).cost
+        # The keyboard has no trusted per-file duration data. Show only the
+        # configured output rate; precise source seconds are verified at quote.
+        total_cost = resolve_video_quote(current_model, current_duration, pricing_quality, tariff=tariff).cost
         per_second_cost = total_cost / max(1, current_duration)
-    builder.button(text=f"Цена: {per_second_cost}🍌/с", callback_data="ignore")
+    rate_label = f"Цена: {per_second_cost:g}🍌/с"
+    if current_video_references:
+        rate_label += " · входящие видео оплачиваются по секундам"
+    builder.button(text=rate_label, callback_data="ignore")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
     widths = [2]
     if ratio_buttons:
