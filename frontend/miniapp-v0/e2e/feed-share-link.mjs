@@ -38,19 +38,25 @@ try {
       const errors = [], destinations = [], mutationPaths = [], unexpectedApis = []
       let shareCalls = 0, exactLink = links[bridge === 'present' ? 0 : 1]
       page.on('pageerror', error => errors.push(error.message))
-      await context.addInitScript(({ bridge }) => {
+      await context.addInitScript(({ bridge, platform }) => {
         window.__copied = []; window.__opened = []; window.__copyAllowed = false
+        window.__legacyCopies = []; window.__legacyCopyAllowed = false
         Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async value => {
           window.__copied.push(value)
           if (!window.__copyAllowed) throw new DOMException('Synthetic clipboard denial', 'NotAllowedError')
         } } })
-        document.execCommand = () => false
-        window.Telegram = { WebApp: { initData: 'query_id=feed-share-test', initDataUnsafe: {}, ready() {}, expand() {}, onEvent() {}, offEvent() {} } }
+        document.execCommand = command => {
+          if (command !== 'copy') return false
+          const field = document.activeElement
+          window.__legacyCopies.push({ text: field?.value, selected: field?.selectionStart === 0 && field?.selectionEnd === field?.value?.length })
+          return window.__legacyCopyAllowed
+        }
+        window.Telegram = { WebApp: { platform, initData: 'query_id=feed-share-test', initDataUnsafe: {}, ready() {}, expand() {}, onEvent() {}, offEvent() {} } }
         if (bridge !== 'absent') window.Telegram.WebApp.openTelegramLink = value => {
           if (bridge === 'throws') throw new Error('Synthetic unavailable native bridge')
           window.__opened.push(value)
         }
-      }, { bridge })
+      }, { bridge, platform: name === 'ios' ? 'ios' : 'android' })
       await context.route('**/*', async route => {
         const url = new URL(route.request().url())
         if (url.hostname === 't.me') {
@@ -83,13 +89,17 @@ try {
       await page.getByRole('button', { name: 'Лента', exact: true }).click()
       await page.getByRole('button', { name: 'Ссылка', exact: true }).click()
       const panel = page.getByRole('region', { name: 'Ссылка на публикацию', exact: true })
-      await panel.getByText(/Автоматическое копирование недоступно/).waitFor()
+      if (name === 'ios') await panel.getByText(/Ссылка готова/).waitFor()
+      else await panel.getByText(/Автоматическое копирование недоступно/).waitFor()
       const open = panel.getByRole('link', { name: 'Открыть ссылку', exact: true })
       const field = panel.getByRole('textbox', { name: 'Ссылка на публикацию', exact: true })
       assert.equal(await field.inputValue(), exactLink)
       assert.equal(await open.getAttribute('href'), exactLink)
       assert.equal(await open.getAttribute('target'), '_blank')
       assert.equal(await open.getAttribute('rel'), 'noopener noreferrer')
+      const forward = panel.getByRole('link', { name: 'Поделиться в Telegram' })
+      assert.equal(await forward.getAttribute('href'), 'https://t.me/share/url?url=' + encodeURIComponent(exactLink))
+      assert.equal(new URL(await forward.getAttribute('href')).searchParams.get('url'), exactLink)
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
       assert.equal((await page.locator('body').innerText()).includes('PRIVATE_RECIPE'), false)
       await field.focus()
@@ -114,11 +124,22 @@ try {
         await popup.close()
       }
       assert.equal(shareCalls, 1)
-      assert.equal(await page.evaluate(() => window.__copied.length), 1)
-      await page.evaluate(() => { window.__copyAllowed = true })
+      assert.equal(await page.evaluate(() => window.__copied.length), name === 'ios' ? 0 : 1)
+      if (name === 'ios') {
+        // Native clipboard denied; immediate textarea selection in the user's
+        // second tap must work before any async permission request.
+        await page.evaluate(() => { window.__legacyCopyAllowed = true })
+      } else {
+        await page.evaluate(() => { window.__copyAllowed = true })
+      }
       await panel.getByRole('button', { name: 'Скопировать ссылку', exact: true }).click()
       await panel.getByText('Ссылка скопирована', { exact: true }).waitFor()
-      assert.deepEqual(await page.evaluate(() => window.__copied), [exactLink, exactLink])
+      if (name === 'ios') {
+        assert.deepEqual(await page.evaluate(() => window.__copied), [])
+        assert.deepEqual(await page.evaluate(() => window.__legacyCopies), [{ text: exactLink, selected: true }])
+      } else {
+        assert.deepEqual(await page.evaluate(() => window.__copied), [exactLink, exactLink])
+      }
       assert.equal(shareCalls, 1)
       // Return/reopen keeps the normal feed usable; unsafe fresh responses never become executable.
       await page.getByRole('button', { name: 'Студия', exact: true }).click()
