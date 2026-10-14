@@ -5035,6 +5035,9 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
     source_feed_gen_id: int | None = None
     try:
         body = await request.json()
+        if not isinstance(body, dict) or not isinstance(body.get("pricing_quote_only", False), bool):
+            return web.json_response({"ok": False, "error": "Неверный запрос расчёта стоимости"}, status=400)
+        pricing_quote_only = body.get("pricing_quote_only") is True
         if isinstance(body, dict) and str(body.get('model') or body.get('v_model') or '') in {'wan_3_prime', 'wan3_prime', 'wan/3-0-video-prime', 'wan_3', 'wan3', 'wan/3-0-video'}:
             from bot.wan3_prime_api import miniapp_generate_wan
             return await miniapp_generate_wan(request, body)
@@ -5454,16 +5457,33 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
             billing_quote = await quote_video_for_actor(
                 telegram_id, effective_model, duration, pricing_quality, video_references,
             )
-        except ValueError:
-            return web.json_response(
-                {
-                    "ok": False,
-                    "error": "Для выбранной модели администратор ещё не настроил цену.",
-                },
-                status=400,
-            )
+        except ValueError as exc:
+            detail = str(exc)
+            message = (detail if "видео-референс" in detail or "длительност" in detail
+                       else "Для выбранной модели администратор ещё не настроил цену.")
+            return web.json_response({"ok": False, "error": message}, status=400)
         cost = billing_quote.cost
         is_admin = billing_quote.charge_cost == 0
+        video_quote_hash = hashlib.sha256(json.dumps({
+            "version": billing_quote.version, "telegram_id": telegram_id,
+            "model": effective_model, "duration": duration, "quality": pricing_quality,
+            "video_references": video_references, "source_id": source_feed_gen_id,
+            "seconds": billing_quote.input_video_seconds, "cost": cost,
+            "revision": billing_quote.revision, "profile": billing_quote.profile,
+        }, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+        if pricing_quote_only:
+            return web.json_response({
+                "ok": True, "quote_only": True, "quote_hash": video_quote_hash,
+                "cost": cost, "source_video_seconds": billing_quote.input_video_seconds,
+                "output_seconds": billing_quote.duration,
+                "billable_seconds": billing_quote.billable_seconds,
+                "admin_free": is_admin,
+            }, headers={"Cache-Control": "no-store"})
+        if video_references and not is_admin and body.get("pricing_quote_hash") != video_quote_hash:
+            return web.json_response({
+                "ok": False, "code": "stale_quote",
+                "error": "Стоимость с видеореференсами нужно подтвердить. Рассчитайте её перед запуском.",
+            }, status=409)
         if not is_admin and not await check_can_afford(telegram_id, cost):
             return web.json_response(
                 {
