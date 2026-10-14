@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from bot import database, miniapp, trend_task_privacy
+from bot import creator_tariff, database, miniapp, trend_task_privacy
 from bot.handlers import miniapp_video_continuity_compat as continuity
 from bot.video_repeat_reference_contract import video_repeat_descriptors
 
@@ -21,6 +21,9 @@ def isolated_financial_unit_receipt(monkeypatch):
     # Financial unit matrices use synthetic users and providers. Actual durable
     # rows and cross-device behavior are exercised in test_video_repeat_receipts.
     monkeypatch.setattr(continuity, "reserve_video_repeat_launch", AsyncMock(return_value=(None, None)))
+    # These private URL fixtures have no real files: the quote service receives
+    # an explicit synthetic total of five verified input seconds.
+    monkeypatch.setattr(creator_tariff, "measure_video_reference_seconds", AsyncMock(return_value=5.0))
 
 
 async def create_video():
@@ -54,7 +57,8 @@ async def test_private_video_grant_has_url_free_ordered_consumer_slots(scope):
     assert public["repeat_reference_slots"]["duration_costs"]
     assert {key: value for key, value in public["repeat_reference_slots"].items()
             if key not in {"pricing_quality", "duration_costs"}} == {
-        "version": 1, "available": True, "cost_multiplier": 2,
+        "version": 1, "available": True, "cost_multiplier": 1,
+        "reference_seconds_pending": True,
         "images": [{"index": 0, "role": "reference", "binding": "upload"},
                    {"index": 1, "role": "reference", "binding": "fixed"}],
         "videos": [{"index": 0, "role": "reference", "binding": "upload"},
@@ -234,7 +238,22 @@ def typed_video_entrypoint(monkeypatch):
         async def json(self):
             return json.loads(self._read_bytes)
 
-    return SimpleNamespace(call=miniapp.miniapp_generate_video, source=source,
+    async def call_with_ack(request):
+        if delegate.side_effect is not None:
+            body = await request.json()
+            if body.get("v_reference_videos") or source.get("request_data", {}).get("v_reference_videos"):
+                preview = Request({**body, "pricing_quote_only": True, "seedance25_quote_only": True})
+                quoted = await miniapp.miniapp_generate_video(preview)
+                if quoted.status == 200:
+                    reply = json.loads(quoted.body)
+                    token = reply.get("quote_hash")
+                    if token:
+                        model = str(body.get("v_model") or source.get("model") or "")
+                        key = "seedance25_reference_quote_hash" if model == "seedance_2_5" else "pricing_quote_hash"
+                        request._read_bytes = json.dumps({**body, key: token}).encode()
+        return await miniapp.miniapp_generate_video(request)
+
+    return SimpleNamespace(call=call_with_ack, source=source,
                            delegate=delegate, context=context, request=Request, availability=availability)
 
 
@@ -609,14 +628,17 @@ def test_typed_price_factor_uses_active_video_presence_once(typed_video_entrypoi
     source["feed_repeat_reference_selection"]["videos"] = urls if fixed else []
     descriptor = video_repeat_descriptors(source)
     assert descriptor["available"] is True
-    assert descriptor["cost_multiplier"] == (video_reference_policy.SEEDANCE_VIDEO_REFERENCE_PRICE_MULTIPLIER if count else 1)
+    assert descriptor["cost_multiplier"] == 1
+    assert descriptor["reference_seconds_pending"] is bool(count)
 
 
-def test_typed_price_factor_reads_authoritative_policy(monkeypatch, typed_video_entrypoint):
+def test_typed_price_factor_reads_authoritative_policy(typed_video_entrypoint):
     from bot import video_reference_policy
 
-    monkeypatch.setattr(video_reference_policy, "SEEDANCE_VIDEO_REFERENCE_PRICE_MULTIPLIER", 3.5)
-    assert video_repeat_descriptors(typed_video_entrypoint.source)["cost_multiplier"] == 3.5
+    assert video_repeat_descriptors(typed_video_entrypoint.source)["cost_multiplier"] == 1
+    assert video_reference_policy.apply_video_reference_cost(
+        "seedance_2_5", 5, ["video.mp4"], output_seconds=5, reference_seconds=7,
+    ) == 12
 
 
 @pytest.mark.asyncio
