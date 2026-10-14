@@ -657,7 +657,7 @@ export function FeedTab() {
             {copyStatus === 'copied'
               ? 'Ссылка скопирована'
               : copyStatus === 'manual'
-                ? 'Telegram не разрешил запись в буфер. Попробуйте ещё раз, отправьте ссылку через Telegram или выделите её вручную.'
+                ? 'Telegram не разрешил запись в буфер. Попробуйте ещё раз или нажмите «Через меню телефона» → «Скопировать». Ссылку можно выделить вручную.'
                 : copyStatus === 'ready'
                   ? 'Ссылка готова. Нажмите «Скопировать ссылку» — iPhone требует отдельного нажатия.'
                   : 'Копируем ссылку…'}
@@ -712,6 +712,24 @@ export function FeedTab() {
             >
               Скопировать ссылку
             </Button>
+            {copyStatus === 'manual' && isNavigableShareLink(shareLink)
+              && typeof navigator !== 'undefined' && typeof navigator.share === 'function' ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11 w-full sm:w-auto"
+                onClick={() => {
+                  // Invoke the native sheet directly in this click, not after
+                  // an awaited clipboard rejection (which loses activation).
+                  // A completed share is NOT proof of clipboard success.
+                  void navigator.share({ url: shareLink }).catch(() => {
+                    setCopyStatus('manual')
+                  })
+                }}
+              >
+                Через меню телефона
+              </Button>
+            ) : null}
           </div>
         </section>
       )}
