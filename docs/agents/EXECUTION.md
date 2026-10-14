@@ -1,5 +1,18 @@
 # Execution ledger
 
+## 2026-10-14 — All-model additive video-reference pricing, no presence ×2
+
+- Baseline: `tanyapi` and prod `a1b1ce4ae6f8c6b52cea06c7527fa61c645339c5`. PR #305 `fix/tanyapi-all-video-reference-seconds-no-multiplier-20261014` (draft until CI verified).
+- Supersedes incorrect output-only WAN PR #304, which was closed without merge. Clarified retail requirement: for all supported video models, **configured rate × (measured input video seconds summed over attached video references + selected output seconds)**; do not add another presence-based ×2.
+- Audit: WAN 3/Prime, Motion and Genjutsu already used input plus generated video accounting; Seedance 2/2.5 and generic quote/UI used an incorrect ×2 if any video reference. Multiple references were indistinguishable. Mini App ordinary and Seedance public UIs displayed doubled prices and lacked precise quote confirmation.
+- New accounting: bounded server-owned ffprobe of locally retained source video, independently measured and summed, fail-closed on unresolvable/expired URLs; source duration never inferred from count or guessed. Shared `quote_video_for_actor` and `resolve_video_quote` apply rate once with existing rounding; actor tariff/admin-free retained. No new provider parameter or upstream rate change.
+- Mini App: new quote-only authenticated mode on the existing generation API validates the same recipe/media as launch; returns source/output/billable seconds, cost and quote hash, and requires current price acknowledgement before debit. Generic Studio uses two-click quote/launch. Separate Seedance 2.5 public screen uses its existing quote endpoint for all source-bearing generations and preserves its identity quote gate. All old clients submitting paid video refs without a confirmed quote get a safe stale-quote response.
+- Feed and repeat: remove presence multiplier in descriptors and creator metadata; prompt-repeat and trend cards with unresolved video references show no invented final price. Normalized repeat references resolve on the backend before charging. Telegram keyboard displays base per-second rate while real quote counts source seconds.
+- Risk policy: no migration of historic tasks or direct balance adjustment; previous reserves/refunds remain frozen. No production config/price writes, paid video generations or provider payload changes. Preserve dirty production `data/price.json`.
+- Verification: RED production read-only test confirmed old Seedance 2 quote 20→40 for a single video despite unknown length. Added deterministic pure and actor tests for 5s generated + 7s refs at 4/s = 48 and 5s + 13s at 4/s = 72; full project CI and browser E2E required before marking ready. `Bambale0/skills` diagnosing-bugs, TDD/code-review, `Bambale0/claw` backend integration and Anthropic webapp-testing consulted.
+- Release: required CI checks → ready-for-review/native auto-merge to protected `tanyapi` → exact prod SHA backend health and Mini App revision verification; **not yet deployed**.
+
+
 ## 2026-10-10 — Higgsfield Genjutsu reference + generation seconds billing
 
 - Baseline: `tanyapi` `fb499599112c630e43ebb0c5b87c66d5b409c075`. Task branch: `fix/tanyapi-genjutsu-reference-plus-generation-seconds`. Draft PR #290.
