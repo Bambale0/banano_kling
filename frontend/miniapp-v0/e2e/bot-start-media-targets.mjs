@@ -63,6 +63,11 @@ try {
       model:c.video?'v3_pro':'banana_pro',author_id:1,status:'approved',
       generation_settings:{kind:c.video?'video':'image',user_input:'prompt',model:c.video?'v3_pro':'banana_pro',
         scenario:'text',ratio:c.video?'16:9':'1:1',quality:'2K',count:1,duration:5}}
+    // Mock the actual text-bot navigation without external Telegram traffic.
+    await context.route('https://t.me/**', route => route.fulfill({
+      status: 200, contentType: 'text/html',
+      body: '<!doctype html><html><body>Mock text bot chat target</body></html>',
+    }))
     await page.route('**/*',async route=>{
       const req=route.request(),url=new URL(req.url())
       if(url.pathname.endsWith('/telegram-web-app.js')) return route.fulfill({contentType:'application/javascript',body:'// fixture'})
@@ -90,6 +95,19 @@ try {
     })
     await page.goto(base+'?startapp='+c.start)
     const gate=page.locator('[role="dialog"][aria-labelledby="bot-write-access-title"]')
+    const openTextBot = async () => {
+      const link=gate.getByRole('link',{name:'Открыть бота',exact:true})
+      const destination=await link.getAttribute('href')
+      assert.ok(destination?.startsWith('https://t.me/test_bot?start='),c.label+' uses textual /start deep link')
+      assert.ok(!destination.includes('startapp='),c.label+' must not reopen Mini App')
+      const opened=page.waitForEvent('popup',{timeout:8000})
+      await link.click()
+      const chat=await opened
+      await chat.waitForLoadState('domcontentloaded')
+      assert.equal(chat.url(),destination,c.label+' real click must navigate to the text chat')
+      await chat.close()
+      assert.deepEqual(await page.evaluate(()=>window.__opened),[],c.label+' never depends on native JS bridge')
+    }
     if (!c.trend) await gate.waitFor()
     let marker
     if(c.kind==='profile') marker=page.getByText('Target Author',{exact:true}).first()
@@ -115,8 +133,7 @@ try {
       await closeTrend.click()
       await trendDialog.waitFor({state:'hidden'})
       await gate.waitFor()
-      await gate.getByRole('button',{name:'Открыть бота',exact:true}).click()
-      assert.equal((await page.evaluate(()=>window.__opened)).length,1,'Start works after trend closes')
+      await openTextBot()
       available=true
       await page.evaluate(()=>window.dispatchEvent(new Event('fixture:activated')))
       await gate.waitFor({state:'hidden'})
@@ -162,8 +179,7 @@ try {
     const node=await marker.elementHandle(),before=page.url()
     if(c.remix&&!c.video) assert.ok(await page.locator('img[src="'+reference+'"]').count()>0,'remix reference loaded')
     await page.waitForLoadState('networkidle')
-    await gate.locator('button').filter({hasText:'Открыть бота'}).click()
-    assert.equal((await page.evaluate(()=>window.__opened)).length,1)
+    await openTextBot()
     available=true
     await page.evaluate(()=>window.dispatchEvent(new Event('fixture:activated')))
     await gate.waitFor({state:'hidden'})
