@@ -1,5 +1,17 @@
 # Архитектура NEUROMIX
 
+
+## Cross-cutting invariants (verified against active code)
+
+- **Release:** `origin/tanyapi → task branch → PR to tanyapi → protected CI / native squash auto-merge → exact-SHA Docker + frontend deploy`. The isolated `dev` environment is optional, not a mandatory promotion stage.
+- **User publications:** completed public Feed/Profile image/video results become independent repeat sources regardless of `action_type` / `source_feed_gen_id`. The clicked publication provides prompt edits, model parameters and slots; lineage is historical.
+- **Privacy:** public cards and editors do not expose hidden prompt/media URLs. Server validates immediate published source, media permissions and exact fixed/upload slots; unsupported model-specific editors require clear separate UX, not invented origin-based bans.
+- **Pricing:** trusted retail/admin tariff config, quote/hash and idempotent debit/refund. Wan input-video seconds are measured; card floors are not final charges. Deployment must preserve mutable `data/price.json`.
+- **Delivery:** terminal task state, Mini App Studio/history, Telegram DM when available; missing Telegram chat cannot block Mini App use. A native bot-start CTA remains optional with Skip.
+
+See [PUBLICATION_REPEAT_CONTRACT.md](PUBLICATION_REPEAT_CONTRACT.md), [PRIVATE_REPEAT_REFERENCES.md](PRIVATE_REPEAT_REFERENCES.md), [production_auto_deploy.md](production_auto_deploy.md), and [POST_RELEASE_AUDIT_2026-10-16.md](POST_RELEASE_AUDIT_2026-10-16.md).
+
+
 ## 1. Назначение системы
 
 NEUROMIX объединяет Telegram-бота, Telegram Mini App, сервисы генерации, платежные интеграции, публикацию контента и административные маршруты.

@@ -1,5 +1,35 @@
 # Troubleshooting NEUROMIX
 
+> **Текущий production:** Docker `banano-kling-bot` на `/root/tanya/banano_kling`; backend `tanyapi.chillcreative.ru`; Mini App `tanyapp.xn--e1aikcel5c5a.online/mini-app/`. Исторические команды ниже для `cdn.chillcreative.ru`, `91.200.84.187` и `banano-kling.service` предназначены **только для отдельно согласованного legacy-контура**, не для текущего production.
+
+## 0. Самая быстрая read-only диагностика production
+
+```bash
+git -C /root/tanya/banano_kling rev-parse HEAD
+docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' banano-kling-bot
+docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' banano-kling-bot
+curl -fsS https://tanyapi.chillcreative.ru/health
+curl -fsSI https://tanyapp.xn--e1aikcel5c5a.online/mini-app/
+curl -fsS https://tanyapp.xn--e1aikcel5c5a.online/mini-app/revision.txt
+docker logs --since 30m --tail 300 banano-kling-bot
+```
+
+**Не делать** `systemctl restart banano-kling.service`, `git reset --hard`, удаление media/cache или ручной CDN deploy без согласованной диагностики. При ошибках, затрагивающих billing, сверять идемпотентные debit/refund before/after.
+
+## 0a. «Повтор недоступен» — матрица причин, а не запрет по происхождению
+
+Правило: завершённую опубликованную работу можно повторять, даже если это результат `trend/repeat/remix`. `source_feed_gen_id` и `action_type` сами по себе не блокируют. [PUBLICATION_REPEAT_CONTRACT.md](PUBLICATION_REPEAT_CONTRACT.md).
+
+1. Найти **ID нажатой публикации**, модель, тип, `status=completed`, действующий Feed/Profile scope; не подменять ID исходным trend.
+2. Проверить, пришёл ли доступный editor/recipe для **этой** модели: Wan `/wan3/repeat-plan`, Seedance typed или legacy (`video_repeat_descriptors` может быть `None`, и это ещё не запрет), Genjutsu dedicated recipe; неизвестная модель/режим — отдельный defect.
+3. Проверить серверный plan/hash, fixed/upload slots и доступность именно тех media, которые разрешены для повторного использования; закрытые ссылки не раскрывать в логах/ответе.
+4. Для Wan проверить количество входящих видео-секунд, точный quote и нет ли старой ошибки `/wan3/upload/complete`; не путать подсказку `от N 🍌` с финальной ценой.
+5. Для обычных фото проверить `private_repeat_permission_source_id` (непосредственная публикация) при автоповторе и `source_feed_gen_id` (линейка истории). Для video проверять `repeat_permission_changed` только при действительно отозванной публикации/разрешении.
+6. Временный 503, media upload 400, сеть или отсутствующий Telegram-чат — **не** отзыв авторского разрешения. Сохранять черновик и возвращать конкретную диагностическую категорию.
+
+Read-only audit recipe не доказывает, что провайдер сгенерировал правильный ролик. Платные тесты — только по отдельному разрешению, иначе mock/quote-only/synthetic smoke. Разбор релиза и остаточные сценарии: [POST_RELEASE_AUDIT_2026-10-16.md](POST_RELEASE_AUDIT_2026-10-16.md).
+
+
 ## 1. Метод диагностики
 
 Всегда разделяйте проблему на слой:
@@ -15,7 +45,7 @@
 
 Не начинайте с массового restart или очистки файлов. Сначала определите слой.
 
-## 2. Frontend deploy завис на `npm ci`
+## 2. Legacy separate-host frontend: `npm ci`
 
 ### Симптом
 
@@ -101,7 +131,7 @@ npm ci --no-audit --no-fund --foreground-scripts --loglevel verbose
 
 Если ручной install успешен, повторить normal remote deploy.
 
-## 3. После `Ctrl+C` получена ошибка строки 562, код 255
+## 3. Legacy CDN shell: code 255 after Ctrl+C
 
 Это типичный результат прерванной SSH-команды `cdn.sh`.
 
@@ -119,7 +149,7 @@ npm ci --no-audit --no-fund --foreground-scripts --loglevel verbose
 4. изучить `/var/log/banano-miniapp-cdn.log`;
 5. повторить deploy после устранения причины.
 
-## 4. Frontend deploy завершился, но видна старая версия
+## 4. Отображается старая версия (legacy-команды ниже не для текущего продакшена)
 
 ### Причины
 

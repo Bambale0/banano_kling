@@ -309,6 +309,16 @@ Secrets are not ordinary configuration. Never expose them in frontend bundles, A
 
 ---
 
+## Publication repeat invariant
+
+**An independently published completed generation is repeatable as that exact selected work**, whether its action was original, `trend`, `repeat` or `remix`. Never add ancestry-only blockers based on `source_feed_gen_id` / `action_type` or silently substitute an ancestor recipe. The selected publication owns its saved prompt, authored edits, model settings and ordered reference slots. Lineage remains separate for history and accounting.
+
+Keep independent server-only **privacy and technical checks**: hidden author media and prompts must not reach the client; fixed/upload choices, media existence, active publication scope, required user uploads, supported provider mode, pricing, authenticated context, idempotency and before-charge validation still apply. Do not label a provider/model failure as revoked author consent.
+
+See [docs/PUBLICATION_REPEAT_CONTRACT.md](docs/PUBLICATION_REPEAT_CONTRACT.md) and [docs/PRIVATE_REPEAT_REFERENCES.md](docs/PRIVATE_REPEAT_REFERENCES.md). Changes to repeating must consider Wan, Seedance, other video, image, Telegram callbacks, Mini App links, billing/retry and reference privacy.
+
+---
+
 ## Telegram / Mini App consistency
 
 Telegram FSM and Mini App are two surfaces of one product.

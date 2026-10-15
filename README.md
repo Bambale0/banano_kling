@@ -29,6 +29,12 @@ tanyapi → feature/* | fix/* | agent/* → PR в tanyapi
 
 Mini App загружает HTML/CSS/JS с frontend-домена, а `/mini-app/api/*` проксируется к backend. Внешний доступ к порту `1888` не требуется. Исходные файлы production хранятся в `static/uploads`; текущую конфигурацию доменов нужно сверять с runtime и активным Nginx, а не с историческими SSH-профилями.
 
+## Повтор опубликованной работы
+
+Если автор разместил готовую работу в ленте или доступном опубликованном профиле, кнопка «Повторить» должна открывать **именно эту публикацию**, даже когда она создана из тренда, ремикса или предыдущего повтора. `source_feed_gen_id` сохраняется для истории, а не служит самостоятельным запретом. Авторские изменения, параметры модели и порядок референсов принадлежат выбранной публикации. Скрытые промпты/ссылки не показываются пользователю: сервер проверяет актуальность разрешённых материалов, режим модели, стоимость и заменяемые слоты до списания.
+
+Контракт: [docs/PUBLICATION_REPEAT_CONTRACT.md](docs/PUBLICATION_REPEAT_CONTRACT.md); проверка после релиза: [docs/POST_RELEASE_AUDIT_2026-10-16.md](docs/POST_RELEASE_AUDIT_2026-10-16.md).
+
 ## Основные возможности
 
 ### Telegram-бот
@@ -182,7 +188,7 @@ sudo -E bash scripts/deploy_media_origin.sh
 
 ## Документация
 
-- [docs/development-deployment.md](docs/development-deployment.md) — DEV-бот, отдельные credentials, autodeploy и promotion `dev -> tanyapi`;
+- [docs/development-deployment.md](docs/development-deployment.md) — необязательный отдельный DEV-бот по поручению владельца (не стадия стандартного релиза);
 - [docs/README.md](docs/README.md) — карта документации;
 - [docs/production_auto_deploy.md](docs/production_auto_deploy.md) — production autodeploy строго из `tanyapi`;
 - [docs/architecture.md](docs/architecture.md) — архитектура и потоки данных;

@@ -1,4 +1,9 @@
-# NEUROMIX Media: Cloudflare Free + Nginx + `static/uploads`
+# NEUROMIX Media — актуальный shared-origin и legacy Cloudflare installer
+
+> **Актуальный production (2026-10-16):** файлы на `/root/tanya/banano_kling/static/uploads`; URL `https://tanyapp.xn--e1aikcel5c5a.online/uploads/...` через existing Nginx reverse proxy/backend. Никакой новый `media.chillcreative.ru` DNS, bind mount в `/var/www/media.chillcreative.ru`, Certbot, Cloudflare API token или `systemctl restart banano-kling.service` **не нужен** для обычного релиза. Старый отдельный media/CDN origin ниже — исключительно исторический reference, не выполнять его `deploy_media_origin.sh` без самостоятельной задачи и review.
+>
+> Сейчас backend — Docker `banano-kling-bot`; проверять только release SHA, Docker health, канонический media URL, Cache-Control по классу публичности и исходные server-owned файлы. Основной runbook: [docs/runbook.md](../../docs/runbook.md); архитектура: [docs/architecture.md](../../docs/architecture.md).
+
 
 ## 1. Цель
 

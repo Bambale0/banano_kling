@@ -14,3 +14,8 @@ The generation ID, card author and `source_feed_gen_id` remain the original sour
 Owner-publication confirmations and author-profile identity links keep their existing owner identity. Internal Repeat/Open navigation is unchanged. Existing issued URLs remain valid with their embedded code; this change affects newly requested share links only. Existing Telegram CopyText buttons keep their embedded URLs until the feed is reopened or navigated and the keyboard is rebuilt.
 
 Regression coverage: `tests/test_feed_share_attribution.py` exercises signed HTTP requests, all link variants, different successive sharers, Feed/Profile permissions, invalid signatures, missing codes, Telegram callbacks/keyboards, shared chats, and creator-reward ownership/idempotency using isolated SQLite. No paid provider or production-data test is required.
+
+
+## Source lineage vs replay authorization
+
+A copied link keeps the authenticated sharer's referral attribution, while clicking **Repeat** must use the **selected published generation** as its recipe source. `source_feed_gen_id` / predecessor IDs may still describe original lineage for accounting; they do not forbid repeating the newly published child or require navigating to the old ancestor. The clicker's referrer, original creator payout rules and replay permissions are separate contracts; do not conflate them. See [PUBLICATION_REPEAT_CONTRACT.md](PUBLICATION_REPEAT_CONTRACT.md).

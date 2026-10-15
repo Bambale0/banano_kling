@@ -1,3 +1,5 @@
+<!-- Current release findings and model-specific repeat acceptance are tracked in docs/POST_RELEASE_AUDIT_2026-10-16.md. This roadmap may contain historical priorities; do not treat old release process or ancestry-based repeat restrictions as current product policy. -->
+
 # Roadmap NEUROMIX
 
 Актуальность: `2026-08-01`, ветка `tanyapi`.

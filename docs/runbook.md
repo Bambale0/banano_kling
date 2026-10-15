@@ -1,64 +1,43 @@
 # Runbook NEUROMIX
 
-## 1. Production inventory
+## 1. Production inventory — актуальный контур
 
 | Компонент | Значение |
 | --- | --- |
-| Backend host | `144.76.188.75` |
-| Backend domain | `tanyapi.chillcreative.ru` |
-| Backend project | `/root/tanya/banano_kling` |
-| Backend branch | `tanyapi` |
-| Backend service | `banano-kling.service` |
-| Backend local health | `http://127.0.0.1:1888/health` |
-| Frontend host | `91.200.84.187` |
-| Frontend domain | `cdn.chillcreative.ru` |
-| Frontend public URL | `https://cdn.chillcreative.ru/mini-app/` |
-| Frontend remote profile | `tanyafrontend` |
-| Media domain | `tanyapp.xn--e1aikcel5c5a.online` |
-| Media source | `/root/tanya/banano_kling/static/uploads` |
+| Backend/frontend host | `144.76.188.75` |
+| Backend origin | `https://tanyapi.chillcreative.ru` |
+| Mini App / media | `https://tanyapp.xn--e1aikcel5c5a.online/mini-app/` и `/uploads/*` |
+| Production checkout | `/root/tanya/banano_kling`, ветка `tanyapi` |
+| Backend runtime | Docker `banano-kling-bot` (Compose service `bot`) |
+| Backend local HTTP | `127.0.0.1:1888` за Nginx, не открывать наружу |
+| Frontend root | `/var/www/tanyapp.xn--e1aikcel5c5a.online/mini-app` |
+| Source of truth | `AGENTS.md`, [production_auto_deploy.md](production_auto_deploy.md) |
 
-## 2. Ежедневная проверка backend
+Предыдущие `banano-kling.service`, отдельный сервер `91.200.84.187` и `cdn.chillcreative.ru` относятся к legacy. Не применять их инструкции для обычного релиза.
+
+## 2. Ежедневная read-only проверка
 
 ```bash
-sudo systemctl is-active banano-kling.service
-sudo systemctl status banano-kling.service --no-pager
-curl -fsS http://127.0.0.1:1888/health
+cd /root/tanya/banano_kling
+git status --short --branch
+git rev-parse HEAD
+docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' banano-kling-bot
+docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' banano-kling-bot
 curl -fsS https://tanyapi.chillcreative.ru/health
+curl -fsSI https://tanyapp.xn--e1aikcel5c5a.online/mini-app/
+curl -fsS https://tanyapp.xn--e1aikcel5c5a.online/mini-app/revision.txt
 ```
 
-Проверка restart count:
+Для успешного релиза SHA из `git rev-parse`, OCI revision и `revision.txt` совпадают с точным merge SHA в GitHub. Проверить, что администраторские изменения `data/price.json` не затёрты автодеплоем.
+
+## 3. Логи и корреляция
 
 ```bash
-systemctl show banano-kling.service \
-  -p ActiveState \
-  -p SubState \
-  -p MainPID \
-  -p NRestarts \
-  -p MemoryCurrent
+docker logs --since 1h --tail 400 banano-kling-bot
+tail -n 150 /root/tanya/banano_kling/logs/bot.log
 ```
 
-## 3. Логи backend
-
-Последние сообщения:
-
-```bash
-journalctl -u banano-kling.service -n 200 --no-pager
-```
-
-Live tail:
-
-```bash
-journalctl -u banano-kling.service -f
-```
-
-Если file logging включён:
-
-```bash
-tail -n 200 /root/tanya/banano_kling/logs/bot.log
-tail -f /root/tanya/banano_kling/logs/bot.log
-```
-
-Не отправлять логи целиком без очистки tokens, URLs с signatures, user data и payment payloads.
+File log может отсутствовать. При проблеме с повтором/доставкой собрать только task ID, модель, endpoint, status, error code, timestamp, commit SHA, баланс до/после и результат quote/повтора; не раскрывать ссылки скрытых референсов, содержимое prompt, приватные media, Telegram initData или токены.
 
 ## 4. Burst-autoban anti-fraud
 
@@ -90,95 +69,43 @@ ORDER BY created_at DESC
 LIMIT 50;
 ```
 
-## 5. Безопасное обновление backend
+## 5. Штатный выпуск backend + frontend
+
+```text
+origin/tanyapi -> отдельная task-ветка -> PR в tanyapi
+ -> protected checks -> squash auto-merge -> production CI/CD
+ -> exact-SHA backend+frontend + health/telemetry
+```
+
+Штатное обновление **не** выполняют через `git reset --hard` в работающем checkout, `systemctl restart banano-kling.service` или `cdn.sh --remote-deploy tanyafrontend`. Runtime `data/price.json` содержит управляемые администратором тарифы, которые не должны быть переписаны Git defaults. Рабочие локальные изменения, диагностика и серверные файлы не удаляются ради «чистого статуса».
+
+Проверить релиз:
 
 ```bash
-cd /root/tanya/banano_kling
-
-git fetch --prune origin tanyapi
-git switch tanyapi
-
-git status --short
+gh pr view PR_NUMBER --repo Bambale0/banano_kling --json state,mergeCommit
+gh run list --repo Bambale0/banano_kling --branch tanyapi --limit 8
+git -C /root/tanya/banano_kling rev-parse HEAD
+docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' banano-kling-bot
+curl -fsS https://tanyapp.xn--e1aikcel5c5a.online/mini-app/revision.txt
 ```
 
-Если working tree чистый:
+При ошибке deploy — читать [production-deployment.md](production-deployment.md) и workflow logs, использовать revert PR либо явно согласованное восстановление; не применять ручной reset без проверки tracked/runtime данных.
+
+## 6. Frontend smoke
 
 ```bash
-git reset --hard origin/tanyapi
-git log -1 --oneline
+curl -fsSI https://tanyapp.xn--e1aikcel5c5a.online/mini-app/
+curl -fsS https://tanyapp.xn--e1aikcel5c5a.online/mini-app/revision.txt
+curl -sS -i -X POST https://tanyapp.xn--e1aikcel5c5a.online/mini-app/api/bootstrap   -H 'Content-Type: application/json' --data '{}'
 ```
 
-Проверки:
+`401/403` без Telegram `init_data` — ожидаемо и не является сбоем. `502/503/504` — инфраструктурная неисправность. В Telegram WebView полностью закрыть/открыть Mini App, проверить актуальную версию, историю и Feed/Profile; не удалять старые hashed assets, которые может запрашивать открытая WebView-сессия.
 
-```bash
-. venv/bin/activate
-python -m pytest
-python -m py_compile $(find bot tests scripts -name '*.py')
-```
+## 7. Исторический отдельный CDN: troubleshooting логов
 
-Перезапуск:
+> Этот раздел ниже относится к legacy separate-host `91.200.84.187` и `cdn.sh`. Для текущего production Mini App используйте `/mini-app/revision.txt` и GitHub workflow logs; ручной remote deploy здесь не требуется.
 
-```bash
-sudo systemctl restart banano-kling.service
-sudo systemctl is-active banano-kling.service
-curl -fsS http://127.0.0.1:1888/health
-journalctl -u banano-kling.service -n 100 --no-pager
-```
-
-## 6. Frontend deploy
-
-### Deploy
-
-```bash
-cd /root/tanya/banano_kling
-
-git fetch --prune origin tanyapi
-git switch tanyapi
-git reset --hard origin/tanyapi
-
-git log -1 --oneline
-sudo bash cdn.sh --remote-deploy tanyafrontend
-```
-
-Дождаться полного завершения. Только затем:
-
-```bash
-sudo bash cdn.sh --remote-status tanyafrontend
-```
-
-### Frontend smoke
-
-```bash
-curl -fsSI https://cdn.chillcreative.ru/mini-app/
-curl -fsS https://cdn.chillcreative.ru/mini-app/ \
-  | grep -o '<title>[^<]*</title>'
-```
-
-Ожидаемый title:
-
-```html
-<title>NEUROMIX</title>
-```
-
-### API proxy smoke
-
-```bash
-curl -i -X POST \
-  https://cdn.chillcreative.ru/mini-app/api/bootstrap \
-  -H 'Content-Type: application/json' \
-  --data '{}'
-```
-
-Нормально: auth error `400/401/403`.
-
-Ненормально:
-
-- `502` — frontend Nginx не достучался до backend;
-- `504` — timeout upstream;
-- HTML вместо JSON — неверный route;
-- redirect loop — ошибка Nginx/base path.
-
-## 7. Frontend deploy logs
+## 7a. Legacy frontend deploy logs
 
 На операторском/backend host:
 
@@ -236,17 +163,9 @@ sudo systemctl status nginx --no-pager
 sudo journalctl -u nginx -n 100 --no-pager
 ```
 
-### Frontend host
+> Исторический отдельный `91.200.84.187` Nginx не является текущим хостом Mini App; не использовать его для production-инцидентов.
 
-```bash
-ssh root@91.200.84.187 '
-  nginx -t
-  systemctl is-active nginx
-  systemctl status nginx --no-pager
-'
-```
-
-## 10. TLS checks
+## 10a. TLS checks (production + historical origin)
 
 ```bash
 openssl s_client \
@@ -301,36 +220,24 @@ chmod 600 /root/backups/neuromix/env-*
 
 ### Frontend
 
-`cdn.sh`/installer создаёт release backup перед заменой файлов. Не удалять backup до post-deploy Telegram smoke.
+Штатный shared-origin static export обновляется production workflow. Исторический `cdn.sh` backup относится к старому CDN-хосту. Сохранять старые hashed JS/CSS на время WebView-совместимости; откат только по согласованной процедуре.
 
 ### Nginx media
 
 `deploy_media_origin.sh` сохраняет предыдущую конфигурацию в root-only backup directory.
 
-## 13. Restart policy
+## 13. Restart / восстановление
 
-### Backend
-
-```bash
-sudo systemctl restart banano-kling.service
-```
-
-Не использовать restart loop. Если сервис сразу падает:
+**Обычный релиз — только CI/CD.** Рестарт/rollback — отдельное контролируемое действие после диагностики, без бесконечных циклов. Read-only осмотр:
 
 ```bash
-sudo systemctl stop banano-kling.service
-journalctl -u banano-kling.service -n 300 --no-pager
+docker ps --filter name=banano-kling-bot
+docker logs --since 30m --tail 300 banano-kling-bot
+docker inspect --format '{{.State.Status}}' banano-kling-bot
+sudo nginx -t
 ```
 
-Сначала исправить config/code, затем start.
-
-### Nginx
-
-Предпочтительно reload после успешного test:
-
-```bash
-sudo nginx -t && sudo systemctl reload nginx
-```
+При согласованном rollback следовать [production-deployment.md](production-deployment.md), не терять DB/медиа и `data/price.json`. Старый `banano-kling.service` не является production runtime, его `systemctl restart` не оживляет текущий Docker bot. Для Nginx reload — сначала `nginx -t`.
 
 ## 14. Incident priorities
 

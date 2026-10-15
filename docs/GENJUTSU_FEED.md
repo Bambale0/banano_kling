@@ -2,6 +2,10 @@
 
 A signed-in user can publish a final video from their own completed Genjutsu run to the ordinary Feed. Each selected output is copied into durable public Feed storage. Only the output becomes public; prompts, original source video and original photo references remain in the private Genjutsu recipe store.
 
+## Продуктовое правило и отдельная реализация Genjutsu
+
+Публикация законченного результата Genjutsu в ленте/профиле разрешает **повтор этой опубликованной работы** независимо от происхождения. Путь к её защищённому recipe — dedicated Genjutsu editor, а не generic Wan/Seedance форма. Ограничение ниже на `recipe-derived runs` относится к техническому созданию **ещё одного нового приватного рецепта в Genjutsu**, а не к общему праву нажать «Повторить» на уже опубликованной работе. Проверить полный цикл `repeat → publish repeated result → repeat again`: существующее ограничение на republish recipe-derived run может оставаться пробелом по продуктовому требованию и не объявляется решённым без тестов. См. [PUBLICATION_REPEAT_CONTRACT.md](PUBLICATION_REPEAT_CONTRACT.md) и [POST_RELEASE_AUDIT_2026-10-16.md](POST_RELEASE_AUDIT_2026-10-16.md).
+
 ## Publication contract
 
 POST /mini-app/api/genjutsu with action=feed_publish accepts run_id, step_id, title and source_binding.

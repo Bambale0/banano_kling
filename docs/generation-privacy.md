@@ -115,25 +115,13 @@ request_data.prompt_actions_allowed = false
 
 If source references are needed for provider retry, store them in a private internal-only channel, not in public DTO fields.
 
-## 8. Repeat policy
+## 8. Repeat policy — publication and secrecy are independent
 
-Repeat must respect privacy flags.
+**Продуктовое правило:** любая опубликованная завершённая работа доступна для повтора независимо от `original/trend/remix/repeat` и `source_feed_gen_id`. Клик по публикации выбирает её собственный рецепт, а не исходного предка. См. [PUBLICATION_REPEAT_CONTRACT.md](PUBLICATION_REPEAT_CONTRACT.md).
 
-Allowed for public prompt task:
+**Запрещено раскрытие в public DTO**, а не серверное восстановление приватного prompt и разрешённых файлов. Backend может читать сохранённый внутренний рецепт и объединять его с изменениями viewer внутри аутентифицированного repeat API. Готовый provider payload никогда не отправляется целиком в Mini App. Скрытые URL/промпты отсутствуют в payload карточки, history, share, error и логах.
 
-```text
-repeat -> reuse prompt/settings if owner/action allows
-```
-
-Not allowed for private trend task:
-
-```text
-repeat -> recover hidden prompt
-repeat -> expose source recipe
-repeat -> clone source author reference chain
-```
-
-If repeat is available, it must use a safe product-specific flow, not raw prompt replay.
+Решения `fixed`/`upload` для каждого слота, доступность media, действующая опубликованность, model/mode support, server quote/hash и один debit остаются проверками перед provider call. Если provider или специальный editor не поддерживает режим, это техническое ограничение, не запрет по происхождению и не «автор запретил».
 
 ## 9. Feed/share policy
 
@@ -163,12 +151,14 @@ URL и сохраняет selection в `generation_tasks.feed_reference_selectio
 сдвигает выбор на соседний reference. Исходный `request_data` и provider recipe при этом не изменяются.
 Старые строки без selection сохраняют прежнее поведение «все или ничего».
 
-Сохранённый selection сам по себе не является разрешением на публикацию. Для
-чужого image-repeat backend наследует и разрешает повторное использование только
-референсов, которые разрешены текущим `feed_references_visible` и действительно
-присутствуют в доступной этому пользователю карточке. Скрытые и невыбранные
-исходные URL не сохраняются в references другого пользователя. Собственные
-приватные входные данные автора при этом остаются доступны в его обычной задаче.
+`feed_reference_selection` отвечает за публичную видимость исходных превью, а
+`feed_repeat_reference_selection` — отдельно за server-only разрешение использовать
+конкретные hidden/fixed файлы при повторе. Скрытый, но разрешённый для fixed-slot URL
+может быть использован сервером, **не появляясь** в чужой карточке или DOM.
+Неразрешённый slot пользователь должен заполнить собственным upload. Для
+публично опубликованного дочернего результата источник server-side media permission
+— сама выбранная публикация, не её предок. Отзыв публикации/fixed grant прекращает
+новое использование без раскрытия private исходников.
 
 Task detail применяет существующий privacy sanitizer при построении ответа,
 помимо middleware. Legacy child-задачи с `source_feed_gen_id` не возвращают
@@ -196,8 +186,8 @@ For every privacy-sensitive generation change:
 - history hides prompt;
 - feed hides prompt;
 - share hides prompt;
-- repeat cannot recover prompt;
-- source feed generation cannot be used to reconstruct recipe;
+- публичный repeat DTO не восстанавливает скрытый prompt; только backend формирует provider prompt после авторизации;
+- источник выбранной публикации нельзя запросить как открытый recipe/payload; внутренняя server-side сборка разрешена;
 - public DTO does not include private `request_data` keys;
 - ordinary non-private generation still works and can show prompt when allowed.
 
