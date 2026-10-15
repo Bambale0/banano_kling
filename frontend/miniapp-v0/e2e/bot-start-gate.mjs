@@ -39,15 +39,14 @@ async function waitForServer() {
   throw new Error('Bot Start static export server did not start')
 }
 
-// Correlate with a NEW capability request. An older ordinary bootstrap may
-// finish after a fixture state change and must not satisfy this assertion.
+// Correlate with a DELIVERED capability response, not merely a request.
+// Playwright emits a request event for a fetch that the app legitimately aborts
+// (e.g. a return/focus event superseded by opening the bot). That request has
+// response() === null and must not satisfy a server-confirmed check.
 function nextCapabilityResponse(page) {
-  return page.waitForRequest(request => request.url().endsWith('/bootstrap')
-    && request.headers()['x-e2e-capability-check'] === '1').then(async request => {
-    const response = await request.response()
-    assert.ok(response, 'Return capability request completed without transport abort')
-    return response
-  })
+  return page.waitForResponse(response =>
+    response.url().endsWith('/bootstrap')
+    && response.request().headers()['x-e2e-capability-check'] === '1')
 }
 
 async function emitReturn(page, event, visible = true) {
