@@ -43,6 +43,12 @@ try {
         onEvent(name, handler) { window.addEventListener('fixture:' + name, handler) },
         offEvent(name, handler) { window.removeEventListener('fixture:' + name, handler) } } }
     })
+    // Mock Telegram destination: verify a real click-generated chat URL
+    // without making any outbound request to Telegram.
+    await context.route('https://t.me/**', route => route.fulfill({
+      status: 200, contentType: 'text/html',
+      body: '<!doctype html><html><body>Mock text bot chat target</body></html>',
+    }))
     await page.route('**/*', async route => {
       const request = route.request(), url = new URL(request.url())
       if (url.pathname.endsWith('/telegram-web-app.js')) return route.fulfill({ contentType: 'application/javascript', body: '// mock' })
@@ -91,8 +97,18 @@ try {
     await region.getByRole('button', { name: 'Закрыть студию' }).click()
     await region.waitFor({ state: 'hidden' })
     await gate.waitFor()
-    await gate.getByRole('button', { name: 'Открыть бота', exact: true }).click()
-    assert.equal((await page.evaluate(() => window.__opened)).length, 1)
+    const openBot = gate.getByRole('link', { name: 'Открыть бота', exact: true })
+    const chatUrl = await openBot.getAttribute('href')
+    assert.equal(chatUrl, 'https://t.me/test_bot?start=miniapp_delivery',
+      'The primary CTA opens the text chat, not the Mini App')
+    const openedChat = page.waitForEvent('popup', { timeout: 8000 })
+    await openBot.click()
+    const chatPage = await openedChat
+    await chatPage.waitForLoadState('domcontentloaded')
+    assert.equal(chatPage.url(), chatUrl)
+    await chatPage.close()
+    assert.deepEqual(await page.evaluate(() => window.__opened), [],
+      'The primary bot chat link does not depend on the Telegram JS bridge')
     await gate.getByRole('button', { name: 'Пропустить', exact: true }).click()
     await gate.waitFor({ state: 'hidden' })
     await page.getByRole('button', { name: 'Получать в боте', exact: true }).waitFor()
