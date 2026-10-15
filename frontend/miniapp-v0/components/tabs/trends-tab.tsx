@@ -13,7 +13,7 @@ import { Wan3TrendDraftEditor, type Wan3TrendDraft } from '@/components/wan3-tre
 import { wan3SafeError } from '@/lib/wan3-prime-api'
 import { updateTrendPreview } from '@/lib/trend-admin-api'
 import { mediaAspectRatio, normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
-import { formatTrendRepeatCost } from '@/lib/trend-price'
+import { formatTrendRepeatPrice } from '@/lib/trend-price'
 import { isNavigableShareLink, telegramForwardLink, tryOpenTelegramShareLink } from '@/lib/share-link-navigation'
 import { genjutsuCall, openGenjutsu, type Recipe } from '@/lib/genjutsu-api'
 import { TrendRunnerDialog } from '@/components/trend-runner-dialog'
@@ -856,7 +856,7 @@ export function TrendsTab() {
             const posterUrl = trend.preview_poster_url
               ? normalizeMiniAppMediaUrl(trend.preview_poster_url)
               : ''
-            const repeatCost = formatTrendRepeatCost(trend.repeat_cost)
+            const repeatPrice = formatTrendRepeatPrice(trend)
             return (
               <article key={trend.id} className="glass min-w-0 overflow-hidden rounded-2xl border border-border/50">
                 <div className="relative bg-secondary/40">
@@ -934,7 +934,7 @@ export function TrendsTab() {
                 <div className="space-y-2.5 p-3">
                   <div><h4 className="line-clamp-2 text-sm font-semibold text-foreground">{trend.title}</h4>{trend.description ? <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{trend.description}</p> : null}</div>
                   <div className="truncate rounded-lg bg-secondary/55 px-2 py-1.5 text-[10px] text-muted-foreground">{modelLabel || trend.model}</div>
-                  <Button type="button" size="sm" className="w-full bg-gold text-primary-foreground hover:bg-gold/90" onClick={() => applyTrend(trend)}><Repeat2 className="h-3.5 w-3.5" />{repeatCost ? 'Повторить · ' + repeatCost + '🍌' : 'Повторить'}</Button>
+                  <Button type="button" size="sm" className="w-full bg-gold text-primary-foreground hover:bg-gold/90" onClick={() => applyTrend(trend)}><Repeat2 className="h-3.5 w-3.5" />{repeatPrice ? 'Повторить · ' + repeatPrice : 'Повторить'}</Button>
                   <div className={isAdmin ? 'grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2' : 'grid'}>
                     <Button type="button" size="sm" variant="secondary" onClick={() => openShareLink(trend)}>{copiedId === trend.id ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}{copiedId === trend.id ? 'Скопировано' : 'Ссылка'}</Button>
                     {isAdmin ? <Button type="button" variant="secondary" size="sm" className="min-w-0 px-2 text-xs" onClick={() => openEditTrend(trend)} aria-label="Редактировать тренд"><Pencil className="h-3.5 w-3.5" /><span className="truncate">Редактировать</span></Button> : null}

@@ -556,9 +556,62 @@ def estimate_trend_repeat_cost(
         return None
 
 
+def wan3_trend_price_hint(trend: Mapping[str, Any], *, tariff: str = "standard") -> dict[str, Any] | None:
+    """Public, server-priced WAN floor (never an executable/final quote).
+
+    Replacement video length and retained author video length are intentionally
+    unknown to catalog cards. A lower bound cannot replace the authoritative
+    post-upload input-plus-output quote or charge anything.
+    """
+    import math
+
+    from bot.services import preset_manager as preset_module
+    from bot.services.wan3_prime_lifecycle import _round_half_credit
+
+    model = str(trend.get("model") or "").strip()
+    if model not in {"wan_3", "wan_3_prime"}:
+        return None
+    settings = trend.get("generation_settings")
+    if isinstance(settings, str):
+        try:
+            settings = json.loads(settings)
+        except (ValueError, TypeError):
+            return None
+    if not isinstance(settings, Mapping):
+        return None
+    quality = str(settings.get("resolution") or "").strip().lower()
+    duration = settings.get("duration")
+    if isinstance(duration, bool) or not isinstance(duration, int) or (
+        duration != -1 and not 2 <= duration <= 30
+    ):
+        return None
+    ordinary = preset_module.preset_manager.get_video_quality_costs(model)
+    raw = {str(k).strip().lower(): value for k, value in (ordinary or {}).items()}.get(quality)
+    if tariff == "creator":
+        from bot.creator_tariff import video_rate_snapshot
+        raw = video_rate_snapshot(model, quality, ordinary, tariff=tariff)["rate"]
+    try:
+        if isinstance(raw, bool):
+            return None
+        rate = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(rate) or rate <= 0:
+        return None
+    # Auto reserves 30 total seconds; manual duration bills this output
+    # PLUS any real source video seconds validated only on quote.
+    minimum = _round_half_credit(rate * (30 if duration == -1 else duration))
+    if minimum <= 0:
+        return None
+    return {"amount": minimum, "kind": "reserve" if duration == -1 else "from"}
+
+
 def with_trend_repeat_cost(trend: Mapping[str, Any], *, tariff: str = "standard") -> dict[str, Any]:
     enriched = dict(trend)
     enriched["repeat_cost"] = estimate_trend_repeat_cost(trend, tariff=tariff)
+    hint = wan3_trend_price_hint(trend, tariff=tariff)
+    if hint is not None:
+        enriched["repeat_price_hint"] = hint
     return enriched
 
 

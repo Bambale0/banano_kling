@@ -5,6 +5,7 @@ import { ArrowLeft, Film, Flame, Loader2, Pencil, Repeat2, Share2, Sparkles, Tra
 import { Button } from './ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog'
 import { normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
+import { formatTrendRepeatPrice } from '@/lib/trend-price'
 import { fetchTrendCategory, resolveGenjutsuPrices, type ShowcaseCategory, type ShowcaseTrend } from '@/lib/trend-catalog-api'
 
 // Avoid decoding a dozen videos at once in Telegram's constrained mobile WebView.
@@ -142,6 +143,7 @@ function LiveTile({ trend, onPreview, className = '' }: {
       ) : null}
       <div className="pointer-events-none absolute inset-x-0 bottom-0 p-3">
         <span className="line-clamp-3 text-xs font-semibold leading-5 text-white drop-shadow-md sm:text-sm">{trend.title}</span>
+        {formatTrendRepeatPrice(trend) ? <span className="mt-1 block text-xs font-semibold text-gold">{formatTrendRepeatPrice(trend)}</span> : null}
       </div>
     </button>
   )
@@ -293,7 +295,7 @@ export function TrendShowcase({ categories, onRepeat, onShare, onEdit, onRemove,
                 onRepeat(selected)
               }}>
                 <Repeat2 className="h-4 w-4" /> Повторить
-                {typeof selected.repeat_cost === 'number' ? ' · ' + selected.repeat_cost + '🍌' : ''}
+                {formatTrendRepeatPrice(selected) ? ' · ' + formatTrendRepeatPrice(selected) : ''}
               </Button>
               <Button type="button" variant="secondary" className="min-h-11 w-full" onClick={() => {
                 setSelected(null)

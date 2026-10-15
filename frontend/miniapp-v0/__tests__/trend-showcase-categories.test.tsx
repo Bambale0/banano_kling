@@ -220,3 +220,18 @@ test('admin can inspect durable history with signed actor and before/after state
   expect(screen.getByText(/Старое название/)).toBeInTheDocument()
   expect(screen.getByText(/Новое название/)).toBeInTheDocument()
 })
+
+
+
+test('WAN live tile and repeat modal show server-authoritative lower-bound price', () => {
+  const wan = { ...makeCard(2075, 'Wan с фиксированным видео', 'video'), model: 'wan_3',
+    repeat_cost: null, repeat_price_hint: { amount: 22, kind: 'from' as const },
+    generation_settings: { kind: 'video' as const, duration: 11, resolution: '480P' },
+  } as ShowcaseTrend
+  render(<TrendShowcase categories={[{ ...catalog[0], items: [wan], total: 1 }]}
+    onRepeat={jest.fn()} onShare={jest.fn()} />)
+  expect(screen.getByRole('button', { name: 'Открыть тренд Wan с фиксированным видео' }))
+    .toHaveTextContent('от 22🍌')
+  fireEvent.click(screen.getByRole('button', { name: 'Открыть тренд Wan с фиксированным видео' }))
+  expect(within(screen.getByRole('dialog')).getByRole('button', { name: /Повторить · от 22🍌/ })).toBeEnabled()
+})

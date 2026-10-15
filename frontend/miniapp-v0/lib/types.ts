@@ -304,6 +304,8 @@ export interface PromptItem {
   uses_count: number
   likes: number
   repeat_cost?: number | null
+  /** WAN catalog-only lower bound/reserve, not the final quote or debit. */
+  repeat_price_hint?: { amount: number; kind: 'from' | 'reserve' } | null
   preview_url?: string | null
   preview_poster_url?: string | null
   model?: string | null

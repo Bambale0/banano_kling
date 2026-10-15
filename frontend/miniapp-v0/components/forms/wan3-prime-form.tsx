@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Wan3DurationSelect } from './wan3-duration-select'
+import { normalizeWan3ImageForRetry, Wan3ImagePreparationError } from '@/lib/wan3-image-normalize'
 import {
   fetchWan3PrimeOwnerRecipe, fetchWan3PrimeRepeatPlan, fetchWan3PrimeTrendPlan, generateWan3Prime, importWan3PrimeReference,
   quoteWan3Prime, uploadWan3PrimeReference, wan3SafeError, Wan3PrimeApiError,
@@ -101,11 +102,24 @@ function MediaField({ title, label, prefix, kind, values, limit, offset = 1, dis
         const file = files[index]
         const caption = `«${file.name}» (${index + 1}/${files.length})`
         setProgress(`Загружаю ${caption}…`)
-        const stored = await uploadWan3PrimeReference(kind as Wan3PrimeUploadKind, file, controller.signal, (uploaded, total) => {
+        const progress = (uploaded: number, total: number) => {
           if (!controller.signal.aborted && active.current === controller) {
-            setProgress(uploaded === total ? `Проверяю ${caption}…` : `Загружаю ${caption}: ${Math.floor(uploaded / total * 100)}%`)
+            setProgress(uploaded === total ? 'Проверяю ' + caption + '…' : 'Загружаю ' + caption + ': ' + Math.floor(uploaded / total * 100) + '%')
           }
-        })
+        }
+        let stored
+        try {
+          stored = await uploadWan3PrimeReference(kind as Wan3PrimeUploadKind, file, controller.signal, progress)
+        } catch (error) {
+          // If complete rejected the original photo, releaseUpload has already
+          // cancelled its owned session. Retry once using a local JPEG export.
+          if (kind !== 'image' || !(error instanceof Wan3PrimeApiError)
+            || error.status !== 400 || error.code !== 'validation_error' || controller.signal.aborted) throw error
+          setProgress('Подготавливаю совместимый JPEG из ' + caption + '…')
+          const normalized = await normalizeWan3ImageForRetry(file, controller.signal)
+          if (controller.signal.aborted || active.current !== controller) return
+          stored = await uploadWan3PrimeReference('image', normalized, controller.signal, progress)
+        }
         if (controller.signal.aborted || active.current !== controller) return
         next = [...next, stored.url]
         setNames(old => ({ ...old, [stored.url]: file.name }))
@@ -114,7 +128,14 @@ function MediaField({ title, label, prefix, kind, values, limit, offset = 1, dis
     } catch (error) {
       if (active.current === controller) {
         setRetryFiles(files.slice(index))
-        fail(`«${files[index].name}»: ${wan3SafeError(error, 'Не удалось загрузить файл. Повторите загрузку.')}`)
+        const imageRejected = kind === 'image' && (
+          error instanceof Wan3ImagePreparationError ||
+          (error instanceof Wan3PrimeApiError && error.status === 400 && error.code === 'validation_error')
+        )
+        const reason = imageRejected
+          ? 'Фото не прошло проверку даже после преобразования. Сохраните его как обычный JPEG или PNG и попробуйте снова.'
+          : wan3SafeError(error, 'Не удалось загрузить файл. Повторите загрузку.')
+        fail('«' + files[index].name + '»: ' + reason)
       }
     } finally { if (active.current === controller) { active.current = null; setProgress('') }; lock.current = false; onBusy(-1) }
   }
@@ -171,6 +192,7 @@ interface Wan3PrimeFormProps {
   model?: Wan3PrimeRecipe['model']
   credits: number; isAdmin?: boolean; modelSelector?: ReactNode; initialRecipe?: Wan3PrimeRecipe | null
   ownerTaskId?: string | null; publicationSourceId?: number | null; trendId?: number | null; disabledReason?: string
+  previewPriceHint?: string | null
   onQueued?: (result: Wan3PrimeGenerateResponse) => void | Promise<void>
 }
 export function Wan3PrimeForm(props: Wan3PrimeFormProps) {
@@ -186,7 +208,7 @@ export function Wan3PrimeForm(props: Wan3PrimeFormProps) {
   return <Wan3PrimeFormSession key={session} {...props} model={model} expectedModel={props.model} initialRecipe={initialRecipe} />
 }
 
-function Wan3PrimeFormSession({ draftOnly = false, onDraftChange, expectedModel, model = 'wan_3_prime', credits, isAdmin = false, modelSelector, initialRecipe, ownerTaskId, publicationSourceId, trendId: selectedTrendId, disabledReason: externalDisabledReason, onQueued }: Wan3PrimeFormProps & { expectedModel?: Wan3PrimeRecipe['model'] }) {
+function Wan3PrimeFormSession({ draftOnly = false, onDraftChange, expectedModel, model = 'wan_3_prime', credits, isAdmin = false, modelSelector, initialRecipe, ownerTaskId, publicationSourceId, trendId: selectedTrendId, previewPriceHint, disabledReason: externalDisabledReason, onQueued }: Wan3PrimeFormProps & { expectedModel?: Wan3PrimeRecipe['model'] }) {
   const disabledReason = externalDisabledReason || ''
   const [recipe, setRecipe] = useState<Wan3PrimeRecipe>(() => initialRecipe ? { ...emptyRecipe('text', model), ...initialRecipe } : emptyRecipe('text', model))
   const drafts = useRef<Partial<Record<Wan3PrimeScenario, Wan3PrimeRecipe>>>({})
@@ -429,6 +451,10 @@ function Wan3PrimeFormSession({ draftOnly = false, onDraftChange, expectedModel,
     {draftOnly ? <>{issue ? <p className="text-xs text-muted-foreground">{issue}</p> : null}{error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}</> : <section className={CARD} aria-label="Стоимость Wan">
       {disabledReason || issue ? <p className="text-xs text-muted-foreground">{disabledReason || issue}</p> : null}
       {pending > 0 ? <p role="status" className="text-xs">Загружаю и проверяю материалы…</p> : null}
+      {!approved && previewPriceHint && repeatPlan && sourceId &&
+        recipe.duration === repeatPlan.recipe.duration &&
+        recipe.resolution === repeatPlan.recipe.resolution ?
+        <p className="text-sm font-semibold">Цена повтора: {previewPriceHint} <span className="font-normal text-muted-foreground">по настройкам публикации. Точная стоимость — после загрузки и проверки файлов.</span></p> : null}
       <Button type="button" variant="outline" disabled={working || attempted || !!issue || !!disabledReason} onClick={() => { void calculate() }}>{quoting ? 'Рассчитываю…' : 'Рассчитать стоимость'}</Button>
       {approved ? <div className="space-y-1 text-sm" role="status">
         <p className="text-xl font-semibold">{approved.admin_free ? 'Без списания бананов для администратора' : `${approved.auto_duration ? 'Максимальный резерв' : 'Стоимость'}: ${approved.reserve_cost}🍌`}</p>

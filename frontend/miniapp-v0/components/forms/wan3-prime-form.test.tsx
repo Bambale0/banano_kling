@@ -1,7 +1,8 @@
 import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { Wan3PrimeForm } from './wan3-prime-form'
-import { Wan3PrimeUploadCleanupError, fetchWan3PrimeRepeatPlan, generateWan3Prime, importWan3PrimeReference, quoteWan3Prime, uploadWan3PrimeReference } from '@/lib/wan3-prime-api'
+import { normalizeWan3ImageForRetry } from '@/lib/wan3-image-normalize'
+import { Wan3PrimeApiError, Wan3PrimeUploadCleanupError, fetchWan3PrimeRepeatPlan, generateWan3Prime, importWan3PrimeReference, quoteWan3Prime, uploadWan3PrimeReference } from '@/lib/wan3-prime-api'
 
 jest.mock('@/lib/wan3-prime-api', () => ({
   ...jest.requireActual('@/lib/wan3-prime-api'),
@@ -9,6 +10,7 @@ jest.mock('@/lib/wan3-prime-api', () => ({
   uploadWan3PrimeReference: jest.fn(), importWan3PrimeReference: jest.fn(),
   fetchWan3PrimeOwnerRecipe: jest.fn(), fetchWan3PrimeRepeatPlan: jest.fn(), fetchWan3PrimeTrendPlan: jest.fn(),
 }))
+jest.mock('@/lib/wan3-image-normalize', () => ({ ...jest.requireActual('@/lib/wan3-image-normalize'), normalizeWan3ImageForRetry: jest.fn() }))
 const quote = { ok: true, quote_hash: 'quote-1', reserve_cost: 60,
   billing_duration_seconds: 30, source_video_duration_seconds: 2.5,
   tariff_missing: false, admin_free: false, auto_duration: true,
@@ -17,6 +19,8 @@ const quote = { ok: true, quote_hash: 'quote-1', reserve_cost: 60,
 beforeEach(() => {
   // Reset implementations and queued mockOnce results so a failed test cannot contaminate the next one.
   jest.resetAllMocks()
+  ;(normalizeWan3ImageForRetry as jest.Mock).mockImplementation(async (file: File) =>
+    new File(['compatible'], file.name.replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' }))
   ;(quoteWan3Prime as jest.Mock).mockResolvedValue(quote)
   ;(generateWan3Prime as jest.Mock).mockResolvedValue({ ok: true, status: 'queued', internal_task_id: 'wan3_test', reserve_cost: 60 })
   ;(uploadWan3PrimeReference as jest.Mock).mockImplementation(async (kind, file) => ({
@@ -464,4 +468,52 @@ test('draft upload rejection never emits a transient publishable snapshot before
   onDraftChange.mockClear()
   fireEvent.change(screen.getByLabelText('Инструкции Wan'), { target: { value: 'Unrelated edit' } })
   expect(onDraftChange.mock.calls.every(([draft]) => draft.busy || Boolean(draft.issue))).toBe(true)
+})
+
+
+test('repeat recovers the rejected original iPhone JPEG once, preserving the original name', async () => {
+  ;(uploadWan3PrimeReference as jest.Mock)
+    .mockRejectedValueOnce(new Wan3PrimeApiError('Invalid or unsafe image', 'validation_error', 400))
+    .mockResolvedValueOnce({ url: 'https://owned.test/normalized.jpg', kind: 'image', size: 9 })
+  render(<Wan3PrimeForm credits={1000} />)
+  fireEvent.click(screen.getByRole('button', { name: 'По референсам' }))
+  const field = within(screen.getByRole('region', { name: 'Фото-референсы' }))
+  fireEvent.change(field.getByLabelText('Загрузить фото-референсы'), {
+    target: { files: [new File(['raw'], 'IMG_0729.jpeg', { type: 'image/jpeg' })] },
+  })
+  await field.findByText('IMG_0729.jpeg')
+  expect(field.queryByRole('alert')).not.toBeInTheDocument()
+  expect(normalizeWan3ImageForRetry).toHaveBeenCalledTimes(1)
+  expect((uploadWan3PrimeReference as jest.Mock).mock.calls.map(call => call[1].name))
+    .toEqual(['IMG_0729.jpeg', 'IMG_0729.jpg'])
+})
+
+test('bad photo after bounded local recovery has a clear retry action and never launches', async () => {
+  ;(uploadWan3PrimeReference as jest.Mock)
+    .mockRejectedValue(new Wan3PrimeApiError('Invalid or unsafe image', 'validation_error', 400))
+  render(<Wan3PrimeForm credits={1000} />)
+  fireEvent.click(screen.getByRole('button', { name: 'По референсам' }))
+  const field = within(screen.getByRole('region', { name: 'Фото-референсы' }))
+  fireEvent.change(field.getByLabelText('Загрузить фото-референсы'), {
+    target: { files: [new File(['raw'], 'IMG_0729.jpeg', { type: 'image/jpeg' })] },
+  })
+  expect(await field.findByRole('alert')).toHaveTextContent('Сохраните его как обычный JPEG или PNG')
+  expect(field.getByRole('button', { name: 'Повторить загрузку' })).toBeEnabled()
+  expect(uploadWan3PrimeReference).toHaveBeenCalledTimes(2)
+  expect(generateWan3Prime).not.toHaveBeenCalled()
+})
+
+test('WAN fixed-video repeat displays an explicit lower bound before missing photo is uploaded', async () => {
+  const api = jest.requireMock('@/lib/wan3-prime-api')
+  api.fetchWan3PrimeTrendPlan.mockResolvedValue({ ok: true, trend_id: 2075, repeat_plan_hash: 'hash',
+    recipe: { model: 'wan_3', scenario: 'reference', prompt: '', resolution: '480P',
+      duration: 11, aspect_ratio: 'adaptive', audio: true, nsfw_checker: false },
+    slots: [{ key: 'image:0', kind: 'image', role: 'reference', index: 0, binding: 'upload' },
+      { key: 'video:0', kind: 'video', role: 'reference', index: 0, binding: 'fixed' }] })
+  render(<Wan3PrimeForm credits={1000} model="wan_3" trendId={2075} previewPriceHint="от 22🍌" />)
+  expect(await screen.findByText(/Цена повтора: от 22🍌/)).toBeInTheDocument()
+  expect(screen.getByText(/Точная стоимость — после загрузки/)).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Запустить Wan' })).toBeDisabled()
+  fireEvent.change(screen.getByRole('combobox', { name: 'Качество Wan' }), { target: { value: '720P' } })
+  expect(screen.queryByText(/Цена повтора: от 22🍌/)).not.toBeInTheDocument()
 })
