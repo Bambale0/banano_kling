@@ -28,6 +28,40 @@ async def chat_state(telegram_id):
 
 
 @pytest.mark.asyncio
+async def test_miniapp_referral_visitor_can_start_a_real_text_chat(monkeypatch):
+    """The user who arrived via startapp opens a separate bot /start chat.
+
+    The Mini App alone cannot grant Telegram DM access. A real /start update
+    must retire the never_started flag and send the ordinary text bot menu.
+    """
+    from bot.handlers import common
+
+    telegram_id = 880015
+    await database.get_or_create_user(
+        telegram_id, initial_telegram_chat_state="never_started"
+    )
+    assert await database.needs_telegram_bot_start(telegram_id) is True
+
+    monkeypatch.setattr(common, "_sync_telegram_profile", AsyncMock())
+    message = SimpleNamespace(
+        text="/start miniapp_delivery",
+        from_user=types.User(
+            id=telegram_id, is_bot=False, first_name="Synthetic Mini App visitor"
+        ),
+        bot=SimpleNamespace(),
+        answer=AsyncMock(),
+    )
+    state = SimpleNamespace(clear=AsyncMock())
+    await common.cmd_start(message, state)
+
+    state.clear.assert_awaited_once()
+    message.answer.assert_awaited_once()
+    assert message.answer.await_args.kwargs.get("reply_markup") is not None
+    assert await database.needs_telegram_bot_start(telegram_id) is False
+    assert await database.can_attempt_telegram_delivery(telegram_id) is True
+
+
+@pytest.mark.asyncio
 async def test_new_miniapp_marker_is_one_way_and_does_not_reset_existing_users():
     user = await database.get_or_create_user(
         880001, initial_telegram_chat_state="never_started"

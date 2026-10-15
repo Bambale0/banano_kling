@@ -77,23 +77,15 @@ export function BotWriteAccessGate({ required, botUsername, onRefresh }: BotWrit
     }
   }, [cancelCheck, onRefresh, required])
 
-  const openBot = useCallback(() => {
+  // Only record intent here. Navigation must be a real user-activated link:
+  // the Telegram SDK intercepts ordinary t.me anchors without target=_blank
+  // and routes them through the same openTelegramLink bridge that can no-op
+  // in some iOS Mini App clients.
+  const recordBotChatLaunch = useCallback(() => {
     cancelCheck()
-    const url = botStartUrl(botUsername)
-    if (!url) {
-      setPhase('error')
-      return
-    }
     openedBot.current = true
     setPhase('open-bot')
-    try {
-      const webApp = window.Telegram?.WebApp
-      if (webApp?.openTelegramLink) webApp.openTelegramLink(url)
-      else window.open(url, '_blank', 'noopener,noreferrer')
-    } catch {
-      setPhase('error')
-    }
-  }, [botUsername, cancelCheck])
+  }, [cancelCheck])
 
   useEffect(() => {
     if (!required) {
@@ -135,11 +127,17 @@ export function BotWriteAccessGate({ required, botUsername, onRefresh }: BotWrit
     </aside>
   )
 
-  const helperText = phase === 'error'
-    ? 'Не удалось проверить доступ. Открой чат с ботом или попробуй проверить снова.'
-    : phase === 'not-started'
-      ? 'Доступ пока не подтверждён. В чате нажми Start / «Начать», затем вернись и проверь снова.'
-      : 'Открой чат, нажми Start / «Начать», затем вернись сюда.'
+  // The bot identity comes from the authenticated backend bootstrap (getMe).
+  // ?start= opens the text chat; ?startapp= would reopen Mini App instead.
+  const botChatUrl = botStartUrl(botUsername)
+
+  const helperText = !botChatUrl
+    ? 'Адрес Telegram-бота пока недоступен. Попробуй открыть Mini App ещё раз.'
+    : phase === 'error'
+      ? 'Не удалось проверить доступ. Открой чат с ботом или попробуй проверить снова.'
+      : phase === 'not-started'
+        ? 'Доступ пока не подтверждён. В чате нажми «Начать», затем вернись и проверь снова.'
+        : 'Открой текстовый чат бота, нажми «Начать» и вернись сюда.'
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center overflow-y-auto bg-black/70 px-5 py-6 backdrop-blur-md" role="dialog" aria-modal="true" aria-labelledby="bot-write-access-title">
@@ -153,10 +151,27 @@ export function BotWriteAccessGate({ required, botUsername, onRefresh }: BotWrit
           Можно пропустить: все результаты будут доступны в Студии.
         </p>
         <p role="status" className="mt-4 rounded-2xl bg-white/[0.05] px-4 py-3 text-sm leading-5 text-white/65">{helperText}</p>
-        <button type="button" onClick={openBot} className="mt-7 flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-gold px-5 py-3 text-lg font-semibold text-black transition active:scale-[0.99]">
-          <ExternalLink className="h-5 w-5 shrink-0" />
-          Открыть бота
-        </button>
+        {botChatUrl ? (
+          <a
+            href={botChatUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={recordBotChatLaunch}
+            className="mt-7 flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-gold px-5 py-3 text-lg font-semibold text-black transition active:scale-[0.99]"
+          >
+            <ExternalLink className="h-5 w-5 shrink-0" />
+            Открыть бота
+          </a>
+        ) : (
+          <button
+            type="button"
+            disabled
+            className="mt-7 flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-gold/40 px-5 py-3 text-lg font-semibold text-black/70"
+          >
+            <ExternalLink className="h-5 w-5 shrink-0" />
+            Открыть бота
+          </button>
+        )}
         <button type="button" onClick={() => void checkAccess()} disabled={phase === 'checking'} className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-medium text-white/75 disabled:opacity-70">
           {phase === 'checking' ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
           {phase === 'checking' ? 'Проверяем…' : 'Проверить снова'}

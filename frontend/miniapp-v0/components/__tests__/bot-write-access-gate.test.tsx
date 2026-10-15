@@ -10,7 +10,7 @@ jest.mock('lucide-react', () => {
 jest.mock('@/lib/api', () => ({ getStartParamFallback: jest.fn(() => '') }))
 const startParam = getStartParamFallback as jest.Mock
 const webApp = () => window.Telegram!.WebApp as any
-const open = () => fireEvent.click(screen.getByRole('button', { name: 'Открыть бота' }))
+const open = () => fireEvent.click(screen.getByRole('link', { name: 'Открыть бота' }))
 const check = () => fireEvent.click(screen.getByRole('button', { name: 'Проверить снова' }))
 
 describe('BotWriteAccessGate', () => {
@@ -30,15 +30,20 @@ describe('BotWriteAccessGate', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
-  it('opens Start immediately even if native permission never returns, without confirming access', () => {
+  it('primary action is a real deep link to the text bot, not Mini App or a silent JS bridge', () => {
     const refresh = jest.fn()
     render(<BotWriteAccessGate required botUsername="neuromix_bot" onRefresh={refresh} />)
+    const entry = screen.getByRole('link', { name: 'Открыть бота' })
+    expect(entry).toHaveAttribute('href', 'https://t.me/neuromix_bot?start=miniapp_delivery')
+    expect(entry).toHaveAttribute('target', '_blank')
+    expect(entry).toHaveAttribute('rel', 'noopener noreferrer')
+    expect(entry.getAttribute('href')).not.toContain('startapp')
     open()
-    expect(webApp().openTelegramLink).toHaveBeenCalledWith('https://t.me/neuromix_bot?start=miniapp_delivery')
+    expect(webApp().openTelegramLink).not.toHaveBeenCalled()
     expect(webApp().requestWriteAccess).not.toHaveBeenCalled()
     expect(refresh).not.toHaveBeenCalled()
     expect(screen.getByRole('dialog')).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Открыть бота' })).toBeEnabled()
+    expect(screen.queryByRole('link', { name: 'Открыть по ссылке' })).toBeNull()
   })
 
   it.each([
@@ -54,7 +59,25 @@ describe('BotWriteAccessGate', () => {
     startParam.mockReturnValue(launch)
     render(<BotWriteAccessGate required botUsername="@neuromix_bot" onRefresh={jest.fn()} />)
     open()
-    expect(webApp().openTelegramLink).toHaveBeenCalledWith('https://t.me/neuromix_bot?start=' + expected)
+    expect(screen.getByRole('link', { name: 'Открыть бота' }))
+      .toHaveAttribute('href', 'https://t.me/neuromix_bot?start=' + expected)
+    expect(webApp().openTelegramLink).not.toHaveBeenCalled()
+  })
+
+  it('always uses the real text chat link even when Telegram native navigation silently no-ops', () => {
+    webApp().openTelegramLink = jest.fn(() => { /* simulates iOS native no-op */ })
+    render(<BotWriteAccessGate required botUsername="neuromix_bot" onRefresh={jest.fn()} />)
+    open()
+    expect(webApp().openTelegramLink).not.toHaveBeenCalled()
+    expect(screen.getAllByRole('link', { name: 'Открыть бота' })).toHaveLength(1)
+    expect(screen.queryByRole('link', { name: 'Открыть по ссылке' })).toBeNull()
+  })
+
+  it('preserves referral attribution in the primary text chat link', () => {
+    startParam.mockReturnValue('feed_42_ref_PARTNER')
+    render(<BotWriteAccessGate required botUsername="neuromix_bot" onRefresh={jest.fn()} />)
+    expect(screen.getByRole('link', { name: 'Открыть бота' }))
+      .toHaveAttribute('href', 'https://t.me/neuromix_bot?start=ref_PARTNER')
   })
 
   it('keeps the gate until the server confirms Start and supports manual retry', async () => {
@@ -83,7 +106,7 @@ describe('BotWriteAccessGate', () => {
     const refresh = jest.fn().mockImplementationOnce(() => new Promise<boolean>(done => { resolve = done })).mockResolvedValue(false)
     render(<BotWriteAccessGate required botUsername="neuromix_bot" onRefresh={refresh} />)
     check()
-    expect(screen.getByRole('button', { name: 'Открыть бота' })).toBeEnabled()
+    expect(screen.getByRole('link', { name: 'Открыть бота' })).toHaveAttribute('href', 'https://t.me/neuromix_bot?start=miniapp_delivery')
     await act(async () => { jest.advanceTimersByTime(12_000) })
     expect(refresh.mock.calls[0][0].aborted).toBe(true)
     expect(screen.getByText(/Не удалось проверить доступ/)).toBeTruthy()
@@ -121,14 +144,14 @@ describe('BotWriteAccessGate', () => {
     check()
     await waitFor(() => expect(screen.getByText(/Не удалось проверить доступ/)).toBeTruthy())
     open()
-    expect(webApp().openTelegramLink).toHaveBeenCalledTimes(1)
+    expect(webApp().openTelegramLink).not.toHaveBeenCalled()
   })
 
-  it('does not navigate to malformed or missing bot usernames', () => {
+  it('does not create navigable links for malformed or missing bot usernames', () => {
     render(<BotWriteAccessGate required botUsername="bad/name?token=x" onRefresh={jest.fn()} />)
-    open()
+    expect(screen.queryByRole('link', { name: 'Открыть бота' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Открыть бота' })).toBeDisabled()
     expect(webApp().openTelegramLink).not.toHaveBeenCalled()
-    expect(screen.getByText(/Не удалось проверить доступ/)).toBeTruthy()
   })
 })
 
@@ -142,12 +165,13 @@ it('a reappearing gate has an enabled check instead of stale loading', () => {
   expect(screen.getByRole('button', { name: 'Проверить снова' })).toBeEnabled()
 })
 
-it('uses browser navigation when Telegram link API is unavailable', () => {
+it('the primary text chat link does not depend on popup APIs or Telegram JS', () => {
   webApp().openTelegramLink = undefined
   const windowOpen = jest.spyOn(window, 'open').mockReturnValue(null)
   render(<BotWriteAccessGate required botUsername="neuromix_bot" onRefresh={jest.fn()} />)
-  open()
-  expect(windowOpen).toHaveBeenCalledWith('https://t.me/neuromix_bot?start=miniapp_delivery', '_blank', 'noopener,noreferrer')
+  expect(screen.getByRole('link', { name: 'Открыть бота' }))
+    .toHaveAttribute('href', 'https://t.me/neuromix_bot?start=miniapp_delivery')
+  expect(windowOpen).not.toHaveBeenCalled()
   windowOpen.mockRestore()
 })
 
@@ -169,7 +193,9 @@ describe('optional delivery offer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Получать в боте' }))
     expect(screen.getByRole('dialog')).toBeTruthy()
     open()
-    expect(webApp().openTelegramLink).toHaveBeenCalledWith('https://t.me/neuromix_bot?start=miniapp_delivery')
+    expect(screen.getByRole('link', { name: 'Открыть бота' }))
+      .toHaveAttribute('href', 'https://t.me/neuromix_bot?start=miniapp_delivery')
+    expect(webApp().openTelegramLink).not.toHaveBeenCalled()
   })
   it('skip cancels a pending check and late success cannot reopen the offer', async () => {
     let resolve!: (value: boolean) => void
