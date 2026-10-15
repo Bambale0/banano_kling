@@ -29,6 +29,12 @@ tanyapi → feature/* | fix/* | agent/* → PR в tanyapi
 
 Mini App загружает HTML/CSS/JS с frontend-домена, а `/mini-app/api/*` проксируется к backend. Внешний доступ к порту `1888` не требуется. Исходные файлы production хранятся в `static/uploads`; текущую конфигурацию доменов нужно сверять с runtime и активным Nginx, а не с историческими SSH-профилями.
 
+## Повторы опубликованных генераций
+
+Для всех поддерживаемых моделей правило одно: **любая опубликованная работа доступна для повтора**, независимо от происхождения (исходник, тренд, ремикс или предыдущий повтор). Повторяется **выбранная работа**, с её параметрами и заменяемыми референсными слотами; нельзя незаметно подменять её первым предком. Скрытые авторские файлы обрабатываются на сервере; пользователь загружает свои материалы для `upload` слотов.
+
+Канонический документ: [Публикации и повторы](docs/PUBLISHED_REPEAT_CONTRACT.md). Частные правила server-side grant: [закрытые референсы](docs/PRIVATE_REPEAT_REFERENCES.md). Успешные повторы в трендах берутся из завершённых задач; Wan показывает предварительную «от N 🍌» до подтверждения полного quote.
+
 ## Основные возможности
 
 ### Telegram-бот
@@ -152,8 +158,8 @@ curl -fsS http://127.0.0.1:1888/health
 ### Frontend status
 
 ```bash
-cd /root/tanya/banano_kling
-sudo bash cdn.sh --remote-status tanyafrontend
+curl -fsS https://tanyapp.xn--e1aikcel5c5a.online/mini-app/revision.txt
+curl -fsSI https://tanyapp.xn--e1aikcel5c5a.online/mini-app/
 ```
 
 ### Media origin
@@ -171,7 +177,7 @@ sudo -E bash scripts/deploy_media_origin.sh
 При расхождении документации и реализации использовать следующий приоритет:
 
 1. `.github/workflows/ci-development.yml`, `deploy-development.yml`, `deploy-frontend-development.yml` — DEV CI/CD;
-2. `.github/workflows/deploy-production.yml`, `deploy-frontend-production.yml` — production CI/CD;
+2. `.github/workflows/deploy-production-reliable.yml` и `deploy-production.yml` — production CI/CD и статический frontend на том же host;
 3. `bot/main.py` — runtime wiring и HTTP server;
 4. `bot/miniapp.py` — Mini App API и auth contracts;
 5. `bot/config.py` — env surface;
@@ -182,7 +188,7 @@ sudo -E bash scripts/deploy_media_origin.sh
 
 ## Документация
 
-- [docs/development-deployment.md](docs/development-deployment.md) — DEV-бот, отдельные credentials, autodeploy и promotion `dev -> tanyapi`;
+- [docs/development-deployment.md](docs/development-deployment.md) — исторический необязательный DEV-контур; обычные PR выпускаются сразу в `tanyapi` по `AGENTS.md`;
 - [docs/README.md](docs/README.md) — карта документации;
 - [docs/production_auto_deploy.md](docs/production_auto_deploy.md) — production autodeploy строго из `tanyapi`;
 - [docs/architecture.md](docs/architecture.md) — архитектура и потоки данных;

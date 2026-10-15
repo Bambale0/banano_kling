@@ -14,3 +14,7 @@ The generation ID, card author and `source_feed_gen_id` remain the original sour
 Owner-publication confirmations and author-profile identity links keep their existing owner identity. Internal Repeat/Open navigation is unchanged. Existing issued URLs remain valid with their embedded code; this change affects newly requested share links only. Existing Telegram CopyText buttons keep their embedded URLs until the feed is reopened or navigated and the keyboard is rebuilt.
 
 Regression coverage: `tests/test_feed_share_attribution.py` exercises signed HTTP requests, all link variants, different successive sharers, Feed/Profile permissions, invalid signatures, missing codes, Telegram callbacks/keyboards, shared chats, and creator-reward ownership/idempotency using isolated SQLite. No paid provider or production-data test is required.
+
+## Опубликованный потомок как источник повтора (2026-10-16)
+
+`source_feed_gen_id` хранит происхождение для внутренней аналитики/финансового ledger и **не** запрещает повтор результата, который автор самостоятельно опубликовал. Кнопка повтора и открытие Mini App должны адресовать **ID выбранной публичной публикации**; её изменения не подменяются первым предком. При этом выбранная работа не передаёт чужие скрытые URLs или prompt клиенту: `fixed`/`upload` проверяются на сервере. Реферальный код sharer в ссылке и выплаты автору/reward ledger остаются отдельными контрактами и не меняются этим UX-правилом.

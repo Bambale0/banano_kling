@@ -1,3 +1,11 @@
+> **Текущий путь (2026-10-16):** `tanyapi` → protected PR CI → exact SHA →
+> `.github/workflows/deploy-production-reliable.yml` / `deploy-production.yml` →
+> `scripts/deploy_backend_docker.sh` → `scripts/deploy_miniapp_local.sh` на **том же хосте**.
+> Встречающиеся ниже отдельный CDN host, `ssh root@91.200.84.187`, `cdn.sh --remote-deploy` —
+> **исторические инструкции**. Для обычной эксплуатации используйте
+> [runbook.md](runbook.md) и [production_auto_deploy.md](production_auto_deploy.md).
+> Не применять `git reset --hard` к runtime checkout: тарифы редактирует администратор.
+
 # Production deployment NEUROMIX
 
 Документ описывает схему ветки `tanyapi`, сверенную 2026-10-07. Текущий frontend и media используют один домен; разделы про отдельный `cdn` host ниже обозначены как legacy и не являются текущим release path.
