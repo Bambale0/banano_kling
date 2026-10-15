@@ -1,3 +1,8 @@
+> **Историческая задача:** новые опубликованные результаты Wan (включая те, что
+> сами запущены из тренда) должны повторяться **по собственной сохранённой работе**,
+> не подменяться исходным трендом. Текущий контракт:
+> [PUBLISHED_REPEAT_CONTRACT.md](../PUBLISHED_REPEAT_CONTRACT.md).
+
 # WAN manual trend publication
 
 Scope: ordinary WAN 3 and Prime manual publisher, owned durable recipe references, safe repeat-unavailable UI, visible model selection, user-facing error sanitization. No historical trend reactivation, tariff edits, paid provider calls, or PR294 changes.

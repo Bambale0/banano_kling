@@ -1,173 +1,43 @@
-# Документация NEUROMIX
+# Документация NEUROMIX — актуальная карта
 
-Этот каталог содержит документацию DEV- и production-контуров репозитория `Bambale0/banano_kling`.
+**Текущий выпуск:** branch `tanyapi` → отдельная task-ветка → PR в `tanyapi` → обязательные CI → squash auto-merge → production CI/CD → exact-SHA smoke. **`dev` и `main` не участвуют в обычной работе агента без прямой просьбы владельца.** Старый маршрут `dev → tanyapi` в документах разработки — историческая/отдельно включаемая схема, не обязательный шаг.
 
-## Ветки и release flow
+## С чего начать
 
-```text
-feature/* -> PR в dev -> автодеплой DEV-бота -> ручной smoke
-          -> PR dev -> tanyapi -> автодеплой production
-```
+| Область | Документы |
+| --- | --- |
+| Проект и правила агента | [README](../README.md), [AGENTS](../AGENTS.md) |
+| Архитектура, API и backend | [architecture.md](architecture.md), [internal-admin-api.md](internal-admin-api.md) |
+| **Повтор любой опубликованной генерации** | [PUBLISHED_REPEAT_CONTRACT.md](PUBLISHED_REPEAT_CONTRACT.md) |
+| Закрытые reference-файлы | [PRIVATE_REPEAT_REFERENCES.md](PRIVATE_REPEAT_REFERENCES.md), [VIDEO_REPEAT_PROMPT_CONTRACT.md](VIDEO_REPEAT_PROMPT_CONTRACT.md) |
+| Wan/Prime все режимы | [wan3-prime-integration.md](wan3-prime-integration.md), [providers/wan3-prime-kie.md](providers/wan3-prime-kie.md) |
+| Тренды, папки, успешные повторы | [TREND_SHOWCASE_CATEGORIES.md](TREND_SHOWCASE_CATEGORIES.md) |
+| Тарифы и админка | [CREATOR_TARIFF.md](CREATOR_TARIFF.md), [internal-admin-payments-tariffs.md](internal-admin-payments-tariffs.md) |
+| Продакшен и CI | [production_auto_deploy.md](production_auto_deploy.md), [production-deployment.md](production-deployment.md) |
+| Операции и диагностика | [runbook.md](runbook.md), [troubleshooting.md](troubleshooting.md) |
+| Frontend | [frontend README](../frontend/miniapp-v0/README.md) |
+| Реферальные начисления | [PARTNER_POLICY.md](PARTNER_POLICY.md), [FEED_SHARE_ATTRIBUTION.md](FEED_SHARE_ATTRIBUTION.md) |
+| Media и environment | [media operations](../ops/media/README.md), [environment.md](environment.md) |
+| QA и контроль релизов | [QA checklist](../QA_AUDIT_CHECKLIST.md), [repeat-result-regression.md](repeat-result-regression.md), [POST_RELEASE_AUDIT_2026-10-16.md](POST_RELEASE_AUDIT_2026-10-16.md) |
 
-- `dev` — источник DEV-бота и DEV Mini App;
-- `tanyapi` — единственный источник production-бота и production Mini App;
-- `main` не участвует в deploy NEUROMIX.
+## Production runtime (сверять перед каждым вмешательством)
 
-Главный документ по новому процессу: [development-deployment.md](development-deployment.md).
+- Frontend/Mini App: `https://tanyapp.xn--e1aikcel5c5a.online/mini-app/`, статический Next.js на том же Nginx что и media.
+- Backend/API/webhooks: `https://tanyapi.chillcreative.ru`.
+- Основной checkout: `/root/tanya/banano_kling`; production branch `tanyapi`.
+- Runtime: Docker `banano-kling-bot`, локальный `127.0.0.1:1888`. Исторический systemd unit `banano-kling.service` не является текущим backend.
+- Текущий деплой: `.github/workflows/deploy-production-reliable.yml` и `deploy-production.yml` вызывают `scripts/deploy_backend_docker.sh` + `scripts/deploy_miniapp_local.sh` на том же хосте.
+- Проверка релиза: Git HEAD, Docker `org.opencontainers.image.revision` и публичный `/mini-app/revision.txt` равны точному SHA; контейнер `healthy`.
+- `data/price.json` — изменяемые админом тарифы. При deploy **не** заменять его версией из Git.
 
-## Как пользоваться документацией
+## Какие документы нормативные
 
-Для разработки и выпуска:
+В начале списка — текущий код, схемы БД, реальные GitHub workflows, regression-тесты и запущенная конфигурация. Далее этот индекс и связанные актуальные контракты.
 
-1. [development-deployment.md](development-deployment.md) — отдельный DEV-бот, secrets, серверы, autodeploy и promotion `dev -> tanyapi`;
-2. [../README.md](../README.md) — что это за система и где находится production;
-3. [production_auto_deploy.md](production_auto_deploy.md) — production autodeploy строго из `tanyapi`;
-4. [production-deployment.md](production-deployment.md) — первичное production-развёртывание и полный deploy;
-5. [runbook.md](runbook.md) — ежедневные команды оператора;
-6. [troubleshooting.md](troubleshooting.md) — диагностика ошибок;
-7. [architecture.md](architecture.md) — устройство системы и потоки данных.
+`docs/agents/*`, `docs/research/*`, `docs/*-2026-*.md`, старые примеры provider API — архив исследований и промежуточных решений. Они могут описывать отклонённые идеи (например, запрет remixes или обязательный DEV promotion). **Не использовать их как инструкцию для production без сверки с текущим контрактом.**
 
-Для изменения frontend:
+[development-deployment.md](development-deployment.md) оставлен как руководство по отдельному DEV-контуру; для обычных изменений действуют `AGENTS.md` и PR прямо в `tanyapi`.
 
-1. [../frontend/miniapp-v0/README.md](../frontend/miniapp-v0/README.md);
-2. [miniapp-frontend-deployment.md](miniapp-frontend-deployment.md);
-3. [development-deployment.md](development-deployment.md) для отдельного DEV profile/domain;
-4. [branding.md](branding.md).
+## Изменение документации
 
-Для media-домена:
-
-1. [../ops/media/README.md](../ops/media/README.md);
-2. `scripts/deploy_media_origin.sh`;
-3. `scripts/check_media_delivery.sh`.
-
-## Основные документы
-
-| Документ | Для кого | Что содержит |
-| --- | --- | --- |
-| [development-deployment.md](development-deployment.md) | разработчик, DevOps, владелец | DEV-бот, ветка `dev`, environment secrets, автодеплой и выпуск в `tanyapi` |
-| [architecture.md](architecture.md) | разработчик, интегратор | компоненты, topology, auth, storage, API и media flows |
-| [production_auto_deploy.md](production_auto_deploy.md) | разработчик, DevOps | promotion `dev -> tanyapi` и production autodeploy |
-| [production-deployment.md](production-deployment.md) | DevOps, владелец проекта | DNS, backend, frontend, media, SSL, Cloudflare, smoke tests и rollback |
-| [miniapp-frontend-deployment.md](miniapp-frontend-deployment.md) | frontend/DevOps | `cdn.sh`, remote profile, build, release, cache overlap и npm troubleshooting |
-| [environment.md](environment.md) | разработчик, DevOps | env-переменные, обязательность, значения и правила хранения секретов |
-| [runbook.md](runbook.md) | оператор | restart, status, logs, health, backup и routine checks |
-| [troubleshooting.md](troubleshooting.md) | оператор, разработчик | симптомы, причины, команды диагностики и безопасные действия |
-| [branding.md](branding.md) | frontend, контент, QA | пользовательский бренд NEUROMIX и допустимые технические имена |
-| [roadmap.md](roadmap.md) | продукт, разработчик | задачи и приоритеты, если документ актуализирован под текущий код |
-| [tracemap.md](tracemap.md) | разработчик | индекс пользовательских и технических потоков |
-| [migration.md](migration.md) | DevOps, backend | backfill, repair и data migration scripts |
-| [postgres-migration.md](postgres-migration.md) | backend, DevOps | перенос и проверка PostgreSQL runtime |
-| [zero-downtime-migration.md](zero-downtime-migration.md) | DevOps | перенос backend runtime без длительной остановки |
-
-## Production topology
-
-```text
-tanyapp.xn--e1aikcel5c5a.online (проверенное DNS: 144.76.188.75)
-  /mini-app/          -> статический Next.js export
-  /mini-app/api/*     -> backend 127.0.0.1:1888
-  /uploads/*          -> backend static/uploads
-  /genjutsu/*         -> подписанные media и provider callbacks
-
-tanyapi.chillcreative.ru (144.76.188.75)
-  -> Telegram/provider/payment webhooks и backend API
-  -> Docker banano-kling-bot за локальным Nginx
-```
-
-Сверено 2026-10-07. `cdn.chillcreative.ru` и `media.chillcreative.ru` — legacy origins: сохранённые `/uploads/` ссылки нормализуются к текущему `STATIC_BASE_URL`, без массовой перезаписи истории. Старый Cloudflare/bind-mount workflow не является текущим media deploy path; DNS не меняется автоматически.
-
-Production topology относится только к ветке `tanyapi`. DEV domains, paths и credentials задаются GitHub environment `development` и DEV server `.env`; они не должны использовать production bot token, database или media root.
-
-## Владение документами
-
-### Операционные документы
-
-Должны обновляться при изменении:
-
-- DEV/production branch policy;
-- production-доменов или IP;
-- DEV-доменов или deploy paths;
-- systemd service;
-- путей проекта;
-- Nginx topology;
-- Cloudflare rules;
-- deploy scripts;
-- env-переменных;
-- frontend build process.
-
-К этой группе относятся:
-
-- `README.md`;
-- `docs/development-deployment.md`;
-- `docs/architecture.md`;
-- `docs/production_auto_deploy.md`;
-- `docs/production-deployment.md`;
-- `docs/miniapp-frontend-deployment.md`;
-- `docs/environment.md`;
-- `docs/runbook.md`;
-- `docs/troubleshooting.md`;
-- `ops/media/README.md`;
-- `frontend/miniapp-v0/README.md`.
-
-### Provider reference docs
-
-Файлы про отдельные внешние API могут быть снимками документации провайдера и не всегда отражают текущую реализацию. Например:
-
-- `kling_api*.md`;
-- `kie_ai_integration.md`;
-- `veo_api.md`;
-- `motion_control_api.md`;
-- `tbank_api.md`;
-- `crypto_api.md`.
-
-Если reference-документ конфликтует с runtime, приоритет имеют:
-
-1. `bot/services/*`;
-2. `bot/main.py` и `bot/miniapp.py`;
-3. `bot/config.py`;
-4. `tests/*`;
-5. фактический ответ провайдера в безопасно очищенных логах.
-
-## Legacy-материалы
-
-В репозитории могут оставаться:
-
-- старые домены;
-- старые IP;
-- backup-файлы;
-- historical tracemap;
-- старое название Banano/Banana;
-- старые схемы прямого доступа к backend port;
-- старые упоминания deploy из `main`.
-
-Они не должны использоваться для production-действий без сверки с `development-deployment.md`, `production_auto_deploy.md` и текущими workflows.
-
-## Правила обновления документации
-
-При изменении инфраструктуры в одном pull request или серии связанных коммитов обновить:
-
-- branch/release flow;
-- topology в `README.md` и `architecture.md`;
-- команды deploy в соответствующем runbook;
-- env-reference, если добавлена или изменена переменная;
-- troubleshooting, если появился новый класс ошибки;
-- rollback-процедуру;
-- фактический результат проверки в описании изменения, но не временные логи и секреты.
-
-## Минимальный documentation review перед релизом
-
-- feature PR направлен в `dev`;
-- DEV exact SHA автоматически задеплоен;
-- DEV Telegram smoke пройден;
-- release PR направлен `dev -> tanyapi`;
-- production workflow слушает только `tanyapi`;
-- `main` не указан как production branch;
-- DEV и production bot tokens различаются;
-- DEV и production databases/storage различаются;
-- все пользовательские заголовки используют NEUROMIX;
-- production frontend указан как `tanyapp.xn--e1aikcel5c5a.online`;
-- production backend указан как `tanyapi.chillcreative.ru`;
-- production media указан как `tanyapp.xn--e1aikcel5c5a.online`, legacy origins помечены как совместимость;
-- нет рекомендаций открывать `:1888` в интернет;
-- нет реальных токенов, паролей и содержимого `.env`;
-- deploy и rollback команды проверены на синтаксические ошибки;
-- различаются ожидаемый `401` без Telegram `initData` и настоящий отказ backend.
+В одном PR с изменением API/UI обновлять контракт, модельные ограничения, инструкции и тесты. После выката записывать реальный exact SHA, health, CI, состояние веб-сборки, логи, отрицательные security smoke и отсутствие изменения runtime-цен. Нельзя выдавать mock E2E за подтверждение реальной платной генерации.

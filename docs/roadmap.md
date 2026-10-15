@@ -1,3 +1,11 @@
+# Исторический roadmap (2026-08-01)
+
+> Текст ниже — снимок на указанную дату. Упоминания `cdn.chillcreative.ru`
+> и `banano-kling.service` устарели. Текущий production: единый Docker/Nginx
+> сервер, frontend `tanyapp.xn--e1aikcel5c5a.online`.
+> Актуальное описание в [README](../README.md), [runbook](runbook.md),
+> [повторы](PUBLISHED_REPEAT_CONTRACT.md). Roadmap не является статусом релиза.
+
 # Roadmap NEUROMIX
 
 Актуальность: `2026-08-01`, ветка `tanyapi`.

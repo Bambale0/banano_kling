@@ -10,7 +10,7 @@ Frontend не является отдельным backend. Он собирает
 https://cdn.chillcreative.ru/mini-app/
 ```
 
-Production build обслуживается Nginx на `91.200.84.187`. API запросы под `/mini-app/api/*` проксируются по HTTPS на `https://tanyapi.chillcreative.ru`.
+Production static build обслуживается Nginx на том же сервере, что и backend: `https://tanyapp.xn--e1aikcel5c5a.online/mini-app/`. `/mini-app/api/*` проксируется локально к backend. Workflow использует `scripts/deploy_miniapp_local.sh` и проверяет `revision.txt`.
 
 ## 2. Стек
 

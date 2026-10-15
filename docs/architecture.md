@@ -45,8 +45,11 @@ Runtime отвечает за:
 Production service:
 
 ```text
-banano-kling.service
+Docker Compose: banano-kling-bot (healthy), internal aiohttp :1888
 ```
+
+Старый `banano-kling.service` относится к предыдущему runtime/cutover и не является текущим backend. Exact-SHA deploy выполняется через `scripts/deploy_backend_docker.sh` и `scripts/deploy_miniapp_local.sh` на одном host.
+
 
 Production checkout:
 
@@ -87,6 +90,12 @@ Telegram update
 ```
 
 Redis используется для FSM/cache, когда доступен. При отказе Redis runtime может перейти на in-memory storage, что допустимо как аварийный fallback, но не обеспечивает сохранение FSM после restart.
+
+## 4.1. Общий контракт повторов фото и видео
+
+[Нормативный договор](PUBLISHED_REPEAT_CONTRACT.md): любая опубликованная завершённая работа может повторяться независимо от `action_type`/родословной. В качестве рецепта выбирается **текущая опубликованная генерация**, а не root/исходный тренд. Public DTO возвращает только разрешённые параметры и role/index/binding слотов, закрытые input URLs и приватные промпты остаются в backend. `fixed` проверяется на уровне конкретного текущего post; для `upload` пользователь предоставляет свой файл.
+
+Для фото работают `bot/miniapp.py` + `bot/handlers/generation.py`, для обычного видео `bot/handlers/miniapp_video_continuity_compat.py` и `bot/video_repeat_reference_contract.py`, для Wan `bot/services/wan3_prime_repeat.py`. Сервер проверяет актуальный post/grant/media перед провайдером и debit; root `source_feed_gen_id` нужен для аналитики, а не подмены источника разрешения. Ошибка провайдера не должна выставляться как отзыв права повтора.
 
 ## 5. Mini App backend
 

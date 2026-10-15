@@ -119,3 +119,15 @@ errors, malformed responses and lineage mismatches preserve the marker and retry
 with the same bounded backoff until a valid canonical observation is available.
 Terminal success/failure still comes only from canonical provider status and the
 original settlement fence. No schema change or additional paid task is involved.
+
+## Правило публикаций после PR #320 (2026-10-16)
+
+Прямой повтор **кураторского тренда** использует `wan3_prime_trends.get_trend_plan`. Повтор **опубликованного результата** (`wan3_prime_repeat.get_repeat_plan`) использует рецепт **этой** генерации и `source_feed_gen_id` выбранного post, даже когда `action_type=trend/remix/repeat`. Не перехватывать опубликованный результат и не отправлять пользователя назад к первоначальному `trend_id`.
+
+Public repeat-plan выдаёт только sanitized рецепт, slots (`index/role/binding`) и opaque `repeat_plan_hash`. Полные закрытые ссылки/промпты остаются на сервере; `fixed` reuse проверяется по current publication, `upload` запрашивает материал пользователя. Перед paid launch server повторно проверяет публичность, media и quote; удалённая публикация не должна генерировать, а provider 5xx не значит «автор запретил».
+
+Wan 3 / Prime поддерживают режимы из реального adapter, без урезания полей и без ложного множителя ×2. Краткий каталог стоимости «от N 🍌» / «резерв N 🍌» не заменяет подтверждённый quote с входящими видеосекундами. См. [общий контракт](PUBLISHED_REPEAT_CONTRACT.md) и [runbook](runbook.md).
+
+### Мобильная загрузка и отображение цены
+
+Multipart/JSON chunks — два транспорта одной owned session; final image validation может отвергнуть принятые байты. При 400 на image complete клиент может **один раз** локально преобразовать изображение в JPEG и загрузить заново в новую session с cleanup старой. Если оба раза отказ — показать отдельную ошибку и дать повторить выбор файла. Реальный iPhone `IMG_0729.jpeg` без клиента/его байт нельзя считать подтверждённым по мокам.

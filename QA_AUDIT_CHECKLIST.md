@@ -298,3 +298,37 @@ Entity lifecycle для каждой сущности:
 Что автоматизировать в CI:
   - ...
 ```
+
+## Финальный QA: опубликованные повторы всех моделей / post-release
+
+### Матрица положительных сценариев
+
+- [ ] Опубликованная исходная фото-генерация → повтор со своими `ImageN` → правильный prompt/result
+- [ ] Опубликованный фоторемикс → повтор именно **ремикса**, не его первого предка; сохраняются `fixed` позиции
+- [ ] Опубликованное исходное видео → video repeat и пользовательские видеореференсы
+- [ ] Опубликованный результат тренда Wan → повтор **его** seed/duration/slots, не перенаправление к curator `trend_id`
+- [ ] Опубликованный Wan repeat/edit/remix → собственные значения, все разрешённые режимы, input validation
+- [ ] Seedance 2 / 2.5 и другие video routes → сохранение private prompt/server-only references; модельные лимиты не теряются
+- [ ] Telegram и Mini App ссылки → ID выбранного опубликованного потомка, без чужой реферальной атрибуции
+- [ ] После открытия чата у бота и после добровольного `Пропустить` → Studio/result delivery согласованы
+
+### Отрицательные сценарии
+
+- [ ] Публикация снята/недоступна → нет bypass к предку, запуск запрещён **до** дебета
+- [ ] Отозван конкретный `fixed` материал → нет раскрытия URL или silently missing slot
+- [ ] Без файла для `upload` нельзя выполнить paid start; 400 upload вызывает понятное восстановление
+- [ ] Provider 5xx/сеть/таймаут → сохранён черновик, **не** выдуман «запрет автора»
+- [ ] Старый callback и legacy published recipe → корректная fail-safe ошибка, не сбрасывать историю
+- [ ] Quote при изменении input/output seconds → точный серверный пересчёт, **без ×2**, duplicate callback не списывает повторно
+- [ ] Публичный каталог содержит только `successful_runs_count` с завершёнными задачами, не `uses_count`
+
+### Обязательные release gates
+
+- [ ] Exact SHA Git HEAD = Docker revision = публичный `/mini-app/revision.txt`
+- [ ] Docker `healthy`, HTTP health и Mini App HTTP 200
+- [ ] `data/price.json` hash до/после deploy совпадает (если администратор не менял настройки во время выпуска)
+- [ ] Безопасный read-only план реальной опубликованной Wan-производной работы показывает **её** `source_feed_gen_id`, prompt/media скрыты
+- [ ] Логи последних 30–60 минут без массовых upload/quote/permission/provider/DB ошибок; у неизвестных случаев — task/correlation ID
+- [ ] Нет paid generation без отдельного согласования; мокированный E2E ≠ device acceptance
+
+Контракт: [docs/PUBLISHED_REPEAT_CONTRACT.md](docs/PUBLISHED_REPEAT_CONTRACT.md), действия: [docs/runbook.md](docs/runbook.md).

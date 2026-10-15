@@ -1,3 +1,13 @@
+# Исторический отдельный frontend host / CDN
+
+> **Предупреждение (2026-10-16):** шаги с `91.200.84.187`, `cdn.chillcreative.ru`,
+> `cdn.sh --remote-deploy tanyafrontend` и отдельным frontend SSH здесь описывают
+> **предыдущий deploy**. Обычный production Mini App расположен вместе с backend
+> на `tanyapp.xn--e1aikcel5c5a.online` и публикуется через
+> `scripts/deploy_miniapp_local.sh` из точного SHA `tanyapi`.
+> См. [production_auto_deploy.md](production_auto_deploy.md) и
+> [runbook.md](runbook.md). Ниже — только архивные инструкции.
+
 # NEUROMIX Mini App frontend deployment
 
 ## 1. Актуальная схема

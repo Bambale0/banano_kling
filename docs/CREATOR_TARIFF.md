@@ -41,3 +41,9 @@ Deploy only after normal repository CI and release approval. Preserve the runtim
 Rollback can disable the profile through admin immediately. A code rollback may leave the additive membership/audit tables in place; do not delete audit records. In-flight task quote metadata is retained. No production migration, activation, assignment, paid generation or deployment was performed during this implementation.
 
 Release verification adds `creator-tariff-postgres.yml` with a disposable loopback-only PostgreSQL16 database and randomized schemas. Creator browser fixtures run in the required main CI browser gate; all requests are intercepted and no paid generation is made. Baseline Handlebars critical advisories are fixed by the compatible4.7.10 lockfile update;20 moderate test-dependency advisories remain below the unchanged high-severity audit threshold.
+
+## Актуальное правило отображения и расчёта в повторах
+
+Источник истины для тарифа — **runtime админская настройка**, включая `data/price.json` и server-side creator snapshot. Frontend не записывает цену в публикацию как навсегда фиксированную сумму. Для Wan при неизвестной длительности исходного видео показывать только lower bound `от N 🍌`; Auto указывает резерв. Exact quote после проверки входящих материалов включает **реальные reference video seconds плюс заданные output seconds**, без дополнительного ×2 по наличию видео. Другие модели подчиняются своему проверенному адаптеру, но общая ошибка presence-only ×2 запрещена.
+
+Публикация ранее созданного результата не меняет модельный тариф и не добавляет новую платную операцию. Повтор подтверждает текущий серверный quote перед debit. Runtime `data/price.json` сохраняется при обычном exact-SHA деплое; исторические ставки и примеры не следует считать действующими ценами.

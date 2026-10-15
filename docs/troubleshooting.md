@@ -1,3 +1,31 @@
+# Современная диагностика (2026-10-16)
+
+> В исторических разделах ниже могут встречаться `banano-kling.service`,
+> `cdn.chillcreative.ru` и `91.200.84.187`. Они **не** отражают нынешнюю
+> topology. Текущий backend — Docker `banano-kling-bot`, Mini App — статический
+> Nginx `tanyapp.xn--e1aikcel5c5a.online`. Точные команды в
+> [runbook.md](runbook.md).
+
+## Повтор недоступен / ошибка Wan
+
+1. Определить ID **нажатой** публикации, модель и статус. Не считать её родословную `source_feed_gen_id` запретом.
+2. Проверить `is_public_feed` / `is_profile_visible`, полный recipe, binding `fixed/upload` и доступность файлов. Публичный API не должен раскрывать hidden URLs.
+3. Для Wan проверить read-only `repeat-plan` выбранной публикации: source ID остаётся выбранным, не превращается в `trend_id` старого тренда.
+4. Различать `repeat_permission_changed`/реальный отзыв, `404` по снятой публикации, ошибку загрузки JPEG и 5xx провайдера. Только первые две причины могут остановить использование авторских материалов; 5xx не блокирует навсегда форму.
+5. Сверить live logs/receipt, quote, идемпотентность debit/refund и фактическую доставку в Studio. Не запускать платную задачу ради smoke без разрешения.
+6. Проверить, что ссылка повтора опубликованного ремикса/повтора ведёт на **эту** публикацию. Проверка после retry выполняется по той же текущей работе, а не по корневому предку.
+
+## Несовпадение SHA / после автодеплоя
+
+Проверить `git rev-parse HEAD`, Docker `org.opencontainers.image.revision`,
+`.State.Health.Status`, публичный `/mini-app/revision.txt`, hash runtime `data/price.json`
+и статус exact-SHA production CI. Если не совпадают, **релиз не подтверждён**.
+Следить за logs, не выполнять старый `git reset --hard`.
+
+---
+
+## Исторические рекомендации (проверять применимость)
+
 # Troubleshooting NEUROMIX
 
 ## 1. Метод диагностики
