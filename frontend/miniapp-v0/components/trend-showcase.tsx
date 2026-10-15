@@ -119,6 +119,15 @@ function LivePreview({ trend }: { trend: ShowcaseTrend }) {
   )
 }
 
+function successfulRepeatsLabel(count: number): string {
+  const lastTwo = count % 100
+  const last = count % 10
+  const ending = lastTwo >= 11 && lastTwo <= 14 ? 'повторов'
+    : last === 1 ? 'повтор'
+      : last >= 2 && last <= 4 ? 'повтора' : 'повторов'
+  return count.toLocaleString('ru-RU') + ' ' + ending
+}
+
 function LiveTile({ trend, onPreview, className = '' }: {
   trend: ShowcaseTrend
   onPreview: (trend: ShowcaseTrend) => void
@@ -141,7 +150,7 @@ function LiveTile({ trend, onPreview, className = '' }: {
           <span
             className="rounded-md bg-black/65 px-2 py-1 text-[10px] font-semibold text-white"
             aria-label={'Успешных повторов: ' + trend.successful_runs_count}
-          >✅ {trend.successful_runs_count.toLocaleString('ru-RU')} повторов</span>
+          >✅ {successfulRepeatsLabel(trend.successful_runs_count)}</span>
         ) : null}
       </div>
       {isVideoPreview(trend) ? (

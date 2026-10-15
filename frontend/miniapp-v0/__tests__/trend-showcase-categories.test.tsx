@@ -270,3 +270,18 @@ test('legacy card without a confirmed success count is not mislabeled zero', () 
   const tile = screen.getByRole('button', { name: 'Открыть тренд Данные не загрузились' })
   expect(tile).not.toHaveTextContent('0 повторов')
 })
+
+
+
+test('completed counter uses correct Russian form for one and several repeats', () => {
+  const counts = [0, 1, 2, 4, 5, 11, 21]
+  const expected = ['0 повторов', '1 повтор', '2 повтора', '4 повтора', '5 повторов', '11 повторов', '21 повтор']
+  const cards = counts.map((count, i) => ({
+    ...makeCard(500 + i, 'Контроль ' + count), successful_runs_count: count,
+  }))
+  render(<TrendShowcase categories={[{ ...catalog[0], total: cards.length, items: cards }]}
+    onRepeat={jest.fn()} onShare={jest.fn()} />)
+  for (let i = 0; i < counts.length; i += 1) {
+    expect(screen.getByRole('button', { name: 'Открыть тренд Контроль ' + counts[i] })).toHaveTextContent(expected[i])
+  }
+})
