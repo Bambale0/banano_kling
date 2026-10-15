@@ -119,13 +119,10 @@ function LivePreview({ trend }: { trend: ShowcaseTrend }) {
   )
 }
 
-function successfulRepeatsLabel(count: number): string {
-  const lastTwo = count % 100
-  const last = count % 10
-  const ending = lastTwo >= 11 && lastTwo <= 14 ? 'повторов'
-    : last === 1 ? 'повтор'
-      : last >= 2 && last <= 4 ? 'повтора' : 'повторов'
-  return count.toLocaleString('ru-RU') + ' ' + ending
+export function completedTrendRunsLabel(count: number | null | undefined): string {
+  // No metric from the API is not the same thing as zero successful jobs.
+  return typeof count === 'number' && Number.isSafeInteger(count) && count >= 0
+    ? count.toLocaleString('ru-RU') : '—'
 }
 
 function LiveTile({ trend, onPreview, className = '' }: {
@@ -146,12 +143,6 @@ function LiveTile({ trend, onPreview, className = '' }: {
         {trend.badge === 'new' ? (
           <span className="rounded-md bg-blue-500 px-2 py-1 text-[10px] font-semibold text-white">Новинка</span>
         ) : null}
-        {typeof trend.successful_runs_count === 'number' && Number.isSafeInteger(trend.successful_runs_count) && trend.successful_runs_count >= 0 ? (
-          <span
-            className="rounded-md bg-black/65 px-2 py-1 text-[10px] font-semibold text-white"
-            aria-label={'Успешных повторов: ' + trend.successful_runs_count}
-          >✅ {successfulRepeatsLabel(trend.successful_runs_count)}</span>
-        ) : null}
       </div>
       {isVideoPreview(trend) ? (
         <span className="pointer-events-none absolute right-2 top-2 rounded-lg bg-black/60 p-1.5 text-white" aria-label="Видео">
@@ -159,7 +150,10 @@ function LiveTile({ trend, onPreview, className = '' }: {
         </span>
       ) : null}
       <div className="pointer-events-none absolute inset-x-0 bottom-0 p-3">
-        <span className="line-clamp-3 text-xs font-semibold leading-5 text-white drop-shadow-md sm:text-sm">{trend.title}</span>
+        <span className="line-clamp-2 text-xs font-semibold leading-5 text-white drop-shadow-md sm:text-sm">{trend.title}</span>
+        <span className="mt-1 block text-xs font-semibold text-white" aria-label={'Успешных запусков: ' + completedTrendRunsLabel(trend.successful_runs_count)}>
+          ✅ {completedTrendRunsLabel(trend.successful_runs_count)} запусков
+        </span>
         {formatTrendRepeatPrice(trend) ? <span className="mt-1 block text-xs font-semibold text-gold">{formatTrendRepeatPrice(trend)}</span> : null}
       </div>
     </button>
@@ -292,11 +286,9 @@ export function TrendShowcase({ categories, onRepeat, onShare, onEdit, onRemove,
           <DialogDescription className="text-xs">{selected?.description || 'Посмотрите пример и повторите со своими данными'}</DialogDescription>
           {selected ? (
             <div className="space-y-3">
-              {typeof selected.successful_runs_count === 'number' && Number.isSafeInteger(selected.successful_runs_count) && selected.successful_runs_count >= 0 ? (
-                <p className="text-xs font-semibold text-foreground" aria-label={'Успешных повторов: ' + selected.successful_runs_count}>
-                  ✅ Успешных повторов: {selected.successful_runs_count.toLocaleString('ru-RU')}
-                </p>
-              ) : null}
+              <p className="text-sm font-semibold text-foreground" aria-label={'Успешных запусков: ' + completedTrendRunsLabel(selected.successful_runs_count)}>
+                ✅ Успешных запусков: {completedTrendRunsLabel(selected.successful_runs_count)}
+              </p>
               {selected.preview_url ? isVideoPreview(selected) ? (
                 <video
                   key={selected.id}
