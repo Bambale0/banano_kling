@@ -135,6 +135,11 @@ export function BotWriteAccessGate({ required, botUsername, onRefresh }: BotWrit
     </aside>
   )
 
+  // Native openTelegramLink can silently no-op on some clients.
+  // Keep a plain, user-activated link with exactly the same safe Start payload.
+  const fallbackBotUrl = botStartUrl(botUsername)
+  const fallbackBotUsername = String(botUsername || '').trim().replace(/^@/, '')
+
   const helperText = phase === 'error'
     ? 'Не удалось проверить доступ. Открой чат с ботом или попробуй проверить снова.'
     : phase === 'not-started'
@@ -157,6 +162,26 @@ export function BotWriteAccessGate({ required, botUsername, onRefresh }: BotWrit
           <ExternalLink className="h-5 w-5 shrink-0" />
           Открыть бота
         </button>
+        {fallbackBotUrl ? (
+          <>
+            <a
+              href={fallbackBotUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => {
+                cancelCheck()
+                openedBot.current = true
+                setPhase('open-bot')
+              }}
+              className="mt-2 flex min-h-11 w-full items-center justify-center rounded-xl border border-gold/35 bg-gold/10 px-4 py-2 text-sm font-semibold text-gold underline underline-offset-2"
+            >
+              Открыть по ссылке
+            </a>
+            <p className="mt-1 text-xs leading-5 text-white/55">
+              Если переход не сработал, найди @{fallbackBotUsername} в Telegram и нажми «Начать».
+            </p>
+          </>
+        ) : null}
         <button type="button" onClick={() => void checkAccess()} disabled={phase === 'checking'} className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-medium text-white/75 disabled:opacity-70">
           {phase === 'checking' ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
           {phase === 'checking' ? 'Проверяем…' : 'Проверить снова'}
