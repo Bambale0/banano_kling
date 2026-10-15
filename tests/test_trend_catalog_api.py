@@ -273,3 +273,40 @@ async def test_history_requires_admin_and_records_authenticated_actor(catalog_cl
     assert events[0]["actor_telegram_id"] == 999999999
     assert events[0]["before"] is None
     assert events[0]["after"]["title"] == "Фото"
+
+
+@pytest.mark.asyncio
+async def test_signed_catalog_exposes_only_successful_repeat_count(catalog_client):
+    from bot import db as db_backend
+    from bot.handlers import trend_success_compat
+
+    trend = await make_trend()
+    owner = await database.get_or_create_user(999999999)
+    await trend_success_compat.ensure_trend_generation_run_schema()
+    async with db_backend.connect(database.DATABASE_PATH) as db:
+        for task_id, status in (("success_signed_test", "completed"), ("failed_signed_test", "failed")):
+            await db.execute(
+                "INSERT INTO generation_tasks (user_id, telegram_id, task_id, type, preset_id, status) "
+                "VALUES (?, ?, ?, 'image', 'banana_pro', ?)",
+                (owner.id, owner.telegram_id, task_id, status),
+            )
+        await db.commit()
+    await trend_success_compat.register_trend_generation_run(
+        task_id="success_signed_test", trend_id=trend["id"], user_id=owner.id,
+    )
+    await trend_success_compat.register_trend_generation_run(
+        task_id="failed_signed_test", trend_id=trend["id"], user_id=owner.id,
+    )
+    viewer = signed_init_data(8311004)
+    response = await catalog_client.post("/mini-app/api/trends/catalog", json={"init_data": viewer})
+    assert response.status == 200, await response.text()
+    item = (await response.json())["categories"][0]["items"][0]
+    assert item["successful_runs_count"] == 1
+    assert "success_signed_test" not in str(item)
+    assert "failed_signed_test" not in str(item)
+    page = await catalog_client.post(
+        "/mini-app/api/trends/category",
+        json={"init_data": viewer, "category_id": "unassigned"},
+    )
+    assert page.status == 200
+    assert (await page.json())["items"][0]["successful_runs_count"] == 1

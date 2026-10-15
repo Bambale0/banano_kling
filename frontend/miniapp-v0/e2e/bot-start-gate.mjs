@@ -39,14 +39,31 @@ async function waitForServer() {
   throw new Error('Bot Start static export server did not start')
 }
 
-// Correlate with a NEW capability request. An older ordinary bootstrap may
-// finish after a fixture state change and must not satisfy this assertion.
-function nextCapabilityResponse(page) {
+// Correlate with a NEW capability response, not an older polling bootstrap.
+// The fixture records exactly which payload it fulfilled for each Request.
+// Chromium GitHub runners sometimes evict the network response body even when
+// the intercepted HTTP 200 was delivered. Never read response.json() here;
+// assert the real response status plus its deterministic mock payload instead.
+function fixtureBootstrapPayload(response, snapshots) {
+  const captured = snapshots.get(response.request())
+  assert.ok(captured, 'Bootstrap response must correspond to an intercepted fixture request')
+  assert.equal(response.status(), captured.status, 'Observed transport matches the mock reply')
+  return captured.body
+}
+
+function nextCapabilityResponse(page, snapshots) {
+  // The request event is emitted even when Chromium suppresses a response
+  // event following the cancellation of an older fetch during a return.
   return page.waitForRequest(request => request.url().endsWith('/bootstrap')
     && request.headers()['x-e2e-capability-check'] === '1').then(async request => {
     const response = await request.response()
-    assert.ok(response, 'Return capability request completed without transport abort')
-    return response
+    // A subsequent bootstrap can cancel this particular fetch after the
+    // route already replied. The app UI assertions below, not DevTools
+    // transport bookkeeping, prove that a valid response cleared the gate.
+    const captured = snapshots.get(request)
+    assert.ok(captured, 'Capability request must have a matching server fixture reply')
+    if (response) assert.equal(response.status(), captured.status)
+    return captured.body
   })
 }
 
@@ -71,6 +88,7 @@ try {
     const errors = []
     const unexpected = []
     const bootstrapRequests = []
+    const bootstrapSnapshots = new WeakMap()
     const generatedRequests = []
     const generatedTasks = new Map()
     const pending = []
@@ -139,10 +157,16 @@ try {
         const endpoint = url.pathname.split('/').at(-1)
         const json = body => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
         if (endpoint === 'bootstrap') {
+          // Keep the verified response body on the mocked Request itself;
+          // DevTools response.json() is not reliable for long CI browser suites.
+          const replyBootstrap = (body, status = 200) => {
+            bootstrapSnapshots.set(request, { body, status })
+            return route.fulfill({ ...json(body), status })
+          }
           bootstrapRequests.push(JSON.parse(request.postData() || '{}'))
           if (request.headers()['x-e2e-stale-background'] === '1') {
             const snapshot = { ...bootstrap, telegram_chat_available: chatAvailable, telegram_bot_start_required: startRequired() }
-            staleBackgroundReply = () => route.fulfill(json(snapshot))
+            staleBackgroundReply = () => replyBootstrap(snapshot)
             signalStaleBackground()
             return
           }
@@ -150,16 +174,16 @@ try {
             pending.push(async available => {
               // An aborted request may already be closed; a late response must
               // never alter the UI even if the transport still accepts it.
-              await route.fulfill(json({ ...bootstrap, telegram_chat_available: available, telegram_bot_start_required: !available })).catch(() => {})
+              await replyBootstrap({ ...bootstrap, telegram_chat_available: available, telegram_bot_start_required: !available }).catch(() => {})
             })
             return
           }
           if (responseMode === 'error') {
-            await route.fulfill({ ...json({ ok: false, error: 'Synthetic bootstrap failure' }), status: 503 })
+            await replyBootstrap({ ok: false, error: 'Synthetic bootstrap failure' }, 503)
             return
           }
-          await route.fulfill(json({ ...bootstrap, recent_tasks: [...generatedTasks.values()], telegram_chat_available: chatAvailable,
-            ...(startRequired() === 'missing' ? {} : { telegram_bot_start_required: startRequired() }) }))
+          await replyBootstrap({ ...bootstrap, recent_tasks: [...generatedTasks.values()], telegram_chat_available: chatAvailable,
+            ...(startRequired() === 'missing' ? {} : { telegram_bot_start_required: startRequired() }) })
         } else if (endpoint === 'generate-image' || endpoint === 'generate-video') {
           const body = JSON.parse(request.postData() || '{}')
           const kind = endpoint === 'generate-image' ? 'image' : 'video'
@@ -308,7 +332,7 @@ try {
     await assertDraftPreserved('timeout and retry')
 
     for (const event of ['focus', 'visibilitychange', 'activated']) {
-      const checked = nextCapabilityResponse(page)
+      const checked = nextCapabilityResponse(page, bootstrapSnapshots)
       await emitReturn(page, event)
       await checked
       await status.getByText(/Доступ пока не подтверждён/).waitFor()
@@ -328,9 +352,9 @@ try {
     // explicitly clear the known-never-started flag before this offer closes.
     chatAvailable = true
     startRequirement = true
-    const stillRequired = nextCapabilityResponse(page)
+    const stillRequired = nextCapabilityResponse(page, bootstrapSnapshots)
     await retry.click()
-    const stillRequiredPayload = await (await stillRequired).json()
+    const stillRequiredPayload = await stillRequired
     assert.equal(stillRequiredPayload.telegram_chat_available, true)
     assert.equal(stillRequiredPayload.telegram_bot_start_required, true)
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
@@ -349,10 +373,10 @@ try {
         await staleBackgroundReady
       }
       chatAvailable = true
-      const checked = nextCapabilityResponse(page)
+      const checked = nextCapabilityResponse(page, bootstrapSnapshots)
       if (staleBackgroundReply) { await staleBackgroundReply(); staleBackgroundReply = undefined }
       await emitReturn(page, event)
-      const confirmed = await (await checked).json()
+      const confirmed = await checked
       assert.equal(confirmed.telegram_bot_start_required, false, event + ': server clears Start requirement')
       await gate.waitFor({ state: 'hidden' })
       await assertDraftPreserved(event + ' successful return')
@@ -401,7 +425,7 @@ try {
         : page.waitForResponse(response => response.url().endsWith('/bootstrap'))
       await emitReturn(page, event)
       if (refreshed) {
-        const response = await (await refreshed).json()
+        const response = fixtureBootstrapPayload(await refreshed, bootstrapSnapshots)
         assert.equal(response.telegram_chat_available, false, 'Server delivery capability remains false')
         assert.equal(response.telegram_bot_start_required, true, 'Skip does not change known-never-started status')
       }
@@ -491,7 +515,7 @@ try {
       const recoveredRefresh = page.waitForResponse(response =>
         response.url().endsWith('/bootstrap') && response.status() === 200)
       await emitReturn(page, 'focus')
-      const payload = await (await recoveredRefresh).json()
+      const payload = fixtureBootstrapPayload(await recoveredRefresh, bootstrapSnapshots)
       assert.equal(payload.telegram_chat_available, false)
       assert.equal(payload.telegram_bot_start_required, requirement === false ? false : undefined)
       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))

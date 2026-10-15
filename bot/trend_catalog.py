@@ -152,6 +152,23 @@ def _card(row: Any, *, tariff: str, is_admin: bool = False) -> dict[str, Any]:
     return public
 
 
+async def _attach_successful_repeat_counts(items: list[dict[str, Any]]) -> None:
+    """Enrich a page once using the existing completed-task metric.
+
+    The older Trends API already counts task-linked completed generations; the
+    editorial category API had bypassed that enrichment entirely. Do not use
+    user_prompts.uses_count, which includes accepted but ultimately failed runs.
+    Keep one bulk query for all folders, including repeated placements.
+    """
+    if not items:
+        return
+    from bot.handlers.trend_success_compat import get_trend_success_counts
+
+    counts = await get_trend_success_counts([int(item["id"]) for item in items])
+    for item in items:
+        item["successful_runs_count"] = counts.get(int(item["id"]), 0)
+
+
 async def _list_page(
     db: Any,
     *,
@@ -242,6 +259,9 @@ async def list_catalog(
                     "items": items,
                 }
             )
+    await _attach_successful_repeat_counts([
+        item for category in result for item in category["items"]
+    ])
     return result
 
 
@@ -280,13 +300,14 @@ async def category_page(
             tariff=tariff,
             is_admin=is_admin,
         )
-        return {
-            "category": meta,
-            "items": items,
-            "total": total,
-            "page": safe_page,
-            "has_more": safe_page * safe_limit < total,
-        }
+    await _attach_successful_repeat_counts(items)
+    return {
+        "category": meta,
+        "items": items,
+        "total": total,
+        "page": safe_page,
+        "has_more": safe_page * safe_limit < total,
+    }
 
 
 async def create_category(
@@ -726,9 +747,11 @@ async def search_admin_trends(
                 (*params, limit, (page - 1) * limit),
             )
         ).fetchall()
-        return {
-            "items": [_card(row, tariff=tariff) for row in rows],
-            "total": total,
-            "page": page,
-            "has_more": page * limit < total,
-        }
+    items = [_card(row, tariff=tariff) for row in rows]
+    await _attach_successful_repeat_counts(items)
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "has_more": page * limit < total,
+    }

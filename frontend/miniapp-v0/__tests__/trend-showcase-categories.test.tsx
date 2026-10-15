@@ -18,7 +18,7 @@ const makeCard = (id: number, title: string, kind: 'image' | 'video' = 'image'):
   id, title, description: 'Публичное описание',
   category: kind === 'video' ? 'video' : 'photo',
   prompt_text: '', tags: ['trend'],
-  model: null, likes: 0, uses_count: 0, author_id: 1,
+  model: null, likes: 0, uses_count: 0, successful_runs_count: 0, author_id: 1,
   status: 'approved',
   preview_url: kind === 'video' ? '/uploads/example.mp4' : '/uploads/example.jpg',
   generation_settings: { kind, preview_type: kind },
@@ -219,4 +219,69 @@ test('admin can inspect durable history with signed actor and before/after state
   fireEvent.click(screen.getByText('Посмотреть до и после'))
   expect(screen.getByText(/Старое название/)).toBeInTheDocument()
   expect(screen.getByText(/Новое название/)).toBeInTheDocument()
+})
+
+
+
+test('WAN live tile and repeat modal show server-authoritative lower-bound price', () => {
+  const wan = { ...makeCard(2075, 'Wan с фиксированным видео', 'video'), model: 'wan_3',
+    repeat_cost: null, repeat_price_hint: { amount: 22, kind: 'from' as const },
+    generation_settings: { kind: 'video' as const, duration: 11, resolution: '480P' },
+  } as ShowcaseTrend
+  render(<TrendShowcase categories={[{ ...catalog[0], items: [wan], total: 1 }]}
+    onRepeat={jest.fn()} onShare={jest.fn()} />)
+  expect(screen.getByRole('button', { name: 'Открыть тренд Wan с фиксированным видео' }))
+    .toHaveTextContent('от 22🍌')
+  fireEvent.click(screen.getByRole('button', { name: 'Открыть тренд Wan с фиксированным видео' }))
+  expect(within(screen.getByRole('dialog')).getByRole('button', { name: /Повторить · от 22🍌/ })).toBeEnabled()
+})
+
+
+test('completed repetition counts stay visible on live tiles and preview for all folders', async () => {
+  const favorite = { ...makeCard(201, 'Пользовательский тренд', 'video'), uses_count: 502, successful_runs_count: 328 }
+  const young = { ...makeCard(202, 'Новый тренд'), uses_count: 17, successful_runs_count: 0 }
+  const groups = [
+    { ...catalog[0], total: 2, items: [favorite, young] },
+    { ...catalog[0], id: 8, title: 'Другие', total: 1, items: [favorite] },
+  ]
+  categoryFetch.mockImplementation(async (id, page) => ({
+    category: groups.find(group => group.id === id)!, items: id === 8 ? [favorite] : [favorite, young],
+    page, total: id === 8 ? 1 : 2, has_more: false,
+  }))
+  render(<TrendShowcase categories={groups} onRepeat={jest.fn()} onShare={jest.fn()} />)
+  const firstTile = screen.getAllByRole('button', { name: 'Открыть тренд Пользовательский тренд' })[0]
+  expect(firstTile).toHaveTextContent('328 повторов')
+  expect(firstTile).not.toHaveTextContent('502')
+  expect(screen.getByRole('button', { name: 'Открыть тренд Новый тренд' })).toHaveTextContent('0 повторов')
+  fireEvent.click(firstTile)
+  const preview = screen.getByRole('dialog')
+  expect(within(preview).getByText('✅ Успешных повторов: 328')).toBeInTheDocument()
+  fireEvent.click(within(preview).getByRole('button', { name: 'Close' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Все тренды категории Другие' }))
+  await waitFor(() => expect(categoryFetch).toHaveBeenCalledWith(8, 1, 24))
+  const paginatedTile = await screen.findByRole('button', { name: 'Открыть тренд Пользовательский тренд' })
+  expect(paginatedTile).toHaveTextContent('328 повторов')
+})
+
+test('legacy card without a confirmed success count is not mislabeled zero', () => {
+  const legacy = makeCard(1234, 'Данные не загрузились')
+  delete legacy.successful_runs_count
+  render(<TrendShowcase categories={[{ ...catalog[0], items: [legacy] }]} onRepeat={jest.fn()} onShare={jest.fn()} />)
+  const tile = screen.getByRole('button', { name: 'Открыть тренд Данные не загрузились' })
+  expect(tile).not.toHaveTextContent('0 повторов')
+})
+
+
+
+test('completed counter uses correct Russian form for one and several repeats', () => {
+  const counts = [0, 1, 2, 4, 5, 11, 21]
+  const expected = ['0 повторов', '1 повтор', '2 повтора', '4 повтора', '5 повторов', '11 повторов', '21 повтор']
+  const cards = counts.map((count, i) => ({
+    ...makeCard(500 + i, 'Контроль ' + count), successful_runs_count: count,
+  }))
+  render(<TrendShowcase categories={[{ ...catalog[0], total: cards.length, items: cards }]}
+    onRepeat={jest.fn()} onShare={jest.fn()} />)
+  for (let i = 0; i < counts.length; i += 1) {
+    expect(screen.getByRole('button', { name: 'Открыть тренд Контроль ' + counts[i] })).toHaveTextContent(expected[i])
+  }
 })

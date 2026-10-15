@@ -5,6 +5,7 @@ import { ArrowLeft, Film, Flame, Loader2, Pencil, Repeat2, Share2, Sparkles, Tra
 import { Button } from './ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog'
 import { normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
+import { formatTrendRepeatPrice } from '@/lib/trend-price'
 import { fetchTrendCategory, resolveGenjutsuPrices, type ShowcaseCategory, type ShowcaseTrend } from '@/lib/trend-catalog-api'
 
 // Avoid decoding a dozen videos at once in Telegram's constrained mobile WebView.
@@ -118,6 +119,15 @@ function LivePreview({ trend }: { trend: ShowcaseTrend }) {
   )
 }
 
+function successfulRepeatsLabel(count: number): string {
+  const lastTwo = count % 100
+  const last = count % 10
+  const ending = lastTwo >= 11 && lastTwo <= 14 ? 'повторов'
+    : last === 1 ? 'повтор'
+      : last >= 2 && last <= 4 ? 'повтора' : 'повторов'
+  return count.toLocaleString('ru-RU') + ' ' + ending
+}
+
 function LiveTile({ trend, onPreview, className = '' }: {
   trend: ShowcaseTrend
   onPreview: (trend: ShowcaseTrend) => void
@@ -132,9 +142,17 @@ function LiveTile({ trend, onPreview, className = '' }: {
     >
       <LivePreview trend={trend} />
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-transparent" />
-      {trend.badge === 'new' ? (
-        <span className="pointer-events-none absolute left-2 top-2 rounded-md bg-blue-500 px-2 py-1 text-[10px] font-semibold text-white">Новинка</span>
-      ) : null}
+      <div className="pointer-events-none absolute left-2 top-2 flex max-w-[calc(100%-4rem)] flex-col items-start gap-1">
+        {trend.badge === 'new' ? (
+          <span className="rounded-md bg-blue-500 px-2 py-1 text-[10px] font-semibold text-white">Новинка</span>
+        ) : null}
+        {typeof trend.successful_runs_count === 'number' && Number.isSafeInteger(trend.successful_runs_count) && trend.successful_runs_count >= 0 ? (
+          <span
+            className="rounded-md bg-black/65 px-2 py-1 text-[10px] font-semibold text-white"
+            aria-label={'Успешных повторов: ' + trend.successful_runs_count}
+          >✅ {successfulRepeatsLabel(trend.successful_runs_count)}</span>
+        ) : null}
+      </div>
       {isVideoPreview(trend) ? (
         <span className="pointer-events-none absolute right-2 top-2 rounded-lg bg-black/60 p-1.5 text-white" aria-label="Видео">
           <Film className="h-4 w-4" />
@@ -142,6 +160,7 @@ function LiveTile({ trend, onPreview, className = '' }: {
       ) : null}
       <div className="pointer-events-none absolute inset-x-0 bottom-0 p-3">
         <span className="line-clamp-3 text-xs font-semibold leading-5 text-white drop-shadow-md sm:text-sm">{trend.title}</span>
+        {formatTrendRepeatPrice(trend) ? <span className="mt-1 block text-xs font-semibold text-gold">{formatTrendRepeatPrice(trend)}</span> : null}
       </div>
     </button>
   )
@@ -273,6 +292,11 @@ export function TrendShowcase({ categories, onRepeat, onShare, onEdit, onRemove,
           <DialogDescription className="text-xs">{selected?.description || 'Посмотрите пример и повторите со своими данными'}</DialogDescription>
           {selected ? (
             <div className="space-y-3">
+              {typeof selected.successful_runs_count === 'number' && Number.isSafeInteger(selected.successful_runs_count) && selected.successful_runs_count >= 0 ? (
+                <p className="text-xs font-semibold text-foreground" aria-label={'Успешных повторов: ' + selected.successful_runs_count}>
+                  ✅ Успешных повторов: {selected.successful_runs_count.toLocaleString('ru-RU')}
+                </p>
+              ) : null}
               {selected.preview_url ? isVideoPreview(selected) ? (
                 <video
                   key={selected.id}
@@ -293,7 +317,7 @@ export function TrendShowcase({ categories, onRepeat, onShare, onEdit, onRemove,
                 onRepeat(selected)
               }}>
                 <Repeat2 className="h-4 w-4" /> Повторить
-                {typeof selected.repeat_cost === 'number' ? ' · ' + selected.repeat_cost + '🍌' : ''}
+                {formatTrendRepeatPrice(selected) ? ' · ' + formatTrendRepeatPrice(selected) : ''}
               </Button>
               <Button type="button" variant="secondary" className="min-h-11 w-full" onClick={() => {
                 setSelected(null)

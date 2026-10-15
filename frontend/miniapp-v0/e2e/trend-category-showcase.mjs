@@ -15,6 +15,7 @@ const photo = {
   category:'photo', tags:['trend'], status:'approved', model:null,
   prompt_text:'', likes:0, uses_count:0, author_id:999,
   preview_url:'/uploads/photo.jpg', repeat_cost:4,
+  successful_runs_count:328,
   generation_settings:{kind:'image', ratio:'1:1', preview_type:'image',
     reference_count:1, user_fields:[{key:'Возраст',label:'Возраст',type:'number',required:true,max_length:160}]}
 }
@@ -114,6 +115,7 @@ try {
   assert.equal(await page.getByRole('button',{name:'Все тренды категории Липсинги'}).count(),1)
   const live=page.getByRole('button',{name:'Открыть тренд Живое видео'}).first()
   await live.waitFor()
+  assert.match(await live.innerText(),/328 повторов/, 'New live tiles must display actual completed repeats')
   const videoTag=live.locator('video')
   await videoTag.waitFor()
   assert.equal(await videoTag.evaluate(video => video.muted), true)
@@ -123,6 +125,7 @@ try {
   await page.getByRole('button',{name:'Показать ещё'}).click()
   await page.getByRole('button',{name:'Открыть тренд Другой праздник'}).waitFor()
   await page.getByRole('button',{name:'Открыть тренд Свечи с возрастом'}).click()
+  await page.getByRole('dialog').getByText('✅ Успешных повторов: 328').waitFor()
   await page.getByRole('dialog').getByRole('button',{name:/Повторить/}).click()
   const repeat = page.getByRole('dialog')
   await repeat.getByText('Персонализируйте шаблон',{exact:true}).waitFor()
