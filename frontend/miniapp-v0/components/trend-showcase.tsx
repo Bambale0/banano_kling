@@ -133,9 +133,17 @@ function LiveTile({ trend, onPreview, className = '' }: {
     >
       <LivePreview trend={trend} />
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-transparent" />
-      {trend.badge === 'new' ? (
-        <span className="pointer-events-none absolute left-2 top-2 rounded-md bg-blue-500 px-2 py-1 text-[10px] font-semibold text-white">Новинка</span>
-      ) : null}
+      <div className="pointer-events-none absolute left-2 top-2 flex max-w-[calc(100%-4rem)] flex-col items-start gap-1">
+        {trend.badge === 'new' ? (
+          <span className="rounded-md bg-blue-500 px-2 py-1 text-[10px] font-semibold text-white">Новинка</span>
+        ) : null}
+        {typeof trend.successful_runs_count === 'number' && Number.isSafeInteger(trend.successful_runs_count) && trend.successful_runs_count >= 0 ? (
+          <span
+            className="rounded-md bg-black/65 px-2 py-1 text-[10px] font-semibold text-white"
+            aria-label={'Успешных повторов: ' + trend.successful_runs_count}
+          >✅ {trend.successful_runs_count.toLocaleString('ru-RU')} повторов</span>
+        ) : null}
+      </div>
       {isVideoPreview(trend) ? (
         <span className="pointer-events-none absolute right-2 top-2 rounded-lg bg-black/60 p-1.5 text-white" aria-label="Видео">
           <Film className="h-4 w-4" />
@@ -275,6 +283,11 @@ export function TrendShowcase({ categories, onRepeat, onShare, onEdit, onRemove,
           <DialogDescription className="text-xs">{selected?.description || 'Посмотрите пример и повторите со своими данными'}</DialogDescription>
           {selected ? (
             <div className="space-y-3">
+              {typeof selected.successful_runs_count === 'number' && Number.isSafeInteger(selected.successful_runs_count) && selected.successful_runs_count >= 0 ? (
+                <p className="text-xs font-semibold text-foreground" aria-label={'Успешных повторов: ' + selected.successful_runs_count}>
+                  ✅ Успешных повторов: {selected.successful_runs_count.toLocaleString('ru-RU')}
+                </p>
+              ) : null}
               {selected.preview_url ? isVideoPreview(selected) ? (
                 <video
                   key={selected.id}

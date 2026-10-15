@@ -41,12 +41,16 @@ async function waitForServer() {
 
 // Correlate with a NEW capability request. An older ordinary bootstrap may
 // finish after a fixture state change and must not satisfy this assertion.
+// Decode the synthetic response immediately, before later browser interactions
+// can evict its body from Chromium's protocol cache. Returning Response and
+// calling .json() only after emitReturn() occasionally hit
+// Network.getResponseBody: No data found for resource with given identifier.
 function nextCapabilityResponse(page) {
   return page.waitForRequest(request => request.url().endsWith('/bootstrap')
     && request.headers()['x-e2e-capability-check'] === '1').then(async request => {
     const response = await request.response()
     assert.ok(response, 'Return capability request completed without transport abort')
-    return response
+    return response.json()
   })
 }
 
@@ -330,7 +334,7 @@ try {
     startRequirement = true
     const stillRequired = nextCapabilityResponse(page)
     await retry.click()
-    const stillRequiredPayload = await (await stillRequired).json()
+    const stillRequiredPayload = await stillRequired
     assert.equal(stillRequiredPayload.telegram_chat_available, true)
     assert.equal(stillRequiredPayload.telegram_bot_start_required, true)
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
@@ -352,7 +356,7 @@ try {
       const checked = nextCapabilityResponse(page)
       if (staleBackgroundReply) { await staleBackgroundReply(); staleBackgroundReply = undefined }
       await emitReturn(page, event)
-      const confirmed = await (await checked).json()
+      const confirmed = await checked
       assert.equal(confirmed.telegram_bot_start_required, false, event + ': server clears Start requirement')
       await gate.waitFor({ state: 'hidden' })
       await assertDraftPreserved(event + ' successful return')

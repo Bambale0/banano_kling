@@ -243,3 +243,73 @@ async def test_concurrent_membership_replacement_keeps_one_complete_requested_se
         assert assigned in ({first["id"]}, {second["id"]}), (
             "Do not union two replacements"
         )
+
+
+@pytest.mark.asyncio
+async def test_successful_repeat_counts_are_identical_in_folders_pages_and_admin_search():
+    from bot.handlers import trend_success_compat as metrics
+
+    first, second = await make_trend(301), await make_trend(302)
+    category_a = await trend_catalog.create_category("Топовые повторы", "⭐")
+    category_b = await trend_catalog.create_category("Популярное", "🔥")
+    await trend_catalog.set_trend_categories(first["id"], [category_a["id"], category_b["id"]])
+    await trend_catalog.set_trend_categories(second["id"], [category_a["id"]])
+    user = await database.get_or_create_user(991001)
+    cases = [
+        ("completed_1", first["id"], "completed"),
+        ("completed_2", first["id"], "completed"),
+        ("failed_1", first["id"], "failed"),
+        ("pending_1", first["id"], "pending"),
+        ("processing_1", first["id"], "processing"),
+        ("completed_unrelated", second["id"], "completed"),
+    ]
+    async with db_backend.connect(database.DATABASE_PATH) as db:
+        for task, trend_id, status in cases:
+            await db.execute(
+                "INSERT INTO generation_tasks (user_id, telegram_id, task_id, type, preset_id, status) "
+                "VALUES (?, ?, ?, 'video', 'test-trend', ?)",
+                (user.id, user.telegram_id, task, status),
+            )
+        # accepted attempts are not completed generations
+        await db.execute(
+            "UPDATE user_prompts SET uses_count = 99 WHERE id = ?",
+            (first["id"],),
+        )
+        await db.commit()
+
+    for task, trend_id, status in cases:
+        assert await metrics.register_trend_generation_run(
+            task_id=task, trend_id=trend_id, user_id=user.id,
+        )
+    assert not await metrics.register_trend_generation_run(
+        task_id="completed_1", trend_id=first["id"], user_id=user.id,
+    )
+
+    catalog = await trend_catalog.list_catalog(is_admin=False)
+    all_cards = [card for folder in catalog for card in folder["items"]]
+    repeated = [card for card in all_cards if card["id"] == first["id"]]
+    assert len(repeated) == 2
+    assert {card["successful_runs_count"] for card in repeated} == {2}
+    assert {card["uses_count"] for card in repeated} == {99}
+    assert next(card for card in all_cards if card["id"] == second["id"])["successful_runs_count"] == 1
+    assert all(card["prompt_text"] == "" and card["model"] is None for card in all_cards)
+    assert all("completed_1" not in str(card) for card in all_cards)
+
+    pages = [await trend_catalog.category_page(category_a["id"], page=page, limit=1)
+             for page in (1, 2)]
+    per_id = {card["id"]: card["successful_runs_count"] for page in pages for card in page["items"]}
+    assert per_id == {first["id"]: 2, second["id"]: 1}
+    admin = await trend_catalog.search_admin_trends(str(first["id"]))
+    assert len(admin["items"]) == 1
+    assert admin["items"][0]["successful_runs_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_zero_successes_are_explicit_not_guessed_from_accepted_launches():
+    trend = await make_trend(303)
+    async with db_backend.connect(database.DATABASE_PATH) as db:
+        await db.execute("UPDATE user_prompts SET uses_count = 18 WHERE id = ?", (trend["id"],))
+        await db.commit()
+    card = (await trend_catalog.list_catalog())[0]["items"][0]
+    assert card["uses_count"] == 18
+    assert card["successful_runs_count"] == 0

@@ -302,6 +302,8 @@ export interface PromptItem {
   category: 'art' | 'business' | 'marketing' | 'photo' | 'video' | 'other'
   tags: string[]
   uses_count: number
+  /** Completed, uniquely task-linked trend repetitions (not accepted launches). */
+  successful_runs_count?: number | null
   likes: number
   repeat_cost?: number | null
   /** WAN catalog-only lower bound/reserve, not the final quote or debit. */
