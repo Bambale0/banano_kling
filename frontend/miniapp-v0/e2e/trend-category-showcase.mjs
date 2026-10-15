@@ -29,10 +29,12 @@ const legacyVideo = {
   ...video, id:1404, title:'Видео без расширения',
   preview_url:'/uploads/legacy-video?auth=synthetic',
   generation_settings:{kind:'video', ratio:'9:16', reference_count:1},
-  badge:undefined
+  badge:undefined,
+  successful_runs_count:undefined
 }
 let legacyPromptRequests = 0
 let adminMode = false
+let catalogUnavailable = false
 const category = {
   id: 101, title:'День рождения', emoji:'🧁', sort_order:0, revision:3,
   is_visible:true, total:4, items:[photo,video,legacyVideo]
@@ -79,11 +81,15 @@ try {
           video_models:[{id:'seedance_2_5',label:'Seedance 2.5', supports:['imgtxt'], ratios:['9:16'],durations:[10],costs:{}}],
           recent_tasks:[], saved_references:[], actions:[], payment_packages:[]}
       }else if(url.pathname.endsWith('/trends/catalog')){
+        if(catalogUnavailable) return route.fulfill({
+          status:503,contentType:'application/json',
+          body:JSON.stringify({ok:false,error:'Каталог временно недоступен'})
+        })
         body={ok:true,categories:[category,reels]}
       }else if(url.pathname.endsWith('/trends/category')){
         const p=route.request().postDataJSON()
         body={ok:true, category:{...category,items:undefined},page:p.page,total:4,has_more:p.page===1,
-          items:p.page===1?[photo,video,legacyVideo]:[{...photo,id:1403,title:'Другой праздник'}]}
+          items:p.page===1?[photo,video,legacyVideo]:[{...photo,id:1403,title:'Другой праздник',successful_runs_count:0}]}
       }else if(url.pathname.endsWith('/admin/trends/categories')){
         const p=route.request().postDataJSON()
         if(p.op==='history') body={ok:true,result:[{
@@ -115,17 +121,19 @@ try {
   assert.equal(await page.getByRole('button',{name:'Все тренды категории Липсинги'}).count(),1)
   const live=page.getByRole('button',{name:'Открыть тренд Живое видео'}).first()
   await live.waitFor()
-  assert.match(await live.innerText(),/328 повторов/, 'New live tiles must display actual completed repeats')
+  assert.match(await live.innerText(),/328 запусков/, 'Live tiles must prominently display completed generations')
   const videoTag=live.locator('video')
   await videoTag.waitFor()
   assert.equal(await videoTag.evaluate(video => video.muted), true)
   const noExtension=page.getByRole('button',{name:'Открыть тренд Видео без расширения'}).first()
   await noExtension.locator('video').waitFor()
+  assert.match(await noExtension.innerText(),/— запусков/, 'Missing metrics must not be fabricated as zero')
   await page.getByRole('button',{name:'Все тренды категории День рождения'}).click()
   await page.getByRole('button',{name:'Показать ещё'}).click()
   await page.getByRole('button',{name:'Открыть тренд Другой праздник'}).waitFor()
+  assert.match(await page.getByRole('button',{name:'Открыть тренд Другой праздник'}).innerText(),/0 запусков/)
   await page.getByRole('button',{name:'Открыть тренд Свечи с возрастом'}).click()
-  await page.getByRole('dialog').getByText('✅ Успешных повторов: 328').waitFor()
+  await page.getByRole('dialog').getByText('✅ Успешных запусков: 328').waitFor()
   await page.getByRole('dialog').getByRole('button',{name:/Повторить/}).click()
   const repeat = page.getByRole('dialog')
   await repeat.getByText('Персонализируйте шаблон',{exact:true}).waitFor()
@@ -153,8 +161,17 @@ try {
   await manager.getByText('Посмотреть до и после').click()
   await manager.getByText(/День рождения/).first().waitFor()
   assert.equal(legacyPromptRequests, 0, 'Admin catalog must not trigger hidden legacy prompt reads')
+
+  // When the category API fails, the legacy /prompts route is still a
+  // supported product fallback: its cards MUST show the same completed count.
+  adminMode = false
+  catalogUnavailable = true
+  await page.reload({waitUntil:'networkidle'})
+  const fallbackPhoto = page.locator('article').filter({hasText:'Свечи с возрастом'})
+  await fallbackPhoto.getByText('✅ Успешных запусков: 328').waitFor()
+  assert.ok(legacyPromptRequests > 0, '503 catalog must exercise the legacy fallback')
   assert.deepEqual(errors,[])
-  console.log('PASS: mobile categories, extensionless video, paginated repeat, admin edit/deactivate and audited history')
+  console.log('PASS: mobile categories, visible successful launches in live/fallback cards, zero/unknown metrics, paginated repeat and admin history')
 }finally{
   if(browser)await browser.close()
   server.kill('SIGTERM')
