@@ -1350,6 +1350,10 @@ async def _start_image_generation_task(
         "reference_images": reference_images,
         "source_reference_images": source_reference_images,
         "private_repeat_reference_images": private_refs,
+        # On automatic retry use the clicked publication, while preserving
+        # original root ID for lineage accounting.
+        **({"private_repeat_permission_source_id": private_repeat_permission_source_id}
+           if private_repeat_permission_source_id else {}),
         "img_quality": img_quality,
         "img_nsfw_checker": img_nsfw_checker,
         "nsfw_enabled": nsfw_enabled,

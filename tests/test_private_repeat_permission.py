@@ -154,6 +154,30 @@ async def test_image_auto_retry_rechecks_revoked_permission(monkeypatch, retry_n
     assert validate.await_args.kwargs == {"source_feed_gen_id": 42, "private_reference_images": ["https://example.test/secret.png"]}
 
 
+
+@pytest.mark.asyncio
+async def test_photo_retry_revalidates_clicked_published_child_not_ancestor(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from bot import main
+    from bot.handlers import generation
+
+    validate = AsyncMock(return_value=False)
+    monkeypatch.setattr(generation, "validate_private_repeat_reference_access", validate)
+    task = SimpleNamespace(
+        type="image", source_feed_gen_id=42,
+        request_data=json.dumps({
+            "private_repeat_reference_images": ["https://example.test/saved.png"],
+            "private_repeat_permission_source_id": 84,
+        }),
+    )
+    assert await main._retry_transient_kie_image_failure(task, "failed-child") is None
+    validate.assert_awaited_once_with(
+        source_feed_gen_id=84, private_reference_images=["https://example.test/saved.png"]
+    )
+
+
 @pytest.mark.asyncio
 async def test_private_snapshot_and_grant_redacted_from_history_bootstrap(monkeypatch):
     from unittest.mock import AsyncMock
