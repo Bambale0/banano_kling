@@ -15,6 +15,7 @@ jest.mock('@/components/forms/duration-select', () => ({
 }))
 
 import { VideoGeneratorForm } from '@/components/forms/video-generator-form'
+import { MiniAppApiError } from '@/lib/api'
 import type { UploadedFile, VideoModel, VideoPromptPreset } from '@/lib/types'
 
 const models: VideoModel[] = [{
@@ -236,17 +237,17 @@ describe('video repeat slot lifecycle', () => {
   })
   it('blocks a typed repeat when its source model is unavailable', () => {
     render(<VideoGeneratorForm models={models} onSubmit={jest.fn()} isSubmitting={false} credits={100} promptPreset={{ ...fixed, model: 'missing-model' }} />)
-    expect(screen.getByRole('alert')).toHaveTextContent('Откройте публикацию заново')
+    expect(screen.getByRole('alert')).toHaveTextContent('Модель исходной публикации сейчас недоступна')
     expect(screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость|Подтвердить цену и запустить/i })).toBeDisabled()
   })
   it('blocks a rejected stale recipe until it is reopened and keeps user prompt edits', async () => {
-    const props = { models, onSubmit: jest.fn().mockRejectedValue(new Error('Permission changed')), onQuote: jest.fn().mockResolvedValue(measuredVideoQuote), isSubmitting: false, credits: 100 }
+    const props = { models, onSubmit: jest.fn().mockRejectedValue(new MiniAppApiError('Разрешение изменилось', 'repeat_permission_changed')), onQuote: jest.fn().mockResolvedValue(measuredVideoQuote), isSubmitting: false, credits: 100 }
     const view = render(<VideoGeneratorForm {...props} promptPreset={fixed} />)
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'My adjustment' } })
     fireEvent.click(screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость|Подтвердить цену и запустить/i }))
     await screen.findByText(/Видеореференсы: 10 с/)
     fireEvent.click(screen.getByRole('button', { name: /Подтвердить цену и запустить/i }))
-    await screen.findByText('Permission changed')
+    await screen.findByText('Разрешение изменилось')
     expect(screen.getByRole('textbox')).toHaveValue('My adjustment')
     expect(screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость|Подтвердить цену и запустить/i })).toBeDisabled()
     view.rerender(<VideoGeneratorForm {...props} promptPreset={{ ...fixed }} />)
@@ -325,5 +326,51 @@ describe('legacy publication repeat slot descriptors', () => {
       references: [savedFrame.url, secondPhoto.url], videoReferences: [],
     }))
     expect(JSON.stringify(submitted)).not.toContain(privateSource)
+  })
+})
+
+
+describe('retriable errors never masquerade as revoked author consent', () => {
+  const safePreset: VideoPromptPreset = { ...preset, prompt: '', promptHidden: true, scenario: 'imgtxt',
+    repeatReferenceSlots: { version: 1, available: true, cost_multiplier: 1,
+      duration_costs: { '5': 5, '10': 10 }, pricing_quality: '720p',
+      images: [{ index: 0, role: 'first_frame', binding: 'fixed' }], videos: [] } }
+
+  it('provider 503 preserves the authorized repeat and permits a second submission', async () => {
+    const onSubmit = jest.fn()
+      .mockRejectedValueOnce(new MiniAppApiError('Провайдер временно недоступен', 'provider_unavailable'))
+      .mockResolvedValueOnce(undefined)
+    render(<VideoGeneratorForm models={models} onSubmit={onSubmit}
+      promptPreset={safePreset} credits={100} isSubmitting={false} />)
+    const button = screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость/ })
+    expect(button).toBeEnabled()
+    fireEvent.click(button)
+    await screen.findByText('Провайдер временно недоступен')
+    expect(screen.queryByText(/Повтор недоступен\. Откройте публикацию/)).not.toBeInTheDocument()
+    expect(screen.getByRole('group', { name: 'Референсы повтора' })).toHaveTextContent('Сохранено автором: 1')
+    expect(button).toBeEnabled()
+    fireEvent.click(button)
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2))
+  })
+
+  it('server-side repeat permission change locks retry and preserves user edits until re-open', async () => {
+    const onSubmit = jest.fn().mockRejectedValue(new MiniAppApiError(
+      'Разрешение или исходные файлы изменились', 'repeat_permission_changed'))
+    render(<VideoGeneratorForm models={models} onSubmit={onSubmit}
+      promptPreset={safePreset} credits={100} isSubmitting={false} />)
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'My edits' } })
+    fireEvent.click(screen.getByRole('button', { name: /Запустить видео/ }))
+    await screen.findByText('Разрешение или исходные файлы изменились')
+    expect(screen.getByText(/Повтор недоступен/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Запустить видео/ })).toBeDisabled()
+    expect(screen.getByRole('textbox')).toHaveValue('My edits')
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+  })
+
+  it('a missing model is not falsely labeled author permission revoked', () => {
+    render(<VideoGeneratorForm models={models} onSubmit={jest.fn()}
+      promptPreset={{ ...safePreset, model: 'offline-model' }} credits={100} isSubmitting={false} />)
+    expect(screen.getByRole('alert')).toHaveTextContent('Модель исходной публикации сейчас недоступна')
+    expect(screen.getByRole('button', { name: /Запустить видео/ })).toBeDisabled()
   })
 })

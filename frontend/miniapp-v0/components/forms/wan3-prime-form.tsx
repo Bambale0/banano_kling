@@ -233,6 +233,7 @@ function Wan3PrimeFormSession({ draftOnly = false, onDraftChange, expectedModel,
   const [planError, setPlanError] = useState('')
   const [planRetry, setPlanRetry] = useState(0)
   const [repeatPlan, setRepeatPlan] = useState<Wan3PrimeRepeatPlan | null>(null)
+  const [routedToOriginalTrend, setRoutedToOriginalTrend] = useState(false)
   const feedSourceId = publicationSourceId || recipe.source_feed_gen_id || null
   const trendId = selectedTrendId || recipe.trend_id || null
   const sourceId = trendId || feedSourceId
@@ -298,6 +299,21 @@ function Wan3PrimeFormSession({ draftOnly = false, onDraftChange, expectedModel,
       if (abort.signal.aborted) return
       if (expectedModel && plan.recipe.model !== expectedModel) {
         setPlanError('Рецепт относится к другой модели Wan. Откройте тренд заново.'); return
+      }
+      if (!trendId && plan.trend_id && Number.isSafeInteger(plan.trend_id)) {
+        // The published result was produced from a curated Wan trend. Only the
+        // curator's currently approved trend may supply its hidden inputs.
+        // Do not reuse the derivative owner's saved source URLs/prompt.
+        setRoutedToOriginalTrend(true)
+        setRepeatPlan(plan)
+        setRecipe({
+          ...emptyRecipe(plan.recipe.scenario, plan.recipe.model),
+          ...plan.recipe, prompt: '', trend_id: plan.trend_id,
+          source_feed_gen_id: null, repeat_plan_hash: plan.repeat_plan_hash,
+          repeat_replacements: {},
+        })
+        setQuoteState(null)
+        return
       }
       setRepeatPlan(plan)
       setRecipe(old => {
@@ -406,6 +422,11 @@ function Wan3PrimeFormSession({ draftOnly = false, onDraftChange, expectedModel,
     {sourceId ? <section className={CARD} aria-label="Материалы для повтора">
       <h3 className="text-sm font-semibold">Повтор публикации Wan</h3>
       <p className="text-xs text-muted-foreground">Промпт и разрешённые автором материалы подставит сервер. Загрузите свои файлы на заменяемые места; порядок и роли сохраняются.</p>
+      {routedToOriginalTrend && repeatPlan ? (
+        <p role="status" className="text-xs text-muted-foreground">
+          Исходный тренд: повтор использует его актуальный разрешённый рецепт, а не скрытые материалы автора этой публикации. Добавьте свои референсы.
+        </p>
+      ) : null}
       {planLoading ? <p role="status">Проверяю разрешения…</p> : null}
       {repeatPlan?.slots.map(slot => slot.binding === 'fixed'
         ? <p key={slot.key} className="rounded-lg border border-border p-3 text-xs">{repeatSlotTitle(slot)} · материал автора, подставится при запуске</p>

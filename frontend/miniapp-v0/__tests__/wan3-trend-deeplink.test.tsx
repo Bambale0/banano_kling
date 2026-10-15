@@ -19,7 +19,7 @@ jest.mock('@/lib/seedance-trend-admin-api', () => ({ publishSeedanceTrendUpload:
 jest.mock('@/components/seedance-trend-upload-references', () => ({ SeedanceTrendUploadReferences: () => null, emptySeedanceUploadReferences: () => ({ images: [], videos: [], audios: [] }) }))
 jest.mock('@/lib/trend-admin-api', () => ({ updateTrendPreview: jest.fn() }))
 jest.mock('@/lib/media-url', () => ({ normalizeMiniAppMediaUrl: (value: string) => value, mediaAspectRatio: () => '1:1', videoPreviewFrameUrl: () => '' }))
-jest.mock('@/lib/trend-price', () => ({ formatTrendRepeatCost: () => '' }))
+jest.mock('@/lib/trend-price', () => ({ ...jest.requireActual('@/lib/trend-price') }))
 jest.mock('@/lib/genjutsu-api', () => ({ genjutsuCall: jest.fn().mockResolvedValue({ items: [] }), openGenjutsu: jest.fn() }))
 jest.mock('@/lib/seedance25-repeat', () => ({ hydrateSeedance25IdentityPreset: jest.fn() }))
 jest.mock('@/lib/trend-api', () => ({ createTrendRunRequestId: () => 'synthetic', runTrend: jest.fn(), runPinterestRepeatTrend: jest.fn(), TrendRunRequestError: class extends Error {} }))

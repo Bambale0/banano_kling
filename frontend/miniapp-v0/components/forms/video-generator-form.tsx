@@ -18,7 +18,7 @@ import { UploadArea } from './upload-area'
 import { ScenarioSelect } from './scenario-select'
 import { DurationSelect } from './duration-select'
 import { getStorageItem, removeStorageItem } from '@/hooks/browser-storage'
-import type { VideoGenerationQuote } from '@/lib/api'
+import { MiniAppApiError, type VideoGenerationQuote } from '@/lib/api'
 import {
   AlertCircle,
   Banana,
@@ -177,6 +177,7 @@ export function VideoGeneratorForm({
   const [repeatSlots, setRepeatSlots] = useState<VideoRepeatReferenceSlots | undefined>()
   const [repeatUploads, setRepeatUploads] = useState<Record<string, UploadedFile[]>>({})
   const [repeatError, setRepeatError] = useState(false)
+  const [repeatModelUnavailable, setRepeatModelUnavailable] = useState(false)
   const [repeatPending, setRepeatPending] = useState<PendingVideoRepeat | null>(null)
   const repeatSession = useRef(0)
   const submittingRef = useRef(false)
@@ -385,7 +386,9 @@ export function VideoGeneratorForm({
     const slots = promptPreset.sourceFeedGenId && promptPreset.repeatReferenceSlots
       ? normalizeVideoRepeatSlots(promptPreset.repeatReferenceSlots) : undefined
     repeatSession.current += 1
-    setRepeatSlots(slots && !models.some((item) => item.id === promptPreset.model)
+    const missingModel = Boolean(slots && !models.some((item) => item.id === promptPreset.model))
+    setRepeatModelUnavailable(missingModel)
+    setRepeatSlots(missingModel
       ? { version: 1, available: false, images: [], videos: [] } : slots)
     setRepeatUploads({})
     setRepeatError(false)
@@ -634,7 +637,11 @@ export function VideoGeneratorForm({
       setVideoQuoteError(error instanceof Error ? error.message : 'Не удалось рассчитать цену видео.')
       if (submittedSession === repeatSession.current) {
         if (isVideoStatusPending(error)) setRepeatPending(getPendingVideoRepeat(sourceFeedGenId))
-        else if (repeatSlots) setRepeatError(true)
+        else if (repeatSlots && error instanceof MiniAppApiError
+          && error.code === 'repeat_permission_changed') setRepeatError(true)
+        // Provider failures, quote failures, network loss and rejected media
+        // do not revoke the author's already-verified repeat grant. Keep
+        // references and edits in place so a corrected retry can succeed.
       }
       return
     } finally {
@@ -1289,7 +1296,13 @@ export function VideoGeneratorForm({
           <div role="group" aria-label="Референсы повтора" className="min-w-0 space-y-3 rounded-2xl border border-cyan/25 p-3">
             <p className="text-sm font-medium">Референсы повтора</p>
             {!repeatSlots.available || repeatError ? (
-              <p role="alert" className="text-sm text-destructive">Повтор недоступен. Откройте публикацию заново, чтобы проверить разрешения автора.</p>
+              <p role="alert" className="text-sm text-destructive">
+                {repeatModelUnavailable
+                  ? 'Модель исходной публикации сейчас недоступна. Попробуйте позже или выберите другой тренд.'
+                  : repeatError
+                    ? 'Повтор недоступен: разрешение автора или исходные файлы изменились. Откройте публикацию заново.'
+                    : 'Повтор этой публикации пока недоступен: сервер не подтвердил сохранённый рецепт или разрешённые референсы. Откройте публикацию заново, попросите автора обновить её или выберите другой тренд.'}
+              </p>
             ) : (
               <>
                 <p className="text-xs text-muted-foreground">Сохранено автором: {typedSlots.filter((slot) => slot.binding === 'fixed').length}</p>
