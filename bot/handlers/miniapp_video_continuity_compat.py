@@ -592,8 +592,8 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
     source_prompt = str(source_task.get("prompt") or "").strip()
     if not source_prompt:
         raise web.HTTPBadRequest(reason="Исходное описание видео недоступно")
-    if source_task.get("source_feed_gen_id") and source_request(source_task).get("video_repeat_contract_version") == 1:
-        raise VideoRepeatReferenceError("Для этого повтора откройте исходную публикацию автора.")
+    # A publicly shared repeat/result is a new publication in its own right.
+    # Keep this source task, rather than silently substituting its ancestor.
     source_task = {**source_task, "_repeat_is_owner": (
         source_task.get("user_id") == context["user"].id and not source_task.get("source_feed_gen_id")
     )}
@@ -638,6 +638,9 @@ async def redirect_typed_video_repeat(callback, task) -> bool:
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Открыть Wan", callback_data=target)]]))
         return True
     parent_id = getattr(task, "source_feed_gen_id", None)
+    published_child = bool(parent_id and (
+        getattr(task, "is_public_feed", False) or getattr(task, "is_profile_visible", False)
+    ))
     request_data = source_request({"request_data": getattr(task, "request_data", None)})
     tagged_child = request_data.get("video_repeat_contract_version") == 1
     raw = getattr(task, "feed_repeat_reference_selection", None)
@@ -647,7 +650,10 @@ async def redirect_typed_video_repeat(callback, task) -> bool:
                 return False
         except VideoRepeatContractError:
             pass
-    source_id = parent_id or getattr(task, "id", None)
+    # For an unpublished derived result, the old callback can still link to
+    # its original feed item. Once the result is itself published, link to
+    # THAT video's generation ID, never its ancestor.
+    source_id = getattr(task, "id", None) if published_child else parent_id or getattr(task, "id", None)
     try:
         source = await get_generation_task_payload(source_id)
         if not source:
@@ -655,7 +661,7 @@ async def redirect_typed_video_repeat(callback, task) -> bool:
                 return False
             raise VideoRepeatReferenceError("Исходная публикация недоступна.")
         typed = parse_video_repeat_grant(source.get("feed_repeat_reference_selection"))
-        if typed is None:
+        if typed is None and not published_child:
             if not tagged_child:
                 return False
             raise VideoRepeatReferenceError("Разрешение на повтор изменилось.")
@@ -667,7 +673,9 @@ async def redirect_typed_video_repeat(callback, task) -> bool:
             return False
         card = await miniapp_module._get_repeat_source_card(source_id, viewer_user_id=user.id)
         descriptors = video_repeat_descriptors(source)
-        if not card or not descriptors or not descriptors["available"]:
+        if not card or (descriptors is None and not published_child) or (
+            descriptors is not None and not descriptors["available"]
+        ):
             raise VideoRepeatReferenceError("Исходная публикация недоступна.")
     except Exception as exc:  # noqa: BLE001 - fail closed without disclosing source details
         logger.warning("Typed video callback rejected: source_generation_id=%s error_type=%s",

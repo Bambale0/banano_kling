@@ -1043,11 +1043,12 @@ async def validate_private_repeat_reference_access(
     source_feed_gen_id: int | None,
     private_reference_images: list[str],
 ) -> bool:
-    """Recheck the original owner's live grant before any new provider submission.
+    """Recheck the clicked published author's live reference grant before sending.
 
-    A saved child snapshot is evidence of which inputs must be checked, never
-    independent authorization. Validation is all-or-nothing so revocation cannot
-    silently produce a different composition.
+    For a derived publication, the caller checks its immediate parent (the
+    clicked post), not the original ancestor ID retained for genealogy.
+    Explicit per-slot grants and active publication are required. Never
+    downgrade a missing granted reference into a different composition.
     """
     if not private_reference_images:
         return True
@@ -1063,8 +1064,6 @@ async def validate_private_repeat_reference_access(
         if not root or (
             root.get("type") != "image"
             or root.get("status") != "completed"
-            or root.get("source_feed_gen_id")
-            or str(root.get("action_type") or "").lower() == "remix"
             or not (root.get("is_public_feed") or root.get("is_profile_visible"))
         ):
             return False
@@ -1254,6 +1253,7 @@ async def _start_image_generation_task(
     nsfw_enabled: bool = False,
     callback_url: Optional[str] = None,
     source_feed_gen_id: Optional[int] = None,
+    private_repeat_permission_source_id: Optional[int] = None,
     parent_generation_id: Optional[int] = None,
     action_type: Optional[str] = None,
     prompt_source_id: Optional[int] = None,
@@ -1278,7 +1278,8 @@ async def _start_image_generation_task(
     if private_resolution_failed or (private_refs and (
         not set(private_refs).issubset(reference_images)
         or not await validate_private_repeat_reference_access(
-            source_feed_gen_id=source_feed_gen_id, private_reference_images=private_refs
+            source_feed_gen_id=private_repeat_permission_source_id or source_feed_gen_id,
+            private_reference_images=private_refs
         )
     )):
         return {

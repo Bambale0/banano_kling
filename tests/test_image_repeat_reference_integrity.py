@@ -9,8 +9,9 @@ from bot import database, miniapp
 @pytest.mark.asyncio
 @pytest.mark.parametrize("endpoint", ["remix", "generate"])
 @pytest.mark.parametrize("model", ["banana_pro", "banana_2"])
+@pytest.mark.parametrize("derived_source", [False, True])
 @pytest.mark.parametrize("case", ["all_fixed", "replacement", "missing_replacement", "unavailable", "revoked", "owner_selected", "owner_selected_gap"])
-async def test_image_repeat_preserves_authorized_recipe_before_billing(monkeypatch, endpoint, model, case):
+async def test_image_repeat_preserves_authorized_recipe_before_billing(monkeypatch, endpoint, model, derived_source, case):
     fixed = "https://example.test/fixed-cake.png"
     original = "https://example.test/original-person.png"
     own = "https://example.test/viewer-person.png"
@@ -23,6 +24,8 @@ async def test_image_repeat_preserves_authorized_recipe_before_billing(monkeypat
     card = {"id": 42, "gen_type": "image", "is_mine": case in {"owner_selected", "owner_selected_gap"}, "model": model,
             "publication_scope": "profile", "references_hidden": True, "feed_references_visible": False}
     source = {"type": "image", "status": "completed", "is_public_feed": True, "prompt": "Synthetic numbered recipe",
+              "source_feed_gen_id": 99 if derived_source else None,
+              "action_type": "remix" if derived_source else None,
               "feed_references_visible": False, "feed_reference_selection": {"images": [fixed], "videos": []},
               "feed_repeat_reference_selection": {"images": grant}, "request_data": {"source_reference_images": source_refs}}
     body = {"init_data": "signed", "gen_id": 42, "source_feed_gen_id": 42, "img_service": model, "reference_images": submitted}
@@ -112,3 +115,45 @@ def test_own_selected_fixed_alias_preserves_the_stored_source_slot():
     references, retained = miniapp._merge_remix_image_references({"is_mine": True}, payload, [own])
     assert references == [own, canonical]
     assert retained == 1
+
+
+@pytest.mark.asyncio
+async def test_published_image_derivative_is_current_private_reference_authority(monkeypatch):
+    from bot.handlers import generation
+
+    reference = "https://example.test/current-published-author.png"
+    current = {
+        "id": 84, "type": "image", "status": "completed",
+        "action_type": "remix", "source_feed_gen_id": 42,
+        "is_public_feed": True, "is_profile_visible": True,
+        "feed_repeat_reference_selection": {"images": [reference]},
+        "request_data": {"source_reference_images": [reference]},
+    }
+    monkeypatch.setattr(generation, "get_generation_task_payload",
+                        AsyncMock(side_effect=lambda source_id: dict(current) if source_id == 84 else None))
+    monkeypatch.setattr(database, "_is_feed_result_url_available", lambda *_args: True)
+    assert await generation.validate_private_repeat_reference_access(
+        source_feed_gen_id=84, private_reference_images=[reference])
+    current["is_public_feed"] = False
+    current["is_profile_visible"] = False
+    assert not await generation.validate_private_repeat_reference_access(
+        source_feed_gen_id=84, private_reference_images=[reference])
+
+
+@pytest.mark.asyncio
+async def test_new_photo_generation_rechecks_clicked_post_not_lineage_root(monkeypatch):
+    from bot.handlers import generation
+
+    retained = "https://example.test/current-published-author.png"
+    verify = AsyncMock(return_value=False)
+    monkeypatch.setattr(generation, "validate_private_repeat_reference_access", verify)
+    # The guard runs before any provider call or task persistence; return
+    # False deliberately to observe the exact source ID being verified.
+    result = await generation._start_image_generation_task(
+        user=SimpleNamespace(id=3), telegram_id=883, img_service="banana_pro",
+        prompt="Keep the jacket", img_ratio="1:1", reference_images=[retained],
+        unit_cost=1, private_repeat_reference_images=[retained],
+        source_feed_gen_id=42, private_repeat_permission_source_id=84,
+        parent_generation_id=84, action_type="remix")
+    assert result["status"] == "failed"
+    verify.assert_awaited_once_with(source_feed_gen_id=84, private_reference_images=[retained])

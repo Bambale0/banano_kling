@@ -93,9 +93,12 @@ async def test_live_private_grant_validation_is_all_or_nothing(monkeypatch, chan
         await update_root(root_id, "feed_repeat_reference_selection = ?", ('{"images":"bad"}',))
     else:
         monkeypatch.setattr(database, "_is_feed_result_url_available", lambda *_: False)
-    assert not await generation.validate_private_repeat_reference_access(
+    # A published result remains repeatable even when it was derived; only
+    # revocation, missing/malformed inputs or withdrawal ends the permission.
+    allowed = await generation.validate_private_repeat_reference_access(
         source_feed_gen_id=root_id, private_reference_images=[PRIVATE]
     )
+    assert allowed is (change == "child")
 
 
 @pytest.mark.asyncio

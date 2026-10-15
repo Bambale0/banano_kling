@@ -519,43 +519,48 @@ test('WAN fixed-video repeat displays an explicit lower bound before missing pho
 })
 
 
-test('published output of a curated Wan trend follows the original approved trend, never the child private source', async () => {
+
+test('published Wan result repeats this video with its own edits, not the original trend', async () => {
   const api = jest.requireMock('@/lib/wan3-prime-api')
-  const original = { ok: true, trend_id: 2048, repeat_plan_hash: 'current-approved-trend',
-    recipe: { model: 'wan_3', scenario: 'reference', prompt: '', duration: 11,
+  const published = { ok: true, source_feed_gen_id: 315600, repeat_plan_hash: 'published-video-own-recipe',
+    recipe: { model: 'wan_3', scenario: 'reference', prompt: '', duration: 11, seed: 73,
       aspect_ratio: '9:16', resolution: '480P', audio: false, nsfw_checker: false },
     slots: [
       { key: 'image:0', kind: 'image', role: 'reference', index: 0, binding: 'upload' },
-      { key: 'video:0', kind: 'video', role: 'reference', index: 0, binding: 'fixed' },
+      { key: 'video:0', kind: 'video', role: 'reference', index: 0, binding: 'upload' },
     ],
   }
-  api.fetchWan3PrimeRepeatPlan.mockResolvedValue(original)
-  api.fetchWan3PrimeTrendPlan.mockResolvedValue(original)
+  api.fetchWan3PrimeRepeatPlan.mockResolvedValue(published)
   render(<Wan3PrimeForm credits={1000} model="wan_3" publicationSourceId={315600} />)
   await waitFor(() => expect(api.fetchWan3PrimeRepeatPlan).toHaveBeenCalledWith(315600, expect.anything()))
-  await waitFor(() => expect(api.fetchWan3PrimeTrendPlan).toHaveBeenCalledWith(2048, expect.anything()))
   await screen.findByLabelText('Загрузить Image1')
-  expect(screen.getByText(/Исходный тренд/)).toBeInTheDocument()
-  await upload('Загрузить Image1', 'my-own-picture.jpg', 'image/jpeg')
+  expect(api.fetchWan3PrimeTrendPlan).not.toHaveBeenCalled()
+  expect(screen.getByLabelText('Длительность Wan')).toHaveValue('11')
+  expect(screen.getByLabelText('Seed Wan')).toHaveValue(73)
+  await upload('Загрузить Image1', 'own-person.jpg', 'image/jpeg')
+  await upload('Загрузить Video1', 'own-video.mp4', 'video/mp4')
   fireEvent.click(screen.getByRole('button', { name: 'Рассчитать стоимость' }))
   await waitFor(() => expect(quoteWan3Prime).toHaveBeenCalled())
   const outbound = (quoteWan3Prime as jest.Mock).mock.calls.at(-1)[0].recipe
-  expect(outbound.trend_id).toBe(2048)
-  expect(outbound.source_feed_gen_id).toBeFalsy()
-  expect(outbound.repeat_plan_hash).toBe('current-approved-trend')
-  expect(outbound.repeat_replacements).toEqual({ 'image:0': 'https://owned.test/my-own-picture.jpg' })
-  expect(JSON.stringify(outbound)).not.toContain('hidden-reference')
+  expect(outbound).toMatchObject({
+    model: 'wan_3', duration: 11, seed: 73,
+    source_feed_gen_id: 315600, repeat_plan_hash: 'published-video-own-recipe',
+    repeat_replacements: { 'image:0': 'https://owned.test/own-person.jpg',
+                           'video:0': 'https://owned.test/own-video.mp4' },
+  })
+  expect(outbound.trend_id).toBeFalsy()
   expect(JSON.stringify(outbound)).not.toContain('child-private')
+  expect(JSON.stringify(outbound)).not.toContain('upstream-secret')
 })
 
-test('curator withdrew original Wan trend: published child remains unavailable, without a fallback to inherited media', async () => {
+test('removed publication remains unavailable even though original Wan trend is approved', async () => {
   const api = jest.requireMock('@/lib/wan3-prime-api')
   api.fetchWan3PrimeRepeatPlan.mockRejectedValue(new Wan3PrimeApiError(
-    'Тренд недоступен для повтора. Попросите автора опубликовать его заново.', 'validation_error', 404,
+    'Публикация больше недоступна', 'validation_error', 404,
   ))
   render(<Wan3PrimeForm credits={1000} model="wan_3" publicationSourceId={315600} />)
-  expect(await screen.findByText(/Тренд недоступен для повтора/)).toBeInTheDocument()
+  expect(await screen.findByText(/Публикация больше недоступна/)).toBeInTheDocument()
+  expect(api.fetchWan3PrimeTrendPlan).not.toHaveBeenCalled()
   expect(screen.queryByRole('button', { name: 'Запустить Wan' })).not.toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Повторить загрузку рецепта' })).toBeEnabled()
   expect(quoteWan3Prime).not.toHaveBeenCalled()
 })

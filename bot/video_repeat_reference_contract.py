@@ -163,8 +163,8 @@ def build_video_repeat_plan(
     grant = parse_video_repeat_grant(task.get("feed_repeat_reference_selection"))
     if grant is None:
         return None
-    if task.get("source_feed_gen_id") or str(task.get("action_type") or "").lower() in {"remix", "repeat"}:
-        raise VideoRepeatContractError("Повтор по чужим исходным материалам нельзя передать как новый рецепт.")
+    # A derivative that its author publishes has its own repeatable recipe.
+    # Repeating it does not grant clients URLs or expose the server-side media.
     data = source_request(task)
     if any(data.get(key) for key in PROVIDER_ASSET_KEYS):
         raise VideoRepeatContractError("Этот рецепт использует сохранённые аудио или персонажей провайдера, не входящие в разрешение на фото и видео.")
