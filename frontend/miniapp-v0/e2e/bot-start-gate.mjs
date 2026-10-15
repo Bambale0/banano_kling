@@ -230,8 +230,14 @@ try {
     chatAvailable = false
     await emitReturn(page, 'focus')
     await gate.waitFor()
+    const directLink = gate.getByRole('link', { name: 'Открыть по ссылке', exact: true })
+    assert.equal(await directLink.getAttribute('href'), 'https://t.me/test_bot?start=ref_E2ESTART',
+      'Fallback link preserves the exact signed Start context despite silent native no-op')
+    assert.equal(await directLink.getAttribute('target'), '_blank',
+      'Fallback opens a new context so the draft and references stay mounted')
+    assert.equal(await directLink.getAttribute('rel'), 'noopener noreferrer')
     await assertDraftPreserved('gate appears')
-    const controls = await gate.locator('button').evaluateAll(buttons => buttons.map(button => {
+    const controls = await gate.locator('button, a').evaluateAll(buttons => buttons.map(button => {
       const rect = button.getBoundingClientRect()
       return { left: rect.left, right: rect.right, height: rect.height }
     }))
