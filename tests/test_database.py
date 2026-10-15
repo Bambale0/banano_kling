@@ -2183,3 +2183,35 @@ async def test_unavailable_chat_transient_probe_does_not_suppress_result(isolate
         probe=probe,
     ) is True
     assert await database.can_attempt_telegram_delivery(user.telegram_id) is False
+
+
+@pytest.mark.asyncio
+async def test_oversize_link_receipt_survives_concurrent_pending_and_restart(monkeypatch):
+    from bot.services.delivery_state import has_retryable_result, retryable_result_sql
+
+    user = await database.get_or_create_user(880309699)
+    task_id = 'synthetic-oversize-delivery'
+    result_url = 'https://example.test/oversize-result.mp4'
+    await database.add_generation_task(user.id, user.telegram_id, task_id, 'video', 'no_preset', model='motion_control_v26')
+    assert await database.store_task_result_ready(task_id, result_url)
+    assert await database.claim_task_delivery(task_id)
+    monkeypatch.setattr(database, 'mark_telegram_chat_available', AsyncMock())
+    assert await database.mark_task_delivery_status(task_id, 'pending', error='telegram_media_too_large')
+    assert not await database.claim_task_delivery(task_id)
+    results = await asyncio.gather(
+        database.mark_task_delivery_status(task_id, 'link_sent'),
+        database.mark_task_delivery_status(task_id, 'pending', error='stale writer'),
+    )
+    assert all(results)
+    assert await database.store_task_result_ready(task_id, result_url)
+    task = await database.get_task_by_id(task_id)
+    metadata = json.loads(task.request_data)
+    assert metadata['delivery_status'] == 'link_delivered'
+    assert metadata['delivery_media_too_large'] is True
+    assert metadata['delivery_link_sent'] is True
+    assert task.status == 'completed' and task.result_url == result_url
+    assert not has_retryable_result(task)
+    assert not await database.claim_task_delivery(task_id)
+    async with db_backend.connect(database.DATABASE_PATH) as db:
+        rows = await (await db.execute('SELECT task_id FROM generation_tasks WHERE ' + retryable_result_sql(postgres=db_backend.is_postgres()))).fetchall()
+    assert task_id not in [row[0] for row in rows]
