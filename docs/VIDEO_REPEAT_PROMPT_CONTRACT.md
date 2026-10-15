@@ -2,6 +2,8 @@
 
 ## Contract
 
+**Применяется к самой выбранной опубликованной работе**, включая опубликованный ремикс, тренд и повтор. `source_feed_gen_id`/`action_type` — происхождение, а не причина подменять источник его предком или отклонять публикацию. Общие правила: [PUBLICATION_REPEAT_CONTRACT.md](PUBLICATION_REPEAT_CONTRACT.md). Legacy и typed Seedance имеют разные внутренние режимы восстановления; они должны сохранять эквивалентный пользовательский результат, не открывая скрытые исходные строки.
+
 Feed/profile video repeats send only the viewer's requested changes from the
 Mini App. After authenticating the viewer and resolving the source publication,
 the shared video-continuity boundary combines the saved source prompt with those
@@ -10,10 +12,10 @@ changes using the same composition helper as photo remixes.
 - Empty edits retain the saved prompt verbatim
 - Nonempty edits preserve the source and take priority for the requested changes
 - Composition occurs once before dispatch, including the separate Seedance 2.5 path
-- Missing/inaccessible source prompts fail before billing or provider submission
+- Missing/inaccessible **clicked publication** prompts fail before billing/provider submission; a working published child is never substituted by its ancestor
 - Normal video creation without a source publication keeps its existing prompt semantics
 - Genjutsu recipes retain their dedicated redirect and structured editing contract
-- Reference consent, ordered slots, receipts, prices, refunds and referral rules are unchanged
+- Reference grant, ordered slots, receipts, prices, refunds and referral rules remain independently validated; provider/network failure is not the same as revoked grant
 
 Composed repeats must fit the existing provider-adapter character limits. Seedance
 2 uses its canonical reference aliases before the length check; Seedance 2.5 keeps

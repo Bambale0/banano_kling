@@ -1,4 +1,9 @@
-# NEUROMIX Mini App frontend deployment
+# Mini App frontend: production CI/CD и legacy separate-host profile
+
+> **Действующий production 2026-10-16:** `https://tanyapp.xn--e1aikcel5c5a.online/mini-app/` на сервере `144.76.188.75`, web root `/var/www/tanyapp.xn--e1aikcel5c5a.online/mini-app`. Штатный выпуск идёт через `tanyapi` protected PR и `.github/workflows/deploy-frontend-production.yml` (см. [production_auto_deploy.md](production_auto_deploy.md)). До отчёта о релизе проверить `/mini-app/revision.txt`, backend OCI revision, health и реальный WebView.
+>
+> **Начиная с `## 1` ниже сохранён исторический отдельный CDN-контур** (`cdn.chillcreative.ru` / `91.200.84.187` / `cdn.sh` / `tanyafrontend`), актуален только для вручную согласованных legacy deployment. НЕ использовать команды `--remote-deploy`/`git reset --hard` ниже как normal production release. Сохранено для исторической совместимости и миграций.
+
 
 ## 1. Актуальная схема
 

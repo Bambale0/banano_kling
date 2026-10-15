@@ -119,3 +119,14 @@ errors, malformed responses and lineage mismatches preserve the marker and retry
 with the same bounded backoff until a valid canonical observation is available.
 Terminal success/failure still comes only from canonical provider status and the
 original settlement fence. No schema change or additional paid task is involved.
+
+
+## Публикации, повторы и отображение стоимости — актуальный контракт
+
+Продуктовое правило: [PUBLICATION_REPEAT_CONTRACT.md](PUBLICATION_REPEAT_CONTRACT.md). Публикация законченного Wan-видео, даже если оно получилось через тренд, повтор или ремикс, даёт повтор **этой** работы. `get_repeat_plan(actor, source_id)` открывает `source_feed_gen_id` выбранной публикации; `trend_id` предназначен отдельно для редакторского тренда. Запрещено молча подменять опубликованный результат рецептом его предка. Клиент получает только роли, индексы и `fixed/upload` bindings; исходный скрытый prompt и media URLs остаются серверными.
+
+`compile_repeat` на quote/generate перепроверяет сохранённый `repeat_plan_hash`, действующую публикацию, модель, source input, exact replacement map и доступность фиксированных материалов. Запуск с отсутствующими обязательными файлами/недостаточным балансом отклоняется до provider POST; quote не выполняет списание. Стоимость учитывает секунды **выходного ролика плюс фактическую длительность входящих видео**, без грубого удвоения. Сумма `от N 🍌` на плитке тренда — **нижняя граница выходной части**, а не окончательный дебит; `резерв N 🍌` в Auto — верхняя бронь до финального settlement. Retail rates берутся из действующих тарифов администратора.
+
+Если фото с мобильного устройства отклонено валидатором при `/wan3/upload/complete` HTTP 400, Mini App делает однократное локальное JPEG-преобразование и повторную сессионную загрузку. Сессия старой попытки освобождается, ошибки и отмена обрабатываются явно. Это восстановление не подтверждает, что конкретный проблемный оригинал на реальном iPhone уже успешно загружен: нужен пользовательский smoke. Платную генерацию для проверки upload запускать не требуется.
+
+Проверки: `tests/test_wan3_feed_repeat.py`, `tests/test_wan3_catalog_price_hint.py`, `tests/test_wan3_prime_lifecycle.py`, `frontend/miniapp-v0/components/forms/wan3-prime-form.test.tsx` и `frontend/miniapp-v0/e2e/wan3-prime.mjs`. Послерелизные ограничения — [POST_RELEASE_AUDIT_2026-10-16.md](POST_RELEASE_AUDIT_2026-10-16.md).

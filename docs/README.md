@@ -1,25 +1,36 @@
 # Документация NEUROMIX
 
-Этот каталог содержит документацию DEV- и production-контуров репозитория `Bambale0/banano_kling`.
+Этот каталог содержит действующие контракты, инструкции эксплуатации и исторические справочники репозитория `Bambale0/banano_kling`. Приоритет правил — [AGENTS.md](../AGENTS.md), индекс документов — [DOCUMENTATION_INDEX.md](DOCUMENTATION_INDEX.md).
 
 ## Ветки и release flow
 
 ```text
-feature/* -> PR в dev -> автодеплой DEV-бота -> ручной smoke
-          -> PR dev -> tanyapi -> автодеплой production
+origin/tanyapi -> docs/* | fix/* | feature/* -> PR напрямую в tanyapi
+              -> обязательные CI/review -> squash auto-merge
+              -> production CI/CD -> backend/frontend exact SHA
+              -> smoke, telemetry, аудит
 ```
 
-- `dev` — источник DEV-бота и DEV Mini App;
-- `tanyapi` — единственный источник production-бота и production Mini App;
-- `main` не участвует в deploy NEUROMIX.
+- `tanyapi` — единственная production-ветка.
+- `dev` — отдельный **опциональный** контур, только по прямому запросу владельца; обычный релиз не проходит через него.
+- `main` не участвует в этом процессе.
+- Штатный релиз не требует ручного `reset --hard`, deploy, рестарта или переноса `.env`. Действующие тарифы администратора сохраняются.
 
-Главный документ по новому процессу: [development-deployment.md](development-deployment.md).
+Выпуск: [production_auto_deploy.md](production_auto_deploy.md); отдельный DEV: [development-deployment.md](development-deployment.md).
+
+## Обязательные продуктовые контракты
+
+- [PUBLICATION_REPEAT_CONTRACT.md](PUBLICATION_REPEAT_CONTRACT.md) — любой опубликованный результат доступен для повтора независимо от его происхождения.
+- [PRIVATE_REPEAT_REFERENCES.md](PRIVATE_REPEAT_REFERENCES.md) — разделение публикации, приватных ссылок и серверного использования.
+- [VIDEO_REPEAT_PROMPT_CONTRACT.md](VIDEO_REPEAT_PROMPT_CONTRACT.md) — составление промпта из выбранной публикации и изменений пользователя.
+- [TREND_SHOWCASE_CATEGORIES.md](TREND_SHOWCASE_CATEGORIES.md) — категории, счётчики и цены повторов.
+- [POST_RELEASE_AUDIT_2026-10-16.md](POST_RELEASE_AUDIT_2026-10-16.md) — факты последнего аудита, ограничения и критерии закрытия.
 
 ## Как пользоваться документацией
 
 Для разработки и выпуска:
 
-1. [development-deployment.md](development-deployment.md) — отдельный DEV-бот, secrets, серверы, autodeploy и promotion `dev -> tanyapi`;
+1. [../AGENTS.md](../AGENTS.md) — обязательные правила веток и качества; [DOCUMENTATION_INDEX.md](DOCUMENTATION_INDEX.md) — статус материалов;
 2. [../README.md](../README.md) — что это за система и где находится production;
 3. [production_auto_deploy.md](production_auto_deploy.md) — production autodeploy строго из `tanyapi`;
 4. [production-deployment.md](production-deployment.md) — первичное production-развёртывание и полный deploy;
@@ -44,9 +55,9 @@ feature/* -> PR в dev -> автодеплой DEV-бота -> ручной smok
 
 | Документ | Для кого | Что содержит |
 | --- | --- | --- |
-| [development-deployment.md](development-deployment.md) | разработчик, DevOps, владелец | DEV-бот, ветка `dev`, environment secrets, автодеплой и выпуск в `tanyapi` |
+| [development-deployment.md](development-deployment.md) | разработчик, DevOps | отдельное DEV-окружение **только по запросу** |
 | [architecture.md](architecture.md) | разработчик, интегратор | компоненты, topology, auth, storage, API и media flows |
-| [production_auto_deploy.md](production_auto_deploy.md) | разработчик, DevOps | promotion `dev -> tanyapi` и production autodeploy |
+| [production_auto_deploy.md](production_auto_deploy.md) | разработчик, DevOps | защищённый PR непосредственно в `tanyapi` и автодеплой exact SHA |
 | [production-deployment.md](production-deployment.md) | DevOps, владелец проекта | DNS, backend, frontend, media, SSL, Cloudflare, smoke tests и rollback |
 | [miniapp-frontend-deployment.md](miniapp-frontend-deployment.md) | frontend/DevOps | `cdn.sh`, remote profile, build, release, cache overlap и npm troubleshooting |
 | [environment.md](environment.md) | разработчик, DevOps | env-переменные, обязательность, значения и правила хранения секретов |
@@ -155,10 +166,9 @@ Production topology относится только к ветке `tanyapi`. DEV
 
 ## Минимальный documentation review перед релизом
 
-- feature PR направлен в `dev`;
-- DEV exact SHA автоматически задеплоен;
-- DEV Telegram smoke пройден;
-- release PR направлен `dev -> tanyapi`;
+- новая task-ветка создана от актуального `origin/tanyapi`;
+- PR направлен непосредственно в `tanyapi` с native auto-merge;
+- обязательные CI/review зелёные, необязательный DEV не используется без отдельного поручения;
 - production workflow слушает только `tanyapi`;
 - `main` не указан как production branch;
 - DEV и production bot tokens различаются;

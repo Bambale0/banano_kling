@@ -1,6 +1,6 @@
-# DEV-окружение и выпуск в production
+# Изолированное DEV-окружение — только по отдельному запросу
 
-Этот документ задаёт обязательную двухконтурную схему разработки NEUROMIX.
+> **Статус: опциональная конфигурация, не обязательный release-процесс.** Исторический `feature → dev → tanyapi` больше не применяется к обычной разработке. Актуальное правило — [AGENTS.md](../AGENTS.md): отдельная task-ветка от `origin/tanyapi` и защищённый PR непосредственно в `tanyapi`. Остальные разделы описывают только раздельный DEV-контур при явном поручении владельца.
 
 ## 1. Ветки и окружения
 
@@ -11,22 +11,15 @@
 | `tanyapi` | production | основной production-бот и production Mini App | после каждого успешного push/merge в `tanyapi` |
 | `main` | не используется в release flow | историческая/default ветка репозитория | запрещён для deploy NEUROMIX |
 
-Главный маршрут изменения:
+Обычный маршрут:
 
 ```text
-feature branch
-    -> pull request в dev
-    -> strict development CI
-    -> merge в dev
-    -> automatic DEV backend/frontend deploy
-    -> ручной Telegram smoke на DEV-боте
-    -> pull request dev -> tanyapi
-    -> production CI
-    -> merge в tanyapi
-    -> automatic production backend/frontend deploy
+task branch from origin/tanyapi -> protected PR to tanyapi
+    -> CI + review -> native squash auto-merge
+    -> production deploy -> exact-SHA post-release smoke
 ```
 
-Нельзя отправлять обычные функциональные изменения сразу в `tanyapi`, минуя DEV-бота. Исключение — подтверждённый аварийный hotfix, который после production должен быть немедленно синхронизирован обратно в `dev`.
+По отдельной просьбе владельца можно добавить DEV-smoke **перед** выпуском. Он использует полностью изолированные credentials и базы, но не требует делать PR в `dev` или сливать `dev` целиком в production.
 
 ## 2. Что должно быть отдельным
 
@@ -305,40 +298,22 @@ Workflow:
 - media URL ведёт в DEV storage;
 - production-бот продолжает работать без изменений.
 
-## 11. Выпуск DEV в production
+## 11. Production-выпуск после необязательного DEV smoke
 
-После успешного smoke:
+1. Сверить проверенный код и результаты тестов в изолированном DEV-контуре, если он был запрошен.
+2. Подготовить отдельную task-ветку от актуального `origin/tanyapi`; внести только одобренные изменения.
+3. Открыть защищённый PR **непосредственно в `tanyapi`**, включить native auto-merge.
+4. После обязательных CI дождаться production автодеплоя, проверить checkout, OCI revision, Mini App `revision.txt`, health и telemetry на точном merge SHA.
+5. Не переносить из DEV `.env`, secrets, database, media, платежи или runtime-тарифы.
 
-1. убедиться, что `dev` CI и deploy зелёные;
-2. убедиться, что tested SHA совпадает с head ветки `dev`;
-3. создать pull request `dev -> tanyapi`;
-4. не добавлять новые функциональные изменения в release PR;
-5. дождаться production CI;
-6. выполнить merge в `tanyapi`;
-7. дождаться backend и frontend production autodeploy;
-8. выполнить короткий production smoke;
-9. не переносить DEV `.env`, DEV database или DEV media в production.
-
-Production source of truth:
+## 12. Emergency hotfix
 
 ```text
-tanyapi
+fix branch from origin/tanyapi -> PR to tanyapi -> required CI
+    -> squash auto-merge -> production deployment -> exact-SHA smoke
 ```
 
-`main` не участвует в выпуске и не должен быть target для release PR.
-
-## 12. Hotfix
-
-Если production требует срочного исправления:
-
-```text
-hotfix branch from tanyapi
-    -> PR в tanyapi
-    -> production deploy
-    -> PR/sync tanyapi -> dev
-```
-
-Нельзя оставить hotfix только в `tanyapi`, иначе следующий release `dev -> tanyapi` может вернуть старое поведение или создать конфликт.
+Автоматическая синхронизация `tanyapi → dev` или `dev → tanyapi` больше не является условием выпуска. Поддержка дополнительного DEV-контура — самостоятельная задача только по поручению владельца.
 
 ## 13. Rollback DEV
 
@@ -368,4 +343,4 @@ DEV-контур считается готовым, когда:
 - backend exact SHA автоматически появляется на DEV-боте;
 - frontend exact SHA автоматически появляется в DEV Mini App;
 - production workflow по-прежнему реагирует только на `tanyapi`;
-- release PR создаётся только `dev -> tanyapi`.
+- release PR создаётся из отдельной task-ветки напрямую в `tanyapi`, даже после опционального DEV smoke.

@@ -1,4 +1,7 @@
-# Автоматическая установка отдельного Mini App frontend
+# Отдельная установка legacy frontend — legacy reference
+
+> **НЕ текущий production release.** Старые профили `cdn.chillcreative.ru`, `91.200.84.187` и `/opt/banano-kling-src` описывают отдельный frontend-хост прошлой инфраструктуры. Сейчас static Mini App расположен на `tanyapp.xn--e1aikcel5c5a.online` вместе с backend на `144.76.188.75`, выпускается через protected `tanyapi` CI/CD. Ниже сохранены старые команды как история; не применять к production без отдельного согласования. См. [production_auto_deploy.md](production_auto_deploy.md) и [runbook.md](runbook.md).
+
 
 Схема развёртывания:
 

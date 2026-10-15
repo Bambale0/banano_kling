@@ -1,3 +1,7 @@
+# Execution ledger — chronological history (not current product policy)
+
+> **Attention (2026-10-16):** Older entries about derived video-repeat denial and redirection to an ancestor trend (notably PR #319) are **superseded** by the product owner and PR #320. The current invariant: every independently published completed result can be repeated as itself, irrespective of origin; reference privacy and media/quote checks are separate. See [publication contract](../PUBLICATION_REPEAT_CONTRACT.md) and [post-release audit](../POST_RELEASE_AUDIT_2026-10-16.md). Preserve old entries as chronological evidence, not instructions.
+
 # Execution ledger
 
 ## 2026-10-15 — Mini App referral → ordinary Telegram bot /start

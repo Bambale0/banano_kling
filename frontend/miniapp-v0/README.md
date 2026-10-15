@@ -7,10 +7,10 @@ Frontend не является отдельным backend. Он собирает
 ## 1. Production URL
 
 ```text
-https://cdn.chillcreative.ru/mini-app/
+https://tanyapp.xn--e1aikcel5c5a.online/mini-app/
 ```
 
-Production build обслуживается Nginx на `91.200.84.187`. API запросы под `/mini-app/api/*` проксируются по HTTPS на `https://tanyapi.chillcreative.ru`.
+Актуальный фронтенд — статический Next.js export на том же production сервере, что и backend (веб-корень `/var/www/tanyapp.xn--e1aikcel5c5a.online/mini-app`, Nginx). `/mini-app/api/*` проксируется к localhost backend. Прежние `cdn.chillcreative.ru` / сервер `91.200.84.187` — исторический separate-host профиль, **не** текущий нормальный deployment target. Exact public revision: `/mini-app/revision.txt`.
 
 ## 2. Стек
 
@@ -107,7 +107,11 @@ lib/brand.ts
 
 Не удалять early-ready механизм без проверки Telegram Android, iOS и Desktop.
 
-## 7. API contracts
+## 7. Повтор опубликованных работ
+
+Клиент открывает непосредственно выбранную публикацию, а не её `source_feed_gen_id`-предка. Сценарии Wan используют `Wan3PrimeForm` и защищённый repeat-plan; обычные фото и Seedance/другие видео — собственные generator forms с серверным объединением базового prompt и пользовательских изменений. Скрытые ссылки и полный исходный промпт в client DTO не возвращаются. Незапущенный текстовый Telegram-чат не препятствует Mini App; предложение «Открыть бота» опционально, «Пропустить» оставляет приложение доступным. Контракт: [docs/PUBLICATION_REPEAT_CONTRACT.md](../../docs/PUBLICATION_REPEAT_CONTRACT.md).
+
+## 8. API contracts
 
 Источник истины: `bot/miniapp.py`.
 

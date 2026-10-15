@@ -16,6 +16,14 @@ Production release branch:
 tanyapi
 ```
 
+## 1a. Штатный выпуск и подтверждение
+
+Новые изменения идут **непосредственно из task-ветки в защищённый PR к `tanyapi`**, native squash auto-merge после обязательных CI. Primary backend workflow — `.github/workflows/deploy-production-reliable.yml`, fallback — `deploy-production.yml`, frontend workflow — `deploy-frontend-production.yml`. Отдельный DEV-контур опционален. Ручной `reset --hard`/`systemctl restart`/`cdn.sh` не является способом обычного выпуска.
+
+После слияния сверить **один merge SHA** в GitHub, `git -C /root/tanya/banano_kling rev-parse HEAD`, Docker OCI label `org.opencontainers.image.revision` и `https://tanyapp.xn--e1aikcel5c5a.online/mini-app/revision.txt`. Проверить Docker `healthy`, публичный `/health`, ключевой сценарий и очищенные логи, затем admin `data/price.json` SHA256 до/после релиза. Не пытаться «исправить» разницу в ценах копированием Git defaults.
+
+Повтор опубликованных фото/видео — один продуктовый контракт без ancestry-only запретов: [PUBLICATION_REPEAT_CONTRACT.md](PUBLICATION_REPEAT_CONTRACT.md). Для безопасного read-only smoke не требуется запускать платные генерации.
+
 ## 2. Предварительные требования
 
 ### Backend host

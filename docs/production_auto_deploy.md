@@ -7,26 +7,26 @@ Branch `main` is not part of this project's release flow.
 Normal release path:
 
 ```text
-feature branch
-    -> pull request to dev
-    -> automatic DEV deploy
-    -> manual Telegram smoke on DEV bot
-    -> pull request dev -> tanyapi
-    -> merge to tanyapi
-    -> automatic production deploy
+task branch from origin/tanyapi
+    -> protected PR directly to tanyapi
+    -> Python, browser, database, Wan and Docker required checks
+    -> GitHub native squash auto-merge
+    -> production backend/frontend exact-SHA deploy
+    -> health + image revision + revision.txt + feature smoke
 ```
 
-Full DEV setup and release procedure: [development-deployment.md](development-deployment.md).
+The separate `dev` environment exists **only when explicitly requested** and is not an intermediate release branch: [development-deployment.md](development-deployment.md). Source of truth: [AGENTS.md](../AGENTS.md).
 
 ## Backend production workflow
 
-Workflow:
+Backend workflows (the reliable path is primary, the older path is fallback):
 
 ```text
+.github/workflows/deploy-production-reliable.yml
 .github/workflows/deploy-production.yml
 ```
 
-It deploys every successful push to `tanyapi` to the production backend host.
+They deploy approved `tanyapi` SHA only. The checkout SHA alone does not establish the revision inside the running Docker image. Current runtime administrative prices in `data/price.json` are mutable, so preserve their contents and checksum during deployment.
 
 Deployment order:
 
@@ -132,16 +132,16 @@ Save exactly that line as `PROD_SSH_KNOWN_HOSTS`. The workflow deliberately does
 A production release must come from a reviewed pull request:
 
 ```text
-dev -> tanyapi
+fix/* | feature/* | docs/* | agent/* -> tanyapi
 ```
 
 Before merge:
 
-- DEV exact SHA is deployed;
-- strict DEV CI passed;
-- Telegram smoke passed on the separate DEV bot;
-- release PR contains no untested extra changes;
-- production secrets and `.env` were not copied to DEV.
+- task branch based on current `origin/tanyapi`;
+- all protected required checks green and no release blocker;
+- native squash auto-merge armed;
+- no unrelated server runtime data, admin prices, secrets or `.env` in the commit;
+- when DEV smoke was requested, it ran on separate tokens, DB and media.
 
 After merge, the production workflows start from the new `tanyapi` SHA automatically.
 
@@ -176,6 +176,6 @@ sudo bash scripts/deploy_backend_docker.sh rollback
 
 Prefer a revert commit in `tanyapi` so Git history and deployed state remain aligned.
 
-After a production hotfix or revert, synchronize the resulting `tanyapi` state back into `dev` before the next normal release.
+After a production hotfix or revert, branch new work from the updated `tanyapi` head. Sync the optional `dev` environment only when explicitly requested.
 
 To stop automatic production deployment immediately, disable the production workflow or remove access to the `production` environment secrets. Do not modify DEV secrets as a production rollback mechanism.
