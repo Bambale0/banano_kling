@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
-import { chromium } from 'playwright'
+import { chromium, webkit } from 'playwright'
 
 // Standalone CI regression against the mounted production export. Telegram,
 // every API, and remote media are mocked; no real bot or generation is used.
@@ -62,7 +62,8 @@ async function emitReturn(page, event, visible = true) {
 
 try {
   await waitForServer()
-  browser = await chromium.launch({ headless: true })
+  const browserEngine = process.env.BOT_START_E2E_BROWSER === 'webkit' ? webkit : chromium
+  browser = await browserEngine.launch({ headless: true })
   for (const width of [320, 375, 390, 430]) {
     const context = await browser.newContext({ viewport: { width, height: 900 }, serviceWorkers: 'block' })
     const page = await context.newPage()
