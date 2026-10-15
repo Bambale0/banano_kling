@@ -1253,7 +1253,7 @@ async def _start_image_generation_task(
     nsfw_enabled: bool = False,
     callback_url: Optional[str] = None,
     source_feed_gen_id: Optional[int] = None,
-    private_repeat_permission_source_id: Optional[int] = None,
+    private_repeat_permission_source_id: int | None = None,
     parent_generation_id: Optional[int] = None,
     action_type: Optional[str] = None,
     prompt_source_id: Optional[int] = None,
