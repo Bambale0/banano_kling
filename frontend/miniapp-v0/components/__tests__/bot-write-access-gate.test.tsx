@@ -57,6 +57,23 @@ describe('BotWriteAccessGate', () => {
     expect(webApp().openTelegramLink).toHaveBeenCalledWith('https://t.me/neuromix_bot?start=' + expected)
   })
 
+  it('keeps a real fallback link when iOS Telegram accepts but ignores openTelegramLink', () => {
+    render(<BotWriteAccessGate required botUsername="neuromix_bot" onRefresh={jest.fn()} />)
+    open()
+    expect(webApp().openTelegramLink).toHaveBeenCalledTimes(1)
+    const fallback = screen.getByRole('link', { name: 'Открыть по ссылке' })
+    expect(fallback).toHaveAttribute('href', 'https://t.me/neuromix_bot?start=miniapp_delivery')
+    expect(fallback).toHaveAttribute('target', '_blank')
+    expect(fallback).toHaveAttribute('rel', 'noopener noreferrer')
+  })
+
+  it('preserves referral attribution in the browser fallback', () => {
+    startParam.mockReturnValue('feed_42_ref_PARTNER')
+    render(<BotWriteAccessGate required botUsername="neuromix_bot" onRefresh={jest.fn()} />)
+    expect(screen.getByRole('link', { name: 'Открыть по ссылке' }))
+      .toHaveAttribute('href', 'https://t.me/neuromix_bot?start=ref_PARTNER')
+  })
+
   it('keeps the gate until the server confirms Start and supports manual retry', async () => {
     const refresh = jest.fn().mockResolvedValue(false)
     render(<BotWriteAccessGate required botUsername="neuromix_bot" onRefresh={refresh} />)
@@ -128,6 +145,7 @@ describe('BotWriteAccessGate', () => {
     render(<BotWriteAccessGate required botUsername="bad/name?token=x" onRefresh={jest.fn()} />)
     open()
     expect(webApp().openTelegramLink).not.toHaveBeenCalled()
+    expect(screen.queryByRole('link', { name: 'Открыть по ссылке' })).toBeNull()
     expect(screen.getByText(/Не удалось проверить доступ/)).toBeTruthy()
   })
 })
