@@ -1136,3 +1136,70 @@ def test_legacy_descriptor_aliases_keep_exact_source_positions():
     source["feed_repeat_reference_selection"] = {"version": 1, "images": [], "videos": []}
     revoked = video_repeat_descriptors(source)
     assert all(slot["binding"] == "upload" for slot in revoked["images"])
+
+
+@pytest.mark.parametrize("model,scenario", [
+    ("seedance_2", "video"),
+    ("seedance_2_5", "multimodal"),
+])
+def test_published_repeat_of_a_repeat_is_a_new_available_video_recipe(model, scenario):
+    # Publication, not action_type/source_feed_gen_id, controls repeat access.
+    # Explicit reference slots keep the author's material hidden while
+    # preserving its positions in a new generation.
+    source = {
+        "id": 844, "user_id": 22, "type": "video", "model": model,
+        "status": "completed", "is_public_feed": True, "is_profile_visible": True,
+        "source_feed_gen_id": 42, "action_type": "repeat",
+        "prompt": "PUBLIC_CHILD_SAVED_PROMPT",
+        "feed_repeat_reference_selection": {
+            "version": 1, "images": [FIXED], "videos": [STYLE],
+        },
+        "request_data": {
+            "seedance25_scenario": scenario, "v_type": "video",
+            "reference_images": [FACE, FIXED],
+            "v_reference_videos": [MOTION, STYLE],
+        },
+    }
+    desc = video_repeat_descriptors(source)
+    assert desc and desc["available"]
+    assert [slot["binding"] for slot in desc["images"]] == ["upload", "fixed"]
+    assert [slot["binding"] for slot in desc["videos"]] == ["upload", "fixed"]
+    assert FIXED not in json.dumps(desc)
+    assert STYLE not in json.dumps(desc)
+
+
+@pytest.mark.asyncio
+async def test_shared_repeat_result_restores_its_own_prompt_and_refs(monkeypatch):
+    owner = await create_video()
+    source = await database.get_generation_task_payload("typed-private-video")
+    source["id"] = 999
+    source["user_id"] = owner.id
+    source["source_feed_gen_id"] = 42
+    source["action_type"] = "repeat"
+    source["request_data"]["video_repeat_contract_version"] = 1
+    source["is_public_feed"] = True
+    source["feed_repeat_reference_selection"] = {
+        "version": 1, "images": [FIXED], "videos": [STYLE],
+    }
+    source["prompt"] = "PUBLISHED_CHILD_WITH_OWN_CHANGES"
+
+    request = SimpleNamespace(app={}, json=AsyncMock(return_value={
+        "init_data": "signed", "source_feed_gen_id": 999,
+        "v_model": "seedance_2_5", "v_type": "video",
+        "seedance25_scenario": "multimodal",
+        "reference_images": ["https://example.test/my-face.png"],
+        "v_reference_videos": ["https://example.test/my-motion.mp4"],
+    }))
+    monkeypatch.setattr(miniapp, "_get_user_context", AsyncMock(return_value=(
+        9922, {"user": SimpleNamespace(id=333)})))
+    monkeypatch.setattr(miniapp, "_get_repeat_source_card", AsyncMock(return_value={
+        "id": 999, "gen_type": "video",
+    }))
+    monkeypatch.setattr(continuity, "get_generation_task_payload", AsyncMock(return_value=source))
+    monkeypatch.setattr(continuity, "missing_local_upload_sources", lambda _media: [])
+
+    result = await continuity._restore_repeat_request(request, await request.json())
+    assert result["reference_images"] == ["https://example.test/my-face.png", FIXED]
+    assert result["v_reference_videos"] == ["https://example.test/my-motion.mp4", STYLE]
+    assert "PUBLISHED_CHILD_WITH_OWN_CHANGES" in result["prompt"]
+    assert request._video_repeat_guard["source_id"] == 999

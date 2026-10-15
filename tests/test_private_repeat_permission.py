@@ -56,12 +56,16 @@ def test_legacy_or_malformed_permission_never_authorizes(grant):
     assert miniapp._selected_private_repeat_references(payload) == []
 
 
-@pytest.mark.parametrize("change", [{"source_feed_gen_id": 12}, {"action_type": "remix"}, {"status": "failed"}, {"type": "video"}, {"is_public_feed": False}])
-def test_child_or_unavailable_source_cannot_authorize(change):
+@pytest.mark.parametrize("change", [{"source_feed_gen_id": 12}, {"action_type": "remix"},
+                                    {"status": "failed"}, {"type": "video"},
+                                    {"is_public_feed": False}])
+def test_current_publication_not_ancestry_authorizes_selected_image_references(change):
     ref = "https://example.test/private.png"
     payload = {"type": "image", "status": "completed", "is_public_feed": True,
-        "feed_repeat_reference_selection": {"images": [ref]}, "request_data": {"source_reference_images": [ref]}, **change}
-    assert miniapp._selected_private_repeat_references(payload) == []
+        "feed_repeat_reference_selection": {"images": [ref]},
+        "request_data": {"source_reference_images": [ref]}, **change}
+    expected = [ref] if "source_feed_gen_id" in change or "action_type" in change else []
+    assert miniapp._selected_private_repeat_references(payload) == expected
 
 
 def test_private_merge_preserves_numbered_image_slots_and_rejects_missing_replacement():
@@ -148,6 +152,30 @@ async def test_image_auto_retry_rechecks_revoked_permission(monkeypatch, retry_n
     task = SimpleNamespace(type="image", source_feed_gen_id=42, request_data=json.dumps({"private_repeat_reference_images": ["https://example.test/secret.png"]}))
     assert await getattr(main, retry_name)(task, "failed-task") is None
     assert validate.await_args.kwargs == {"source_feed_gen_id": 42, "private_reference_images": ["https://example.test/secret.png"]}
+
+
+
+@pytest.mark.asyncio
+async def test_photo_retry_revalidates_clicked_published_child_not_ancestor(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from bot import main
+    from bot.handlers import generation
+
+    validate = AsyncMock(return_value=False)
+    monkeypatch.setattr(generation, "validate_private_repeat_reference_access", validate)
+    task = SimpleNamespace(
+        type="image", source_feed_gen_id=42,
+        request_data=json.dumps({
+            "private_repeat_reference_images": ["https://example.test/saved.png"],
+            "private_repeat_permission_source_id": 84,
+        }),
+    )
+    assert await main._retry_transient_kie_image_failure(task, "failed-child") is None
+    validate.assert_awaited_once_with(
+        source_feed_gen_id=84, private_reference_images=["https://example.test/saved.png"]
+    )
 
 
 @pytest.mark.asyncio

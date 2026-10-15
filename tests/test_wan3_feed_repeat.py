@@ -74,115 +74,110 @@ async def test_repeat_permission_change_invalidates_quote_without_debit():
     assert provider.creates == 0 and await balance(actor.user_id) == 100
 
 
-@pytest.mark.asyncio
-async def test_published_curated_wan_result_delegates_to_current_approved_trend(monkeypatch):
-    """A trend output may be published but may NOT pass along another owner's media.
-
-    Its public repeat opens the *original still-approved* curated trend; only
-    that canonical editor's current plan authorizes hidden references and
-    charges. The user's own generated output is not a new media grant.
-    """
-    from types import SimpleNamespace
-
-    from bot.services import wan3_prime_trends
-
-    child = {
-        "id": 315600, "type": "video", "status": "completed", "model": "wan_3",
-        "action_type": "trend", "source_feed_gen_id": None,
-        "request_data": {
-            "trend_id": 2048, "scenario": "reference",
-            "prompt": "CHILD_PRIVATE_PROMPT_NOT_TO_REPUBLISH",
-            "reference_image_urls": ["https://child.test/inherited-secret.png"],
-            "reference_video_urls": ["https://child.test/inherited-secret.mp4"],
-        },
-    }
-    async def source_card(source_id, *, viewer_user_id, include_unavailable=False):
-        assert source_id == 315600 and viewer_user_id == 992
-        return {"id": source_id, "gen_type": "video"}
-    async def source_task(source_id):
-        assert source_id == 315600
-        return child
-    expected = {
-        "source_id": 0, "trend_id": 2048, "owner_id": 1, "owner_telegram_id": 2,
-        "recipe": {
-            "model": "wan_3", "scenario": "reference", "prompt": "UPSTREAM_SECRET_PROMPT",
-            "reference_image_urls": ["https://owner.test/hidden-reference.png"],
-            "reference_video_urls": [], "reference_audio_urls": [],
-            "reference_file_urls": [], "reference_link_urls": [],
-            "resolution": "480P", "aspect_ratio": "9:16", "duration": 11,
-            "audio": False, "nsfw_checker": False,
-        },
-        "slots": [
-            {"key": "image:0", "kind": "image", "role": "reference", "index": 0,
-             "url": "https://owner.test/hidden-reference.png", "field": "reference_image_urls",
-             "binding": "upload"},
-        ],
-        "hash": "canonical_trend_hash",
-    }
-    async def upstream(actor, trend_id):
-        assert actor.user_id == 992 and trend_id == 2048
-        return expected
-    monkeypatch.setattr(database, "get_profile_generation_card", source_card)
-    monkeypatch.setattr(database, "get_generation_task_payload", source_task)
-    monkeypatch.setattr(wan3_prime_trends, "get_trend_plan", upstream)
-    actor = SimpleNamespace(user_id=992)
-    plan = await get_repeat_plan(actor, 315600)
-    assert plan is expected
-    public = public_plan(plan)
-    assert public["trend_id"] == 2048
-    assert "source_feed_gen_id" not in public
-    assert public["slots"][0]["binding"] == "upload"
-    assert "UPSTREAM_SECRET_PROMPT" not in json.dumps(public)
-    assert "CHILD_PRIVATE_PROMPT_NOT_TO_REPUBLISH" not in json.dumps(public)
-    assert "inherited-secret" not in json.dumps(public)
-    assert "hidden-reference" not in json.dumps(public)
-
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("source_parent, action, original_trend, upstream_model", [
-    (None, "trend", None, "wan_3"),
-    (332, "trend", 2048, "wan_3"),
-    (None, "repeat", 2048, "wan_3"),
-    (None, "trend", 2048, "wan_3_prime"),
+@pytest.mark.parametrize("action,parent_id", [
+    ("trend", None),
+    ("repeat", 153),
+    ("remix", 153),
 ])
-async def test_wan_derived_route_fail_closed_without_valid_provenance(
-    monkeypatch, source_parent, action, original_trend, upstream_model,
-):
+async def test_any_published_wan_video_repeats_its_own_recipe(monkeypatch, action, parent_id):
+    # Publishing the generated result grants replay of this specific result,
+    # including the creator's edits. Never swap it for a different ancestor.
     from types import SimpleNamespace
 
     from bot.services import wan3_prime_trends
 
     source = {
-        "id": 810, "type": "video", "status": "completed", "model": "wan_3",
-        "action_type": action, "source_feed_gen_id": source_parent,
-        "request_data": {"trend_id": original_trend} if original_trend is not None else {},
+        "id": 315600, "user_id": 70, "telegram_id": 89170,
+        "type": "video", "status": "completed", "model": "wan_3",
+        "is_public_feed": True, "is_profile_visible": True,
+        "action_type": action, "source_feed_gen_id": parent_id,
+        "request_data": {
+            "trend_id": 2048, "scenario": "reference",
+            "prompt": "CHILD_PRIVATE_PROMPT",
+            "reference_image_urls": ["https://child.test/one.png"],
+            "reference_video_urls": ["https://child.test/original.mp4"],
+            "reference_audio_urls": [], "reference_file_urls": [], "reference_link_urls": [],
+            "resolution": "480P", "aspect_ratio": "9:16", "duration": 11,
+            "audio": False, "nsfw_checker": False, "seed": 73,
+        },
     }
-    async def source_card(*a, **kw): return {"id": 810}
-    async def source_task(*a, **kw): return source
-    async def upstream(*a, **kw):
-        return {"recipe": {"model": upstream_model}, "trend_id": 2048}
+    async def source_card(source_id, *, viewer_user_id, include_unavailable=False):
+        assert (source_id, viewer_user_id) == (315600, 992)
+        return {"id": source_id, "gen_type": "video"}
+    async def source_task(_):
+        return dict(source)
+    async def forbidden_ancestor(*_args):
+        raise AssertionError("The published child is the source; do not use an ancestor's recipe")
     monkeypatch.setattr(database, "get_profile_generation_card", source_card)
     monkeypatch.setattr(database, "get_generation_task_payload", source_task)
-    monkeypatch.setattr(wan3_prime_trends, "get_trend_plan", upstream)
-    with pytest.raises(Wan3PrimeValidationError):
-        await get_repeat_plan(SimpleNamespace(user_id=992), 810)
+    monkeypatch.setattr(wan3_prime_trends, "get_trend_plan", forbidden_ancestor)
+
+    plan = await get_repeat_plan(SimpleNamespace(user_id=992), 315600)
+    public = public_plan(plan)
+    assert plan["source_id"] == 315600
+    assert public["source_feed_gen_id"] == 315600
+    assert "trend_id" not in public
+    assert plan["recipe"]["duration"] == 11 and plan["recipe"]["seed"] == 73
+    assert plan["recipe"]["prompt"] == "CHILD_PRIVATE_PROMPT"
+    assert len(public["slots"]) == 2
+    assert all(item["binding"] == "upload" for item in public["slots"])
+    assert "CHILD_PRIVATE_PROMPT" not in json.dumps(public)
+    assert "child.test" not in json.dumps(public)
 
 
 @pytest.mark.asyncio
-async def test_wan_trend_repeat_never_bypasses_revoked_curator_publication(monkeypatch):
+async def test_published_child_permission_independent_of_ancestor(monkeypatch):
+    # If the child's own publication is available, repeat it. If it was
+    # withdrawn, reject regardless of the original template's status.
     from types import SimpleNamespace
 
     from bot.services import wan3_prime_trends
 
-    async def source_card(*a, **kw): return {"id": 810}
-    async def source_task(*a, **kw):
-        return {"id": 810, "type": "video", "status": "completed", "model": "wan_3",
-                "action_type": "trend", "source_feed_gen_id": None, "request_data": {"trend_id": 2048}}
-    async def revoked(*a, **kw):
-        raise Wan3PrimeValidationError("Тренд недоступен для повтора", status=404)
+    source = {
+        "id": 810, "user_id": 70, "telegram_id": 89170, "type": "video",
+        "status": "completed", "model": "wan_3", "action_type": "trend",
+        "source_feed_gen_id": None, "is_public_feed": True, "is_profile_visible": True,
+        "request_data": {
+            "trend_id": 2048, "scenario": "text", "prompt": "CHILD_AUTHOR_EDIT",
+            "reference_image_urls": [], "reference_video_urls": [],
+            "reference_audio_urls": [], "reference_file_urls": [], "reference_link_urls": [],
+            "resolution": "720P", "aspect_ratio": "9:16", "duration": 5,
+            "audio": True, "nsfw_checker": True,
+        },
+    }
+    async def source_card(*_args, **_kwargs):
+        return {"id": 810} if source["is_public_feed"] else None
+    async def source_task(*_args):
+        return dict(source)
+    async def revoked_parent(*_args):
+        raise Wan3PrimeValidationError("Original template withdrawn", status=404)
     monkeypatch.setattr(database, "get_profile_generation_card", source_card)
     monkeypatch.setattr(database, "get_generation_task_payload", source_task)
-    monkeypatch.setattr(wan3_prime_trends, "get_trend_plan", revoked)
-    with pytest.raises(Wan3PrimeValidationError) as exc:
+    monkeypatch.setattr(wan3_prime_trends, "get_trend_plan", revoked_parent)
+    assert (await get_repeat_plan(SimpleNamespace(user_id=992), 810))["source_id"] == 810
+    source["is_public_feed"] = False
+    source["is_profile_visible"] = False
+    with pytest.raises(Wan3PrimeValidationError) as err:
         await get_repeat_plan(SimpleNamespace(user_id=992), 810)
-    assert exc.value.status == 404
+    assert err.value.status == 404
+
+
+@pytest.mark.asyncio
+async def test_unpublished_child_even_with_visible_card_never_grants_repeat(monkeypatch):
+    from types import SimpleNamespace
+
+    async def source_card(*_args, **_kwargs): return {"id": 810}
+    async def source_task(*_args):
+        return {
+            "id": 810, "user_id": 70, "type": "video", "status": "completed",
+            "is_public_feed": False, "is_profile_visible": False,
+            "model": "wan_3", "action_type": "trend", "source_feed_gen_id": None,
+            "request_data": {"scenario": "text", "prompt": "hidden"},
+        }
+    monkeypatch.setattr(database, "get_profile_generation_card", source_card)
+    monkeypatch.setattr(database, "get_generation_task_payload", source_task)
+    with pytest.raises(Wan3PrimeValidationError) as err:
+        await get_repeat_plan(SimpleNamespace(user_id=992), 810)
+    assert err.value.status == 404

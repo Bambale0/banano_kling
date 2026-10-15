@@ -1426,8 +1426,8 @@ def _selected_private_repeat_references(task_payload: dict[str, Any]) -> list[st
     """Server-only permission, independent from preview/publication visibility."""
     if (task_payload.get("type") != "image"
         or task_payload.get("status") != "completed"
-        or task_payload.get("source_feed_gen_id")
-        or str(task_payload.get("action_type") or "").lower() == "remix"
+        # Publishing a derivative grants repeat-use of its selected reference
+        # slots just as publishing an original does. Raw URLs stay server-only.
         or not (task_payload.get("is_public_feed") or task_payload.get("is_profile_visible"))):
         return []
     from bot.database import _is_feed_result_url_available
@@ -1443,7 +1443,7 @@ def _merge_private_repeat_references(task_payload: dict[str, Any], references: l
     granted = generation_repeat_reference_selection(task_payload)
     private = _selected_private_repeat_references(task_payload)
     if not private:
-        if granted and not task_payload.get("source_feed_gen_id"):
+        if granted:
             raise ValueError("Референсы для повтора больше недоступны. Откройте публикацию заново.")
         return references
     if len(private) != len(granted):
@@ -4608,10 +4608,12 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
         source_task = await get_generation_task_payload(source["id"])
         if not source_task:
             return web.json_response({"ok": False, "error": "Пост ленты не найден"}, status=404)
-        if source_task.get("source_feed_gen_id") or str(source_task.get("action_type") or "").lower() == "remix":
-            return web.json_response(
-                {"ok": False, "error": "Для нового повтора откройте исходную публикацию автора."}, status=403,
-            )
+        # A derived result can become a new repeat source only after its own
+        # publication; never use an unpublished child as proof of consent.
+        if (source_task.get("source_feed_gen_id") or str(source_task.get("action_type") or "").lower() == "remix") and not (
+            source_task.get("is_public_feed") or source_task.get("is_profile_visible")
+        ):
+            return web.json_response({"ok": False, "error": "Эта работа не опубликована"}, status=403)
         source_prompt = str(source_task.get("prompt") or "").strip()
         if not source_prompt:
             return web.json_response({"ok": False, "error": "У исходной генерации нет prompt"}, status=400)
@@ -4710,6 +4712,9 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
             nsfw_enabled=nsfw_enabled,
             callback_url=(config.kie_notification_url if config.WEBHOOK_HOST else None),
             source_feed_gen_id=int(source_task.get("source_feed_gen_id") or source["id"]),
+            # Reuse exactly the clicked author's public grant. The root ID
+            # above remains the generation's lineage for accounting/history.
+            private_repeat_permission_source_id=int(source["id"]),
             parent_generation_id=int(source["id"]),
             action_type="remix",
             private_repeat_reference_images=_selected_private_repeat_references(source_task),
@@ -4808,10 +4813,12 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
                     {"ok": False, "error": "Пост ленты не найден"},
                     status=404,
                 )
-            if source_feed_payload.get("source_feed_gen_id") or str(source_feed_payload.get("action_type") or "").lower() == "remix":
-                return web.json_response(
-                    {"ok": False, "error": "Для нового повтора откройте исходную публикацию автора."}, status=403,
-                )
+            # Use the immediate derived task's own recipe only if its author
+            # published that result, not merely its ancestor.
+            if (source_feed_payload.get("source_feed_gen_id") or str(source_feed_payload.get("action_type") or "").lower() == "remix") and not (
+                source_feed_payload.get("is_public_feed") or source_feed_payload.get("is_profile_visible")
+            ):
+                return web.json_response({"ok": False, "error": "Эта работа не опубликована"}, status=403)
             source_prompt = str(source_feed_payload.get("prompt") or "").strip()
             if not source_prompt:
                 return web.json_response(
@@ -4951,6 +4958,7 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
             callback_url=(config.kie_notification_url if config.WEBHOOK_HOST else None),
             prompt_source_id=(None if source_feed_gen_id else prompt_id),
             source_feed_gen_id=source_feed_gen_id,
+            private_repeat_permission_source_id=(immediate_parent_id if source_feed_gen_id else None),
             parent_generation_id=(immediate_parent_id if source_feed_gen_id else None),
             action_type=("remix" if source_feed_gen_id else None),
             private_repeat_reference_images=(

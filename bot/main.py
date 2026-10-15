@@ -2207,6 +2207,11 @@ async def _image_retry_private_references_allowed(task, request_data: dict) -> b
 
     source_id = getattr(task, "source_feed_gen_id", None)
     private_references = request_data.get("private_repeat_reference_images") or []
+    explicit_source = request_data.get("private_repeat_permission_source_id")
+    if private_references and type(explicit_source) is int and explicit_source > 0:
+        # First launch captured and validated this immediate public source.
+        # Do not revert to an earlier ancestor when retrying.
+        source_id = explicit_source
     if source_id and not private_references:
         # Old children have no explicit private-input marker. Reconstruct their
         # provenance from the original root, never treat absence as consent.

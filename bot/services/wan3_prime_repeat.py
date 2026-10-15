@@ -77,8 +77,10 @@ def build_repeat_plan(source: dict[str, Any]) -> dict[str, Any]:
     from bot.services.media_input_utils import resolve_reference_source
     from bot.video_repeat_reference_contract import parse_video_repeat_grant
 
-    if source.get("source_feed_gen_id") or str(source.get("action_type") or "") in {"repeat", "remix", "trend"}:
-        raise Wan3PrimeValidationError("Чужой приватный рецепт нельзя передать повторно", status=403)
+    # Publishing a completed result explicitly enables repeating THAT result.
+    # Its ancestry is provenance, not an authorization veto. The author's
+    # submitted slot bindings still decide which hidden inputs stay server-side
+    # and which inputs the next visitor must upload.
     recipe = source_recipe(source)
     try:
         grant = parse_video_repeat_grant(source.get("feed_repeat_reference_selection"))
@@ -126,26 +128,10 @@ async def get_repeat_plan(actor, source_id: int) -> dict[str, Any]:
     source = await database.get_generation_task_payload(source_id) if card else None
     if not source or source.get("status") != "completed" or source.get("type") != "video":
         raise Wan3PrimeValidationError("Публикация больше недоступна", status=404)
-    # Outputs made from a *curated Wan trend* may be shared, but their creator
-    # cannot sublicense upstream private files or prompt by publishing the
-    # result. Resolve a new repeat to the original still-approved curator plan,
-    # which is rechecked in the quote and debit transaction. Never construct a
-    # repeat plan from the derived output's inherited request_data or grants.
-    action = str(source.get("action_type") or "").strip().lower()
-    if action == "trend" and not source.get("source_feed_gen_id"):
-        from bot.services.wan3_prime_trends import get_trend_plan
-
-        trend_id = _json_object(source.get("request_data")).get("trend_id")
-        if type(trend_id) is not int or trend_id <= 0:
-            raise Wan3PrimeValidationError(
-                "Исходный тренд для этого повтора не найден. Откройте другой тренд.", status=409
-            )
-        current = await get_trend_plan(actor, trend_id)
-        if current["recipe"]["model"] != source.get("model"):
-            raise Wan3PrimeValidationError(
-                "Модель исходного тренда изменилась. Откройте тренд заново.", status=409
-            )
-        return current
+    if not (source.get("is_public_feed") or source.get("is_profile_visible")):
+        raise Wan3PrimeValidationError("Публикация больше недоступна", status=404)
+    # Do NOT reroute to the ancestor trend: the source is the video the viewer
+    # actually chose, with its own edited prompt, media slots and settings.
     return build_repeat_plan(source)
 
 

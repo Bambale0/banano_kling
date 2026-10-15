@@ -76,3 +76,46 @@ async def test_typed_video_callback_redirects_or_blocks_before_billing(
         callback.answer.assert_awaited()
         assert callback.answer.await_args.kwargs["show_alert"] is True
         message.answer.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("typed_grant", [False, True])
+async def test_published_child_telegram_repeat_targets_its_own_post(monkeypatch, typed_grant):
+    # A published descendant is a standalone repeateable post, not an alias
+    # for the original source. No backend debit or provider launch here.
+    grant = {"version": 1, "images": ["https://example.test/fixed.png"], "videos": []}
+    task = SimpleNamespace(
+        id=84, task_id="child-repeat", user_id=4, type="video",
+        model="seedance_2", is_public_feed=True, is_profile_visible=True,
+        source_feed_gen_id=42, action_type="repeat",
+        feed_repeat_reference_selection=grant if typed_grant else None,
+        request_data={"v_model": "seedance_2", "v_type": "imgtxt",
+                      "v_image_url": "https://example.test/fixed.png",
+                      "video_repeat_contract_version": 1},
+        prompt="Child's own edited prompt",
+    )
+    payload = {
+        "id": 84, "user_id": 4, "model": "seedance_2",
+        "type": "video", "status": "completed", "is_public_feed": True,
+        "source_feed_gen_id": 42, "action_type": "repeat",
+        "feed_repeat_reference_selection": grant if typed_grant else None,
+        "request_data": {"v_type": "imgtxt", "v_image_url": "https://example.test/fixed.png"},
+        "prompt": "Child's own edited prompt",
+    }
+    lookup = AsyncMock(side_effect=lambda id: payload if id == 84 else None)
+    monkeypatch.setattr(continuity, "get_generation_task_payload", lookup)
+    monkeypatch.setattr(database, "get_or_create_user", AsyncMock(return_value=SimpleNamespace(id=2)))
+    monkeypatch.setattr(miniapp, "_get_repeat_source_card", AsyncMock(return_value={"id": 84, "gen_type": "video"}))
+    monkeypatch.setattr("bot.keyboards._mini_app_url_with_start_param",
+                        lambda value: "https://example.test/mini-app?startapp=" + value)
+    callback = SimpleNamespace(
+        from_user=SimpleNamespace(id=880202),
+        message=SimpleNamespace(answer=AsyncMock()),
+        answer=AsyncMock(),
+    )
+    result = await continuity.redirect_typed_video_repeat(callback, task)
+    assert result is True
+    lookup.assert_awaited_once_with(84)
+    url = callback.message.answer.await_args.kwargs["reply_markup"].inline_keyboard[0][0].web_app.url
+    assert url.endswith("startapp=remix_84"), url
+    assert "Child's own edited prompt" not in callback.message.answer.await_args.args[0]
