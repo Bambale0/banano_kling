@@ -17,7 +17,7 @@ import { formatTrendRepeatPrice } from '@/lib/trend-price'
 import { isNavigableShareLink, telegramForwardLink, tryOpenTelegramShareLink } from '@/lib/share-link-navigation'
 import { genjutsuCall, openGenjutsu, type Recipe } from '@/lib/genjutsu-api'
 import { TrendRunnerDialog } from '@/components/trend-runner-dialog'
-import { TrendShowcase } from '@/components/trend-showcase'
+import { TrendShowcase, completedTrendRunsLabel } from '@/components/trend-showcase'
 import { TrendCategoryManager } from '@/components/trend-category-manager'
 import { adminShowcaseAction, fetchTrendCatalog, resolveGenjutsuCatalogPrices, ShowcaseApiError, type ShowcaseCategory } from '@/lib/trend-catalog-api'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
@@ -857,6 +857,9 @@ export function TrendsTab() {
               ? normalizeMiniAppMediaUrl(trend.preview_poster_url)
               : ''
             const repeatPrice = formatTrendRepeatPrice(trend)
+            // Older /prompts API prefixes the description with its count. Strip
+            // that legacy heading now that the number has a dedicated row.
+            const visibleDescription = trend.description?.replace(/^✅ Успешных запусков: [0-9]+(?: · )?/, '').trim()
             return (
               <article key={trend.id} className="glass min-w-0 overflow-hidden rounded-2xl border border-border/50">
                 <div className="relative bg-secondary/40">
@@ -932,7 +935,10 @@ export function TrendsTab() {
                   )}
                 </div>
                 <div className="space-y-2.5 p-3">
-                  <div><h4 className="line-clamp-2 text-sm font-semibold text-foreground">{trend.title}</h4>{trend.description ? <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{trend.description}</p> : null}</div>
+                  <div><h4 className="line-clamp-2 text-sm font-semibold text-foreground">{trend.title}</h4>{visibleDescription ? <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{visibleDescription}</p> : null}</div>
+                  <p className="text-xs font-semibold text-foreground" aria-label={'Успешных запусков: ' + completedTrendRunsLabel(trend.successful_runs_count)}>
+                    ✅ Успешных запусков: {completedTrendRunsLabel(trend.successful_runs_count)}
+                  </p>
                   <div className="truncate rounded-lg bg-secondary/55 px-2 py-1.5 text-[10px] text-muted-foreground">{modelLabel || trend.model}</div>
                   <Button type="button" size="sm" className="w-full bg-gold text-primary-foreground hover:bg-gold/90" onClick={() => applyTrend(trend)}><Repeat2 className="h-3.5 w-3.5" />{repeatPrice ? 'Повторить · ' + repeatPrice : 'Повторить'}</Button>
                   <div className={isAdmin ? 'grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2' : 'grid'}>
