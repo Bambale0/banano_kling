@@ -115,6 +115,13 @@ try {
       window.open = url => { window.__openedBotLinks.push(url); return null }
     })
 
+    // Real browser navigation: this fixture never talks to Telegram; the
+    // browser must issue a popup request for the textual bot /start URL.
+    await context.route('https://t.me/**', route => route.fulfill({
+      status: 200, contentType: 'text/html',
+      body: '<!doctype html><html><body>Mock text bot chat target</body></html>',
+    }))
+
     await page.route('**/*', async route => {
       const request = route.request()
       const url = new URL(request.url())
@@ -211,7 +218,7 @@ try {
     const referenceNode = await selectedReference.elementHandle()
     const originalUrl = page.url()
     const gate = page.getByRole('dialog', { name: 'Разреши боту писать тебе' })
-    const openBot = gate.getByRole('button', { name: 'Открыть бота', exact: true })
+    const openBot = gate.getByRole('link', { name: 'Открыть бота', exact: true })
     const retry = gate.getByRole('button', { name: 'Проверить снова', exact: true })
     const status = gate.getByRole('status')
 
@@ -230,12 +237,13 @@ try {
     chatAvailable = false
     await emitReturn(page, 'focus')
     await gate.waitFor()
-    const directLink = gate.getByRole('link', { name: 'Открыть по ссылке', exact: true })
-    assert.equal(await directLink.getAttribute('href'), 'https://t.me/test_bot?start=ref_E2ESTART',
-      'Fallback link preserves the exact signed Start context despite silent native no-op')
-    assert.equal(await directLink.getAttribute('target'), '_blank',
-      'Fallback opens a new context so the draft and references stay mounted')
-    assert.equal(await directLink.getAttribute('rel'), 'noopener noreferrer')
+    assert.equal(await openBot.getAttribute('href'), 'https://t.me/test_bot?start=ref_E2ESTART',
+      'The primary CTA points to text chat via start= instead of relaunching startapp=')
+    assert.equal(await openBot.getAttribute('target'), '_blank',
+      'The native Telegram SDK must not intercept the link as a silent openTelegramLink no-op')
+    assert.equal(await openBot.getAttribute('rel'), 'noopener noreferrer')
+    assert.equal(await gate.getByRole('link', { name: 'Открыть по ссылке' }).count(), 0,
+      'Exactly one user action opens the bot; there is no extra fallback button')
     await assertDraftPreserved('gate appears')
     const controls = await gate.locator('button, a').evaluateAll(buttons => buttons.map(button => {
       const rect = button.getBoundingClientRect()
@@ -247,14 +255,17 @@ try {
     mkdirSync('test-results', { recursive: true })
     await page.screenshot({ path: 'test-results/bot-start-gate-' + width + '.png' })
 
-    const clickResult = await openBot.evaluate(button => {
-      const before = window.__openedBotLinks.length
-      button.click()
-      return { opened: window.__openedBotLinks.slice(before), nativeCalls: window.__nativeWriteAccessCalls }
-    })
-    assert.deepEqual(clickResult, {
-      opened: ['https://t.me/test_bot?start=ref_E2ESTART'], nativeCalls: 0,
-    }, 'Primary CTA must synchronously open Start even when native permission never calls back')
+    const popupPromise = page.waitForEvent('popup', { timeout: 8_000 })
+    await openBot.click()
+    const botChatPage = await popupPromise
+    await botChatPage.waitForLoadState('domcontentloaded')
+    assert.equal(botChatPage.url(), 'https://t.me/test_bot?start=ref_E2ESTART',
+      'One actual user tap must cause a browser navigation to Telegram text bot /start')
+    await botChatPage.close()
+    page.on('popup', popup => { void popup.close().catch(() => {}) })
+    assert.equal(await page.evaluate(() => window.__nativeWriteAccessCalls), 0)
+    assert.deepEqual(await page.evaluate(() => window.__openedBotLinks), [],
+      'Primary CTA must not depend on the silently failing Telegram native bridge')
     assert.equal(await gate.isVisible(), true, 'Opening Telegram does not confirm delivery access')
     assert.equal(await openBot.isEnabled(), true)
 
