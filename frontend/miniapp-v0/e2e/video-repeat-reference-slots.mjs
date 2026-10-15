@@ -127,7 +127,8 @@ try {
             status = 409
             response = generationPending
               ? { ok: false, code: 'video_status_pending', task_id: 'video_repeat_receipt_browser', error: 'Видео принято провайдером. Ожидаем подтверждения.' }
-              : { ok: false, error: 'Разрешения автора изменились. Откройте публикацию заново.' }
+              : { ok: false, code: 'repeat_permission_changed',
+                  error: 'Разрешения автора изменились. Откройте публикацию заново.' }
           }
         } else if (/generate|repeat|remix|start/.test(url.pathname)) throw new Error('Unexpected generation request: ' + url.pathname)
         return route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(response) })
