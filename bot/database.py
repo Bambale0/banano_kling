@@ -4438,6 +4438,13 @@ async def cleanup_saved_references(
 
 
 async def cleanup_orphaned_reference_files(max_age_seconds: int = 24 * 3600) -> dict[str, int]:
+    # INCIDENT 2026-10-18: do not delete media until every Studio, trend,
+    # repeat and in-flight task reference is included in reachability checks.
+    # The old collector considered only a subset of generation snapshots and
+    # could permanently remove media still needed for paid repeats.
+    logger.warning("Orphan reference file deletion suspended pending full media reachability audit")
+    return {"removed_count": 0, "removed_bytes": 0, "protected_generation_paths": 0}
+
     base_dir = os.path.join("static", "uploads", "refs")
     if not os.path.exists(base_dir):
         return {
