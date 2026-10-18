@@ -8,7 +8,7 @@
 - Launch fix: exact user and template reference existence, plus typed Seedance bindings, checked before quote/debit/provider calls. Typed ImageN cannot become VideoN/AudioN implicitly. Stable error codes distinguish user uploads, template originals and unbound aliases. Logs contain actor/trend/stage/code, not private media URLs or prompts.
 - RED: 19 new ownership regressions failed on baseline; four new HTTP quote/launch regressions failed before preflight. The prior no-op PR also failed three existing cleanup tests. GREEN: ownership and existing cleanup 27 passed; quote/trend suite 49 passed. Full safe suite, lint, CI, exact deployed SHA and post-release smoke still required.
 - No schema, model routing, price, payment, referral, or UI permission changes. Old combined-ordinal prompts must use explicit typed aliases; no automatic guessing. Recovery never substitutes visually similar images.
-- Rollout: tested PR to protected `tanyapi`, required strict four CI gates, normal autodeploy and exact-SHA verification. Keep the current production price/config modifications. Remaining source recovery and oversized Telegram-delivery incident stay explicitly tracked until verified.
+- Rollout: tested PR to protected `tanyapi`, required strict four CI gates, normal autodeploy and exact-SHA verification. Keep the current production price/config modifications. Remaining source recovery stays explicitly tracked. The reviewed delivery fix from PR #314 is integrated: terminal link-only handling for confirmed oversized uploads, bounded retries and compare-and-swap delivery receipts; combined focused delivery/retention/trend tests passed (104). Full combined CI and production convergence remain unverified.
 
 # Execution ledger
 
