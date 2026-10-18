@@ -44,6 +44,7 @@ from bot.services.kie_webhook_verification import serialize_kie_callback
 from bot.services.delivery_state import (
     has_retryable_result,
     stored_result_payload,
+    telegram_media_too_large as _telegram_media_too_large,
     is_terminal_telegram_delivery_error as _is_terminal_telegram_delivery_error,
     terminal_telegram_delivery_reason as _terminal_telegram_delivery_reason,
 )
@@ -2577,6 +2578,25 @@ async def _public_feed_protected_upload_paths() -> set[str]:
                 """
             )
             rows = await cursor.fetchall()
+            # Inputs remain owned even before completion or when the work is
+            # private. Generic upload expiry must not erase those references.
+            from bot.services.reference_retention import reference_snapshot_query
+
+            snapshot_cursor = await db.execute(
+                reference_snapshot_query(postgres=db_backend.is_postgres(), all_uploads=True)
+            )
+            owned_urls = [str(row[0] or "") for row in await snapshot_cursor.fetchall()]
+            preview_cursor = await db.execute(
+                "SELECT preview_url FROM user_prompts WHERE preview_url LIKE '%uploads/%' "
+                "UNION SELECT file_url FROM trend_reference_assets"
+            )
+            owned_urls.extend(str(row[0] or "") for row in await preview_cursor.fetchall())
+
+        for url in owned_urls:
+            if is_local_upload_source(url):
+                local_path = resolve_local_upload_path(url)
+                if local_path:
+                    protected.add(os.path.abspath(local_path))
 
         for row in rows:
             urls: list[str] = []
@@ -2600,7 +2620,8 @@ async def _public_feed_protected_upload_paths() -> set[str]:
                 if local_path:
                     protected.add(os.path.abspath(local_path))
     except Exception:
-        logger.exception("Failed to collect public feed protected upload paths")
+        logger.exception("Upload cleanup aborted: could not collect complete media ownership")
+        raise
     return protected
 
 
@@ -4869,6 +4890,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             bot_instance = request.app["bot"]
             try:
                 sent_media = False
+                video_permanently_oversized = False
                 if is_video:
                     video_kb = get_video_result_keyboard(
                         result_url,
@@ -4900,6 +4922,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                             telegram_id=telegram_id,
                         ):
                             return web.Response(status=200)
+                        video_permanently_oversized = _telegram_media_too_large(e)
                         logger.warning(
                             "Video URL send failed (%s), trying file upload",
                             e,
@@ -4951,7 +4974,18 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                                 telegram_id=telegram_id,
                             ):
                                 return web.Response(status=200)
-                            logger.error(f"Video file upload failed: {dl_e}")
+                            video_permanently_oversized = (
+                                video_permanently_oversized
+                                or _telegram_media_too_large(dl_e)
+                            )
+                            if video_permanently_oversized:
+                                logger.info(
+                                    "%s Telegram rejected oversized video upload: task=%s",
+                                    service_name,
+                                    task_id,
+                                )
+                            else:
+                                logger.error("Video file upload failed: %s", dl_e)
                         finally:
                             if tmp_file and os.path.exists(tmp_file):
                                 try:
@@ -5072,17 +5106,32 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                             service_name,
                             telegram_id,
                         )
-                    await mark_task_delivery_status(
-                        task_id,
-                        "pending",
-                        error="Telegram/CDN media delivery failed; reconciliation scheduled",
-                    )
-                    logger.warning(
-                        "%s media delivery pending after provider success: task=%s user=%s",
-                        service_name,
-                        task_id,
-                        telegram_id,
-                    )
+                    if is_video and video_permanently_oversized:
+                        # Explicit 413 is permanent for this media. The
+                        # original result remains durable and the user already
+                        # has a link; never replay the same oversized upload.
+                        await mark_task_delivery_status(
+                            task_id,
+                            "link_only",
+                            error="telegram_media_too_large",
+                        )
+                        logger.info(
+                            "%s result available via link (oversized media): task=%s",
+                            service_name,
+                            task_id,
+                        )
+                    else:
+                        await mark_task_delivery_status(
+                            task_id,
+                            "pending",
+                            error="Telegram/CDN media delivery failed; reconciliation scheduled",
+                        )
+                        logger.warning(
+                            "%s media delivery pending after provider success: task=%s user=%s",
+                            service_name,
+                            task_id,
+                            telegram_id,
+                        )
             except Exception as send_e:
                 if _is_terminal_telegram_delivery_error(send_e):
                     logger.info(

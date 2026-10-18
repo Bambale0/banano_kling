@@ -2,7 +2,7 @@
 
 Seedance prompts bind uploaded media by typed aliases such as ``@Image1`` and
 ``@Video1``. User/admin prompts have historically used mixed case, whitespace,
-or one combined ordinal across all uploaded media. Normalize those variants at
+or one combined ordinal across all uploaded media. Normalize safe variants at
 the provider boundary so every caller gets the same deterministic binding.
 """
 
@@ -22,12 +22,13 @@ def canonicalize_seedance_reference_tags(
     image_count: int = 0,
     video_count: int = 0,
     audio_count: int = 0,
+    allow_legacy_combined_ordinals: bool = False,
 ) -> str:
     """Return prompt with reference mentions canonicalized to Seedance aliases.
 
-    Besides case/spacing normalization, repair the legacy combined-ordinal form
-    used by some trend prompts. Example: with three images and one video,
-    ``@IMAGE 4`` refers to the fourth uploaded asset and becomes ``@Video1``.
+    Legacy combined ordinals are ambiguous when images have disappeared.
+    Never silently turn a missing @Image into a video/audio unless a caller
+    explicitly opts into the legacy format.
     """
 
     text = str(prompt or "")
@@ -40,7 +41,7 @@ def canonicalize_seedance_reference_tags(
         index = int(match.group("index"))
 
         if kind in {"image", "img"}:
-            if index > images and index > 0:
+            if allow_legacy_combined_ordinals and index > images and index > 0:
                 overflow = index - images
                 if 1 <= overflow <= videos:
                     return f"@Video{overflow}"

@@ -67,11 +67,11 @@ def test_seedance_combines_identity_image_and_motion_video() -> None:
     )
 
 
-def test_seedance_repairs_combined_ordinal_video_alias() -> None:
+def test_seedance_preserves_explicit_typed_video_alias() -> None:
     service = CaptureSeedanceService()
     prompt = (
         "@IMAGE 1 = лицо первого человека. @IMAGE 2 = лицо второго. "
-        "@IMAGE 3 = лицо третьего. @IMAGE 4 = видеореференс движений."
+        "@IMAGE 3 = лицо третьего. @VIDEO 1 = видеореференс движений."
     )
 
     asyncio.run(
@@ -384,3 +384,15 @@ def test_seedance_transport_rebases_legacy_local_video_reference(monkeypatch) ->
     assert videos == [
         "https://tanyapp.xn--e1aikcel5c5a.online/uploads/refs/video/123/motion.mp4"
     ]
+
+
+def test_seedance_missing_image_never_rebinds_video_at_provider_boundary() -> None:
+    service = CaptureSeedanceService()
+    result = asyncio.run(service.generate_video(
+        prompt="Identity @Image1 with the cake in @Image2, motion @Video1.",
+        reference_image_urls=["https://cdn.test/person.jpg"],
+        reference_video_urls=["https://cdn.test/motion.mp4"],
+    ))
+    assert result["error"] == "missing_seedance_references"
+    assert "@Image2" in result["message"]
+    assert service.last_payload is None

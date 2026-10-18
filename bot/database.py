@@ -28,8 +28,11 @@ from bot.partner_policy import (
     record_pending_invite_bonus,
 )
 from bot.services.delivery_state import (
+    MAX_DELIVERY_ATTEMPTS,
     TASK_DELIVERY_STATUSES,
     TERMINAL_TASK_DELIVERY_STATUSES,
+    exhausted_delivery_status,
+    telegram_media_too_large,
     terminal_telegram_delivery_reason,
 )
 from bot.video_repeat_reference_contract import (
@@ -4226,29 +4229,14 @@ async def _invalidate_saved_reference_cache(telegram_id: int) -> None:
 
 
 async def _remove_saved_reference_file(file_url: str) -> None:
-    try:
-        from bot.services.media_input_utils import resolve_local_upload_path
+    """Removing a recent-upload shortcut must not destroy historical inputs.
 
-        local_path = resolve_local_upload_path(file_url)
-        if not local_path or not os.path.exists(local_path):
-            return
-
-        os.remove(local_path)
-
-        uploads_root = os.path.abspath(os.path.join("static", "uploads"))
-        current_dir = os.path.dirname(os.path.abspath(local_path))
-        while current_dir.startswith(uploads_root) and current_dir != uploads_root:
-            try:
-                if os.listdir(current_dir):
-                    break
-                os.rmdir(current_dir)
-                current_dir = os.path.dirname(current_dir)
-            except OSError:
-                break
-    except FileNotFoundError:
-        return
-    except Exception:
-        logger.exception("Failed to remove saved reference file: %s", file_url)
+    Physical reclamation belongs to the ownership-aware orphan collector.
+    Both explicit removal and per-user pruning can share a file with a Studio
+    work, a published recipe or an in-flight generation.
+    """
+    if file_url:
+        logger.info("Saved reference file deletion deferred to ownership-aware cleanup")
 
 
 async def _remove_saved_reference_files(file_urls: list[str]) -> None:
@@ -4461,73 +4449,20 @@ async def cleanup_orphaned_reference_files(max_age_seconds: int = 24 * 3600) -> 
             FROM user_prompts
             WHERE preview_url IS NOT NULL
               AND TRIM(preview_url) != ''
-              AND status IN ('pending', 'approved')
             """
         )
         rows.extend(await prompt_cursor.fetchall())
+        asset_cursor = await db.execute("SELECT file_url FROM trend_reference_assets")
+        rows.extend(await asset_cursor.fetchall())
+        result_cursor = await db.execute(
+            "SELECT result_url FROM generation_tasks WHERE result_url LIKE '%uploads/refs/%'"
+        )
+        rows.extend(await result_cursor.fetchall())
 
-        if db_backend.is_postgres():
-            snapshot_query = """
-                SELECT DISTINCT ref_url
-                FROM (
-                    SELECT ref #>> '{}' AS ref_url
-                    FROM generation_tasks gt
-                    CROSS JOIN LATERAL jsonb_path_query(
-                        CASE
-                            WHEN json_valid(gt.request_data) THEN gt.request_data::jsonb
-                            ELSE '{}'::jsonb
-                        END,
-                        '$.source_reference_images[*]'
-                    ) AS ref
-                    WHERE gt.status = 'completed'
-                      AND gt.type IN ('image', 'video')
 
-                    UNION
+        from bot.services.reference_retention import reference_snapshot_query
 
-                    SELECT ref #>> '{}' AS ref_url
-                    FROM generation_tasks gt
-                    CROSS JOIN LATERAL jsonb_path_query(
-                        CASE
-                            WHEN json_valid(gt.request_data) THEN gt.request_data::jsonb
-                            ELSE '{}'::jsonb
-                        END,
-                        '$.reference_images[*]'
-                    ) AS ref
-                    WHERE gt.status = 'completed'
-                      AND gt.type IN ('image', 'video')
-                ) refs
-                WHERE ref_url LIKE '%uploads/refs/%'
-            """
-        else:
-            snapshot_query = """
-                SELECT DISTINCT CAST(ref.value AS TEXT) AS ref_url
-                FROM generation_tasks gt,
-                     json_each(
-                         CASE
-                             WHEN json_valid(gt.request_data) THEN gt.request_data
-                             ELSE '{}'
-                         END,
-                         '$.source_reference_images'
-                     ) AS ref
-                WHERE gt.status = 'completed'
-                  AND gt.type IN ('image', 'video')
-                  AND CAST(ref.value AS TEXT) LIKE '%uploads/refs/%'
-
-                UNION
-
-                SELECT DISTINCT CAST(ref.value AS TEXT) AS ref_url
-                FROM generation_tasks gt,
-                     json_each(
-                         CASE
-                             WHEN json_valid(gt.request_data) THEN gt.request_data
-                             ELSE '{}'
-                         END,
-                         '$.reference_images'
-                     ) AS ref
-                WHERE gt.status = 'completed'
-                  AND gt.type IN ('image', 'video')
-                  AND CAST(ref.value AS TEXT) LIKE '%uploads/refs/%'
-            """
+        snapshot_query = reference_snapshot_query(postgres=db_backend.is_postgres())
         snapshot_cursor = await db.execute(snapshot_query)
         snapshot_rows = await snapshot_cursor.fetchall()
 
@@ -5820,73 +5755,115 @@ async def mark_task_delivery_status(
     error: str | None = None,
     retry_after_seconds: int | None = None,
 ) -> bool:
-    """Persist Telegram delivery outcome separately from provider completion."""
+    """Persist Telegram outcome without losing concurrent delivery state.
+
+    Explicit size rejections and a bounded retry budget are terminal. A
+    delivered result link is partial success, never a reason to regenerate or
+    refund a completed upstream task.
+    """
     normalized_status = str(status or "").strip().lower()
     if normalized_status not in TASK_DELIVERY_STATUSES:
         raise ValueError(f"Unsupported delivery status: {status}")
 
-    task = await get_task_by_id(task_id)
-    if not task:
-        return False
+    for _ in range(4):
+        task = await get_task_by_id(task_id)
+        if not task:
+            return False
 
-    request_data = _parse_json_dict(task.request_data)
-    # A link notification is intermediate work, not release of the media lease.
-    if normalized_status != "link_sent" or request_data.get("delivery_status") != "delivering":
-        request_data["delivery_status"] = normalized_status
-    if normalized_status == "link_sent":
-        request_data["delivery_link_sent"] = True
-    if normalized_status == "result_ready":
-        request_data.setdefault("result_ready_at", datetime.now(UTC).isoformat())
-    else:
-        request_data["delivery_attempts"] = int(request_data.get("delivery_attempts") or 0) + 1
-    request_data["delivery_updated_at"] = datetime.now(UTC).isoformat()
-    if retry_after_seconds is not None:
-        request_data["delivery_retry_at"] = (
-            datetime.now(UTC) + timedelta(seconds=max(1, int(retry_after_seconds)))
-        ).isoformat()
-    else:
-        request_data.pop("delivery_retry_at", None)
-    if error:
-        request_data["delivery_error"] = str(error)[:500]
-    else:
-        request_data.pop("delivery_error", None)
+        old_json = task.request_data or "{}"
+        request_data = _parse_json_dict(old_json)
+        current_status = str(request_data.get("delivery_status") or "").strip().lower()
+        # Explicit confirmation of a real file send can upgrade link-only.
+        if (
+            current_status in TERMINAL_TASK_DELIVERY_STATUSES
+            and (current_status != "link_only" or normalized_status != "delivered")
+        ):
+            return current_status == normalized_status
 
-    async with db_backend.connect(DATABASE_PATH) as db:
-        cursor = await db.execute(
-            """
-            UPDATE generation_tasks
-            SET request_data = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            (json.dumps(request_data, ensure_ascii=False), int(task.id)),
-        )
-        if normalized_status == "unavailable" and task.telegram_id:
-            await db.execute(
-                """UPDATE users
-                   SET telegram_chat_state = CASE
-                           WHEN telegram_chat_state = 'never_started' THEN 'never_started'
-                           ELSE 'unavailable'
-                       END,
-                       updated_at = CURRENT_TIMESTAMP
-                   WHERE telegram_id = ?""",
-                (int(task.telegram_id),),
+        effective_status = normalized_status
+        # Historical count increments on claims as well as status transitions.
+        attempts = int(request_data.get("delivery_attempts") or 0)
+        if normalized_status != "result_ready":
+            attempts += 1
+        has_link = bool(request_data.get("delivery_link_sent"))
+        if normalized_status == "pending" and (
+            telegram_media_too_large(error) or attempts >= MAX_DELIVERY_ATTEMPTS
+        ):
+            effective_status = exhausted_delivery_status(has_link=has_link)
+        if effective_status == "link_only" and not has_link:
+            effective_status = "uncertain"
+
+        # link_sent is a delivery receipt, not release of the media lease.
+        if effective_status != "link_sent" or current_status != "delivering":
+            request_data["delivery_status"] = effective_status
+        if normalized_status == "link_sent":
+            request_data["delivery_link_sent"] = True
+        if normalized_status == "result_ready":
+            request_data.setdefault("result_ready_at", datetime.now(UTC).isoformat())
+        else:
+            request_data["delivery_attempts"] = attempts
+        request_data["delivery_updated_at"] = datetime.now(UTC).isoformat()
+        if retry_after_seconds is not None and effective_status not in TERMINAL_TASK_DELIVERY_STATUSES:
+            request_data["delivery_retry_at"] = (
+                datetime.now(UTC) + timedelta(seconds=max(1, int(retry_after_seconds)))
+            ).isoformat()
+        else:
+            request_data.pop("delivery_retry_at", None)
+        if effective_status != normalized_status and not telegram_media_too_large(error):
+            request_data["delivery_error"] = "delivery_retry_budget_exhausted"
+        elif error:
+            request_data["delivery_error"] = str(error)[:500]
+        else:
+            request_data.pop("delivery_error", None)
+
+        async with db_backend.connect(DATABASE_PATH) as db:
+            cursor = await db.execute(
+                """
+                UPDATE generation_tasks
+                SET request_data = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND COALESCE(request_data, '{}') = ?
+                """,
+                (json.dumps(request_data, ensure_ascii=False), int(task.id), old_json),
             )
-        await db.commit()
-        recorded = int(getattr(cursor, "rowcount", 0) or 0) > 0
+            recorded = int(getattr(cursor, "rowcount", 0) or 0) > 0
+            if not recorded:
+                await db.rollback()
+                continue
+            if effective_status == "unavailable" and task.telegram_id:
+                await db.execute(
+                    """UPDATE users
+                       SET telegram_chat_state = CASE
+                               WHEN telegram_chat_state = 'never_started' THEN 'never_started'
+                               ELSE 'unavailable'
+                           END,
+                           updated_at = CURRENT_TIMESTAMP
+                       WHERE telegram_id = ?""",
+                    (int(task.telegram_id),),
+                )
+            await db.commit()
 
-    if normalized_status in {"delivered", "link_sent"} and task.telegram_id:
-        # The successful delivery receipt is already committed. Historical
-        # chat proof is best-effort and must never roll that receipt back.
-        try:
-            await mark_telegram_chat_available(int(task.telegram_id))
-        except Exception as proof_error:  # noqa: BLE001 - proof bookkeeping must never resend a delivered result
+        if effective_status in {"link_only", "uncertain"} and effective_status != normalized_status:
             logger.warning(
-                "Telegram delivery proof update failed: task_id=%s error=%s",
+                "Telegram media delivery retries exhausted: task=%s "
+                "delivery_status=%s attempts=%s has_link=%s",
                 task_id,
-                type(proof_error).__name__,
+                effective_status,
+                attempts,
+                has_link,
             )
-    return recorded
-
+        if effective_status in {"delivered", "link_sent", "link_only"} and task.telegram_id:
+            # A committed receipt cannot be rolled back by chat-proof bookkeeping.
+            try:
+                await mark_telegram_chat_available(int(task.telegram_id))
+            except Exception as proof_error:  # noqa: BLE001
+                logger.warning(
+                    "Telegram delivery proof update failed: task_id=%s error=%s",
+                    task_id,
+                    type(proof_error).__name__,
+                )
+        return True
+    logger.warning("Telegram delivery status CAS contention exhausted: task_id=%s", task_id)
+    return False
 
 async def store_task_result_ready(task_id: str, result_url: str) -> bool:
     """Commit provider completion independently of Telegram delivery.
@@ -5910,7 +5887,7 @@ async def store_task_result_ready(task_id: str, result_url: str) -> bool:
         if task.status == "failed":
             # Never resurrect an already failed/refunded generation.
             return False
-        if task.status == "completed" and current_status in {"delivered", "failed"}:
+        if task.status == "completed" and current_status in {"delivered", "failed", "link_only", "uncertain"}:
             return bool(task.result_url)
         if task.status == "completed" and current_status == "unavailable":
             return bool(task.result_url)
@@ -5961,6 +5938,29 @@ async def claim_task_delivery(task_id: str, *, lease_seconds: int = 300) -> bool
         return False
 
     now = datetime.now(UTC)
+    if int(request_data.get("delivery_attempts") or 0) >= MAX_DELIVERY_ATTEMPTS:
+        terminal = exhausted_delivery_status(
+            has_link=bool(request_data.get("delivery_link_sent"))
+        )
+        request_data["delivery_status"] = terminal
+        request_data["delivery_updated_at"] = now.isoformat()
+        request_data["delivery_error"] = "delivery_retry_budget_exhausted"
+        request_data.pop("delivery_retry_at", None)
+        async with db_backend.connect(DATABASE_PATH) as db:
+            cursor = await db.execute(
+                """UPDATE generation_tasks SET request_data = ?, updated_at = CURRENT_TIMESTAMP
+                   WHERE id = ? AND COALESCE(request_data, '{}') = ?""",
+                (json.dumps(request_data, ensure_ascii=False), int(task.id), old_json),
+            )
+            await db.commit()
+            if int(getattr(cursor, "rowcount", 0) or 0) == 1:
+                logger.warning(
+                    "Telegram delivery retry budget reached: task_id=%s "
+                    "status=%s attempts=%s", task_id, terminal,
+                    request_data["delivery_attempts"],
+                )
+        return False
+
     retry_at = request_data.get("delivery_retry_at")
     if retry_at:
         try:
