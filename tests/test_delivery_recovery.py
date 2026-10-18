@@ -618,3 +618,70 @@ async def test_kie_success_revalidates_stale_unavailable_chat_and_delivers(
     bot_instance.get_chat.assert_awaited_once_with(user.telegram_id)
     bot_instance.send_photo.assert_awaited_once()
     assert await bot.database.can_attempt_telegram_delivery(user.telegram_id) is True
+
+
+@pytest.mark.asyncio
+async def test_actual_kie_webhook_oversize_video_finishes_with_link_receipt(monkeypatch):
+    import aiohttp
+    from aiogram.exceptions import TelegramBadRequest, TelegramEntityTooLarge
+    from aiogram.methods import SendVideo
+
+    url = 'https://example.test/synthetic-motion.mp4'
+    task = SimpleNamespace(id=42, task_id='synthetic-oversize-http', status='processing',
+                           user_id=7, telegram_id=123456, type='video', model='motion_control_v26',
+                           preset_id='no_preset', prompt='synthetic', cost=8, duration=5,
+                           aspect_ratio='9:16', source_feed_gen_id=None, is_public_feed=False,
+                           request_data='{}', result_url=url)
+    payload = {'code': 200, 'data': {'taskId': task.task_id, 'state': 'success',
+                                   'model': 'kling/motion-control',
+                                   'resultJson': json.dumps({'resultUrls': [url]})}}
+    method = SendVideo(chat_id=task.telegram_id, video=url)
+    bot_instance = SimpleNamespace(send_video=AsyncMock(side_effect=[
+        TelegramBadRequest(method=method, message='failed to get HTTP URL content'),
+        TelegramEntityTooLarge(method=method, message='Request entity too large'),
+    ]))
+    request = FakeRequest(payload, bot_instance)
+    request['skip_kie_ai_secret_check'] = True
+    monkeypatch.setattr(bot.database, 'get_task_by_id', AsyncMock(return_value=task))
+    monkeypatch.setattr('bot.services.kie_webhook_verification.kie_market_service.get_task_status', AsyncMock(return_value=payload['data']))
+    monkeypatch.setattr(bot.database, 'can_attempt_telegram_delivery', AsyncMock(return_value=True))
+    monkeypatch.setattr(bot.database, 'claim_task_delivery', AsyncMock(return_value=True))
+    monkeypatch.setattr(bot.database, 'store_task_result_ready', AsyncMock(return_value=True))
+    complete = AsyncMock(return_value=True)
+    mark = AsyncMock(return_value=True)
+    link = AsyncMock()
+    monkeypatch.setattr(bot.database, 'complete_video_task', complete)
+    monkeypatch.setattr(bot.database, 'mark_task_delivery_status', mark)
+    monkeypatch.setattr(main, '_resolve_task_telegram_id', AsyncMock(return_value=task.telegram_id))
+    monkeypatch.setattr(main, '_persist_result_url_if_needed', AsyncMock(return_value=url))
+    monkeypatch.setattr(main, '_send_plain_result_link', link)
+
+    class Response:
+        status = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        @property
+        def content(self):
+            return self
+
+        async def iter_chunked(self, size):
+            yield b'synthetic-video'
+
+    class Session(Response):
+        def get(self, *args, **kwargs):
+            return Response()
+
+    monkeypatch.setattr(aiohttp, 'ClientSession', Session)
+    response = await main.handle_kie_ai_webhook(request)
+    assert response.status == 200
+    assert bot_instance.send_video.await_count == 2
+    link.assert_awaited_once()
+    complete.assert_not_awaited()
+    assert [(call.args[1], call.kwargs.get('error')) for call in mark.await_args_list] == [
+        ('pending', 'telegram_media_too_large'), ('link_sent', None),
+    ]

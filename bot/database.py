@@ -5825,56 +5825,78 @@ async def mark_task_delivery_status(
     if normalized_status not in TASK_DELIVERY_STATUSES:
         raise ValueError(f"Unsupported delivery status: {status}")
 
-    task = await get_task_by_id(task_id)
-    if not task:
+    requested_status = normalized_status
+    for _attempt in range(3):
+        task = await get_task_by_id(task_id)
+        if not task:
+            return False
+
+        old_json = task.request_data or "{}"
+        request_data = _parse_json_dict(old_json)
+        if request_data.get('delivery_status') in {'delivered', 'link_delivered'}:
+            return True
+        normalized_status = requested_status
+        if error == 'telegram_media_too_large':
+            request_data['delivery_media_too_large'] = True
+        if normalized_status == 'link_sent':
+            request_data['delivery_link_sent'] = True
+        if normalized_status != 'delivered' and request_data.get('delivery_media_too_large') and request_data.get('delivery_link_sent'):
+            normalized_status = 'link_delivered'
+        elif normalized_status == 'link_delivered':
+            raise ValueError('Terminal link delivery requires size rejection and confirmed link receipt')
+        # A link notification is intermediate work, not release of the media lease.
+        preserve_lease = (request_data.get("delivery_status") == "delivering"
+                          and (normalized_status == "link_sent"
+                               or (normalized_status == "pending" and error == "telegram_media_too_large")))
+        if not preserve_lease:
+            request_data["delivery_status"] = normalized_status
+        if normalized_status == "link_sent":
+            request_data["delivery_link_sent"] = True
+        if normalized_status == "result_ready":
+            request_data.setdefault("result_ready_at", datetime.now(UTC).isoformat())
+        else:
+            request_data["delivery_attempts"] = int(request_data.get("delivery_attempts") or 0) + 1
+        request_data["delivery_updated_at"] = datetime.now(UTC).isoformat()
+        if retry_after_seconds is not None:
+            request_data["delivery_retry_at"] = (
+                datetime.now(UTC) + timedelta(seconds=max(1, int(retry_after_seconds)))
+            ).isoformat()
+        else:
+            request_data.pop("delivery_retry_at", None)
+        if error:
+            request_data["delivery_error"] = str(error)[:500]
+        else:
+            request_data.pop("delivery_error", None)
+
+        async with db_backend.connect(DATABASE_PATH) as db:
+            cursor = await db.execute(
+                """
+                UPDATE generation_tasks
+                SET request_data = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND COALESCE(request_data, '{}') = ?
+                """,
+                (json.dumps(request_data, ensure_ascii=False), int(task.id), old_json),
+            )
+            if int(getattr(cursor, "rowcount", 0) or 0) > 0 and normalized_status == "unavailable" and task.telegram_id:
+                await db.execute(
+                    """UPDATE users
+                       SET telegram_chat_state = CASE
+                               WHEN telegram_chat_state = 'never_started' THEN 'never_started'
+                               ELSE 'unavailable'
+                           END,
+                           updated_at = CURRENT_TIMESTAMP
+                       WHERE telegram_id = ?""",
+                    (int(task.telegram_id),),
+                )
+            await db.commit()
+            recorded = int(getattr(cursor, "rowcount", 0) or 0) > 0
+
+        if recorded:
+            break
+    else:
         return False
 
-    request_data = _parse_json_dict(task.request_data)
-    # A link notification is intermediate work, not release of the media lease.
-    if normalized_status != "link_sent" or request_data.get("delivery_status") != "delivering":
-        request_data["delivery_status"] = normalized_status
-    if normalized_status == "link_sent":
-        request_data["delivery_link_sent"] = True
-    if normalized_status == "result_ready":
-        request_data.setdefault("result_ready_at", datetime.now(UTC).isoformat())
-    else:
-        request_data["delivery_attempts"] = int(request_data.get("delivery_attempts") or 0) + 1
-    request_data["delivery_updated_at"] = datetime.now(UTC).isoformat()
-    if retry_after_seconds is not None:
-        request_data["delivery_retry_at"] = (
-            datetime.now(UTC) + timedelta(seconds=max(1, int(retry_after_seconds)))
-        ).isoformat()
-    else:
-        request_data.pop("delivery_retry_at", None)
-    if error:
-        request_data["delivery_error"] = str(error)[:500]
-    else:
-        request_data.pop("delivery_error", None)
-
-    async with db_backend.connect(DATABASE_PATH) as db:
-        cursor = await db.execute(
-            """
-            UPDATE generation_tasks
-            SET request_data = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            (json.dumps(request_data, ensure_ascii=False), int(task.id)),
-        )
-        if normalized_status == "unavailable" and task.telegram_id:
-            await db.execute(
-                """UPDATE users
-                   SET telegram_chat_state = CASE
-                           WHEN telegram_chat_state = 'never_started' THEN 'never_started'
-                           ELSE 'unavailable'
-                       END,
-                       updated_at = CURRENT_TIMESTAMP
-                   WHERE telegram_id = ?""",
-                (int(task.telegram_id),),
-            )
-        await db.commit()
-        recorded = int(getattr(cursor, "rowcount", 0) or 0) > 0
-
-    if normalized_status in {"delivered", "link_sent"} and task.telegram_id:
+    if normalized_status in {"delivered", "link_sent", "link_delivered"} and task.telegram_id:
         # The successful delivery receipt is already committed. Historical
         # chat proof is best-effort and must never roll that receipt back.
         try:
@@ -5910,13 +5932,13 @@ async def store_task_result_ready(task_id: str, result_url: str) -> bool:
         if task.status == "failed":
             # Never resurrect an already failed/refunded generation.
             return False
-        if task.status == "completed" and current_status in {"delivered", "failed"}:
+        if task.status == "completed" and current_status in {"delivered", "link_delivered", "failed"}:
             return bool(task.result_url)
         if task.status == "completed" and current_status == "unavailable":
             return bool(task.result_url)
 
         now = datetime.now(UTC)
-        if current_status not in {"delivering", "pending", "link_sent", "result_ready", "delivered", "failed"}:
+        if current_status not in {"delivering", "pending", "link_sent", "result_ready", "delivered", "link_delivered", "failed"}:
             # Older start-notification code could set unavailable before success.
             request_data["delivery_status"] = "result_ready"
         request_data.setdefault("result_ready_at", now.isoformat())
