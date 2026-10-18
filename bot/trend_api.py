@@ -703,7 +703,9 @@ def _preflight_trend_references(trend: TrustedTrendRun, miniapp_module: Any) -> 
         )
 
     if trend.model in PRIVATE_REFERENCE_MODELS:
-        from bot.services.seedance_reference_binding import missing_seedance_reference_tags
+        from bot.services.seedance_reference_binding import (
+            missing_seedance_reference_tags,
+        )
 
         unbound = missing_seedance_reference_tags(
             trend.prompt,
