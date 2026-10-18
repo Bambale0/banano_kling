@@ -2577,6 +2577,25 @@ async def _public_feed_protected_upload_paths() -> set[str]:
                 """
             )
             rows = await cursor.fetchall()
+            # Inputs remain owned even before completion or when the work is
+            # private. Generic upload expiry must not erase those references.
+            from bot.services.reference_retention import reference_snapshot_query
+
+            snapshot_cursor = await db.execute(
+                reference_snapshot_query(postgres=db_backend.is_postgres(), all_uploads=True)
+            )
+            owned_urls = [str(row[0] or "") for row in await snapshot_cursor.fetchall()]
+            preview_cursor = await db.execute(
+                "SELECT preview_url FROM user_prompts WHERE preview_url LIKE '%uploads/%' "
+                "UNION SELECT file_url FROM trend_reference_assets"
+            )
+            owned_urls.extend(str(row[0] or "") for row in await preview_cursor.fetchall())
+
+        for url in owned_urls:
+            if is_local_upload_source(url):
+                local_path = resolve_local_upload_path(url)
+                if local_path:
+                    protected.add(os.path.abspath(local_path))
 
         for row in rows:
             urls: list[str] = []
@@ -2600,7 +2619,8 @@ async def _public_feed_protected_upload_paths() -> set[str]:
                 if local_path:
                     protected.add(os.path.abspath(local_path))
     except Exception:
-        logger.exception("Failed to collect public feed protected upload paths")
+        logger.exception("Upload cleanup aborted: could not collect complete media ownership")
+        raise
     return protected
 
 

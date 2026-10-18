@@ -4226,29 +4226,14 @@ async def _invalidate_saved_reference_cache(telegram_id: int) -> None:
 
 
 async def _remove_saved_reference_file(file_url: str) -> None:
-    try:
-        from bot.services.media_input_utils import resolve_local_upload_path
+    """Removing a recent-upload shortcut must not destroy historical inputs.
 
-        local_path = resolve_local_upload_path(file_url)
-        if not local_path or not os.path.exists(local_path):
-            return
-
-        os.remove(local_path)
-
-        uploads_root = os.path.abspath(os.path.join("static", "uploads"))
-        current_dir = os.path.dirname(os.path.abspath(local_path))
-        while current_dir.startswith(uploads_root) and current_dir != uploads_root:
-            try:
-                if os.listdir(current_dir):
-                    break
-                os.rmdir(current_dir)
-                current_dir = os.path.dirname(current_dir)
-            except OSError:
-                break
-    except FileNotFoundError:
-        return
-    except Exception:
-        logger.exception("Failed to remove saved reference file: %s", file_url)
+    Physical reclamation belongs to the ownership-aware orphan collector.
+    Both explicit removal and per-user pruning can share a file with a Studio
+    work, a published recipe or an in-flight generation.
+    """
+    if file_url:
+        logger.info("Saved reference file deletion deferred to ownership-aware cleanup")
 
 
 async def _remove_saved_reference_files(file_urls: list[str]) -> None:
@@ -4438,13 +4423,109 @@ async def cleanup_saved_references(
 
 
 async def cleanup_orphaned_reference_files(max_age_seconds: int = 24 * 3600) -> dict[str, int]:
-    """Fail closed while the full reference ownership graph is audited.
+    base_dir = os.path.join("static", "uploads", "refs")
+    if not os.path.exists(base_dir):
+        return {
+            "removed_count": 0,
+            "removed_bytes": 0,
+            "protected_generation_paths": 0,
+        }
 
-    Historical garbage collection omitted Studio/trend/repeat references and
-    non-completed tasks. Do not delete originals during recovery.
-    """
-    logger.warning("Orphan reference cleanup suspended: media recovery in progress")
-    return {"removed_count": 0, "removed_bytes": 0, "protected_generation_paths": 0}
+    from bot.services.media_input_utils import resolve_local_upload_path
+
+    referenced_paths: set[str] = set()
+    generation_snapshot_urls: set[str] = set()
+    async with db_backend.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT file_url FROM saved_references WHERE file_url IS NOT NULL AND TRIM(file_url) != ''"
+        )
+        rows = await cursor.fetchall()
+        prompt_cursor = await db.execute(
+            """
+            SELECT preview_url
+            FROM user_prompts
+            WHERE preview_url IS NOT NULL
+              AND TRIM(preview_url) != ''
+            """
+        )
+        rows.extend(await prompt_cursor.fetchall())
+        asset_cursor = await db.execute("SELECT file_url FROM trend_reference_assets")
+        rows.extend(await asset_cursor.fetchall())
+        result_cursor = await db.execute(
+            "SELECT result_url FROM generation_tasks WHERE result_url LIKE '%uploads/refs/%'"
+        )
+        rows.extend(await result_cursor.fetchall())
+
+
+        from bot.services.reference_retention import reference_snapshot_query
+
+        snapshot_query = reference_snapshot_query(postgres=db_backend.is_postgres())
+        snapshot_cursor = await db.execute(snapshot_query)
+        snapshot_rows = await snapshot_cursor.fetchall()
+
+    def protect_url(source: str) -> bool:
+        local_path = resolve_local_upload_path(str(source or ""))
+        if not local_path:
+            return False
+        abs_path = os.path.abspath(local_path)
+        referenced_paths.add(abs_path)
+        base_path, _ext = os.path.splitext(abs_path)
+        for sibling_ext in (".png", ".jpg", ".jpeg", ".webp"):
+            sibling_path = base_path + sibling_ext
+            if os.path.exists(sibling_path):
+                referenced_paths.add(os.path.abspath(sibling_path))
+        return True
+
+    for row in rows:
+        protect_url(str(row[0] or ""))
+
+    for row in snapshot_rows:
+        source = str(row[0] or "").strip()
+        if source:
+            generation_snapshot_urls.add(source)
+
+    protected_generation_paths = sum(
+        1 for source in generation_snapshot_urls if protect_url(source)
+    )
+    if protected_generation_paths:
+        logger.info(
+            "Orphan reference cleanup protected %s generation snapshot refs",
+            protected_generation_paths,
+        )
+
+    now = time.time()
+    removed_count = 0
+    removed_bytes = 0
+
+    for root, dirs, files in os.walk(base_dir, topdown=False):
+        for name in files:
+            path = os.path.join(root, name)
+            try:
+                if os.path.abspath(path) in referenced_paths:
+                    continue
+                if now - os.path.getmtime(path) <= max_age_seconds:
+                    continue
+                removed_bytes += os.path.getsize(path)
+                os.remove(path)
+                removed_count += 1
+            except FileNotFoundError:
+                continue
+            except Exception:
+                logger.exception("Failed to remove orphaned reference file: %s", path)
+
+        for dirname in dirs:
+            directory = os.path.join(root, dirname)
+            try:
+                if not os.listdir(directory):
+                    os.rmdir(directory)
+            except OSError:
+                pass
+
+    return {
+        "removed_count": removed_count,
+        "removed_bytes": removed_bytes,
+        "protected_generation_paths": protected_generation_paths,
+    }
 
 
 async def cleanup_stale_local_generation_tasks(

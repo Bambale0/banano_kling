@@ -1004,6 +1004,12 @@ async def test_seedance2_private_repeat_validates_actual_video_before_charge(
     videos = [base + relative for relative in relative_videos]
     face = base + "/uploads/refs/image/9001/face.png"
     dress = base + "/uploads/trend-assets/dress.png"
+    # This test isolates duration validation; the prerequisite photos exist.
+    from PIL import Image
+    for photo_path in ("static/uploads/refs/image/9001/face.png", "static/uploads/trend-assets/dress.png"):
+        local_photo = Path(photo_path)
+        local_photo.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (16, 16)).save(local_photo)
     prompt = _private_seedance_trend()
     slots = [{"media_type": "image", "position": 1, "label": "ВАШЕ ЛИЦО"}]
     inputs = [{"media_type": "image", "position": 1, "url": face}]

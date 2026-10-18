@@ -56,6 +56,10 @@ MAX_TREND_REFERENCES = 12
 class TrendRunValidationError(ValueError):
     """Raised when a curated trend cannot be run safely."""
 
+    def __init__(self, message: str, *, code: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+
 
 @dataclass(frozen=True)
 class TrendRunRequest:
@@ -666,6 +670,56 @@ def _validate_uploaded_references(
         )
 
 
+def _preflight_trend_references(trend: TrustedTrendRun, miniapp_module: Any) -> None:
+    """Validate exact user and author assets before quote, debit or provider IO."""
+    if miniapp_module._browser_local_reference_urls(list(trend.reference_urls)):
+        raise TrendRunValidationError(
+            "Дождитесь окончания загрузки референсов и попробуйте снова",
+            code="reference_upload_incomplete",
+        )
+    if missing_local_upload_sources(trend.reference_urls):
+        raise TrendRunValidationError(
+            "Ваши референсы недоступны. Прикрепите фото или видео заново. Средства не списаны.",
+            code="missing_user_reference",
+        )
+    missing_tags: list[str] = []
+    for kind, sources in (
+        ("Image", trend.provider_image_urls),
+        ("Video", trend.provider_video_urls),
+        ("Audio", trend.provider_audio_urls),
+    ):
+        missing = set(missing_local_upload_sources(sources))
+        missing_tags.extend(
+            f"@{kind}{position}"
+            for position, source in enumerate(sources, start=1)
+            if source in missing
+        )
+    if missing_tags:
+        raise TrendRunValidationError(
+            "В исходном тренде недоступны закреплённые референсы: "
+            + ", ".join(missing_tags)
+            + ". Сообщите администратору номер тренда. Средства не списаны.",
+            code="missing_trend_reference",
+        )
+
+    if trend.model in PRIVATE_REFERENCE_MODELS:
+        from bot.services.seedance_reference_binding import missing_seedance_reference_tags
+
+        unbound = missing_seedance_reference_tags(
+            trend.prompt,
+            image_count=len(trend.provider_image_urls),
+            video_count=len(trend.provider_video_urls),
+            audio_count=len(trend.provider_audio_urls),
+        )
+        if unbound:
+            raise TrendRunValidationError(
+                "Промпт тренда ссылается на отсутствующие референсы: "
+                + ", ".join(unbound)
+                + ". Средства не списаны.",
+                code="missing_reference_binding",
+            )
+
+
 async def _run_image_trend(
     request: web.Request,
     *,
@@ -1122,6 +1176,9 @@ async def miniapp_run_trend(request: web.Request) -> web.Response:
 
     claim_context: tuple[int, int, str] | None = None
     claim_reserved = False
+    parsed: TrendRunRequest | None = None
+    telegram_id: int | None = None
+    quote_only = False
     try:
         body = await request.json()
         parsed = parse_trend_run_request(body)
@@ -1235,6 +1292,8 @@ async def miniapp_run_trend(request: web.Request) -> web.Response:
                 len(template_assets),
             )
 
+        _preflight_trend_references(trend, miniapp_module)
+
         if trend.reference_contract == REFERENCE_CONTRACT and trend.model == "seedance_2":
             from bot.services.trend_reference_storage import (
                 TrendReferenceStorageError,
@@ -1310,8 +1369,16 @@ async def miniapp_run_trend(request: web.Request) -> web.Response:
             )
         return response
     except TrendRunValidationError as error:
+        code = error.code or "trend_validation_failed"
+        logger.warning(
+            "Trend request rejected: trend_id=%s telegram_id=%s stage=%s code=%s",
+            parsed.trend_id if parsed else None,
+            telegram_id,
+            "quote" if quote_only else "launch",
+            code,
+        )
         response = web.json_response(
-            {"ok": False, "error": str(error), "retry_same_request": False},
+            {"ok": False, "error": str(error), "code": code, "retry_same_request": False},
             status=400,
         )
         if claim_reserved and claim_context:

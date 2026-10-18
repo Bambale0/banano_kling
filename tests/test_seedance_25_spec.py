@@ -238,7 +238,7 @@ async def test_seedance_25_canonicalizes_reference_mentions(monkeypatch):
     result = await service.generate_video(
         prompt=(
             "@IMAGE 1 = первый человек; @image2 = второй; "
-            "@IMAGE3 = третий; движения строго из @image 4."
+            "@IMAGE3 = третий; движения строго из @video 1."
         ),
         reference_image_urls=[
             "https://example.com/p1.png",
@@ -380,3 +380,19 @@ async def test_seedance_25_rebases_legacy_local_first_last_frames(monkeypatch):
     assert captured["payload"]["input"]["last_frame_url"] == (
         "https://tanyapp.xn--e1aikcel5c5a.online/uploads/refs/image/123/last.png"
     )
+
+
+@pytest.mark.asyncio
+async def test_seedance25_missing_image_never_rebinds_video_at_provider_boundary(monkeypatch):
+    from unittest.mock import AsyncMock
+    service = Seedance25Service(kie_key="test-key")
+    provider = AsyncMock(return_value={"task_id": "must-not-start"})
+    monkeypatch.setattr(service, "_kie_post", provider)
+    result = await service.generate_video(
+        prompt="Identity @Image1 with the cake in @Image2, motion @Video1.",
+        reference_image_urls=["https://example.test/person.jpg"],
+        reference_video_urls=["https://example.test/motion.mp4"],
+    )
+    assert result.get("success") is False
+    assert "@Image2" in result["error"]
+    provider.assert_not_awaited()

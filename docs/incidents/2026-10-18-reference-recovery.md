@@ -1,24 +1,31 @@
 # Reference loss recovery — 2026-10-18
 
-## Confirmed risk
+## Confirmed incident
 
-`cleanup_orphaned_reference_files` previously considered saved references, prompt previews, and selected completed-generation image fields. It did not establish complete reachability across all Studio works, trend assets, repeat configurations, in-flight jobs and all video/audio reference fields. A file could therefore be incorrectly classified as orphaned.
+The October 11 application log explicitly records generic upload cleanup deleting content-addressed `static/uploads/trend-assets` originals. The current baseline already excludes this directory, but did not restore the deleted files. On October 18 all 17 persisted asset rows (15 unique files across nine templates) initially pointed to missing files. Recent `trend_run_claims.response_json` confirmed missing-reference launch failures after a successful price quote.
 
-## Containment
+## Implemented safeguards
 
-Suspend orphan reference file deletion until the complete ownership graph is implemented and tested. This does not restore already missing files or prevent unrelated cleanup paths; audit all cleanup entrypoints separately. No user DB rows are changed by this patch.
+- Keep typed Seedance image/video/audio bindings. Missing `@ImageN` is never implicitly converted into another media type; legacy combined-ordinal conversion is available only through explicit helper opt-in.
+- Validate all user and fixed references before quote or launch. Return `missing_user_reference`, `missing_trend_reference`, or `missing_reference_binding` without exposing author asset URLs. Log trend, actor, stage and stable rejection code.
+- Removing a saved-reference shortcut only removes the library row. Physical reclamation is deferred to an ownership-aware collector.
+- The collector reads nested references from all generation states and media types, repeat selections, result lists and template settings, including dated upload directories, plus saved references, previews and durable asset rows. Malformed owner JSON aborts the collector before deletion. Unowned aged files remain reclaimable; the initial blanket-disable proposal in PR #326 is superseded.
 
-## Recovery sources found on host
+## Restoration utility
 
-- `backups/predeploy-20261012*` through `predeploy-20261015*` PostgreSQL dumps
-- `backups/postgres-latest.dump` (2026-10-18)
-- `backups/media-origin-before-20261007T072500Z.jsonl.gz`
-- `static/uploads/refs`, `static/uploads/feed`, `static/uploads/trend-assets`
+`scripts/restore_trend_assets.py` reads asset metadata through a read-only PostgreSQL connection. It scans explicitly supplied source roots and accepts only matching full SHA-256 and byte size. Default mode is dry-run. `--apply` stages each exact file, verifies it again, publishes without overwriting a destination, fsyncs, and writes a private per-run JSONL receipt. It never changes task rows, slot order, balances or template metadata.
 
-## Safe restoration requirements
+```sh
+python scripts/restore_trend_assets.py \
+  --source-root /path/to/retained/originals \
+  --media-root /path/to/project/static/uploads/trend-assets \
+  --receipt /private/diagnostics/unique-run.jsonl
+```
 
-Inventory live DB references and backups read-only; compare missing URLs with local files, snapshots and provider results. Restore into staging first with hashes, owners and ordinal positions verified. Back up live DB before any writes; apply only proven, idempotent mappings, then invalidate caches and smoke-test original Studio work plus Trend repeat. Do not delete or replace originals; do not promise 100% recovery until verified.
+Supply the existing database connection through the runtime environment; never paste it into logs or command arguments. Review the dry-run, then run with `--apply` and a new receipt path. Receipts include private source paths and must not be committed. A missing source is reported, not replaced with a lookalike. Existing differing files are preserved and reported as errors.
 
-## Validation
+## Observed recovery
 
-`pytest -q tests/test_reference_cleanup_suspended.py`; run CI and production smoke after merge. The status of those steps must be reported from evidence, not assumed.
+Eleven unique originals were restored, resolving twelve asset rows for six templates. File hashes, local and public HTTP availability, and the production Seedance payload preflight for all six templates were verified without paid requests. Four unique originals/five rows across three templates were not found in retained upload/data directories, checked workspaces or the public cache (404). Examined predeployment archives contained PostgreSQL data, not media bytes; a database backup alone is not proof that original media can be restored.
+
+An independent read-only production query validated the new PostgreSQL ownership traversal (145,565 URLs). New isolated regression cases prove protection of active/failed/completed video and audio inputs, nested recipe slots and draft template references, while existing orphan-reclamation tests remain unchanged. Run the full safe suite and CI before release; do not infer production deployment from a PR or recovery receipt.
