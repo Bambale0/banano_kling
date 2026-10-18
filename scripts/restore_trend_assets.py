@@ -9,7 +9,7 @@ import os
 import shutil
 import tempfile
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -118,7 +118,7 @@ def main() -> None:
     if receipt_path.exists():
         raise FileExistsError("Receipt already exists; use a new run receipt")
     report = {
-        "started_at": datetime.now(timezone.utc).isoformat(),
+        "started_at": datetime.now(UTC).isoformat(),
         "apply": args.apply,
         "scanned_files": scanned,
         "assets": [],
