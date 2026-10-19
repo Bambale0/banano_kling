@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useApp } from '@/lib/app-context'
+import { REPEAT_MODEL_UNAVAILABLE } from '@/lib/repeat-routing'
 import { hydrateSeedance25IdentityPreset } from '@/lib/seedance25-repeat'
 import { openGenjutsu } from '@/lib/genjutsu-api'
 import type { FeedComment, FeedItem, ScenarioType, UploadedFile } from '@/lib/types'
@@ -203,6 +204,7 @@ export function FeedTab() {
     setActiveTab,
     setPromptPreset,
     setVideoPromptPreset,
+    openSmartRepeat,
     openProfile,
   } = useApp()
   const [source, setSource] = useState<(typeof sources)[number]['id']>('recent')
@@ -461,12 +463,21 @@ export function FeedTab() {
       handleVideoRepeat(item)
       return
     }
-    const modelExists = state.imageModels.some((model) => model.id === item.model)
+    if (state.smartRepeatEnabled) {
+      dismissPreview()
+      openSmartRepeat(item.id)
+      return
+    }
+    if (!state.imageModels.some(model => model.id === item.model)) {
+      dismissPreview()
+      setError(REPEAT_MODEL_UNAVAILABLE)
+      return
+    }
     setPromptPreset({
       promptId: null,
       title: 'Повторить образ из ленты',
       prompt: '',
-      model: modelExists ? item.model : state.imageModels[0]?.id || 'banana_pro',
+      model: item.model,
       ratio: item.aspect_ratio || '1:1',
       sourceFeedGenId: item.id,
       promptHidden: false,
@@ -485,7 +496,16 @@ export function FeedTab() {
       setError('Повтор этой публикации недоступен. Обновите ленту.')
       return
     }
-    const modelExists = state.videoModels.some((model) => model.id === item.model)
+    if (state.smartRepeatEnabled) {
+      dismissPreview()
+      openSmartRepeat(item.id)
+      return
+    }
+    if (!state.videoModels.some(model => model.id === item.model)) {
+      dismissPreview()
+      setError(REPEAT_MODEL_UNAVAILABLE)
+      return
+    }
     const imageReferences = item.references_hidden
       ? []
       : (item.reference_images || []).map((url, index) => feedReferenceToUploadedFile(url, index))
@@ -503,7 +523,7 @@ export function FeedTab() {
     const preset = await hydrateSeedance25IdentityPreset(item, {
       title: 'Повторить видео из ленты',
       prompt: item.prompt || '',
-      model: modelExists ? item.model : state.videoModels[0]?.id || 'v3_pro',
+      model: item.model,
       scenario,
       ratio: item.aspect_ratio || '16:9',
       duration: item.duration || 5,

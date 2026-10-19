@@ -146,11 +146,11 @@ export function SmartRepeatDialog({ sourceId, onClose }: { sourceId: number | nu
 
   return <Dialog open={Boolean(sourceId)} onOpenChange={open => { if (!open) onClose() }}>
     <DialogContent className="max-h-[90dvh] overflow-y-auto min-w-0" aria-describedby={undefined}>
-      <DialogTitle>{draft?.template.type === 'image' ? 'Повторить фото' : 'Повторить видео'}</DialogTitle>
+      <DialogTitle>{!draft ? 'Повторить публикацию' : draft.template.type === 'image' ? 'Повторить фото' : 'Повторить видео'}</DialogTitle>
       {!draft && !error ? <p role="status">Восстанавливаем ваши файлы…</p> : null}
       {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
       {draft ? <>
-        <p className="text-sm text-muted-foreground">{[...state.videoModels, ...state.imageModels].find(m => m.id === draft.template.model)?.label || draft.template.model}</p>
+        <p className="text-sm text-muted-foreground">Модель исходной работы: {[...state.videoModels, ...state.imageModels].find(m => m.id === draft.template.model)?.label || draft.template.model}</p>
         {draft.status !== 'draft' ? <div className="space-y-3">
           <p role="status">{draft.status === 'rejected' ? 'Запуск отклонён. Можно создать новый повтор.' : draft.task_id ? 'Задача сохранена в истории.' : 'Проверяем ранее созданную операцию. Повторный запуск заблокирован.'}</p>
           <Button onClick={async () => { await refreshTasks(); onClose(); if (draft.task_id) selectTask({
@@ -174,6 +174,7 @@ export function SmartRepeatDialog({ sourceId, onClose }: { sourceId: number | nu
           {slots.map((slot, index) => {
             const asset = draft.slots[slot.slot_id]
             const pending = uploading.has(slot.slot_id)
+            const savedFiles = state.savedReferences.filter(file => file.type === slot.kind && !Object.values(draft.slots).some(value => value.url === file.url)).slice(0, 6)
             return <fieldset key={slot.slot_id} aria-label={slot.label} className="min-w-0 rounded-xl border p-3 space-y-2" disabled={busy}>
               <legend className="text-sm font-medium">{index + 1}. {slot.label}{slot.required ? ' · Обязательно' : ''}</legend>
               {slot.hint ? <p className="text-xs text-muted-foreground">{slot.hint}</p> : null}
@@ -181,8 +182,10 @@ export function SmartRepeatDialog({ sourceId, onClose }: { sourceId: number | nu
               {asset?.state === 'READY' && asset.url && slot.kind === 'image' ? <img alt={slot.label} src={asset.url} className="max-h-28 max-w-full rounded object-contain" /> : null}
               <input aria-label={`Загрузить: ${slot.label}`} type="file" accept={`${slot.kind}/*`} disabled={pending}
                 onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void upload(slot, file) }} className="block w-full min-w-0 text-xs" />
-              {state.savedReferences.filter(file => file.type === slot.kind && !Object.values(draft.slots).some(value => value.url === file.url)).slice(0, 6).map(file =>
-                <button key={file.id} type="button" disabled={pending} className="block max-w-full truncate text-xs underline" onClick={() => void upload(slot, undefined, file)}>{file.name}</button>)}
+              {savedFiles.length ? <div className="space-y-1 rounded-lg bg-secondary/40 p-2">
+                <p className="text-xs text-muted-foreground">Сохранённые файлы — нажмите, чтобы выбрать</p>
+                {savedFiles.map(file => <button key={file.id} type="button" disabled={pending} className="block max-w-full truncate text-xs underline" onClick={() => void upload(slot, undefined, file)}>{file.name}</button>)}
+              </div> : null}
               {asset ? <button type="button" className="text-xs underline" onClick={() => {
                 slotEpochs.current[slot.slot_id] = (slotEpochs.current[slot.slot_id] || 0) + 1
                 setUploading(current => { const next = new Set(current); next.delete(slot.slot_id); return next })
