@@ -188,8 +188,9 @@ export function SmartRepeatForm({ sourceId, onClose }: { sourceId: number | null
     }
   }
 
-  return <section aria-label={draft?.template.type === 'image' ? 'Повторить фото' : 'Повторить видео'} className="glass min-w-0 space-y-4 rounded-2xl border border-border/50 p-4 sm:p-5">
-      <div className="flex items-center justify-between gap-3"><h3 className="text-lg font-semibold">{draft?.template.type === 'image' ? 'Повторить фото' : 'Повторить видео'}</h3>
+  const title = !draft ? 'Повторить публикацию' : draft.template.type === 'image' ? 'Повторить фото' : 'Повторить видео'
+  return <section aria-label={title} className="glass min-w-0 space-y-4 rounded-2xl border border-border/50 p-4 sm:p-5">
+      <div className="flex items-center justify-between gap-3"><h3 className="text-lg font-semibold">{title}</h3>
         <Button type="button" variant="ghost" size="icon" aria-label="Закрыть повтор" disabled={busy} onClick={() => void close()}><X /></Button></div>
       {!draft && !error ? <p role="status">Восстанавливаем ваши файлы…</p> : null}
       {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}

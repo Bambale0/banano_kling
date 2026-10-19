@@ -60,7 +60,9 @@ jobs:
       - name: Run Mini App regression tests
         run: >-
           npm test -- --runInBand
-          components/__tests__/smart-repeat-dialog.test.tsx
+          components/__tests__/smart-repeat-form.test.tsx
+          lib/__tests__/smart-repeat-navigation.test.tsx
+          components/tabs/__tests__/feed-profile-repeat-routing.test.tsx
           lib/__tests__/trend-api.test.ts
           components/tabs/__tests__/video-tab-repeat.test.tsx
           components/forms/image-generator-form-remix.test.tsx

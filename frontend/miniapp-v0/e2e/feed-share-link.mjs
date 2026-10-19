@@ -77,6 +77,12 @@ try {
             mini_app_url: baseUrl, actions: [], payment_packages: [], image_models: [{ id: 'banana_pro', label: 'Nano Banana Pro', cost: 1, ratios: ['1:1'], qualities: ['2K'], max_references: 8 }], video_models: [], recent_tasks: [], saved_references: [] }
           else if (url.pathname.endsWith('/feed/share')) { shareCalls++; data = { ok: true, feed_item: card, link: exactLink, repeat_link: exactLink } }
           else if (url.pathname.endsWith('/feed')) data = { ok: true, feed: [card], models: [{ id: 'banana_pro', label: 'Nano Banana Pro' }] }
+          else if (url.pathname === '/mini-app/api/trends/catalog') {
+            // Returning through Studio mounts the existing read-only showcase.
+            // Keep the strict unknown/mutation guard below; mock only its contract.
+            assert.equal(route.request().method(), 'POST')
+            data = { ok: true, categories: [] }
+          }
           else if (url.pathname.endsWith('/prompts')) data = { ok: true, prompts: [] }
           else if (url.pathname.endsWith('/genjutsu') && route.request().postDataJSON()?.action === 'availability') data = { ok: true, visible: false }
           else {
