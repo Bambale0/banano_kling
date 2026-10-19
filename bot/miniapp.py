@@ -1540,12 +1540,25 @@ def _filter_foreign_feed_source_references(
         # the publication's canonical source list excludes those derivatives.
         source_references.update(str(url or "").strip() for url in provider_references)
     source_identities = {reference_source_identity(url) for url in source_references}
+    from bot.smart_repeat_contract import current_authorization
+    authorization = current_authorization()
+    # An extended smart-repeat source contains the caller's verified inputs as
+    # well as private originals. Only the request-local compiler capability can
+    # distinguish them; client JSON cannot authorize this exception.
+    owned_identities = set()
+    if (authorization and task_payload.get('_smart_repeat_authorization') is authorization
+        and authorization.get('source_id') == task_payload.get('id')
+        and authorization.get('telegram_id') == viewer_telegram_id):
+        owned_identities = {reference_source_identity(url) for url in authorization['owned_inputs']}
     filtered: list[str] = []
     for item in references:
         url = str(item or "").strip()
         if not url or url in filtered:
             continue
         owner_telegram_id = _reference_upload_owner_telegram_id(url)
+        if reference_source_identity(url) in owned_identities:
+            filtered.append(url)
+            continue
         if reference_source_identity(url) in source_identities:
             continue
         if (

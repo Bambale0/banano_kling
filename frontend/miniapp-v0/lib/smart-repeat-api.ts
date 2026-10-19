@@ -32,6 +32,8 @@ export interface RepeatDraft {
   revision: number
   status: 'draft' | 'launching' | 'launched' | 'unknown' | 'rejected'
   template: RepeatTemplate
+  additional_image_limit?: number
+  additional_image_slots?: RepeatSlot[]
   preset_id: string | null
   prompt_changes?: string
   user_values: Record<string, string>
