@@ -244,6 +244,8 @@ dp.include_router(common_router)  # последним!
 
 Repeat восстанавливает request_data из generation_tasks в FSM.
 
+Telegram-повторы фото остаются в чате и при включённом smart_repeat_rollout: сообщение с обязательным переходом в Mini App удалено. Старые кнопки repeat_image_*/repeat_result_* сохраняют загрузку фото и отдельное подтверждение без списания при открытии. Специализированные video/Wan/Genjutsu-обработчики не заменяются общим фото-сценарием.
+
 ---
 
 ## 12. Критерий готовности UX
@@ -297,3 +299,9 @@ the ordinary idle-photo shortcut remains unchanged outside the Seedance lab.
 - Telegram `initData`, запреты доступа/баны, защита от саморефералов, повторной привязки и циклов сохраняются. Для вывода и обмена сохраняются проверки баланса, лимитов и подтверждения
 - Приглашённый получает стартовый бонус при регистрации. Бонус пригласившему начисляется однократно после первой генерации приглашённого, принятой сервисом в работу; генерация за стартовые бананы подходит. Открытие ссылки и неудачный запуск сами по себе бонуса не дают
 - Кабинет показывает индивидуальный процент из backend; прежние финансовые записи и условия уже созданных операций не переписываются
+
+### Native repeat confirmation contract (2026-10-19)
+
+Old `repeat_image_*` / `repeat_result_*` and unbound `repeat_run_*` / `repeat_run_confirm_*` buttons enter the same editable photo FSM without charging. The rendered launch uses `repeat_q_<opaque token>`; the token is stored in the user's FSM and bound to current source, prompt, image references, model/quality/ratio, compatible template version and current price. A changed/stale/already-consumed token cannot debit. Current model/quality pricing replaces historical source-task cost; admins see the free amount. The token is consumed under the existing user reference lock before the payment/provider boundary.
+
+Authored positional photo templates are checked on open and confirmation; required names appear in source order and existing compile_bindings/local media validation run before debit. Schemas the plain chat FSM cannot represent (author variables, added required slots, changed binding rules/stricter constraints) return a no-charge error rather than silently dropping requirements. No generic Mini App redirect is sent. Specialized video routes are unchanged.

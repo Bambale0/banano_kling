@@ -230,8 +230,10 @@ async def test_owner_child_repeat_preserves_lineage_and_checks_before_debit(monk
     monkeypatch.setattr(generation, "check_can_afford", AsyncMock(return_value=True))
     monkeypatch.setattr(generation, "deduct_credits", debit)
     monkeypatch.setattr(generation, "credit_feed_prompt_repeat", AsyncMock())
-    function = generation.quick_repeat_image_confirm if quick else generation.run_repeat_image_generation
-    await function(callback, state)
+    if quick:
+        await generation.quick_repeat_image_confirm(callback, state)
+    callback.data = f"repeat_q_{state.data.get('repeat_quote_id')}"
+    await generation.confirm_native_repeat_quote(callback, state)
     if revoke:
         debit.assert_not_awaited()
         launch.assert_not_awaited()

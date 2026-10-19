@@ -2454,7 +2454,6 @@ to SmartRepeatForm; update upstream routing/browser assertions for inline hosts.
 No new backend change in this integration; rerun frontend/build/both navigation
 journeys and exact protected CI.
 
-
 ## 2026-10-19 — optional extra images in photo repeats
 
 - Baseline: f1649adbaa2e2023023541556b883e7482a77f78 (PR341). Isolated worktree/feature branch; production prices and checkout are not edited.
@@ -2478,3 +2477,50 @@ journeys and exact protected CI.
 
 - Local disposable native PostgreSQL acceptance: all 6 cases passed, including optional references and concurrent real-HTTP image launch; dedicated test container removed afterward. Existing private-repeat regressions: 157 passed. GitHub PostgreSQL acceptance for PR342 also succeeded.
 - First CI caught a TypeScript error in the last added test (React Testing Library getByRole does not accept Playwright's `exact` option). Runtime/Jest behavior was already correct; removed only that unsupported query option, keeping the same exact accessible-name assertion. No assertion or behavior was weakened. PR returned to draft while the corrected final tree is rechecked.
+
+## 2026-10-19 — remove forced Mini App handoff from Telegram repeats
+
+Baseline: f1649adbaa2e2023023541556b883e7482a77f78 (origin/tanyapi).
+Request: remove the Telegram message asking users to upload named inputs in Mini App and its `Open repeat` button; keep supported Telegram repeats usable without opening WebView.
+
+Preflight: `smart_repeat_api.redirect_telegram_repeat` intercepts five image/video callbacks for published tasks whenever the Mini App rollout is enabled. The native Telegram reference/confirmation flow still exists immediately after those early returns; old `repeat_result_*` compatibility opening already uses it. The screenshot text exists only in this common interception helper. Specialized Wan, typed-video and Genjutsu routes are separate contracts and must not be routed into an incompatible legacy generator.
+
+Plan: add red native callback/FSM regressions under global and per-user rollout; remove the shared handoff/helper, retain native validation/debit/provider paths and specialized video guards; document independent Telegram vs Mini App routing; run isolated SQLite/callback/privacy and existing smart HTTP regression suites; protected PR to tanyapi, exact-SHA CI/autodeploy and deployed-code/health/log smoke. Production working tree and parallel photo-extra-reference PR are not modified.
+
+No schema, tariff, provider, rollout settings or customer data changes. Tests use synthetic users/media and mocked paid providers in a network-disabled disposable Docker container. This change restores the existing native Telegram flow; it does not implement the Mini App's author-configured smart-field editor in Telegram or remove model-specific compatibility guards.
+
+Acceptance: direct and historical supported photo-repeat callbacks stay in chat, preserve source model/prompt privacy/references, require explicit confirmation and reject unavailable inputs before debit. Common quick-video entry reaches the existing model-specific handler rather than the generic Mini App handoff. Mini App draft/quote/idempotency and HTTP stale-client guard remain unchanged.
+
+Verification checkpoint: baseline new regression suite reproduced 14 failures / 10 passes (native published callbacks were intercepted). After removing the five calls/helper, 24/24 new cases pass. The expanded isolated run passed 312 tests across native callbacks/FSM, prompt privacy, private-reference permission/revocation, image reference integrity, smart draft/store/HTTP quote-and-replay, and video/Wan callback guards. Existing datetime deprecation and aiohttp AppKey warnings remain; no paid requests or customer writes. New test is explicitly staged despite the repository's broad tests/* ignore rule. Numeric-ID tests preserve the documented get_task_by_id alias contract rather than requiring a different internal ID representation.
+
+Integration checkpoint: PR342 merged upstream as 5c733182d322758168f7c0f3290e7c7044eafeff while PR343 CI was running. Merged origin/tanyapi normally; the only conflict was this append-only ledger and both histories are retained. No optional-photo-reference code was overwritten. Repeat-native regressions are rechecked on the combined tree before pushing.
+
+Additional release evidence: the same 24-case harness was run against the exact currently deployed f1649ad Docker image (only synthetic tests/dependencies mounted, production application source intact) and reproduced 14 failures / 10 passes. Production preflight found a dirty generated tsconfig.tsbuildinfo cache from the previous frontend check; its bytes were preserved under the isolated QA directory, then only this generated cache was restored to HEAD with a concurrent-change check. Runtime price.json and application source were untouched.
+
+Combined-tree verification after PR342 integration: 323/323 isolated regressions passed, including its optional-photo append tests. All 24 native Telegram cases still pass; paid providers remain mocked.
+
+### Review correction before release (PR343 remains draft until validated)
+
+The initial minimal interception removal was NOT released. Three P1 findings were confirmed: a saved authored template could be bypassed by the generic FSM; native cost used historical task.cost; actual generation_router priority made old repeat_result buttons open only quick confirm/cancel rather than the editable compat flow. Auto-merge was disabled and PR343 converted to draft before merging.
+
+Corrections: added native_repeat_contract preflight at open and launch. Compatible positional photo templates retain named required slots and use compile_bindings plus actual local-image inspection/limits. Unrepresentable authored variables/added required slots/changed bindings or narrower rules stop before debit, without a generic Mini App handoff. This is an explicit compatibility boundary, NOT a new smart-field editor in Telegram. Unified old/direct image entries and eliminated the duplicate legacy charged-confirm implementation. Task-only historical run buttons now open the current editable screen without charging. Fresh current model/quality/actor price comes from the existing Mini App resolver. Opaque repeat_q tokens bind source/config/template/price/prompt/references, are invalidated by changes and consumed before the debit/provider boundary. The existing per-user reference lock serializes duplicate direct calls in addition to dispatcher FSM isolation. Private-source permission and native provider/refund paths remain intact.
+
+Review regression evidence: new router-order, current-price change/reconfirmation, stale old confirmation, configured required-slot rejection, actual local image verification, variable placeholders, template changes after opening, admin-free quote, concurrent duplicate and changed-input tests. Latest selected combined suite passed 343/343 (38 native Telegram cases), including internal-admin compatibility assertions and all earlier repeat/private/HTTP/photo-extra suites. Tests use no real provider or Telegram calls.
+
+The attempted full local suite in the original read-only /app and 512MiB tmpfs was not a valid full-suite result: first reproducible failure is tests/isolated/test_motion_financial_lifecycle.py needing a writable tempfile under repository ROOT, and later /tmp filled to 100%. Stopped only that disposable container; no tests were weakened. The protected GitHub full suite has a writable clean checkout and remains a required release gate. Existing datetime/aiohttp warnings are unchanged. Final CI and exact-image postdeploy proof must be recorded after the corrected commit, not inferred from the older green PR head.
+
+### Complete review pagination and hidden prompt correction
+
+The complete inline review contains FIVE P1 findings, not just the three visible in the first truncated response. The fourth (duplicate native confirmations) is covered by the consumed opaque quote token + existing user/FSM isolation and the concurrent duplicate regression. The fifth (hidden prompt edits replacing the recipe) was reproduced with a new red test: only the user's change fragment reached repeat_prompt. Fixed by loading the authoritative original prompt and composing changes with the shared compose_feed_remix_prompt function, retaining repeat_prompt_hidden=True. Re-editing replaces only the change request, not the original recipe or an accumulated earlier edit. Rendered instructions clarify that the source is preserved. Latest full focused run: 344/344 passed, including 39 native cases and an actual launch asserting original hidden recipe + latest user changes without disclosure.
+
+A writable archived-checkout full-suite attempt passed 518 tests but stopped on three failures outside changed code: the backup fixture returned `file is not a database` (its exact cause was not established here), the production-image WEBHOOK_BIND_HOST was 0.0.0.0 instead of the test's expected default, and the scratch filesystem triggered the Wan result-storage capacity guard. It does not replace the required clean GitHub full-suite gate and is not described as a green full run. No application guards or tests were weakened to mask these environment differences.
+
+### Second review gate: durable native receipt, source withdrawal, hints, deep-link actor
+
+Latest ec2cd4 review found two additional P1s and two P2s. Auto-merge was disabled and PR returned to draft BEFORE any merge. Reproduced four financial regression failures on the prior wiring and verified the three small routing/visibility/hint corrections. Added `native_repeat_receipt` using the existing smart-repeat ledger (internal tg: namespace): claim committed before debit; shared atomic debit/refund; explicit reopen fences and refunds only provably unsubmitted operations; task-capture shares the same user lock and refuses a refunded/stale worker. Bound/accepted tasks are never guessed failed or refunded. Native rows are excluded from editable Mini App draft lookup but have a read-only diagnostic template. No schema changes and no real customer balances used in tests.
+
+Template-less sources now have a fingerprint and foreign publication/status checks at open/confirm plus locked revalidation at claim/debit. Owner retry recipes retain legacy access. Authored hints are escaped and rendered. Feed deep links supply actor ID; requote also repairs actor binding. Financial assertions account for configured signup credits by testing exact before/after deltas, not assuming zero signup balance. Existing private-runtime tests retain their pending owner-recipe fixtures and still pass.
+
+Focused integration after durable wiring: 116/116 passed (native, cancellation/claim/refund, smart HTTP/store, private callback suites). Five PostgreSQL wrappers added to the existing guarded disposable acceptance workflow, including concurrent claim, cancellation refund, stale-worker fence, accepted-task no-refund and template-less withdrawal. Required clean GitHub full regression previously passed on ec2cd4: 3983 passed, 121 skipped, 76 subtests; that does NOT prove the uncommitted durable patch, which must pass fresh CI and exact-image postdeploy verification.
+
+Durable final checks: 351/351 expanded regressions passed. Added one further case ensuring interrupted-debit refund happens before a newly unsupported template blocks reopening; latest native suite 47/47 passed, and the same case is added to guarded PostgreSQL acceptance. This prevents an author edit from blocking return of a provably unsubmitted charge.

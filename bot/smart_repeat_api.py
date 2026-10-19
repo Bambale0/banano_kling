@@ -255,25 +255,6 @@ def setup_smart_repeat_routes(app, miniapp_root):
     app.router.add_post(miniapp_root + '/api/repeat/{action}', smart_repeat_route)
 
 
-async def redirect_telegram_repeat(callback, task):
-    """Old callback buttons enter the same versioned form for rollout accounts."""
-    if not task or not await store.rollout_enabled(callback.from_user.id):
-        return False
-    from bot.database import get_generation_task_payload
-    source = await get_generation_task_payload(task.task_id)
-    if not source or not (source.get('is_public_feed') or source.get('is_profile_visible')):
-        return False
-    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-
-    from bot.miniapp_links import remix_link
-    me = await callback.bot.get_me()
-    await callback.message.answer('Загрузите файлы в подписанные поля и подтвердите стоимость в Mini App.',
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text='Открыть повтор', url=remix_link(me.username, source['id']))]]))
-    await callback.answer()
-    return True
-
-
 @web.middleware
 async def legacy_repeat_gateway(request, handler):
     """Stale clients cannot bypass the slot form during a staged rollout."""

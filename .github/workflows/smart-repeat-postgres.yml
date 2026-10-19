@@ -4,6 +4,9 @@ on:
     branches: [tanyapi]
     paths:
       - 'bot/smart_repeat*.py'
+      - 'bot/handlers/native_repeat*.py'
+      - 'tests/test_native_repeat_receipt.py'
+      - 'tests/test_telegram_repeat_no_miniapp.py'
       - 'bot/database.py'
       - 'bot/services/wan3_prime*.py'
       - 'schema_postgres.sql'
@@ -13,6 +16,9 @@ on:
     branches: [tanyapi]
     paths:
       - 'bot/smart_repeat*.py'
+      - 'bot/handlers/native_repeat*.py'
+      - 'tests/test_native_repeat_receipt.py'
+      - 'tests/test_telegram_repeat_no_miniapp.py'
       - 'bot/database.py'
       - 'bot/services/wan3_prime*.py'
       - 'schema_postgres.sql'

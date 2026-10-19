@@ -76,7 +76,7 @@ async def _lock_user(db, user_id):
         fail('AUTH_REQUIRED', 'Откройте Mini App заново.', 401)
 
 
-async def _current_source(db, source_id):
+async def _current_source(db, source_id, *, owner_id=None):
     row = await (await db.execute('SELECT * FROM generation_tasks WHERE id = ?' +
         (' FOR SHARE' if db_backend.is_postgres() else ''), (source_id,))).fetchone()
     if not row:
@@ -84,7 +84,8 @@ async def _current_source(db, source_id):
     source = dict(row)
     raw = source.get('request_data')
     source['request_data'] = json.loads(raw) if isinstance(raw, str) and raw else (raw or {})
-    if (source.get('status') != 'completed' or
+    owns_native_recipe = owner_id is not None and source.get('user_id') == owner_id
+    if not owns_native_recipe and (source.get('status') != 'completed' or
         not (source.get('is_public_feed') or source.get('is_profile_visible'))):
         fail('SOURCE_UNAVAILABLE', 'Публикация больше недоступна.', 404)
     return source
@@ -160,7 +161,7 @@ async def load_draft(user_id, draft_id):
 async def latest_draft(user_id, source_id):
     async with db_backend.connect() as db:
         db.row_factory = db_backend.Row
-        row = await (await db.execute('SELECT * FROM smart_repeat_drafts WHERE user_id = ? AND source_id = ? '
+        row = await (await db.execute("SELECT * FROM smart_repeat_drafts WHERE user_id = ? AND source_id = ? AND id NOT LIKE 'tg:%' "
             'ORDER BY created_at DESC, id DESC LIMIT 1', (user_id, source_id))).fetchone()
     return _decode(row) if row else None
 
@@ -170,7 +171,7 @@ async def open_draft(user, source, template, *, new=False):
         db.row_factory = db_backend.Row
         await _lock_user(db, user.id)
         row = await (await db.execute('SELECT * FROM smart_repeat_drafts '
-            'WHERE user_id = ? AND source_id = ? ORDER BY created_at DESC, id DESC LIMIT 1',
+            "WHERE user_id = ? AND source_id = ? AND id NOT LIKE 'tg:%' ORDER BY created_at DESC, id DESC LIMIT 1",
             (user.id, source['id']))).fetchone()
         current = _decode(row) if row else None
         if current and current['status'] != 'draft':
@@ -399,6 +400,10 @@ async def refresh_draft_media(user, draft):
 
 
 async def _template_for_draft(draft):
+    if str(draft['id']).startswith('tg:'):
+        return {'contract_version': 1, 'source_id': draft['source_id'],
+                'version': draft['template_version'], 'model': (draft.get('snapshot') or {}).get('model'),
+                'type': 'image', 'slots': [], 'variables': [], 'presets': []}
     async with db_backend.connect() as db:
         row = await (await db.execute('SELECT schema_json FROM smart_repeat_templates WHERE source_id = ? AND version = ?',
             (draft['source_id'], draft['template_version']))).fetchone()
@@ -538,9 +543,15 @@ async def repeat_finance(telegram_id, amount, *, refund=False):
             quote = json.loads(row['quote_json'])
             if row['charge_amount'] or not math.isclose(float(quote['cost']), float(amount), rel_tol=0, abs_tol=0.00001):
                 fail('PRICE_CHANGED', 'Стоимость изменилась. Обновите расчёт.')
-            current = await _current_source(db, context['source_id'])
+            current = await _current_source(db, context['source_id'],
+                owner_id=context['user_id'] if context.get('native_telegram') else None)
             if source_fingerprint(current) != context['source_hash']:
                 fail('TEMPLATE_CHANGED', 'Автор изменил публикацию до списания.')
+            if context.get('native_telegram'):
+                latest = await (await db.execute('SELECT version FROM smart_repeat_templates '
+                    'WHERE source_id = ? ORDER BY version DESC LIMIT 1', (context['source_id'],))).fetchone()
+                if (int(latest[0]) if latest else 0) != context['template_version']:
+                    fail('TEMPLATE_CHANGED', 'Автор обновил поля до списания.')
             changed = await db.execute('UPDATE users SET credits = credits - ?, updated_at = CURRENT_TIMESTAMP '
                 'WHERE id = ? AND telegram_id = ? AND credits >= ?',
                 (amount, context['user_id'], telegram_id, amount))
@@ -557,6 +568,15 @@ async def record_accepted(task_id, task_record):
     if not context:
         return
     async with db_backend.connect() as db:
+        if context.get('native_telegram'):
+            db.row_factory = db_backend.Row
+            await _lock_user(db, context['user_id'])
+            receipt = await (await db.execute('SELECT * FROM smart_repeat_drafts WHERE id = ? AND user_id = ?',
+                (context['draft_id'], context['user_id']))).fetchone()
+            if (not receipt or receipt['status'] != 'launching' or receipt['refund_amount']
+                    or not math.isclose(float(receipt['charge_amount']),
+                        float(json.loads(receipt['quote_json'])['cost']), rel_tol=0, abs_tol=0.00001)):
+                fail('OPERATION_ALREADY_CREATED', 'Операция отменена или уже обработана. Откройте новый повтор.')
         await db.execute('UPDATE smart_repeat_drafts SET provider_accepted = ?, task_id = ?, accepted_task_json = ?, '
             'updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
             (int(task_record.get('provider_accepted', False)), task_id, json.dumps(task_record), context['draft_id'], context['user_id']))
