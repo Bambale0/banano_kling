@@ -10,6 +10,7 @@ import type { UploadedFile } from '@/lib/types'
 import { Button } from './ui/button'
 import { ImagePlus, Film, Music, Plus, X } from 'lucide-react'
 import { Textarea } from './ui/textarea'
+import { AdditionalRepeatImages } from './additional-repeat-images'
 
 export function SmartRepeatForm({ sourceId, onClose }: { sourceId: number | null; onClose: (showSource?: boolean) => void | Promise<void> }) {
   const { state, addTask, setCredits, addSavedReference, refreshTasks, selectTask } = useApp()
@@ -70,6 +71,7 @@ export function SmartRepeatForm({ sourceId, onClose }: { sourceId: number | null
     try {
       const begun = await update({ operation: 'begin', slot_id: slot.slot_id }, generation)
       token = begun.slots[slot.slot_id].upload_token
+      if (generation !== session.current || slotEpochs.current[slot.slot_id] !== epoch) return
       let uploaded = saved
       if (file) {
         uploaded = draft.template.model.startsWith('wan_3')
@@ -81,6 +83,7 @@ export function SmartRepeatForm({ sourceId, onClose }: { sourceId: number | null
       if (!uploaded) throw new Error('Выберите файл.')
       if (generation !== session.current || slotEpochs.current[slot.slot_id] !== epoch) return
       await smartRepeatCall<RepeatDraft>('update', { draft_id: draftId, operation: 'processing', slot_id: slot.slot_id, upload_token: token })
+      if (generation !== session.current || slotEpochs.current[slot.slot_id] !== epoch) return
       const ready = await smartRepeatCall<RepeatDraft>('update', { draft_id: draftId, operation: 'ready', slot_id: slot.slot_id, upload_token: token,
         ...(uploaded.wan3_media_id ? { wan3_media_id: uploaded.wan3_media_id }
           : uploaded.saved_reference_id ? { saved_reference_id: uploaded.saved_reference_id } : { url: uploaded.url }) })
@@ -103,14 +106,26 @@ export function SmartRepeatForm({ sourceId, onClose }: { sourceId: number | null
   const selected = draft?.preset_id ? draft.template.presets.find(p => p.id === draft.preset_id)?.slot_ids || []
     : draft?.template.slots.filter(slot => slot.binding === 'upload').map(slot => slot.slot_id) || []
   const slots = draft?.template.slots.filter(slot => selected.includes(slot.slot_id)) || []
+  const extraSlots = draft?.template.type === 'image' ? draft.additional_image_slots || [] : []
+  const extraLimit = draft?.additional_image_limit || 0
+  const extraOverLimit = extraSlots.filter(slot => draft?.slots[slot.slot_id]).length > extraLimit
   const required = slots.filter(slot => slot.required)
   const ready = required.filter(slot => draft?.slots[slot.slot_id]?.state === 'READY').length
   const variablesReady = (draft?.template.variables || []).every(variable => {
     const value = userValues[variable.id] || ''
     return (!variable.required || Boolean(value.trim())) && value.length <= variable.max_length
   })
-  const invalidFile = slots.some(slot => ['UPLOADING', 'PROCESSING', 'FAILED'].includes(draft?.slots[slot.slot_id]?.state || 'EMPTY'))
-  const canRequest = Boolean(draft && draft.status === 'draft' && ready === required.length && variablesReady && !invalidFile && !uploading.size && !busy && !updating)
+  const invalidFile = [...slots, ...extraSlots].some(slot => ['UPLOADING', 'PROCESSING', 'FAILED'].includes(draft?.slots[slot.slot_id]?.state || 'EMPTY'))
+  const canRequest = Boolean(draft && draft.status === 'draft' && ready === required.length && variablesReady && !extraOverLimit && !invalidFile && !uploading.size && !busy && !updating)
+
+  const removeExtra = async (slot: RepeatSlot) => {
+    const generation = session.current
+    slotEpochs.current[slot.slot_id] = (slotEpochs.current[slot.slot_id] || 0) + 1
+    setUploading(current => { const next = new Set(current); next.delete(slot.slot_id); return next })
+    setSlotErrors(current => ({ ...current, [slot.slot_id]: '' }))
+    try { await update({ operation: 'remove', slot_id: slot.slot_id }, generation) }
+    catch (e) { if (generation === session.current) setError(e instanceof Error ? e.message : 'Не удалось удалить фото.') }
+  }
 
   const persistEdits = async (generation = session.current) => {
     if (!draft) return null
@@ -265,7 +280,12 @@ export function SmartRepeatForm({ sourceId, onClose }: { sourceId: number | null
               {slotErrors[slot.slot_id] ? <p role="alert" className="text-xs text-destructive">{slotErrors[slot.slot_id]}</p> : null}
             </fieldset>
           })}
-          {!slots.length ? <p className="text-sm">Автор сохранил необходимые исходники. Дополнительные файлы не нужны.</p> : null}
+          {!slots.length ? <p className="text-sm">Автор сохранил необходимые исходники. Обязательные файлы загружать не нужно.</p> : null}
+          {draft.template.type === 'image' && typeof draft.additional_image_limit === 'number' ? <AdditionalRepeatImages
+            key={draft.draft_id} slots={extraSlots} limit={extraLimit} values={draft.slots}
+            savedFiles={state.savedReferences} uploading={uploading} errors={slotErrors}
+            disabled={busy || updating > 0} onUpload={upload} onRemove={removeExtra}
+          /> : null}
           {draft.template.variables.map(variable => <label key={variable.id} className="text-sm">{variable.label}
             <input className="mt-1 w-full rounded border bg-background p-2" value={userValues[variable.id] || ''} maxLength={variable.max_length} required={variable.required}
               onChange={event => { setUserValues(current => ({ ...current, [variable.id]: event.target.value })); setDraft(current => current ? { ...current, quote: null } : current) }}

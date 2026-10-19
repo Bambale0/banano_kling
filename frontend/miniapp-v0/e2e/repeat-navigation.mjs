@@ -7,8 +7,8 @@ import { chromium, webkit } from 'playwright'
 
 // All auth/API/media are synthetic and intercepted. Never submit a paid task.
 const port = Number(process.env.REPEAT_NAVIGATION_E2E_PORT || 4201)
-const origin = `http://127.0.0.1:${port}`
-const baseUrl = `${origin}/mini-app/`
+const baseUrl = process.env.REPEAT_NAVIGATION_E2E_BASE_URL || `http://127.0.0.1:${port}/mini-app/`
+const origin = new URL(baseUrl).origin
 const root = mkdtempSync(join(tmpdir(), 'repeat-navigation-e2e-'))
 symlinkSync(resolve('out'), join(root, 'mini-app'), 'dir')
 const server = spawn('python3', ['-m', 'http.server', String(port), '--bind', '127.0.0.1', '--directory', root], { stdio: 'ignore' })
@@ -38,7 +38,7 @@ try {
         comments_count: 0, remixes: 0, score: 0, aspect_ratio: '9:16', duration: 5, scenario: 'video', created_at: '2026-10-19' }
       const template = { contract_version: 1, source_id: 777, version: 1, model: model.id, type: kind, presets: [], variables: [],
         slots: [{ slot_id: 'face', kind: 'image', role: 'reference', label: 'Ваше фото', hint: '', binding: 'upload', required: true }] }
-      let draft = { ok: true, draft_id: 'synthetic-draft', revision: 0, status: 'draft', template, preset_id: null, user_values: {}, slots: {}, quote: null }
+      let draft = { additional_image_limit: kind === 'image' ? 2 : 0, additional_image_slots: kind === 'image' ? [0, 1].map(index => ({ slot_id: `extra_image_${index}`, kind: 'image', role: 'reference', label: `Extra ${index + 1}`, hint: '', binding: 'upload', required: false })) : [], ok: true, draft_id: 'synthetic-draft', revision: 0, status: 'draft', template, preset_id: null, user_values: {}, slots: {}, quote: null }
       const requests = [], errors = []
       page.on('pageerror', error => errors.push(error.message))
       await page.addInitScript(() => {
@@ -64,12 +64,14 @@ try {
           const action = url.pathname.split('/').at(-1), body = route.request().postDataJSON()
           if (action === 'open') assert.equal(body.source_id, 777)
           else if (action === 'update') {
-            assert.equal(body.slot_id, 'face')
-            if (body.operation === 'ready') { assert.equal(Number(body.saved_reference_id), 2); assert.equal(body.url, undefined) }
-            draft = { ...draft, revision: draft.revision + 1, quote: null, slots: { face: {
+            assert.ok(['face', ...(kind === 'image' ? ['extra_image_0', 'extra_image_1'] : [])].includes(body.slot_id))
+            if (body.operation === 'ready') { assert.equal(Number(body.saved_reference_id), body.slot_id === 'face' ? 2 : 3); assert.equal(body.url, undefined) }
+            draft = { ...draft, revision: draft.revision + 1, quote: null, slots: { ...draft.slots } }
+            if (body.operation === 'remove') delete draft.slots[body.slot_id]
+            else draft.slots[body.slot_id] = {
               state: body.operation === 'begin' ? 'UPLOADING' : body.operation.toUpperCase(),
-              upload_token: 'lease', ...(body.operation === 'ready' ? { asset_id: 'owned-asset', url: `https://example.test/saved-${body.saved_reference_id}.jpg`, saved_reference_id: String(body.saved_reference_id), filename: `saved-${body.saved_reference_id}.jpg` } : {}),
-            } } }
+              upload_token: 'lease', ...(body.operation === 'ready' ? { asset_id: `owned-${body.slot_id}`, url: `https://example.test/saved-${body.saved_reference_id}.jpg`, saved_reference_id: String(body.saved_reference_id), filename: `saved-${body.saved_reference_id}.jpg` } : {}),
+            }
           } else if (action === 'quote') {
             assert.equal(draft.slots.face.state, 'READY')
             draft = { ...draft, quote: { cost: 10, quote_id: 'synthetic-quote' } }
@@ -98,11 +100,26 @@ try {
       assert.equal(draft.slots.face.url, 'https://example.test/saved-2.jpg')
       await calculate.click()
       await dialog.getByRole('button', { name: /Создать.*10/ }).waitFor()
+      const extras = dialog.getByRole('region', { name: 'Дополнительные референсы', exact: true })
+      if (kind === 'image') {
+        await extras.getByRole('button', { name: 'Добавить дополнительное фото: saved-3.jpg', exact: true }).click()
+        await extras.getByText('Фото добавлено', { exact: true }).waitFor()
+        assert.equal(draft.slots.face.url, 'https://example.test/saved-2.jpg')
+        assert.equal(draft.slots.extra_image_0.url, 'https://example.test/saved-3.jpg')
+        assert.equal(await dialog.getByText('Загружено обязательных референсов: 1 / 1', { exact: true }).count(), 1)
+        // An extra selection invalidates the old quote, without a paid launch.
+        await calculate.waitFor()
+        await extras.getByRole('button', { name: 'Удалить дополнительное фото 1', exact: true }).click()
+        await extras.getByText('Дополнительных фото: 0 / 2', { exact: true }).waitFor()
+        assert.equal(draft.slots.face.url, 'https://example.test/saved-2.jpg')
+        await calculate.click()
+        await dialog.getByRole('button', { name: /Создать.*10/ }).waitFor()
+      } else assert.equal(await extras.count(), 0)
       assert.equal(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth + 1), true)
       assert.equal(requests.filter(path => path.endsWith('/repeat/open')).length, 1)
       assert.deepEqual(errors, [])
       await context.close()
-      console.log(`${engine.name()} ${width}px ${surface}/${kind}: source model, direct repeat, explicit saved choice and quote passed`)
+      console.log(`${engine.name()} ${width}px ${surface}/${kind}: source model, direct repeat, explicit saved choice, optional photo-only extras, removal and quote passed`)
     }
     await browser.close(); browser = undefined
   }

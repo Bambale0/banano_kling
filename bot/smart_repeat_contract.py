@@ -272,11 +272,13 @@ def selected_slot_ids(template: dict, preset_id: str | None) -> set[str]:
     preset = next((item for item in template['presets'] if item['id'] == preset_id), None)
     if preset is None:
         fail('INVALID_PRESET', 'Выберите существующий вариант.', 400)
-    return set(preset['slot_ids'])
+    return set(preset['slot_ids']) | {slot['slot_id'] for slot in template['slots'] if slot.get('additional')}
 
 
 def compile_bindings(source: dict, template: dict, draft: dict) -> dict:
+    from bot.smart_repeat_extra_images import with_additional_images
     from bot.smart_repeat_policy import validate_counts
+    template = with_additional_images(template, draft)
     validate_counts(source, template['slots'])
     if source_fingerprint(source) != template['source_hash']:
         fail('TEMPLATE_CHANGED', 'Автор изменил публикацию. Откройте повтор заново.')
