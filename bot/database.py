@@ -4202,7 +4202,7 @@ def _saved_reference_is_available(reference: SavedReference) -> bool:
             return bool(resolve_local_upload_path(reference.file_url))
     except Exception:
         logger.exception("Failed to validate saved reference file: %s", reference.file_url)
-        return True
+        return False
     return True
 
 
