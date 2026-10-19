@@ -465,7 +465,7 @@ export function FeedTab() {
     }
     if (state.smartRepeatEnabled) {
       dismissPreview()
-      openSmartRepeat(item.id)
+      openSmartRepeat(item.id, item.gen_type)
       return
     }
     if (!state.imageModels.some(model => model.id === item.model)) {
@@ -498,7 +498,7 @@ export function FeedTab() {
     }
     if (state.smartRepeatEnabled) {
       dismissPreview()
-      openSmartRepeat(item.id)
+      openSmartRepeat(item.id, item.gen_type)
       return
     }
     if (!state.videoModels.some(model => model.id === item.model)) {

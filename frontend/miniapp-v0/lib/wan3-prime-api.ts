@@ -242,12 +242,13 @@ function maxBytesForKind(kind: Wan3PrimeUploadKind): number {
 
 function uploadedFileFromWan3(file: File, data: Wan3PrimeUploadCompleteResponse): UploadedFile {
   return {
-    id: data.reference?.id ? String(data.reference.id) : `wan3_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+    id: data.reference?.id ? `wan3_${data.reference.id}` : `wan3_${Date.now()}_${Math.random().toString(36).slice(2)}`,
     name: data.filename || file.name,
     url: data.url,
     type: data.kind === 'file' ? 'image' : data.kind,
     size: data.size || file.size,
-    saved_reference_id: data.reference?.id ? String(data.reference.id) : null,
+    saved_reference_id: null,
+    wan3_media_id: data.reference?.id ? String(data.reference.id) : null,
     created_at: data.reference?.created_at || null,
     source: data.reference?.source || 'miniapp_wan3_prime',
   }

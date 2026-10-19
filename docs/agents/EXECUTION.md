@@ -2286,6 +2286,130 @@ Coverage: pure contract tests and existing chunk HTTP regression run locally wit
   smart-repeat schema migration; no production query fallback or test exclusion.
 
 
+## 2026-10-19 — Repeat saved-reference selection and source integrity
+
+Baseline: b8f03bbf59e2c1b8991c76e27fc8f2829a243036 (`tanyapi`).
+User-visible result: make library selection explicit, persist the selected media
+identity and filename with its existing slot, restore that assignment on reopen,
+and prove source model/settings/hidden prompt survive the shared repeat path.
+
+Preflight: production is healthy at the baseline SHA. Read-only PostgreSQL audit
+matched a screenshot filename and the 17:55 UTC draft: source 328366 and its
+provider metadata both identify banana_pro / nano-banana-pro; draft slots are
+empty. Other inspected sources 328379/328651 also agree with provider metadata.
+The three underlined library entries are available choices, not attached assets.
+No confirmed source-model substitution. Existing server READY/ownership/hash,
+upload leases, required-slot guards, quote CAS and launch idempotency are reused.
+Missing: clear library-versus-selected presentation and durable public filename/
+saved-reference ID; regression coverage for saved selection and model pinning.
+
+No business configuration, model availability, schema, migrations, prices,
+provider payload format or payment rules change. No arbitrary library file is
+automatically assigned. Private author media remain behind explicit grants.
+Auth/ownership and model constraints apply to ID selection as to uploads.
+Relevant guidance: Bambale0/skills diagnosing-bugs and code-review;
+Bambale0/claw PR review checklist; anthropics/skills webapp-testing.
+
+Steps / acceptance:
+1. Reproduce ambiguous saved-file selection through the actual dialog seam;
+   assert explicit selection and named READY restoration, including equal names.
+2. Resolve saved media by owner-scoped ID, retain current slot lease/asset ID,
+   return validated filename/ID; test foreign/deleted/wrong-kind IDs.
+3. Show library previews with explicit choose actions and selected filename;
+   keep missing/processing/failed slots unable to quote or launch.
+4. Verify source model/settings/prompt across existing registered model families,
+   HTTP selection/reload/paid-launch guards, Jest and mobile browser journeys.
+5. Independent spec/standards review; protected PR to tanyapi, native squash
+   auto-merge, exact-SHA CI/autodeploy/health/static and free smoke/telemetry.
+
+Telemetry reuses repeat_opened, slot_ready and validation_failed with source,
+slot, asset and model IDs. Rollback is normal revert PR or existing rollout flag.
+No paid provider calls or production user-draft mutations for diagnosis.
+
+Progress:
+- Red-capable dialog reproduction failed on absent explicit choose action;
+  service reproduction failed because ID attachment was unsupported. After the
+  fix, dialog suite 3/3 and owner-scoped ID service case pass. This confirms the
+  presentation/identity gap; it does not prove a past model substitution or
+  previously lost READY assignment.
+- UI now distinguishes library candidates from the selected named file, with
+  thumbnails and per-slot choose actions; saved selection sends only the media
+  ID. Server resolves owner/kind, validates bytes/hash/constraints and lease,
+  persists filename/ID and includes media ID in the immutable launch snapshot.
+- Expanded real HTTP image engine matrix to select by ID (forged URL ignored),
+  restore identity and assert the original hidden prompt reaches the provider.
+  Registry-driven contract matrix covers all image/video IDs and capabilities,
+  including Nano Banana, Seedance, Wan, Kling and other registered families.
+  Higgsfield is not a separate registered model ID in the current catalog; no
+  unverified adapter/model identifier was added.
+- Full Jest 68 suites / 522 tests pass. Focused backend and full safe suite,
+  TypeScript/build/mobile browser, review and protected release are in progress.
+
+User clarification supersedes initial UI scope: the problematic cross closes
+the repeat modal, revealing an unrelated default generator. Users rely on the
+editable changes field for both image/video. Deliver the repeat in the existing
+photo/video page with that field intact, replacing the reference input area with
+only named recipe slots, trend-style cards and explicit new/library choices.
+Closing returns to the original publication, saving draft edits. Additive draft
+JSON prompt_changes reuses the existing compose_feed_remix_prompt semantics;
+original author prompt stays private and is never replaced by client text.
+Re-run verification/review after this scope adjustment.
+
+- Clarified cross scenario reproduced red in actual built browser: after Close,
+  original-publication preview never appeared (3s deterministic timeout).
+- Added red contract case proving free-form user changes were ignored. Fixed
+  through existing shared remix composition, after named-variable replacement.
+- Smart repeat now renders inline in PhotoTab/VideoTab; the ordinary unrelated
+  generator is not behind a covering modal. The changes editor remains visible.
+  Required source slots use compact trend-style label/hint/media cards; plus
+  opens separate new-upload/library actions. Library is initially collapsed.
+  Source model stays pinned. Close persists edits and returns to the original
+  feed/profile publication; its navigation result is fenced against newer user
+  navigation. History opening skips source navigation.
+- Interim pre-clarification full safe suite: 3926 passed / 117 skipped /
+  76 subtests. Repeat final full suite after updated behavior.
+
+- Updated focused backend 62/62 pass, including actual image engine with user
+  changes reaching synthetic provider exactly once and hidden base undisclosed.
+- Updated built browser passes 320/390/430px, photo and video surfaces, visible
+  changes editor, close→original publication→reopen with edits/files retained,
+  new/library choice and ID binding, quote guard, duplicate click and lost reply.
+- Added stale-publication fence before quote/launch after edit persistence, and
+  PostgreSQL acceptance reuse for saved-media identity and filename.
+
+- Two-axis review found two stale-response holes: a second variable-save
+  request after changes save could adopt the new session; and late new-repeat
+  response used the current session. Both now capture the starting generation,
+  fence each await/state mutation, and have deterministic regressions (the
+  new-repeat case was observed red before the fix). Await final reviewer check.
+
+- Final upload/editor race regressions: 6/6 pass; TypeScript passes. Disposable
+  native PostgreSQL16: 3/3 pass, including owner-scoped saved ID/filename and
+  existing concurrent claim/debit/refund + interrupted upload cases.
+- Branch protection verified strict=true with the unchanged four required gates.
+  Added smart-repeat browser journey to the main required E2E gate. CI/release
+  and exact deployed SHA verification remain pending. Production browser smoke
+  will use real deployed assets with synthetic intercepted APIs; backend guards
+  will be read-only, with no paid calls or customer-draft mutations.
+
+- Final adapter audit caught a pre-release Wan namespace incompatibility: Wan
+  upload reference.id belongs to wan3_prime_media, not saved_references. Native
+  auto-merge temporarily disabled before merging. Added explicit wan3_media_id
+  from the actual uploader, separate owner/kind-scoped lookup and durable
+  metadata/snapshot identity; URL compatibility retained. New red component
+  regression confirms same numeric IDs cannot select the wrong stored file.
+  Add SQLite/PostgreSQL collision, invalid IDs and mixed-ID rejection cases.
+
+- Closed library-level namespace collision too: actual Wan uploader now emits
+  UI id wan3_<id>, wan3_media_id and no misleading saved_reference_id. Actual
+  uploader→AppProvider library regression observed duplicate identity red with
+  the old mapping and passes with saved_7 and wan3_7 present simultaneously.
+  No other consumer uses Wan's old saved_reference_id as an API ID (focused
+  search); generic/Seedance uploads still persist in saved_references.
+- Updated focused backend: 69 passed. Disposable native PostgreSQL16: 4 passed,
+  including collision/ownership recovery. Uploader/context/component tests pass;
+  final frontend/full backend CI are being rerun for the corrected candidate.
+
 ## 2026-10-19 — repeat navigation and saved-file clarity regression
 
 - Baseline: `b8f03bbf59e2c1b8991c76e27fc8f2829a243036`, verified checkout and running Docker OCI revision. Work is isolated in `fix/smart-repeat-runtime-20261019`; the production admin-managed price file is untouched.
@@ -2315,3 +2439,17 @@ Coverage: pure contract tests and existing chunk HTTP regression run locally wit
 - Rebuilt **unchanged b8f03bb** in an isolated detached worktree and reproduced the identical strict unexpected-API assertion. This is a missing fixture for the already-existing showcase, not a repeat/model code regression.
 - Added only the exact catalog mock with its POST method assertion and `{ok:true,categories:[]}` response. All unknown-API, mutation, unsafe-link, clipboard and privacy assertions remain unchanged; both Android/Chromium and iOS/WebKit cases remain required by that workflow. No runtime code was changed to accommodate the test.
 - The navigation concurrency fixture now explicitly starts at `remix_99`, then selects source 42 before source 99 resolves, so request and response IDs model the actual race.
+
+
+## 2026-10-19 — integrate current tanyapi routing release
+
+Upstream PR340 merged as 88b7d33544ba79985fd35a2f69df7e8c9d3ad71d.
+Merged current tanyapi into this task without discarding either ledger. Retain
+its direct source-ID opening, stale-link fencing, preset cleanup, unavailable
+legacy-model errors, Genjutsu precedence and exact share-catalog test fixture.
+Adapt the opener to carry publication kind and select PhotoTab/VideoTab so the
+new inline form mounts. Preserve our async close/source-return and all edit/
+asset/session guards. Port neutral loading and explicit-selection assertions
+to SmartRepeatForm; update upstream routing/browser assertions for inline hosts.
+No new backend change in this integration; rerun frontend/build/both navigation
+journeys and exact protected CI.

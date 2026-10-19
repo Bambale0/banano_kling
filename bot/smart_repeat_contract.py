@@ -311,6 +311,9 @@ def compile_bindings(source: dict, template: dict, draft: dict) -> dict:
             {'image': images, 'video': videos, 'audio': audio}[slot['kind']].append(url)
             references[sid] = {'binding': 'upload', 'asset_id': aid, 'kind': slot['kind'],
                 'field': slot['field'], 'index': slot['index'], 'url': url, 'state': 'READY'}
+            for key in ('saved_reference_id', 'wan3_media_id'):
+                if asset.get(key):
+                    references[sid][key] = asset[key]
             if asset.get('sha256'):
                 references[sid].update(sha256=asset['sha256'], size_bytes=asset['size_bytes'])
         else:
@@ -330,6 +333,9 @@ def compile_bindings(source: dict, template: dict, draft: dict) -> dict:
         prompt = prompt.replace('{{' + variable['id'] + '}}', value)
     if re.search(r'\{\{[a-zA-Z][a-zA-Z0-9_]*\}\}', prompt):
         fail('PROMPT_BINDINGS_INVALID', 'Автору нужно настроить переменные скрытого промпта.')
+    from bot.services.remix_prompt import compose_feed_remix_prompt
+    changes = _text(draft.get('prompt_changes', ''), 64 * 1024, empty=True)
+    prompt = compose_feed_remix_prompt(prompt, changes)
     from bot.services.seedance_reference_binding import missing_seedance_reference_tags
     if missing_seedance_reference_tags(prompt,
         image_count=sum(slot['kind'] == 'image' for slot in template['slots']),
@@ -360,4 +366,5 @@ def compile_bindings(source: dict, template: dict, draft: dict) -> dict:
         effective.update(feed_repeat_reference_selection=None, feed_references_visible=True, feed_reference_selection=fixed)
     return {'body': body, 'source': effective, 'snapshot': {
         'contract_version': 1, 'source_id': int(source['id']), 'template_version': template['version'],
-        'model': template['model'], 'preset_id': draft.get('preset_id'), 'references': references}}
+        'model': template['model'], 'preset_id': draft.get('preset_id'), 'references': references,
+        'prompt_changes': changes}}

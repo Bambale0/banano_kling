@@ -22,7 +22,7 @@ function Harness() {
     <output data-testid="image">{app.promptPreset?.model}</output>
     <output data-testid="video">{app.videoPromptPreset?.model}</output>
     <output data-testid="error">{app.state.error}</output>
-    <button onClick={app.closeSmartRepeat}>Close repeat</button>
+    <button onClick={() => void app.closeSmartRepeat()}>Close repeat</button>
     <button onClick={() => void app.refreshTasks()}>Refresh</button>
     <button onClick={() => { app.setPromptPreset({ title: 'Old image', prompt: '', model: 'old-image' }); app.setVideoPromptPreset({ title: 'Old video', prompt: '', model: 'old-video' }) }}>Old forms</button>
     <button onClick={() => app.setPromptPreset({ title: 'Repeat', prompt: '', model: 'source-model', sourceFeedGenId: 42 })}>Repeat image</button>
@@ -38,22 +38,26 @@ test.each(['image', 'video'])('smart %s deep link uses server source without ope
   ;(fetchFeedItem as jest.Mock).mockResolvedValue({ id: 42, gen_type: kind, model: 'source-model-not-in-catalog', publication_scope: 'feed' })
   render(<AppProvider><Harness /></AppProvider>)
   await waitFor(() => expect(screen.getByTestId('source')).toHaveTextContent('42'))
-  expect(screen.getByTestId('tab')).toHaveTextContent('4')
+  expect(screen.getByTestId('tab')).toHaveTextContent(kind === 'image' ? '1' : '2')
   expect(screen.getByTestId('image')).toBeEmptyDOMElement()
   expect(screen.getByTestId('video')).toBeEmptyDOMElement()
   expect(hydrateSeedance25IdentityPreset).not.toHaveBeenCalled()
   fireEvent.click(screen.getByText('Close repeat'))
+  await waitFor(() => expect(screen.getByTestId('source')).toBeEmptyDOMElement())
+  expect(screen.getByTestId('tab')).toHaveTextContent('4')
   fireEvent.click(screen.getByText('Refresh'))
   await waitFor(() => expect(bootstrapApp).toHaveBeenCalledTimes(2))
   expect(screen.getByTestId('source')).toBeEmptyDOMElement()
-  expect(fetchFeedItem).toHaveBeenCalledTimes(1)
+  expect(fetchFeedItem).toHaveBeenCalledTimes(2)
 })
-test('profile repeat deep link keeps the author profile behind the dialog', async () => {
+test('profile repeat deep link opens inline and returns to its source profile', async () => {
   ;(fetchFeedItem as jest.Mock).mockResolvedValue({ id: 42, gen_type: 'image', model: 'source-model', publication_scope: 'profile', author_referral_code: 'AUTHOR' })
   render(<AppProvider><Harness /></AppProvider>)
   await waitFor(() => expect(screen.getByTestId('source')).toHaveTextContent('42'))
-  expect(screen.getByTestId('tab')).toHaveTextContent('7')
+  expect(screen.getByTestId('tab')).toHaveTextContent('1')
   expect(screen.getByTestId('profile')).toHaveTextContent('AUTHOR')
+  fireEvent.click(screen.getByText('Close repeat'))
+  await waitFor(() => expect(screen.getByTestId('tab')).toHaveTextContent('7'))
 })
 test.each(['image', 'video'])('legacy %s link rejects unavailable source model instead of substituting a default', async kind => {
   ;(bootstrapApp as jest.Mock).mockResolvedValue({ ...base, smart_repeat_enabled: false,

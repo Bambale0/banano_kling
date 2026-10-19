@@ -448,6 +448,7 @@ export interface UploadedFile {
   size: number
   uploading?: boolean
   saved_reference_id?: string | null
+  wan3_media_id?: string | null
   created_at?: string | null
   source?: string
 }

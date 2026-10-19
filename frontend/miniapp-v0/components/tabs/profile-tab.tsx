@@ -620,7 +620,7 @@ export function ProfileTab() {
     }
     if (isLive && state.smartRepeatEnabled) {
       dismissPreview()
-      openSmartRepeat(item.id)
+      openSmartRepeat(item.id, item.gen_type)
       return
     }
     if (item.gen_type === 'video') {

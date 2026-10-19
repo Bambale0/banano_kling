@@ -252,6 +252,7 @@ jobs:
           node e2e/trend-share-clipboard.mjs
           node e2e/hidden-repeat-prompt.mjs
           node e2e/video-repeat-reference-slots.mjs
+          node e2e/smart-repeat.mjs
           node e2e/bot-start-gate.mjs
           node e2e/bot-start-media-targets.mjs
           node e2e/bot-start-genjutsu.mjs

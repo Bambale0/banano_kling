@@ -65,9 +65,10 @@ try {
           if (action === 'open') assert.equal(body.source_id, 777)
           else if (action === 'update') {
             assert.equal(body.slot_id, 'face')
+            if (body.operation === 'ready') { assert.equal(Number(body.saved_reference_id), 2); assert.equal(body.url, undefined) }
             draft = { ...draft, revision: draft.revision + 1, quote: null, slots: { face: {
               state: body.operation === 'begin' ? 'UPLOADING' : body.operation.toUpperCase(),
-              upload_token: 'lease', ...(body.operation === 'ready' ? { asset_id: 'owned-asset', url: body.url } : {}),
+              upload_token: 'lease', ...(body.operation === 'ready' ? { asset_id: 'owned-asset', url: `https://example.test/saved-${body.saved_reference_id}.jpg`, saved_reference_id: String(body.saved_reference_id), filename: `saved-${body.saved_reference_id}.jpg` } : {}),
             } } }
           } else if (action === 'quote') {
             assert.equal(draft.slots.face.state, 'READY')
@@ -83,14 +84,16 @@ try {
       const repeat = page.getByRole('button', { name: /^Повторить/ })
       await repeat.waitFor()
       await repeat.click()
-      const dialog = page.getByRole('dialog')
+      const dialog = page.getByRole('region', { name: kind === 'image' ? 'Повторить фото' : 'Повторить видео', exact: true })
       await dialog.getByText('Модель исходной работы: ' + model.label, { exact: true }).waitFor()
-      assert.equal(await page.getByRole('heading', { name: /Генерация (фото|видео)/, includeHidden: true }).count(), 0)
+      assert.equal(await page.getByRole('heading', { name: kind === 'image' ? 'Генерация фото' : 'Генерация видео', exact: true }).count(), 1)
+      assert.equal(await page.getByText(/^Other (image|video) model$/).count(), 0)
       assert.equal(await dialog.getByText('Загружено обязательных референсов: 0 / 1', { exact: true }).count(), 1)
-      await dialog.getByText('Сохранённые файлы — нажмите, чтобы выбрать', { exact: true }).waitFor()
+      await dialog.getByRole('button', { name: 'Выбрать файл: Ваше фото', exact: true }).click()
+      await dialog.getByRole('button', { name: 'Взять из сохранённых', exact: true }).click()
       const calculate = dialog.getByRole('button', { name: 'Рассчитать стоимость' })
       assert.equal(await calculate.isDisabled(), true)
-      await dialog.getByRole('button', { name: 'saved-2.jpg', exact: true }).click()
+      await dialog.getByRole('button', { name: 'Выбрать: saved-2.jpg', exact: true }).click()
       await dialog.getByText('Загружено обязательных референсов: 1 / 1', { exact: true }).waitFor()
       assert.equal(draft.slots.face.url, 'https://example.test/saved-2.jpg')
       await calculate.click()

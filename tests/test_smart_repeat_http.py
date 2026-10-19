@@ -16,7 +16,8 @@ from tests.test_smart_repeat_store import setup_repeat
 @pytest.mark.asyncio
 @pytest.mark.parametrize('outcome', ['queued', 'rejected', 'lost_response'])
 @pytest.mark.parametrize('source_inputs', [False, True])
-async def test_http_image_preflight_upload_reload_quote_launch_and_replay(monkeypatch, tmp_path, outcome, source_inputs):
+@pytest.mark.parametrize('reference_store', ['saved', 'wan'])
+async def test_http_image_preflight_upload_reload_quote_launch_and_replay(monkeypatch, tmp_path, outcome, source_inputs, reference_store):
     from bot.handlers import generation
     ctx = await setup_repeat(monkeypatch, tmp_path)
     async with db_backend.connect() as db:
@@ -27,6 +28,17 @@ async def test_http_image_preflight_upload_reload_quote_launch_and_replay(monkey
         await db.execute('DELETE FROM smart_repeat_drafts')
         await db.execute('DELETE FROM smart_repeat_templates')
         await db.commit()
+    reference = (await database.list_saved_references(ctx.user.telegram_id))[0]
+    identity = {'saved_reference_id': str(reference.id)}
+    if reference_store == 'wan':
+        from bot.services.wan3_prime_storage import Wan3PrimeStorage
+        await Wan3PrimeStorage().init_schema()
+        async with db_backend.connect() as db:
+            await db.execute('INSERT INTO wan3_prime_media (id,user_id,telegram_id,kind,public_url,local_path,filename,content_type,size_bytes,sha256,media_info) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                (reference.id,ctx.user.id,ctx.user.telegram_id,'image','/uploads/wan3/own.png',str(ctx.path),'wan-portrait.png','image/png',ctx.path.stat().st_size,'synthetic','{}'))
+            await db.commit()
+        identity = {'wan3_media_id': str(reference.id)}
+    expected_url = '/uploads/wan3/own.png' if reference_store == 'wan' else '/uploads/refs/own.png'
     await database.set_bot_setting('smart_repeat_rollout', json.dumps({'enabled': True}))
     monkeypatch.setattr(database, '_is_feed_result_url_available', lambda *args: True)
     monkeypatch.setattr(miniapp, '_get_user_context', AsyncMock(return_value=(ctx.user.telegram_id, {'user': ctx.user})))
@@ -56,10 +68,18 @@ async def test_http_image_preflight_upload_reload_quote_launch_and_replay(monkey
         provider.assert_not_awaited()
         assert (await database.get_or_create_user(ctx.user.telegram_id)).credits == 100
         status, ready = await call('update', draft_id=did, operation='ready', slot_id=sid,
-            upload_token=begun['slots'][sid]['upload_token'], url='/uploads/refs/own.png')
+            upload_token=begun['slots'][sid]['upload_token'], **identity,
+            url='https://example.test/forged-url-is-ignored.png')
         assert status == 200, ready
         _, restored = await call('open', source_id=ctx.source['id'])
         assert restored['slots'][sid]['asset_id'] == ready['slots'][sid]['asset_id']
+        assert restored['slots'][sid][next(iter(identity))] == next(iter(identity.values()))
+        assert restored['slots'][sid]['url'] == expected_url
+        status, changed = await call('update', draft_id=did, operation='changes', prompt_changes='Make the car blue')
+        assert status == 200, changed
+        _, restored = await call('open', source_id=ctx.source['id'])
+        assert restored['prompt_changes'] == 'Make the car blue'
+        assert 'Private synthetic recipe' not in json.dumps(restored)
         status, quoted = await call('quote', draft_id=did)
         assert status == 200 and quoted['quote']['cost'] == 10, quoted
         responses = await asyncio.gather(*(call('launch', draft_id=did, quote_id=quoted['quote']['quote_id']) for _ in range(2)))
@@ -67,7 +87,9 @@ async def test_http_image_preflight_upload_reload_quote_launch_and_replay(monkey
         if outcome == 'queued':
             assert any(status < 400 for status, result in responses), responses
         provider.assert_awaited_once()
-        assert provider.await_args.kwargs['image_input'] == ['/uploads/refs/own.png']
+        assert provider.await_args.kwargs['image_input'] == [expected_url]
+        assert 'Private synthetic recipe' in provider.await_args.kwargs['prompt']
+        assert provider.await_args.kwargs['prompt'].count('Make the car blue') == 1
         _, recovered = await call('open', source_id=ctx.source['id'])
         assert recovered['status'] == ('rejected' if outcome == 'rejected' else 'launched'), recovered
         await call('launch', draft_id=did, quote_id=quoted['quote']['quote_id'])

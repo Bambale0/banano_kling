@@ -124,12 +124,16 @@ test('chunk upload uses Wan limits and preserves large video capability', async 
       kind: 'video',
       filename: 'video.mp4',
       size: 10,
+      reference: { id: 7, source: 'upload' },
     }))
 
   const file = new File(['0123456789'], 'video.mp4', { type: 'video/mp4' })
   const uploaded = await uploadWan3PrimeReference('video', file)
 
   expect(uploaded.url).toBe('https://cdn.test/video.mp4')
+  expect(uploaded.wan3_media_id).toBe('7')
+  expect(uploaded.saved_reference_id).toBeNull()
+  expect(uploaded.id).toBe('wan3_7')
   expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
     '/mini-app/api/wan3/upload/init',
     '/mini-app/api/wan3/upload/chunk',

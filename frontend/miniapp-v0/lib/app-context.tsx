@@ -21,8 +21,9 @@ interface AppContextType {
   promptPreset: PromptPreset | null
   videoPromptPreset: VideoPromptPreset | null
   smartRepeatSourceId: number | null
-  closeSmartRepeat: () => void
-  openSmartRepeat: (sourceId: number) => void
+  smartRepeatType: 'image' | 'video' | null
+  closeSmartRepeat: (showSource?: boolean) => Promise<void>
+  openSmartRepeat: (sourceId: number, kind: 'image' | 'video') => void
   trendToRun: PromptItem | null
   viewedProfileCode: string | null
   activeTab: number
@@ -173,7 +174,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [promptPreset, setLegacyPromptPreset] = useState<PromptPreset | null>(null)
   const [videoPromptPreset, setLegacyVideoPromptPreset] = useState<VideoPromptPreset | null>(null)
   const [smartRepeatSourceId, setSmartRepeatSourceId] = useState<number | null>(null)
-  const closeSmartRepeat = useCallback(() => setSmartRepeatSourceId(null), [])
+  const [smartRepeatType, setSmartRepeatType] = useState<'image' | 'video' | null>(null)
   const [trendToRun, setTrendToRun] = useState<PromptItem | null>(null)
   const [viewedProfileCode, setViewedProfileCode] = useState<string | null>(null)
   const [activeTab, setActiveTabState] = useState(1)
@@ -189,7 +190,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     pendingStartParamRef.current = null
   }, [])
 
-  const openSmartRepeat = useCallback((sourceId: number) => {
+  const openSmartRepeat = useCallback((sourceId: number, kind: 'image' | 'video') => {
     // A new publication owns navigation; a delayed deep-link response must not
     // restore an older recipe or leave an unrelated generator preset behind.
     cancelStartNavigation()
@@ -198,15 +199,42 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setLegacyVideoPromptPreset(null)
     setIsTaskDetailOpen(false)
     setSmartRepeatSourceId(sourceId)
+    setSmartRepeatType(kind)
+    setActiveTabState(kind === 'video' ? 2 : 1)
   }, [cancelStartNavigation])
   const setPromptPreset = useCallback((preset: PromptPreset | null) => {
-    if (state.smartRepeatEnabled && preset?.sourceFeedGenId) { openSmartRepeat(preset.sourceFeedGenId); return }
+    if (state.smartRepeatEnabled && preset?.sourceFeedGenId) { openSmartRepeat(preset.sourceFeedGenId, 'image'); return }
     setLegacyPromptPreset(preset)
   }, [state.smartRepeatEnabled, openSmartRepeat])
   const setVideoPromptPreset = useCallback((preset: VideoPromptPreset | null) => {
-    if (state.smartRepeatEnabled && preset?.sourceFeedGenId) { openSmartRepeat(preset.sourceFeedGenId); return }
+    if (state.smartRepeatEnabled && preset?.sourceFeedGenId) { openSmartRepeat(preset.sourceFeedGenId, 'video'); return }
     setLegacyVideoPromptPreset(preset)
   }, [state.smartRepeatEnabled, openSmartRepeat])
+
+  const closeSmartRepeat = useCallback(async (showSource = true) => {
+    const sourceId = smartRepeatSourceId
+    const revision = ++startNavigationVersionRef.current
+    if (showSource && sourceId) {
+      try {
+        const item = await fetchFeedItem(sourceId)
+        if (revision !== startNavigationVersionRef.current) return
+        if (!item?.id) throw new Error('Публикация недоступна. Обновите ленту.')
+        setFeedDeepLink({ item, action: 'preview' })
+        if (item.publication_scope === 'profile') {
+          setViewedProfileCode(String(item.author_referral_code || '').trim().toUpperCase() || null)
+          setActiveTabState(7)
+        } else {
+          setActiveTabState(4)
+        }
+      } catch {
+        if (revision !== startNavigationVersionRef.current) return
+        setActiveTabState(4)
+        setState(previous => ({ ...previous, error: 'Публикация больше недоступна. Ваш черновик повтора сохранён.' }))
+      }
+    }
+    setSmartRepeatSourceId(null)
+    setSmartRepeatType(null)
+  }, [smartRepeatSourceId])
 
   useEffect(() => {
     const navigate = (event: Event) => {
@@ -428,7 +456,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       } else {
         setActiveTabState(4)
       }
-      openSmartRepeat(item.id)
+      openSmartRepeat(item.id, item.gen_type)
       return
     }
     if (item.gen_type === 'video') {
@@ -750,6 +778,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         promptPreset,
         videoPromptPreset,
         smartRepeatSourceId,
+        smartRepeatType,
         closeSmartRepeat,
         openSmartRepeat,
         trendToRun,

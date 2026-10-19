@@ -162,3 +162,46 @@ def test_mixed_frame_and_list_share_the_actual_provider_budget(model, maximum):
         'required': True, 'label': 'Extra image'})
     with pytest.raises(SmartRepeatError, match='MODEL_CONSTRAINTS_INVALID'):
         configure_template(task, submitted)
+
+
+def registered_repeat_models():
+    from bot.miniapp import IMAGE_MODELS, VIDEO_MODELS
+    from bot.model_capabilities import VIDEO_MODEL_CAPABILITIES
+    return [(item['id'], 'image') for item in IMAGE_MODELS] + [
+        (model, 'video') for model in sorted({item['id'] for item in VIDEO_MODELS} | set(VIDEO_MODEL_CAPABILITIES))]
+
+
+@pytest.mark.parametrize('model,kind', registered_repeat_models())
+def test_registered_repeat_models_keep_source_identity_settings_and_hidden_prompt(model, kind):
+    from bot.smart_repeat_api import _engine_body
+    task = source(model)
+    task.update(type=kind, prompt='Private {{subject}} recipe', duration=5, aspect_ratio='9:16')
+    task['request_data'] = {'img_quality': '4K', 'img_ratio': '9:16', 'v_ratio': '9:16',
+        'v_model': model, 'img_service': model, 'v_type': 'imgtxt',
+        'v_image_url': '/uploads/refs/source.png', 'reference_images': ['/uploads/refs/source.png'],
+        'seedance25_resolution': '720p', 'seedance25_scenario': 'multimodal'}
+    if model in {'wan_3', 'wan_3_prime'}:
+        task['request_data'] = {'model': model, 'scenario': 'reference', 'prompt': task['prompt'],
+            'resolution': '720P', 'aspect_ratio': '9:16', 'duration': 5,
+            'reference_image_urls': ['/uploads/refs/source.png']}
+    template = infer_template(task)
+    template['variables'] = [{'id': 'subject', 'label': 'Сюжет', 'required': True, 'max_length': 40}]
+    state = {'slots': {slot['slot_id']: ready('/uploads/refs/mine.png', 'my-media') for slot in template['slots']},
+        'user_values': {'subject': 'car'}, 'prompt_changes': 'Make the car blue'}
+    compiled = compile_bindings(task, template, state)
+    body = _engine_body(None, task, compiled, {'img_service': 'banana_pro', 'v_model': 'banana_pro',
+        'model': 'banana_pro', 'prompt': 'forged prompt'}, {'id': 'test-draft'})
+    assert template['model'] == compiled['snapshot']['model'] == model
+    assert compiled['source']['prompt'].startswith('Private car recipe')
+    assert compiled['source']['prompt'].endswith('Make the car blue')
+    assert task['prompt'] == 'Private {{subject}} recipe'
+    assert 'Private' not in str(public_template(template))
+    if model in {'wan_3', 'wan_3_prime'}:
+        assert body['model'] == model
+        assert body['repeat_replacements'] == {'image:0': '/uploads/refs/mine.png'}
+    else:
+        assert body['img_service'] == body['v_model'] == model
+        assert body['img_quality'] == '4K'
+        assert body['img_ratio'] == body['v_ratio'] == '9:16'
+        assert body['seedance25_resolution'] == '720p'
+        assert body['prompt'] == ''

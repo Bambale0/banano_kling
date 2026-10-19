@@ -21,8 +21,10 @@ async def disposable_schema():
     parsed = urlsplit(dsn)
     assert parsed.hostname in {'localhost', '127.0.0.1'} and parsed.path == '/banano_partner_test'
     assert db_backend.is_postgres()
+    from bot.services.wan3_prime_storage import Wan3PrimeStorage
+    await Wan3PrimeStorage().init_schema()
     async with await psycopg.AsyncConnection.connect(dsn) as conn:
-        await conn.execute('TRUNCATE generation_tasks, users, saved_references, smart_repeat_drafts, smart_repeat_templates RESTART IDENTITY CASCADE')
+        await conn.execute('TRUNCATE wan3_prime_media, generation_tasks, users, saved_references, smart_repeat_drafts, smart_repeat_templates RESTART IDENTITY CASCADE')
     async with db_backend.connect() as db:
         await ensure_schema(db)
         await ensure_schema(db)
@@ -44,3 +46,19 @@ async def test_postgres_upload_lease_recovery_and_missing_asset(monkeypatch, tmp
         test_upload_fencing_reload_delete_and_no_early_quote,
     )
     await test_upload_fencing_reload_delete_and_no_early_quote(monkeypatch, tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_postgres_saved_reference_identity_and_filename(monkeypatch, tmp_path):
+    from tests.test_smart_repeat_store import (
+        test_saved_reference_id_binds_owned_asset_to_slot_and_restores_metadata,
+    )
+    await test_saved_reference_id_binds_owned_asset_to_slot_and_restores_metadata(monkeypatch, tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_postgres_wan_and_saved_reference_namespace_collision(monkeypatch, tmp_path):
+    from tests.test_smart_repeat_store import (
+        test_wan_and_saved_media_ids_have_distinct_owned_namespaces,
+    )
+    await test_wan_and_saved_media_ids_have_distinct_owned_namespaces(monkeypatch, tmp_path)

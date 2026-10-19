@@ -41,7 +41,7 @@ async function mount(surface: string, kind: string, smart: boolean, model = 'sou
 beforeEach(() => { jest.clearAllMocks(); window.sessionStorage.clear() })
 test.each(cases)('%s %s smart repeat opens directly, without legacy hydration or a generator tab', async (surface, kind) => {
   const app = await mount(surface, kind, true)
-  await waitFor(() => expect(app.openSmartRepeat).toHaveBeenCalledWith(42))
+  await waitFor(() => expect(app.openSmartRepeat).toHaveBeenCalledWith(42, kind))
   expect(app.setActiveTab).not.toHaveBeenCalled()
   expect(app.setPromptPreset).not.toHaveBeenCalled()
   expect(app.setVideoPromptPreset).not.toHaveBeenCalled()
