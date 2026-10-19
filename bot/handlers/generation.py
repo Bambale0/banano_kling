@@ -49,6 +49,7 @@ from bot.database import (
     share_to_library,
 )
 from bot.handlers import native_repeat_contract as native_repeat
+from bot.handlers import native_repeat_receipt
 from bot.keyboards import (
     get_back_keyboard,
     get_create_image_keyboard,
@@ -1764,7 +1765,10 @@ async def _restore_image_task_to_state(
     nsfw_enabled = bool(request_data.get("nsfw_enabled", False))
     prompt = _repeat_source_prompt(request_data, task)
     try:
-        contract = await native_repeat.load_contract(task) if repeat_source_task_id else None
+        contract = await native_repeat.load_contract(task, viewer_telegram_id) if repeat_source_task_id else None
+        if repeat_source_task_id and viewer_telegram_id is not None:
+            actor = await get_or_create_user(viewer_telegram_id)
+            await native_repeat_receipt.recover_unsubmitted(actor, task.id)
         if repeat_source_task_id and re.search(r'\{\{[a-zA-Z][a-zA-Z0-9_]*\}\}', prompt):
             return False, native_repeat.UNSUPPORTED
         unit_cost = native_repeat.current_price(img_service, img_quality, viewer_telegram_id)
@@ -2714,9 +2718,13 @@ async def confirm_native_repeat_quote(callback: types.CallbackQuery, state: FSMC
     async with _get_reference_upload_lock(callback.from_user.id):
         data = await state.get_data()
         if not quote_id or quote_id != data.get("repeat_quote_id"):
-            await callback.answer("Это подтверждение уже использовано или устарело. Откройте повтор заново.", show_alert=True)
+            message = await native_repeat_receipt.replay_message(callback.from_user.id, quote_id)
+            await callback.answer(message or "Это подтверждение уже использовано или устарело. Откройте повтор заново.", show_alert=True)
             return
-        await _run_native_image_repeat(callback, state, str(data.get("repeat_source_task_id") or ""), quote_id)
+        try:
+            await _run_native_image_repeat(callback, state, str(data.get("repeat_source_task_id") or ""), quote_id)
+        except SmartRepeatError as exc:
+            await callback.answer(exc.message, show_alert=True)
 
 
 async def _run_native_image_repeat(callback, state, task_id: str, quote_id: str):
@@ -2736,7 +2744,7 @@ async def _run_native_image_repeat(callback, state, task_id: str, quote_id: str)
     data = await state.get_data()
     state_matches_repeat = data.get("repeat_source_task_id") == task_id
     try:
-        contract = await native_repeat.load_contract(task)
+        contract = await native_repeat.load_contract(task, callback.from_user.id)
     except SmartRepeatError as exc:
         await callback.answer(exc.message, show_alert=True)
         return
@@ -2830,7 +2838,8 @@ async def _run_native_image_repeat(callback, state, task_id: str, quote_id: str)
         return
     quote_data = {**data, "img_service": img_service, "img_ratio": img_ratio, "img_quality": img_quality}
     if not state_matches_repeat or data.get("repeat_quote_signature") != native_repeat.quote_signature(quote_data, unit_cost):
-        await state.update_data(img_service=img_service, img_ratio=img_ratio, img_quality=img_quality)
+        await state.update_data(img_service=img_service, img_ratio=img_ratio, img_quality=img_quality,
+                                repeat_pricing_actor_id=callback.from_user.id)
         await _show_repeat_image_screen(callback, state)
         await callback.answer("Стоимость или настройки изменились. Подтвердите новую цену.", show_alert=True)
         return
@@ -2840,147 +2849,148 @@ async def _run_native_image_repeat(callback, state, task_id: str, quote_id: str)
     if current.get("repeat_quote_id") != quote_id or current.get("repeat_source_task_id") != task_id:
         await callback.answer("Подтверждение устарело. Откройте повтор заново.", show_alert=True)
         return
-    await state.update_data(repeat_quote_id=None)
-    is_admin = config.is_admin(callback.from_user.id)
-    if is_admin:
-        unit_cost = 0
-    if unit_cost > 0 and not is_admin:
-        can_afford = await check_can_afford(callback.from_user.id, unit_cost)
-        if not can_afford:
-            await callback.answer("Недостаточно бананов для повтора.", show_alert=True)
-            return
-        if not await deduct_credits(callback.from_user.id, unit_cost):
-            await callback.answer("Не удалось списать бананы.", show_alert=True)
-            return
+    async with native_repeat_receipt.authorized_launch(user, contract, quote_data, quote_id, unit_cost):
+        await state.update_data(repeat_quote_id=None)
+        is_admin = config.is_admin(callback.from_user.id)
+        if is_admin:
+            unit_cost = 0
+        if unit_cost > 0 and not is_admin:
+            can_afford = await check_can_afford(callback.from_user.id, unit_cost)
+            if not can_afford:
+                await callback.answer("Недостаточно бананов для повтора.", show_alert=True)
+                return
+            if not await deduct_credits(callback.from_user.id, unit_cost):
+                await callback.answer("Не удалось списать бананы.", show_alert=True)
+                return
 
-    callback_url = config.kie_notification_url if config.WEBHOOK_HOST else None
-    model_label = get_image_model_label(img_service)
-    progress_message = await callback.message.answer(
-        "🔁 <b>Повторяю генерацию</b>\n"
-        f"• Модель: <code>{model_label}</code>\n"
-        f"• Формат: <code>{img_ratio.replace(':', '∶')}</code>\n"
-        f"• Референсы: <code>{len(reference_images)}</code>",
-        parse_mode="HTML",
-    )
-
-    async def notify_local_task_created(local_task_id: str):
-        try:
-            await progress_message.edit_text(
-                "🔁 <b>Повтор поставлен в запуск</b>\n"
-                f"• Модель: <code>{model_label}</code>\n"
-                f"• ID задачи: <code>{local_task_id}</code>\n"
-                f"• Формат: <code>{img_ratio.replace(':', '∶')}</code>\n"
-                f"• Референсы: <code>{len(reference_images)}</code>\n\n"
-                "Жду ответ провайдера.",
-                parse_mode="HTML",
-            )
-        except TelegramBadRequest:
-            pass
-
-    try:
-        launch_result = await _start_image_generation_task(
-            user=user,
-            telegram_id=callback.from_user.id,
-            img_service=img_service,
-            prompt=_build_image_variant_prompt(prompt, 0, 1),
-            img_ratio=img_ratio,
-            reference_images=reference_images,
-            unit_cost=unit_cost,
-            img_quality=img_quality,
-            img_nsfw_checker=img_nsfw_checker,
-            nsfw_enabled=nsfw_enabled,
-            callback_url=callback_url,
-            source_feed_gen_id=source_feed_gen_id,
-            parent_generation_id=task.id if source_feed_gen_id else None,
-            private_repeat_reference_images=private_refs,
-            action_type="repeat" if source_feed_gen_id else None,
-            on_task_created=notify_local_task_created,
+        callback_url = config.kie_notification_url if config.WEBHOOK_HOST else None
+        model_label = get_image_model_label(img_service)
+        progress_message = await callback.message.answer(
+            "🔁 <b>Повторяю генерацию</b>\n"
+            f"• Модель: <code>{model_label}</code>\n"
+            f"• Формат: <code>{img_ratio.replace(':', '∶')}</code>\n"
+            f"• Референсы: <code>{len(reference_images)}</code>",
+            parse_mode="HTML",
         )
-        await progress_message.delete()
 
-        if launch_result["status"] == "queued":
-            if source_feed_gen_id:
-                await credit_feed_prompt_repeat(
-                    task.id,
-                    user.id,
-                    repeat_task_id=str(launch_result.get("task_id") or ""),
-                    credits_spent=unit_cost,
-                )
-
-            queued_task_id = str(launch_result["task_id"])
-            local_task_id = str(launch_result.get("local_task_id") or "")
-            public_task_id, provider_id_line = _format_public_task_id_lines(
-                queued_task_id, local_task_id
-            )
-            await callback.message.answer(
-                "🚀 <b>Повторная генерация запущена</b>\n"
-                f"• Модель: <code>{model_label}</code>\n"
-                f"• ID задачи: <code>{public_task_id}</code>\n"
-                f"{provider_id_line}"
-                f"• Списано: <code>{unit_cost}</code>🍌 {'(админ бесплатно)' if is_admin else ''}\n\n"
-                "Результат придёт в этот чат.",
-                parse_mode="HTML",
-            )
-        elif launch_result["status"] == "done":
-            if source_feed_gen_id:
-                await credit_feed_prompt_repeat(
-                    task.id,
-                    user.id,
-                    repeat_task_id=str(launch_result.get("task_id") or ""),
-                    credits_spent=unit_cost,
-                )
-            result_bytes = launch_result["result_bytes"]
-            saved_url = launch_result["saved_url"]
-            await callback.message.answer_photo(
-                photo=types.BufferedInputFile(result_bytes, filename=f"{launch_result['task_id']}.png"),
-                caption=(
-                    "✅ <b>Повтор готов</b>\n"
+        async def notify_local_task_created(local_task_id: str):
+            try:
+                await progress_message.edit_text(
+                    "🔁 <b>Повтор поставлен в запуск</b>\n"
                     f"• Модель: <code>{model_label}</code>\n"
-                    f"• ID задачи: <code>{launch_result['task_id']}</code>\n"
-                    f"• Списано: <code>{unit_cost}</code>🍌 {'(админ бесплатно)' if is_admin else ''}"
-                ),
-                parse_mode="HTML",
-                reply_markup=get_image_result_keyboard(
-                    saved_url, task_id=launch_result["task_id"]
-                ),
+                    f"• ID задачи: <code>{local_task_id}</code>\n"
+                    f"• Формат: <code>{img_ratio.replace(':', '∶')}</code>\n"
+                    f"• Референсы: <code>{len(reference_images)}</code>\n\n"
+                    "Жду ответ провайдера.",
+                    parse_mode="HTML",
+                )
+            except TelegramBadRequest:
+                pass
+
+        try:
+            launch_result = await _start_image_generation_task(
+                user=user,
+                telegram_id=callback.from_user.id,
+                img_service=img_service,
+                prompt=_build_image_variant_prompt(prompt, 0, 1),
+                img_ratio=img_ratio,
+                reference_images=reference_images,
+                unit_cost=unit_cost,
+                img_quality=img_quality,
+                img_nsfw_checker=img_nsfw_checker,
+                nsfw_enabled=nsfw_enabled,
+                callback_url=callback_url,
+                source_feed_gen_id=source_feed_gen_id,
+                parent_generation_id=task.id if source_feed_gen_id else None,
+                private_repeat_reference_images=private_refs,
+                action_type="repeat" if source_feed_gen_id else None,
+                on_task_created=notify_local_task_created,
             )
-            await _send_original_document(
-                callback.message.answer_document,
-                result_bytes,
-                saved_url,
-                filename=f"{launch_result['task_id']}_original.png",
-            )
-            await _send_used_prompt_message_to_chat(
-                callback.message.answer,
-                prompt,
-                task_id=launch_result["task_id"],
-                model_label=model_label,
-                hidden=bool(source_feed_gen_id or data.get("repeat_prompt_hidden")),
-            )
-        else:
+            await progress_message.delete()
+
+            if launch_result["status"] == "queued":
+                if source_feed_gen_id:
+                    await credit_feed_prompt_repeat(
+                        task.id,
+                        user.id,
+                        repeat_task_id=str(launch_result.get("task_id") or ""),
+                        credits_spent=unit_cost,
+                    )
+
+                queued_task_id = str(launch_result["task_id"])
+                local_task_id = str(launch_result.get("local_task_id") or "")
+                public_task_id, provider_id_line = _format_public_task_id_lines(
+                    queued_task_id, local_task_id
+                )
+                await callback.message.answer(
+                    "🚀 <b>Повторная генерация запущена</b>\n"
+                    f"• Модель: <code>{model_label}</code>\n"
+                    f"• ID задачи: <code>{public_task_id}</code>\n"
+                    f"{provider_id_line}"
+                    f"• Списано: <code>{unit_cost}</code>🍌 {'(админ бесплатно)' if is_admin else ''}\n\n"
+                    "Результат придёт в этот чат.",
+                    parse_mode="HTML",
+                )
+            elif launch_result["status"] == "done":
+                if source_feed_gen_id:
+                    await credit_feed_prompt_repeat(
+                        task.id,
+                        user.id,
+                        repeat_task_id=str(launch_result.get("task_id") or ""),
+                        credits_spent=unit_cost,
+                    )
+                result_bytes = launch_result["result_bytes"]
+                saved_url = launch_result["saved_url"]
+                await callback.message.answer_photo(
+                    photo=types.BufferedInputFile(result_bytes, filename=f"{launch_result['task_id']}.png"),
+                    caption=(
+                        "✅ <b>Повтор готов</b>\n"
+                        f"• Модель: <code>{model_label}</code>\n"
+                        f"• ID задачи: <code>{launch_result['task_id']}</code>\n"
+                        f"• Списано: <code>{unit_cost}</code>🍌 {'(админ бесплатно)' if is_admin else ''}"
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=get_image_result_keyboard(
+                        saved_url, task_id=launch_result["task_id"]
+                    ),
+                )
+                await _send_original_document(
+                    callback.message.answer_document,
+                    result_bytes,
+                    saved_url,
+                    filename=f"{launch_result['task_id']}_original.png",
+                )
+                await _send_used_prompt_message_to_chat(
+                    callback.message.answer,
+                    prompt,
+                    task_id=launch_result["task_id"],
+                    model_label=model_label,
+                    hidden=bool(source_feed_gen_id or data.get("repeat_prompt_hidden")),
+                )
+            else:
+                if unit_cost > 0 and not is_admin:
+                    await add_credits(callback.from_user.id, unit_cost)
+                await callback.message.answer(
+                    "❌ Не получилось повторить генерацию. Бананы за попытку уже возвращены."
+                )
+
+            await state.clear()
+            try:
+                await callback.answer("Повтор запускаю")
+            except TelegramBadRequest:
+                pass  # stale callback — ignore
+        except Exception as exc:  # noqa: BLE001 - generation boundary refunds without leaking provider details
+            logger.warning("Repeat image generation failed: exception_type=%s", type(exc).__name__)
             if unit_cost > 0 and not is_admin:
                 await add_credits(callback.from_user.id, unit_cost)
-            await callback.message.answer(
-                "❌ Не получилось повторить генерацию. Бананы за попытку уже возвращены."
-            )
-
-        await state.clear()
-        try:
-            await callback.answer("Повтор запускаю")
-        except TelegramBadRequest:
-            pass  # stale callback — ignore
-    except Exception as exc:  # noqa: BLE001 - generation boundary refunds without leaking provider details
-        logger.warning("Repeat image generation failed: exception_type=%s", type(exc).__name__)
-        if unit_cost > 0 and not is_admin:
-            await add_credits(callback.from_user.id, unit_cost)
-        try:
-            await progress_message.delete()
-        except Exception:
-            pass
-        try:
-            await callback.answer("Не удалось повторить генерацию.", show_alert=True)
-        except TelegramBadRequest:
-            pass  # stale callback — ignore
+            try:
+                await progress_message.delete()
+            except Exception as cleanup_error:  # noqa: BLE001 - notification cleanup must not replace the failure
+                logger.debug("native_repeat_progress_cleanup_failed error_type=%s", type(cleanup_error).__name__)
+            try:
+                await callback.answer("Не удалось повторить генерацию.", show_alert=True)
+            except TelegramBadRequest:
+                pass  # stale callback — ignore
 
 
 @router.callback_query(F.data.startswith("repeat_result_"))

@@ -2958,6 +2958,7 @@ async def _open_repeat_screen_from_feed_deeplink(
         include_references=include_references,
         repeat_source_task_id=str(task.id),
         hide_prompt=hide_prompt,
+        viewer_telegram_id=message.from_user.id,
     )
     if not restored:
         logger.info(

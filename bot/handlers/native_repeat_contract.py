@@ -36,7 +36,7 @@ def quote_signature(data: dict, price: float) -> str:
     )} | {'cost': price})
 
 
-async def load_contract(task):
+async def load_contract(task, viewer_telegram_id: int | None = None):
     """Accept only templates whose positional contract the native FSM supports.
 
     Labels/hints may be customized. Variables, added slots, changed bindings or
@@ -48,15 +48,22 @@ async def load_contract(task):
     from bot import database
     from bot import db as db_backend
 
+    source = await database.get_generation_task_payload(task.id)
+    if not source or source.get('type') != 'image':
+        fail('SOURCE_UNAVAILABLE', 'Исходная работа больше недоступна.')
+    if viewer_telegram_id is not None:
+        viewer = await database.get_or_create_user(viewer_telegram_id)
+        if source['user_id'] != viewer.id and (source.get('status') != 'completed' or
+                not (source.get('is_public_feed') or source.get('is_profile_visible'))):
+            fail('SOURCE_UNAVAILABLE', 'Автор снял работу с публикации. Повтор недоступен.')
     async with db_backend.connect() as db:
         row = await (await db.execute(
             'SELECT schema_json FROM smart_repeat_templates WHERE source_id = ? '
             'ORDER BY version DESC LIMIT 1', (task.id,),
         )).fetchone()
     if not row:
-        return None
+        return {'source': source, 'template': None}
     template = json.loads(row[0])
-    source = await database.get_generation_task_payload(task.id)
     if not source or template.get('source_hash') != source_fingerprint(source):
         fail('TEMPLATE_CHANGED', 'Автор изменил публикацию. Откройте повтор заново.')
     inferred = infer_template(source)
@@ -78,20 +85,21 @@ def marker(contract) -> str | None:
     if not contract:
         return None
     template = contract['template']
-    return digest({'source_hash': template['source_hash'], 'version': template['version']})
+    return digest({'source_hash': source_fingerprint(contract['source']),
+                   'version': template['version'] if template else 0})
 
 
 def public_labels(contract) -> list[str]:
-    if not contract:
+    if not contract or not contract.get('template'):
         return []
-    return [str(slot['label']) for slot in sorted(contract['template']['slots'], key=lambda slot: slot['index'])
+    return [str(slot['label']) + (' — ' + str(slot['hint']) if slot.get('hint') else '') for slot in sorted(contract['template']['slots'], key=lambda slot: slot['index'])
             if slot['binding'] == 'upload']
 
 
 async def validate_inputs(contract, references: list[str], prompt: str) -> None:
     if re.search(r'\{\{[a-zA-Z][a-zA-Z0-9_]*\}\}', prompt):
         fail('NATIVE_TEMPLATE_UNSUPPORTED', UNSUPPORTED)
-    if not contract:
+    if not contract or not contract.get("template"):
         return
     from bot.services.media_input_utils import (
         reference_source_identity,

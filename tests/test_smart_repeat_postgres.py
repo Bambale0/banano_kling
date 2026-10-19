@@ -78,3 +78,43 @@ async def test_postgres_extra_photo_http_concurrent_launch(monkeypatch, tmp_path
         test_http_extras_reach_real_image_engine_after_main_and_fixed_refs_once,
     )
     await test_http_extras_reach_real_image_engine_after_main_and_fixed_refs_once(monkeypatch, tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_postgres_native_cancelled_debit_recovers_once(monkeypatch):
+    from tests.test_native_repeat_receipt import (
+        test_cancel_after_atomic_debit_has_durable_receipt_and_refunds_once_on_reopen,
+    )
+    await test_cancel_after_atomic_debit_has_durable_receipt_and_refunds_once_on_reopen(monkeypatch)
+
+
+@pytest.mark.asyncio
+async def test_postgres_native_refund_fences_suspended_worker(monkeypatch):
+    from tests.test_native_repeat_receipt import (
+        test_refunded_receipt_fences_a_suspended_worker_before_task_and_provider,
+    )
+    await test_refunded_receipt_fences_a_suspended_worker_before_task_and_provider(monkeypatch)
+
+
+@pytest.mark.asyncio
+async def test_postgres_native_accepted_task_never_refunded_on_reopen(monkeypatch):
+    from tests.test_native_repeat_receipt import (
+        test_cancel_after_task_capture_never_guesses_provider_failure_or_refunds,
+    )
+    await test_cancel_after_task_capture_never_guesses_provider_failure_or_refunds(monkeypatch)
+
+
+@pytest.mark.asyncio
+async def test_postgres_native_duplicate_claim_and_miniapp_namespace(monkeypatch):
+    from tests.test_native_repeat_receipt import (
+        test_native_claim_is_atomic_across_independent_contexts_and_hidden_from_miniapp,
+    )
+    await test_native_claim_is_atomic_across_independent_contexts_and_hidden_from_miniapp(monkeypatch)
+
+
+@pytest.mark.asyncio
+async def test_postgres_native_template_less_withdrawal(monkeypatch):
+    from tests.test_native_repeat_receipt import (
+        test_template_less_withdrawn_source_rejected_before_debit,
+    )
+    await test_template_less_withdrawn_source_rejected_before_debit(monkeypatch)
