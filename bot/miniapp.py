@@ -1483,6 +1483,11 @@ def _merge_remix_image_references(
     viewers submit only their own inputs; any author-approved retained refs are
     merged later from ``feed_repeat_reference_selection`` on the server.
     """
+    from bot.smart_repeat_contract import current_authorization
+    if current_authorization():
+        # The smart compiler already selected exact replacement slots. Owner
+        # preview visibility must not add a second set of implicit inputs.
+        return list(submitted_references), 0
     references = list(dict.fromkeys(submitted_references))
     retained: list[str] = []
     if source_card.get("is_mine"):
@@ -2200,7 +2205,10 @@ async def _launch_video_generation_task(
         )
     elif model == "grok_imagine":
         result = await grok_service.generate_image_to_video(
-            image_urls=([image_url] if image_url else []) + image_references[:6],
+            image_urls=normalize_reference_urls(
+                ([image_url] if image_url else []) + image_references,
+                max_count=get_max_video_image_references(model),
+            ),
             prompt=prompt,
             mode=grok_mode,
             duration=duration,
@@ -3203,8 +3211,10 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
         )
         recent_tasks = await _fetch_recent_tasks(telegram_id)
         partner_stats = await get_partner_overview(telegram_id)
+        from bot.smart_repeat_store import rollout_enabled as smart_repeat_enabled
         data = {
             "ok": True,
+            "smart_repeat_enabled": await smart_repeat_enabled(telegram_id),
             "telegram_id": telegram_id,
             "credits": user.credits,
             "first_name": telegram_user.get("first_name", ""),
@@ -5547,6 +5557,7 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
             image_references=image_references,
             video_references=video_references,
             audio_url=audio_url,
+            audio_references=audio_references,
             grok_mode=grok_mode,
             grok_resolution=grok_resolution,
             veo_generation_type=veo_generation_type,
@@ -6108,6 +6119,8 @@ def setup_miniapp_routes(app: web.Application):
     app.router.add_get(f"{miniapp_root}/", _miniapp_frontend_redirect)
     from bot.wan3_prime_api import setup_wan3_prime_routes
     setup_wan3_prime_routes(app, miniapp_root)
+    from bot.smart_repeat_api import setup_smart_repeat_routes
+    setup_smart_repeat_routes(app, miniapp_root)
     from bot.trend_catalog_api import setup_trend_catalog_routes
     setup_trend_catalog_routes(app, miniapp_root)
     app.router.add_post(miniapp_root + "/api/bootstrap", miniapp_bootstrap)

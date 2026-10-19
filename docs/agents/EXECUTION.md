@@ -2156,3 +2156,131 @@ Coverage: pure contract tests and existing chunk HTTP regression run locally wit
 
 - RED/GREEN: both no-bind regression variants failed on the baseline query and pass after moving the string-type predicate into SQL. Thirty-seven focused safe tests pass. A fresh read-only production dry-run through the real PostgresConnection adapter protects 72,503 owned upload paths, including all twelve previously restored rows; all remove/unlink/rmdir calls intercepted, zero physical deletions.
 - Disposable PostgreSQL uncovered a pre-existing migration-test fixture error, reproduced unchanged on baseline 63d6e8b: a video task was given an unversioned nonempty image-only grant. Updated only that explicit test input to the existing version-1 image/video contract; kept all migration, no-backfill, exact persistence and restart assertions. No production permission behavior changed.
+## 2026-10-19 — open epics and smart-repeat release preflight
+
+- Baseline: current production `tanyapi` `9c253009f1f5f56542216e81f4425ebd04469d1a`.
+- Intent: audit open epics against the supplied smart-repeat specification and
+  bring the selected scope through protected release and exact-SHA smoke.
+- Discovery: the supplied EPIC-01..08 are proposed/unregistered; the actual
+  eight open GitHub epics #60..#67 concern a different security/billing backlog.
+  Scope confirmed by the user: implement and release all eight smart-repeat
+  epics from the attachment; security epics #60–#67 stay outside this task.
+- Audit/reuse/risks/acceptance: see
+  `docs/SMART_REPEAT_RELEASE_AUDIT_2026-10-19.md`. Missing universal author slots,
+  draft upload state and template versions are not represented as complete.
+- Isolation: task branch `feature/smart-repeat-release-20261019`, separate
+  worktree; production `bot/database.py` local patch and admin `data/price.json`
+  preserved. No changes to API/schema/FSM, prices/config/admin settings,
+  providers, payments or media in this documentation slice.
+- Plan: (1) inventory epics/PRs/runtime; (2) verify already shipped reference
+  protections and PR #328; (3) reconcile concrete release blockers; (4) use
+  protected native squash auto-merge; (5) verify merged CI, deployed SHA,
+  backend/static smoke and new telemetry; (6) execute confirmed remaining scope.
+- Verification seams: existing saved-reference availability, typed-repeat
+  receipt/no-double-debit, reference-binding/preflight and retention regression
+  tests. SQLite/PostgreSQL and browser are covered by exact-head CI for #328;
+  a docs-only slice does not add new domain/DB/auth/provider behavior to test.
+  Real paid model acceptance is distinct and is not claimed by mocked tests.
+- Observability: inspect aggregate error categories without private URLs,
+  prompts, user identifiers, secrets or customer payloads in audit output.
+- Review: #328 independently reviewed on standards and spec axes: 0 findings
+  each. Squash auto-merge armed for head
+  `9328ed4bc1fd12274f38b5bca709aca60aa6ba9b`; all four required PR gates passed.
+  Full safe CI: 3864 passed, 115 skipped, 76 subtests passed.
+  PR merged at `6566eb26eb4b102197a2c7610cf0723d98920a8a`; exact release
+  CI/deploy and post-deploy smoke are pending, so production is not yet claimed.
+- #325 functional canonicalizer and regression are already included in #326;
+  stale/conflicting PR closed as superseded after verifying no functional delta.
+- Exact-head local verification at #328 head: `python -m pytest -q
+  tests/test_saved_reference_availability.py tests/test_seedance_missing_reference_guard.py
+  tests/test_seedance_trend_reference_recipes.py tests/test_video_repeat_receipts.py
+  tests/test_trend_reference_preflight.py tests/test_reference_ownership_retention.py`:
+  105 passed. Test environment skips production dotenv and uses isolated SQLite.
+  The initial invocation from the baseline worktree had no tests run because
+  the PR-only test file was absent; corrected by checking out the exact PR head.
+- Production local code patch matched #328 byte-for-byte. Preserved it in
+  `/root/tanya/release-audit-20261019/pre-release-reference-availability.patch`
+  and a named git stash, removing the code-only dirty-tree deployment blocker.
+  Runtime `data/price.json` remained byte-for-byte unchanged.
+- Production RED smoke before deploy: a separate Python process in the old
+  container used a synthetic reference and mocked storage OSError; availability
+  incorrectly returned True. No database writes, real media reads, running
+  application monkeypatch or external/provider calls. Repeat after deployment.
+- Rollout: normal production CI/CD only, preserve runtime pricing; no manual
+  production deploy, destructive cleanup, refunds, paid runs or migration.
+- Follow-ups: implement selected smart-repeat scope; storage capacity issue #323
+  remains open and does not authorize pruning customer media or backups.
+
+## 2026-10-19 — smart repeats EPIC-01..08 implementation
+
+- Confirmed user scope: GitHub issues #330, #331, #332, #333, #334, #335, #336, #337
+  represent the eight attached epics. The older security backlog is separate.
+- Updated baseline: `6566eb26eb4b102197a2c7610cf0723d98920a8a` (#328). Exact
+  post-merge CI and reliable autodeploy succeeded; production checkout, Docker
+  OCI and public frontend revision match. Health is ok; isolated synthetic
+  storage-error smoke changed True to False. Runtime price SHA256 stayed
+  `3c73a0651c6deee689ce779669faf9dd572b7ac3f09eddc200b0e26f6ef39583`.
+- Prefactor/reuse: existing engine, quote, provider validation, permission and
+  callback/delivery seams remain authoritative. A request-scoped capability
+  supplies selected grants to those existing adapters; child background tasks
+  do not inherit financial/source override authority.
+- Additive schema: immutable smart_repeat_templates versions and durable
+  smart_repeat_drafts, including per-slot leases/assets, quote and input snapshot,
+  one charge/refund markers and known provider acceptance for recovery. No
+  destructive migration/backfill or price/provider configuration change.
+- UI: named typed slots with server readiness, draft reload, quote-before-launch,
+  optional author variables and configured presets; owner constructor; DB-backed
+  authenticated rollout control with pilot IDs and global enable/disable.
+- Safety: exact slot mapping, owned persisted media and content hash validation,
+  late-upload fencing, quote invalidation on mutation, launch CAS, atomic draft
+  debit, no synchronous refund before debit or after known provider acceptance.
+  Input snapshots/versions participate in media retention.
+- Initial red: public contract module absent; then nine contract behaviors passed.
+  Durable-store tests first exposed absent new schema after correcting fixture
+  preset_id; twelve contract/store tests now pass. Combined existing typed
+  repeat/receipt/retention regression slices also passed (84 and 127 tests).
+- Verification pending: full API/real engine matrices, new frontend Jest/browser
+  cases, PostgreSQL startup/concurrency, complete safe suite, independent final
+  review, protected release, pilot smoke and staged enablement. No completion
+  claim for the eight epics yet; no paid production test run started.
+
+### Review corrections and acceptance expansion
+
+- Two-axis review identified image local-row/provider-acceptance confusion,
+  definitive rejection recovery lockout, missing Wan reservation linkage and a
+  READY/retention race. Corrected all four; added actual image-engine rejection,
+  accepted-response persistence failure and concurrent-recovery/refund tests,
+  plus interrupted Wan submission recovery. Refund stays idempotent after a
+  concurrent recovery changes the draft status.
+- Constructor now supports additional stable one-file slots in model-supported
+  list fields, MIME/bytes/duration/dimension restrictions, source-version CAS,
+  exact original-grant resolution, prompt-tag validation and provider budgets
+  including promoted first frames. Generic generation now forwards every audio
+  reference and preserves the full audio list in the source recipe.
+- Added authenticated rollout gateway (snake/camel aliases, query, REST remix,
+  nested Wan recipe), Telegram callback redirects, admin task diagnostics and
+  additive migration/review inventory. No change to existing prices or media.
+- Verified browser at 320/390/430px: named reverse-order uploads, no early quote,
+  persisted reload, deletion, double-click single launch and dropped-response
+  recovery. New component Jest cases pass. Full Jest: 68 suites, 521 tests pass.
+  Two existing publisher tests failed identically at baseline 6566eb2: adjusted
+  the synthetic JPEG-normalization seam and stale preview cancellation assertion
+  to match already-shipped behavior; production publisher code was unchanged.
+- Actual HTTP engine tests cover image success/rejection/persistence failure;
+  Seedance 2.5 edit and identity use real local media/ffprobe and mock only the
+  paid provider. Generic two-audio acceptance and mixed-frame limits added.
+- Disposable PostgreSQL16 native schema + repeated additive init + concurrent
+  draft claim/debit/refund/upload recovery: 2 passed. Fixed fixture publication
+  state to match the existing profile backfill and avoid explicit-ID currval
+  behavior in the legacy adapter; no production adapter change.
+- Build passed. Full safe backend final rerun and exact-head review/CI/release
+  are pending. No paid production generation or feature activation yet.
+- Final review follow-up: restored the legacy required personal-photo input for
+  text-to-image publications without original references (real image HTTP matrix
+  with both empty and populated source request_data). Diagnostics now reads Wan
+  settlement/task-refund proof rather than presenting the old reservation as a
+  final charge. Reviewed focused suite: 29 passed, including zero extra credits
+  during read-only settlement projection.
+- First PR CI exposed two retention PostgreSQL cases whose minimal schema lacked
+  the new snapshot tables. Updated the guarded fixture to run the same additive
+  smart-repeat schema migration; no production query fallback or test exclusion.

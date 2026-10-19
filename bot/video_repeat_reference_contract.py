@@ -122,7 +122,7 @@ def active_video_recipe(task: dict[str, Any]) -> dict[str, Any]:
         images.extend({"role": "reference", "url": value} for value in _list(data, IMAGE_LIST_KEYS) if value != first)
         videos = [{"role": "reference", "url": value} for value in _list(data, VIDEO_LIST_KEYS)]
         audio_value = _first(data, AUDIO_KEYS)
-        audio = [audio_value] if audio_value else _list(data, AUDIO_LIST_KEYS)[:1]
+        audio = _list(data, AUDIO_LIST_KEYS) or ([audio_value] if audio_value else [])
         if not scenario:
             scenario = "video" if videos else "imgtxt" if first else "text"
     for kind, slots in (("images", images), ("videos", videos)):
@@ -351,7 +351,11 @@ def merge_typed_video_inputs(
                 inherited = resolve_reference_source(value, candidates)
             except ValueError as exc:
                 raise VideoRepeatContractError("Загрузите свои файлы для заменяемых референсов.") from exc
-            if inherited is not None:
+            from bot.smart_repeat_contract import current_authorization
+            smart_context = current_authorization()
+            own_asset = smart_context and (smart_context['user_id'] == task.get('user_id') or
+                value in smart_context.get('owned_inputs', set()))
+            if inherited is not None and not own_asset:
                 raise VideoRepeatContractError("Загрузите свои файлы для заменяемых референсов.")
         iterator = iter(uploads)
         private: list[str] = []

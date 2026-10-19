@@ -19,6 +19,8 @@ interface AppContextType {
   feedDeepLink: FeedDeepLink | null
   promptPreset: PromptPreset | null
   videoPromptPreset: VideoPromptPreset | null
+  smartRepeatSourceId: number | null
+  closeSmartRepeat: () => void
   trendToRun: PromptItem | null
   viewedProfileCode: string | null
   activeTab: number
@@ -166,8 +168,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [isBalanceOpen, setIsBalanceOpen] = useState(false)
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspacePanel | null>(null)
   const [feedDeepLink, setFeedDeepLink] = useState<FeedDeepLink | null>(null)
-  const [promptPreset, setPromptPreset] = useState<PromptPreset | null>(null)
-  const [videoPromptPreset, setVideoPromptPreset] = useState<VideoPromptPreset | null>(null)
+  const [promptPreset, setLegacyPromptPreset] = useState<PromptPreset | null>(null)
+  const [videoPromptPreset, setLegacyVideoPromptPreset] = useState<VideoPromptPreset | null>(null)
+  const [smartRepeatSourceId, setSmartRepeatSourceId] = useState<number | null>(null)
+  const closeSmartRepeat = useCallback(() => setSmartRepeatSourceId(null), [])
+  const setPromptPreset = useCallback((preset: PromptPreset | null) => {
+    if (state.smartRepeatEnabled && preset?.sourceFeedGenId) { setSmartRepeatSourceId(preset.sourceFeedGenId); return }
+    setLegacyPromptPreset(preset)
+  }, [state.smartRepeatEnabled])
+  const setVideoPromptPreset = useCallback((preset: VideoPromptPreset | null) => {
+    if (state.smartRepeatEnabled && preset?.sourceFeedGenId) { setSmartRepeatSourceId(preset.sourceFeedGenId); return }
+    setLegacyVideoPromptPreset(preset)
+  }, [state.smartRepeatEnabled])
   const [trendToRun, setTrendToRun] = useState<PromptItem | null>(null)
   const [viewedProfileCode, setViewedProfileCode] = useState<string | null>(null)
   const [activeTab, setActiveTabState] = useState(1)
@@ -223,6 +235,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return fresh ? { ...current, ...fresh } : current
     })
     setState(prev => ({
+      smartRepeatEnabled: data.smart_repeat_enabled === true,
       mode: 'live',
       isLoading: false,
       error: null,
@@ -434,7 +447,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         : [],
     })
     setActiveTabState(1)
-  }, [state.imageModels, state.videoModels])
+  }, [state.imageModels, state.videoModels, setVideoPromptPreset, setPromptPreset])
 
   useEffect(() => {
     if (state.mode !== 'live' || state.isLoading) return
@@ -710,6 +723,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         feedDeepLink,
         promptPreset,
         videoPromptPreset,
+        smartRepeatSourceId,
+        closeSmartRepeat,
         trendToRun,
         viewedProfileCode,
         activeTab,

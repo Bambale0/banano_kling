@@ -17,6 +17,15 @@ REFERENCE_DOCUMENTS_SQL = """
     UNION ALL
     SELECT generation_settings AS document FROM user_prompts
     WHERE generation_settings LIKE '%uploads/refs/%'
+    UNION ALL
+    SELECT state_json AS document FROM smart_repeat_drafts
+    WHERE state_json LIKE '%uploads/refs/%'
+    UNION ALL
+    SELECT snapshot_json AS document FROM smart_repeat_drafts
+    WHERE snapshot_json LIKE '%uploads/refs/%'
+    UNION ALL
+    SELECT schema_json AS document FROM smart_repeat_templates
+    WHERE schema_json LIKE '%uploads/refs/%'
 """
 
 

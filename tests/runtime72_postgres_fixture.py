@@ -53,6 +53,10 @@ async def runtime_postgres_schema():
             )
         await connection.execute('TRUNCATE saved_references, generation_tasks')
         await connection.commit()
+    from bot.smart_repeat_store import ensure_schema
+    async with db_backend.connect() as db:
+        await ensure_schema(db)
+        await db.commit()
     try:
         yield
     finally:
