@@ -364,3 +364,31 @@ async def test_reference_or_prompt_change_invalidates_old_confirmation(monkeypat
     ctx.debit.assert_not_awaited()
     ctx.launch.assert_not_awaited()
     assert (await ctx.state.get_data())['repeat_quote_id'] != old_token
+
+
+@pytest.mark.asyncio
+async def test_hidden_repeat_edits_preserve_recipe_without_exposing_it(monkeypatch):
+    ctx = await published_context(monkeypatch)
+    ctx.callback.data = f'repeat_image_{TASK_ID}'
+    await generation.repeat_image_generation(ctx.callback, ctx.state)
+    message = MagicMock(spec=types.Message)
+    message.from_user = ctx.callback.from_user
+    message.answer = AsyncMock()
+    message.text = 'Change background to a beach'
+    await generation.handle_repeat_image_prompt_text(message, ctx.state)
+    data = await ctx.state.get_data()
+    assert SECRET in data['repeat_prompt']
+    assert message.text in data['repeat_prompt']
+    assert data['repeat_prompt_hidden'] is True
+    assert SECRET not in str(message.answer.await_args_list)
+    message.text = 'Use a red jacket instead'
+    await generation.handle_repeat_image_prompt_text(message, ctx.state)
+    data = await ctx.state.get_data()
+    assert SECRET in data['repeat_prompt'] and message.text in data['repeat_prompt']
+    assert 'Change background to a beach' not in data['repeat_prompt']
+    ctx.callback.data = f'repeat_q_{data["repeat_quote_id"]}'
+    await generation.confirm_native_repeat_quote(ctx.callback, ctx.state)
+    ctx.launch.assert_awaited_once()
+    sent_prompt = ctx.launch.await_args.kwargs['prompt']
+    assert SECRET in sent_prompt and message.text in sent_prompt
+    assert SECRET not in str(ctx.callback.message.answer.await_args_list)

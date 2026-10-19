@@ -2450,7 +2450,7 @@ def _repeat_image_text(data: dict, task_id: str) -> str:
         + f"{changes_hint}"
         "\n<b>Prompt</b>\n"
         + (
-            "<i>Скрыт автором. В генерацию уйдёт исходный prompt без показа текста.</i>"
+            "<i>Скрыт автором. Исходный промпт сохраняется с учётом ваших изменений, без показа текста.</i>"
             if prompt_hidden
             else f"<pre>{prompt_preview or html.escape(task_id)}</pre>"
         )
@@ -2606,14 +2606,16 @@ async def repeat_image_wait_for_prompt(callback: types.CallbackQuery, state: FSM
     current_prompt = " ".join(str(data.get("repeat_prompt") or "").split())
     prompt_hidden = bool(data.get("repeat_prompt_hidden"))
     prompt_preview = (
-        "<i>Скрыт автором. Новый текст можно написать своим сообщением.</i>"
+        "<i>Скрыт автором. Опишите только изменения: исходный промпт будет сохранён.</i>"
         if prompt_hidden
         else f"<pre>{html.escape(current_prompt[:700] + ('...' if len(current_prompt) > 700 else '')) or html.escape(task_id)}</pre>"
     )
     await state.set_state(GenerationStates.waiting_for_repeat_prompt)
     await callback.message.answer(
-        "✏️ <b>Новый prompt для повтора</b>\n\n"
-        "Отправьте одним сообщением новый текст. Фото и настройки останутся как на экране повтора.\n\n"
+        "✏️ <b>Изменения для повтора</b>\n\n"
+        + ("Опишите одним сообщением, что изменить. Исходный промпт, фото и настройки сохранятся.\n\n"
+         if prompt_hidden else "Отправьте одним сообщением новый текст. Фото и настройки останутся как на экране повтора.\n\n")
+        +
         "<b>Сейчас</b>\n"
         f"{prompt_preview}",
         parse_mode="HTML",
@@ -2638,8 +2640,28 @@ async def handle_repeat_image_prompt_text(message: types.Message, state: FSMCont
         )
         return
 
-    await state.update_data(repeat_prompt=prompt, repeat_prompt_hidden=False)
-    await message.answer("✅ Prompt обновлён.")
+    task = await get_task_by_id(task_id)
+    if not task:
+        await message.answer("Исходная работа недоступна. Откройте повтор заново.")
+        return
+    user = await get_or_create_user(message.from_user.id)
+    hidden = bool(data.get("repeat_prompt_hidden") or _repeat_source_prompt_hidden(task, user.id))
+    if hidden:
+        from bot.services.remix_prompt import compose_feed_remix_prompt
+        try:
+            source_data = json.loads(task.request_data) if task.request_data else {}
+            base_prompt = _repeat_source_prompt(source_data, task)
+        except (ValueError, TypeError):
+            await message.answer("Не удалось восстановить исходный промпт. Откройте повтор заново.")
+            return
+        # Re-editing replaces the user's change request, not the private recipe
+        # and not an accumulating chain of previous change requests.
+        await state.update_data(repeat_prompt=compose_feed_remix_prompt(base_prompt, prompt),
+                                repeat_prompt_changes=prompt, repeat_prompt_hidden=True)
+        await message.answer("✅ Изменения сохранены. Исходный промпт останется в генерации.")
+    else:
+        await state.update_data(repeat_prompt=prompt, repeat_prompt_hidden=False)
+        await message.answer("✅ Prompt обновлён.")
     await _show_repeat_image_screen(message, state)
 
 
@@ -2651,7 +2673,7 @@ async def repeat_image_show_changes_hint(callback: types.CallbackQuery, state: F
     current_prompt = " ".join(str(data.get("repeat_prompt") or "").split())
     prompt_hidden = bool(data.get("repeat_prompt_hidden"))
     if prompt_hidden:
-        prompt_info = "<i>Текущий prompt скрыт. Напишите новый prompt или только изменения, и он будет использован для генерации.</i>"
+        prompt_info = "<i>Текущий prompt скрыт. Напишите, что изменить: исходный промпт сохранится.</i>"
     else:
         prompt_info = f"<pre>{html.escape(current_prompt[:700] + ('...' if len(current_prompt) > 700 else '')) or html.escape(task_id)}</pre>"
     await state.set_state(GenerationStates.waiting_for_repeat_prompt)
