@@ -2184,7 +2184,10 @@ Coverage: pure contract tests and existing chunk HTTP regression run locally wit
   prompts, user identifiers, secrets or customer payloads in audit output.
 - Review: #328 independently reviewed on standards and spec axes: 0 findings
   each. Squash auto-merge armed for head
-  `9328ed4bc1fd12274f38b5bca709aca60aa6ba9b`; CI still in progress.
+  `9328ed4bc1fd12274f38b5bca709aca60aa6ba9b`; all four required PR gates passed.
+  Full safe CI: 3864 passed, 115 skipped, 76 subtests passed.
+  PR merged at `6566eb26eb4b102197a2c7610cf0723d98920a8a`; exact release
+  CI/deploy and post-deploy smoke are pending, so production is not yet claimed.
 - #325 functional canonicalizer and regression are already included in #326;
   stale/conflicting PR closed as superseded after verifying no functional delta.
 - Exact-head local verification at #328 head: `python -m pytest -q
@@ -2198,6 +2201,10 @@ Coverage: pure contract tests and existing chunk HTTP regression run locally wit
   `/root/tanya/release-audit-20261019/pre-release-reference-availability.patch`
   and a named git stash, removing the code-only dirty-tree deployment blocker.
   Runtime `data/price.json` remained byte-for-byte unchanged.
+- Production RED smoke before deploy: a separate Python process in the old
+  container used a synthetic reference and mocked storage OSError; availability
+  incorrectly returned True. No database writes, real media reads, running
+  application monkeypatch or external/provider calls. Repeat after deployment.
 - Rollout: normal production CI/CD only, preserve runtime pricing; no manual
   production deploy, destructive cleanup, refunds, paid runs or migration.
 - Follow-ups: selected scope pending clarification; storage capacity issue #323

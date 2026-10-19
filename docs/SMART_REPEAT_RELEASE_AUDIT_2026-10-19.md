@@ -54,8 +54,10 @@ No open epic may be closed merely because a related patch or CI job exists.
 - PR #328: fail closed when saved-reference storage validation raises.
   Reviewed head: `9328ed4bc1fd12274f38b5bca709aca60aa6ba9b`.
   Independent standards and spec reviews reported zero findings. Native squash
-  auto-merge armed; all four required gates and post-merge production checks
-  must still be verified. This is a prerequisite, not the whole smart-repeat
+  auto-merge armed; all four required PR gates passed, including 3864 safe
+  regression tests (115 skipped, 76 subtests passed). Merged as
+  `6566eb26eb4b102197a2c7610cf0723d98920a8a`; exact post-merge CI, deployment
+  and production checks remain to be verified. This is a prerequisite, not the whole smart-repeat
   feature.
 
 ## Release safeguards
