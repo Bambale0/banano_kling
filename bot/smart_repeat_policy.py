@@ -98,9 +98,9 @@ def validate_counts(source, slots):
         capability = get_video_capability(source['model'])
         # These adapters promote a first frame into the reference image list.
         # Count it in that provider budget before a normalizer can truncate it.
-        if capability and capability.provider in {'seedance', 'grok'} and capability.max_reference_images:
-            if sum(slot['kind'] == 'image' for slot in slots) > capability.max_reference_images:
-                fail('MODEL_CONSTRAINTS_INVALID', 'Первый кадр и фото вместе превышают лимит модели.', 400)
+        if (capability and capability.provider in {'seedance', 'grok'} and capability.max_reference_images
+            and sum(slot['kind'] == 'image' for slot in slots) > capability.max_reference_images):
+            fail('MODEL_CONSTRAINTS_INVALID', 'Первый кадр и фото вместе превышают лимит модели.', 400)
 
 
 def validate_asset(slot, inspection):

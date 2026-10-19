@@ -5523,11 +5523,11 @@ async def add_generation_task(
         request_data = {**_parse_json_dict(request_data),
                         'smart_repeat_draft_id': smart_context['draft_id'],
                         'smart_repeat_template_version': smart_context['template_version']}
-        await record_accepted(task_id, dict(user_id=user_id, telegram_id=telegram_id,
-            task_id=task_id, type=type, preset_id=preset_id, model=model, duration=duration,
-            aspect_ratio=aspect_ratio, prompt=prompt, cost=cost, request_data=request_data,
-            source_feed_gen_id=source_feed_gen_id, parent_generation_id=parent_generation_id,
-            action_type=action_type, reserved_task_id=reserved_task_id, provider_accepted=provider_accepted))
+        await record_accepted(task_id, {'user_id': user_id, 'telegram_id': telegram_id,
+            'task_id': task_id, 'type': type, 'preset_id': preset_id, 'model': model, 'duration': duration,
+            'aspect_ratio': aspect_ratio, 'prompt': prompt, 'cost': cost, 'request_data': request_data,
+            'source_feed_gen_id': source_feed_gen_id, 'parent_generation_id': parent_generation_id,
+            'action_type': action_type, 'reserved_task_id': reserved_task_id, 'provider_accepted': provider_accepted})
 
     invite_eligible = (type in {"image", "video", "motion_control", "audio", "character"}
                        and float(cost or 0) > 0 and not config.is_admin(telegram_id)
