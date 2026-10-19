@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { smartRepeatCall, type RepeatTemplate } from '@/lib/smart-repeat-api'
+import { smartRepeatCall, type RepeatTemplate, type RepeatSlot } from '@/lib/smart-repeat-api'
 import { useApp } from '@/lib/app-context'
 import { Button } from './ui/button'
 
@@ -12,6 +12,9 @@ export function SmartRepeatEditor({ sourceId, prompt = '' }: { sourceId: number;
   const [message, setMessage] = useState('')
   const [pilotIds, setPilotIds] = useState('')
   useEffect(() => { setTemplate(null); setMessage('') }, [sourceId])
+  const limits = (id: string, key: string, value: number | string[] | undefined) => setTemplate(current => current ? {
+    ...current, slots: current.slots.map(slot => slot.slot_id === id ? { ...slot, constraints: { ...slot.constraints, [key]: value } } : slot),
+  } : current)
 
   const load = async () => {
     setBusy(true); setMessage('')
@@ -64,13 +67,32 @@ export function SmartRepeatEditor({ sourceId, prompt = '' }: { sourceId: number;
         </select>
         <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={slot.required} disabled={slot.binding === 'fixed' || !slot.can_keep_original}
           onChange={event => setTemplate(current => current ? { ...current, slots: current.slots.map(item => item.slot_id === slot.slot_id ? { ...item, required: event.target.checked } : item) } : current)} />Обязательное поле</label>
+        <p className="text-xs">Файлов в поле: {slot.required ? 1 : 0}–1. Каждый файл имеет собственную привязку.</p>
+        <label className="block text-xs">Разрешённые MIME-типы через запятую
+          <input aria-label={`Форматы поля ${index + 1}`} value={(slot.constraints?.mime_types || []).join(', ')} className="mt-1 w-full rounded border bg-background p-2"
+            onChange={event => limits(slot.slot_id, 'mime_types', event.target.value.split(',').map(value => value.trim()).filter(Boolean))} />
+        </label>
+        {(['max_bytes', 'min_side', 'max_side', ...(slot.kind !== 'image' ? ['min_duration', 'max_duration'] : [])] as const).map(key => <label key={key} className="block text-xs">
+          {{ max_bytes: 'Максимум байт', min_side: 'Минимальная сторона, px', max_side: 'Максимальная сторона, px', min_duration: 'Минимум секунд', max_duration: 'Максимум секунд' }[key]}
+          <input aria-label={`${key} поля ${index + 1}`} type="number" min={0} step={key.includes('duration') ? '0.1' : '1'} value={slot.constraints?.[key as keyof NonNullable<RepeatSlot['constraints']>] as number ?? ''}
+            className="ml-2 w-28 rounded border bg-background p-1" onChange={event => limits(slot.slot_id, key, event.target.value ? Number(event.target.value) : undefined)} />
+        </label>)}
         {!slot.can_keep_original ? <p className="text-xs text-muted-foreground">Чтобы разрешить пропуск, сначала разрешите скрытое использование этого исходника в настройках публикации.</p> : null}
         <Button type="button" variant="outline" disabled={!index} onClick={() => setTemplate(current => {
           if (!current) return current
           const next = [...current.slots]; [next[index - 1], next[index]] = [next[index], next[index - 1]]
           return { ...current, slots: next }
         })}>Выше</Button>
+        {slot.added ? <Button type="button" variant="outline" onClick={() => setTemplate(current => current ? { ...current,
+          slots: current.slots.filter(item => item.slot_id !== slot.slot_id),
+          presets: current.presets.map(preset => ({ ...preset, slot_ids: preset.slot_ids.filter(id => id !== slot.slot_id) })),
+        } : current)}>Удалить дополнительное поле</Button> : null}
       </fieldset>)}
+      <div className="flex flex-wrap gap-2">{Object.entries(template.addable || {}).map(([kind, descriptor]) => <Button key={kind} type="button" variant="outline" disabled={busy || template.slots.filter(slot => slot.kind === kind).length >= descriptor.maximum}
+        onClick={() => setTemplate(current => current ? { ...current, slots: [...current.slots, {
+          slot_id: crypto.randomUUID().replaceAll('-', ''), kind: kind as RepeatSlot['kind'], role: 'reference', label: 'Новый референс', hint: '', binding: 'upload', required: true, added: true,
+          min_files: 1, max_files: 1, constraints: {},
+        }] } : current)}>Добавить {kind === 'image' ? 'фото' : kind === 'video' ? 'видео' : 'аудио'} · до {descriptor.maximum}</Button>)}</div>
       <h4 className="text-sm font-medium">Варианты персонализации</h4>
       {template.presets.map((preset, index) => <fieldset key={preset.id} className="rounded border p-2 space-y-2" disabled={busy}>
         <input aria-label={`Название варианта ${index + 1}`} value={preset.label} maxLength={80} className="w-full rounded border bg-background p-2 text-xs"

@@ -2243,3 +2243,35 @@ Coverage: pure contract tests and existing chunk HTTP regression run locally wit
   cases, PostgreSQL startup/concurrency, complete safe suite, independent final
   review, protected release, pilot smoke and staged enablement. No completion
   claim for the eight epics yet; no paid production test run started.
+
+### Review corrections and acceptance expansion
+
+- Two-axis review identified image local-row/provider-acceptance confusion,
+  definitive rejection recovery lockout, missing Wan reservation linkage and a
+  READY/retention race. Corrected all four; added actual image-engine rejection,
+  accepted-response persistence failure and concurrent-recovery/refund tests,
+  plus interrupted Wan submission recovery. Refund stays idempotent after a
+  concurrent recovery changes the draft status.
+- Constructor now supports additional stable one-file slots in model-supported
+  list fields, MIME/bytes/duration/dimension restrictions, source-version CAS,
+  exact original-grant resolution, prompt-tag validation and provider budgets
+  including promoted first frames. Generic generation now forwards every audio
+  reference and preserves the full audio list in the source recipe.
+- Added authenticated rollout gateway (snake/camel aliases, query, REST remix,
+  nested Wan recipe), Telegram callback redirects, admin task diagnostics and
+  additive migration/review inventory. No change to existing prices or media.
+- Verified browser at 320/390/430px: named reverse-order uploads, no early quote,
+  persisted reload, deletion, double-click single launch and dropped-response
+  recovery. New component Jest cases pass. Full Jest: 68 suites, 521 tests pass.
+  Two existing publisher tests failed identically at baseline 6566eb2: adjusted
+  the synthetic JPEG-normalization seam and stale preview cancellation assertion
+  to match already-shipped behavior; production publisher code was unchanged.
+- Actual HTTP engine tests cover image success/rejection/persistence failure;
+  Seedance 2.5 edit and identity use real local media/ffprobe and mock only the
+  paid provider. Generic two-audio acceptance and mixed-frame limits added.
+- Disposable PostgreSQL16 native schema + repeated additive init + concurrent
+  draft claim/debit/refund/upload recovery: 2 passed. Fixed fixture publication
+  state to match the existing profile backfill and avoid explicit-ID currval
+  behavior in the legacy adapter; no production adapter change.
+- Build passed. Full safe backend final rerun and exact-head review/CI/release
+  are pending. No paid production generation or feature activation yet.

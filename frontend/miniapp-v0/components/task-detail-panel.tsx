@@ -23,6 +23,7 @@ import { normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
 import { SeedanceTrendPublisher } from '@/components/seedance-trend-publisher'
 import { Wan3TrendPublisher } from '@/components/wan3-trend-publisher'
 import { SmartRepeatEditor } from '@/components/smart-repeat-editor'
+import { SmartRepeatDiagnostics } from '@/components/smart-repeat-diagnostics'
 
 const EMPTY_REFERENCE_URLS: string[] = []
 
@@ -490,6 +491,7 @@ export function TaskDetailPanel() {
               </div>
 
               {/* Task ID */}
+              {state.user.isAdmin ? <SmartRepeatDiagnostics key={`diagnostics-${taskDetail.task_id}`} taskId={taskDetail.task_id} /> : null}
               {isPublished && taskDetail.feed_id && taskDetail.status === 'completed' && taskDetail.prompt_actions_allowed !== false ? (
                 <SmartRepeatEditor key={taskDetail.task_id} sourceId={taskDetail.feed_id} prompt={taskDetail.prompt || ''} />
               ) : null}

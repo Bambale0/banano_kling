@@ -2205,7 +2205,10 @@ async def _launch_video_generation_task(
         )
     elif model == "grok_imagine":
         result = await grok_service.generate_image_to_video(
-            image_urls=([image_url] if image_url else []) + image_references[:6],
+            image_urls=normalize_reference_urls(
+                ([image_url] if image_url else []) + image_references,
+                max_count=get_max_video_image_references(model),
+            ),
             prompt=prompt,
             mode=grok_mode,
             duration=duration,
@@ -5554,6 +5557,7 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
             image_references=image_references,
             video_references=video_references,
             audio_url=audio_url,
+            audio_references=audio_references,
             grok_mode=grok_mode,
             grok_resolution=grok_resolution,
             veo_generation_type=veo_generation_type,

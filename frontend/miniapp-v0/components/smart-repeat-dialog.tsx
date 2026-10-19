@@ -21,6 +21,7 @@ export function SmartRepeatDialog({ sourceId, onClose }: { sourceId: number | nu
   const [userValues, setUserValues] = useState<Record<string, string>>({})
   const session = useRef(0)
   const submitting = useRef(false)
+  const slotEpochs = useRef<Record<string, number>>({})
 
   const accept = (next: RepeatDraft, generation: number) => {
     if (generation !== session.current) return
@@ -32,12 +33,13 @@ export function SmartRepeatDialog({ sourceId, onClose }: { sourceId: number | nu
     const controller = new AbortController()
     setDraft(null); setError(''); setUploading(new Set()); setSlotErrors({}); setUserValues({})
     submitting.current = false; setBusy(false); setUpdating(0)
+    slotEpochs.current = {}
     if (sourceId) {
       smartRepeatCall<RepeatDraft>('open', { source_id: sourceId }, controller.signal)
         .then(next => { accept(next, generation); if (generation === session.current) setUserValues(next.user_values) })
         .catch(e => { if (!controller.signal.aborted && generation === session.current) setError(e.message) })
     }
-    return () => { controller.abort(); session.current++ }
+    return () => { controller.abort(); if (session.current === generation) session.current = generation + 1 }
   }, [sourceId])
 
   const update = async (payload: Record<string, unknown>, generation = session.current) => {
@@ -56,6 +58,8 @@ export function SmartRepeatDialog({ sourceId, onClose }: { sourceId: number | nu
     if (!draft || submitting.current) return
     const generation = session.current
     const draftId = draft.draft_id
+    const epoch = (slotEpochs.current[slot.slot_id] || 0) + 1
+    slotEpochs.current[slot.slot_id] = epoch
     setUploading(current => new Set(current).add(slot.slot_id))
     setSlotErrors(current => ({ ...current, [slot.slot_id]: '' }))
     let token: string | undefined
@@ -71,13 +75,13 @@ export function SmartRepeatDialog({ sourceId, onClose }: { sourceId: number | nu
             : await uploadFile(`${slot.kind}_reference`, file)
       }
       if (!uploaded) throw new Error('Выберите файл.')
-      if (generation !== session.current) return
+      if (generation !== session.current || slotEpochs.current[slot.slot_id] !== epoch) return
       await smartRepeatCall<RepeatDraft>('update', { draft_id: draftId, operation: 'processing', slot_id: slot.slot_id, upload_token: token })
       const ready = await smartRepeatCall<RepeatDraft>('update', { draft_id: draftId, operation: 'ready', slot_id: slot.slot_id, upload_token: token, url: uploaded.url })
       accept(ready, generation)
       if (generation === session.current) addSavedReference(uploaded)
     } catch (e) {
-      if (generation !== session.current) return
+      if (generation !== session.current || slotEpochs.current[slot.slot_id] !== epoch) return
       setSlotErrors(current => ({ ...current, [slot.slot_id]: e instanceof Error ? e.message : 'Не удалось загрузить файл.' }))
       if (token) {
         try {
@@ -86,7 +90,7 @@ export function SmartRepeatDialog({ sourceId, onClose }: { sourceId: number | nu
         } catch { /* A replaced/cancelled upload cannot overwrite its successor. */ }
       }
     } finally {
-      if (generation === session.current) setUploading(current => { const next = new Set(current); next.delete(slot.slot_id); return next })
+      if (generation === session.current && slotEpochs.current[slot.slot_id] === epoch) setUploading(current => { const next = new Set(current); next.delete(slot.slot_id); return next })
     }
   }
 
@@ -148,12 +152,12 @@ export function SmartRepeatDialog({ sourceId, onClose }: { sourceId: number | nu
       {draft ? <>
         <p className="text-sm text-muted-foreground">{[...state.videoModels, ...state.imageModels].find(m => m.id === draft.template.model)?.label || draft.template.model}</p>
         {draft.status !== 'draft' ? <div className="space-y-3">
-          <p role="status">{draft.task_id ? 'Задача сохранена в истории.' : 'Проверяем ранее созданную операцию. Повторный запуск заблокирован.'}</p>
+          <p role="status">{draft.status === 'rejected' ? 'Запуск отклонён. Можно создать новый повтор.' : draft.task_id ? 'Задача сохранена в истории.' : 'Проверяем ранее созданную операцию. Повторный запуск заблокирован.'}</p>
           <Button onClick={async () => { await refreshTasks(); onClose(); if (draft.task_id) selectTask({
             task_id: draft.task_id, type: draft.template.type, model: draft.template.model, model_label: draft.template.model,
             status: 'pending', aspect_ratio: '', created_at: new Date().toISOString(), cost: draft.quote?.cost || 0, prompt_preview: '', prompt_hidden: true,
           }) }}>Открыть историю</Button>
-          {state.recentTasks.some(task => task.task_id === draft.task_id && task.status !== 'pending') ? <Button variant="outline" disabled={busy} onClick={async () => {
+          {draft.status === 'rejected' || state.recentTasks.some(task => task.task_id === draft.task_id && task.status !== 'pending') ? <Button variant="outline" disabled={busy} onClick={async () => {
             setBusy(true)
             try { const next = await smartRepeatCall<RepeatDraft>('open', { source_id: sourceId, new: true }); accept(next, session.current); setUserValues(next.user_values); setError('') }
             catch (e) { setError(e instanceof Error ? e.message : 'Не удалось создать новый повтор.') }
@@ -179,7 +183,12 @@ export function SmartRepeatDialog({ sourceId, onClose }: { sourceId: number | nu
                 onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void upload(slot, file) }} className="block w-full min-w-0 text-xs" />
               {state.savedReferences.filter(file => file.type === slot.kind && !Object.values(draft.slots).some(value => value.url === file.url)).slice(0, 6).map(file =>
                 <button key={file.id} type="button" disabled={pending} className="block max-w-full truncate text-xs underline" onClick={() => void upload(slot, undefined, file)}>{file.name}</button>)}
-              {asset ? <button type="button" className="text-xs underline" onClick={() => { update({ operation: 'remove', slot_id: slot.slot_id }).catch(e => setError(e.message)) }}>Удалить файл</button> : null}
+              {asset ? <button type="button" className="text-xs underline" onClick={() => {
+                slotEpochs.current[slot.slot_id] = (slotEpochs.current[slot.slot_id] || 0) + 1
+                setUploading(current => { const next = new Set(current); next.delete(slot.slot_id); return next })
+                setSlotErrors(current => ({ ...current, [slot.slot_id]: '' }))
+                update({ operation: 'remove', slot_id: slot.slot_id }).catch(e => setError(e.message))
+              }}>Удалить файл</button> : null}
               {slotErrors[slot.slot_id] ? <p role="alert" className="text-xs text-destructive">{slotErrors[slot.slot_id]}</p> : null}
             </fieldset>
           })}

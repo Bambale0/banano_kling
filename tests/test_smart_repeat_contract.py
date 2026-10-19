@@ -117,3 +117,48 @@ def test_wan_and_generic_models_reuse_their_existing_provider_slot_mapping():
         one['slot_id']: ready('/uploads/refs/new-one.png', 'one')}})
     assert compiled['body']['repeat_replacements'] == {
         'image:0': '/uploads/refs/new-one.png', 'image:1': '/uploads/refs/new-two.png'}
+
+
+def test_added_slot_uses_capability_budget_and_keeps_stable_provider_index():
+    import uuid
+    task = source()
+    submitted = public_template(infer_template(task), author=True)
+    sid = uuid.uuid4().hex
+    submitted['slots'].append({'slot_id': sid, 'kind': 'image', 'binding': 'upload',
+        'required': True, 'label': 'Ваш торт', 'constraints': {'mime_types': ['image/png'], 'max_bytes': 1024}})
+    configured = configure_template(task, submitted)
+    assert configured['slots'][-1]['index'] == 2
+    next_schema = public_template(configured, author=True)
+    next_schema['slots'].reverse()
+    configured = configure_template(task, next_schema, previous=configured)
+    assert configured['slots'][0]['slot_id'] == sid and configured['slots'][0]['index'] == 2
+    draft = {'slots': {slot['slot_id']: ready(f'/uploads/{slot["index"]}.png', str(slot['index'])) for slot in configured['slots']}}
+    compiled = compile_bindings(task, configured, draft)
+    assert compiled['body']['reference_images'] == ['/uploads/0.png', '/uploads/1.png', '/uploads/2.png']
+    assert compiled['source']['request_data']['reference_images'] == compiled['body']['reference_images']
+    from bot.smart_repeat_policy import validate_asset
+    with pytest.raises(SmartRepeatError, match='ASSET_CONSTRAINTS_INVALID'):
+        validate_asset(configured['slots'][0], {'size_bytes': 1025, 'media': {'mime_type': 'image/png'}})
+    with pytest.raises(SmartRepeatError, match='ASSET_CONSTRAINTS_INVALID'):
+        validate_asset(configured['slots'][0], {'size_bytes': 100, 'media': {'mime_type': 'image/jpeg'}})
+    too_many = public_template(configured)
+    for _ in range(30):
+        too_many['slots'].append({**submitted['slots'][-1], 'slot_id': uuid.uuid4().hex})
+    with pytest.raises(SmartRepeatError, match='MODEL_CONSTRAINTS_INVALID'):
+        configure_template(task, too_many, previous=configured)
+
+
+@pytest.mark.parametrize('model,maximum', [('seedance_2', 9), ('grok_imagine', 7)])
+def test_mixed_frame_and_list_share_the_actual_provider_budget(model, maximum):
+    import uuid
+    task = source(model)
+    task['prompt'] = 'Use the supplied images'
+    task['request_data'] = {'v_type': 'imgtxt', 'v_image_url': '/uploads/frame.png',
+        'reference_images': [f'/uploads/reference{index}.png' for index in range(maximum - 1)]}
+    template = infer_template(task)
+    submitted = public_template(template, author=True)
+    assert len(configure_template(task, submitted)['slots']) == maximum
+    submitted['slots'].append({'slot_id': uuid.uuid4().hex, 'kind': 'image', 'binding': 'upload',
+        'required': True, 'label': 'Extra image'})
+    with pytest.raises(SmartRepeatError, match='MODEL_CONSTRAINTS_INVALID'):
+        configure_template(task, submitted)

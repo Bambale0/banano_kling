@@ -652,6 +652,16 @@ class Wan3PrimeLifecycle:
             if actor.operation_context:
                 await db.execute("UPDATE generation_tasks SET parent_generation_id = ?, action_type = 'admin_replay' WHERE task_id = ?",
                                  (actor.operation_context["source_operation_id"], internal_task_id))
+            from bot.smart_repeat_contract import current_authorization
+            smart_context = current_authorization()
+            if smart_context:
+                if smart_context['user_id'] != actor.user_id or key != smart_context['draft_id']:
+                    raise Wan3PrimeLifecycleError('Repeat operation mismatch', status=409)
+                linked = await db.execute("UPDATE smart_repeat_drafts SET task_id = ?, charge_amount = ? "
+                    "WHERE id = ? AND user_id = ? AND status = 'launching' AND task_id IS NULL",
+                    (internal_task_id, 0 if actor.is_admin else server_quote.reserve_credits, key, actor.user_id))
+                if linked.rowcount != 1:
+                    raise Wan3PrimeLifecycleError('Repeat operation unavailable', status=409)
             await db.commit()
 
         callback_url = self._callback_url(internal_task_id, nonce)

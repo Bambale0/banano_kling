@@ -11,6 +11,10 @@ export interface RepeatSlot {
   binding: 'fixed' | 'upload'
   required: boolean
   can_keep_original?: boolean
+  added?: boolean
+  min_files?: number
+  max_files?: number
+  constraints?: { mime_types?: string[]; max_bytes?: number; min_duration?: number; max_duration?: number; min_side?: number; max_side?: number }
 }
 export interface RepeatTemplate {
   contract_version: 1
@@ -21,11 +25,12 @@ export interface RepeatTemplate {
   slots: RepeatSlot[]
   presets: Array<{ id: string; label: string; slot_ids: string[] }>
   variables: Array<{ id: string; label: string; required: boolean; max_length: number }>
+  addable?: Partial<Record<'image' | 'video' | 'audio', { field: string; maximum: number }>>
 }
 export interface RepeatDraft {
   draft_id: string
   revision: number
-  status: 'draft' | 'launching' | 'launched' | 'unknown'
+  status: 'draft' | 'launching' | 'launched' | 'unknown' | 'rejected'
   template: RepeatTemplate
   preset_id: string | null
   user_values: Record<string, string>
@@ -42,11 +47,18 @@ export class SmartRepeatApiError extends Error {
 export async function smartRepeatCall<T>(action: string, payload: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
   const initData = getInitData()
   if (!initData) throw new SmartRepeatApiError('Откройте Mini App из Telegram.', 'AUTH_REQUIRED')
+  const controller = new AbortController()
+  const abort = () => controller.abort()
+  signal?.addEventListener('abort', abort, { once: true })
+  if (signal?.aborted) controller.abort()
+  const timeout = setTimeout(abort, 120_000)
+  try {
   const response = await fetch(`${getApiBasePath()}/repeat/${action}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
     body: JSON.stringify({ ...payload, init_data: initData, start_param_fallback: getStartParamFallback() }),
   })
   const result = await response.json()
   if (!response.ok || result.ok === false) throw new SmartRepeatApiError(result.error || 'Не удалось подтвердить повтор.', result.code || 'REPEAT_UNAVAILABLE')
   return result as T
+  } finally { clearTimeout(timeout); signal?.removeEventListener('abort', abort) }
 }

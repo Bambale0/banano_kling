@@ -1,0 +1,59 @@
+name: Smart repeat PostgreSQL acceptance
+on:
+  pull_request:
+    branches: [tanyapi]
+    paths:
+      - 'bot/smart_repeat*.py'
+      - 'bot/database.py'
+      - 'bot/services/wan3_prime*.py'
+      - 'schema_postgres.sql'
+      - 'tests/test_smart_repeat*.py'
+      - '.github/workflows/smart-repeat-postgres.yml'
+  push:
+    branches: [tanyapi]
+    paths:
+      - 'bot/smart_repeat*.py'
+      - 'bot/database.py'
+      - 'bot/services/wan3_prime*.py'
+      - 'schema_postgres.sql'
+      - 'tests/test_smart_repeat*.py'
+      - '.github/workflows/smart-repeat-postgres.yml'
+permissions:
+  contents: read
+jobs:
+  postgres:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: banano_partner_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d banano_partner_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/banano_partner_test
+      PARTNER_POSTGRES_TEST: '1'
+      SMART_REPEAT_POSTGRES_TEST: '1'
+      BANANO_SKIP_PROJECT_ENV: '1'
+      BANANO_DISABLE_FILE_LOGGING: '1'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt pytest pytest-asyncio pytest-mock
+      - name: Bootstrap guarded disposable schema
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import psycopg
+          with psycopg.connect(os.environ['DATABASE_URL']) as connection:
+              connection.execute(Path('schema_postgres.sql').read_text(), prepare=False)
+          PY
+      - run: pytest tests/test_smart_repeat_postgres.py -q --tb=short

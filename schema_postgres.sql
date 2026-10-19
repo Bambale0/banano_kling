@@ -1,5 +1,6 @@
 -- Native PostgreSQL schema for clean deployments
 -- Smart repeat tables are also installed additively by application startup.
+-- Draft attachments and Wan retention serialize on this shared lock.
 -- Run once on an empty Postgres database before starting the bot
 -- Usage: psql "$DATABASE_URL" -f schema_postgres.sql
 
@@ -649,6 +650,9 @@ CREATE TABLE IF NOT EXISTS genjutsu_feed_publications (
 
 
 -- Immutable smart-repeat templates and durable operation/upload snapshots.
+CREATE TABLE IF NOT EXISTS wan3_prime_storage_lock (id INTEGER PRIMARY KEY);
+INSERT INTO wan3_prime_storage_lock (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS smart_repeat_templates (
         source_id BIGINT NOT NULL, version INTEGER NOT NULL, owner_id BIGINT NOT NULL,
         schema_json TEXT NOT NULL, source_hash TEXT NOT NULL,

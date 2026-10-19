@@ -5,13 +5,13 @@ field positions and the original prompt remain server-side.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
 import uuid
-import asyncio
-from copy import deepcopy
 from contextvars import ContextVar
+from copy import deepcopy
 from typing import Any
 
 from bot.services.media_input_utils import reference_source_identity
@@ -84,6 +84,15 @@ def _grant(source: dict) -> dict:
 
 
 def infer_template(source: dict) -> dict:
+    try:
+        return _infer_template(source)
+    except SmartRepeatError:
+        raise
+    except ValueError:
+        fail('TEMPLATE_REVIEW_REQUIRED', 'Автору нужно проверить соответствие референсов исходному рецепту.')
+
+
+def _infer_template(source: dict) -> dict:
     if source.get('type') not in {'image', 'video'} or source.get('status') != 'completed':
         fail('TEMPLATE_REVIEW_REQUIRED', 'Нужна завершённая генерация фото или видео.')
     data = source_request(source)
@@ -105,8 +114,6 @@ def infer_template(source: dict) -> dict:
         images = _source_image_references_from_task_payload(source)
         for index, url in enumerate(images):
             add('image', 'reference', 'reference_images', index, url)
-        if not images:
-            add('image', 'reference', 'reference_images', 0, None)
     elif model in {'wan_3', 'wan_3_prime'}:
         from bot.services.wan3_prime_repeat import source_recipe, source_slots
         for slot in source_slots(source_recipe(source)):
@@ -126,20 +133,35 @@ def infer_template(source: dict) -> dict:
                 add(kind, slot['role'], actual_field, slot['index'], slot['url'])
         for index, url in enumerate(recipe.get('audio') or []):
             add('audio', 'reference', 'seedance25_reference_audio_urls', index, url)
+    from bot.services.media_input_utils import resolve_reference_source
+    for kind, plural in (('image', 'images'), ('video', 'videos')):
+        candidates = [slot['source_url'] for slot in slots if slot['kind'] == kind and slot['source_url']]
+        allowed = {resolve_reference_source(value, candidates) for value in grant.get(plural, [])}
+        for slot in slots:
+            if slot['kind'] == kind:
+                keep = slot['source_url'] is not None and slot['source_url'] in allowed
+                slot.update(allow_original=keep, binding='fixed' if keep else 'upload', required=not keep)
     if data.get('seedance25_identity_transfer') or data.get('identityTransfer'):
         # Identity validation requires user-owned replacement media.
         for slot in slots:
             slot.update(binding='upload', required=True, allow_original=False)
+    from bot.smart_repeat_policy import configure_limits, list_fields
+    for slot in slots:
+        slot.update(min_files=int(slot['required']), max_files=1,
+                    constraints=configure_limits(model, slot, {}), added=False)
     return {'contract_version': 1, 'source_id': int(source['id']), 'version': 1,
         'model': model, 'type': source['type'], 'slots': slots, 'presets': [], 'variables': [],
+        'addable': list_fields(source),
         'source_hash': source_fingerprint(source)}
 
 
 def public_template(template: dict, *, author: bool = False) -> dict:
-    fields = ('slot_id', 'kind', 'role', 'label', 'hint', 'binding', 'required')
+    fields = ('slot_id', 'kind', 'role', 'label', 'hint', 'binding', 'required',
+              'min_files', 'max_files', 'constraints', 'added')
     return {**{key: deepcopy(template[key]) for key in (
         'contract_version', 'source_id', 'version', 'model', 'type', 'presets', 'variables')},
-        'slots': [{**{key: slot[key] for key in fields},
+        **({'addable': deepcopy(template.get('addable', {}))} if author else {}),
+        'slots': [{**{key: slot[key] for key in fields if key in slot},
                    **({'can_keep_original': slot['allow_original']} if author else {})}
                   for slot in template['slots']]}
 
@@ -150,25 +172,56 @@ def _text(value: Any, maximum: int, *, empty: bool = False) -> str:
     return value.strip()
 
 
-def configure_template(source: dict, submitted: dict) -> dict:
+def configure_template(source: dict, submitted: dict, *, previous=None) -> dict:
     template = infer_template(source)
     raw = submitted.get('slots')
-    expected = {slot['slot_id']: slot for slot in template['slots']}
-    if (not isinstance(raw, list) or len(raw) != len(expected)
+    expected = {slot['slot_id']: slot for slot in (previous or template)['slots']}
+    mandatory_ids = {slot['slot_id'] for slot in template['slots']}
+    if (not isinstance(raw, list) or len(raw) > 100
         or any(not isinstance(slot, dict) for slot in raw)
-        or {slot.get('slot_id') for slot in raw} != set(expected)):
+        or any(not isinstance(slot.get('slot_id'), str) for slot in raw)
+        or len({slot['slot_id'] for slot in raw}) != len(raw)
+        or not mandatory_ids <= {slot['slot_id'] for slot in raw}):
         fail('INVALID_SLOTS', 'Набор полей должен соответствовать исходному рецепту.', 400)
+    from bot.smart_repeat_policy import configure_limits, validate_counts
     configured = []
     for slot in raw:
-        base = deepcopy(expected[slot['slot_id']])
+        if slot['slot_id'] in expected:
+            base = deepcopy(expected[slot['slot_id']])
+        else:
+            descriptor = template['addable'].get(slot.get('kind'))
+            if not descriptor or not re.fullmatch(r'[a-f0-9]{32}', slot['slot_id']):
+                fail('INVALID_SLOTS', 'Модель не поддерживает добавление этого поля.', 400)
+            field = descriptor['field']
+            index = 1 + max((item['index'] for item in [*expected.values(), *configured] if item['kind'] == slot['kind']), default=-1)
+            base = {'slot_id': slot['slot_id'], 'kind': slot['kind'], 'role': 'reference',
+                'field': field, 'index': index, 'source_url': None, 'allow_original': False,
+                'key': f"{slot['kind']}:{index}" if source['model'] in {'wan_3', 'wan_3_prime'} else None,
+                'added': True}
         binding, required = slot.get('binding'), slot.get('required')
         if binding not in {'fixed', 'upload'} or type(required) is not bool:
             fail('INVALID_TEMPLATE', 'Неверный тип поля.', 400)
         if (binding == 'fixed' or not required) and not base['allow_original']:
             fail('ORIGINAL_NOT_PERMITTED', 'Для необязательного поля разрешите сохранение исходника автора.', 400)
         base.update(label=_text(slot.get('label'), 80), hint=_text(slot.get('hint', ''), 240, empty=True),
-                    binding=binding, required=required if binding == 'upload' else False)
+                    binding=binding, required=required if binding == 'upload' else False,
+                    constraints=configure_limits(template['model'], base, slot))
+        base.update(min_files=int(base['required']), max_files=1)
+        if slot.get('max_files', 1) != 1 or slot.get('min_files', int(required)) not in (0, 1):
+            fail('INVALID_TEMPLATE', 'Каждое именованное поле соответствует одному файлу.', 400)
         configured.append(base)
+    # Gaps would renumber provider tags. Only a trailing added field may be removed.
+    for kind in {item['kind'] for item in configured}:
+        indices = sorted(item['index'] for item in configured if item['kind'] == kind)
+        if indices != list(range(len(indices))):
+            fail('PROMPT_BINDINGS_INVALID', 'Удалите сначала последнее дополнительное поле.', 400)
+    validate_counts(source, configured)
+    from bot.services.seedance_reference_binding import missing_seedance_reference_tags
+    if missing_seedance_reference_tags(str(source.get('prompt') or ''),
+        image_count=sum(item['kind'] == 'image' for item in configured),
+        video_count=sum(item['kind'] == 'video' for item in configured),
+        audio_count=sum(item['kind'] == 'audio' for item in configured)):
+        fail('PROMPT_BINDINGS_INVALID', 'Поле используется в скрытом промпте.', 400)
     template['slots'] = configured
     presets = submitted.get('presets', [])
     if not isinstance(presets, list) or len(presets) > 20:
@@ -217,6 +270,8 @@ def selected_slot_ids(template: dict, preset_id: str | None) -> set[str]:
 
 
 def compile_bindings(source: dict, template: dict, draft: dict) -> dict:
+    from bot.smart_repeat_policy import validate_counts
+    validate_counts(source, template['slots'])
     if source_fingerprint(source) != template['source_hash']:
         fail('TEMPLATE_CHANGED', 'Автор изменил публикацию. Откройте повтор заново.')
     selected = selected_slot_ids(template, draft.get('preset_id'))
@@ -279,8 +334,19 @@ def compile_bindings(source: dict, template: dict, draft: dict) -> dict:
         'v_reference_videos': videos, 'seedance25_reference_audio_urls': audio}
     effective = {**source, 'prompt': prompt,
         'feed_repeat_reference_selection': ({'version': 1, **fixed} if source['type'] == 'video' else fixed)}
+    if any(slot.get('added') for slot in template['slots']):
+        data = deepcopy(source_request(source))
+        fields = {slot['field'] for slot in template['slots']}
+        for field in fields:
+            field_slots = sorted((slot for slot in template['slots'] if slot['field'] == field), key=lambda slot: slot['index'])
+            # Additional fields are permitted only in explicit list descriptors.
+            if any(slot.get('added') for slot in field_slots):
+                data[field] = [references[slot['slot_id']]['url'] for slot in field_slots]
+                if source['type'] == 'image':
+                    data['source_reference_images'] = list(data[field])
+        effective['request_data'] = data
     if template['model'] in {'wan_3', 'wan_3_prime'}:
-        effective['request_data'] = {**source_request(source), 'prompt': prompt}
+        effective['request_data'] = {**source_request(effective), 'prompt': prompt}
         body = {'model': template['model'], 'source_feed_gen_id': int(source['id']),
                 'repeat_replacements': replacements}
     data = source_request(source)

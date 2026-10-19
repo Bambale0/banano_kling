@@ -447,7 +447,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         : [],
     })
     setActiveTabState(1)
-  }, [state.imageModels, state.videoModels])
+  }, [state.imageModels, state.videoModels, setVideoPromptPreset, setPromptPreset])
 
   useEffect(() => {
     if (state.mode !== 'live' || state.isLoading) return

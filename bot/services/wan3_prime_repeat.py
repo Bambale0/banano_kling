@@ -184,7 +184,10 @@ async def compile_repeat(actor, body: dict[str, Any], probe):
             continue
         value = replacements[slot["key"]].strip()
         # Even a known original URL cannot be smuggled in as a user's upload.
-        if actor.user_id != plan["owner_id"] and any(value == item["url"] for item in plan["slots"]):
+        from bot.smart_repeat_contract import current_authorization
+        smart_context = current_authorization()
+        own_asset = smart_context and value in smart_context.get('owned_inputs', set())
+        if actor.user_id != plan["owner_id"] and not own_asset and any(value == item["url"] for item in plan["slots"]):
             raise Wan3PrimeValidationError("Загрузите собственный файл для заменяемого места", status=403)
         if slot["field"] in FRAME_FIELDS:
             compiled[slot["field"]] = value

@@ -2,6 +2,7 @@
 import asyncio
 import hashlib
 import json
+import mimetypes
 import subprocess
 from pathlib import Path
 
@@ -17,8 +18,9 @@ async def inspect_asset(path: str, kind: str) -> dict:
             if kind == 'image':
                 with Image.open(local) as image:
                     width, height = image.size
+                    mime_type = Image.MIME.get(image.format)
                     image.verify()
-                media = {'width': width, 'height': height}
+                media = {'width': width, 'height': height, 'mime_type': mime_type}
             else:
                 completed = subprocess.run([
                     'ffprobe', '-protocol_whitelist', 'file,pipe', '-v', 'error',
@@ -28,7 +30,9 @@ async def inspect_asset(path: str, kind: str) -> dict:
                 streams = [stream for stream in parsed.get('streams', []) if stream.get('codec_type') == kind]
                 if not streams:
                     fail('INVALID_ASSET', 'Тип файла не соответствует полю.', 400)
-                media = {'duration_seconds': (parsed.get('format') or {}).get('duration')}
+                media = {'duration_seconds': (parsed.get('format') or {}).get('duration'),
+                    'mime_type': mimetypes.guess_type(str(local))[0],
+                    **{key: streams[0].get(key) for key in ('width', 'height')}}
             digest = hashlib.sha256()
             with local.open('rb') as handle:
                 for chunk in iter(lambda: handle.read(1024 * 1024), b''):

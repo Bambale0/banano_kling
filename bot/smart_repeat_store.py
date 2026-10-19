@@ -6,12 +6,20 @@ import logging
 import math
 import uuid
 from copy import deepcopy
+from datetime import UTC, datetime
 from pathlib import Path
 
 from bot import db as db_backend
 from bot.smart_repeat_contract import (
-    current_authorization, compile_bindings, configure_template, fail,
-    infer_template, public_template, selected_slot_ids, source_fingerprint,
+    SmartRepeatError,
+    compile_bindings,
+    configure_template,
+    current_authorization,
+    fail,
+    infer_template,
+    public_template,
+    selected_slot_ids,
+    source_fingerprint,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,6 +47,10 @@ async def ensure_schema(db):
     from bot.services.wan3_prime_schema import execute_wan_ddl
     for statement in TABLES:
         await execute_wan_ddl(db, statement)
+    # The shared retention lock is required for image/video drafts as well as
+    # Wan uploads, including clean deployments before the Wan runner starts.
+    await execute_wan_ddl(db, 'CREATE TABLE IF NOT EXISTS wan3_prime_storage_lock (id INTEGER PRIMARY KEY)')
+    await db.execute('INSERT INTO wan3_prime_storage_lock (id) VALUES (1) ON CONFLICT (id) DO NOTHING')
 
 
 async def rollout_enabled(telegram_id=None):
@@ -104,15 +116,20 @@ async def get_template(source, *, author=False):
 async def save_template(user, source, submitted):
     if source['user_id'] != user.id:
         fail('FORBIDDEN', 'Настраивать повтор может только автор публикации.', 403)
-    template = configure_template(source, submitted)
     async with db_backend.connect() as db:
         db.row_factory = db_backend.Row
         await _lock_user(db, user.id)
         current = await _current_source(db, source['id'])
-        if source_fingerprint(current) != template['source_hash']:
+        if source_fingerprint(current) != source_fingerprint(source):
             fail('TEMPLATE_CHANGED', 'Публикация изменилась. Обновите редактор.')
-        previous = await (await db.execute('SELECT version FROM smart_repeat_templates '
+        previous = await (await db.execute('SELECT version, schema_json FROM smart_repeat_templates '
             'WHERE source_id = ? ORDER BY version DESC LIMIT 1', (source['id'],))).fetchone()
+        prior = json.loads(previous['schema_json']) if previous else None
+        if prior and prior['source_hash'] != source_fingerprint(source):
+            prior = None
+        if previous and submitted.get('version') != previous['version'] + int(prior is None):
+            fail('TEMPLATE_CHANGED', 'Версия редактора устарела. Откройте его заново.')
+        template = configure_template(source, submitted, previous=prior)
         template['version'] = int(previous['version']) + 1 if previous else 1
         await db.execute('INSERT INTO smart_repeat_templates '
             '(source_id, version, owner_id, schema_json, source_hash) VALUES (?, ?, ?, ?, ?)',
@@ -158,7 +175,8 @@ async def open_draft(user, source, template, *, new=False):
         if current and current['status'] != 'draft':
             task = await (await db.execute('SELECT status FROM generation_tasks '
                 'WHERE task_id = ? AND user_id = ?', (current['task_id'], user.id))).fetchone() if current['task_id'] else None
-            if not new or not task or task['status'] in {'pending', 'processing'}:
+            if not new or (current['status'] != 'rejected' and
+                           (not task or task['status'] in {'pending', 'processing'})):
                 await db.commit()
                 return current
         if current and not new and current['template_version'] == template['version']:
@@ -166,9 +184,10 @@ async def open_draft(user, source, template, *, new=False):
             return current
         draft_id = uuid.uuid4().hex
         await db.execute('INSERT INTO smart_repeat_drafts '
-            '(id, user_id, telegram_id, source_id, template_version, state_json) VALUES (?, ?, ?, ?, ?, ?)',
+            '(id, user_id, telegram_id, source_id, template_version, state_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
             (draft_id, user.id, user.telegram_id, source['id'], template['version'],
-             json.dumps({'slots': {}, 'preset_id': None, 'user_values': {}})))
+             json.dumps({'slots': {}, 'preset_id': None, 'user_values': {}}),
+             datetime.now(UTC).replace(tzinfo=None).isoformat(' ', timespec='microseconds')))
         await db.commit()
     event('repeat_opened', user_id=user.id, source_id=source['id'], draft_id=draft_id,
           template_version=template['version'])
@@ -187,7 +206,10 @@ def public_draft(draft, template):
 
 
 async def validate_owned_asset(user, kind, url, *, existing=None):
-    from bot.services.media_input_utils import reference_source_identity, resolve_local_upload_path
+    from bot.services.media_input_utils import (
+        reference_source_identity,
+        resolve_local_upload_path,
+    )
     if not isinstance(url, str) or not url or kind not in {'image', 'video', 'audio'}:
         fail('INVALID_ASSET', 'Некорректный файл.', 400)
     identity = reference_source_identity(url)
@@ -230,6 +252,14 @@ async def mutate_draft(user, draft_id, template, operation, *, slot_id=None, upl
         inspection = await validate_owned_asset(user, definition['kind'], url)
     async with db_backend.connect() as db:
         db.row_factory = db_backend.Row
+        if operation == 'ready':
+            from bot.services.wan3_prime_storage_policy import lock_storage
+            await lock_storage(db)
+            # Retention uses this same lock. Recheck after acquiring it so an
+            # asset cannot disappear between validation and durable attachment.
+            inspection = await validate_owned_asset(user, definition['kind'], url)
+            from bot.smart_repeat_policy import validate_asset
+            validate_asset(definition, inspection)
         locked = await db.execute('UPDATE smart_repeat_drafts SET revision = revision '
             "WHERE id = ? AND user_id = ? AND status = 'draft'", (draft_id, user.id))
         if locked.rowcount != 1:
@@ -269,7 +299,8 @@ async def mutate_draft(user, draft_id, template, operation, *, slot_id=None, upl
         await db.commit()
     event({'begin': 'slot_upload_started', 'ready': 'slot_ready'}.get(operation, 'draft_changed'),
           user_id=user.id, source_id=template['source_id'], template_version=template['version'],
-          draft_id=draft_id, slot_id=slot_id)
+          draft_id=draft_id, slot_id=slot_id, model=template['model'],
+          asset_id=(state.get('slots', {}).get(slot_id) or {}).get('asset_id'))
     return await load_draft(user.id, draft_id)
 
 
@@ -278,7 +309,9 @@ async def validate_inputs(user, source, template, draft):
     from bot.services.media_input_utils import missing_local_upload_sources
     for sid, ref in compiled['snapshot']['references'].items():
         if ref['binding'] == 'upload':
-            await validate_owned_asset(user, ref['kind'], ref['url'], existing=draft['state']['slots'][sid])
+            inspection = await validate_owned_asset(user, ref['kind'], ref['url'], existing=draft['state']['slots'][sid])
+            from bot.smart_repeat_policy import validate_asset
+            validate_asset(next(slot for slot in template['slots'] if slot['slot_id'] == sid), inspection)
         elif missing_local_upload_sources([ref['url']]):
             fail('REFERENCES_NOT_READY', 'Исходник автора больше недоступен.')
     return compiled
@@ -296,7 +329,7 @@ async def refresh_draft_media(user, draft):
         try:
             kind = next(slot['kind'] for slot in template['slots'] if slot['slot_id'] == sid)
             await validate_owned_asset(user, kind, asset.get('url'), existing=asset)
-        except Exception:
+        except (SmartRepeatError, OSError):
             asset.update(state='FAILED', error='Файл больше недоступен. Загрузите его заново.')
             changed = True
     if changed:
@@ -320,16 +353,32 @@ async def _template_for_draft(draft):
 
 async def recover_draft(user, draft):
     """Persist known provider acceptance without ever resubmitting a generation."""
-    if not draft.get('task_id') or not draft['provider_accepted']:
+    if not draft.get('task_id'):
         return draft
     from bot import database
     task = await database.get_task_by_id(draft['task_id'])
     if task and task.user_id != user.id:
         fail('OPERATION_CONFLICT', 'Не удалось подтвердить владельца задачи.')
-    if not task and draft.get('accepted_task'):
-        await database.add_generation_task(**draft['accepted_task'])
+    if not task and draft['provider_accepted'] and draft.get('accepted_task'):
+        record = draft['accepted_task']
+        if record['type'] == 'image' and record.get('reserved_task_id'):
+            from bot.partner_policy import generation_partner_snapshot
+            metadata = generation_partner_snapshot(record['request_data'], accepted=True)
+            metadata['task_id_aliases'] = [record['reserved_task_id'], record['task_id']]
+            async with db_backend.connect() as db:
+                await db.execute('UPDATE generation_tasks SET task_id = ?, request_data = ? '
+                    "WHERE task_id = ? AND user_id = ? AND status IN ('pending', 'processing')",
+                    (record['task_id'], json.dumps(metadata), record['reserved_task_id'], user.id))
+                await db.commit()
+        else:
+            await database.add_generation_task(**record)
         task = await database.get_task_by_id(draft['task_id'])
-    if not task:
+    wan_intent = None
+    if (draft.get('snapshot') or {}).get('model') in {'wan_3', 'wan_3_prime'}:
+        async with db_backend.connect() as db:
+            wan_intent = await (await db.execute('SELECT internal_task_id FROM wan3_prime_intents '
+                'WHERE user_id = ? AND idempotency_key = ?', (user.id, draft['id']))).fetchone()
+    if not task or (not draft['provider_accepted'] and task.status != 'failed' and not wan_intent):
         return draft
     result = {'ok': True, 'task_id': task.task_id,
               'status': 'done' if task.status == 'completed' else 'queued',
@@ -337,8 +386,10 @@ async def recover_draft(user, draft):
     if task.status == 'failed':
         result.update(ok=False, code='PREVIOUS_TASK_FAILED', error='Предыдущая задача завершилась ошибкой. Создайте новый повтор явно.')
     async with db_backend.connect() as db:
-        await db.execute("UPDATE smart_repeat_drafts SET status = 'launched', result_json = ? WHERE id = ? AND user_id = ?",
-            (json.dumps({'status': 409 if task.status == 'failed' else 200, 'body': result}), draft['id'], user.id))
+        status = ('rejected' if task.status == 'failed' and not draft['provider_accepted']
+                  and draft['charge_amount'] == draft['refund_amount'] else 'launched')
+        await db.execute('UPDATE smart_repeat_drafts SET status = ?, result_json = ? WHERE id = ? AND user_id = ?',
+            (status, json.dumps({'status': 409 if task.status == 'failed' else 200, 'body': result}), draft['id'], user.id))
         await db.commit()
     return await load_draft(user.id, draft['id'])
 
@@ -383,7 +434,7 @@ async def claim_launch(user, source, template, draft, quote_id, compiled):
             fail('OPERATION_ALREADY_CREATED', 'Операция уже создана. Проверьте историю.')
         await db.commit()
     event('generation_requested', user_id=user.id, source_id=source['id'],
-          draft_id=draft['id'], template_version=template['version'])
+          draft_id=draft['id'], template_version=template['version'], model=template['model'])
     return snapshot
 
 
@@ -391,9 +442,17 @@ async def finish_launch(user, draft_id, response):
     result = json.loads(response.text) if response.text else {}
     task_id = result.get('task_id') or result.get('internal_task_id')
     async with db_backend.connect() as db:
+        db.row_factory = db_backend.Row
+        row = await (await db.execute('SELECT * FROM smart_repeat_drafts WHERE id = ? AND user_id = ?',
+            (draft_id, user.id))).fetchone()
+        local = await (await db.execute('SELECT status FROM generation_tasks WHERE task_id = ? AND user_id = ?',
+            (row['task_id'], user.id))).fetchone() if row['task_id'] else None
+        rejected = (not row['provider_accepted'] and response.status >= 400 and
+            (400 <= response.status < 500 or (local and local['status'] == 'failed')) and
+            row['charge_amount'] == row['refund_amount'])
         await db.execute('UPDATE smart_repeat_drafts SET status = ?, result_json = ?, '
             'task_id = COALESCE(?, task_id), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
-            ('launched' if response.status < 400 and task_id else 'unknown',
+            ('rejected' if rejected else 'launched' if response.status < 400 and task_id else 'unknown',
              json.dumps({'status': response.status, 'body': result}), task_id, draft_id, user.id))
         await db.commit()
     return result
@@ -411,7 +470,7 @@ async def repeat_finance(telegram_id, amount, *, refund=False):
         await _lock_user(db, context['user_id'])
         row = await (await db.execute('SELECT * FROM smart_repeat_drafts WHERE id = ? AND user_id = ?',
             (context['draft_id'], context['user_id']))).fetchone()
-        if not row or row['status'] != 'launching':
+        if not row or (not refund and row['status'] != 'launching'):
             fail('OPERATION_CONTEXT_INVALID', 'Не удалось подтвердить операцию.')
         if refund:
             if row['charge_amount'] != amount or row['refund_amount'] or row['provider_accepted']:
@@ -442,9 +501,49 @@ async def record_accepted(task_id, task_record):
     if not context:
         return
     async with db_backend.connect() as db:
-        await db.execute('UPDATE smart_repeat_drafts SET provider_accepted = 1, task_id = ?, accepted_task_json = ?, '
+        await db.execute('UPDATE smart_repeat_drafts SET provider_accepted = ?, task_id = ?, accepted_task_json = ?, '
             'updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
-            (task_id, json.dumps(task_record), context['draft_id'], context['user_id']))
+            (int(task_record.get('provider_accepted', False)), task_id, json.dumps(task_record), context['draft_id'], context['user_id']))
         await db.commit()
     event('generation_created', user_id=context['user_id'], source_id=context['source_id'],
-          draft_id=context['draft_id'], task_id=task_id, template_version=context['template_version'])
+          draft_id=context['draft_id'], task_id=task_id, template_version=context['template_version'],
+          model=task_record.get('model'), provider_accepted=bool(task_record.get('provider_accepted')))
+
+
+async def record_provider_ack(task_id):
+    """Save real acceptance before subsequent task/notification writes can fail."""
+    context = current_authorization()
+    if not context:
+        return
+    async with db_backend.connect() as db:
+        db.row_factory = db_backend.Row
+        row = await (await db.execute('SELECT accepted_task_json FROM smart_repeat_drafts '
+            'WHERE id = ? AND user_id = ?', (context['draft_id'], context['user_id']))).fetchone()
+        record = json.loads(row[0]) if row and row[0] else None
+        if record:
+            if record['task_id'] != task_id:
+                record['reserved_task_id'] = record['task_id']
+            record.update(task_id=task_id, provider_accepted=True)
+        await db.execute('UPDATE smart_repeat_drafts SET provider_accepted = 1, task_id = ?, '
+            'accepted_task_json = ? WHERE id = ? AND user_id = ?',
+            (task_id, json.dumps(record) if record else None, context['draft_id'], context['user_id']))
+        await db.commit()
+
+
+async def migrate_public_templates(*, after_id, limit):
+    """Add versions only for unambiguous sources; report reviews without media writes."""
+    from bot.database import get_generation_task_payload
+    from bot.smart_repeat_contract import SmartRepeatError
+    async with db_backend.connect() as db:
+        rows = await (await db.execute("SELECT id FROM generation_tasks WHERE id > ? AND status = 'completed' "
+            "AND type IN ('image', 'video') AND (is_public_feed = 1 OR is_profile_visible = 1) ORDER BY id LIMIT ?",
+            (after_id, limit))).fetchall()
+    results = []
+    for row in rows:
+        source = await get_generation_task_payload(row[0])
+        try:
+            template = await get_template(source)
+            results.append({'source_id': row[0], 'status': 'ready', 'version': template['version']})
+        except SmartRepeatError as exc:
+            results.append({'source_id': row[0], 'status': 'review_required', 'code': exc.code})
+    return {'publications': results, 'next_after_id': rows[-1][0] if rows else after_id, 'has_more': len(rows) == limit}

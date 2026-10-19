@@ -57,7 +57,7 @@ No open epic may be closed merely because a related patch or CI job exists.
   auto-merge armed; all four required PR gates passed, including 3864 safe
   regression tests (115 skipped, 76 subtests passed). Merged as
   `6566eb26eb4b102197a2c7610cf0723d98920a8a`; exact post-merge CI, deployment
-  and production checks remain to be verified. This is a prerequisite, not the whole smart-repeat
+  and production health/static revision/storage-error smoke were verified. This is a prerequisite, not the whole smart-repeat
   feature.
 
 ## Release safeguards
