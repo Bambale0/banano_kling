@@ -2284,3 +2284,34 @@ Coverage: pure contract tests and existing chunk HTTP regression run locally wit
 - First PR CI exposed two retention PostgreSQL cases whose minimal schema lacked
   the new snapshot tables. Updated the guarded fixture to run the same additive
   smart-repeat schema migration; no production query fallback or test exclusion.
+
+
+## 2026-10-19 — repeat navigation and saved-file clarity regression
+
+- Baseline: `b8f03bbf59e2c1b8991c76e27fc8f2829a243036`, verified checkout and running Docker OCI revision. Work is isolated in `fix/smart-repeat-runtime-20261019`; the production admin-managed price file is untouched.
+- Evidence: the reported photo's persisted generation, request and template all agree on `banana_pro`; the displayed model is correct. The empty required slot is not populated by the three saved-file choice buttons. No source repair or data migration is justified.
+- Audit: feed/profile/deep-link legacy paths fall back to the first unrelated model when the source is missing from the catalog. Smart-repeat preset interception still lets callers switch to the ordinary generator, exposing an unrelated background form. The loading title assumes video before the source arrives.
+- Acceptance: an enabled smart repeat opens directly from the publication without a generic generator or legacy hydration; legacy unavailable models show an explicit error instead of substitution; stale navigation cannot replace the selected source. Saved choices are clearly distinguished from server-READY references, with launch blocked until ready.
+- Plan: (1) red navigation/UI regressions; (2) minimal routing and labels; (3) focused/full Jest, build/lint and mobile browser regression; (4) review, docs, protected PR/automerge and exact-SHA deployment checks.
+- No schema, provider, price, balance, permissions or retention changes; no paid requests or production writes. Telegram repeat deep links use the same Mini App router. Existing source-authoritative backend and quote/launch engines remain unchanged.
+- Guidance: Bambale0/skills diagnosing-bugs, Bambale0/claw review checklist and anthropics/skills webapp-testing; synthetic API/browser fixtures only.
+- Progress: diagnosis complete, regression tests being added.
+
+### Repeat navigation verification and release review
+
+- Red loop: three new/expanded Jest suites had 16 failures and 6 passes at the reported baseline. The failures cover smart routing into unrelated tabs, legacy model substitution, stale presets, misleading loading type and unlabeled saved choices. After fixing those seams all 22 passed.
+- Review found legacy unavailable-model errors hidden behind the publication preview. Added four failing preview-closure assertions, then closed the preview before displaying that error. Added a delayed-old-link fencing case.
+- Final local Jest: **70 suites / 542 tests passed**. Existing smart-repeat contract/store/actual HTTP-engine regression: **29 passed** (synthetic providers, no live charges).
+- Production static build/TypeScript passed. ESLint: zero errors, two pre-existing exhaustive-deps warnings in the unchanged locked-state/deep-link dependency arrays.
+- Chromium smart-repeat journeys passed at 320/390/430px: reverse uploads, READY gate, reload, deletion, double-click single launch and lost-response recovery. New feed/profile image/video browser journeys passed: source model, no generic generator background, explicit saved choice and quote. Local WebKit could not start because required OS libraries are absent; both engines remain mandatory in GitHub CI, which installs those dependencies. No production package install was attempted.
+- Read-only runtime cross-check: 37 launched smart-repeat drafts since 14:00 UTC had matching source/result models (29 banana_pro, 5 seedream_5_pro, 2 banana_2, 1 wan_3). This does not claim every provider output was manually checked.
+- Review scope: exact source is preserved; unknown legacy models fail visibly; smart path bypasses stale catalog/hydration but retains server authorization; Genjutsu stays specialized. No backend, payment, pricing or media modifications. Production price SHA256 remains `3c73a0651c6deee689ce779669faf9dd572b7ac3f09eddc200b0e26f6ef39583`.
+- Parallel PR #339 touches only smart-repeat-editor.tsx; this fix does not overwrite it. Protected PR checks, native squash auto-merge and exact deployed-SHA verification are the remaining release gate, reported with the PR.
+
+### PR #340 extended CI triage
+
+- New feed/profile × photo/video acceptance passed in both Chromium and WebKit on GitHub (run 39301525339), including named model, explicit saved-reference selection and server quote. Full safe Python CI passed **3893 tests**, 117 skipped, 76 subtests.
+- The separate share-link browser workflow failed on an unmocked read-only `/mini-app/api/trends/catalog` call while navigating back through Studio. Auto-merge was temporarily disarmed for diagnosis.
+- Rebuilt **unchanged b8f03bb** in an isolated detached worktree and reproduced the identical strict unexpected-API assertion. This is a missing fixture for the already-existing showcase, not a repeat/model code regression.
+- Added only the exact catalog mock with its POST method assertion and `{ok:true,categories:[]}` response. All unknown-API, mutation, unsafe-link, clipboard and privacy assertions remain unchanged; both Android/Chromium and iOS/WebKit cases remain required by that workflow. No runtime code was changed to accommodate the test.
+- The navigation concurrency fixture now explicitly starts at `remix_99`, then selects source 42 before source 99 resolves, so request and response IDs model the actual race.

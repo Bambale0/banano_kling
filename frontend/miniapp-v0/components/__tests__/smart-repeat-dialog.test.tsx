@@ -75,3 +75,29 @@ test('ready files restore; removing one prevents launch', async () => {
   await waitFor(() => expect(calculate).toBeDisabled())
   expect(call.mock.calls.filter(([action]) => action === 'launch')).toHaveLength(0)
 })
+
+test('loading does not mislabel a photo repeat as video', () => {
+  call.mockImplementation(() => new Promise(() => {}))
+  render(<SmartRepeatDialog sourceId={42} onClose={jest.fn()} />)
+  expect(screen.getByRole('heading', { name: 'Повторить публикацию' })).toBeInTheDocument()
+  expect(screen.queryByRole('heading', { name: 'Повторить видео' })).not.toBeInTheDocument()
+})
+test('saved-file choices are separate from ready slots and require an explicit selection', async () => {
+  draft.template.slots = [draft.template.slots[0]]
+  ;(useApp as jest.Mock).mockReturnValue({ ...context, state: { ...context.state,
+    imageModels: [{ id: 'other', label: 'Other model' }, { id: 'banana_pro', label: 'Nano Banana Pro' }],
+    savedReferences: [1, 2, 3].map(id => ({ id: String(id), name: `saved-${id}.jpg`, type: 'image', url: `/uploads/saved-${id}.jpg` })),
+  } })
+  render(<SmartRepeatDialog sourceId={42} onClose={jest.fn()} />)
+  await screen.findByText('Модель исходной работы: Nano Banana Pro')
+  expect(screen.getByText('Сохранённые файлы — нажмите, чтобы выбрать')).toBeInTheDocument()
+  const calculate = screen.getByRole('button', { name: 'Рассчитать стоимость' })
+  expect(calculate).toBeDisabled()
+  expect(screen.getByText('Загружено обязательных референсов: 0 / 1')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'saved-2.jpg' }))
+  await waitFor(() => expect(calculate).toBeEnabled())
+  expect(screen.getByText('Загружено обязательных референсов: 1 / 1')).toBeInTheDocument()
+  expect(upload).not.toHaveBeenCalled()
+  expect(call).toHaveBeenCalledWith('update', expect.objectContaining({ operation: 'ready', slot_id: 'face', url: '/uploads/saved-2.jpg' }))
+  expect(call.mock.calls.filter(([action]) => action === 'launch')).toHaveLength(0)
+})

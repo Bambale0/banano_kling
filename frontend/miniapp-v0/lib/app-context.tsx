@@ -8,6 +8,7 @@ import { genjutsuRecipeStartParam, parseMiniAppStartParam, startParamFromLocatio
 import { isVideoTrendItem, isWanTrendItem, resolveTrendSettings } from './trend-settings'
 import { genjutsuCall, openGenjutsu } from './genjutsu-api'
 import { hydrateSeedance25IdentityPreset } from './seedance25-repeat'
+import { REPEAT_MODEL_UNAVAILABLE } from './repeat-routing'
 
 interface AppContextType {
   state: AppState
@@ -21,6 +22,7 @@ interface AppContextType {
   videoPromptPreset: VideoPromptPreset | null
   smartRepeatSourceId: number | null
   closeSmartRepeat: () => void
+  openSmartRepeat: (sourceId: number) => void
   trendToRun: PromptItem | null
   viewedProfileCode: string | null
   activeTab: number
@@ -172,14 +174,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [videoPromptPreset, setLegacyVideoPromptPreset] = useState<VideoPromptPreset | null>(null)
   const [smartRepeatSourceId, setSmartRepeatSourceId] = useState<number | null>(null)
   const closeSmartRepeat = useCallback(() => setSmartRepeatSourceId(null), [])
-  const setPromptPreset = useCallback((preset: PromptPreset | null) => {
-    if (state.smartRepeatEnabled && preset?.sourceFeedGenId) { setSmartRepeatSourceId(preset.sourceFeedGenId); return }
-    setLegacyPromptPreset(preset)
-  }, [state.smartRepeatEnabled])
-  const setVideoPromptPreset = useCallback((preset: VideoPromptPreset | null) => {
-    if (state.smartRepeatEnabled && preset?.sourceFeedGenId) { setSmartRepeatSourceId(preset.sourceFeedGenId); return }
-    setLegacyVideoPromptPreset(preset)
-  }, [state.smartRepeatEnabled])
   const [trendToRun, setTrendToRun] = useState<PromptItem | null>(null)
   const [viewedProfileCode, setViewedProfileCode] = useState<string | null>(null)
   const [activeTab, setActiveTabState] = useState(1)
@@ -194,6 +188,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (pendingStartParamRef.current) handledStartParamRef.current = pendingStartParamRef.current
     pendingStartParamRef.current = null
   }, [])
+
+  const openSmartRepeat = useCallback((sourceId: number) => {
+    // A new publication owns navigation; a delayed deep-link response must not
+    // restore an older recipe or leave an unrelated generator preset behind.
+    cancelStartNavigation()
+    setFeedDeepLink(null)
+    setLegacyPromptPreset(null)
+    setLegacyVideoPromptPreset(null)
+    setIsTaskDetailOpen(false)
+    setSmartRepeatSourceId(sourceId)
+  }, [cancelStartNavigation])
+  const setPromptPreset = useCallback((preset: PromptPreset | null) => {
+    if (state.smartRepeatEnabled && preset?.sourceFeedGenId) { openSmartRepeat(preset.sourceFeedGenId); return }
+    setLegacyPromptPreset(preset)
+  }, [state.smartRepeatEnabled, openSmartRepeat])
+  const setVideoPromptPreset = useCallback((preset: VideoPromptPreset | null) => {
+    if (state.smartRepeatEnabled && preset?.sourceFeedGenId) { openSmartRepeat(preset.sourceFeedGenId); return }
+    setLegacyVideoPromptPreset(preset)
+  }, [state.smartRepeatEnabled, openSmartRepeat])
 
   useEffect(() => {
     const navigate = (event: Event) => {
@@ -405,8 +418,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [applyBootstrap, applyBootstrapErrorState, applyLockedState])
 
   const applyFeedRemix = useCallback(async (item: FeedItem, isCurrent: () => boolean) => {
+    if (state.smartRepeatEnabled) {
+      if (!isCurrent()) return
+      // A direct repeat link has no originating tab: keep its publication's
+      // feed/profile behind the dialog rather than an unrelated generator.
+      if (item.publication_scope === 'profile') {
+        setViewedProfileCode(String(item.author_referral_code || '').trim().toUpperCase() || null)
+        setActiveTabState(7)
+      } else {
+        setActiveTabState(4)
+      }
+      openSmartRepeat(item.id)
+      return
+    }
     if (item.gen_type === 'video') {
-      const modelExists = state.videoModels.some((model) => model.id === item.model)
+      if (!state.videoModels.some(model => model.id === item.model)) throw new Error(REPEAT_MODEL_UNAVAILABLE)
       const imageReferences = item.references_hidden ? [] : (item.reference_images || []).map((url, index) => feedReferenceToUploadedFile(url, index))
       const videoReferences = item.references_hidden ? [] : (item.reference_videos || []).map((url, index) => feedReferenceToUploadedFile(url, index, 'video'))
       const scenario = imageReferences.length
@@ -417,7 +443,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const preset = await hydrateSeedance25IdentityPreset(item, {
         title: 'Повторить видео из ссылки',
         prompt: item.prompt || '',
-        model: modelExists ? item.model : state.videoModels[0]?.id || 'v3_pro',
+        model: item.model,
         scenario,
         ratio: item.aspect_ratio || '16:9',
         duration: item.duration || 5,
@@ -433,12 +459,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return
     }
 
-    const modelExists = state.imageModels.some((model) => model.id === item.model)
+    if (!state.imageModels.some(model => model.id === item.model)) throw new Error(REPEAT_MODEL_UNAVAILABLE)
     setPromptPreset({
       promptId: null,
       title: 'Повторить публикацию из ссылки',
       prompt: item.prompt || '',
-      model: modelExists ? item.model : state.imageModels[0]?.id || 'banana_pro',
+      model: item.model,
       ratio: item.aspect_ratio || '1:1',
       sourceFeedGenId: item.id,
       promptHidden: item.prompt_hidden,
@@ -447,7 +473,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         : [],
     })
     setActiveTabState(1)
-  }, [state.imageModels, state.videoModels, setVideoPromptPreset, setPromptPreset])
+  }, [state.imageModels, state.videoModels, state.smartRepeatEnabled, openSmartRepeat, setVideoPromptPreset, setPromptPreset])
 
   useEffect(() => {
     if (state.mode !== 'live' || state.isLoading) return
@@ -725,6 +751,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         videoPromptPreset,
         smartRepeatSourceId,
         closeSmartRepeat,
+        openSmartRepeat,
         trendToRun,
         viewedProfileCode,
         activeTab,
