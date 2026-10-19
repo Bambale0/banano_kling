@@ -2307,3 +2307,11 @@ Coverage: pure contract tests and existing chunk HTTP regression run locally wit
 - Read-only runtime cross-check: 37 launched smart-repeat drafts since 14:00 UTC had matching source/result models (29 banana_pro, 5 seedream_5_pro, 2 banana_2, 1 wan_3). This does not claim every provider output was manually checked.
 - Review scope: exact source is preserved; unknown legacy models fail visibly; smart path bypasses stale catalog/hydration but retains server authorization; Genjutsu stays specialized. No backend, payment, pricing or media modifications. Production price SHA256 remains `3c73a0651c6deee689ce779669faf9dd572b7ac3f09eddc200b0e26f6ef39583`.
 - Parallel PR #339 touches only smart-repeat-editor.tsx; this fix does not overwrite it. Protected PR checks, native squash auto-merge and exact deployed-SHA verification are the remaining release gate, reported with the PR.
+
+### PR #340 extended CI triage
+
+- New feed/profile × photo/video acceptance passed in both Chromium and WebKit on GitHub (run 39301525339), including named model, explicit saved-reference selection and server quote. Full safe Python CI passed **3893 tests**, 117 skipped, 76 subtests.
+- The separate share-link browser workflow failed on an unmocked read-only `/mini-app/api/trends/catalog` call while navigating back through Studio. Auto-merge was temporarily disarmed for diagnosis.
+- Rebuilt **unchanged b8f03bb** in an isolated detached worktree and reproduced the identical strict unexpected-API assertion. This is a missing fixture for the already-existing showcase, not a repeat/model code regression.
+- Added only the exact catalog mock with its POST method assertion and `{ok:true,categories:[]}` response. All unknown-API, mutation, unsafe-link, clipboard and privacy assertions remain unchanged; both Android/Chromium and iOS/WebKit cases remain required by that workflow. No runtime code was changed to accommodate the test.
+- The navigation concurrency fixture now explicitly starts at `remix_99`, then selects source 42 before source 99 resolves, so request and response IDs model the actual race.

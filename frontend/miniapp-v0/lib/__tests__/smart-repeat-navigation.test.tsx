@@ -78,10 +78,11 @@ test('opening a smart repeat clears both older generator presets', async () => {
 })
 
 test('an explicitly selected repeat fences a delayed older deep link', async () => {
+  ;(getStartParamFallback as jest.Mock).mockReturnValue('remix_99')
   let resolve!: (item: unknown) => void
   ;(fetchFeedItem as jest.Mock).mockImplementationOnce(() => new Promise(done => { resolve = done }))
   render(<AppProvider><Harness /></AppProvider>)
-  await waitFor(() => expect(fetchFeedItem).toHaveBeenCalledTimes(1))
+  await waitFor(() => expect(fetchFeedItem).toHaveBeenCalledWith(99))
   fireEvent.click(screen.getByText('Repeat image'))
   await act(async () => resolve({ id: 99, gen_type: 'video', model: 'older-source', publication_scope: 'feed' }))
   expect(screen.getByTestId('source')).toHaveTextContent('42')
