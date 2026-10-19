@@ -77,7 +77,8 @@ export function SmartRepeatDialog({ sourceId, onClose }: { sourceId: number | nu
       if (!uploaded) throw new Error('Выберите файл.')
       if (generation !== session.current || slotEpochs.current[slot.slot_id] !== epoch) return
       await smartRepeatCall<RepeatDraft>('update', { draft_id: draftId, operation: 'processing', slot_id: slot.slot_id, upload_token: token })
-      const ready = await smartRepeatCall<RepeatDraft>('update', { draft_id: draftId, operation: 'ready', slot_id: slot.slot_id, upload_token: token, url: uploaded.url })
+      const ready = await smartRepeatCall<RepeatDraft>('update', { draft_id: draftId, operation: 'ready', slot_id: slot.slot_id, upload_token: token,
+        ...(uploaded.saved_reference_id ? { saved_reference_id: uploaded.saved_reference_id } : { url: uploaded.url }) })
       accept(ready, generation)
       if (generation === session.current) addSavedReference(uploaded)
     } catch (e) {
@@ -150,7 +151,7 @@ export function SmartRepeatDialog({ sourceId, onClose }: { sourceId: number | nu
       {!draft && !error ? <p role="status">Восстанавливаем ваши файлы…</p> : null}
       {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
       {draft ? <>
-        <p className="text-sm text-muted-foreground">{[...state.videoModels, ...state.imageModels].find(m => m.id === draft.template.model)?.label || draft.template.model}</p>
+        <p className="text-sm text-muted-foreground">Модель исходной работы: {[...state.videoModels, ...state.imageModels].find(m => m.id === draft.template.model)?.label || draft.template.model}</p>
         {draft.status !== 'draft' ? <div className="space-y-3">
           <p role="status">{draft.status === 'rejected' ? 'Запуск отклонён. Можно создать новый повтор.' : draft.task_id ? 'Задача сохранена в истории.' : 'Проверяем ранее созданную операцию. Повторный запуск заблокирован.'}</p>
           <Button onClick={async () => { await refreshTasks(); onClose(); if (draft.task_id) selectTask({
@@ -174,15 +175,26 @@ export function SmartRepeatDialog({ sourceId, onClose }: { sourceId: number | nu
           {slots.map((slot, index) => {
             const asset = draft.slots[slot.slot_id]
             const pending = uploading.has(slot.slot_id)
+            const savedFiles = state.savedReferences.filter(file => file.type === slot.kind && !Object.values(draft.slots).some(value => value.url === file.url)).slice(0, 6)
+            const selectedName = asset?.filename || state.savedReferences.find(file =>
+              (asset?.saved_reference_id && file.saved_reference_id === asset.saved_reference_id) || file.url === asset?.url)?.name
             return <fieldset key={slot.slot_id} aria-label={slot.label} className="min-w-0 rounded-xl border p-3 space-y-2" disabled={busy}>
               <legend className="text-sm font-medium">{index + 1}. {slot.label}{slot.required ? ' · Обязательно' : ''}</legend>
               {slot.hint ? <p className="text-xs text-muted-foreground">{slot.hint}</p> : null}
               <p role="status" className="text-xs">{asset?.state === 'READY' ? 'Файл готов' : pending || asset?.state === 'UPLOADING' ? 'Загружаем файл…' : asset?.state === 'PROCESSING' ? 'Проверяем файл…' : asset?.state === 'FAILED' ? 'Ошибка загрузки' : 'Файл не выбран'}</p>
+              {asset?.state === 'READY' ? <p className="break-words text-xs font-medium">{selectedName ? `Выбрано: ${selectedName}` : 'Файл закреплён за этим полем'}</p> : null}
               {asset?.state === 'READY' && asset.url && slot.kind === 'image' ? <img alt={slot.label} src={asset.url} className="max-h-28 max-w-full rounded object-contain" /> : null}
               <input aria-label={`Загрузить: ${slot.label}`} type="file" accept={`${slot.kind}/*`} disabled={pending}
                 onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void upload(slot, file) }} className="block w-full min-w-0 text-xs" />
-              {state.savedReferences.filter(file => file.type === slot.kind && !Object.values(draft.slots).some(value => value.url === file.url)).slice(0, 6).map(file =>
-                <button key={file.id} type="button" disabled={pending} className="block max-w-full truncate text-xs underline" onClick={() => void upload(slot, undefined, file)}>{file.name}</button>)}
+              {savedFiles.length ? <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">Или выберите из ваших сохранённых файлов. Файл добавится в это поле после выбора.</p>
+                {savedFiles.map(file => <button key={file.id} type="button" aria-label={`Выбрать: ${file.name}`} disabled={pending}
+                  className="flex w-full min-w-0 items-center gap-2 rounded-lg border p-2 text-left text-xs hover:bg-accent disabled:opacity-50"
+                  onClick={() => void upload(slot, undefined, file)}>
+                  {file.type === 'image' ? <img alt="" src={file.preview_url || file.url} loading="lazy" className="h-12 w-12 shrink-0 rounded object-cover" /> : null}
+                  <span className="min-w-0"><span className="block truncate">{file.name}</span><span className="text-primary">Выбрать для этого поля</span></span>
+                </button>)}
+              </div> : null}
               {asset ? <button type="button" className="text-xs underline" onClick={() => {
                 slotEpochs.current[slot.slot_id] = (slotEpochs.current[slot.slot_id] || 0) + 1
                 setUploading(current => { const next = new Set(current); next.delete(slot.slot_id); return next })

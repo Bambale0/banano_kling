@@ -199,7 +199,7 @@ def public_draft(draft, template):
     return {'draft_id': draft['id'], 'revision': draft['revision'], 'status': draft['status'],
         'template': public_template(template), 'preset_id': state.get('preset_id'),
         'user_values': state.get('user_values', {}),
-        'slots': {sid: {key: value[key] for key in ('state', 'asset_id', 'url', 'upload_token', 'error') if key in value}
+        'slots': {sid: {key: value[key] for key in ('state', 'asset_id', 'url', 'upload_token', 'error', 'saved_reference_id', 'filename') if key in value}
                   for sid, value in state.get('slots', {}).items()},
         'quote': ({key: draft['quote'][key] for key in ('cost', 'quote_id')} if draft['quote'] else None),
         'task_id': draft.get('task_id'), 'result': draft.get('result')}
@@ -214,9 +214,10 @@ async def validate_owned_asset(user, kind, url, *, existing=None):
         fail('INVALID_ASSET', 'Некорректный файл.', 400)
     identity = reference_source_identity(url)
     async with db_backend.connect() as db:
-        rows = await (await db.execute('SELECT file_url FROM saved_references WHERE user_id = ? AND kind = ?',
+        rows = await (await db.execute('SELECT id, file_url, original_filename FROM saved_references WHERE user_id = ? AND kind = ?',
             (user.id, kind))).fetchall()
-    owned = any(reference_source_identity(row[0]) == identity for row in rows)
+    saved = next((row for row in rows if reference_source_identity(row[1]) == identity), None)
+    owned = saved is not None
     if existing and existing.get('asset_id') and existing.get('sha256') and reference_source_identity(existing.get('url', '')) == identity:
         # A recent-upload shortcut may be pruned without revoking ownership of
         # an asset already attached to this user's durable draft.
@@ -238,17 +239,33 @@ async def validate_owned_asset(user, kind, url, *, existing=None):
     inspection = await inspect_asset(path, kind)
     if existing and inspection['sha256'] != existing.get('sha256'):
         fail('REFERENCES_NOT_READY', 'Содержимое файла изменилось. Загрузите его заново.')
+    if saved is not None:
+        inspection.update(saved_reference_id=str(saved[0]), filename=saved[2])
+    elif existing:
+        inspection.update({key: existing[key] for key in ('saved_reference_id', 'filename') if key in existing})
     return inspection
 
 
 async def mutate_draft(user, draft_id, template, operation, *, slot_id=None, upload_token=None, url=None,
-                       preset_id=None, user_values=None):
+                       preset_id=None, user_values=None, saved_reference_id=None):
     # READY is accepted only for the current upload lease and a persisted owned
     # asset. Slow validation happens outside the row lock, then the lease fences it.
     definition = next((slot for slot in template['slots'] if slot['slot_id'] == slot_id), None)
+    selected_reference = None
     if operation == 'ready':
         if not definition:
             fail('INVALID_SLOTS', 'Неизвестное поле.', 400)
+        if saved_reference_id is not None:
+            if (type(saved_reference_id) not in (str, int)
+                or not str(saved_reference_id).isascii() or not str(saved_reference_id).isdigit()
+                or len(str(saved_reference_id)) > 19 or not 0 < int(saved_reference_id) <= 2**63 - 1):
+                fail('INVALID_ASSET', 'Некорректный сохранённый файл.', 400)
+            from bot.database import get_saved_reference_by_id
+            selected_reference = await get_saved_reference_by_id(user.telegram_id, int(saved_reference_id))
+            if selected_reference is None or selected_reference.kind != definition['kind']:
+                fail('ASSET_NOT_OWNED', 'Выберите собственный файл подходящего типа.', 403)
+            # The ID is authoritative. Never trust a client URL or filename for it.
+            url = selected_reference.file_url
         inspection = await validate_owned_asset(user, definition['kind'], url)
     async with db_backend.connect() as db:
         db.row_factory = db_backend.Row
@@ -260,6 +277,9 @@ async def mutate_draft(user, draft_id, template, operation, *, slot_id=None, upl
             inspection = await validate_owned_asset(user, definition['kind'], url)
             from bot.smart_repeat_policy import validate_asset
             validate_asset(definition, inspection)
+            if selected_reference is not None:
+                inspection.update(saved_reference_id=str(selected_reference.id),
+                                  filename=selected_reference.original_filename)
         locked = await db.execute('UPDATE smart_repeat_drafts SET revision = revision '
             "WHERE id = ? AND user_id = ? AND status = 'draft'", (draft_id, user.id))
         if locked.rowcount != 1:

@@ -34,9 +34,9 @@ const bootstrap = { ok: true, smart_repeat_enabled: true, telegram_id: 424242, f
   bot_username: 'test_bot', credits: 125, is_admin: false, mini_app_url: baseUrl, actions: [], payment_packages: [], image_models: [],
   video_models: [{ id: 'seedance_2_5', label: 'Seedance 2.5', description: 'Synthetic', durations: [5], ratios: ['16:9'], supports: ['text', 'imgtxt', 'video'], costs: { '5': 5 }, max_image_references: 8, max_video_references: 5 }],
   recent_tasks: [task], saved_references: [
-    { id: 'first', kind: 'image', filename: 'first.jpg', url: 'https://example.test/first.jpg' },
-    { id: 'third', kind: 'image', filename: 'third.jpg', url: 'https://example.test/third.jpg' },
-    { id: 'clip', kind: 'video', filename: 'clip.mp4', url: 'https://example.test/clip.mp4' },
+    { id: '11', kind: 'image', filename: 'first.jpg', url: 'https://example.test/first.jpg' },
+    { id: '12', kind: 'image', filename: 'third.jpg', url: 'https://example.test/third.jpg' },
+    { id: '13', kind: 'video', filename: 'clip.mp4', url: 'https://example.test/clip.mp4' },
   ] }
 const template = { contract_version: 1, source_id: 777, version: 1, model: 'seedance_2_5', type: 'video', presets: [], variables: [], slots: [
   { slot_id: 'face', kind: 'image', role: 'reference', label: 'Ваше лицо', hint: 'Фото лица', binding: 'upload', required: true },
@@ -71,7 +71,7 @@ try {
       if (url.hostname === 'example.test') return route.fulfill(url.pathname.endsWith('.mp4') ? { contentType: 'video/mp4', body: media } : { contentType: 'image/png', body: png })
       if (!url.pathname.includes('/mini-app/api/')) return route.continue()
       let response = { ok: true }
-      if (url.pathname.endsWith('/bootstrap')) response = { ...bootstrap, credits, recent_tasks: draft.task_id ? [{ ...task, task_id: draft.task_id, status: 'pending', prompt: '', prompt_preview: '', prompt_hidden: true }] : [], saved_references: [] }
+      if (url.pathname.endsWith('/bootstrap')) response = { ...bootstrap, credits, recent_tasks: draft.task_id ? [{ ...task, task_id: draft.task_id, status: 'pending', prompt: '', prompt_preview: '', prompt_hidden: true }] : [], saved_references: width === 430 ? bootstrap.saved_references : [] }
       else if (url.pathname.endsWith('/feed/item')) response = { ok: true, feed_item: card }
       else if (url.pathname.endsWith('/feed') || url.pathname.endsWith('/feed/my')) response = { ok: true, feed: [card] }
       else if (url.pathname.endsWith('/genjutsu')) response = { ok: true, visible: false }
@@ -93,8 +93,12 @@ try {
               upload_token: body.operation === 'begin' ? body.slot_id + '-' + draft.revision : previous.upload_token }
             if (body.operation === 'ready') {
               assert.equal(body.upload_token, previous.upload_token)
-              draft.slots[body.slot_id] = { ...draft.slots[body.slot_id], url: body.url, asset_id: body.slot_id + '-asset' }
-              bindings.push([body.slot_id, body.url])
+              const saved = body.saved_reference_id ? bootstrap.saved_references.find(file => file.id === body.saved_reference_id) : undefined
+              assert.ok(!body.saved_reference_id || saved)
+              const url = saved?.url || body.url
+              draft.slots[body.slot_id] = { ...draft.slots[body.slot_id], url, asset_id: body.slot_id + '-asset',
+                saved_reference_id: saved?.id, filename: saved?.filename }
+              bindings.push([body.slot_id, url])
             }
           }
         } else if (action === 'quote') {
@@ -131,7 +135,15 @@ try {
     await dialog.getByRole('button', { name: 'Удалить файл', exact: true }).first().click()
     await dialog.getByText('Загружено обязательных референсов: 1 / 2', { exact: true }).waitFor()
     assert.equal(await calculate.isDisabled(), true)
-    await dialog.getByLabel('Загрузить: Ваше лицо').setInputFiles({ name: 'face2.png', mimeType: 'image/png', buffer: png })
+    if (width === 430) {
+      await dialog.getByRole('group', { name: 'Ваше лицо' }).getByRole('button', { name: 'Выбрать: first.jpg', exact: true }).click()
+      await dialog.getByText('Выбрано: first.jpg', { exact: true }).waitFor()
+      assert.deepEqual(bindings.at(-1), ['face', 'https://example.test/first.jpg'])
+      await page.reload()
+      await dialog.getByText('Выбрано: first.jpg', { exact: true }).waitFor()
+    } else {
+      await dialog.getByLabel('Загрузить: Ваше лицо').setInputFiles({ name: 'face2.png', mimeType: 'image/png', buffer: png })
+    }
     await dialog.getByText('Загружено обязательных референсов: 2 / 2', { exact: true }).waitFor()
     await calculate.click()
     const launch = dialog.getByRole('button', { name: /Создать.*10/ })

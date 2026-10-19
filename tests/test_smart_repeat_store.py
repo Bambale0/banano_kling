@@ -257,3 +257,32 @@ async def test_wan_committed_intent_remains_linked_after_submission_cancellation
     assert finance['billing_source'] == 'wan_intent'
     assert finance['charge_amount'] == 6 and finance['refund_amount'] == 4
     assert (await database.get_or_create_user(ctx.user.telegram_id)).credits == 100 - quote['reserve_credits']
+
+
+@pytest.mark.asyncio
+async def test_saved_reference_id_binds_owned_asset_to_slot_and_restores_metadata(monkeypatch, tmp_path):
+    from bot.smart_repeat_store import public_draft
+    ctx = await setup_repeat(monkeypatch, tmp_path)
+    saved = await database.save_user_reference(ctx.user.telegram_id, kind='image',
+        file_url='/uploads/refs/own.png', file_hash='own', original_filename='portrait.jpg')
+    begun = await mutate_draft(ctx.user, ctx.draft['id'], ctx.template, 'begin', slot_id=ctx.slot)
+    ready = await mutate_draft(ctx.user, ctx.draft['id'], ctx.template, 'ready', slot_id=ctx.slot,
+        upload_token=begun['state']['slots'][ctx.slot]['upload_token'], saved_reference_id=str(saved.id))
+    restored = await open_draft(ctx.user, ctx.source, ctx.template)
+    asset = public_draft(restored, ctx.template)['slots'][ctx.slot]
+    assert asset['saved_reference_id'] == str(saved.id)
+    assert asset['filename'] == 'portrait.jpg'
+    assert asset['url'] == '/uploads/refs/own.png'
+    assert asset['asset_id'] == ready['state']['slots'][ctx.slot]['asset_id']
+    await validate_inputs(ctx.user, ctx.source, ctx.template, restored)
+    foreign = await database.save_user_reference(ctx.owner.telegram_id, kind='image',
+        file_url='/uploads/refs/foreign.png', file_hash='foreign', original_filename='portrait.jpg')
+    wrong_kind = await database.save_user_reference(ctx.user.telegram_id, kind='video',
+        file_url='/uploads/refs/clip.mp4', file_hash='clip')
+    for invalid in (str(foreign.id), str(wrong_kind.id), '99999999', True, 'bogus'):
+        begun = await mutate_draft(ctx.user, ctx.draft['id'], ctx.template, 'begin', slot_id=ctx.slot)
+        with pytest.raises(SmartRepeatError, match='ASSET_NOT_OWNED|INVALID_ASSET'):
+            await mutate_draft(ctx.user, ctx.draft['id'], ctx.template, 'ready', slot_id=ctx.slot,
+                upload_token=begun['state']['slots'][ctx.slot]['upload_token'], saved_reference_id=invalid,
+                url='/uploads/refs/own.png')
+    assert (await database.get_or_create_user(ctx.user.telegram_id)).credits == 100

@@ -56,10 +56,13 @@ async def test_http_image_preflight_upload_reload_quote_launch_and_replay(monkey
         provider.assert_not_awaited()
         assert (await database.get_or_create_user(ctx.user.telegram_id)).credits == 100
         status, ready = await call('update', draft_id=did, operation='ready', slot_id=sid,
-            upload_token=begun['slots'][sid]['upload_token'], url='/uploads/refs/own.png')
+            upload_token=begun['slots'][sid]['upload_token'], saved_reference_id=str((await database.list_saved_references(ctx.user.telegram_id))[0].id),
+            url='https://example.test/forged-url-is-ignored.png')
         assert status == 200, ready
         _, restored = await call('open', source_id=ctx.source['id'])
         assert restored['slots'][sid]['asset_id'] == ready['slots'][sid]['asset_id']
+        assert restored['slots'][sid]['saved_reference_id'] == ready['slots'][sid]['saved_reference_id']
+        assert restored['slots'][sid]['url'] == '/uploads/refs/own.png'
         status, quoted = await call('quote', draft_id=did)
         assert status == 200 and quoted['quote']['cost'] == 10, quoted
         responses = await asyncio.gather(*(call('launch', draft_id=did, quote_id=quoted['quote']['quote_id']) for _ in range(2)))
@@ -68,6 +71,7 @@ async def test_http_image_preflight_upload_reload_quote_launch_and_replay(monkey
             assert any(status < 400 for status, result in responses), responses
         provider.assert_awaited_once()
         assert provider.await_args.kwargs['image_input'] == ['/uploads/refs/own.png']
+        assert 'Private synthetic recipe' in provider.await_args.kwargs['prompt']
         _, recovered = await call('open', source_id=ctx.source['id'])
         assert recovered['status'] == ('rejected' if outcome == 'rejected' else 'launched'), recovered
         await call('launch', draft_id=did, quote_id=quoted['quote']['quote_id'])

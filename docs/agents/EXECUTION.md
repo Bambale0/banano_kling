@@ -2284,3 +2284,63 @@ Coverage: pure contract tests and existing chunk HTTP regression run locally wit
 - First PR CI exposed two retention PostgreSQL cases whose minimal schema lacked
   the new snapshot tables. Updated the guarded fixture to run the same additive
   smart-repeat schema migration; no production query fallback or test exclusion.
+
+
+## 2026-10-19 — Repeat saved-reference selection and source integrity
+
+Baseline: b8f03bbf59e2c1b8991c76e27fc8f2829a243036 (`tanyapi`).
+User-visible result: make library selection explicit, persist the selected media
+identity and filename with its existing slot, restore that assignment on reopen,
+and prove source model/settings/hidden prompt survive the shared repeat path.
+
+Preflight: production is healthy at the baseline SHA. Read-only PostgreSQL audit
+matched a screenshot filename and the 17:55 UTC draft: source 328366 and its
+provider metadata both identify banana_pro / nano-banana-pro; draft slots are
+empty. Other inspected sources 328379/328651 also agree with provider metadata.
+The three underlined library entries are available choices, not attached assets.
+No confirmed source-model substitution. Existing server READY/ownership/hash,
+upload leases, required-slot guards, quote CAS and launch idempotency are reused.
+Missing: clear library-versus-selected presentation and durable public filename/
+saved-reference ID; regression coverage for saved selection and model pinning.
+
+No business configuration, model availability, schema, migrations, prices,
+provider payload format or payment rules change. No arbitrary library file is
+automatically assigned. Private author media remain behind explicit grants.
+Auth/ownership and model constraints apply to ID selection as to uploads.
+Relevant guidance: Bambale0/skills diagnosing-bugs and code-review;
+Bambale0/claw PR review checklist; anthropics/skills webapp-testing.
+
+Steps / acceptance:
+1. Reproduce ambiguous saved-file selection through the actual dialog seam;
+   assert explicit selection and named READY restoration, including equal names.
+2. Resolve saved media by owner-scoped ID, retain current slot lease/asset ID,
+   return validated filename/ID; test foreign/deleted/wrong-kind IDs.
+3. Show library previews with explicit choose actions and selected filename;
+   keep missing/processing/failed slots unable to quote or launch.
+4. Verify source model/settings/prompt across existing registered model families,
+   HTTP selection/reload/paid-launch guards, Jest and mobile browser journeys.
+5. Independent spec/standards review; protected PR to tanyapi, native squash
+   auto-merge, exact-SHA CI/autodeploy/health/static and free smoke/telemetry.
+
+Telemetry reuses repeat_opened, slot_ready and validation_failed with source,
+slot, asset and model IDs. Rollback is normal revert PR or existing rollout flag.
+No paid provider calls or production user-draft mutations for diagnosis.
+
+Progress:
+- Red-capable dialog reproduction failed on absent explicit choose action;
+  service reproduction failed because ID attachment was unsupported. After the
+  fix, dialog suite 3/3 and owner-scoped ID service case pass. This confirms the
+  presentation/identity gap; it does not prove a past model substitution or
+  previously lost READY assignment.
+- UI now distinguishes library candidates from the selected named file, with
+  thumbnails and per-slot choose actions; saved selection sends only the media
+  ID. Server resolves owner/kind, validates bytes/hash/constraints and lease,
+  persists filename/ID and includes media ID in the immutable launch snapshot.
+- Expanded real HTTP image engine matrix to select by ID (forged URL ignored),
+  restore identity and assert the original hidden prompt reaches the provider.
+  Registry-driven contract matrix covers all image/video IDs and capabilities,
+  including Nano Banana, Seedance, Wan, Kling and other registered families.
+  Higgsfield is not a separate registered model ID in the current catalog; no
+  unverified adapter/model identifier was added.
+- Full Jest 68 suites / 522 tests pass. Focused backend and full safe suite,
+  TypeScript/build/mobile browser, review and protected release are in progress.

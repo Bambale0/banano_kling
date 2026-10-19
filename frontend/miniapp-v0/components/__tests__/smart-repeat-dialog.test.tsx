@@ -4,6 +4,7 @@ import { SmartRepeatDialog } from '@/components/smart-repeat-dialog'
 import { useApp } from '@/lib/app-context'
 import { smartRepeatCall, type RepeatDraft } from '@/lib/smart-repeat-api'
 import { uploadFile } from '@/lib/api'
+import type { UploadedFile } from '@/lib/types'
 
 jest.mock('@/lib/app-context', () => ({ useApp: jest.fn() }))
 jest.mock('@/lib/smart-repeat-api', () => ({ smartRepeatCall: jest.fn() }))
@@ -74,4 +75,37 @@ test('ready files restore; removing one prevents launch', async () => {
   fireEvent.click(screen.getAllByRole('button', { name: 'Удалить файл' })[0])
   await waitFor(() => expect(calculate).toBeDisabled())
   expect(call.mock.calls.filter(([action]) => action === 'launch')).toHaveLength(0)
+})
+
+test('saved library choices bind their ID to a named slot and restore the selected filename', async () => {
+  const files: UploadedFile[] = [
+    { id: 'saved_11', saved_reference_id: '11', name: 'portrait.jpg', type: 'image', url: '/uploads/one.jpg', size: 10 },
+    { id: 'saved_12', saved_reference_id: '12', name: 'portrait.jpg', type: 'image', url: '/uploads/two.jpg', size: 10 },
+  ]
+  ;(useApp as jest.Mock).mockReturnValue({ ...context, state: { ...context.state, savedReferences: files } })
+  const original = call.getMockImplementation()!
+  call.mockImplementation(async (action, payload) => {
+    const result = await original(action, payload)
+    if (action === 'update' && payload.operation === 'ready') {
+      draft = { ...draft, slots: { ...draft.slots, [payload.slot_id]: { ...draft.slots[payload.slot_id],
+        url: '/uploads/two.jpg', filename: 'portrait.jpg', saved_reference_id: '12' } } } as RepeatDraft
+      return draft
+    }
+    return result
+  })
+  const rendered = render(<SmartRepeatDialog sourceId={42} onClose={jest.fn()} />)
+  const choices = await screen.findAllByRole('button', { name: 'Выбрать: portrait.jpg' })
+  expect(screen.getByText('Загружено обязательных референсов: 0 / 2')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Рассчитать стоимость' })).toBeDisabled()
+  fireEvent.click(choices[1])
+  await waitFor(() => expect(screen.getByText('Выбрано: portrait.jpg')).toBeInTheDocument())
+  const ready = call.mock.calls.find(([action, payload]) => action === 'update' && payload.operation === 'ready')?.[1]
+  expect(ready).toMatchObject({ slot_id: 'face', saved_reference_id: '12' })
+  expect(ready).not.toHaveProperty('url')
+  expect(upload).not.toHaveBeenCalled()
+  expect(screen.getByText('Загружено обязательных референсов: 1 / 2')).toBeInTheDocument()
+  rendered.unmount()
+  render(<SmartRepeatDialog sourceId={42} onClose={jest.fn()} />)
+  expect(await screen.findByText('Выбрано: portrait.jpg')).toBeInTheDocument()
+  expect(screen.getByAltText('Ваше лицо')).toHaveAttribute('src', '/uploads/two.jpg')
 })

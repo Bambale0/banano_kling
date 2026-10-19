@@ -34,7 +34,7 @@ export interface RepeatDraft {
   template: RepeatTemplate
   preset_id: string | null
   user_values: Record<string, string>
-  slots: Record<string, { state: 'EMPTY' | 'UPLOADING' | 'PROCESSING' | 'READY' | 'FAILED'; asset_id?: string; url?: string; upload_token?: string }>
+  slots: Record<string, { state: 'EMPTY' | 'UPLOADING' | 'PROCESSING' | 'READY' | 'FAILED'; asset_id?: string; url?: string; upload_token?: string; saved_reference_id?: string; filename?: string | null }>
   quote: { cost: number; quote_id: string } | null
   task_id?: string | null
   result?: { status: number; body: Record<string, unknown> } | null
