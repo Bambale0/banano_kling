@@ -111,15 +111,17 @@ export function SmartRepeatForm({ sourceId, onClose }: { sourceId: number | null
   const invalidFile = slots.some(slot => ['UPLOADING', 'PROCESSING', 'FAILED'].includes(draft?.slots[slot.slot_id]?.state || 'EMPTY'))
   const canRequest = Boolean(draft && draft.status === 'draft' && ready === required.length && variablesReady && !invalidFile && !uploading.size && !busy && !updating)
 
-  const persistEdits = async () => {
+  const persistEdits = async (generation = session.current) => {
     if (!draft) return null
     let next = draft
     if (draft.status !== 'draft') return next
     if ((draft.prompt_changes || '') !== promptChanges.trim()) {
-      next = await update({ operation: 'changes', prompt_changes: promptChanges })
+      next = await update({ operation: 'changes', prompt_changes: promptChanges }, generation)
+      if (generation !== session.current) return null
     }
     if (draft.template.variables.some(variable => (draft.user_values[variable.id] || '') !== (userValues[variable.id] || ''))) {
-      next = await update({ operation: 'values', user_values: userValues })
+      next = await update({ operation: 'values', user_values: userValues }, generation)
+      if (generation !== session.current) return null
     }
     return next
   }
@@ -128,8 +130,22 @@ export function SmartRepeatForm({ sourceId, onClose }: { sourceId: number | null
     if (busy || submitting.current) return
     const generation = session.current
     setBusy(true); setError('')
-    try { await persistEdits(); if (generation === session.current) await onClose() }
+    try { await persistEdits(generation); if (generation === session.current) await onClose() }
     catch (e) { setError(e instanceof Error ? e.message : 'Не удалось сохранить изменения.'); setBusy(false) }
+  }
+
+  const newRepeat = async () => {
+    const generation = session.current
+    setBusy(true)
+    try {
+      const next = await smartRepeatCall<RepeatDraft>('open', { source_id: sourceId, new: true })
+      if (generation !== session.current) return
+      accept(next, generation); setUserValues(next.user_values); setPromptChanges(next.prompt_changes || ''); setError('')
+    } catch (e) {
+      if (generation === session.current) setError(e instanceof Error ? e.message : 'Не удалось создать новый повтор.')
+    } finally {
+      if (generation === session.current) setBusy(false)
+    }
   }
 
   const submit = async () => {
@@ -137,7 +153,7 @@ export function SmartRepeatForm({ sourceId, onClose }: { sourceId: number | null
     submitting.current = true; setBusy(true); setError('')
     const generation = session.current
     try {
-      const saved = await persistEdits()
+      const saved = await persistEdits(generation)
       if (!saved || generation !== session.current) return
       if (!saved.quote) {
         const next = await smartRepeatCall<RepeatDraft>('quote', { draft_id: draft.draft_id })
@@ -184,12 +200,7 @@ export function SmartRepeatForm({ sourceId, onClose }: { sourceId: number | null
             task_id: draft.task_id, type: draft.template.type, model: draft.template.model, model_label: draft.template.model,
             status: 'pending', aspect_ratio: '', created_at: new Date().toISOString(), cost: draft.quote?.cost || 0, prompt_preview: '', prompt_hidden: true,
           }) }}>Открыть историю</Button>
-          {draft.status === 'rejected' || state.recentTasks.some(task => task.task_id === draft.task_id && task.status !== 'pending') ? <Button variant="outline" disabled={busy} onClick={async () => {
-            setBusy(true)
-            try { const next = await smartRepeatCall<RepeatDraft>('open', { source_id: sourceId, new: true }); accept(next, session.current); setUserValues(next.user_values); setPromptChanges(next.prompt_changes || ''); setError('') }
-            catch (e) { setError(e instanceof Error ? e.message : 'Не удалось создать новый повтор.') }
-            finally { setBusy(false) }
-          }}>Повторить ещё раз</Button> : null}
+          {draft.status === 'rejected' || state.recentTasks.some(task => task.task_id === draft.task_id && task.status !== 'pending') ? <Button variant="outline" disabled={busy} onClick={() => void newRepeat()}}>Повторить ещё раз</Button> : null}
         </div> : <>
           <div className="space-y-2">
             <label htmlFor="repeat-prompt-changes" className="text-sm font-medium">Что изменить</label>

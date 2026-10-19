@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { SmartRepeatForm } from '@/components/smart-repeat-form'
 import { useApp } from '@/lib/app-context'
 import { smartRepeatCall, type RepeatDraft } from '@/lib/smart-repeat-api'
@@ -131,16 +131,42 @@ test('changes editor stays inside the repeat and saves before close or quote', a
 
 test('changing publication while edits save cannot quote or launch the old repeat', async () => {
   draft.slots = { face: { state: 'READY', asset_id: 'face', url: '/uploads/face.png' }, car: { state: 'READY', asset_id: 'car', url: '/uploads/car.png' } }
+  draft.template.variables = [{ id: 'city', label: 'Город', required: true, max_length: 80 }]
   let finish: (value: unknown) => void = () => {}
   const original = call.getMockImplementation()!
-  call.mockImplementation((action, payload) => action === 'update' && payload.operation === 'changes'
-    ? new Promise(resolve => { finish = resolve }) : original(action, payload))
+  call.mockImplementation((action, payload) => {
+    if (action === 'open' && payload.source_id === 43) return Promise.resolve({ ...draft, draft_id: 'other', template: { ...draft.template, source_id: 43, model: 'banana_2', variables: [] } })
+    return action === 'update' && payload.operation === 'changes'
+      ? new Promise(resolve => { finish = resolve }) : original(action, payload)
+  })
   const rendered = render(<SmartRepeatForm sourceId={42} onClose={jest.fn()} />)
   fireEvent.change(await screen.findByRole('textbox', { name: 'Что изменить' }), { target: { value: 'New changes' } })
+  fireEvent.change(screen.getByLabelText('Город'), { target: { value: 'Казань' } })
   fireEvent.click(screen.getByRole('button', { name: 'Рассчитать стоимость' }))
   await waitFor(() => expect(call.mock.calls.some(([action, body]) => action === 'update' && body.operation === 'changes')).toBe(true))
   rendered.rerender(<SmartRepeatForm sourceId={43} onClose={jest.fn()} />)
-  finish(draft)
-  await screen.findByRole('textbox', { name: 'Что изменить' })
+  await screen.findByText('Модель исходной работы: banana_2')
+  await act(async () => { finish(draft) })
+  expect(screen.getByText('Модель исходной работы: banana_2')).toBeInTheDocument()
+  expect(call.mock.calls.some(([action, body]) => action === 'update' && body.operation === 'values')).toBe(false)
   expect(call.mock.calls.some(([action]) => action === 'quote' || action === 'launch')).toBe(false)
+})
+
+test('late new-repeat response cannot replace another publication', async () => {
+  draft.status = 'rejected'
+  let finish: (value: unknown) => void = () => {}
+  const previous = draft
+  call.mockImplementation((action, body) => {
+    if (action === 'open' && body.new) return new Promise(resolve => { finish = resolve })
+    if (action === 'open' && body.source_id === 43) return Promise.resolve({ ...previous, draft_id: 'other', status: 'draft', prompt_changes: 'B changes', template: { ...previous.template, source_id: 43, model: 'banana_2' } })
+    return Promise.resolve(previous)
+  })
+  const rendered = render(<SmartRepeatForm sourceId={42} onClose={jest.fn()} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Повторить ещё раз' }))
+  await waitFor(() => expect(call.mock.calls.some(([action, body]) => action === 'open' && body.new)).toBe(true))
+  rendered.rerender(<SmartRepeatForm sourceId={43} onClose={jest.fn()} />)
+  await screen.findByText('Модель исходной работы: banana_2')
+  await act(async () => { finish({ ...previous, status: 'draft', prompt_changes: 'A changes' }) })
+  expect(screen.getByText('Модель исходной работы: banana_2')).toBeInTheDocument()
+  expect(screen.getByRole('textbox', { name: 'Что изменить' })).toHaveValue('B changes')
 })

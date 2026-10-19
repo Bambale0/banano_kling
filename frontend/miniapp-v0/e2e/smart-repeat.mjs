@@ -52,7 +52,7 @@ try {
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   browser = await chromium.launch({ headless: true })
-  for (const width of [320, 390, 430]) {
+  for (const width of [320, 390, 430, 1280]) {
     const image = width === 390
     const title = image ? 'Повторить фото' : 'Повторить видео'
     const sourceCard = image ? { ...card, gen_type: 'image', model: 'banana_2', result_url: 'https://example.test/result.png', preview_url: 'https://example.test/result.png', result_urls: ['https://example.test/result.png'] } : card
@@ -160,6 +160,7 @@ try {
       await dialog.getByLabel('Загрузить: Ваше лицо').setInputFiles({ name: 'face2.png', mimeType: 'image/png', buffer: png })
     }
     await dialog.getByText('Загружено обязательных референсов: 2 / 2', { exact: true }).waitFor()
+    if (width === 430 || width === 1280) await page.screenshot({ path: `/tmp/tanya-repeat-fixed-${width}.png`, fullPage: true })
     await calculate.click()
     const launch = dialog.getByRole('button', { name: /Создать.*10/ })
     await launch.evaluate(button => { button.click(); button.click() })
@@ -167,7 +168,6 @@ try {
     assert.equal(launches.length, 1); assert.equal(credits, 115)
     assert.equal(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth + 1), true)
     assert.ok(!(await page.locator('body').innerText()).includes(secret))
-    if (width === 430) await page.screenshot({ path: '/tmp/tanya-repeat-fixed-430.png', fullPage: true })
     assert.deepEqual(errors, [])
     await context.close()
     console.log(`Smart repeat ${width}px: inline changes editor, close to source/reopen, reverse uploads, pending guard, reload/remove, one launch${width === 390 ? ', lost response recovery' : ''} passed`)

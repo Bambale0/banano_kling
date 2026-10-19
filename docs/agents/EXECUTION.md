@@ -2376,3 +2376,9 @@ Re-run verification/review after this scope adjustment.
   new/library choice and ID binding, quote guard, duplicate click and lost reply.
 - Added stale-publication fence before quote/launch after edit persistence, and
   PostgreSQL acceptance reuse for saved-media identity and filename.
+
+- Two-axis review found two stale-response holes: a second variable-save
+  request after changes save could adopt the new session; and late new-repeat
+  response used the current session. Both now capture the starting generation,
+  fence each await/state mutation, and have deterministic regressions (the
+  new-repeat case was observed red before the fix). Await final reviewer check.
