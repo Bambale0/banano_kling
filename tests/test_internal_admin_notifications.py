@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 from aiohttp.test_utils import make_mocked_request
 
-from bot.handlers import repeat_result_compat
+from bot.handlers import generation, repeat_result_compat
 from bot.internal_admin_dispatch import _AuthenticatedBody
 from bot.internal_admin_notification_actions import _test_result
 from bot.internal_admin_notifications import (
@@ -27,20 +27,22 @@ async def test_repeat_result_compat_restores_safe_repeat_flow(monkeypatch) -> No
     state = AsyncMock()
     task = SimpleNamespace(
         id=42,
+        task_id="task-42",
+        model="banana_pro",
         user_id=7,
         is_public_feed=False,
         feed_references_visible=False,
     )
-    monkeypatch.setattr(repeat_result_compat, "get_task_by_id", AsyncMock(return_value=task))
+    monkeypatch.setattr(generation, "get_task_by_id", AsyncMock(return_value=task))
     monkeypatch.setattr(
-        repeat_result_compat,
+        generation,
         "get_or_create_user",
         AsyncMock(return_value=SimpleNamespace(id=7)),
     )
     restore = AsyncMock(return_value=(True, None))
     show = AsyncMock()
-    monkeypatch.setattr(repeat_result_compat, "_restore_image_task_to_state", restore)
-    monkeypatch.setattr(repeat_result_compat, "_show_repeat_image_screen", show)
+    monkeypatch.setattr(generation, "_restore_image_task_to_state", restore)
+    monkeypatch.setattr(generation, "_show_repeat_image_screen", show)
 
     await repeat_result_compat.repeat_result_compat(callback, state)
 
@@ -50,6 +52,7 @@ async def test_repeat_result_compat_restores_safe_repeat_flow(monkeypatch) -> No
         include_references=True,
         repeat_source_task_id="42",
         hide_prompt=False,
+        viewer_telegram_id=9001,
     )
     show.assert_awaited_once_with(callback, state)
     callback.answer.assert_awaited_once()
