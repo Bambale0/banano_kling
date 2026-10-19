@@ -48,10 +48,12 @@ export function SmartRepeatEditor({ sourceId, prompt = '' }: { sourceId: number;
   return <section aria-label="Конструктор повтора" className="min-w-0 space-y-3 rounded-xl border p-3">
     <h3 className="text-sm font-semibold">Поля умного повтора</h3>
     <p className="text-xs text-muted-foreground">Выберите, какие исходники пользователь заменит своими файлами. Типы и привязка к модели сохраняются из вашей работы.</p>
+    <p className="text-xs text-muted-foreground">Подпишите каждый референс: например, «Ваше лицо», «Ваша одежда», «Ваш ребёнок». Добавьте подсказку, какое фото нужно загрузить. Пользователь увидит эти подписи при повторе.</p>
     {!template ? <Button variant="outline" type="button" disabled={busy} onClick={load}>Настроить поля повтора</Button> : <>
       <p className="text-xs">Версия {template.version} · Заменяемых файлов: {template.slots.filter(slot => slot.binding === 'upload').length}</p>
       {template.slots.map((slot, index) => <fieldset key={slot.slot_id} className="min-w-0 rounded border p-2 space-y-2" disabled={busy}>
         <legend className="text-xs">Поле {index + 1} · {slot.kind === 'image' ? 'Фото' : slot.kind === 'video' ? 'Видео' : 'Аудио'}</legend>
+        <p className="text-xs text-muted-foreground">Позиция исходника закреплена за моделью. Название и подсказку можно менять без перестановки референсов.</p>
         <label className="block text-xs">Название
           <input aria-label={`Название поля ${index + 1}`} value={slot.label} maxLength={80} className="mt-1 w-full rounded border bg-background p-2"
             onChange={event => setTemplate(current => current ? { ...current, slots: current.slots.map(item => item.slot_id === slot.slot_id ? { ...item, label: event.target.value } : item) } : current)} />
@@ -78,11 +80,6 @@ export function SmartRepeatEditor({ sourceId, prompt = '' }: { sourceId: number;
             className="ml-2 w-28 rounded border bg-background p-1" onChange={event => limits(slot.slot_id, key, event.target.value ? Number(event.target.value) : undefined)} />
         </label>)}
         {!slot.can_keep_original ? <p className="text-xs text-muted-foreground">Чтобы разрешить пропуск, сначала разрешите скрытое использование этого исходника в настройках публикации.</p> : null}
-        <Button type="button" variant="outline" disabled={!index} onClick={() => setTemplate(current => {
-          if (!current) return current
-          const next = [...current.slots]; [next[index - 1], next[index]] = [next[index], next[index - 1]]
-          return { ...current, slots: next }
-        })}>Выше</Button>
         {slot.added ? <Button type="button" variant="outline" onClick={() => setTemplate(current => current ? { ...current,
           slots: current.slots.filter(item => item.slot_id !== slot.slot_id),
           presets: current.presets.map(preset => ({ ...preset, slot_ids: preset.slot_ids.filter(id => id !== slot.slot_id) })),
