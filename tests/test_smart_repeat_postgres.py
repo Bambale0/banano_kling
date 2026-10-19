@@ -58,5 +58,7 @@ async def test_postgres_saved_reference_identity_and_filename(monkeypatch, tmp_p
 
 @pytest.mark.asyncio
 async def test_postgres_wan_and_saved_reference_namespace_collision(monkeypatch, tmp_path):
-    from tests.test_smart_repeat_store import test_wan_and_saved_media_ids_have_distinct_owned_namespaces
+    from tests.test_smart_repeat_store import (
+        test_wan_and_saved_media_ids_have_distinct_owned_namespaces,
+    )
     await test_wan_and_saved_media_ids_have_distinct_owned_namespaces(monkeypatch, tmp_path)
