@@ -2399,3 +2399,13 @@ Re-run verification/review after this scope adjustment.
   metadata/snapshot identity; URL compatibility retained. New red component
   regression confirms same numeric IDs cannot select the wrong stored file.
   Add SQLite/PostgreSQL collision, invalid IDs and mixed-ID rejection cases.
+
+- Closed library-level namespace collision too: actual Wan uploader now emits
+  UI id wan3_<id>, wan3_media_id and no misleading saved_reference_id. Actual
+  uploader→AppProvider library regression observed duplicate identity red with
+  the old mapping and passes with saved_7 and wan3_7 present simultaneously.
+  No other consumer uses Wan's old saved_reference_id as an API ID (focused
+  search); generic/Seedance uploads still persist in saved_references.
+- Updated focused backend: 69 passed. Disposable native PostgreSQL16: 4 passed,
+  including collision/ownership recovery. Uploader/context/component tests pass;
+  final frontend/full backend CI are being rerun for the corrected candidate.
