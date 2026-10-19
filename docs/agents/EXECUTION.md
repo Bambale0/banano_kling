@@ -2382,3 +2382,12 @@ Re-run verification/review after this scope adjustment.
   response used the current session. Both now capture the starting generation,
   fence each await/state mutation, and have deterministic regressions (the
   new-repeat case was observed red before the fix). Await final reviewer check.
+
+- Final upload/editor race regressions: 6/6 pass; TypeScript passes. Disposable
+  native PostgreSQL16: 3/3 pass, including owner-scoped saved ID/filename and
+  existing concurrent claim/debit/refund + interrupted upload cases.
+- Branch protection verified strict=true with the unchanged four required gates.
+  Added smart-repeat browser journey to the main required E2E gate. CI/release
+  and exact deployed SHA verification remain pending. Production browser smoke
+  will use real deployed assets with synthetic intercepted APIs; backend guards
+  will be read-only, with no paid calls or customer-draft mutations.

@@ -8,7 +8,7 @@ import { chromium } from 'playwright'
 // Synthetic owner/consumer journeys. All APIs, uploads and media are intercepted.
 const port = Number(process.env.SMART_REPEAT_E2E_PORT || 4199)
 const origin = `http://127.0.0.1:${port}`
-const baseUrl = `${origin}/mini-app/`
+const baseUrl = process.env.SMART_REPEAT_E2E_BASE_URL || `${origin}/mini-app/`
 const root = mkdtempSync(join(tmpdir(), 'smart-repeat-e2e-'))
 symlinkSync(resolve('out'), join(root, 'mini-app'), 'dir')
 const server = spawn('python3', ['-m', 'http.server', String(port), '--bind', '127.0.0.1', '--directory', root], { stdio: 'ignore' })

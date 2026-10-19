@@ -200,7 +200,7 @@ export function SmartRepeatForm({ sourceId, onClose }: { sourceId: number | null
             task_id: draft.task_id, type: draft.template.type, model: draft.template.model, model_label: draft.template.model,
             status: 'pending', aspect_ratio: '', created_at: new Date().toISOString(), cost: draft.quote?.cost || 0, prompt_preview: '', prompt_hidden: true,
           }) }}>Открыть историю</Button>
-          {draft.status === 'rejected' || state.recentTasks.some(task => task.task_id === draft.task_id && task.status !== 'pending') ? <Button variant="outline" disabled={busy} onClick={() => void newRepeat()}}>Повторить ещё раз</Button> : null}
+          {draft.status === 'rejected' || state.recentTasks.some(task => task.task_id === draft.task_id && task.status !== 'pending') ? <Button variant="outline" disabled={busy} onClick={() => void newRepeat()}>Повторить ещё раз</Button> : null}
         </div> : <>
           <div className="space-y-2">
             <label htmlFor="repeat-prompt-changes" className="text-sm font-medium">Что изменить</label>
