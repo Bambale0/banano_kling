@@ -244,6 +244,8 @@ dp.include_router(common_router)  # последним!
 
 Repeat восстанавливает request_data из generation_tasks в FSM.
 
+Telegram-повторы фото остаются в чате и при включённом smart_repeat_rollout: сообщение с обязательным переходом в Mini App удалено. Старые кнопки repeat_image_*/repeat_result_* сохраняют загрузку фото и отдельное подтверждение без списания при открытии. Специализированные video/Wan/Genjutsu-обработчики не заменяются общим фото-сценарием.
+
 ---
 
 ## 12. Критерий готовности UX

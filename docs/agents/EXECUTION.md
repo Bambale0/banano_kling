@@ -2453,3 +2453,18 @@ asset/session guards. Port neutral loading and explicit-selection assertions
 to SmartRepeatForm; update upstream routing/browser assertions for inline hosts.
 No new backend change in this integration; rerun frontend/build/both navigation
 journeys and exact protected CI.
+
+## 2026-10-19 — remove forced Mini App handoff from Telegram repeats
+
+Baseline: f1649adbaa2e2023023541556b883e7482a77f78 (origin/tanyapi).
+Request: remove the Telegram message asking users to upload named inputs in Mini App and its `Open repeat` button; keep supported Telegram repeats usable without opening WebView.
+
+Preflight: `smart_repeat_api.redirect_telegram_repeat` intercepts five image/video callbacks for published tasks whenever the Mini App rollout is enabled. The native Telegram reference/confirmation flow still exists immediately after those early returns; old `repeat_result_*` compatibility opening already uses it. The screenshot text exists only in this common interception helper. Specialized Wan, typed-video and Genjutsu routes are separate contracts and must not be routed into an incompatible legacy generator.
+
+Plan: add red native callback/FSM regressions under global and per-user rollout; remove the shared handoff/helper, retain native validation/debit/provider paths and specialized video guards; document independent Telegram vs Mini App routing; run isolated SQLite/callback/privacy and existing smart HTTP regression suites; protected PR to tanyapi, exact-SHA CI/autodeploy and deployed-code/health/log smoke. Production working tree and parallel photo-extra-reference PR are not modified.
+
+No schema, tariff, provider, rollout settings or customer data changes. Tests use synthetic users/media and mocked paid providers in a network-disabled disposable Docker container. This change restores the existing native Telegram flow; it does not implement the Mini App's author-configured smart-field editor in Telegram or remove model-specific compatibility guards.
+
+Acceptance: direct and historical supported photo-repeat callbacks stay in chat, preserve source model/prompt privacy/references, require explicit confirmation and reject unavailable inputs before debit. Common quick-video entry reaches the existing model-specific handler rather than the generic Mini App handoff. Mini App draft/quote/idempotency and HTTP stale-client guard remain unchanged.
+
+Verification checkpoint: baseline new regression suite reproduced 14 failures / 10 passes (native published callbacks were intercepted). After removing the five calls/helper, 24/24 new cases pass. The expanded isolated run passed 312 tests across native callbacks/FSM, prompt privacy, private-reference permission/revocation, image reference integrity, smart draft/store/HTTP quote-and-replay, and video/Wan callback guards. Existing datetime deprecation and aiohttp AppKey warnings remain; no paid requests or customer writes. New test is explicitly staged despite the repository's broad tests/* ignore rule. Numeric-ID tests preserve the documented get_task_by_id alias contract rather than requiring a different internal ID representation.

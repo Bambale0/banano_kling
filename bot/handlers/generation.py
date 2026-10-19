@@ -2509,9 +2509,6 @@ async def repeat_image_generation(callback: types.CallbackQuery, state: FSMConte
     """Opens a safe repeat flow instead of launching generation immediately."""
     task_id = callback.data.replace("repeat_image_", "", 1)
     task_id, task = await _resolve_repeat_image_task(task_id)
-    from bot.smart_repeat_api import redirect_telegram_repeat
-    if await redirect_telegram_repeat(callback, task):
-        return
 
     user = await get_or_create_user(callback.from_user.id)
 
@@ -2527,6 +2524,10 @@ async def repeat_image_generation(callback: types.CallbackQuery, state: FSMConte
         await callback.answer(error_message or "Не удалось открыть повтор.", show_alert=True)
         return
 
+    logger.info(
+        "telegram_repeat_native user_id=%s task_id=%s model=%s",
+        callback.from_user.id, task.task_id, task.model,
+    )
     await _show_repeat_image_screen(callback, state)
     await callback.answer("Сначала можно добавить своё фото")
 
@@ -2645,10 +2646,6 @@ async def run_repeat_image_generation(callback: types.CallbackQuery, state: FSMC
     """Launches repeat generation after explicit user confirmation."""
     task_id = callback.data.replace("repeat_run_", "", 1)
     task = await get_task_by_id(task_id)
-    from bot.smart_repeat_api import redirect_telegram_repeat
-    if await redirect_telegram_repeat(callback, task):
-        return
-
 
     if not task or task.type != "image":
         await callback.answer("Не удалось найти данные для повтора.", show_alert=True)
@@ -2888,10 +2885,6 @@ async def quick_repeat_image_result(callback: types.CallbackQuery, state: FSMCon
     """Показывает подтверждение перед повтором: без списаний и запуска сразу."""
     task_id = callback.data.replace("repeat_result_", "", 1)
     task = await get_task_by_id(task_id)
-    from bot.smart_repeat_api import redirect_telegram_repeat
-    if await redirect_telegram_repeat(callback, task):
-        return
-
 
     if not task or task.type != "image":
         await callback.answer("Не удалось найти данные для повтора.", show_alert=True)
@@ -2958,10 +2951,6 @@ async def quick_repeat_image_confirm(callback: types.CallbackQuery, state: FSMCo
     """Запускает повтор только после явного подтверждения пользователя."""
     task_id = callback.data.replace("repeat_run_confirm_", "", 1)
     task = await get_task_by_id(task_id)
-    from bot.smart_repeat_api import redirect_telegram_repeat
-    if await redirect_telegram_repeat(callback, task):
-        return
-
 
     if not task or task.type != "image":
         await callback.answer("Не удалось найти данные для повтора.", show_alert=True)
@@ -3156,10 +3145,6 @@ async def quick_repeat_video_result(callback: types.CallbackQuery, state: FSMCon
     """Быстрый повтор генерации видео с теми же параметрами (из кнопки «🔁 Повторить»)."""
     task_id = callback.data.replace("repeat_video_result_", "", 1)
     task = await get_task_by_id(task_id)
-    from bot.smart_repeat_api import redirect_telegram_repeat
-    if await redirect_telegram_repeat(callback, task):
-        return
-
 
     if not task or task.type != "video":
         await callback.answer("Не удалось найти данные для повтора.", show_alert=True)
