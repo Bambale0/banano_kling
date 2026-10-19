@@ -309,6 +309,6 @@ test('full original model budget explains why no extra photo can be added', asyn
   Object.assign(draft, { additional_image_limit: 0, additional_image_slots: [] })
   render(<SmartRepeatForm sourceId={42} onClose={jest.fn()} />)
   await screen.findByRole('region', { name: 'Дополнительные референсы' })
-  expect(screen.getByRole('button', { name: 'Добавить фото', exact: true })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Добавить фото' })).toBeDisabled()
   expect(screen.getByText('Достигнут общий лимит референсов модели с учётом основных фото.')).toBeInTheDocument()
 })
