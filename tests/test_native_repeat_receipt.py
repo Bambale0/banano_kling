@@ -158,3 +158,17 @@ async def test_admin_feed_deeplink_quote_launches_without_reconfirmation_loop(mo
     ctx.launch.assert_awaited_once()
     ctx.debit.assert_not_awaited()
     assert ctx.launch.await_args.kwargs['unit_cost'] == 0
+
+
+@pytest.mark.asyncio
+async def test_refund_is_not_blocked_by_new_unsupported_author_fields(monkeypatch):
+    ctx = await real_finance_context(monkeypatch)
+    ctx.launch.side_effect = asyncio.CancelledError
+    with pytest.raises(asyncio.CancelledError):
+        await generation.confirm_native_repeat_quote(ctx.callback, ctx.state)
+    await configure_named_template(ctx, advanced=True)
+    ctx.callback.data = f'repeat_image_{TASK_ID}'
+    await generation.repeat_image_generation(ctx.callback, ctx.state)
+    assert ctx.callback.answer.await_args.kwargs.get('show_alert') is True
+    assert (await database.get_or_create_user(ctx.owner.telegram_id)).credits == ctx.start_credits
+    assert (await store.load_draft(ctx.owner.id, 'tg:' + ctx.token))['refund_amount'] == 10

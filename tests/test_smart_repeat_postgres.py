@@ -118,3 +118,11 @@ async def test_postgres_native_template_less_withdrawal(monkeypatch):
         test_template_less_withdrawn_source_rejected_before_debit,
     )
     await test_template_less_withdrawn_source_rejected_before_debit(monkeypatch)
+
+
+@pytest.mark.asyncio
+async def test_postgres_native_refund_precedes_changed_template_validation(monkeypatch):
+    from tests.test_native_repeat_receipt import (
+        test_refund_is_not_blocked_by_new_unsupported_author_fields,
+    )
+    await test_refund_is_not_blocked_by_new_unsupported_author_fields(monkeypatch)

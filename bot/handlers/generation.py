@@ -1765,10 +1765,10 @@ async def _restore_image_task_to_state(
     nsfw_enabled = bool(request_data.get("nsfw_enabled", False))
     prompt = _repeat_source_prompt(request_data, task)
     try:
-        contract = await native_repeat.load_contract(task, viewer_telegram_id) if repeat_source_task_id else None
         if repeat_source_task_id and viewer_telegram_id is not None:
             actor = await get_or_create_user(viewer_telegram_id)
             await native_repeat_receipt.recover_unsubmitted(actor, task.id)
+        contract = await native_repeat.load_contract(task, viewer_telegram_id) if repeat_source_task_id else None
         if repeat_source_task_id and re.search(r'\{\{[a-zA-Z][a-zA-Z0-9_]*\}\}', prompt):
             return False, native_repeat.UNSUPPORTED
         unit_cost = native_repeat.current_price(img_service, img_quality, viewer_telegram_id)
