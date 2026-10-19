@@ -15,13 +15,14 @@ from tests.test_smart_repeat_store import setup_repeat
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('outcome', ['queued', 'rejected', 'lost_response'])
-async def test_http_image_preflight_upload_reload_quote_launch_and_replay(monkeypatch, tmp_path, outcome):
+@pytest.mark.parametrize('source_inputs', [False, True])
+async def test_http_image_preflight_upload_reload_quote_launch_and_replay(monkeypatch, tmp_path, outcome, source_inputs):
     from bot.handlers import generation
     ctx = await setup_repeat(monkeypatch, tmp_path)
     async with db_backend.connect() as db:
         await db.execute("UPDATE generation_tasks SET type = 'image', model = 'banana_pro', prompt = 'Private synthetic recipe', "
             'result_url = ?, request_data = ? WHERE id = ?', ('https://example.test/result.png',
-            json.dumps({'source_reference_images': ['/uploads/refs/source.png']}), ctx.source['id']))
+            json.dumps({'source_reference_images': ['/uploads/refs/source.png']} if source_inputs else {}), ctx.source['id']))
         # Fresh model/source is a new fixture, not a migration of a published template.
         await db.execute('DELETE FROM smart_repeat_drafts')
         await db.execute('DELETE FROM smart_repeat_templates')

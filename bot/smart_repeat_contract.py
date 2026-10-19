@@ -114,6 +114,12 @@ def _infer_template(source: dict) -> dict:
         images = _source_image_references_from_task_payload(source)
         for index, url in enumerate(images):
             add('image', 'reference', 'reference_images', index, url)
+        if not images:
+            from bot.smart_repeat_policy import list_fields
+            if not list_fields(source).get('image', {}).get('maximum'):
+                fail('TEMPLATE_REVIEW_REQUIRED', 'Автору нужно выбрать модель с поддержкой фото-референсов.')
+            # Preserve the existing public image remix's personal-photo input.
+            add('image', 'reference', 'reference_images', 0, None)
     elif model in {'wan_3', 'wan_3_prime'}:
         from bot.services.wan3_prime_repeat import source_recipe, source_slots
         for slot in source_slots(source_recipe(source)):

@@ -2275,3 +2275,12 @@ Coverage: pure contract tests and existing chunk HTTP regression run locally wit
   behavior in the legacy adapter; no production adapter change.
 - Build passed. Full safe backend final rerun and exact-head review/CI/release
   are pending. No paid production generation or feature activation yet.
+- Final review follow-up: restored the legacy required personal-photo input for
+  text-to-image publications without original references (real image HTTP matrix
+  with both empty and populated source request_data). Diagnostics now reads Wan
+  settlement/task-refund proof rather than presenting the old reservation as a
+  final charge. Reviewed focused suite: 29 passed, including zero extra credits
+  during read-only settlement projection.
+- First PR CI exposed two retention PostgreSQL cases whose minimal schema lacked
+  the new snapshot tables. Updated the guarded fixture to run the same additive
+  smart-repeat schema migration; no production query fallback or test exclusion.

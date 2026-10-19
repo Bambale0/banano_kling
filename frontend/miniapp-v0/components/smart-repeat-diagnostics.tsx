@@ -37,7 +37,7 @@ export function SmartRepeatDiagnostics({ taskId }: { taskId: string }) {
     {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
     {result ? <div className="space-y-2 text-xs break-all">
       <p>Операция: {result.draft_id} · {result.status}</p>
-      <p>Списано: {result.charge_amount} · Возвращено: {result.refund_amount}</p>
+      <p>Удержано: {result.charge_amount} · Возвращено: {result.refund_amount}</p>
       {result.expected_slots.map(slot => { const actual = result.snapshot.references?.[slot.slot_id]; return <p key={slot.slot_id}>
         {slot.label} · {slot.kind} · {slot.required ? 'обязательное' : 'необязательное'}<br />
         {slot.slot_id}: {actual ? `${actual.state} · ${actual.binding} · asset ${actual.asset_id}` : 'В снимке запуска отсутствует'}

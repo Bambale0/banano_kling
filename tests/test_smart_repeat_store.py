@@ -246,3 +246,14 @@ async def test_wan_committed_intent_remains_linked_after_submission_cancellation
     assert restored['task_id'] == draft['task_id'] and restored['result']['body']['task_id'] == draft['task_id']
     assert provider.creates == 1
     assert (await database.get_or_create_user(ctx.user.telegram_id)).credits == 100 - quote['reserve_credits']
+    # Diagnostics reads the authoritative later settlement without crediting a
+    # second refund or treating the original draft reservation as final charge.
+    async with db_backend.connect() as db:
+        await db.execute('UPDATE wan3_prime_intents SET settled = 1, charged_credits = 6, refunded_credits = 4 '
+            'WHERE internal_task_id = ?', (draft['task_id'],))
+        await db.commit()
+    from bot.smart_repeat_store import diagnostic_finance
+    finance = await diagnostic_finance(draft)
+    assert finance['billing_source'] == 'wan_intent'
+    assert finance['charge_amount'] == 6 and finance['refund_amount'] == 4
+    assert (await database.get_or_create_user(ctx.user.telegram_id)).credits == 100 - quote['reserve_credits']

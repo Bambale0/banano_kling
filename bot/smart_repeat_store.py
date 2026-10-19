@@ -547,3 +547,33 @@ async def migrate_public_templates(*, after_id, limit):
         except SmartRepeatError as exc:
             results.append({'source_id': row[0], 'status': 'review_required', 'code': exc.code})
     return {'publications': results, 'next_after_id': rows[-1][0] if rows else after_id, 'has_more': len(rows) == limit}
+
+
+async def diagnostic_finance(draft):
+    """Read current settlement/refund proof; never mutate balances for diagnostics."""
+    reserved = float(draft['charge_amount'])
+    refunded = float(draft['refund_amount'])
+    result = {'reserved_amount': reserved, 'charge_amount': max(0, reserved - refunded),
+              'refund_amount': refunded, 'billing_source': 'repeat_reservation'}
+    if not draft.get('task_id'):
+        return result
+    async with db_backend.connect() as db:
+        db.row_factory = db_backend.Row
+        if (draft.get('snapshot') or {}).get('model') in {'wan_3', 'wan_3_prime'}:
+            intent = await (await db.execute('SELECT reserve_credits, charged_credits, refunded_credits, settled '
+                'FROM wan3_prime_intents WHERE internal_task_id = ? AND user_id = ?',
+                (draft['task_id'], draft['user_id']))).fetchone()
+            if intent:
+                return {'reserved_amount': float(intent['reserve_credits']),
+                    'charge_amount': float(intent['charged_credits'] if intent['settled'] else intent['reserve_credits']),
+                    'refund_amount': float(intent['refunded_credits']), 'billing_source': 'wan_intent',
+                    'billing_status': 'settled' if intent['settled'] else 'reserved'}
+        task = await (await db.execute('SELECT cost, request_data FROM generation_tasks WHERE task_id = ? AND user_id = ?',
+            (draft['task_id'], draft['user_id']))).fetchone()
+    if task:
+        metadata = json.loads(task['request_data'] or '{}')
+        if metadata.get('refund_claimed') and metadata.get('refund_state') == 'refunded':
+            refunded = max(refunded, float(metadata.get('charged_cost', task['cost']) or 0))
+            result.update(charge_amount=max(0, reserved - refunded), refund_amount=refunded,
+                          billing_source='task_refund', billing_status='refunded')
+    return result

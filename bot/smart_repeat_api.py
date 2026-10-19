@@ -173,7 +173,7 @@ async def smart_repeat_route(request):
             return _json({'ok': True, 'draft_id': draft['id'], 'user_id': draft['user_id'],
                 'task_id': draft['task_id'], 'status': draft['status'], 'snapshot': _diagnostic_snapshot(draft),
                 'expected_slots': public_template(template)['slots'],
-                'charge_amount': draft['charge_amount'], 'refund_amount': draft['refund_amount']})
+                **await store.diagnostic_finance(draft)})
         draft_id = auth_body.get('draft_id')
         if not isinstance(draft_id, str) or len(draft_id) != 32:
             fail('DRAFT_NOT_FOUND', 'Черновик не найден.', 404)
@@ -183,7 +183,7 @@ async def smart_repeat_route(request):
         if action == 'diagnostics':
             return _json({'ok': True, 'draft_id': draft_id, 'status': draft['status'],
                 'snapshot': _diagnostic_snapshot(draft), 'task_id': draft.get('task_id'),
-                'charge_amount': draft['charge_amount'], 'refund_amount': draft['refund_amount']})
+                **await store.diagnostic_finance(draft)})
         if action in {'launch', 'quote'} and draft['status'] != 'draft':
             if draft.get('result'):
                 return _json(draft['result']['body'], status=draft['result']['status'])
