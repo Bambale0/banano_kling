@@ -25,6 +25,7 @@ const BalanceSheet = dynamic(() =>
 const WorkspaceSheet = dynamic(() =>
   import('./workspace-sheet').then((module) => module.WorkspaceSheet),
 )
+const SmartRepeatDialog = dynamic(() => import('./smart-repeat-dialog').then(module => module.SmartRepeatDialog))
 
 interface MiniAppShellProps {
   children: ReactNode
@@ -32,7 +33,7 @@ interface MiniAppShellProps {
 
 
 function MiniAppBody({ children }: MiniAppShellProps) {
-  const { state, activeWorkspace, trendToRun, setActiveTab, refreshTelegramChatAccess } = useApp()
+  const { state, activeWorkspace, trendToRun, setActiveTab, refreshTelegramChatAccess, smartRepeatSourceId, closeSmartRepeat } = useApp()
   const [genjutsuOpen, setGenjutsuOpen] = useState(false)
   const isBootstrapping = state.isLoading
   const isLocked = state.mode === 'locked'
@@ -70,7 +71,7 @@ function MiniAppBody({ children }: MiniAppShellProps) {
           {/* A deep-linked trend owns the active Radix modal. Delivery is optional,
               so defer its offer instead of blocking the trend or fighting its focus trap. */}
           <BotWriteAccessGate
-            required={state.user.telegramBotStartRequired && !trendToRun && !genjutsuOpen}
+            required={state.user.telegramBotStartRequired && !trendToRun && !genjutsuOpen && !smartRepeatSourceId}
             botUsername={state.user.botUsername}
             onRefresh={refreshTelegramChatAccess}
           />
@@ -84,6 +85,7 @@ function MiniAppBody({ children }: MiniAppShellProps) {
           </div>
 
           <TaskDetailPanel />
+          {smartRepeatSourceId ? <SmartRepeatDialog sourceId={smartRepeatSourceId} onClose={closeSmartRepeat} /> : null}
           <GenjutsuEntry onOpenChange={setGenjutsuOpen} />
           <BalanceSheet />
           {activeWorkspace === 'partners' ? <PartnerApprovalSheet /> : <WorkspaceSheet />}

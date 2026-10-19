@@ -74,6 +74,8 @@ def source_slots(recipe: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def build_repeat_plan(source: dict[str, Any]) -> dict[str, Any]:
+    from bot.smart_repeat_contract import authorized_source
+    source = authorized_source(source)
     from bot.services.media_input_utils import resolve_reference_source
     from bot.video_repeat_reference_contract import parse_video_repeat_grant
 

@@ -2163,7 +2163,8 @@ Coverage: pure contract tests and existing chunk HTTP regression run locally wit
   bring the selected scope through protected release and exact-SHA smoke.
 - Discovery: the supplied EPIC-01..08 are proposed/unregistered; the actual
   eight open GitHub epics #60..#67 concern a different security/billing backlog.
-  Scope clarification requested; independent reference safety review proceeds.
+  Scope confirmed by the user: implement and release all eight smart-repeat
+  epics from the attachment; security epics #60–#67 stay outside this task.
 - Audit/reuse/risks/acceptance: see
   `docs/SMART_REPEAT_RELEASE_AUDIT_2026-10-19.md`. Missing universal author slots,
   draft upload state and template versions are not represented as complete.
@@ -2207,5 +2208,38 @@ Coverage: pure contract tests and existing chunk HTTP regression run locally wit
   application monkeypatch or external/provider calls. Repeat after deployment.
 - Rollout: normal production CI/CD only, preserve runtime pricing; no manual
   production deploy, destructive cleanup, refunds, paid runs or migration.
-- Follow-ups: selected scope pending clarification; storage capacity issue #323
+- Follow-ups: implement selected smart-repeat scope; storage capacity issue #323
   remains open and does not authorize pruning customer media or backups.
+
+## 2026-10-19 — smart repeats EPIC-01..08 implementation
+
+- Confirmed user scope: GitHub issues #330, #331, #332, #333, #334, #335, #336, #337
+  represent the eight attached epics. The older security backlog is separate.
+- Updated baseline: `6566eb26eb4b102197a2c7610cf0723d98920a8a` (#328). Exact
+  post-merge CI and reliable autodeploy succeeded; production checkout, Docker
+  OCI and public frontend revision match. Health is ok; isolated synthetic
+  storage-error smoke changed True to False. Runtime price SHA256 stayed
+  `3c73a0651c6deee689ce779669faf9dd572b7ac3f09eddc200b0e26f6ef39583`.
+- Prefactor/reuse: existing engine, quote, provider validation, permission and
+  callback/delivery seams remain authoritative. A request-scoped capability
+  supplies selected grants to those existing adapters; child background tasks
+  do not inherit financial/source override authority.
+- Additive schema: immutable smart_repeat_templates versions and durable
+  smart_repeat_drafts, including per-slot leases/assets, quote and input snapshot,
+  one charge/refund markers and known provider acceptance for recovery. No
+  destructive migration/backfill or price/provider configuration change.
+- UI: named typed slots with server readiness, draft reload, quote-before-launch,
+  optional author variables and configured presets; owner constructor; DB-backed
+  authenticated rollout control with pilot IDs and global enable/disable.
+- Safety: exact slot mapping, owned persisted media and content hash validation,
+  late-upload fencing, quote invalidation on mutation, launch CAS, atomic draft
+  debit, no synchronous refund before debit or after known provider acceptance.
+  Input snapshots/versions participate in media retention.
+- Initial red: public contract module absent; then nine contract behaviors passed.
+  Durable-store tests first exposed absent new schema after correcting fixture
+  preset_id; twelve contract/store tests now pass. Combined existing typed
+  repeat/receipt/retention regression slices also passed (84 and 127 tests).
+- Verification pending: full API/real engine matrices, new frontend Jest/browser
+  cases, PostgreSQL startup/concurrency, complete safe suite, independent final
+  review, protected release, pilot smoke and staged enablement. No completion
+  claim for the eight epics yet; no paid production test run started.

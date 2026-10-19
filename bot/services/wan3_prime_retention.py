@@ -50,7 +50,9 @@ async def cleanup_expired(*, limit: int = 100) -> dict[str, int]:
                              "WHERE upload_id = ?", (stamp, session['upload_id']))
             removed_sessions += 1
         optional_tables = [(table, column) for table, column in (('trend_reference_assets', 'file_url'),
-            ('saved_references', 'file_url'), ('wan3_prime_trend_recipes', 'recipe_json')) if await _table_exists(db, table)]
+            ('saved_references', 'file_url'), ('wan3_prime_trend_recipes', 'recipe_json'),
+            ('smart_repeat_drafts', 'state_json'), ('smart_repeat_drafts', 'snapshot_json'),
+            ('smart_repeat_templates', 'schema_json')) if await _table_exists(db, table)]
         cursor = await (await db.execute('SELECT last_media_id FROM wan3_prime_cleanup_cursor WHERE id = 1')).fetchone()
         after_id = int(cursor[0]) if cursor else 0
         rows = await (await db.execute(

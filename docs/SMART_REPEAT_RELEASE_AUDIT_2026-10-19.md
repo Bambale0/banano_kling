@@ -6,8 +6,8 @@ Inspected production `tanyapi` at `9c253009f1f5f56542216e81f4425ebd04469d1a`.
 The attached specification describes eight **proposed** smart-repeat epics; it
 explicitly says they were not registered as GitHub issues. The eight actually
 open GitHub epics, issues #60–#67, concern security, billing and architecture.
-They are different backlogs. A scope clarification was requested before making
-material financial, authentication or storage changes across these backlogs.
+They are different backlogs. The user confirmed that the selected scope is the eight smart-repeat epics
+from the attachment. Security epics #60–#67 remain a separate backlog.
 
 The production checkout contains local edits to `bot/database.py` and the
 admin-managed `data/price.json`. Audit work uses a separate worktree. No prices,
@@ -39,7 +39,7 @@ not claim that the eight proposed epics are implemented or released.
 | #63 — Private storage | Reusable reference URLs still use `/uploads/refs/<kind>/<telegram_id>/...`; publication consent does not itself close direct storage access. Namespace/signed-delivery migration remains material work. |
 | #64 — SSRF and provider callbacks | Existing adapters and fetchers need a call-site inventory against the epic's shared policy. No claim of complete verification. |
 | #65 — DoS and degraded policy | Webhook admission is still unbounded before the semaphore. Pagination/proxy/access/Redis/container acceptance must be checked separately. |
-| #66 — Mini App sessions and lifecycle | `_verify_telegram_init_data` accepts a one-day absolute clock difference; CORS reflects arbitrary Origin with credentials. Session and lifecycle acceptance remains open. |
+| #66 — Mini App sessions and lifecycle | `_validate_init_data` accepts a one-day absolute clock difference; CORS reflects arbitrary Origin with credentials. Session and lifecycle acceptance remains open. |
 | #67 — Architecture and supply chain | CI has four strict mandatory gates and builds the frontend, but Python dependencies retain version ranges and the modules remain broad. CI improvements alone do not close this epic. |
 
 No open epic may be closed merely because a related patch or CI job exists.

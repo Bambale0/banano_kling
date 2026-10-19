@@ -351,7 +351,10 @@ def merge_typed_video_inputs(
                 inherited = resolve_reference_source(value, candidates)
             except ValueError as exc:
                 raise VideoRepeatContractError("Загрузите свои файлы для заменяемых референсов.") from exc
-            if inherited is not None:
+            from bot.smart_repeat_contract import current_authorization
+            smart_context = current_authorization()
+            own_asset = smart_context and smart_context['user_id'] == task.get('user_id')
+            if inherited is not None and not own_asset:
                 raise VideoRepeatContractError("Загрузите свои файлы для заменяемых референсов.")
         iterator = iter(uploads)
         private: list[str] = []

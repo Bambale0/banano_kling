@@ -204,6 +204,7 @@ export interface TaskDetail extends Task {
 
 export interface BootstrapResponse {
   ok: true
+  smart_repeat_enabled?: boolean
   telegram_id?: number
   first_name: string
   last_name?: string
@@ -380,6 +381,7 @@ export interface FeedComment {
 }
 
 export interface AppState {
+  smartRepeatEnabled?: boolean
   mode: AppMode
   isLoading: boolean
   error: string | null
