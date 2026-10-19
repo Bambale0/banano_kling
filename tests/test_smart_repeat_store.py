@@ -286,3 +286,34 @@ async def test_saved_reference_id_binds_owned_asset_to_slot_and_restores_metadat
                 upload_token=begun['state']['slots'][ctx.slot]['upload_token'], saved_reference_id=invalid,
                 url='/uploads/refs/own.png')
     assert (await database.get_or_create_user(ctx.user.telegram_id)).credits == 100
+
+
+@pytest.mark.asyncio
+async def test_wan_and_saved_media_ids_have_distinct_owned_namespaces(monkeypatch, tmp_path):
+    from bot.services.wan3_prime_storage import Wan3PrimeStorage
+    from bot.smart_repeat_store import public_draft
+    ctx = await setup_repeat(monkeypatch, tmp_path)
+    await Wan3PrimeStorage().init_schema()
+    saved = (await database.list_saved_references(ctx.user.telegram_id))[0]
+    async with db_backend.connect() as db:
+        await db.execute('INSERT INTO wan3_prime_media (id,user_id,telegram_id,kind,public_url,local_path,filename,content_type,size_bytes,sha256,media_info) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+            (saved.id,ctx.user.id,ctx.user.telegram_id,'image','/uploads/wan3/own.png',str(ctx.path),'wan-portrait.png','image/png',ctx.path.stat().st_size,'synthetic','{}'))
+        await db.commit()
+    begun = await mutate_draft(ctx.user,ctx.draft['id'],ctx.template,'begin',slot_id=ctx.slot)
+    attached = await mutate_draft(ctx.user,ctx.draft['id'],ctx.template,'ready',slot_id=ctx.slot,
+        upload_token=begun['state']['slots'][ctx.slot]['upload_token'],wan3_media_id=str(saved.id))
+    asset = public_draft(attached,ctx.template)['slots'][ctx.slot]
+    assert asset['url']=='/uploads/wan3/own.png'
+    assert asset['wan3_media_id']==str(saved.id)
+    assert asset['filename']=='wan-portrait.png'
+    assert 'saved_reference_id' not in asset
+    compiled = await validate_inputs(ctx.user,ctx.source,ctx.template,attached)
+    assert compiled['snapshot']['references'][ctx.slot]['wan3_media_id']==str(saved.id)
+    begun = await mutate_draft(ctx.user,ctx.draft['id'],ctx.template,'begin',slot_id=ctx.slot)
+    for invalid in (str(saved.id+1),True,'invalid'):
+        with pytest.raises(SmartRepeatError,match='ASSET_NOT_OWNED|INVALID_ASSET'):
+            await mutate_draft(ctx.user,ctx.draft['id'],ctx.template,'ready',slot_id=ctx.slot,
+                upload_token=begun['state']['slots'][ctx.slot]['upload_token'],wan3_media_id=invalid)
+    with pytest.raises(SmartRepeatError,match='INVALID_ASSET'):
+        await mutate_draft(ctx.user,ctx.draft['id'],ctx.template,'ready',slot_id=ctx.slot,
+            upload_token=begun['state']['slots'][ctx.slot]['upload_token'],wan3_media_id=str(saved.id),saved_reference_id=str(saved.id))

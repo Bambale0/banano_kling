@@ -199,6 +199,7 @@ async def smart_repeat_route(request):
             draft = await store.mutate_draft(user, draft_id, template, str(auth_body.get('operation') or ''),
                 slot_id=auth_body.get('slot_id'), upload_token=auth_body.get('upload_token'),
                 url=auth_body.get('url'), saved_reference_id=auth_body.get('saved_reference_id'),
+                wan3_media_id=auth_body.get('wan3_media_id'),
                 preset_id=auth_body.get('preset_id'), user_values=auth_body.get('user_values'),
                 prompt_changes=auth_body.get('prompt_changes'))
             return _json({'ok': True, **store.public_draft(draft, template)})

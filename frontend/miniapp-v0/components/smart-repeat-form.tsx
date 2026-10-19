@@ -82,7 +82,8 @@ export function SmartRepeatForm({ sourceId, onClose }: { sourceId: number | null
       if (generation !== session.current || slotEpochs.current[slot.slot_id] !== epoch) return
       await smartRepeatCall<RepeatDraft>('update', { draft_id: draftId, operation: 'processing', slot_id: slot.slot_id, upload_token: token })
       const ready = await smartRepeatCall<RepeatDraft>('update', { draft_id: draftId, operation: 'ready', slot_id: slot.slot_id, upload_token: token,
-        ...(uploaded.saved_reference_id ? { saved_reference_id: uploaded.saved_reference_id } : { url: uploaded.url }) })
+        ...(uploaded.wan3_media_id ? { wan3_media_id: uploaded.wan3_media_id }
+          : uploaded.saved_reference_id ? { saved_reference_id: uploaded.saved_reference_id } : { url: uploaded.url }) })
       accept(ready, generation)
       if (generation === session.current) { addSavedReference(uploaded); setPickerSlot(null); setLibrarySlot(null) }
     } catch (e) {

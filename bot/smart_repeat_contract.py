@@ -311,8 +311,9 @@ def compile_bindings(source: dict, template: dict, draft: dict) -> dict:
             {'image': images, 'video': videos, 'audio': audio}[slot['kind']].append(url)
             references[sid] = {'binding': 'upload', 'asset_id': aid, 'kind': slot['kind'],
                 'field': slot['field'], 'index': slot['index'], 'url': url, 'state': 'READY'}
-            if asset.get('saved_reference_id'):
-                references[sid]['saved_reference_id'] = asset['saved_reference_id']
+            for key in ('saved_reference_id', 'wan3_media_id'):
+                if asset.get(key):
+                    references[sid][key] = asset[key]
             if asset.get('sha256'):
                 references[sid].update(sha256=asset['sha256'], size_bytes=asset['size_bytes'])
         else:

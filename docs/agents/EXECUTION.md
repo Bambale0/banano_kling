@@ -2391,3 +2391,11 @@ Re-run verification/review after this scope adjustment.
   and exact deployed SHA verification remain pending. Production browser smoke
   will use real deployed assets with synthetic intercepted APIs; backend guards
   will be read-only, with no paid calls or customer-draft mutations.
+
+- Final adapter audit caught a pre-release Wan namespace incompatibility: Wan
+  upload reference.id belongs to wan3_prime_media, not saved_references. Native
+  auto-merge temporarily disabled before merging. Added explicit wan3_media_id
+  from the actual uploader, separate owner/kind-scoped lookup and durable
+  metadata/snapshot identity; URL compatibility retained. New red component
+  regression confirms same numeric IDs cannot select the wrong stored file.
+  Add SQLite/PostgreSQL collision, invalid IDs and mixed-ID rejection cases.

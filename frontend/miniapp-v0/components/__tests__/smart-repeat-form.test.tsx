@@ -4,6 +4,7 @@ import { SmartRepeatForm } from '@/components/smart-repeat-form'
 import { useApp } from '@/lib/app-context'
 import { smartRepeatCall, type RepeatDraft } from '@/lib/smart-repeat-api'
 import { uploadFile } from '@/lib/api'
+import { uploadWan3PrimeReference } from '@/lib/wan3-prime-api'
 import type { UploadedFile } from '@/lib/types'
 
 jest.mock('@/lib/app-context', () => ({ useApp: jest.fn() }))
@@ -169,4 +170,16 @@ test('late new-repeat response cannot replace another publication', async () => 
   await act(async () => { finish({ ...previous, status: 'draft', prompt_changes: 'A changes' }) })
   expect(screen.getByText('Модель исходной работы: banana_2')).toBeInTheDocument()
   expect(screen.getByRole('textbox', { name: 'Что изменить' })).toHaveValue('B changes')
+})
+
+test('Wan upload identity never resolves as a saved-reference ID with the same number', async () => {
+  draft.template.model = 'wan_3'
+  ;(uploadWan3PrimeReference as jest.Mock).mockResolvedValue({ id: '7', saved_reference_id: '7', wan3_media_id: '7',
+    name: 'wan.png', type: 'image', url: '/uploads/wan3/own.png', size: 10 })
+  render(<SmartRepeatForm sourceId={42} onClose={jest.fn()} />)
+  fireEvent.change(await screen.findByLabelText('Загрузить: Ваше лицо'), { target: { files: [new File(['wan'], 'wan.png', { type: 'image/png' })] } })
+  await waitFor(() => expect(call.mock.calls.some(([action, body]) => action === 'update' && body.operation === 'ready')).toBe(true))
+  const ready = call.mock.calls.find(([action, body]) => action === 'update' && body.operation === 'ready')![1]
+  expect(ready).toMatchObject({ slot_id: 'face', wan3_media_id: '7' })
+  expect(ready).not.toHaveProperty('saved_reference_id')
 })

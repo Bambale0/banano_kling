@@ -248,6 +248,7 @@ function uploadedFileFromWan3(file: File, data: Wan3PrimeUploadCompleteResponse)
     type: data.kind === 'file' ? 'image' : data.kind,
     size: data.size || file.size,
     saved_reference_id: data.reference?.id ? String(data.reference.id) : null,
+    wan3_media_id: data.reference?.id ? String(data.reference.id) : null,
     created_at: data.reference?.created_at || null,
     source: data.reference?.source || 'miniapp_wan3_prime',
   }
