@@ -1,40 +1,33 @@
-# Private references in ordinary image repeats
+# Закрытые референсы при повторе публикации
 
-Ordinary image publications now have two independent owner controls:
+**Общий контракт:** [PUBLISHED_REPEAT_CONTRACT.md](PUBLISHED_REPEAT_CONTRACT.md). Право **повторить опубликованную работу** и право использовать **её скрытый входной файл** — разные вещи.
 
-- **Public references:** the existing visibility switch and per-image/video publication selection determine which source previews and links are published.
-- **Private image-repeat permission:** a separate image-only selection permits the server to reuse these particular original images in other users’ repeats. It does not publish their previews or links. The author must explicitly select them; old public-reference selections never enable this permission.
+## Публикация и выбор материалов
 
-## Permission and withdrawal
+Автор может опубликовать результат исходной генерации, тренда, ремикса или повтора; это самостоятельная публикация. `action_type` / `source_feed_gen_id` не является основанием запрещать новый повтор.
 
-`generation_tasks.feed_repeat_reference_selection` is nullable JSON containing an `images` URL snapshot. The migration is additive, with no backfill. The owner publication API accepts `repeat_reference_image_indices`; an omitted, null or empty selection grants no private reuse. Owner task detail returns only indices in `feed_repeat_reference_selection`, using the existing canonical source-index mapping. Public cards do not include the grant snapshot.
+- Настройки видимости определяют, будут ли ссылки/превью референсов показаны публично.
+- `feed_repeat_reference_selection` хранит отдельный выбор владельца для **server-side reuse** конкретных закрытых входных файлов. В image-публикации используются `repeat_reference_image_indices`; старый публичный выбор референсов не означает разрешение на приватный reuse.
+- `fixed` слот: сервер подставляет разрешённый сохранённый файл, **не** возвращая его URL другим пользователям.
+- `upload` слот: пользователь прикрепляет своё фото/видео. Закрытая ссылка автора не передаётся в Mini App.
+- Позиции `ImageN`/`VideoN`, порядок и роли важны. Нельзя сдвигать слоты или молча удалять недостающий `fixed` материал.
 
-Only an original, completed image generation may supply a grant. New Mini App repeats require that original author publication; legacy child publication sources are rejected. Owner Telegram repeats of a child retain provenance and re-check the original permission. Foreign callers cannot edit it. Child/legacy remix rows cannot re-authorize inherited inputs. Each new provider submission checks the current original publication, exact selected URL membership, and availability. A persisted child snapshot records inputs to re-check, never permission by itself. Revocation or missing assets reject the affected new repeat/retry rather than silently changing its composition. Already submitted generation requests cannot be recalled from a provider.
+## Кем проверяется разрешение
 
-Hiding public previews does not revoke the separate private-use permission. To revoke reuse, clear the private-repeat selection or withdraw the whole publication. Removing only the feed placement while retaining the published profile leaves the publication shared. Full withdrawal clears the grant. Re-publishing from an older client with no private-use field also clears it, fail-closed.
+Перед созданием provider job backend проверяет разрешения **самой выбранной публикации**, её public/profile visibility, выбранные fixed refs, их доступность, quota/limits и актуальный quote. Для дочерней публикации разрешение фиксируется как `private_repeat_permission_source_id`; генеалогический `source_feed_gen_id` остаётся для истории. При автоматическом retry должна проверяться та же текущая публикация, а не первый предок.
 
-## Data boundaries
+Снимок исходных reference URLs в task/request не создаёт нового разрешения, но позволяет проверить точные выбранные слоты. При отзыве разрешения, удалении материала или полном снятии публикации новый paid launch/retry **запрещён до списания**. Нельзя обещать отзыв уже отправленной provider job.
 
-Private refs enter only the server-side generation recipe and provider input. They are excluded from child task detail, recent task history/bootstrap, public/owner child cards, restored selectable FSM inputs, and user-facing errors. Server logs retain IDs, counts and sanitized error categories without source URLs. The original author still has their own source images in owner task detail.
+Скрытие публичных превью не равно отзыву `fixed`. Если автор снял работу из ленты, но оставил публичный профиль, доступ определяется текущей visibility для этого источника.
 
-Ordinary image repeats preserve the original image positions used by `ImageN` prompts. Selected original images retain their slots; new images fill replaced slots in order. Missing required replacements or a combined model limit violation is rejected before generation. Seedance trend hidden/fixed reference behavior is separate and unchanged.
+## Данные и диагностика
 
-Public reference-media responses now use `Cache-Control: private, no-store`, and both thumbnail/full routes re-check current visibility even if an on-disk thumbnail already exists. Previously downloaded or previously cached assets cannot be erased retroactively by changing these headers. This is not a promise of retroactive deletion from third-party caches.
+Private source URLs и скрытый авторский prompt не появляются в чужих public cards, bootstrap/истории, повторных формах, Telegram FSM, рекламных ссылках, ошибках или логах. Для отладки достаточно source/task ID, binding/role/position и безопасного кода отказа. Старые защищённые media могут быть загружены и закешированы ранее; `Cache-Control: private, no-store` не удаляет их задним числом.
 
-## Verification and release
+Любая медиа/таймкод-проверка выполняется до provider launch. Цена повтора видео рассчитывается по **фактическим секундам** референсных видео и результату, не через «есть видео → ×2». Точный quote и idempotent accounting — серверные.
 
-All automated checks use synthetic URLs/assets and mocked providers. No paid generation or real customer private-asset reads are part of this implementation. See the execution ledger for exact tests, review findings, and release status. Merge/deploy requires separate authorization.
+## Регрессии
 
+`tests/test_image_repeat_reference_integrity.py`, `tests/test_private_repeat_runtime.py`, `tests/test_private_repeat_permission.py`, `tests/test_video_repeat_private_contract.py`, `tests/test_video_repeat_private_callbacks.py`. Обязательные сценарии: исходник, дочерняя опубликованная работа, заменяемые слоты, скрытые fixed refs, отзыв, повторное обращение провайдера и rollback charge.
 
-## Repeat integrity (2026-10-07)
-
-Image creation and Feed remix now assemble the same authorized recipe. A repeat
-whose slots are all explicitly fixed does not require an extra uploaded photo.
-Owner-selected inputs retain their original ImageN positions; a missing earlier
-replacement rejects before billing rather than shifting a later fixed object.
-
-Video repeats likewise reject incomplete fixed-reference slots or failed recipe
-restoration before reaching the generation handler. Private inputs remain server-side.
-Known canonical and legacy local-upload aliases represent one source identity for
-permission checks; unrelated external hosts do not. Existing grants/revocation and
-reference-display settings retain their separate meanings.
+Записи до PR #320 в `docs/agents/EXECUTION.md` отражают историю разработки, включая **отменённый** запрет повторов опубликованных ремиксов. Приоритет — актуальный контракт и код.

@@ -1,3 +1,8 @@
+> **Архивный фрагмент:** упоминание `cdn.chillcreative.ru` в старых примерах
+> не относится к текущей Mini App. Production:
+> `https://tanyapp.xn--e1aikcel5c5a.online/mini-app/`.
+> Обновлённый [runbook](runbook.md) — источник операций.
+
 # Локальный запуск и проверка NEUROMIX
 
 ## 1. Назначение
