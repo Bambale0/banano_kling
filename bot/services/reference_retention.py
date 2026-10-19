@@ -23,14 +23,17 @@ REFERENCE_DOCUMENTS_SQL = """
 def reference_snapshot_query(*, postgres: bool, all_uploads: bool = False) -> str:
     """Return a backend-specific read-only query over all nested media slots."""
     if postgres:
+        # Keep predicates outside JSONPath: the compatibility adapter treats
+        # question marks as bind placeholders, even inside quoted literals.
         leaves = """
             SELECT DISTINCT ref.value #>> '{}' AS ref_url
             FROM snapshots
             CROSS JOIN LATERAL jsonb_path_query(
                 snapshots.document::jsonb,
-                'strict $.** ? (@.type() == "string")'
+                'strict $.**'
             ) AS ref(value)
-            WHERE (ref.value #>> '{}') LIKE '%uploads/refs/%'
+            WHERE jsonb_typeof(ref.value) = 'string'
+              AND (ref.value #>> '{}') LIKE '%uploads/refs/%'
         """
     else:
         leaves = """

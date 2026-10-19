@@ -2140,3 +2140,19 @@ Coverage: pure contract tests and existing chunk HTTP regression run locally wit
 - **Acceptance:** read-only production repeat-plan for real published Wan task 315600 must return *source_feed_gen_id=315600*, preserve the child settings and avoid trend_id fallback. Inspect whether user-upload slots are requested appropriately; then manual Telegram repeat, upload, quote and finished output in normal client.
 
 - Auto-retry: persist the server-authorized immediate publication ID as private_repeat_permission_source_id in the child request snapshot and recheck it on failed-provider automatic retry. Retain source_feed_gen_id as the original lineage for history; old jobs without this field keep old behavior. The current child owner can revoke consent by unpublishing.
+
+
+## 2026-10-19 - Reference loss recovery and PostgreSQL ownership query
+
+- Baseline/runtime: `63d6e8b2164de223f80ca950460c697e123237c1`, tanyapi only, `/root/tanya/banano_kling`, `banano-kling-bot`. Other projects excluded.
+- Historical causes: generic 24-hour upload cleanup included durable trend-assets before 6ce4197; recent-reference pruning physically unlinked files before #326, independently of generation ownership.
+- Fresh audit: all twelve restored asset rows still have hash-valid originals; five rows/four unique originals remain missing. Expanded size-filtered scans covered 510,298 ordinary files without a size match, and normalization of 139 original owner images produced no target SHA-256. No lookalike substitution, DB/balance write or paid launch.
+- Safety action: a separate same-host private tar rescue copy outside uploads contains eleven exact originals plus manifest; all members verified. This is not an off-host backup.
+- New reproducible defect: reference_snapshot_query uses a JSONPath question-mark filter. The real PostgreSQL compatibility adapter rewrites it into a bind placeholder inside the path, raising OperationalError. A direct raw PostgreSQL query misses this adapter defect. Cleanup fails closed; this is not evidence of fresh deletion after #326.
+- Slice: add a failing no-bind query regression and a disposable PostgreSQL adapter integration regression; move the type predicate from JSONPath into SQL without changing reference ownership or global adapter behavior; run focused/full safe checks and real-data read-only collector dry-run with filesystem deletions intercepted.
+- No schema, UI, provider, pricing, permissions or runtime configuration changes. Preserve pending/private/failed work references and malformed-JSON fail-closed behavior. Normal protected PR to tanyapi, exact-SHA autodeploy and post-release verification required.
+- Guidance: Bambale0/skills diagnosing-bugs, Bambale0/claw safety/verification instructions; anthropics webapp-testing reviewed, browser changes not part of this storage-only slice.
+- Status: red regression pending; production code unchanged.
+
+- RED/GREEN: both no-bind regression variants failed on the baseline query and pass after moving the string-type predicate into SQL. Thirty-seven focused safe tests pass. A fresh read-only production dry-run through the real PostgresConnection adapter protects 72,503 owned upload paths, including all twelve previously restored rows; all remove/unlink/rmdir calls intercepted, zero physical deletions.
+- Disposable PostgreSQL uncovered a pre-existing migration-test fixture error, reproduced unchanged on baseline 63d6e8b: a video task was given an unversioned nonempty image-only grant. Updated only that explicit test input to the existing version-1 image/video contract; kept all migration, no-backfill, exact persistence and restart assertions. No production permission behavior changed.
