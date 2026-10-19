@@ -44,3 +44,11 @@ async def test_postgres_upload_lease_recovery_and_missing_asset(monkeypatch, tmp
         test_upload_fencing_reload_delete_and_no_early_quote,
     )
     await test_upload_fencing_reload_delete_and_no_early_quote(monkeypatch, tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_postgres_saved_reference_identity_and_filename(monkeypatch, tmp_path):
+    from tests.test_smart_repeat_store import (
+        test_saved_reference_id_binds_owned_asset_to_slot_and_restores_metadata,
+    )
+    await test_saved_reference_id_binds_owned_asset_to_slot_and_restores_metadata(monkeypatch, tmp_path)

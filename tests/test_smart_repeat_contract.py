@@ -187,12 +187,13 @@ def test_registered_repeat_models_keep_source_identity_settings_and_hidden_promp
     template = infer_template(task)
     template['variables'] = [{'id': 'subject', 'label': 'Сюжет', 'required': True, 'max_length': 40}]
     state = {'slots': {slot['slot_id']: ready('/uploads/refs/mine.png', 'my-media') for slot in template['slots']},
-        'user_values': {'subject': 'car'}}
+        'user_values': {'subject': 'car'}, 'prompt_changes': 'Make the car blue'}
     compiled = compile_bindings(task, template, state)
     body = _engine_body(None, task, compiled, {'img_service': 'banana_pro', 'v_model': 'banana_pro',
         'model': 'banana_pro', 'prompt': 'forged prompt'}, {'id': 'test-draft'})
     assert template['model'] == compiled['snapshot']['model'] == model
-    assert compiled['source']['prompt'] == 'Private car recipe'
+    assert compiled['source']['prompt'].startswith('Private car recipe')
+    assert compiled['source']['prompt'].endswith('Make the car blue')
     assert task['prompt'] == 'Private {{subject}} recipe'
     assert 'Private' not in str(public_template(template))
     if model in {'wan_3', 'wan_3_prime'}:

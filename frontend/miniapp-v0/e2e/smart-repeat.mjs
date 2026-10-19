@@ -53,10 +53,14 @@ try {
   }
   browser = await chromium.launch({ headless: true })
   for (const width of [320, 390, 430]) {
+    const image = width === 390
+    const title = image ? 'Повторить фото' : 'Повторить видео'
+    const sourceCard = image ? { ...card, gen_type: 'image', model: 'banana_2', result_url: 'https://example.test/result.png', preview_url: 'https://example.test/result.png', result_urls: ['https://example.test/result.png'] } : card
+    const sourceTemplate = image ? { ...template, type: 'image', model: 'banana_2' } : template
     const context = await browser.newContext({ viewport: { width, height: 900 } })
     const page = await context.newPage()
     const errors = [], launches = [], bindings = []
-    let draft = { ok: true, draft_id: 'synthetic-draft', revision: 0, status: 'draft', template, preset_id: null, user_values: {}, slots: {}, quote: null }
+    let draft = { ok: true, draft_id: 'synthetic-draft', revision: 0, status: 'draft', template: sourceTemplate, preset_id: null, user_values: {}, slots: {}, quote: null }
     let credits = 125
     let releaseUpload = () => {}
     let holdUpload = true
@@ -71,9 +75,9 @@ try {
       if (url.hostname === 'example.test') return route.fulfill(url.pathname.endsWith('.mp4') ? { contentType: 'video/mp4', body: media } : { contentType: 'image/png', body: png })
       if (!url.pathname.includes('/mini-app/api/')) return route.continue()
       let response = { ok: true }
-      if (url.pathname.endsWith('/bootstrap')) response = { ...bootstrap, credits, recent_tasks: draft.task_id ? [{ ...task, task_id: draft.task_id, status: 'pending', prompt: '', prompt_preview: '', prompt_hidden: true }] : [], saved_references: width === 430 ? bootstrap.saved_references : [] }
-      else if (url.pathname.endsWith('/feed/item')) response = { ok: true, feed_item: card }
-      else if (url.pathname.endsWith('/feed') || url.pathname.endsWith('/feed/my')) response = { ok: true, feed: [card] }
+      if (url.pathname.endsWith('/bootstrap')) response = { ...bootstrap, image_models: [{ id: 'banana_2', label: 'Nano Banana 2', ratios: ['1:1'], costs: { '2K': 10 }, max_references: 8 }], credits, recent_tasks: draft.task_id ? [{ ...task, task_id: draft.task_id, status: 'pending', prompt: '', prompt_preview: '', prompt_hidden: true }] : [], saved_references: width === 430 ? bootstrap.saved_references : [] }
+      else if (url.pathname.endsWith('/feed/item')) response = { ok: true, feed_item: sourceCard }
+      else if (url.pathname.endsWith('/feed') || url.pathname.endsWith('/feed/my')) response = { ok: true, feed: [sourceCard] }
       else if (url.pathname.endsWith('/genjutsu')) response = { ok: true, visible: false }
       else if (url.pathname.endsWith('/prompts')) response = { ok: true, prompts: [] }
       else if (url.pathname.endsWith('/upload')) {
@@ -86,7 +90,9 @@ try {
         const body = route.request().postDataJSON()
         if (action === 'update') {
           draft = { ...draft, revision: draft.revision + 1, quote: null, slots: { ...draft.slots } }
-          if (body.operation === 'remove') delete draft.slots[body.slot_id]
+          if (body.operation === 'changes') draft.prompt_changes = body.prompt_changes.trim()
+          else if (body.operation === 'values') draft.user_values = body.user_values
+          else if (body.operation === 'remove') delete draft.slots[body.slot_id]
           else {
             const previous = draft.slots[body.slot_id] || {}
             draft.slots[body.slot_id] = { ...previous, state: body.operation === 'begin' ? 'UPLOADING' : body.operation.toUpperCase(),
@@ -117,7 +123,7 @@ try {
       return route.fulfill({ contentType: 'application/json', body: JSON.stringify(response) })
     })
     await page.goto(baseUrl + '?startapp=remix_777')
-    const dialog = page.getByRole('dialog').filter({ has: page.getByRole('heading', { name: 'Повторить видео' }) })
+    const dialog = page.getByRole('region', { name: title, exact: true })
     await dialog.waitFor()
     const calculate = dialog.getByRole('button', { name: 'Рассчитать стоимость' })
     assert.equal(await calculate.isDisabled(), true)
@@ -130,13 +136,22 @@ try {
     await dialog.getByLabel('Загрузить: Ваше лицо').setInputFiles({ name: 'face.png', mimeType: 'image/png', buffer: png })
     await dialog.getByText('Загружено обязательных референсов: 2 / 2', { exact: true }).waitFor()
     assert.deepEqual(bindings.slice(0, 2), [['car', 'https://example.test/owned/car.png'], ['face', 'https://example.test/owned/face.png']])
+    await dialog.getByRole('textbox', { name: 'Что изменить' }).fill('Make the car blue')
+    await dialog.getByRole('button', { name: 'Закрыть повтор', exact: true }).click()
+    await page.getByRole('button', { name: 'Закрыть', exact: true }).waitFor({ timeout: 3000 })
+    await page.getByRole('button', { name: 'Повторить', exact: true }).last().click()
+    await dialog.waitFor()
+    assert.equal(await dialog.getByRole('textbox', { name: 'Что изменить' }).inputValue(), 'Make the car blue')
     await page.reload()
     await dialog.getByText('Загружено обязательных референсов: 2 / 2', { exact: true }).waitFor()
     await dialog.getByRole('button', { name: 'Удалить файл', exact: true }).first().click()
     await dialog.getByText('Загружено обязательных референсов: 1 / 2', { exact: true }).waitFor()
     assert.equal(await calculate.isDisabled(), true)
     if (width === 430) {
-      await dialog.getByRole('group', { name: 'Ваше лицо' }).getByRole('button', { name: 'Выбрать: first.jpg', exact: true }).click()
+      const face = dialog.getByRole('group', { name: 'Ваше лицо' })
+      await face.getByRole('button', { name: 'Выбрать файл: Ваше лицо' }).click()
+      await face.getByRole('button', { name: 'Взять из сохранённых' }).click()
+      await face.getByRole('button', { name: 'Выбрать: first.jpg', exact: true }).click()
       await dialog.getByText('Выбрано: first.jpg', { exact: true }).waitFor()
       assert.deepEqual(bindings.at(-1), ['face', 'https://example.test/first.jpg'])
       await page.reload()
@@ -152,9 +167,10 @@ try {
     assert.equal(launches.length, 1); assert.equal(credits, 115)
     assert.equal(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth + 1), true)
     assert.ok(!(await page.locator('body').innerText()).includes(secret))
+    if (width === 430) await page.screenshot({ path: '/tmp/tanya-repeat-fixed-430.png', fullPage: true })
     assert.deepEqual(errors, [])
     await context.close()
-    console.log(`Smart repeat ${width}px: reverse uploads, pending guard, reload/remove, one launch${width === 390 ? ', lost response recovery' : ''} passed`)
+    console.log(`Smart repeat ${width}px: inline changes editor, close to source/reopen, reverse uploads, pending guard, reload/remove, one launch${width === 390 ? ', lost response recovery' : ''} passed`)
   }
 } finally {
   await browser?.close()

@@ -33,6 +33,7 @@ export interface RepeatDraft {
   status: 'draft' | 'launching' | 'launched' | 'unknown' | 'rejected'
   template: RepeatTemplate
   preset_id: string | null
+  prompt_changes?: string
   user_values: Record<string, string>
   slots: Record<string, { state: 'EMPTY' | 'UPLOADING' | 'PROCESSING' | 'READY' | 'FAILED'; asset_id?: string; url?: string; upload_token?: string; saved_reference_id?: string; filename?: string | null }>
   quote: { cost: number; quote_id: string } | null

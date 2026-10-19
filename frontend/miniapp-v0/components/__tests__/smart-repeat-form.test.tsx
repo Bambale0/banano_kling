@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { SmartRepeatDialog } from '@/components/smart-repeat-dialog'
+import { SmartRepeatForm } from '@/components/smart-repeat-form'
 import { useApp } from '@/lib/app-context'
 import { smartRepeatCall, type RepeatDraft } from '@/lib/smart-repeat-api'
 import { uploadFile } from '@/lib/api'
@@ -11,11 +11,6 @@ jest.mock('@/lib/smart-repeat-api', () => ({ smartRepeatCall: jest.fn() }))
 jest.mock('@/lib/api', () => ({ uploadFile: jest.fn() }))
 jest.mock('@/lib/seedance25-api', () => ({ uploadSeedance25Video: jest.fn() }))
 jest.mock('@/lib/wan3-prime-api', () => ({ uploadWan3PrimeReference: jest.fn() }))
-jest.mock('@/components/ui/dialog', () => ({
-  Dialog: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DialogContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DialogTitle: ({ children }: { children: React.ReactNode }) => <h2>{children}</h2>,
-}))
 const call = smartRepeatCall as jest.Mock
 const upload = uploadFile as jest.Mock
 let draft: RepeatDraft
@@ -31,7 +26,9 @@ beforeEach(() => {
   call.mockImplementation(async (action, payload) => {
     if (action === 'update') {
       draft = { ...draft, revision: draft.revision + 1, quote: null, slots: { ...draft.slots } }
-      if (payload.operation === 'remove') delete draft.slots[payload.slot_id]
+      if (payload.operation === 'changes') draft.prompt_changes = payload.prompt_changes.trim()
+      else if (payload.operation === 'values') draft.user_values = payload.user_values
+      else if (payload.operation === 'remove') delete draft.slots[payload.slot_id]
       else draft.slots[payload.slot_id] = { state: payload.operation === 'begin' ? 'UPLOADING' : payload.operation === 'ready' ? 'READY' : 'PROCESSING',
         upload_token: payload.slot_id + '-lease', url: payload.url, asset_id: payload.slot_id + '-asset' }
     }
@@ -47,7 +44,7 @@ test('reverse uploads remain named; unfinished files block quote; double click l
   let finishUpload: (value: unknown) => void = () => {}
   upload.mockImplementationOnce(() => new Promise(resolve => { finishUpload = resolve }))
     .mockResolvedValue({ id: 'face', type: 'image', url: '/uploads/face.png', name: 'face.png' })
-  render(<SmartRepeatDialog sourceId={42} onClose={jest.fn()} />)
+  render(<SmartRepeatForm sourceId={42} onClose={jest.fn()} />)
   const car = await screen.findByLabelText('Загрузить: Ваша машина')
   const calculate = screen.getByRole('button', { name: 'Рассчитать стоимость' })
   expect(calculate).toBeDisabled()
@@ -69,7 +66,7 @@ test('reverse uploads remain named; unfinished files block quote; double click l
 })
 test('ready files restore; removing one prevents launch', async () => {
   draft.slots = { face: { state: 'READY', asset_id: 'face', url: '/uploads/face.png' }, car: { state: 'READY', asset_id: 'car', url: '/uploads/car.png' } }
-  render(<SmartRepeatDialog sourceId={42} onClose={jest.fn()} />)
+  render(<SmartRepeatForm sourceId={42} onClose={jest.fn()} />)
   const calculate = await screen.findByRole('button', { name: 'Рассчитать стоимость' })
   expect(calculate).toBeEnabled()
   fireEvent.click(screen.getAllByRole('button', { name: 'Удалить файл' })[0])
@@ -93,7 +90,9 @@ test('saved library choices bind their ID to a named slot and restore the select
     }
     return result
   })
-  const rendered = render(<SmartRepeatDialog sourceId={42} onClose={jest.fn()} />)
+  const rendered = render(<SmartRepeatForm sourceId={42} onClose={jest.fn()} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Выбрать файл: Ваше лицо' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Взять из сохранённых' }))
   const choices = await screen.findAllByRole('button', { name: 'Выбрать: portrait.jpg' })
   expect(screen.getByText('Загружено обязательных референсов: 0 / 2')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Рассчитать стоимость' })).toBeDisabled()
@@ -105,7 +104,43 @@ test('saved library choices bind their ID to a named slot and restore the select
   expect(upload).not.toHaveBeenCalled()
   expect(screen.getByText('Загружено обязательных референсов: 1 / 2')).toBeInTheDocument()
   rendered.unmount()
-  render(<SmartRepeatDialog sourceId={42} onClose={jest.fn()} />)
+  render(<SmartRepeatForm sourceId={42} onClose={jest.fn()} />)
   expect(await screen.findByText('Выбрано: portrait.jpg')).toBeInTheDocument()
   expect(screen.getByAltText('Ваше лицо')).toHaveAttribute('src', '/uploads/two.jpg')
+})
+
+test('changes editor stays inside the repeat and saves before close or quote', async () => {
+  draft.slots = { face: { state: 'READY', asset_id: 'face', url: '/uploads/face.png' }, car: { state: 'READY', asset_id: 'car', url: '/uploads/car.png' } }
+  const close = jest.fn()
+  const rendered = render(<SmartRepeatForm sourceId={42} onClose={close} />)
+  const editor = await screen.findByRole('textbox', { name: 'Что изменить' })
+  fireEvent.change(editor, { target: { value: 'Синяя машина' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Закрыть повтор' }))
+  await waitFor(() => expect(close).toHaveBeenCalledTimes(1))
+  expect(call.mock.calls.some(([action, body]) => action === 'update' && body.operation === 'changes' && body.prompt_changes === 'Синяя машина')).toBe(true)
+  expect(call.mock.calls.some(([action]) => action === 'quote' || action === 'launch')).toBe(false)
+  rendered.unmount()
+  render(<SmartRepeatForm sourceId={42} onClose={close} />)
+  expect(await screen.findByRole('textbox', { name: 'Что изменить' })).toHaveValue('Синяя машина')
+  fireEvent.change(screen.getByRole('textbox', { name: 'Что изменить' }), { target: { value: 'Красная машина' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Рассчитать стоимость' }))
+  await screen.findByRole('button', { name: /Создать.*10/ })
+  expect(draft.prompt_changes).toBe('Красная машина')
+  expect(call.mock.calls.filter(([action]) => action === 'launch')).toHaveLength(0)
+})
+
+test('changing publication while edits save cannot quote or launch the old repeat', async () => {
+  draft.slots = { face: { state: 'READY', asset_id: 'face', url: '/uploads/face.png' }, car: { state: 'READY', asset_id: 'car', url: '/uploads/car.png' } }
+  let finish: (value: unknown) => void = () => {}
+  const original = call.getMockImplementation()!
+  call.mockImplementation((action, payload) => action === 'update' && payload.operation === 'changes'
+    ? new Promise(resolve => { finish = resolve }) : original(action, payload))
+  const rendered = render(<SmartRepeatForm sourceId={42} onClose={jest.fn()} />)
+  fireEvent.change(await screen.findByRole('textbox', { name: 'Что изменить' }), { target: { value: 'New changes' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Рассчитать стоимость' }))
+  await waitFor(() => expect(call.mock.calls.some(([action, body]) => action === 'update' && body.operation === 'changes')).toBe(true))
+  rendered.rerender(<SmartRepeatForm sourceId={43} onClose={jest.fn()} />)
+  finish(draft)
+  await screen.findByRole('textbox', { name: 'Что изменить' })
+  expect(call.mock.calls.some(([action]) => action === 'quote' || action === 'launch')).toBe(false)
 })

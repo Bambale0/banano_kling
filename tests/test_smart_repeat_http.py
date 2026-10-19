@@ -63,6 +63,11 @@ async def test_http_image_preflight_upload_reload_quote_launch_and_replay(monkey
         assert restored['slots'][sid]['asset_id'] == ready['slots'][sid]['asset_id']
         assert restored['slots'][sid]['saved_reference_id'] == ready['slots'][sid]['saved_reference_id']
         assert restored['slots'][sid]['url'] == '/uploads/refs/own.png'
+        status, changed = await call('update', draft_id=did, operation='changes', prompt_changes='Make the car blue')
+        assert status == 200, changed
+        _, restored = await call('open', source_id=ctx.source['id'])
+        assert restored['prompt_changes'] == 'Make the car blue'
+        assert 'Private synthetic recipe' not in json.dumps(restored)
         status, quoted = await call('quote', draft_id=did)
         assert status == 200 and quoted['quote']['cost'] == 10, quoted
         responses = await asyncio.gather(*(call('launch', draft_id=did, quote_id=quoted['quote']['quote_id']) for _ in range(2)))
@@ -72,6 +77,7 @@ async def test_http_image_preflight_upload_reload_quote_launch_and_replay(monkey
         provider.assert_awaited_once()
         assert provider.await_args.kwargs['image_input'] == ['/uploads/refs/own.png']
         assert 'Private synthetic recipe' in provider.await_args.kwargs['prompt']
+        assert provider.await_args.kwargs['prompt'].count('Make the car blue') == 1
         _, recovered = await call('open', source_id=ctx.source['id'])
         assert recovered['status'] == ('rejected' if outcome == 'rejected' else 'launched'), recovered
         await call('launch', draft_id=did, quote_id=quoted['quote']['quote_id'])

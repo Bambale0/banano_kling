@@ -2344,3 +2344,35 @@ Progress:
   unverified adapter/model identifier was added.
 - Full Jest 68 suites / 522 tests pass. Focused backend and full safe suite,
   TypeScript/build/mobile browser, review and protected release are in progress.
+
+User clarification supersedes initial UI scope: the problematic cross closes
+the repeat modal, revealing an unrelated default generator. Users rely on the
+editable changes field for both image/video. Deliver the repeat in the existing
+photo/video page with that field intact, replacing the reference input area with
+only named recipe slots, trend-style cards and explicit new/library choices.
+Closing returns to the original publication, saving draft edits. Additive draft
+JSON prompt_changes reuses the existing compose_feed_remix_prompt semantics;
+original author prompt stays private and is never replaced by client text.
+Re-run verification/review after this scope adjustment.
+
+- Clarified cross scenario reproduced red in actual built browser: after Close,
+  original-publication preview never appeared (3s deterministic timeout).
+- Added red contract case proving free-form user changes were ignored. Fixed
+  through existing shared remix composition, after named-variable replacement.
+- Smart repeat now renders inline in PhotoTab/VideoTab; the ordinary unrelated
+  generator is not behind a covering modal. The changes editor remains visible.
+  Required source slots use compact trend-style label/hint/media cards; plus
+  opens separate new-upload/library actions. Library is initially collapsed.
+  Source model stays pinned. Close persists edits and returns to the original
+  feed/profile publication; its navigation result is fenced against newer user
+  navigation. History opening skips source navigation.
+- Interim pre-clarification full safe suite: 3926 passed / 117 skipped /
+  76 subtests. Repeat final full suite after updated behavior.
+
+- Updated focused backend 62/62 pass, including actual image engine with user
+  changes reaching synthetic provider exactly once and hidden base undisclosed.
+- Updated built browser passes 320/390/430px, photo and video surfaces, visible
+  changes editor, close→original publication→reopen with edits/files retained,
+  new/library choice and ID binding, quote guard, duplicate click and lost reply.
+- Added stale-publication fence before quote/launch after edit persistence, and
+  PostgreSQL acceptance reuse for saved-media identity and filename.

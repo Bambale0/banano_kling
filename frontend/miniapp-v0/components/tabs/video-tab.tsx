@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { SmartRepeatForm } from '@/components/smart-repeat-form'
 import { useApp } from '@/lib/app-context'
 import { VideoGeneratorForm } from '../forms/video-generator-form'
 import { Seedance25PublicForm } from '../forms/seedance25-public-form'
@@ -13,6 +14,7 @@ import { GenjutsuButton } from '../genjutsu-entry'
 
 export function VideoTab() {
   const {
+    smartRepeatSourceId, smartRepeatType, closeSmartRepeat,
     state,
     addTask,
     setCredits,
@@ -203,8 +205,8 @@ export function VideoTab() {
         </p>
       </div>
 
-      <GenjutsuButton />
-      {canUseSeedance25 ? (
+      {smartRepeatSourceId && smartRepeatType === 'video' ? null : <GenjutsuButton />}
+      {canUseSeedance25 && !(smartRepeatSourceId && smartRepeatType === 'video') ? (
         <div className="mx-auto mb-4 max-w-xl space-y-2">
           <div className="px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
             Выберите модель
@@ -239,7 +241,7 @@ export function VideoTab() {
       ) : null}
 
       <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)] xl:gap-6">
-        {effectiveMode === 'seedance25' && seedance25Model && !keepSeedanceRepeatInCatalog ? (
+        {smartRepeatSourceId && smartRepeatType === 'video' ? <SmartRepeatForm sourceId={smartRepeatSourceId} onClose={closeSmartRepeat} /> : effectiveMode === 'seedance25' && seedance25Model && !keepSeedanceRepeatInCatalog ? (
           <Seedance25PublicForm
             model={seedance25Model}
             credits={state.user.credits}

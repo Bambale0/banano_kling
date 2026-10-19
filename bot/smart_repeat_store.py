@@ -198,7 +198,7 @@ def public_draft(draft, template):
     state = draft['state'] or {}
     return {'draft_id': draft['id'], 'revision': draft['revision'], 'status': draft['status'],
         'template': public_template(template), 'preset_id': state.get('preset_id'),
-        'user_values': state.get('user_values', {}),
+        'user_values': state.get('user_values', {}), 'prompt_changes': state.get('prompt_changes', ''),
         'slots': {sid: {key: value[key] for key in ('state', 'asset_id', 'url', 'upload_token', 'error', 'saved_reference_id', 'filename') if key in value}
                   for sid, value in state.get('slots', {}).items()},
         'quote': ({key: draft['quote'][key] for key in ('cost', 'quote_id')} if draft['quote'] else None),
@@ -247,7 +247,7 @@ async def validate_owned_asset(user, kind, url, *, existing=None):
 
 
 async def mutate_draft(user, draft_id, template, operation, *, slot_id=None, upload_token=None, url=None,
-                       preset_id=None, user_values=None, saved_reference_id=None):
+                       preset_id=None, user_values=None, saved_reference_id=None, prompt_changes=None):
     # READY is accepted only for the current upload lease and a persisted owned
     # asset. Slow validation happens outside the row lock, then the lease fences it.
     definition = next((slot for slot in template['slots'] if slot['slot_id'] == slot_id), None)
@@ -305,6 +305,10 @@ async def mutate_draft(user, draft_id, template, operation, *, slot_id=None, upl
         elif operation == 'preset':
             selected = selected_slot_ids(template, preset_id)
             state.update(preset_id=preset_id, slots={sid: value for sid, value in state['slots'].items() if sid in selected})
+        elif operation == 'changes':
+            if not isinstance(prompt_changes, str) or len(prompt_changes) > 64 * 1024:
+                fail('INVALID_CHANGES', 'Проверьте текст изменений.', 400)
+            state['prompt_changes'] = prompt_changes.strip()
         elif operation == 'values':
             if not isinstance(user_values, dict) or not set(user_values) <= {var['id'] for var in template['variables']}:
                 fail('INVALID_VARIABLES', 'Некорректные поля персонализации.', 400)
