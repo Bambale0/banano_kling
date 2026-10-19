@@ -2156,3 +2156,49 @@ Coverage: pure contract tests and existing chunk HTTP regression run locally wit
 
 - RED/GREEN: both no-bind regression variants failed on the baseline query and pass after moving the string-type predicate into SQL. Thirty-seven focused safe tests pass. A fresh read-only production dry-run through the real PostgresConnection adapter protects 72,503 owned upload paths, including all twelve previously restored rows; all remove/unlink/rmdir calls intercepted, zero physical deletions.
 - Disposable PostgreSQL uncovered a pre-existing migration-test fixture error, reproduced unchanged on baseline 63d6e8b: a video task was given an unversioned nonempty image-only grant. Updated only that explicit test input to the existing version-1 image/video contract; kept all migration, no-backfill, exact persistence and restart assertions. No production permission behavior changed.
+## 2026-10-19 — open epics and smart-repeat release preflight
+
+- Baseline: current production `tanyapi` `9c253009f1f5f56542216e81f4425ebd04469d1a`.
+- Intent: audit open epics against the supplied smart-repeat specification and
+  bring the selected scope through protected release and exact-SHA smoke.
+- Discovery: the supplied EPIC-01..08 are proposed/unregistered; the actual
+  eight open GitHub epics #60..#67 concern a different security/billing backlog.
+  Scope clarification requested; independent reference safety review proceeds.
+- Audit/reuse/risks/acceptance: see
+  `docs/SMART_REPEAT_RELEASE_AUDIT_2026-10-19.md`. Missing universal author slots,
+  draft upload state and template versions are not represented as complete.
+- Isolation: task branch `feature/smart-repeat-release-20261019`, separate
+  worktree; production `bot/database.py` local patch and admin `data/price.json`
+  preserved. No changes to API/schema/FSM, prices/config/admin settings,
+  providers, payments or media in this documentation slice.
+- Plan: (1) inventory epics/PRs/runtime; (2) verify already shipped reference
+  protections and PR #328; (3) reconcile concrete release blockers; (4) use
+  protected native squash auto-merge; (5) verify merged CI, deployed SHA,
+  backend/static smoke and new telemetry; (6) execute confirmed remaining scope.
+- Verification seams: existing saved-reference availability, typed-repeat
+  receipt/no-double-debit, reference-binding/preflight and retention regression
+  tests. SQLite/PostgreSQL and browser are covered by exact-head CI for #328;
+  a docs-only slice does not add new domain/DB/auth/provider behavior to test.
+  Real paid model acceptance is distinct and is not claimed by mocked tests.
+- Observability: inspect aggregate error categories without private URLs,
+  prompts, user identifiers, secrets or customer payloads in audit output.
+- Review: #328 independently reviewed on standards and spec axes: 0 findings
+  each. Squash auto-merge armed for head
+  `9328ed4bc1fd12274f38b5bca709aca60aa6ba9b`; CI still in progress.
+- #325 functional canonicalizer and regression are already included in #326;
+  stale/conflicting PR closed as superseded after verifying no functional delta.
+- Exact-head local verification at #328 head: `python -m pytest -q
+  tests/test_saved_reference_availability.py tests/test_seedance_missing_reference_guard.py
+  tests/test_seedance_trend_reference_recipes.py tests/test_video_repeat_receipts.py
+  tests/test_trend_reference_preflight.py tests/test_reference_ownership_retention.py`:
+  105 passed. Test environment skips production dotenv and uses isolated SQLite.
+  The initial invocation from the baseline worktree had no tests run because
+  the PR-only test file was absent; corrected by checking out the exact PR head.
+- Production local code patch matched #328 byte-for-byte. Preserved it in
+  `/root/tanya/release-audit-20261019/pre-release-reference-availability.patch`
+  and a named git stash, removing the code-only dirty-tree deployment blocker.
+  Runtime `data/price.json` remained byte-for-byte unchanged.
+- Rollout: normal production CI/CD only, preserve runtime pricing; no manual
+  production deploy, destructive cleanup, refunds, paid runs or migration.
+- Follow-ups: selected scope pending clarification; storage capacity issue #323
+  remains open and does not authorize pruning customer media or backups.
