@@ -2453,3 +2453,25 @@ asset/session guards. Port neutral loading and explicit-selection assertions
 to SmartRepeatForm; update upstream routing/browser assertions for inline hosts.
 No new backend change in this integration; rerun frontend/build/both navigation
 journeys and exact protected CI.
+
+
+## 2026-10-19 — optional extra images in photo repeats
+
+- Baseline: f1649adbaa2e2023023541556b883e7482a77f78 (PR341). Isolated worktree/feature branch; production prices and checkout are not edited.
+- Request: one optional additional-reference block for photo repeats (nails, phone, case, other details); no new video input behavior.
+- Audit: author-configured slots already preserve source/provider indexes; draft slots already enforce owned media, upload leases, durable recovery, quote invalidation, idempotent paid launch and media retention. No user-owned optional append block exists.
+- Design: derive optional image capacity from existing model/upload policy minus ALL original image slots (including hidden/fixed). Use a reserved draft-only slot namespace, never change the author's template. Only READY extra images are appended after original positions, with separate UI and no required-file count inflation. Preserve existing excess references if limits shrink so users can remove them; never truncate silently.
+- Risks: main/fixed reference displacement, extra-slot forgery on video, duplicate/foreign assets, deleted/late uploads, old quote replay, lost-response recovery, library identity collisions and concurrent source navigation. Reuse existing ownership/lease/finance code and record extra slot IDs in existing structured events/snapshots.
+- Schema/config: no migration, provider/model/price changes or new feature flag. Existing smart-repeat rollout applies. Telegram published-repeat deep links reach this same form; non-Mini-App generation is unchanged.
+- Plan: (1) failing HTTP/store/UI regressions; (2) scoped backend append contract and optional photo UI; (3) ownership/count/order/concurrency/retention and browser checks; (4) docs/review, protected PR and exact-SHA autodeploy verification.
+- Verification uses synthetic media/providers and isolated databases; no live paid requests or user-draft mutations.
+- Progress: source/API/provider path audit complete; test-first implementation starting.
+
+- Red: five new backend scenarios failed on absent optional-image fields; four new UI scenarios failed on absent extra-photo block (existing nine UI cases still passed). After implementation: 102 backend/HTTP/retention cases and initial 14 repeat UI cases passed; two more source-switch/zero-budget checks added for review.
+- Full HTTP seam exposed a real adapter integration issue: extended source arrays include the verified user inputs, so the old foreign-source filter removed them. Fixed only through the existing request-local capability, matching source, caller and exact owned input identity. Five negative/positive capability cases verify that forged JSON, wrong user/source and private inputs stay filtered.
+- Existing tests defaulted to host-local Redis; the new fixtures and local test runner now explicitly disable real Redis access. All generation/database checks use temporary DBs, synthetic IDs/files and mocked providers. No production secrets/env, balances, drafts or provider calls are used.
+- Shared upload FSM, quote invalidation, duplicate/ownership checks, fixed-position compilation, preset persistence, snapshot/retention and paid launch replay pass. Runtime limit reductions retain existing extra files for explicit removal instead of silently truncating them.
+- Added PostgreSQL acceptance wrappers and expanded the required Chromium/WebKit feed/profile repeat journey with extra-photo selection/removal and a negative video assertion. Deployed-asset smoke can set REPEAT_NAVIGATION_E2E_BASE_URL; all API/media requests remain synthetic/intercepted.
+
+- Final local frontend checks: all 71 Jest suites / 553 tests passed before the last two additional race/zero-budget cases; the final focused repeat suite passes all 16 cases. Production static build, TypeScript and targeted ESLint passed. Chromium passed feed/profile × image/video at 320/390/430px including new extra-photo selection, removal, quote invalidation and negative video UI. WebKit cannot start on this host because its OS libraries are absent; both engines remain mandatory in GitHub CI and no production OS package installation is attempted.
+- New test file is explicitly included in .gitignore's existing test allowlist so CI receives it. Ruff import corrections applied only to touched/new tests. Protected CI, PostgreSQL acceptance and exact release/deploy verification remain pending.

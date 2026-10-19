@@ -21,6 +21,7 @@ from bot.smart_repeat_contract import (
     selected_slot_ids,
     source_fingerprint,
 )
+from bot.smart_repeat_extra_images import additional_image_limit, additional_image_slots
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +199,8 @@ def public_draft(draft, template):
     state = draft['state'] or {}
     return {'draft_id': draft['id'], 'revision': draft['revision'], 'status': draft['status'],
         'template': public_template(template), 'preset_id': state.get('preset_id'),
+        'additional_image_limit': additional_image_limit(template),
+        'additional_image_slots': public_template({**template, 'slots': additional_image_slots(template, state)})['slots'],
         'user_values': state.get('user_values', {}), 'prompt_changes': state.get('prompt_changes', ''),
         'slots': {sid: {key: value[key] for key in ('state', 'asset_id', 'url', 'upload_token', 'error', 'saved_reference_id', 'wan3_media_id', 'filename') if key in value}
                   for sid, value in state.get('slots', {}).items()},
@@ -255,6 +258,10 @@ async def mutate_draft(user, draft_id, template, operation, *, slot_id=None, upl
     # READY is accepted only for the current upload lease and a persisted owned
     # asset. Slow validation happens outside the row lock, then the lease fences it.
     definition = next((slot for slot in template['slots'] if slot['slot_id'] == slot_id), None)
+    if definition is None and slot_id is not None:
+        previous_draft = await load_draft(user.id, draft_id)
+        definition = next((slot for slot in additional_image_slots(template, previous_draft['state'])
+                           if slot['slot_id'] == slot_id), None)
     selected_reference = None
     if operation == 'ready':
         if not definition:
@@ -301,10 +308,16 @@ async def mutate_draft(user, draft_id, template, operation, *, slot_id=None, upl
             fail('TEMPLATE_CHANGED', 'Автор обновил поля. Откройте повтор заново.')
         state = deepcopy(draft['state'])
         if operation in {'begin', 'processing', 'ready', 'remove', 'failed'}:
-            if not definition or slot_id not in selected_slot_ids(template, state.get('preset_id')):
+            extra_ids = {slot['slot_id'] for slot in additional_image_slots(template, state)}
+            selectable = selected_slot_ids(template, state.get('preset_id')) | extra_ids
+            if not definition or slot_id not in selectable:
                 fail('INVALID_SLOTS', 'Это поле недоступно в выбранном варианте.', 400)
             previous = state['slots'].get(slot_id, {})
             if operation == 'begin':
+                if definition.get('additional'):
+                    occupied = len((set(state['slots']) & extra_ids) - {slot_id})
+                    if occupied >= additional_image_limit(template):
+                        fail('MODEL_CONSTRAINTS_INVALID', 'Достигнут общий лимит фото этой модели.', 400)
                 state['slots'][slot_id] = {'state': 'UPLOADING', 'upload_token': uuid.uuid4().hex}
             elif operation == 'remove':
                 state['slots'].pop(slot_id, None)
@@ -315,7 +328,8 @@ async def mutate_draft(user, draft_id, template, operation, *, slot_id=None, upl
                 if operation == 'ready':
                     state['slots'][slot_id].update(asset_id=uuid.uuid4().hex, url=url, **inspection)
         elif operation == 'preset':
-            selected = selected_slot_ids(template, preset_id)
+            selected = selected_slot_ids(template, preset_id) | {
+                slot['slot_id'] for slot in additional_image_slots(template, state)}
             state.update(preset_id=preset_id, slots={sid: value for sid, value in state['slots'].items() if sid in selected})
         elif operation == 'changes':
             if not isinstance(prompt_changes, str) or len(prompt_changes) > 64 * 1024:
@@ -342,12 +356,14 @@ async def mutate_draft(user, draft_id, template, operation, *, slot_id=None, upl
 
 async def validate_inputs(user, source, template, draft):
     compiled = compile_bindings(source, template, draft['state'])
+    definitions = {slot['slot_id']: slot for slot in [*template['slots'],
+        *additional_image_slots(template, draft['state'])]}
     from bot.services.media_input_utils import missing_local_upload_sources
     for sid, ref in compiled['snapshot']['references'].items():
         if ref['binding'] == 'upload':
             inspection = await validate_owned_asset(user, ref['kind'], ref['url'], existing=draft['state']['slots'][sid])
             from bot.smart_repeat_policy import validate_asset
-            validate_asset(next(slot for slot in template['slots'] if slot['slot_id'] == sid), inspection)
+            validate_asset(definitions[sid], inspection)
         elif missing_local_upload_sources([ref['url']]):
             fail('REFERENCES_NOT_READY', 'Исходник автора больше недоступен.')
     return compiled
@@ -359,11 +375,15 @@ async def refresh_draft_media(user, draft):
     state = deepcopy(draft['state'])
     changed = False
     template = await _template_for_draft(draft)
+    definitions = {slot['slot_id']: slot for slot in [*template['slots'],
+        *additional_image_slots(template, state)]}
     for sid, asset in state.get('slots', {}).items():
         if asset.get('state') != 'READY':
             continue
         try:
-            kind = next(slot['kind'] for slot in template['slots'] if slot['slot_id'] == sid)
+            if sid not in definitions:
+                fail('INVALID_SLOTS', 'Поле больше недоступно.')
+            kind = definitions[sid]['kind']
             await validate_owned_asset(user, kind, asset.get('url'), existing=asset)
         except (SmartRepeatError, OSError):
             asset.update(state='FAILED', error='Файл больше недоступен. Загрузите его заново.')

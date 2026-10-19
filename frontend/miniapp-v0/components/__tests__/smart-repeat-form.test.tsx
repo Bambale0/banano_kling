@@ -210,3 +210,105 @@ test('saved-file choices are separate from ready slots and require an explicit s
   expect(call).toHaveBeenCalledWith('update', expect.objectContaining({ operation: 'ready', slot_id: 'face', url: '/uploads/saved-2.jpg' }))
   expect(call.mock.calls.filter(([action]) => action === 'launch')).toHaveLength(0)
 })
+
+
+function enableAdditionalImages() {
+  Object.assign(draft, { additional_image_limit: 2, additional_image_slots: [0, 1].map(index => ({
+    slot_id: `extra_image_${index}`, kind: 'image', role: 'reference', label: `Дополнительное фото ${index + 1}`,
+    hint: '', binding: 'upload', required: false,
+  })) })
+}
+
+test('optional extra image block does not populate required slots or change their count', async () => {
+  enableAdditionalImages()
+  upload.mockResolvedValue({ id: 'phone', type: 'image', url: '/uploads/phone.png', name: 'phone.png' })
+  render(<SmartRepeatForm sourceId={42} onClose={jest.fn()} />)
+  const input = await screen.findByLabelText('Загрузить дополнительные фото')
+  fireEvent.change(input, { target: { files: [new File(['phone'], 'phone.png', { type: 'image/png' })] } })
+  await waitFor(() => expect(draft.slots.extra_image_0?.state).toBe('READY'))
+  expect(draft.slots.face).toBeUndefined()
+  expect(draft.slots.car).toBeUndefined()
+  expect(screen.getByText('Загружено обязательных референсов: 0 / 2')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Рассчитать стоимость' })).toBeDisabled()
+})
+
+test('optional extras can be empty; pending extra blocks quote and removing it restores eligibility', async () => {
+  enableAdditionalImages()
+  draft.slots = { face: { state: 'READY', asset_id: 'f', url: '/uploads/face.png' }, car: { state: 'READY', asset_id: 'c', url: '/uploads/car.png' } }
+  let finish: (value: unknown) => void = () => {}
+  upload.mockImplementation(() => new Promise(resolve => { finish = resolve }))
+  render(<SmartRepeatForm sourceId={42} onClose={jest.fn()} />)
+  const input = await screen.findByLabelText('Загрузить дополнительные фото')
+  const calculate = screen.getByRole('button', { name: 'Рассчитать стоимость' })
+  expect(calculate).toBeEnabled()
+  fireEvent.change(input, { target: { files: [new File(['phone'], 'phone.png', { type: 'image/png' })] } })
+  await waitFor(() => expect(upload).toHaveBeenCalledTimes(1))
+  expect(calculate).toBeDisabled()
+  fireEvent.click(screen.getByRole('button', { name: 'Удалить дополнительное фото 1' }))
+  await act(async () => { finish({ id: 'phone', type: 'image', url: '/uploads/phone.png', name: 'phone.png' }) })
+  await waitFor(() => expect(calculate).toBeEnabled())
+  expect(call.mock.calls.some(([action, body]) => action === 'update' && body.operation === 'ready' && body.slot_id === 'extra_image_0')).toBe(false)
+})
+
+test('extra photo multi-selection never silently truncates beyond the remaining model budget', async () => {
+  enableAdditionalImages()
+  render(<SmartRepeatForm sourceId={42} onClose={jest.fn()} />)
+  const input = await screen.findByLabelText('Загрузить дополнительные фото')
+  fireEvent.change(input, { target: { files: [1, 2, 3].map(n => new File(['x'], `${n}.png`, { type: 'image/png' })) } })
+  await screen.findByRole('alert')
+  expect(upload).not.toHaveBeenCalled()
+  expect(call.mock.calls.filter(([action]) => action === 'update')).toHaveLength(0)
+})
+
+test('extra saved file uses owned library identity and leaves original slots alone', async () => {
+  enableAdditionalImages()
+  ;(useApp as jest.Mock).mockReturnValue({ ...context, state: { ...context.state, savedReferences: [
+    { id: 'saved_22', saved_reference_id: '22', name: 'nails.jpg', type: 'image', url: '/uploads/nails.jpg', size: 10 },
+  ] } })
+  render(<SmartRepeatForm sourceId={42} onClose={jest.fn()} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Добавить дополнительное фото: nails.jpg' }))
+  await waitFor(() => expect(call).toHaveBeenCalledWith('update', expect.objectContaining({
+    operation: 'ready', slot_id: 'extra_image_0', saved_reference_id: '22',
+  })))
+  expect(upload).not.toHaveBeenCalled()
+  expect(screen.getByText('Загружено обязательных референсов: 0 / 2')).toBeInTheDocument()
+})
+
+test('video never renders optional extra photo inputs even if stale schema includes them', async () => {
+  enableAdditionalImages()
+  draft.template.type = 'video'; draft.template.model = 'seedance_2_5'
+  render(<SmartRepeatForm sourceId={42} onClose={jest.fn()} />)
+  await screen.findByRole('heading', { name: 'Повторить видео' })
+  expect(screen.queryByLabelText('Загрузить дополнительные фото')).not.toBeInTheDocument()
+  expect(screen.queryByRole('region', { name: 'Дополнительные референсы' })).not.toBeInTheDocument()
+})
+
+
+test('switching source during an extra photo batch cannot upload the remaining old files', async () => {
+  enableAdditionalImages()
+  let finish: (value: unknown) => void = () => {}
+  upload.mockImplementation(() => new Promise(resolve => { finish = resolve }))
+  const original = call.getMockImplementation()!
+  call.mockImplementation((action, body) => action === 'open' && body.source_id === 43
+    ? Promise.resolve({ ...draft, draft_id: 'other', slots: {}, template: { ...draft.template, source_id: 43, model: 'banana_2' } })
+    : original(action, body))
+  const rendered = render(<SmartRepeatForm sourceId={42} onClose={jest.fn()} />)
+  fireEvent.change(await screen.findByLabelText('Загрузить дополнительные фото'), {
+    target: { files: [1, 2].map(n => new File(['x'], `${n}.png`, { type: 'image/png' })) },
+  })
+  await waitFor(() => expect(upload).toHaveBeenCalledTimes(1))
+  rendered.rerender(<SmartRepeatForm sourceId={43} onClose={jest.fn()} />)
+  await screen.findByText('Модель исходной работы: banana_2')
+  await act(async () => { finish({ id: 'old', type: 'image', url: '/uploads/old.png', name: 'old.png' }) })
+  expect(upload).toHaveBeenCalledTimes(1)
+  expect(call.mock.calls.some(([action, body]) => action === 'update' && ['ready', 'processing'].includes(body.operation))).toBe(false)
+  expect(screen.getByText('Дополнительных фото: 0 / 2')).toBeInTheDocument()
+})
+
+test('full original model budget explains why no extra photo can be added', async () => {
+  Object.assign(draft, { additional_image_limit: 0, additional_image_slots: [] })
+  render(<SmartRepeatForm sourceId={42} onClose={jest.fn()} />)
+  await screen.findByRole('region', { name: 'Дополнительные референсы' })
+  expect(screen.getByRole('button', { name: 'Добавить фото', exact: true })).toBeDisabled()
+  expect(screen.getByText('Достигнут общий лимит референсов модели с учётом основных фото.')).toBeInTheDocument()
+})

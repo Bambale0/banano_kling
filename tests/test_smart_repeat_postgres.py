@@ -62,3 +62,19 @@ async def test_postgres_wan_and_saved_reference_namespace_collision(monkeypatch,
         test_wan_and_saved_media_ids_have_distinct_owned_namespaces,
     )
     await test_wan_and_saved_media_ids_have_distinct_owned_namespaces(monkeypatch, tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_postgres_optional_photo_images_and_fixed_positions(monkeypatch, tmp_path):
+    from tests.test_smart_repeat_extra_images import (
+        test_optional_photo_budget_and_fixed_positions_survive_remove_reload,
+    )
+    await test_optional_photo_budget_and_fixed_positions_survive_remove_reload(monkeypatch, tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_postgres_extra_photo_http_concurrent_launch(monkeypatch, tmp_path):
+    from tests.test_smart_repeat_extra_images import (
+        test_http_extras_reach_real_image_engine_after_main_and_fixed_refs_once,
+    )
+    await test_http_extras_reach_real_image_engine_after_main_and_fixed_refs_once(monkeypatch, tmp_path)
