@@ -18,8 +18,12 @@ Startup telemetry uses the existing client-log endpoint, event/phase and same-or
 
 ## Verification
 
-Regression tests: `lib/__tests__/bootstrap-timeout.test.ts`, `lib/__tests__/startup-recovery.test.ts`. Browser test: `node e2e/startup-recovery.mjs`, using a static production export and synthetic/intercepted auth/API only. It covers normal startup, transient errors, persistent missing chunks, stalled delivery plus native reload preserving launch data, and a stalled bootstrap plus explicit retry. Run the standard repeat/navigation suite as well. Test results and exact release SHA are recorded in the PR/deploy, not inferred from HTTP 200.
+Regression tests: `lib/__tests__/bootstrap-timeout.test.ts`, `lib/__tests__/startup-recovery.test.ts`, `components/__tests__/telegram-open-gate-startup.test.tsx`, and `tests/test_miniapp_startup_watchdog_contract.py`. Browser test: `node e2e/startup-recovery.mjs`, using a static production export and synthetic/intercepted auth/API only. It covers normal startup, transient errors, persistent missing chunks, stalled delivery plus native reload preserving launch data, a stalled bootstrap plus explicit retry, delayed success without reload, consumed query-based launch parameters, expired credentials with fresh-login availability, and the actual backend-injected legacy watchdog. Run the standard repeat/navigation suite as well. Test results and exact release SHA are recorded in the PR/deploy, not inferred from HTTP 200.
 
 ## Operational blocker
 
 The preceding release #342 failed before switching containers because free disk space was below the existing 10 GiB deployment floor. Production remained on #341 despite the newer source checkout. On October 20, unused Docker build cache older than 24 hours was pruned (20.19 GB reclaimed); media, databases, volumes, retained backup files and rollback images were not deleted. The deployment floor remains unchanged. Always compare both the running container revision and `/mini-app/revision.txt` to the merged release SHA.
+
+## Authentication and legacy-handler compatibility
+
+Bootstrap preserves HTTP status in `MiniAppApiError`; an HTTP 401 is recorded separately from a transport failure. Invalid/expired cached init data must keep the fresh Telegram login widget available rather than retrying the same invalid session. No launch storage is silently cleared. The backend-rendered index's older 9-second reload watchdog returns immediately when the new startup guard is present, retaining legacy fallback only for older exports. This avoids competing reload deadlines and legacy duplicate telemetry. Both the actual injected watchdog script and expired-session recovery have regression coverage.

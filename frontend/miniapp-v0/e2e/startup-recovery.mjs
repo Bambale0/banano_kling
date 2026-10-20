@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { mkdtempSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
 
 // Only synthetic Telegram auth/API responses. This must never create paid jobs.
@@ -19,10 +20,23 @@ try {
     await new Promise(done => setTimeout(done, 100))
   }
   browser = await chromium.launch({ headless: true })
-  const cases = process.env.BOOT_E2E_CASE ? [process.env.BOOT_E2E_CASE] : ['normal', 'transient', 'persistent', 'stall', 'query-launch', 'slow-success', 'bootstrap-timeout']
+  const cases = process.env.BOOT_E2E_CASE ? [process.env.BOOT_E2E_CASE] : ['normal', 'transient', 'persistent', 'stall', 'legacy-stall', 'query-launch', 'slow-success', 'auth-expired', 'bootstrap-timeout']
   for (const scenario of cases) {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
     const page = await context.newPage()
+    let legacyWatchdog = ''
+    if (scenario === 'legacy-stall') {
+      const extract = spawnSync('python3', ['-c', `
+import ast, sys
+from pathlib import Path
+module = ast.parse(Path(sys.argv[1]).read_text())
+handler = next(n for n in module.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'miniapp_index')
+assignment = next(n for n in ast.walk(handler) if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'watchdog_script' for t in n.targets))
+print(ast.literal_eval(assignment.value))
+`, fileURLToPath(new URL('../../../bot/miniapp.py', import.meta.url))], { encoding: 'utf8' })
+      assert.equal(extract.status, 0, extract.stderr)
+      legacyWatchdog = extract.stdout
+    }
     const errors = [], telemetry = [], launches = []
     let chunks = 0, bootstraps = 0, allow = false
     const stallReleases = []
@@ -34,13 +48,18 @@ try {
     })
     await page.route('**/*', async route => {
       const request = route.request(), url = new URL(request.url())
+      if (scenario === 'auth-expired' && url.hostname === 'telegram.org' && url.pathname.endsWith('/telegram-widget.js')) return route.fulfill({ contentType: 'application/javascript', body: '// synthetic login widget' })
       if (url.origin !== origin) return route.abort()
+      if (scenario === 'legacy-stall' && url.pathname === '/mini-app/') {
+        const response = await route.fetch()
+        return route.fulfill({ response, body: (await response.text()).replace('</head>', legacyWatchdog + '</head>') })
+      }
       if (url.pathname.endsWith('/telegram-web-app.js')) return route.fulfill({ contentType: 'application/javascript', body: '// synthetic Telegram SDK' })
       if (/\/chunks\/app\/page-[^/]+\.js$/.test(url.pathname)) {
         chunks++
         if (scenario === 'transient' && chunks === 1) return route.abort('connectionreset')
         if (scenario === 'persistent') return route.abort('connectionreset')
-        if ((scenario === 'stall' || scenario === 'query-launch' || scenario === 'slow-success') && !allow) {
+        if ((scenario === 'legacy-stall' || scenario === 'stall' || scenario === 'query-launch' || scenario === 'slow-success') && !allow) {
           await new Promise(done => { stallReleases.push(done) })
           try { return await route.continue() } catch { return }
         }
@@ -51,8 +70,10 @@ try {
         return route.fulfill({ json: { ok: true } })
       }
       if (/launch|generate/.test(url.pathname)) launches.push(url.pathname)
+      if (url.pathname.endsWith('/browser-auth/config')) return route.fulfill({ json: { ok: true, bot_username: 'synthetic_bot' } })
       if (url.pathname.endsWith('/bootstrap')) {
         bootstraps++
+        if (scenario === 'auth-expired') return route.fulfill({ status: 401, json: { ok: false, error: 'Expired synthetic init data' } })
         if (scenario === 'bootstrap-timeout' && !allow) {
           await new Promise(done => { stallReleases.push(done) })
         }
@@ -64,7 +85,7 @@ try {
     const hash = scenario === 'query-launch' ? '' : '#tgWebAppData=query_id%3Dsynthetic-startup&tgWebAppStartParam=boot_referral'
     const queryData = scenario === 'query-launch' ? '&tgWebAppData=query_id%3Dsynthetic-startup' : ''
     await page.goto(`${origin}/mini-app/?startapp=boot_referral${queryData}${hash}`, { waitUntil: 'commit' })
-    if (scenario === 'persistent' || scenario === 'stall' || scenario === 'query-launch' || scenario === 'slow-success') {
+    if (scenario === 'persistent' || scenario === 'legacy-stall' || scenario === 'stall' || scenario === 'query-launch' || scenario === 'slow-success') {
       const recovery = page.locator('#miniapp-startup-recovery')
       try { await recovery.waitFor({ state: 'visible', timeout: 20_000 }) }
       catch (e) {
@@ -76,6 +97,7 @@ try {
         throw e
       }
       assert.equal(bootstraps, 0)
+      assert.equal(new URL(page.url()).searchParams.has('_miniapp_reload'), false, 'legacy watchdog must not reload first')
       if (scenario === 'persistent') {
         assert.ok(chunks <= 3, 'no unbounded competing chunk retries')
         assert.equal(await page.locator('#miniapp-startup-recovery button').count(), 1)
@@ -101,6 +123,11 @@ try {
         assert.ok(bootstraps > 0)
         assert.equal(await recovery.isVisible(), false)
       }
+    } else if (scenario === 'auth-expired') {
+      await page.locator('script[data-telegram-login="synthetic_bot"]').waitFor({ state: 'attached', timeout: 10_000 })
+      assert.equal(await page.getByRole('button', { name: 'Повторить подключение' }).count(), 0)
+      await page.getByText('Данные входа устарели. Войдите через Telegram заново.').waitFor()
+      assert.equal(bootstraps, 1)
     } else if (scenario === 'bootstrap-timeout') {
       await page.getByRole('button', { name: 'Повторить подключение' }).waitFor({ timeout: 20_000 })
       assert.equal(bootstraps, 1)

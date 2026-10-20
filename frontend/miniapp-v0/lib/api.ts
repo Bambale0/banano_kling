@@ -358,7 +358,7 @@ function rewriteTemporaryMedia(value: unknown): unknown {
 }
 
 export class MiniAppApiError extends Error {
-  constructor(message: string, readonly code?: string, readonly taskId?: string) {
+  constructor(message: string, readonly code?: string, readonly taskId?: string, readonly status?: number) {
     super(message)
     this.name = 'MiniAppApiError'
   }
@@ -382,14 +382,14 @@ async function parseJson<T>(response: Response): Promise<T> {
       preview: text.slice(0, 160),
       error,
     })
-    throw new Error('Не удалось загрузить данные. Обновите mini app и попробуйте снова.')
+    throw new MiniAppApiError('Не удалось загрузить данные. Обновите mini app и попробуйте снова.', undefined, undefined, response.status)
   }
 
   const payload = data as { ok?: boolean; error?: string; code?: unknown; task_id?: unknown }
   if (!response.ok || payload.ok === false) {
     throw new MiniAppApiError(payload.error || 'Не удалось выполнить действие',
       typeof payload.code === 'string' ? payload.code : undefined,
-      typeof payload.task_id === 'string' && payload.task_id ? payload.task_id : undefined)
+      typeof payload.task_id === 'string' && payload.task_id ? payload.task_id : undefined, response.status)
   }
   return rewriteTemporaryMedia(data) as T
 }

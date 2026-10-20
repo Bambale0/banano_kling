@@ -57,3 +57,11 @@ test('successful bootstrap clears its deadline without aborting a completed requ
   expect(requestSignal?.aborted).not.toBe(true)
   expect(jest.getTimerCount()).toBe(0)
 })
+
+test('expired authentication remains distinguishable from a network timeout', async () => {
+  global.fetch = jest.fn(async () => ({ ok: false, status: 401, headers: { get: () => 'application/json' },
+    text: async () => JSON.stringify({ ok: false, error: 'Expired synthetic init data' }),
+  })) as unknown as typeof fetch
+  await expect(bootstrapApp()).rejects.toHaveProperty('status', 401)
+  expect(jest.getTimerCount()).toBe(0)
+})

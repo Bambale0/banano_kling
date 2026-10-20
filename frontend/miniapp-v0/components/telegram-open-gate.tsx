@@ -36,7 +36,7 @@ function setBrowserInitData(initData: string) {
 
 export function TelegramOpenGate() {
   const { state, refreshTasks } = useApp()
-  const canRetryConnection = Boolean(state.error && hasTelegramInitData())
+  const canRetryConnection = Boolean(state.error && state.bootstrapFailureKind !== 'auth' && hasTelegramInitData())
   const widgetRef = useRef<HTMLDivElement | null>(null)
   const [botUsername, setBotUsername] = useState('')
   const [telegramUrl, setTelegramUrl] = useState('')
@@ -186,6 +186,7 @@ export function TelegramOpenGate() {
               <p className="mt-2 text-sm leading-6 text-muted-foreground">
                 Продолжите через Telegram — без пароля
               </p>
+              {state.bootstrapFailureKind === 'auth' ? <p role="alert" className="mt-3 text-sm text-muted-foreground">{state.error}</p> : null}
 
               <div className="mt-7 flex min-h-12 w-full items-center justify-center">
                 {loginStatus === 'loading' ? (

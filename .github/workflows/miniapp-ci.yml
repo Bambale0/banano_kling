@@ -60,6 +60,7 @@ jobs:
       - name: Run Mini App regression tests
         run: >-
           npm test -- --runInBand
+          components/__tests__/telegram-open-gate-startup.test.tsx
           lib/__tests__/bootstrap-timeout.test.ts
           lib/__tests__/startup-recovery.test.ts
           components/__tests__/smart-repeat-form.test.tsx
