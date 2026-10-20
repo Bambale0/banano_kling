@@ -301,8 +301,9 @@ export interface PromptItem {
   prompt_text: string
   category: 'art' | 'business' | 'marketing' | 'photo' | 'video' | 'other'
   tags: string[]
-  uses_count: number
-  /** Completed, uniquely task-linked trend repetitions (not accepted launches). */
+  // Omitted for non-admin viewers of curated trends.
+  uses_count?: number
+  /** Admin-only completed, uniquely task-linked repetitions (not accepted launches). */
   successful_runs_count?: number | null
   likes: number
   repeat_cost?: number | null

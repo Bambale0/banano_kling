@@ -222,9 +222,10 @@ async def test_legacy_get_preserves_signed_admin_prompt_but_redacts_viewer():
     app["trend_prompt_privacy_root"] = "/mini-app"
 
     async def raw(_request):
-        return web.json_response(
-            {"ok": True, "prompt": await database.get_prompt_by_id(item["id"])}
-        )
+        from bot.handlers.trend_success_compat import _public_counter_description
+
+        prompt = await database.get_prompt_by_id(item["id"])
+        return web.json_response({"ok": True, "prompt": _public_counter_description(prompt, 7)})
 
     app.router.add_get("/api/v1/prompts/1", raw)
     async with TestClient(TestServer(app)) as client:
@@ -233,13 +234,20 @@ async def test_legacy_get_preserves_signed_admin_prompt_but_redacts_viewer():
             headers={"X-Telegram-Init-Data": signed_init_data(999999999)},
         )
         assert admin.status == 200
-        assert (await admin.json())["prompt"]["prompt_text"].startswith("Private scene")
+        admin_prompt = (await admin.json())["prompt"]
+        assert admin_prompt["prompt_text"].startswith("Private scene")
+        assert admin_prompt["successful_runs_count"] == 7
+        assert admin_prompt["description"].startswith("✅ Успешных запусков: 7")
         viewer = await client.get(
             "/api/v1/prompts/1",
             headers={"X-Telegram-Init-Data": signed_init_data(8311098)},
         )
         assert viewer.status == 200
-        assert (await viewer.json())["prompt"]["prompt_text"] == ""
+        public_prompt = (await viewer.json())["prompt"]
+        assert public_prompt["prompt_text"] == ""
+        assert "successful_runs_count" not in public_prompt
+        assert "uses_count" not in public_prompt
+        assert public_prompt["description"] == "День рождения"
 
 
 @pytest.mark.asyncio
@@ -276,7 +284,8 @@ async def test_history_requires_admin_and_records_authenticated_actor(catalog_cl
 
 
 @pytest.mark.asyncio
-async def test_signed_catalog_exposes_only_successful_repeat_count(catalog_client):
+@pytest.mark.parametrize("actor_id,is_admin", [(999999999, True), (8311004, False)])
+async def test_signed_catalog_repeat_counts_require_admin(catalog_client, actor_id, is_admin):
     from bot import db as db_backend
     from bot.handlers import trend_success_compat
 
@@ -297,16 +306,57 @@ async def test_signed_catalog_exposes_only_successful_repeat_count(catalog_clien
     await trend_success_compat.register_trend_generation_run(
         task_id="failed_signed_test", trend_id=trend["id"], user_id=owner.id,
     )
-    viewer = signed_init_data(8311004)
-    response = await catalog_client.post("/mini-app/api/trends/catalog", json={"init_data": viewer})
+    viewer = signed_init_data(actor_id)
+    # A client-provided role never grants administrator statistics.
+    response = await catalog_client.post("/mini-app/api/trends/catalog", json={"init_data": viewer, "is_admin": True})
     assert response.status == 200, await response.text()
     item = (await response.json())["categories"][0]["items"][0]
-    assert item["successful_runs_count"] == 1
+    if is_admin:
+        assert item["successful_runs_count"] == 1
+    else:
+        assert "successful_runs_count" not in item
+        assert "uses_count" not in item
     assert "success_signed_test" not in str(item)
     assert "failed_signed_test" not in str(item)
     page = await catalog_client.post(
         "/mini-app/api/trends/category",
-        json={"init_data": viewer, "category_id": "unassigned"},
+        json={"init_data": viewer, "category_id": "unassigned", "is_admin": True},
     )
     assert page.status == 200
-    assert (await page.json())["items"][0]["successful_runs_count"] == 1
+    page_item = (await page.json())["items"][0]
+    if is_admin:
+        assert page_item["successful_runs_count"] == 1
+    else:
+        assert "successful_runs_count" not in page_item
+        assert "uses_count" not in page_item
+    assert response.headers["Cache-Control"] == page.headers["Cache-Control"] == "no-store"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("actor_id,is_admin", [(999999999, True), (8311004, False)])
+async def test_shared_prompt_detail_keeps_stats_only_for_signed_admin(actor_id, is_admin):
+    from bot.handlers.trend_success_compat import _public_counter_description
+
+    item = await make_trend()
+    app = web.Application(middlewares=[trend_prompt_privacy_middleware])
+    app["trend_prompt_privacy_root"] = "/mini-app"
+
+    async def raw(_request):
+        prompt = await database.get_prompt_by_id(item["id"])
+        return web.json_response({"ok": True, "prompt": _public_counter_description(prompt, 7)})
+
+    app.router.add_post("/mini-app/api/prompts/detail", raw)
+    async with TestClient(TestServer(app)) as client:
+        response = await client.post("/mini-app/api/prompts/detail", json={
+            "init_data": signed_init_data(actor_id), "start_param_fallback": f"prompt_{item['id']}",
+            "is_admin": True,
+        })
+        assert response.status == 200
+        prompt = (await response.json())["prompt"]
+        assert prompt["prompt_text"] == ""  # Shared recipes remain private even for admin.
+        if is_admin:
+            assert prompt["successful_runs_count"] == 7
+        else:
+            assert "successful_runs_count" not in prompt
+            assert "uses_count" not in prompt
+            assert prompt["description"] == "День рождения"

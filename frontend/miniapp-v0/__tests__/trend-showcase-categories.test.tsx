@@ -237,7 +237,7 @@ test('WAN live tile and repeat modal show server-authoritative lower-bound price
 })
 
 
-test('completed repetition counts stay visible on live tiles and preview for all folders', async () => {
+test('admin repetition counts stay visible on live tiles and preview for all folders', async () => {
   const favorite = { ...makeCard(201, 'Пользовательский тренд', 'video'), uses_count: 502, successful_runs_count: 328 }
   const young = { ...makeCard(202, 'Новый тренд'), uses_count: 17, successful_runs_count: 0 }
   const groups = [
@@ -248,7 +248,7 @@ test('completed repetition counts stay visible on live tiles and preview for all
     category: groups.find(group => group.id === id)!, items: id === 8 ? [favorite] : [favorite, young],
     page, total: id === 8 ? 1 : 2, has_more: false,
   }))
-  render(<TrendShowcase categories={groups} onRepeat={jest.fn()} onShare={jest.fn()} />)
+  render(<TrendShowcase isAdmin categories={groups} onRepeat={jest.fn()} onShare={jest.fn()} />)
   const firstTile = screen.getAllByRole('button', { name: 'Открыть тренд Пользовательский тренд' })[0]
   expect(firstTile).toHaveTextContent('328 повторов')
   expect(firstTile).not.toHaveTextContent('502')
@@ -266,7 +266,7 @@ test('completed repetition counts stay visible on live tiles and preview for all
 test('legacy card without a confirmed success count is not mislabeled zero', () => {
   const legacy = makeCard(1234, 'Данные не загрузились')
   delete legacy.successful_runs_count
-  render(<TrendShowcase categories={[{ ...catalog[0], items: [legacy] }]} onRepeat={jest.fn()} onShare={jest.fn()} />)
+  render(<TrendShowcase isAdmin categories={[{ ...catalog[0], items: [legacy] }]} onRepeat={jest.fn()} onShare={jest.fn()} />)
   const tile = screen.getByRole('button', { name: 'Открыть тренд Данные не загрузились' })
   expect(tile).not.toHaveTextContent('0 повторов')
 })
@@ -279,9 +279,43 @@ test('completed counter uses correct Russian form for one and several repeats', 
   const cards = counts.map((count, i) => ({
     ...makeCard(500 + i, 'Контроль ' + count), successful_runs_count: count,
   }))
-  render(<TrendShowcase categories={[{ ...catalog[0], total: cards.length, items: cards }]}
+  render(<TrendShowcase isAdmin categories={[{ ...catalog[0], total: cards.length, items: cards }]}
     onRepeat={jest.fn()} onShare={jest.fn()} />)
   for (let i = 0; i < counts.length; i += 1) {
     expect(screen.getByRole('button', { name: 'Открыть тренд Контроль ' + counts[i] })).toHaveTextContent(expected[i])
   }
+})
+
+
+test('viewer never sees cached admin counters on shelves, preview or paginated category', async () => {
+  const counted = { ...video, successful_runs_count: 328, repeat_cost: 14 }
+  const zero = { ...image, successful_runs_count: 0 }
+  const folders = [{ ...catalog[0], items: [counted, zero], total: 2 }]
+  categoryFetch.mockResolvedValue({ category: folders[0], items: [counted, zero], page: 1, total: 2, has_more: false })
+  const onRepeat = jest.fn()
+  render(<TrendShowcase categories={folders} onRepeat={onRepeat} onShare={jest.fn()} />)
+  expect(screen.queryAllByLabelText(/Успешных повторов/)).toHaveLength(0)
+  expect(screen.getByText('Новинка')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Открыть тренд Видео с эффектами' })).toHaveTextContent('14🍌')
+  fireEvent.click(screen.getByRole('button', { name: 'Все тренды категории Видео на День рождения' }))
+  await waitFor(() => expect(categoryFetch).toHaveBeenCalledWith(7, 1, 24))
+  const tile = await screen.findByRole('button', { name: 'Открыть тренд Видео с эффектами' })
+  expect(tile).not.toHaveTextContent('328')
+  expect(screen.queryAllByLabelText(/Успешных повторов/)).toHaveLength(0)
+  fireEvent.click(tile)
+  const preview = screen.getByRole('dialog')
+  expect(preview).not.toHaveTextContent(/Успешных повторов/)
+  fireEvent.click(within(preview).getByRole('button', { name: /Повторить/ }))
+  expect(onRepeat).toHaveBeenCalledWith(counted)
+})
+
+test('revoking administrator role hides statistics in an already open preview', () => {
+  const folders = [{ ...catalog[0], items: [{ ...image, successful_runs_count: 7 }] }]
+  const props = { categories: folders, onRepeat: jest.fn(), onShare: jest.fn(), onEdit: jest.fn() }
+  const view = render(<TrendShowcase {...props} isAdmin />)
+  fireEvent.click(screen.getByRole('button', { name: 'Открыть тренд Свечи в торте' }))
+  expect(within(screen.getByRole('dialog')).getByLabelText('Успешных повторов: 7')).toBeInTheDocument()
+  view.rerender(<TrendShowcase {...props} isAdmin={false} />)
+  expect(screen.queryAllByLabelText(/Успешных повторов/)).toHaveLength(0)
+  expect(screen.getByRole('dialog')).not.toHaveTextContent('7')
 })

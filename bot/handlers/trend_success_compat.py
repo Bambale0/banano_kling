@@ -2,7 +2,7 @@
 
 ``uses_count`` is an accepted-launch counter and therefore cannot truthfully be
 presented as completed generations. This compatibility layer records the
-trend/task relation once and derives the public success count by joining that
+trend/task relation once and derives the admin-visible success count by joining that
 relation with ``generation_tasks.status = 'completed'``. Callback retries do
 not increment anything, because one task can only contribute one joined row.
 """

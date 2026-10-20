@@ -26,6 +26,7 @@ from bot.config import config
 from bot.handlers.trend_text_upload import _build_image_generation_settings
 from bot.keyboards import _mini_app_url_with_start_param
 from bot.trend_user_fields import TrendUserFieldsError, normalize_user_fields_settings
+from bot.trend_visibility import without_trend_repeat_statistics
 from bot.utils.validators import detect_explicit_prompt_policy_violation
 
 logger = logging.getLogger(__name__)
@@ -60,7 +61,11 @@ def _clean_model_label(value: Any) -> str:
     return model.replace("_", " ").replace("-", " ").title()
 
 
-def _trend_caption(prompt: dict[str, Any], *, index: int, total: int) -> str:
+def _trend_caption(
+    prompt: dict[str, Any], *, index: int, total: int, is_admin: bool = False,
+) -> str:
+    if not is_admin:
+        prompt = without_trend_repeat_statistics(prompt)
     title = html.escape(str(prompt.get("title") or "Тренд"))
     description = html.escape(str(prompt.get("description") or "").strip())
     model = html.escape(_clean_model_label(prompt.get("model")))
@@ -142,7 +147,10 @@ async def _render_trends(
     trend = trends[safe_index]
     preview_url = str(trend.get("preview_url") or "").strip()
     preview_kind = _trend_preview_kind(trend)
-    caption = _trend_caption(trend, index=safe_index, total=len(trends))
+    caption = _trend_caption(
+        trend, index=safe_index, total=len(trends),
+        is_admin=config.is_admin(admin_telegram_id),
+    )
     markup = _trend_keyboard(
         trend,
         index=safe_index,

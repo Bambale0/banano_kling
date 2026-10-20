@@ -128,9 +128,10 @@ function successfulRepeatsLabel(count: number): string {
   return count.toLocaleString('ru-RU') + ' ' + ending
 }
 
-function LiveTile({ trend, onPreview, className = '' }: {
+function LiveTile({ trend, onPreview, isAdmin, className = '' }: {
   trend: ShowcaseTrend
   onPreview: (trend: ShowcaseTrend) => void
+  isAdmin: boolean
   className?: string
 }) {
   return (
@@ -146,7 +147,7 @@ function LiveTile({ trend, onPreview, className = '' }: {
         {trend.badge === 'new' ? (
           <span className="rounded-md bg-blue-500 px-2 py-1 text-[10px] font-semibold text-white">Новинка</span>
         ) : null}
-        {typeof trend.successful_runs_count === 'number' && Number.isSafeInteger(trend.successful_runs_count) && trend.successful_runs_count >= 0 ? (
+        {isAdmin === true && typeof trend.successful_runs_count === 'number' && Number.isSafeInteger(trend.successful_runs_count) && trend.successful_runs_count >= 0 ? (
           <span
             className="rounded-md bg-black/65 px-2 py-1 text-[10px] font-semibold text-white"
             aria-label={'Успешных повторов: ' + trend.successful_runs_count}
@@ -166,8 +167,9 @@ function LiveTile({ trend, onPreview, className = '' }: {
   )
 }
 
-export function TrendShowcase({ categories, onRepeat, onShare, onEdit, onRemove, removingId }: {
+export function TrendShowcase({ categories, onRepeat, onShare, onEdit, onRemove, removingId, isAdmin = false }: {
   categories: ShowcaseCategory[]
+  isAdmin?: boolean
   onRepeat: (trend: ShowcaseTrend) => void
   onShare: (trend: ShowcaseTrend) => void
   onEdit?: (trend: ShowcaseTrend) => void
@@ -251,6 +253,7 @@ export function TrendShowcase({ categories, onRepeat, onShare, onEdit, onRemove,
               <LiveTile
                 key={trend.id}
                 trend={trend}
+                isAdmin={isAdmin}
                 onPreview={setSelected}
                 className="w-[min(44vw,188px)] snap-start"
               />
@@ -271,7 +274,7 @@ export function TrendShowcase({ categories, onRepeat, onShare, onEdit, onRemove,
           {pageError ? <p role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{pageError}</p> : null}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
             {pageItems.map((trend) => (
-              <LiveTile key={trend.id} trend={trend} onPreview={setSelected} className="w-full" />
+              <LiveTile key={trend.id} trend={trend} isAdmin={isAdmin} onPreview={setSelected} className="w-full" />
             ))}
           </div>
           {pageLoading ? <div role="status" className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin" /></div> : null}
@@ -292,7 +295,7 @@ export function TrendShowcase({ categories, onRepeat, onShare, onEdit, onRemove,
           <DialogDescription className="text-xs">{selected?.description || 'Посмотрите пример и повторите со своими данными'}</DialogDescription>
           {selected ? (
             <div className="space-y-3">
-              {typeof selected.successful_runs_count === 'number' && Number.isSafeInteger(selected.successful_runs_count) && selected.successful_runs_count >= 0 ? (
+              {isAdmin === true && typeof selected.successful_runs_count === 'number' && Number.isSafeInteger(selected.successful_runs_count) && selected.successful_runs_count >= 0 ? (
                 <p className="text-xs font-semibold text-foreground" aria-label={'Успешных повторов: ' + selected.successful_runs_count}>
                   ✅ Успешных повторов: {selected.successful_runs_count.toLocaleString('ru-RU')}
                 </p>

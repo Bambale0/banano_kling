@@ -130,7 +130,7 @@ def _card(row: Any, *, tariff: str, is_admin: bool = False) -> dict[str, Any]:
     if not raw:
         raise CatalogNotFound("Тренд не найден")
     priced = with_trend_repeat_cost(raw, tariff=tariff)
-    public = sanitize_prompt_for_public(priced)
+    public = sanitize_prompt_for_public(priced, include_repeat_stats=is_admin)
     # Always use the same public serializer, even for an administrative list.
     media = cached_trend_preview_assets(public.get("preview_url"))
     public["preview_url"] = media["preview_url"]
@@ -153,7 +153,7 @@ def _card(row: Any, *, tariff: str, is_admin: bool = False) -> dict[str, Any]:
 
 
 async def _attach_successful_repeat_counts(items: list[dict[str, Any]]) -> None:
-    """Enrich a page once using the existing completed-task metric.
+    """Enrich an admin page once using the existing completed-task metric.
 
     The older Trends API already counts task-linked completed generations; the
     editorial category API had bypassed that enrichment entirely. Do not use
@@ -259,9 +259,10 @@ async def list_catalog(
                     "items": items,
                 }
             )
-    await _attach_successful_repeat_counts([
-        item for category in result for item in category["items"]
-    ])
+    if is_admin:
+        await _attach_successful_repeat_counts([
+            item for category in result for item in category["items"]
+        ])
     return result
 
 
@@ -300,7 +301,8 @@ async def category_page(
             tariff=tariff,
             is_admin=is_admin,
         )
-    await _attach_successful_repeat_counts(items)
+    if is_admin:
+        await _attach_successful_repeat_counts(items)
     return {
         "category": meta,
         "items": items,
@@ -747,7 +749,7 @@ async def search_admin_trends(
                 (*params, limit, (page - 1) * limit),
             )
         ).fetchall()
-    items = [_card(row, tariff=tariff) for row in rows]
+    items = [_card(row, tariff=tariff, is_admin=True) for row in rows]
     await _attach_successful_repeat_counts(items)
     return {
         "items": items,
