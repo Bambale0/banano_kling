@@ -61,6 +61,11 @@ export const startupRecoveryScript = `
     var launch = window.__BANANO_INITIAL_LAUNCH__;
     // Next may have already consumed the hash before a dependent chunk stalled.
     if (launch && launch.hash) url.hash = launch.hash;
+    if (launch && launch.search) {
+      new URLSearchParams(launch.search).forEach(function (value, key) {
+        if (!url.searchParams.has(key)) url.searchParams.set(key, value);
+      });
+    }
     url.searchParams.set('_boot_reload', String(Date.now()));
     location.replace(url.toString());
   }

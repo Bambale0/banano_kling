@@ -19,7 +19,7 @@ try {
     await new Promise(done => setTimeout(done, 100))
   }
   browser = await chromium.launch({ headless: true })
-  const cases = process.env.BOOT_E2E_CASE ? [process.env.BOOT_E2E_CASE] : ['normal', 'transient', 'persistent', 'stall', 'slow-success', 'bootstrap-timeout']
+  const cases = process.env.BOOT_E2E_CASE ? [process.env.BOOT_E2E_CASE] : ['normal', 'transient', 'persistent', 'stall', 'query-launch', 'slow-success', 'bootstrap-timeout']
   for (const scenario of cases) {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
     const page = await context.newPage()
@@ -40,7 +40,7 @@ try {
         chunks++
         if (scenario === 'transient' && chunks === 1) return route.abort('connectionreset')
         if (scenario === 'persistent') return route.abort('connectionreset')
-        if ((scenario === 'stall' || scenario === 'slow-success') && !allow) {
+        if ((scenario === 'stall' || scenario === 'query-launch' || scenario === 'slow-success') && !allow) {
           await new Promise(done => { stallReleases.push(done) })
           try { return await route.continue() } catch { return }
         }
@@ -61,9 +61,10 @@ try {
       }
       return route.fulfill({ json: { ok: true, visible: false, feed: [], models: [], prompts: [], tasks: [] } })
     })
-    const hash = '#tgWebAppData=query_id%3Dsynthetic-startup&tgWebAppStartParam=boot_referral'
-    await page.goto(`${origin}/mini-app/?startapp=boot_referral${hash}`, { waitUntil: 'commit' })
-    if (scenario === 'persistent' || scenario === 'stall' || scenario === 'slow-success') {
+    const hash = scenario === 'query-launch' ? '' : '#tgWebAppData=query_id%3Dsynthetic-startup&tgWebAppStartParam=boot_referral'
+    const queryData = scenario === 'query-launch' ? '&tgWebAppData=query_id%3Dsynthetic-startup' : ''
+    await page.goto(`${origin}/mini-app/?startapp=boot_referral${queryData}${hash}`, { waitUntil: 'commit' })
+    if (scenario === 'persistent' || scenario === 'stall' || scenario === 'query-launch' || scenario === 'slow-success') {
       const recovery = page.locator('#miniapp-startup-recovery')
       try { await recovery.waitFor({ state: 'visible', timeout: 20_000 }) }
       catch (e) {
@@ -87,6 +88,7 @@ try {
         assert.equal(new URL(page.url()).searchParams.has('_boot_reload'), false)
       } else {
         allow = true
+        if (scenario === 'query-launch') await page.evaluate(() => history.replaceState(null, '', '/mini-app/'))
         const navigated = page.waitForURL(url => url.searchParams.has('_boot_reload'), { waitUntil: 'commit', timeout: 10_000 })
         await recovery.getByRole('button', { name: 'Повторить загрузку' }).click()
         await navigated
@@ -95,6 +97,7 @@ try {
         const restored = new URL(page.url())
         assert.equal(restored.searchParams.get('startapp'), 'boot_referral')
         assert.equal(restored.hash, hash)
+        if (scenario === 'query-launch') assert.equal(restored.searchParams.get('tgWebAppData'), 'query_id=synthetic-startup')
         assert.ok(bootstraps > 0)
         assert.equal(await recovery.isVisible(), false)
       }
