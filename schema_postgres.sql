@@ -1,6 +1,4 @@
 -- Native PostgreSQL schema for clean deployments
--- Smart repeat tables are also installed additively by application startup.
--- Draft attachments and Wan retention serialize on this shared lock.
 -- Run once on an empty Postgres database before starting the bot
 -- Usage: psql "$DATABASE_URL" -f schema_postgres.sql
 
@@ -647,27 +645,6 @@ CREATE TABLE IF NOT EXISTS genjutsu_feed_publications (
     source_binding TEXT NOT NULL,
     created_ms BIGINT NOT NULL
 );
-
-
--- Immutable smart-repeat templates and durable operation/upload snapshots.
-CREATE TABLE IF NOT EXISTS wan3_prime_storage_lock (id INTEGER PRIMARY KEY);
-INSERT INTO wan3_prime_storage_lock (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
-
-CREATE TABLE IF NOT EXISTS smart_repeat_templates (
-        source_id BIGINT NOT NULL, version INTEGER NOT NULL, owner_id BIGINT NOT NULL,
-        schema_json TEXT NOT NULL, source_hash TEXT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY (source_id, version));
-CREATE TABLE IF NOT EXISTS smart_repeat_drafts (
-        id TEXT PRIMARY KEY, user_id BIGINT NOT NULL, telegram_id BIGINT NOT NULL,
-        source_id BIGINT NOT NULL, template_version INTEGER NOT NULL,
-        revision INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'draft',
-        state_json TEXT NOT NULL DEFAULT '{}', quote_json TEXT, snapshot_json TEXT,
-        result_json TEXT, task_id TEXT, accepted_task_json TEXT, charge_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
-        refund_amount DOUBLE PRECISION NOT NULL DEFAULT 0, provider_accepted INTEGER NOT NULL DEFAULT 0,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
-CREATE INDEX IF NOT EXISTS idx_smart_repeat_drafts_actor ON smart_repeat_drafts(user_id, source_id, created_at);
 
 COMMIT;
 

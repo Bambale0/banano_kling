@@ -1483,11 +1483,6 @@ def _merge_remix_image_references(
     viewers submit only their own inputs; any author-approved retained refs are
     merged later from ``feed_repeat_reference_selection`` on the server.
     """
-    from bot.smart_repeat_contract import current_authorization
-    if current_authorization():
-        # The smart compiler already selected exact replacement slots. Owner
-        # preview visibility must not add a second set of implicit inputs.
-        return list(submitted_references), 0
     references = list(dict.fromkeys(submitted_references))
     retained: list[str] = []
     if source_card.get("is_mine"):
@@ -1540,25 +1535,12 @@ def _filter_foreign_feed_source_references(
         # the publication's canonical source list excludes those derivatives.
         source_references.update(str(url or "").strip() for url in provider_references)
     source_identities = {reference_source_identity(url) for url in source_references}
-    from bot.smart_repeat_contract import current_authorization
-    authorization = current_authorization()
-    # An extended smart-repeat source contains the caller's verified inputs as
-    # well as private originals. Only the request-local compiler capability can
-    # distinguish them; client JSON cannot authorize this exception.
-    owned_identities = set()
-    if (authorization and task_payload.get('_smart_repeat_authorization') is authorization
-        and authorization.get('source_id') == task_payload.get('id')
-        and authorization.get('telegram_id') == viewer_telegram_id):
-        owned_identities = {reference_source_identity(url) for url in authorization['owned_inputs']}
     filtered: list[str] = []
     for item in references:
         url = str(item or "").strip()
         if not url or url in filtered:
             continue
         owner_telegram_id = _reference_upload_owner_telegram_id(url)
-        if reference_source_identity(url) in owned_identities:
-            filtered.append(url)
-            continue
         if reference_source_identity(url) in source_identities:
             continue
         if (
@@ -2218,10 +2200,7 @@ async def _launch_video_generation_task(
         )
     elif model == "grok_imagine":
         result = await grok_service.generate_image_to_video(
-            image_urls=normalize_reference_urls(
-                ([image_url] if image_url else []) + image_references,
-                max_count=get_max_video_image_references(model),
-            ),
+            image_urls=([image_url] if image_url else []) + image_references[:6],
             prompt=prompt,
             mode=grok_mode,
             duration=duration,
@@ -3224,10 +3203,8 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
         )
         recent_tasks = await _fetch_recent_tasks(telegram_id)
         partner_stats = await get_partner_overview(telegram_id)
-        from bot.smart_repeat_store import rollout_enabled as smart_repeat_enabled
         data = {
             "ok": True,
-            "smart_repeat_enabled": await smart_repeat_enabled(telegram_id),
             "telegram_id": telegram_id,
             "credits": user.credits,
             "first_name": telegram_user.get("first_name", ""),
@@ -5570,7 +5547,6 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
             image_references=image_references,
             video_references=video_references,
             audio_url=audio_url,
-            audio_references=audio_references,
             grok_mode=grok_mode,
             grok_resolution=grok_resolution,
             veo_generation_type=veo_generation_type,
@@ -6132,8 +6108,6 @@ def setup_miniapp_routes(app: web.Application):
     app.router.add_get(f"{miniapp_root}/", _miniapp_frontend_redirect)
     from bot.wan3_prime_api import setup_wan3_prime_routes
     setup_wan3_prime_routes(app, miniapp_root)
-    from bot.smart_repeat_api import setup_smart_repeat_routes
-    setup_smart_repeat_routes(app, miniapp_root)
     from bot.trend_catalog_api import setup_trend_catalog_routes
     setup_trend_catalog_routes(app, miniapp_root)
     app.router.add_post(miniapp_root + "/api/bootstrap", miniapp_bootstrap)

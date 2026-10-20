@@ -8,7 +8,6 @@ import { genjutsuRecipeStartParam, parseMiniAppStartParam, startParamFromLocatio
 import { isVideoTrendItem, isWanTrendItem, resolveTrendSettings } from './trend-settings'
 import { genjutsuCall, openGenjutsu } from './genjutsu-api'
 import { hydrateSeedance25IdentityPreset } from './seedance25-repeat'
-import { REPEAT_MODEL_UNAVAILABLE } from './repeat-routing'
 
 interface AppContextType {
   state: AppState
@@ -20,10 +19,6 @@ interface AppContextType {
   feedDeepLink: FeedDeepLink | null
   promptPreset: PromptPreset | null
   videoPromptPreset: VideoPromptPreset | null
-  smartRepeatSourceId: number | null
-  smartRepeatType: 'image' | 'video' | null
-  closeSmartRepeat: (showSource?: boolean) => Promise<void>
-  openSmartRepeat: (sourceId: number, kind: 'image' | 'video') => void
   trendToRun: PromptItem | null
   viewedProfileCode: string | null
   activeTab: number
@@ -171,10 +166,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [isBalanceOpen, setIsBalanceOpen] = useState(false)
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspacePanel | null>(null)
   const [feedDeepLink, setFeedDeepLink] = useState<FeedDeepLink | null>(null)
-  const [promptPreset, setLegacyPromptPreset] = useState<PromptPreset | null>(null)
-  const [videoPromptPreset, setLegacyVideoPromptPreset] = useState<VideoPromptPreset | null>(null)
-  const [smartRepeatSourceId, setSmartRepeatSourceId] = useState<number | null>(null)
-  const [smartRepeatType, setSmartRepeatType] = useState<'image' | 'video' | null>(null)
+  const [promptPreset, setPromptPreset] = useState<PromptPreset | null>(null)
+  const [videoPromptPreset, setVideoPromptPreset] = useState<VideoPromptPreset | null>(null)
   const [trendToRun, setTrendToRun] = useState<PromptItem | null>(null)
   const [viewedProfileCode, setViewedProfileCode] = useState<string | null>(null)
   const [activeTab, setActiveTabState] = useState(1)
@@ -189,52 +182,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (pendingStartParamRef.current) handledStartParamRef.current = pendingStartParamRef.current
     pendingStartParamRef.current = null
   }, [])
-
-  const openSmartRepeat = useCallback((sourceId: number, kind: 'image' | 'video') => {
-    // A new publication owns navigation; a delayed deep-link response must not
-    // restore an older recipe or leave an unrelated generator preset behind.
-    cancelStartNavigation()
-    setFeedDeepLink(null)
-    setLegacyPromptPreset(null)
-    setLegacyVideoPromptPreset(null)
-    setIsTaskDetailOpen(false)
-    setSmartRepeatSourceId(sourceId)
-    setSmartRepeatType(kind)
-    setActiveTabState(kind === 'video' ? 2 : 1)
-  }, [cancelStartNavigation])
-  const setPromptPreset = useCallback((preset: PromptPreset | null) => {
-    if (state.smartRepeatEnabled && preset?.sourceFeedGenId) { openSmartRepeat(preset.sourceFeedGenId, 'image'); return }
-    setLegacyPromptPreset(preset)
-  }, [state.smartRepeatEnabled, openSmartRepeat])
-  const setVideoPromptPreset = useCallback((preset: VideoPromptPreset | null) => {
-    if (state.smartRepeatEnabled && preset?.sourceFeedGenId) { openSmartRepeat(preset.sourceFeedGenId, 'video'); return }
-    setLegacyVideoPromptPreset(preset)
-  }, [state.smartRepeatEnabled, openSmartRepeat])
-
-  const closeSmartRepeat = useCallback(async (showSource = true) => {
-    const sourceId = smartRepeatSourceId
-    const revision = ++startNavigationVersionRef.current
-    if (showSource && sourceId) {
-      try {
-        const item = await fetchFeedItem(sourceId)
-        if (revision !== startNavigationVersionRef.current) return
-        if (!item?.id) throw new Error('Публикация недоступна. Обновите ленту.')
-        setFeedDeepLink({ item, action: 'preview' })
-        if (item.publication_scope === 'profile') {
-          setViewedProfileCode(String(item.author_referral_code || '').trim().toUpperCase() || null)
-          setActiveTabState(7)
-        } else {
-          setActiveTabState(4)
-        }
-      } catch {
-        if (revision !== startNavigationVersionRef.current) return
-        setActiveTabState(4)
-        setState(previous => ({ ...previous, error: 'Публикация больше недоступна. Ваш черновик повтора сохранён.' }))
-      }
-    }
-    setSmartRepeatSourceId(null)
-    setSmartRepeatType(null)
-  }, [smartRepeatSourceId])
 
   useEffect(() => {
     const navigate = (event: Event) => {
@@ -276,7 +223,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return fresh ? { ...current, ...fresh } : current
     })
     setState(prev => ({
-      smartRepeatEnabled: data.smart_repeat_enabled === true,
       mode: 'live',
       isLoading: false,
       error: null,
@@ -446,21 +392,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [applyBootstrap, applyBootstrapErrorState, applyLockedState])
 
   const applyFeedRemix = useCallback(async (item: FeedItem, isCurrent: () => boolean) => {
-    if (state.smartRepeatEnabled) {
-      if (!isCurrent()) return
-      // A direct repeat link has no originating tab: keep its publication's
-      // feed/profile behind the dialog rather than an unrelated generator.
-      if (item.publication_scope === 'profile') {
-        setViewedProfileCode(String(item.author_referral_code || '').trim().toUpperCase() || null)
-        setActiveTabState(7)
-      } else {
-        setActiveTabState(4)
-      }
-      openSmartRepeat(item.id, item.gen_type)
-      return
-    }
     if (item.gen_type === 'video') {
-      if (!state.videoModels.some(model => model.id === item.model)) throw new Error(REPEAT_MODEL_UNAVAILABLE)
+      const modelExists = state.videoModels.some((model) => model.id === item.model)
       const imageReferences = item.references_hidden ? [] : (item.reference_images || []).map((url, index) => feedReferenceToUploadedFile(url, index))
       const videoReferences = item.references_hidden ? [] : (item.reference_videos || []).map((url, index) => feedReferenceToUploadedFile(url, index, 'video'))
       const scenario = imageReferences.length
@@ -471,7 +404,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const preset = await hydrateSeedance25IdentityPreset(item, {
         title: 'Повторить видео из ссылки',
         prompt: item.prompt || '',
-        model: item.model,
+        model: modelExists ? item.model : state.videoModels[0]?.id || 'v3_pro',
         scenario,
         ratio: item.aspect_ratio || '16:9',
         duration: item.duration || 5,
@@ -487,12 +420,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return
     }
 
-    if (!state.imageModels.some(model => model.id === item.model)) throw new Error(REPEAT_MODEL_UNAVAILABLE)
+    const modelExists = state.imageModels.some((model) => model.id === item.model)
     setPromptPreset({
       promptId: null,
       title: 'Повторить публикацию из ссылки',
       prompt: item.prompt || '',
-      model: item.model,
+      model: modelExists ? item.model : state.imageModels[0]?.id || 'banana_pro',
       ratio: item.aspect_ratio || '1:1',
       sourceFeedGenId: item.id,
       promptHidden: item.prompt_hidden,
@@ -501,7 +434,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         : [],
     })
     setActiveTabState(1)
-  }, [state.imageModels, state.videoModels, state.smartRepeatEnabled, openSmartRepeat, setVideoPromptPreset, setPromptPreset])
+  }, [state.imageModels, state.videoModels])
 
   useEffect(() => {
     if (state.mode !== 'live' || state.isLoading) return
@@ -777,10 +710,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         feedDeepLink,
         promptPreset,
         videoPromptPreset,
-        smartRepeatSourceId,
-        smartRepeatType,
-        closeSmartRepeat,
-        openSmartRepeat,
         trendToRun,
         viewedProfileCode,
         activeTab,

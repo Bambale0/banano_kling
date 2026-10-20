@@ -74,8 +74,6 @@ def source_slots(recipe: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def build_repeat_plan(source: dict[str, Any]) -> dict[str, Any]:
-    from bot.smart_repeat_contract import authorized_source
-    source = authorized_source(source)
     from bot.services.media_input_utils import resolve_reference_source
     from bot.video_repeat_reference_contract import parse_video_repeat_grant
 
@@ -184,10 +182,7 @@ async def compile_repeat(actor, body: dict[str, Any], probe):
             continue
         value = replacements[slot["key"]].strip()
         # Even a known original URL cannot be smuggled in as a user's upload.
-        from bot.smart_repeat_contract import current_authorization
-        smart_context = current_authorization()
-        own_asset = smart_context and value in smart_context.get('owned_inputs', set())
-        if actor.user_id != plan["owner_id"] and not own_asset and any(value == item["url"] for item in plan["slots"]):
+        if actor.user_id != plan["owner_id"] and any(value == item["url"] for item in plan["slots"]):
             raise Wan3PrimeValidationError("Загрузите собственный файл для заменяемого места", status=403)
         if slot["field"] in FRAME_FIELDS:
             compiled[slot["field"]] = value

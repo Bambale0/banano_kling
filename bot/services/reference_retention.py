@@ -17,32 +17,20 @@ REFERENCE_DOCUMENTS_SQL = """
     UNION ALL
     SELECT generation_settings AS document FROM user_prompts
     WHERE generation_settings LIKE '%uploads/refs/%'
-    UNION ALL
-    SELECT state_json AS document FROM smart_repeat_drafts
-    WHERE state_json LIKE '%uploads/refs/%'
-    UNION ALL
-    SELECT snapshot_json AS document FROM smart_repeat_drafts
-    WHERE snapshot_json LIKE '%uploads/refs/%'
-    UNION ALL
-    SELECT schema_json AS document FROM smart_repeat_templates
-    WHERE schema_json LIKE '%uploads/refs/%'
 """
 
 
 def reference_snapshot_query(*, postgres: bool, all_uploads: bool = False) -> str:
     """Return a backend-specific read-only query over all nested media slots."""
     if postgres:
-        # Keep predicates outside JSONPath: the compatibility adapter treats
-        # question marks as bind placeholders, even inside quoted literals.
         leaves = """
             SELECT DISTINCT ref.value #>> '{}' AS ref_url
             FROM snapshots
             CROSS JOIN LATERAL jsonb_path_query(
                 snapshots.document::jsonb,
-                'strict $.**'
+                'strict $.** ? (@.type() == "string")'
             ) AS ref(value)
-            WHERE jsonb_typeof(ref.value) = 'string'
-              AND (ref.value #>> '{}') LIKE '%uploads/refs/%'
+            WHERE (ref.value #>> '{}') LIKE '%uploads/refs/%'
         """
     else:
         leaves = """

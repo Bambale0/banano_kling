@@ -387,8 +387,6 @@ async def _validate_public_payload(
     trusted_trend: bool = False,
     telegram_id: int | None = None,
 ) -> None:
-    from bot.smart_repeat_contract import current_authorization
-    trusted_trend = trusted_trend or bool(current_authorization())
     scenario = payload["scenario"]
     identity = payload.get("seedance25_identity_transfer", False)
     if not isinstance(identity, bool):

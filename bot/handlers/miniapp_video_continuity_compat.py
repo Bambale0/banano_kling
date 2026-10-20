@@ -594,8 +594,7 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
         raise web.HTTPBadRequest(reason="Исходное описание видео недоступно")
     # A publicly shared repeat/result is a new publication in its own right.
     # Keep this source task, rather than silently substituting its ancestor.
-    from bot.smart_repeat_contract import current_authorization
-    source_task = {**source_task, "_repeat_is_owner": (not current_authorization() and
+    source_task = {**source_task, "_repeat_is_owner": (
         source_task.get("user_id") == context["user"].id and not source_task.get("source_feed_gen_id")
     )}
     enriched = enrich_video_repeat_body(body, source_task)
