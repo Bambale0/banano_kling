@@ -23,7 +23,7 @@ test('startup watchdog shows native recovery without React and records no auth',
   expect(fetch).toHaveBeenCalledTimes(1)
   const request = (fetch as jest.Mock).mock.calls[0]
   expect(request[0]).toBe('/mini-app/api/client-log')
-  expect(JSON.parse(request[1].body)).toEqual({event: 'startup-assets-incomplete', phase: 'before-react', resource_path: ''})
+  expect(JSON.parse(request[1].body)).toEqual({event: 'startup-assets-incomplete', message: 'before-react', source: ''})
 })
 
 test('mounted app disarms the watchdog so active drafts are never interrupted', () => {
@@ -57,7 +57,7 @@ test('resource telemetry excludes query parameters and external origins', () => 
   external.dispatchEvent(new Event('error'))
   jest.advanceTimersByTime(STARTUP_RECOVERY_AFTER_MS)
   const body = (fetch as jest.Mock).mock.calls[0][1].body
-  expect(JSON.parse(body).resource_path).toBe('/mini-app/_next/static/chunks/test.js')
+  expect(JSON.parse(body).source).toBe('/mini-app/_next/static/chunks/test.js')
   expect(body).not.toMatch(/token|secret|not-for-logs|unrelated/)
   script.remove(); external.remove()
 })

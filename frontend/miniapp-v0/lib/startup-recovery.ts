@@ -39,7 +39,7 @@ export const startupRecoveryScript = `
     try {
       fetch(base + '/api/client-log', {
         method: 'POST', headers: {'Content-Type': 'application/json'}, keepalive: true,
-        body: JSON.stringify({event: 'startup-assets-incomplete', phase: 'before-react', resource_path: failedPath})
+        body: JSON.stringify({event: 'startup-assets-incomplete', message: 'before-react', source: failedPath})
       }).catch(function () {});
     } catch (e) {}
   }
