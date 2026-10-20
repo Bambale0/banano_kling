@@ -17,7 +17,7 @@ from aiohttp.test_utils import TestClient, TestServer
 source = ast.parse(Path('bot/trend_visibility.py').read_text())
 ns = {'Mapping': Mapping, 'Any': Any, 're': re,
       'configured_user_fields': lambda *_args, **_kwargs: [], 'TrendUserFieldsError': ValueError, 'hashlib': hashlib, 'hmac': hmac, 'json': json, 'parse_qsl': parse_qsl}
-selected = {'is_trend_prompt', 'public_trend_settings', 'sanitize_prompt_for_public', 'sanitize_prompt_api_payload', 'verified_telegram_id_from_init_data'}
+selected = {'is_trend_prompt', 'public_trend_settings', 'without_trend_repeat_statistics', 'sanitize_prompt_for_public', 'sanitize_prompt_api_payload', 'verified_telegram_id_from_init_data'}
 exec(compile(ast.Module(body=[node for node in source.body if isinstance(node, ast.FunctionDef) and node.name in selected], type_ignores=[]), 'actual-trend-sanitizer', 'exec'), ns)  # noqa: S102 - isolated trusted repository declarations
 
 
@@ -25,6 +25,8 @@ class PublicWanMarkerTests(unittest.TestCase):
     def card(self, model='wan_3', version=1):
         return {'id': 731, 'model': model, 'tags': ['trend', 'trend-video'], 'category': 'video',
                 'prompt_text': 'PRIVATE-SYNTHETIC', 'source_generation_id': 99,
+                'uses_count': 99, 'successful_runs_count': 7,
+                'description': '✅ Успешных запусков: 7 · Public description',
                 'generation_settings': {'kind': 'video', 'ratio': '9:16', 'model': model,
                   'wan3_recipe_version': version, 'wan3_recipe': {'prompt': 'PRIVATE-SYNTHETIC'},
                   'reference_image_urls': ['https://private.test/fixed.png'], 'user_reference_count': 1}}
@@ -41,6 +43,9 @@ class PublicWanMarkerTests(unittest.TestCase):
                 self.assertNotIn('private.test', str(result))
                 self.assertNotIn('model', result['generation_settings'])
                 self.assertNotIn('wan3_recipe', result['generation_settings'])
+                self.assertNotIn('uses_count', result)
+                self.assertNotIn('successful_runs_count', result)
+                self.assertEqual(result['description'], 'Public description')
 
     def test_generic_or_invalid_marker_does_not_gain_wan_route(self):
         for model, version in [('seedance_2_5', 1), ('wan_3', None), ('wan_3', 2), ('wan_3', True), ('wan_3', '1')]:
@@ -93,6 +98,12 @@ class PublicWanHttpTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(card['prompt_text'], '')
                     self.assertNotIn('PRIVATE-SYNTHETIC', str(body))
                     self.assertNotIn('private.test', str(body))
+                    if actor == 222:
+                        self.assertEqual(card['successful_runs_count'], 7)
+                    else:
+                        self.assertNotIn('successful_runs_count', card)
+                        self.assertNotIn('uses_count', card)
+                        self.assertEqual(card['description'], 'Public description')
 
 
 if __name__ == '__main__':
