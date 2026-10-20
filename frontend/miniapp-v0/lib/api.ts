@@ -429,12 +429,37 @@ function resolvePendingVideoTask(taskId: string): Promise<TaskDetail> {
   return request
 }
 
+export const BOOTSTRAP_TIMEOUT_MS = 15_000
+
 export async function bootstrapApp(signal?: AbortSignal): Promise<BootstrapResponse> {
   const initData = getInitData()
   if (!initData) {
     throw new Error('Откройте mini app из Telegram и попробуйте снова.')
   }
-  const response = await postJson<BootstrapResponse>('bootstrap', { init_data: initData }, signal)
+  if (signal?.aborted) throw signal.reason || new DOMException('Aborted', 'AbortError')
+  const controller = new AbortController()
+  let timedOut = false
+  const cancel = () => controller.abort(signal?.reason)
+  signal?.addEventListener('abort', cancel, { once: true })
+  const timeout = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, BOOTSTRAP_TIMEOUT_MS)
+  let response: BootstrapResponse
+  try {
+    // The deadline covers both response headers and the complete JSON body.
+    response = await postJson<BootstrapResponse>('bootstrap', { init_data: initData }, controller.signal)
+  } catch (error) {
+    if (timedOut) {
+      const failure = new Error('Сервер не ответил вовремя. Проверьте соединение и повторите подключение.')
+      failure.name = 'BootstrapTimeoutError'
+      throw failure
+    }
+    throw error
+  } finally {
+    clearTimeout(timeout)
+    signal?.removeEventListener('abort', cancel)
+  }
   const tasks = response.recent_tasks || []
   reconcilePendingVideoRepeats(tasks)
   if (!signal?.aborted) {

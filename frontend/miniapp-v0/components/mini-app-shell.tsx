@@ -38,6 +38,10 @@ function MiniAppBody({ children }: MiniAppShellProps) {
   const isLocked = state.mode === 'locked'
 
   useEffect(() => {
+    window.__BANANO_BOOT_RECOVERY__?.done()
+  }, [])
+
+  useEffect(() => {
     if (typeof window === 'undefined' || state.mode !== 'live') return
 
     const openDefaultTrends = () => {

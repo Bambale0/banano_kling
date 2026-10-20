@@ -440,8 +440,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const accessRevision = chatAccessRevision.current
       const data = await bootstrapApp()
       applyBootstrap(data, accessRevision)
-    } catch {
-      applyBootstrapErrorState('Не удалось обновить данные прямо сейчас. Показываю только подтверждённые данные без демо-подстановок.')
+    } catch (error) {
+      applyBootstrapErrorState(error instanceof Error && error.name === 'BootstrapTimeoutError'
+        ? error.message
+        : 'Не удалось подключиться к серверу. Проверьте соединение и повторите подключение.')
     }
   }, [applyBootstrap, applyBootstrapErrorState, applyLockedState])
 
