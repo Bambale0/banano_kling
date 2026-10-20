@@ -394,7 +394,7 @@ async function parseJson<T>(response: Response): Promise<T> {
   return rewriteTemporaryMedia(data) as T
 }
 
-async function postJson<T>(path: string, payload: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
+async function postJson<T>(path: string, payload: Record<string, unknown>, signal?: AbortSignal, headers: Record<string, string> = {}): Promise<T> {
   const nextPayload = { ...payload }
   const startParamFallback = getStartParamFallback()
   if (startParamFallback && !nextPayload.start_param_fallback) {
@@ -405,6 +405,7 @@ async function postJson<T>(path: string, payload: Record<string, unknown>, signa
     headers: {
       Accept: 'application/json',
       'Content-Type': 'application/json',
+      ...headers,
     },
     body: JSON.stringify(nextPayload),
     cache: 'no-store',
@@ -431,7 +432,7 @@ function resolvePendingVideoTask(taskId: string): Promise<TaskDetail> {
 
 export const BOOTSTRAP_TIMEOUT_MS = 15_000
 
-export async function bootstrapApp(signal?: AbortSignal): Promise<BootstrapResponse> {
+export async function bootstrapApp(signal?: AbortSignal, purpose: 'state' | 'capability' = 'state'): Promise<BootstrapResponse> {
   const initData = getInitData()
   if (!initData) {
     throw new Error('Откройте mini app из Telegram и попробуйте снова.')
@@ -448,7 +449,9 @@ export async function bootstrapApp(signal?: AbortSignal): Promise<BootstrapRespo
   let response: BootstrapResponse
   try {
     // The deadline covers both response headers and the complete JSON body.
-    response = await postJson<BootstrapResponse>('bootstrap', { init_data: initData }, controller.signal)
+    response = await postJson<BootstrapResponse>('bootstrap', { init_data: initData }, controller.signal, {
+      'X-MiniApp-Bootstrap-Purpose': purpose,
+    })
   } catch (error) {
     if (timedOut) {
       const failure = new Error('Сервер не ответил вовремя. Проверьте соединение и повторите подключение.')

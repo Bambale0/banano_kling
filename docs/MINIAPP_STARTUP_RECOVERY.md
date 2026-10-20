@@ -27,3 +27,7 @@ The preceding release #342 failed before switching containers because free disk 
 ## Authentication and legacy-handler compatibility
 
 Bootstrap preserves HTTP status in `MiniAppApiError`; an HTTP 401 is recorded separately from a transport failure. Invalid/expired cached init data must keep the fresh Telegram login widget available rather than retrying the same invalid session. No launch storage is silently cleared. The backend-rendered index's older 9-second reload watchdog returns immediately when the new startup guard is present, retaining legacy fallback only for older exports. This avoids competing reload deadlines and legacy duplicate telemetry. Both the actual injected watchdog script and expired-session recovery have regression coverage.
+
+## Bootstrap request correlation
+
+Both background state refreshes and explicit bot-delivery capability checks are now abortable. `X-MiniApp-Bootstrap-Purpose` (`state` or `capability`) distinguishes their intent without identifiers or credential data. The former E2E heuristic classified any request with an AbortSignal as capability-only; after introducing a deadline for every request it incorrectly delayed normal five-second polling and reported two checks. The browser fixture now uses explicit purpose and retains its exact one-in-flight, cancellation, timeout and draft-preservation assertions. Both request kinds retain the same deadline/cancellation protections.

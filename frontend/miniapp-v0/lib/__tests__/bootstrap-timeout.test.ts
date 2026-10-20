@@ -65,3 +65,14 @@ test('expired authentication remains distinguishable from a network timeout', as
   await expect(bootstrapApp()).rejects.toHaveProperty('status', 401)
   expect(jest.getTimerCount()).toBe(0)
 })
+
+test('background and capability checks remain separately identifiable although both are abortable', async () => {
+  global.fetch = jest.fn(async () => ({ ok: true, status: 200, headers: { get: () => 'application/json' },
+    text: async () => JSON.stringify({ ok: true, recent_tasks: [] }),
+  })) as unknown as typeof fetch
+  await bootstrapApp()
+  await bootstrapApp(new AbortController().signal, 'capability')
+  const requests = (fetch as jest.Mock).mock.calls.map(([, options]) => options)
+  expect(requests.every(options => options.signal instanceof AbortSignal)).toBe(true)
+  expect(requests.map(options => new Headers(options.headers).get('X-MiniApp-Bootstrap-Purpose'))).toEqual(['state', 'capability'])
+})

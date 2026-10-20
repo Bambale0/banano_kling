@@ -420,7 +420,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // Capability-only verification must not unmount generation forms or replace drafts.
   const refreshTelegramChatAccess = useCallback(async (signal: AbortSignal) => {
-    const data = await bootstrapApp(signal)
+    const data = await bootstrapApp(signal, 'capability')
     if (signal.aborted) throw new DOMException('Check cancelled', 'AbortError')
     const available = data.telegram_chat_available === true
     chatAccessRevision.current += 1
