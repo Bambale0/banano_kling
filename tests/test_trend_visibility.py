@@ -218,3 +218,43 @@ def test_implicit_description_must_not_leak_secret_recipe():
     safe = sanitize_prompt_for_public(payload)
     assert safe["description"] == ""
     assert original not in str(safe)
+
+
+def test_public_trend_hides_counts_and_legacy_counter_description_without_mutation():
+    trend = {**_trend(), "uses_count": 99, "successful_runs_count": 7,
+             "description": "✅ Успешных запусков: 7 · Публичное описание"}
+    safe = sanitize_prompt_for_public(trend)
+    assert "uses_count" not in safe
+    assert "successful_runs_count" not in safe
+    assert safe["description"] == "Публичное описание"
+    assert trend["uses_count"] == 99
+    assert trend["description"].startswith("✅ Успешных запусков: 7")
+    for field in ("prompt", "prompts"):
+        value = trend if field == "prompt" else [trend]
+        public = sanitize_prompt_api_payload({field: value})
+        assert "successful_runs_count" not in str(public)
+        assert "Успешных запусков" not in str(public)
+
+
+def test_public_zero_success_counter_is_omitted_instead_of_displayed_as_zero():
+    trend = {**_trend(), "uses_count": 3, "successful_runs_count": 0,
+             "description": "✅ Успешных запусков: 0"}
+    safe = sanitize_prompt_for_public(trend)
+    assert safe["description"] == ""
+    assert "uses_count" not in safe and "successful_runs_count" not in safe
+
+
+def test_admin_catalog_statistics_do_not_reveal_private_recipe():
+    trend = {**_trend(), "uses_count": 99, "successful_runs_count": 7}
+    safe = sanitize_prompt_for_public(trend, include_repeat_stats=True)
+    assert safe["uses_count"] == 99 and safe["successful_runs_count"] == 7
+    assert safe["model"] is None and safe["prompt_text"] == ""
+
+
+def test_non_trend_statistics_and_authored_description_are_unchanged():
+    prompt = {"id": 9, "tags": ["portrait"], "uses_count": 42,
+              "description": "An ordinary prompt", "prompt_text": "Visible"}
+    assert sanitize_prompt_for_public(prompt) == prompt
+    trend = {**_trend(), "successful_runs_count": 7,
+             "description": "Инструкция: Успешных запусков может быть много"}
+    assert sanitize_prompt_for_public(trend)["description"] == trend["description"]

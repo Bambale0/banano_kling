@@ -132,8 +132,29 @@ def public_trend_settings(prompt: Mapping[str, Any]) -> dict[str, Any]:
     return public_settings
 
 
+def without_trend_repeat_statistics(prompt: Mapping[str, Any]) -> dict[str, Any]:
+    """Copy viewer metadata without admin counters, including the legacy prefix."""
+    payload = dict(prompt)
+    if not is_trend_prompt(payload):
+        return payload
+    count = payload.pop("successful_runs_count", None)
+    payload.pop("uses_count", None)
+    # Only remove the exact system-generated prefix for this metric; never
+    # rewrite an author's arbitrary description or mutate the shared DB result.
+    if type(count) is int and count >= 0:
+        prefix = f"✅ Успешных запусков: {count}"
+        description = str(payload.get("description") or "").strip()
+        if description == prefix:
+            payload["description"] = ""
+        elif description.startswith(prefix + " · "):
+            payload["description"] = description[len(prefix + " · "):]
+    return payload
+
+
 def sanitize_prompt_for_public(
     prompt: Mapping[str, Any] | None,
+    *,
+    include_repeat_stats: bool = False,
 ) -> dict[str, Any] | None:
     """Return public prompt metadata without a trend's executable recipe."""
 
@@ -144,6 +165,8 @@ def sanitize_prompt_for_public(
     if not is_trend_prompt(payload):
         return payload
 
+    if not include_repeat_stats:
+        payload = without_trend_repeat_statistics(payload)
     public_settings = public_trend_settings(payload)
     # Legacy authors could publish without a description. create_prompt then
     # derives one from the SECRET recipe; redacting only prompt_text is not enough.
@@ -166,7 +189,9 @@ def sanitize_prompt_for_public(
     return payload
 
 
-def sanitize_prompt_api_payload(payload: Any) -> Any:
+def sanitize_prompt_api_payload(
+    payload: Any, *, include_repeat_stats: bool = False,
+) -> Any:
     """Redact trend secrets in Mini App prompt list/detail mutation responses."""
 
     if not isinstance(payload, Mapping):
@@ -175,12 +200,15 @@ def sanitize_prompt_api_payload(payload: Any) -> Any:
     result = dict(payload)
     prompt = result.get("prompt")
     if isinstance(prompt, Mapping):
-        result["prompt"] = sanitize_prompt_for_public(prompt)
+        result["prompt"] = sanitize_prompt_for_public(
+            prompt, include_repeat_stats=include_repeat_stats,
+        )
 
     prompts = result.get("prompts")
     if isinstance(prompts, list):
         result["prompts"] = [
-            sanitize_prompt_for_public(item) if isinstance(item, Mapping) else item
+            sanitize_prompt_for_public(item, include_repeat_stats=include_repeat_stats)
+            if isinstance(item, Mapping) else item
             for item in prompts
         ]
 

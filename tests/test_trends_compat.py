@@ -1,3 +1,7 @@
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot.handlers.trend_text_upload import (
@@ -108,3 +112,21 @@ def test_text_upload_model_keyboard_uses_canonical_image_models() -> None:
     assert callbacks == [f"trend_model:{model_id}" for model_id, _ in TREND_IMAGE_MODELS]
     assert "trend_model:nanobanana" not in callbacks
     assert keyboard.inline_keyboard[-1][0].callback_data == "trend_add_cancel"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("actor_id,is_admin", [(999999999, True), (8311004, False)])
+async def test_telegram_trend_caption_counters_require_admin(monkeypatch, actor_id, is_admin):
+    from bot.handlers import trends_compat
+
+    trend = {"id": 42, "tags": ["trend"], "title": "Test trend", "model": "banana_pro",
+             "description": "✅ Успешных запусков: 7 · Keep this description",
+             "successful_runs_count": 7, "uses_count": 99}
+    monkeypatch.setattr(trends_compat, "_get_trends", AsyncMock(return_value=[trend]))
+    message = SimpleNamespace(answer=AsyncMock(), photo=None, video=None)
+    await trends_compat._render_trends(message, admin_telegram_id=actor_id)
+    caption = message.answer.await_args.args[0]
+    assert ("Успешных запусков: 7" in caption) is is_admin
+    assert "Keep this description" in caption
+    assert "Banana Pro" in caption
+    assert "Успешных запусков: 7" in trend["description"]

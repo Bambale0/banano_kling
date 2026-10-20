@@ -285,7 +285,7 @@ async def test_successful_repeat_counts_are_identical_in_folders_pages_and_admin
         task_id="completed_1", trend_id=first["id"], user_id=user.id,
     )
 
-    catalog = await trend_catalog.list_catalog(is_admin=False)
+    catalog = await trend_catalog.list_catalog(is_admin=True)
     all_cards = [card for folder in catalog for card in folder["items"]]
     repeated = [card for card in all_cards if card["id"] == first["id"]]
     assert len(repeated) == 2
@@ -295,7 +295,7 @@ async def test_successful_repeat_counts_are_identical_in_folders_pages_and_admin
     assert all(card["prompt_text"] == "" and card["model"] is None for card in all_cards)
     assert all("completed_1" not in str(card) for card in all_cards)
 
-    pages = [await trend_catalog.category_page(category_a["id"], page=page, limit=1)
+    pages = [await trend_catalog.category_page(category_a["id"], is_admin=True, page=page, limit=1)
              for page in (1, 2)]
     per_id = {card["id"]: card["successful_runs_count"] for page in pages for card in page["items"]}
     assert per_id == {first["id"]: 2, second["id"]: 1}
@@ -310,6 +310,30 @@ async def test_zero_successes_are_explicit_not_guessed_from_accepted_launches():
     async with db_backend.connect(database.DATABASE_PATH) as db:
         await db.execute("UPDATE user_prompts SET uses_count = 18 WHERE id = ?", (trend["id"],))
         await db.commit()
-    card = (await trend_catalog.list_catalog())[0]["items"][0]
+    card = (await trend_catalog.list_catalog(is_admin=True))[0]["items"][0]
     assert card["uses_count"] == 18
     assert card["successful_runs_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_viewer_catalog_pages_omit_statistics_without_querying_counts(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from bot.handlers import trend_success_compat as metrics
+
+    assigned, unassigned = await make_trend(401), await make_trend(402)
+    category = await trend_catalog.create_category("Public category")
+    await trend_catalog.set_trend_categories(assigned["id"], [category["id"]])
+    query = AsyncMock(side_effect=AssertionError("Viewer must not query private statistics"))
+    monkeypatch.setattr(metrics, "get_trend_success_counts", query)
+    catalog = await trend_catalog.list_catalog()
+    cards = [card for folder in catalog for card in folder["items"]]
+    assert {card["id"] for card in cards} == {assigned["id"], unassigned["id"]}
+    for category_id in (category["id"], "unassigned"):
+        cards.extend((await trend_catalog.category_page(category_id))["items"])
+    for card in cards:
+        assert "successful_runs_count" not in card
+        assert "uses_count" not in card
+        assert card["title"]
+        assert card["prompt_text"] == ""
+    query.assert_not_awaited()

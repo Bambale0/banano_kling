@@ -277,7 +277,9 @@ async def trend_prompt_privacy_middleware(
             and start_param.startswith("prompt_")
         )
         if not viewer_is_admin or shared_prompt_detail:
-            payload = sanitize_prompt_api_payload(payload)
+            payload = sanitize_prompt_api_payload(
+                payload, include_repeat_stats=viewer_is_admin,
+            )
 
     if is_task_api:
         payload = await sanitize_task_api_payload(payload)

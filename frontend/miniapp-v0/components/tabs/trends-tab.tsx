@@ -1348,6 +1348,7 @@ export function TrendsTab() {
 
       {catalog !== null ? (
         <TrendShowcase
+          isAdmin={isAdmin}
           categories={catalog.filter((cat) => cat.is_visible)}
           onRepeat={applyTrend}
           onShare={openShareLink}
