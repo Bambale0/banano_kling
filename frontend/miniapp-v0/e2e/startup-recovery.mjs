@@ -19,7 +19,7 @@ try {
     await new Promise(done => setTimeout(done, 100))
   }
   browser = await chromium.launch({ headless: true })
-  const cases = process.env.BOOT_E2E_CASE ? [process.env.BOOT_E2E_CASE] : ['normal', 'transient', 'persistent', 'stall', 'bootstrap-timeout']
+  const cases = process.env.BOOT_E2E_CASE ? [process.env.BOOT_E2E_CASE] : ['normal', 'transient', 'persistent', 'stall', 'slow-success', 'bootstrap-timeout']
   for (const scenario of cases) {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
     const page = await context.newPage()
@@ -28,6 +28,7 @@ try {
     const stallReleases = []
     const releaseStall = () => { stallReleases.splice(0).forEach(done => done()) }
     page.on('pageerror', error => errors.push(error.message))
+    page.on('console', message => { if (message.type() === 'error' && /hydration|Minified React error #418/i.test(message.text())) errors.push(message.text()) })
     await page.addInitScript(() => {
       window.Telegram = { WebApp: { initData: 'query_id=synthetic-startup', initDataUnsafe: {}, ready() {}, expand() {}, onEvent() {}, offEvent() {} } }
     })
@@ -39,7 +40,7 @@ try {
         chunks++
         if (scenario === 'transient' && chunks === 1) return route.abort('connectionreset')
         if (scenario === 'persistent') return route.abort('connectionreset')
-        if (scenario === 'stall' && !allow) {
+        if ((scenario === 'stall' || scenario === 'slow-success') && !allow) {
           await new Promise(done => { stallReleases.push(done) })
           try { return await route.continue() } catch { return }
         }
@@ -62,7 +63,7 @@ try {
     })
     const hash = '#tgWebAppData=query_id%3Dsynthetic-startup&tgWebAppStartParam=boot_referral'
     await page.goto(`${origin}/mini-app/?startapp=boot_referral${hash}`, { waitUntil: 'commit' })
-    if (scenario === 'persistent' || scenario === 'stall') {
+    if (scenario === 'persistent' || scenario === 'stall' || scenario === 'slow-success') {
       const recovery = page.locator('#miniapp-startup-recovery')
       try { await recovery.waitFor({ state: 'visible', timeout: 20_000 }) }
       catch (e) {
@@ -77,6 +78,13 @@ try {
       if (scenario === 'persistent') {
         assert.ok(chunks <= 3, 'no unbounded competing chunk retries')
         assert.equal(await page.locator('#miniapp-startup-recovery button').count(), 1)
+      } else if (scenario === 'slow-success') {
+        allow = true
+        releaseStall()
+        await page.getByRole('button', { name: 'Студия', exact: true }).waitFor({ timeout: 10_000 })
+        assert.ok(bootstraps > 0)
+        assert.equal(await recovery.isVisible(), false)
+        assert.equal(new URL(page.url()).searchParams.has('_boot_reload'), false)
       } else {
         allow = true
         const navigated = page.waitForURL(url => url.searchParams.has('_boot_reload'), { waitUntil: 'commit', timeout: 10_000 })
