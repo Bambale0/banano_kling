@@ -32,7 +32,7 @@ interface MiniAppShellProps {
 
 
 function MiniAppBody({ children }: MiniAppShellProps) {
-  const { state, activeWorkspace, trendToRun, setActiveTab, refreshTelegramChatAccess, smartRepeatSourceId } = useApp()
+  const { state, activeWorkspace, trendToRun, setActiveTab, refreshTelegramChatAccess } = useApp()
   const [genjutsuOpen, setGenjutsuOpen] = useState(false)
   const isBootstrapping = state.isLoading
   const isLocked = state.mode === 'locked'
@@ -70,7 +70,7 @@ function MiniAppBody({ children }: MiniAppShellProps) {
           {/* A deep-linked trend owns the active Radix modal. Delivery is optional,
               so defer its offer instead of blocking the trend or fighting its focus trap. */}
           <BotWriteAccessGate
-            required={state.user.telegramBotStartRequired && !trendToRun && !genjutsuOpen && !smartRepeatSourceId}
+            required={state.user.telegramBotStartRequired && !trendToRun && !genjutsuOpen}
             botUsername={state.user.botUsername}
             onRefresh={refreshTelegramChatAccess}
           />

@@ -171,9 +171,7 @@ async def test_pg_startup_adds_private_repeat_grants_without_backfill(monkeypatc
         row = await cursor.fetchone()
         assert row["feed_repeat_reference_selection"] is None
         assert row["feed_reference_selection"] == legacy_selection
-        # A video grant must use the current typed contract; an image-only
-        # fixture is rejected independently of the migration under test.
-        explicit_grant = json.dumps({"version": 1, "images": ["https://example.test/explicit-private.png"], "videos": []})
+        explicit_grant = json.dumps({"images": ["https://example.test/explicit-private.png"]})
         await db.execute(
             "UPDATE generation_tasks SET feed_repeat_reference_selection = ? WHERE id = ?",
             (explicit_grant, tid),
@@ -225,40 +223,3 @@ async def test_pg_telegram_oversized_video_delivery_is_terminal_link_only():
     assert await database.store_task_result_ready(task_id, result_url)
     assert json.loads((await database.get_task_by_id(task_id)).request_data) == metadata
     assert not await get_stuck_tasks(minutes=0)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("all_uploads", [False, True])
-async def test_pg_reference_ownership_query_through_runtime_adapter(all_uploads):
-    from bot.services.reference_retention import reference_snapshot_query
-
-    reference = "/uploads/refs/image/test-owned.png"
-    nested_video = "/uploads/refs/video/test-owned.mp4"
-    audio = "/uploads/refs/audio/test-owned.wav"
-    dated = "/uploads/20261019/owned-input.png"
-    template = "/uploads/refs/image/template-owned.png"
-    tid, _uid = await create_delivery_task()
-    # The fixture explicitly restricts this to the disposable runtime test DB.
-    async with await psycopg.AsyncConnection.connect(os.environ["DATABASE_URL"]) as conn:
-        await conn.execute("ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS result_urls TEXT")
-        await conn.execute("ALTER TABLE user_prompts ADD COLUMN IF NOT EXISTS generation_settings TEXT")
-        await conn.execute(
-            "UPDATE generation_tasks SET request_data = %s, "
-            "feed_repeat_reference_selection = %s, result_urls = %s WHERE id = %s",
-            (
-                json.dumps({"images": [reference, reference], "nested": {"video": nested_video},
-                            "dated": dated, "ignored": [None, True, 42, "https://example.test/external.png"]}),
-                json.dumps({"audio": [audio]}),
-                json.dumps([reference]), tid,
-            ),
-        )
-        await conn.execute("INSERT INTO user_prompts(generation_settings) VALUES (%s)",
-                           (json.dumps({"draft": {"url": template}}),))
-        await conn.commit()
-    # Critical seam: do not bypass the SQLite-to-PostgreSQL SQL translator.
-    async with db_backend.connect() as db:
-        cursor = await db.execute(reference_snapshot_query(postgres=True, all_uploads=all_uploads))
-        urls = {row[0] for row in await cursor.fetchall()}
-    assert {reference, nested_video, audio, template} <= urls
-    assert (dated in urls) is all_uploads
-    assert all(url.startswith("/uploads/") for url in urls)

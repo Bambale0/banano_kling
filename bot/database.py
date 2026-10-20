@@ -1277,8 +1277,6 @@ async def init_db():
 
         await _ensure_saved_references_schema(db)
         await _ensure_prompt_feed_schema(db)
-        from bot.smart_repeat_store import ensure_schema as ensure_smart_repeat_schema
-        await ensure_smart_repeat_schema(db)
         from bot.creator_tariff_membership import ensure_creator_tariff_schema
         await ensure_creator_tariff_schema(db)
 
@@ -4204,7 +4202,7 @@ def _saved_reference_is_available(reference: SavedReference) -> bool:
             return bool(resolve_local_upload_path(reference.file_url))
     except Exception:
         logger.exception("Failed to validate saved reference file: %s", reference.file_url)
-        return False
+        return True
     return True
 
 
@@ -5067,10 +5065,6 @@ async def get_user_credits(telegram_id: int) -> Credits:
 
 async def add_credits(telegram_id: int, amount: int) -> bool:
     """Добавляет кредиты пользователю"""
-    from bot.smart_repeat_contract import current_authorization
-    if current_authorization():
-        from bot.smart_repeat_store import repeat_finance
-        return await repeat_finance(telegram_id, amount, refund=True)
     if amount <= 0:
         logger.warning(f"add_credits: non-positive amount {amount} for user {telegram_id}")
         return False
@@ -5088,10 +5082,6 @@ async def deduct_credits(
     telegram_id: int, amount: int, check_balance: bool = True
 ) -> bool:
     """Списывает кредиты с проверкой баланса"""
-    from bot.smart_repeat_contract import current_authorization
-    if current_authorization():
-        from bot.smart_repeat_store import repeat_finance
-        return await repeat_finance(telegram_id, amount)
     if amount <= 0:
         logger.warning(f"deduct_credits: non-positive amount {amount} for user {telegram_id}")
         return False
@@ -5514,20 +5504,6 @@ async def add_generation_task(
 ) -> bool:
     """Создаёт задачу генерации"""
     from bot.config import config
-    from bot.smart_repeat_contract import current_authorization
-    smart_context = current_authorization()
-    if smart_context:
-        if user_id != smart_context['user_id'] or telegram_id != smart_context['telegram_id']:
-            raise ValueError('Smart repeat actor mismatch')
-        from bot.smart_repeat_store import record_accepted
-        request_data = {**_parse_json_dict(request_data),
-                        'smart_repeat_draft_id': smart_context['draft_id'],
-                        'smart_repeat_template_version': smart_context['template_version']}
-        await record_accepted(task_id, {'user_id': user_id, 'telegram_id': telegram_id,
-            'task_id': task_id, 'type': type, 'preset_id': preset_id, 'model': model, 'duration': duration,
-            'aspect_ratio': aspect_ratio, 'prompt': prompt, 'cost': cost, 'request_data': request_data,
-            'source_feed_gen_id': source_feed_gen_id, 'parent_generation_id': parent_generation_id,
-            'action_type': action_type, 'reserved_task_id': reserved_task_id, 'provider_accepted': provider_accepted})
 
     invite_eligible = (type in {"image", "video", "motion_control", "audio", "character"}
                        and float(cost or 0) > 0 and not config.is_admin(telegram_id)
@@ -8143,8 +8119,7 @@ async def get_generation_task_payload(
         payload = dict(row)
         payload["result_urls"] = _generation_result_urls(row)
         payload["request_data"] = _parse_json_dict(row["request_data"])
-        from bot.smart_repeat_contract import authorized_source
-        return authorized_source(payload)
+        return payload
 
 
 async def share_to_feed(

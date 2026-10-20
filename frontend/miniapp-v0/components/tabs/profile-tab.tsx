@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useApp } from '@/lib/app-context'
-import { REPEAT_MODEL_UNAVAILABLE } from '@/lib/repeat-routing'
 import { hydrateSeedance25IdentityPreset } from '@/lib/seedance25-repeat'
 import { openGenjutsu } from '@/lib/genjutsu-api'
 import type { FeedComment, FeedItem, ProfileSummary, ScenarioType, UploadedFile } from '@/lib/types'
@@ -177,7 +176,6 @@ export function ProfileTab() {
     setActiveTab,
     setPromptPreset,
     setVideoPromptPreset,
-    openSmartRepeat,
   } = useApp()
   const { user } = state
   const [items, setItems] = useState<FeedItem[]>([])
@@ -618,17 +616,8 @@ export function ProfileTab() {
       setError('Повтор этой публикации недоступен. Обновите ленту.')
       return
     }
-    if (isLive && state.smartRepeatEnabled) {
-      dismissPreview()
-      openSmartRepeat(item.id, item.gen_type)
-      return
-    }
     if (item.gen_type === 'video') {
-      if (!state.videoModels.some(model => model.id === item.model)) {
-        dismissPreview()
-        setError(REPEAT_MODEL_UNAVAILABLE)
-        return
-      }
+      const modelExists = state.videoModels.some((model) => model.id === item.model)
       const imageReferences = item.references_hidden ? [] : (item.reference_images || []).map((url, index) => feedReferenceToUploadedFile(url, index))
       const videoReferences = item.references_hidden ? [] : (item.reference_videos || []).map((url, index) => feedReferenceToUploadedFile(url, index, 'video'))
       const scenario = imageReferences.length ? 'imgtxt' : videoReferences.length ? 'video' : normalizeVideoScenario(item.scenario)
@@ -638,7 +627,7 @@ export function ProfileTab() {
       const preset = await hydrateSeedance25IdentityPreset(item, {
         title: 'Повторить видео из ленты',
         prompt: item.prompt || '',
-        model: item.model,
+        model: modelExists ? item.model : state.videoModels[0]?.id || 'v3_pro',
         scenario,
         ratio: item.aspect_ratio || '16:9',
         duration: item.duration || 5,
@@ -658,16 +647,12 @@ export function ProfileTab() {
       }
       return
     }
-    if (!state.imageModels.some(model => model.id === item.model)) {
-      dismissPreview()
-      setError(REPEAT_MODEL_UNAVAILABLE)
-      return
-    }
+    const modelExists = state.imageModels.some((model) => model.id === item.model)
     setPromptPreset({
       promptId: null,
       title: 'Повторить публикацию',
       prompt: '',
-      model: item.model,
+      model: modelExists ? item.model : state.imageModels[0]?.id || 'banana_pro',
       ratio: item.aspect_ratio || '1:1',
       sourceFeedGenId: isLive ? item.id : null,
       promptHidden: item.prompt_hidden,

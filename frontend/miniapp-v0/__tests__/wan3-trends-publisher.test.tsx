@@ -3,7 +3,6 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { TrendsTab } from '@/components/tabs/trends-tab'
 import * as api from '@/lib/api'
 import * as wanApi from '@/lib/wan3-prime-api'
-import { normalizeWan3ImageForRetry, Wan3ImagePreparationError } from '@/lib/wan3-image-normalize'
 
 const mockState = {
   mode: 'live', user: { isAdmin: true },
@@ -28,18 +27,12 @@ jest.mock('@/lib/wan3-prime-api', () => ({
   ...jest.requireActual('@/lib/wan3-prime-api'),
   quoteWan3Prime: jest.fn(), generateWan3Prime: jest.fn(), uploadWan3PrimeReference: jest.fn(), importWan3PrimeReference: jest.fn(),
 }))
-jest.mock('@/lib/wan3-image-normalize', () => ({
-  ...jest.requireActual('@/lib/wan3-image-normalize'), normalizeWan3ImageForRetry: jest.fn(),
-}))
 const apiMock = api as jest.Mocked<typeof api>
 const wanMock = wanApi as jest.Mocked<typeof wanApi>
 const file = (name: string, type = 'image/png') => new File(['test'], name, { type })
 function deferred<T>() { let resolve!: (value: T) => void; let reject!: (error: unknown) => void; const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej }); return { promise, resolve, reject } }
 beforeEach(() => {
   jest.clearAllMocks()
-  // Invalid synthetic bytes cannot be decoded by JSDOM. Exercise the final
-  // failure after the existing bounded JPEG fallback, rather than hanging on Image.load.
-  ;(normalizeWan3ImageForRetry as jest.Mock).mockRejectedValue(new Wan3ImagePreparationError('synthetic invalid image'))
   apiMock.fetchPrompts.mockResolvedValue([])
   apiMock.uploadFile.mockResolvedValue({ url: 'https://owned/preview.jpg' } as any)
   // Keep publishing pending: the outgoing object is asserted before a new catalog render.
@@ -199,7 +192,7 @@ test('removing a fixed slot never silently fixes a different file or restores a 
   expect(await screen.findByLabelText('При повторе: Image1')).toHaveValue('replaceable')
 })
 
-test('switching preview kind discards a stale preview failure before switching to WAN', async () => {
+test('a preview failure stays safe when upload starts before switching to WAN', async () => {
   const pending = deferred<any>()
   apiMock.uploadFile.mockImplementationOnce(() => pending.promise)
   render(<TrendsTab />)
@@ -208,10 +201,7 @@ test('switching preview kind discards a stale preview failure before switching t
   fireEvent.click(screen.getByRole('button', { name: 'Видео-тренд' }))
   fireEvent.change(screen.getByRole('combobox', { name: 'Видео-нейросеть' }), { target: { value: 'wan_3' } })
   await act(async () => pending.reject(new Error('private provider detail')))
-  // Switching image -> video explicitly clears the old preview and its lease.
-  // A late rejection must not resurrect that old upload's error.
-  expect(screen.queryByText('Не удалось загрузить превью. Повторите загрузку файла.')).not.toBeInTheDocument()
-  expect(screen.queryByAltText('Preview тренда')).not.toBeInTheDocument()
+  expect(await screen.findByText('Не удалось загрузить превью. Повторите загрузку файла.')).toBeInTheDocument()
   expect(screen.queryByText(/private provider detail/)).not.toBeInTheDocument()
 })
 

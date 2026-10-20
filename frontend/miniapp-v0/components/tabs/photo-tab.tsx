@@ -1,7 +1,6 @@
 'use client'
 
 import { useState } from 'react'
-import { SmartRepeatForm } from '@/components/smart-repeat-form'
 import { useApp } from '@/lib/app-context'
 import { ImageGeneratorForm } from '../forms/image-generator-form'
 import { ResultCard } from '../result-card'
@@ -9,7 +8,7 @@ import type { Task, UploadedFile } from '@/lib/types'
 import { generateImage, remixFeedItem, uploadFile } from '@/lib/api'
 
 export function PhotoTab() {
-  const { smartRepeatSourceId, smartRepeatType, closeSmartRepeat, state, addTask, setCredits, setTaskDetail, selectTask, addSavedReference, promptPreset, setPromptPreset } = useApp()
+  const { state, addTask, setCredits, setTaskDetail, selectTask, addSavedReference, promptPreset, setPromptPreset } = useApp()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [lastРезультат, setLastРезультат] = useState<Task | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -102,7 +101,7 @@ export function PhotoTab() {
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
-        {smartRepeatSourceId && smartRepeatType === 'image' ? <SmartRepeatForm sourceId={smartRepeatSourceId} onClose={closeSmartRepeat} /> : <ImageGeneratorForm
+        <ImageGeneratorForm 
           models={state.imageModels}
           onSubmit={handleSubmit}
           onUploadReference={handleUploadReference}
@@ -111,7 +110,7 @@ export function PhotoTab() {
           onPromptPresetConsumed={() => setPromptPreset(null)}
           isSubmitting={isSubmitting}
           credits={state.user.credits}
-        />}
+        />
 
         <div className="space-y-4">
           {error && (
