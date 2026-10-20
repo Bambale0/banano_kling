@@ -358,7 +358,7 @@ function rewriteTemporaryMedia(value: unknown): unknown {
 }
 
 export class MiniAppApiError extends Error {
-  constructor(message: string, readonly code?: string, readonly taskId?: string) {
+  constructor(message: string, readonly code?: string, readonly taskId?: string, readonly status?: number) {
     super(message)
     this.name = 'MiniAppApiError'
   }
@@ -382,19 +382,19 @@ async function parseJson<T>(response: Response): Promise<T> {
       preview: text.slice(0, 160),
       error,
     })
-    throw new Error('Не удалось загрузить данные. Обновите mini app и попробуйте снова.')
+    throw new MiniAppApiError('Не удалось загрузить данные. Обновите mini app и попробуйте снова.', undefined, undefined, response.status)
   }
 
   const payload = data as { ok?: boolean; error?: string; code?: unknown; task_id?: unknown }
   if (!response.ok || payload.ok === false) {
     throw new MiniAppApiError(payload.error || 'Не удалось выполнить действие',
       typeof payload.code === 'string' ? payload.code : undefined,
-      typeof payload.task_id === 'string' && payload.task_id ? payload.task_id : undefined)
+      typeof payload.task_id === 'string' && payload.task_id ? payload.task_id : undefined, response.status)
   }
   return rewriteTemporaryMedia(data) as T
 }
 
-async function postJson<T>(path: string, payload: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
+async function postJson<T>(path: string, payload: Record<string, unknown>, signal?: AbortSignal, headers: Record<string, string> = {}): Promise<T> {
   const nextPayload = { ...payload }
   const startParamFallback = getStartParamFallback()
   if (startParamFallback && !nextPayload.start_param_fallback) {
@@ -405,6 +405,7 @@ async function postJson<T>(path: string, payload: Record<string, unknown>, signa
     headers: {
       Accept: 'application/json',
       'Content-Type': 'application/json',
+      ...headers,
     },
     body: JSON.stringify(nextPayload),
     cache: 'no-store',
@@ -429,12 +430,39 @@ function resolvePendingVideoTask(taskId: string): Promise<TaskDetail> {
   return request
 }
 
-export async function bootstrapApp(signal?: AbortSignal): Promise<BootstrapResponse> {
+export const BOOTSTRAP_TIMEOUT_MS = 15_000
+
+export async function bootstrapApp(signal?: AbortSignal, purpose: 'state' | 'capability' = 'state'): Promise<BootstrapResponse> {
   const initData = getInitData()
   if (!initData) {
     throw new Error('Откройте mini app из Telegram и попробуйте снова.')
   }
-  const response = await postJson<BootstrapResponse>('bootstrap', { init_data: initData }, signal)
+  if (signal?.aborted) throw signal.reason || new DOMException('Aborted', 'AbortError')
+  const controller = new AbortController()
+  let timedOut = false
+  const cancel = () => controller.abort(signal?.reason)
+  signal?.addEventListener('abort', cancel, { once: true })
+  const timeout = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, BOOTSTRAP_TIMEOUT_MS)
+  let response: BootstrapResponse
+  try {
+    // The deadline covers both response headers and the complete JSON body.
+    response = await postJson<BootstrapResponse>('bootstrap', { init_data: initData }, controller.signal, {
+      'X-MiniApp-Bootstrap-Purpose': purpose,
+    })
+  } catch (error) {
+    if (timedOut) {
+      const failure = new Error('Сервер не ответил вовремя. Проверьте соединение и повторите подключение.')
+      failure.name = 'BootstrapTimeoutError'
+      throw failure
+    }
+    throw error
+  } finally {
+    clearTimeout(timeout)
+    signal?.removeEventListener('abort', cancel)
+  }
   const tasks = response.recent_tasks || []
   reconcilePendingVideoRepeats(tasks)
   if (!signal?.aborted) {

@@ -381,6 +381,7 @@ export interface FeedComment {
 }
 
 export interface AppState {
+  bootstrapFailureKind?: 'auth' | 'network' | null
   smartRepeatEnabled?: boolean
   mode: AppMode
   isLoading: boolean

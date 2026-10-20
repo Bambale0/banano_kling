@@ -41,7 +41,7 @@ export function MiniAppLoader() {
 
           <div className="mt-5 flex items-center gap-2 text-xs text-muted-foreground/80">
             <LoaderCircle className="h-3.5 w-3.5 animate-spin text-gold" />
-            Получаем данные Telegram
+            Загружаем приложение и подключаемся к серверу
           </div>
         </div>
       </section>

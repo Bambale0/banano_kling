@@ -55,7 +55,7 @@ function nextCapabilityResponse(page, snapshots) {
   // The request event is emitted even when Chromium suppresses a response
   // event following the cancellation of an older fetch during a return.
   return page.waitForRequest(request => request.url().endsWith('/bootstrap')
-    && request.headers()['x-e2e-capability-check'] === '1').then(async request => {
+    && request.headers()['x-miniapp-bootstrap-purpose'] === 'capability').then(async request => {
     const response = await request.response()
     // A subsequent bootstrap can cancel this particular fetch after the
     // route already replied. The app UI assertions below, not DevTools
@@ -105,17 +105,9 @@ try {
       window.__openedBotLinks = []
       window.__nativeWriteAccessCalls = 0
       window.__telegramHandlers = {}
-      // Mark the abortable capability request at the fetch boundary, so the
-      // app's normal five-second polling cannot consume a hung-check fixture.
-      const originalFetch = window.fetch.bind(window)
-      window.fetch = (input, init) => {
-        if (String(input).endsWith('/bootstrap') && init?.signal) {
-          const headers = new Headers(init.headers)
-          headers.set('x-e2e-capability-check', '1')
-          return originalFetch(input, { ...init, headers })
-        }
-        return originalFetch(input, init)
-      }
+      // Every bootstrap now has a network deadline, so an AbortSignal is no
+      // longer a capability-check discriminator. Use the explicit request
+      // purpose, not transport implementation details; keep exact counts below.
       window.Telegram = { WebApp: {
         initData: 'query_id=bot-start-e2e', initDataUnsafe: {},
         ready() {}, expand() {},
@@ -170,7 +162,7 @@ try {
             signalStaleBackground()
             return
           }
-          if (responseMode === 'hang' && request.headers()['x-e2e-capability-check'] === '1') {
+          if (responseMode === 'hang' && request.headers()['x-miniapp-bootstrap-purpose'] === 'capability') {
             pending.push(async available => {
               // An aborted request may already be closed; a late response must
               // never alter the UI even if the transport still accepts it.

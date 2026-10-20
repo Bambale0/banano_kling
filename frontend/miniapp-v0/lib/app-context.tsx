@@ -280,6 +280,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       mode: 'live',
       isLoading: false,
       error: null,
+      bootstrapFailureKind: null,
       user: {
         telegramId: data.telegram_id,
         firstName: data.first_name || 'Пользователь',
@@ -325,11 +326,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setState(createLockedState(message, false))
   }, [])
 
-  const applyBootstrapErrorState = useCallback((message: string) => {
+  const applyBootstrapErrorState = useCallback((message: string, kind: 'auth' | 'network' = 'network') => {
     setState(prev => ({
       ...(prev.mode === 'live' ? prev : createLockedState(message, false)),
       isLoading: false,
       error: message,
+      bootstrapFailureKind: kind,
       user: {
         ...prev.user,
         credits: prev.mode === 'live' ? prev.user.credits : 0,
@@ -418,7 +420,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // Capability-only verification must not unmount generation forms or replace drafts.
   const refreshTelegramChatAccess = useCallback(async (signal: AbortSignal) => {
-    const data = await bootstrapApp(signal)
+    const data = await bootstrapApp(signal, 'capability')
     if (signal.aborted) throw new DOMException('Check cancelled', 'AbortError')
     const available = data.telegram_chat_available === true
     chatAccessRevision.current += 1
@@ -430,7 +432,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const refreshTasks = useCallback(async () => {
-    setState(prev => ({ ...prev, isLoading: true, error: null }))
+    setState(prev => ({ ...prev, isLoading: true, error: null, bootstrapFailureKind: null }))
     const hasInitData = hasTelegramInitData() || await waitForTelegramInitData(5000)
     if (!hasInitData) {
       applyLockedState('Telegram не передал данные входа. Закройте окно и откройте Mini App заново из Telegram.')
@@ -440,8 +442,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const accessRevision = chatAccessRevision.current
       const data = await bootstrapApp()
       applyBootstrap(data, accessRevision)
-    } catch {
-      applyBootstrapErrorState('Не удалось обновить данные прямо сейчас. Показываю только подтверждённые данные без демо-подстановок.')
+    } catch (error) {
+      const authRequired = error instanceof Error && 'status' in error && error.status === 401
+      applyBootstrapErrorState(authRequired
+        ? 'Данные входа устарели. Войдите через Telegram заново.'
+        : error instanceof Error && error.name === 'BootstrapTimeoutError'
+          ? error.message
+          : 'Не удалось подключиться к серверу. Проверьте соединение и повторите подключение.',
+      authRequired ? 'auth' : 'network')
     }
   }, [applyBootstrap, applyBootstrapErrorState, applyLockedState])
 

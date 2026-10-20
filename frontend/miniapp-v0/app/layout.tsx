@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import { BRAND_DESCRIPTION, BRAND_NAME } from '@/lib/brand'
 import './globals.css'
+import { startupRecoveryMarkup, startupRecoveryScript } from '@/lib/startup-recovery'
 
 const telegramBootstrapScript = `
 (function () {
@@ -121,11 +122,13 @@ export default function RootLayout({
         <script defer src="/mini-app/telegram-web-app.js" />
         <script
           id="telegram-early-ready"
-          dangerouslySetInnerHTML={{ __html: telegramBootstrapScript }}
+          dangerouslySetInnerHTML={{ __html: telegramBootstrapScript + startupRecoveryScript }}
         />
       </head>
       <body className="font-sans antialiased">
         {children}
+        {/* Static native markup is not reconciled while pre-hydration recovery shows it. */}
+        <div dangerouslySetInnerHTML={{ __html: startupRecoveryMarkup }} />
       </body>
     </html>
   )

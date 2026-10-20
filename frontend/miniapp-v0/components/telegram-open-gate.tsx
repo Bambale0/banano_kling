@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ExternalLink, LoaderCircle, Send } from 'lucide-react'
 import {
   getApiBasePath,
+  hasTelegramInitData,
   getRuntimeBotUsername,
   getStartParamFallback,
 } from '@/lib/api'
@@ -34,7 +35,8 @@ function setBrowserInitData(initData: string) {
 }
 
 export function TelegramOpenGate() {
-  const { state } = useApp()
+  const { state, refreshTasks } = useApp()
+  const canRetryConnection = Boolean(state.error && state.bootstrapFailureKind !== 'auth' && hasTelegramInitData())
   const widgetRef = useRef<HTMLDivElement | null>(null)
   const [botUsername, setBotUsername] = useState('')
   const [telegramUrl, setTelegramUrl] = useState('')
@@ -88,7 +90,7 @@ export function TelegramOpenGate() {
   }, [botUsername])
 
   useEffect(() => {
-    if (isConnecting || !botUsername || !widgetRef.current) return
+    if (isConnecting || canRetryConnection || !botUsername || !widgetRef.current) return
 
     const container = widgetRef.current
     container.replaceChildren()
@@ -138,7 +140,7 @@ export function TelegramOpenGate() {
       delete window.onBananoTelegramAuth
       container.replaceChildren()
     }
-  }, [botUsername, isConnecting])
+  }, [botUsername, isConnecting, canRetryConnection])
 
   return (
     <main className="relative flex min-h-svh items-center justify-center overflow-hidden px-5 py-10">
@@ -167,7 +169,12 @@ export function TelegramOpenGate() {
             {BRAND_NAME}
           </h1>
 
-          {isConnecting ? (
+          {canRetryConnection && !isConnecting ? (
+            <div className="mt-5 w-full space-y-4">
+              <p role="alert" className="text-sm leading-6 text-muted-foreground">{state.error}</p>
+              <Button className="min-h-11 w-full" onClick={() => void refreshTasks()}>Повторить подключение</Button>
+            </div>
+          ) : isConnecting ? (
             <>
               <p className="mt-2 text-sm text-muted-foreground">Загружаем Mini App</p>
               <div className="mt-7 h-1.5 w-full overflow-hidden rounded-full bg-white/5">
@@ -179,6 +186,7 @@ export function TelegramOpenGate() {
               <p className="mt-2 text-sm leading-6 text-muted-foreground">
                 Продолжите через Telegram — без пароля
               </p>
+              {state.bootstrapFailureKind === 'auth' ? <p role="alert" className="mt-3 text-sm text-muted-foreground">{state.error}</p> : null}
 
               <div className="mt-7 flex min-h-12 w-full items-center justify-center">
                 {loginStatus === 'loading' ? (

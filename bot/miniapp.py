@@ -2968,6 +2968,7 @@ async def miniapp_index(request: web.Request) -> web.Response:
         watchdog_script = (
             '<script id="miniapp-bootstrap-watchdog">'
             '(function(){'
+            '  if(window.__BANANO_BOOT_RECOVERY__){return;}'
             '  function clientLog(event, extra){'
             '    try{'
             '      var tg=window.Telegram;'

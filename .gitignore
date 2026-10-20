@@ -49,6 +49,7 @@ tests/
 tests/*
 !tests/test_seedance25_direct_edit.py
 !tests/test_smart_repeat_extra_images.py
+!tests/test_miniapp_startup_watchdog_contract.py
 !tests/live/
 tests/live/*
 !tests/live/test_kie_live_smoke.py

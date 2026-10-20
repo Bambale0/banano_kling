@@ -248,6 +248,7 @@ jobs:
         run: |
           node e2e/critical-flows.mjs
           node e2e/repeat-navigation.mjs
+          node e2e/startup-recovery.mjs
           node e2e/trend-category-showcase.mjs
           node e2e/trend-share-clipboard.mjs
           node e2e/hidden-repeat-prompt.mjs
