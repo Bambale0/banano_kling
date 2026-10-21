@@ -119,7 +119,7 @@ async def test_child_restore_never_exposes_hidden_inputs_to_fsm(marker):
         child, state, include_references=True, repeat_source_task_id=child.task_id,
     )
     assert restored and error is None
-    assert state.data["reference_images"] == [OWN]
+    assert state.data["reference_images"] == []
     assert PRIVATE not in json.dumps(state.data)
     assert state.data["repeat_prompt_hidden"] is True
     hidden, source_id = await generation._image_repeat_private_context(child, viewer.id)
@@ -128,7 +128,7 @@ async def test_child_restore_never_exposes_hidden_inputs_to_fsm(marker):
 
 
 @pytest.mark.asyncio
-async def test_legacy_public_inputs_remain_user_visible():
+async def test_legacy_child_public_inputs_still_require_fresh_consumer_selection():
     _author, viewer, root_id, child = await make_tasks(marker=False)
     await update_root(
         root_id, "feed_references_visible = 1, feed_reference_selection = ?",
@@ -142,7 +142,7 @@ async def test_legacy_public_inputs_remain_user_visible():
         child, state, include_references=True, repeat_source_task_id=child.task_id
     )
     assert restored
-    assert state.data["reference_images"] == [OWN, PRIVATE]
+    assert state.data["reference_images"] == []
 
 
 @pytest.mark.parametrize("sources,visible,hidden,expected", [
@@ -230,19 +230,27 @@ async def test_owner_child_repeat_preserves_lineage_and_checks_before_debit(monk
     monkeypatch.setattr(generation, "check_can_afford", AsyncMock(return_value=True))
     monkeypatch.setattr(generation, "deduct_credits", debit)
     monkeypatch.setattr(generation, "credit_feed_prompt_repeat", AsyncMock())
+    screen = AsyncMock()
+    monkeypatch.setattr(generation, "_show_repeat_image_screen", screen)
+    # Explicit consumer selection replaces every inherited slot. Revoking an
+    # ancestor grant cannot block a repeat that no longer uses that grant.
+    await state.update_data(reference_images=[OTHER])
     function = generation.quick_repeat_image_confirm if quick else generation.run_repeat_image_generation
     await function(callback, state)
-    if revoke:
+    if quick:
         debit.assert_not_awaited()
         launch.assert_not_awaited()
+        screen.assert_awaited_once()
+        assert state.data["reference_images"] == []
     else:
         debit.assert_awaited_once()
         launch.assert_awaited_once()
         params = launch.await_args.kwargs
         assert params["source_feed_gen_id"] == root_id
         assert params["parent_generation_id"] == child.id
-        assert params["reference_images"] == [PRIVATE, OWN]
-        assert params["private_repeat_reference_images"] == [PRIVATE]
+        assert params["reference_images"] == [OTHER]
+        assert params["private_repeat_reference_images"] == []
+        assert params["private_recipe"] is True
     assert PRIVATE not in str(callback.answer.call_args_list)
     assert PRIVATE not in str(callback.message.answer.call_args_list)
 
