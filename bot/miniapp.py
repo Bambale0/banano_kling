@@ -1827,9 +1827,28 @@ def _public_task_status(row) -> str:
     return status
 
 
-async def _fetch_recent_tasks(telegram_id: int, limit: int = 8) -> list[dict[str, Any]]:
+class TaskHistoryCursorError(ValueError):
+    pass
+
+
+async def _fetch_recent_tasks(
+    telegram_id: int, limit: int = 8, *, before_task_id: str | None = None,
+) -> list[dict[str, Any]]:
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
+        older = ""
+        params: list[Any] = [telegram_id]
+        if before_task_id is not None:
+            anchor = await (await db.execute(
+                "SELECT id, created_at FROM generation_tasks "
+                "WHERE telegram_id = ? AND task_id = ? AND COALESCE(model, '') <> 'genjutsu'",
+                (telegram_id, before_task_id),
+            )).fetchone()
+            if anchor is None:
+                raise TaskHistoryCursorError("Курсор истории недоступен.")
+            older = " AND (created_at < ? OR (created_at = ? AND id < ?))"
+            params.extend([anchor["created_at"], anchor["created_at"], anchor["id"]])
+        params.append(limit)
         cursor = await db.execute(
             """
             SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
@@ -1840,10 +1859,11 @@ async def _fetch_recent_tasks(telegram_id: int, limit: int = 8) -> list[dict[str
             FROM generation_tasks
             WHERE telegram_id = ?
               AND COALESCE(model, '') <> 'genjutsu'
-            ORDER BY created_at DESC
+            """ + older + """
+            ORDER BY created_at DESC, id DESC
             LIMIT ?
             """,
-            (telegram_id, limit),
+            tuple(params),
         )
         rows = await cursor.fetchall()
 
@@ -5887,6 +5907,53 @@ async def miniapp_media(request: web.Request) -> web.StreamResponse:
     return response
 
 
+async def miniapp_task_history(request: web.Request) -> web.Response:
+    """Continue owned Studio history without expanding the polled bootstrap."""
+    started_at = time.monotonic()
+    try:
+        try:
+            body = await request.json()
+        except (ValueError, TypeError):
+            return web.json_response({"ok": False, "error": "Некорректный запрос истории."}, status=400)
+        if not isinstance(body, dict):
+            return web.json_response({"ok": False, "error": "Некорректный запрос истории."}, status=400)
+        telegram_id, _ctx = await _get_user_context(
+            request.app, body.get("init_data", ""), body.get("start_param_fallback"),
+        )
+        cursor = body.get("cursor")
+        if cursor is not None and (not isinstance(cursor, str) or not cursor.strip() or len(cursor) > 256):
+            return web.json_response({"ok": False, "error": "Некорректный курсор истории."}, status=400)
+        # Eight is a transport page, never a maximum number of user works.
+        cursor_reset = False
+        try:
+            rows = await _fetch_recent_tasks(telegram_id, limit=9, before_task_id=cursor)
+        except TaskHistoryCursorError:
+            # A deleted/stale/foreign anchor never selects another owner's
+            # records. Restart at the owned head so the next page can progress.
+            cursor_reset = True
+            rows = await _fetch_recent_tasks(telegram_id, limit=9)
+        tasks = rows[:8]
+        from .trend_task_privacy import sanitize_task_api_payload
+
+        payload = await sanitize_task_api_payload({
+            "ok": True, "recent_tasks": tasks,
+            "next_cursor": tasks[-1]["task_id"] if len(rows) > 8 else None,
+            "cursor_reset": cursor_reset,
+        })
+        logger.info(
+            "Mini App task history: telegram_id=%s count=%s has_more=%s cursor_reset=%s duration_ms=%s",
+            telegram_id, len(tasks), payload["next_cursor"] is not None,
+            cursor_reset,
+            round((time.monotonic() - started_at) * 1000),
+        )
+        return web.json_response(payload, headers={"Cache-Control": "no-store"})
+    except Exception as error:
+        return _miniapp_error_response(
+            error, log_message="Mini App task history failed",
+            default_error="Не удалось загрузить историю. Попробуйте ещё раз.",
+        )
+
+
 async def miniapp_task_detail(request: web.Request) -> web.Response:
     try:
         body = await request.json()
@@ -6185,6 +6252,7 @@ def setup_miniapp_routes(app: web.Application):
     )
     app.router.add_post(miniapp_root + "/api/create-payment", miniapp_create_payment)
     app.router.add_post(miniapp_root + "/api/task-detail", miniapp_task_detail)
+    app.router.add_post(miniapp_root + "/api/task-history", miniapp_task_history)
     app.router.add_post(miniapp_root + "/api/ai-assistant", miniapp_ai_assistant)
     app.router.add_get(
         miniapp_root + "/api/media/{task_id}/{index}", miniapp_media
