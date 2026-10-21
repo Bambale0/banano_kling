@@ -21,6 +21,7 @@ from bot import creator_tariff_display
 from bot import db as db_backend
 from bot.config import config
 from bot.creator_tariff import VideoQuote, quote_video_for_actor
+from bot.services.runtime_http import database_error_response
 from bot.trend_user_fields import (
     TrendUserFieldsError,
     normalize_user_fields_settings,
@@ -210,6 +211,9 @@ _MINIAPP_INIT_DATA_ERRORS = {
 
 
 def _miniapp_expected_error_response(error: Exception) -> web.Response | None:
+    unavailable = database_error_response(error)
+    if unavailable is not None:
+        return unavailable
     if isinstance(error, PermissionError):
         return web.json_response({"ok": False, "error": str(error)}, status=403)
 
@@ -285,7 +289,7 @@ def _miniapp_error_response(
 ) -> web.Response:
     expected_response = _miniapp_expected_error_response(error)
     if expected_response is not None:
-        logger.warning("%s: %s", log_message, error)
+        logger.warning("%s: error_type=%s status=%s", log_message, type(error).__name__, expected_response.status)
         return expected_response
 
     logger.exception(log_message)

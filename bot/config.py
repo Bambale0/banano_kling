@@ -13,6 +13,10 @@ load_project_env()
 class Config:
     # Telegram
     BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
+    TELEGRAM_TRANSIENT_MAX_ATTEMPTS: int = int(os.getenv("TELEGRAM_TRANSIENT_MAX_ATTEMPTS", "3"))
+    TELEGRAM_RETRY_AFTER_MAX_SECONDS: int = int(os.getenv("TELEGRAM_RETRY_AFTER_MAX_SECONDS", "30"))
+    REDIS_OPERATION_TIMEOUT_SECONDS: float = float(os.getenv("REDIS_OPERATION_TIMEOUT_SECONDS", "3"))
+    REDIS_RECOVERY_INTERVAL_SECONDS: float = float(os.getenv("REDIS_RECOVERY_INTERVAL_SECONDS", "5"))
 
     # T-Bank (legacy)
     TBANK_TERMINAL_KEY: str = os.getenv("TBANK_TERMINAL_KEY", "")
@@ -165,6 +169,12 @@ class Config:
 
     KIE_MEDIA_ANALYSIS_TIMEOUT_SECONDS: int = int(os.getenv("KIE_MEDIA_ANALYSIS_TIMEOUT_SECONDS", "180"))
     KIE_MEDIA_ANALYSIS_MAX_ATTEMPTS: int = int(os.getenv("KIE_MEDIA_ANALYSIS_MAX_ATTEMPTS", "2"))
+
+    AI_ASSISTANT_AUDIO_MODEL: str = os.getenv(
+        "AI_ASSISTANT_AUDIO_MODEL", "google/gemini-3.8-flash"
+    )
+    AI_ASSISTANT_AUDIO_TIMEOUT_SECONDS: int = int(os.getenv("AI_ASSISTANT_AUDIO_TIMEOUT_SECONDS", "120"))
+    AI_ASSISTANT_AUDIO_MAX_ATTEMPTS: int = int(os.getenv("AI_ASSISTANT_AUDIO_MAX_ATTEMPTS", "2"))
 
     PHOTO_PROMPT_MODEL: str = os.getenv("PHOTO_PROMPT_MODEL", "gpt-5-5")
 

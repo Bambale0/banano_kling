@@ -87,6 +87,8 @@ from bot.keyboards import (
 )
 from bot.services.preset_manager import preset_manager
 from bot.services.redis_service import redis_service
+from bot.services.telegram_transport import telegram_api_call
+from bot.services.runtime_http import database_availability_middleware
 from bot.services.subscription_service import (
     REQUIRED_CHANNEL_USERNAME,
     SUBSCRIPTION_CHECK_CALLBACK,
@@ -286,11 +288,11 @@ async def _memory_dump_loop(bot: Bot) -> None:
 
         for admin_id in admin_ids:
             try:
-                await bot.send_document(
+                await telegram_api_call(lambda: bot.send_document(
                     chat_id=admin_id,
                     document=BufferedInputFile(data, filename=filename),
                     caption=caption,
-                )
+                ))
             except Exception:
                 logger.exception("Failed to send memory dump to admin_id=%s", admin_id)
 
@@ -407,22 +409,82 @@ ensure_memory_tracing()
 class FallbackFSMStorage(BaseStorage):
     """Keep handlers responsive if Redis FSM storage fails after startup."""
 
-    def __init__(self, primary: BaseStorage, fallback: BaseStorage):
+    def __init__(
+        self, primary: BaseStorage, fallback: BaseStorage,
+        *, recovery_interval_seconds: float | None = None,
+    ):
         self._primary = primary
         self._fallback = fallback
         self._fallback_active = False
+        self._recovery_interval = max(0.0, config.REDIS_RECOVERY_INTERVAL_SECONDS if recovery_interval_seconds is None else recovery_interval_seconds)
+        self._next_recovery_at = 0.0
+        self._dirty_states: set[StorageKey] = set()
+        self._dirty_data: set[StorageKey] = set()
+        self._replaced_data: set[StorageKey] = set()
+        self._recovered_keys: set[StorageKey] = set()
+        self._operation_lock = asyncio.Lock()
+
+    async def _recover(self, key: StorageKey) -> None:
+        self._next_recovery_at = time.monotonic() + self._recovery_interval
+        try:
+            # Probe before replaying. Serialize recovery with fallback writes so
+            # a concurrent handler cannot lose its newest state or data.
+            await self._primary.get_state(key)
+            for dirty_key in list(self._dirty_data | self._dirty_states):
+                if dirty_key in self._dirty_data:
+                    write = self._primary.set_data if dirty_key in self._replaced_data else self._primary.update_data
+                    await write(dirty_key, await self._fallback.get_data(dirty_key))
+                if dirty_key in self._dirty_states:
+                    await self._primary.set_state(dirty_key, await self._fallback.get_state(dirty_key))
+                # Retire each fully migrated key before the aggregate deadline.
+                # Keep its memory snapshot readable until the whole queue drains.
+                self._dirty_data.discard(dirty_key)
+                self._dirty_states.discard(dirty_key)
+                self._replaced_data.discard(dirty_key)
+                self._recovered_keys.add(dirty_key)
+        except Exception as exc:
+            logger.warning("FSM Redis recovery deferred: error_type=%s", type(exc).__name__)
+            return
+        recovered = self._recovered_keys
+        for dirty_key in recovered:
+            await self._fallback.set_state(dirty_key, None)
+            await self._fallback.set_data(dirty_key, {})
+        self._dirty_data.clear()
+        self._replaced_data.clear()
+        self._dirty_states.clear()
+        self._fallback_active = False
+        logger.info("FSM Redis storage recovered: migrated_keys=%s", len(recovered))
+        self._recovered_keys.clear()
 
     async def _call(self, method_name: str, *args, **kwargs):
-        if not self._fallback_active:
-            try:
-                return await getattr(self._primary, method_name)(*args, **kwargs)
-            except Exception:
-                self._fallback_active = True
-                logger.exception(
-                    "FSM Redis storage failed; switching to in-memory FSM storage"
-                )
+        key = kwargs.get("key") or kwargs["storage_key"]
+        async with self._operation_lock:
+            if self._fallback_active and time.monotonic() >= self._next_recovery_at:
+                try:
+                    async with asyncio.timeout(max(0.01, config.REDIS_OPERATION_TIMEOUT_SECONDS)):
+                        await self._recover(key)
+                except TimeoutError:
+                    logger.warning("FSM Redis recovery timed out; retaining temporary changes")
+            if not self._fallback_active:
+                try:
+                    async with asyncio.timeout(max(0.01, config.REDIS_OPERATION_TIMEOUT_SECONDS)):
+                        return await getattr(self._primary, method_name)(*args, **kwargs)
+                except Exception as exc:
+                    self._fallback_active = True
+                    self._next_recovery_at = time.monotonic() + self._recovery_interval
+                    logger.warning(
+                        "FSM Redis storage unavailable; using temporary memory: error_type=%s",
+                        type(exc).__name__,
+                    )
 
-        return await getattr(self._fallback, method_name)(*args, **kwargs)
+            result = await getattr(self._fallback, method_name)(*args, **kwargs)
+            if method_name == "set_state":
+                self._dirty_states.add(key)
+            elif method_name in {"set_data", "update_data"}:
+                self._dirty_data.add(key)
+                if method_name == "set_data":
+                    self._replaced_data.add(key)
+            return result
 
     async def set_state(self, key: StorageKey, state: StateType = None) -> None:
         await self._call("set_state", key=key, state=state)
@@ -699,6 +761,7 @@ def _build_dispatcher_storage():
 
         storage = RedisStorage.from_url(
             config.redis_url,
+            connection_kwargs={"socket_connect_timeout": 2, "socket_timeout": 2, "health_check_interval": 30},
             key_builder=DefaultKeyBuilder(prefix=config.REDIS_PREFIX, with_bot_id=True),
         )
         logger.info("FSM storage configured via Redis: %s", _safe_log_url(config.redis_url))
@@ -5372,6 +5435,7 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
 
     # Rate limiter middleware — applies to all routes except /health GET
     from bot.services.rate_limiter import rate_limiter_middleware
+    app.middlewares.append(database_availability_middleware)
     app.middlewares.append(rate_limiter_middleware)
 
     app["bot"] = bot

@@ -499,13 +499,9 @@ async def test_explicit_identity_repeat_quotes_only_required_current_media(
         delegate.assert_awaited_once()
     else:
         assert response.status == 400
-        if selection.startswith("omitted"):
-            assert json.loads(response.body)["code"] == "repeat_reference_incomplete"
-            delegate.assert_not_awaited()
-        else:
-            # Explicit empties are removals, then the actual identity validator
-            # rejects the missing required media rather than restoring old refs.
-            delegate.assert_awaited_once()
+        # Neither omitted nor empty inputs inherit author media. The real
+        # identity validator rejects the incomplete caller-owned selection.
+        delegate.assert_awaited_once()
     miniapp.deduct_credits.assert_not_awaited()
     public._launch_provider.assert_not_awaited()
     public.generation_module.add_generation_task.assert_not_awaited()

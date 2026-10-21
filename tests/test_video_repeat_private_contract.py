@@ -179,9 +179,9 @@ async def test_video_permission_is_rechecked_immediately_before_debit(monkeypatc
                 "v_model": model, "v_type": "video", "v_duration": 5, "v_ratio": "9:16",
                 "seedance25_scenario": "multimodal",
                 "reference_images": (["https://example.test/viewer.png", "https://example.test/viewer-second.png"]
-                                     if change == "interread_withdrawal" else [] if change.startswith("legacy_") else ["https://example.test/viewer.png"]),
+                                     if change == "interread_withdrawal" else ["https://example.test/viewer.png", "https://example.test/viewer-two.png"] if change.startswith("legacy_") else ["https://example.test/viewer.png"]),
                 "v_reference_videos": (["https://example.test/viewer.mp4", "https://example.test/viewer-second.mp4"]
-                                      if change == "interread_withdrawal" else [] if change.startswith("legacy_") else ["https://example.test/viewer.mp4"]),
+                                      if change == "interread_withdrawal" else ["https://example.test/viewer.mp4", "https://example.test/viewer-two.mp4"] if change.startswith("legacy_") else ["https://example.test/viewer.mp4"]),
             }).encode()
 
         async def json(self):
@@ -379,12 +379,13 @@ async def test_withdrawal_then_legacy_republish_cannot_restore_revoked_video_gra
 
 
 @pytest.mark.asyncio
-async def test_legacy_video_publication_without_new_consent_remains_legacy():
+async def test_legacy_publication_preserves_stored_consent_but_requires_replacement_uploads():
     owner = await create_video()
     card = await database.share_to_feed("typed-private-video", owner.id)
     source = await database.get_generation_task_payload(card["id"])
     assert json.loads(source["feed_repeat_reference_selection"]) == {"images": []}
-    assert "repeat_reference_slots" not in (await database.get_feed_generation_card(card["id"]))
+    descriptor = (await database.get_feed_generation_card(card["id"]))["repeat_reference_slots"]
+    assert all(slot["binding"] == "upload" for kind in ("images", "videos") for slot in descriptor[kind])
 
 
 @pytest.mark.asyncio
@@ -414,7 +415,7 @@ async def test_audio_bearing_video_rejects_private_image_video_grant_but_legacy_
         await database.share_to_feed("audio-video", owner.id, repeat_reference_image_indices=[0], repeat_reference_video_indices=[])
     card = await database.share_to_feed("audio-video", owner.id)
     assert card is not None
-    assert "repeat_reference_slots" not in (await database.get_feed_generation_card(card["id"]))
+    assert (await database.get_feed_generation_card(card["id"]))["repeat_reference_slots"]["available"] is False
 
 
 @pytest.mark.asyncio
@@ -679,7 +680,7 @@ async def test_author_cannot_save_generic_private_grant_for_specialized_seedance
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["owner", "legacy"])
-async def test_ordinary_owner_and_legacy_omni_keep_existing_provider_assets(typed_video_entrypoint, mode):
+async def test_omni_provider_assets_remain_owner_only_without_a_foreign_grant(typed_video_entrypoint, mode):
     entry = typed_video_entrypoint
     entry.source["model"] = "gemini_omni_video"
     entry.source["request_data"]["omni_audio_ids"] = ["synthetic-owner-audio"]
@@ -691,8 +692,13 @@ async def test_ordinary_owner_and_legacy_omni_keep_existing_provider_assets(type
         "reference_images": ["https://example.test/own.png"],
         "v_reference_videos": ["https://example.test/own.mp4"],
     })
-    assert (await entry.call(request)).status == 200
-    assert (await request.json())["omni_audio_ids"] == ["synthetic-owner-audio"]
+    response = await entry.call(request)
+    if mode == "owner":
+        assert response.status == 200
+        assert (await request.json())["omni_audio_ids"] == ["synthetic-owner-audio"]
+    else:
+        assert response.status == 400
+        entry.delegate.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -910,7 +916,7 @@ async def test_full_unpublish_installed_http_revokes_grant_and_deeplink_repeat(m
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('mode', ['owner', 'legacy'])
-async def test_motion_control_original_owner_and_legacy_continuity_unchanged(typed_video_entrypoint, mode):
+async def test_motion_control_source_reuse_remains_owner_only_without_a_grant(typed_video_entrypoint, mode):
     entry = typed_video_entrypoint
     entry.source.update(model='motion_control_v26',
         request_data={'v_type': 'motion_control', 'motion_image_url': FACE, 'motion_video_url': MOTION})
@@ -918,8 +924,13 @@ async def test_motion_control_original_owner_and_legacy_continuity_unchanged(typ
         entry.source['user_id'] = 2
     else:
         entry.source['feed_repeat_reference_selection'] = None
-    assert (await entry.call(entry.request({}))).status == 200
-    entry.delegate.assert_awaited_once()
+    response = await entry.call(entry.request({}))
+    if mode == 'owner':
+        assert response.status == 200
+        entry.delegate.assert_awaited_once()
+    else:
+        assert response.status == 400
+        entry.delegate.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -1087,7 +1098,7 @@ async def test_canonical_source_audio_is_replaced_only_by_explicit_viewer_audio(
 
 
 @pytest.mark.asyncio
-async def test_legacy_visible_card_describes_two_uploads_and_two_fixed_without_new_grant():
+async def test_legacy_visibility_does_not_grant_provider_reuse_without_repeat_consent():
     owner = await database.get_or_create_user(880199)
     images = [f"https://example.test/legacy-slot-{i}.png" for i in range(4)]
     await database.add_generation_task(
@@ -1106,7 +1117,7 @@ async def test_legacy_visible_card_describes_two_uploads_and_two_fixed_without_n
     slots = public["repeat_reference_slots"]
     assert slots["available"] is True
     assert slots["images"] == [
-        {"index": i, "role": "reference", "binding": "upload" if i < 2 else "fixed"}
+        {"index": i, "role": "reference", "binding": "upload"}
         for i in range(4)
     ]
     assert not any(url in json.dumps(slots) for url in images)
@@ -1131,7 +1142,7 @@ def test_legacy_descriptor_aliases_keep_exact_source_positions():
     }
     slots = video_repeat_descriptors(source)
     assert slots["available"] is True
-    assert [slot["binding"] for slot in slots["images"]] == ["upload", "upload", "fixed", "fixed"]
+    assert [slot["binding"] for slot in slots["images"]] == ["upload", "upload", "upload", "upload"]
     assert "/uploads/" not in json.dumps(slots)
     source["feed_repeat_reference_selection"] = {"version": 1, "images": [], "videos": []}
     revoked = video_repeat_descriptors(source)
@@ -1203,3 +1214,36 @@ async def test_shared_repeat_result_restores_its_own_prompt_and_refs(monkeypatch
     assert result["v_reference_videos"] == ["https://example.test/my-motion.mp4", STYLE]
     assert "PUBLISHED_CHILD_WITH_OWN_CHANGES" in result["prompt"]
     assert request._video_repeat_guard["source_id"] == 999
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('legacy_grant', [None, {'images': []}])
+@pytest.mark.parametrize('source_count,upload_count', [(1, 0), (2, 1), (1, 1), (2, 2)])
+async def test_foreign_legacy_repeat_never_resurrects_ungranted_author_images(typed_video_entrypoint, legacy_grant, source_count, upload_count):
+    entry = typed_video_entrypoint
+    entry.source.update(feed_repeat_reference_selection=legacy_grant, feed_references_visible=False, feed_reference_selection=None)
+    entry.source['request_data']['reference_images'] = [FACE, FIXED][:source_count]
+    entry.source['request_data']['v_reference_videos'] = []
+    own = ['https://example.test/viewer-one.png', 'https://example.test/viewer-two.png'][:upload_count]
+    request = entry.request({'v_model': 'seedance_2_5', 'v_type': 'video', 'reference_images': own, '_repeat_is_owner': True})
+    response = await entry.call(request)
+    if source_count != upload_count:
+        assert response.status == 400
+        entry.delegate.assert_not_awaited()  # Cannot reach billing/provider.
+    else:
+        assert response.status == 200
+        outgoing = await request.json()
+        assert outgoing['reference_images'] == own
+        assert not outgoing.get('_private_repeat_reference_images')
+    assert FACE not in response.text and FIXED not in response.text
+
+
+def test_foreign_legacy_descriptor_requires_own_photo_without_revealing_author_url():
+    source = {'type': 'video', 'model': 'seedance_2_5', 'status': 'completed',
+              'feed_repeat_reference_selection': None, 'feed_references_visible': False,
+              'request_data': {'seedance25_scenario': 'multimodal', 'reference_images': [FACE]}}
+    descriptor = video_repeat_descriptors(source)
+    assert descriptor is not None
+    assert descriptor['available'] is True
+    assert descriptor['images'] == [{'index': 0, 'role': 'reference', 'binding': 'upload'}]
+    assert FACE not in json.dumps(descriptor)

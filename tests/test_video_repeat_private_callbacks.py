@@ -119,3 +119,16 @@ async def test_published_child_telegram_repeat_targets_its_own_post(monkeypatch,
     url = callback.message.answer.await_args.kwargs["reply_markup"].inline_keyboard[0][0].web_app.url
     assert url.endswith("startapp=remix_84"), url
     assert "Child's own edited prompt" not in callback.message.answer.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_legacy_derivative_with_missing_parent_never_enters_automatic_reuse(monkeypatch):
+    monkeypatch.setattr(continuity, 'get_generation_task_payload', AsyncMock(return_value=None))
+    callback = SimpleNamespace(from_user=SimpleNamespace(id=880202), answer=AsyncMock(), message=SimpleNamespace(answer=AsyncMock()))
+    task = SimpleNamespace(id=43, user_id=2, type='video', model='seedance_2_5',
+                           source_feed_gen_id=42, is_public_feed=False, is_profile_visible=False,
+                           feed_repeat_reference_selection=None, request_data={'reference_images': ['https://example.test/author.png']})
+    assert await continuity.redirect_typed_video_repeat(callback, task) is True
+    callback.answer.assert_awaited_once()
+    assert callback.answer.await_args.kwargs['show_alert'] is True
+    callback.message.answer.assert_not_awaited()

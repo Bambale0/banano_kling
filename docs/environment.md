@@ -445,3 +445,15 @@ attempts cannot extend it indefinitely. After this window, the stored result rem
 available but automatic file delivery stops; inspect provider URL availability and
 Telegram errors before operator recovery. No automatic refund is issued for a
 completed generation whose Telegram file delivery fails.
+
+### Runtime recovery and assistant audio
+
+- `REDIS_RECOVERY_INTERVAL_SECONDS` (default `5`): interval between FSM/cache reconnection attempts. Temporary FSM changes are replayed on recovery; `update_data` preserves existing Redis fields and explicit `set_data`/clear replaces them. Temporary memory is process-local and cannot survive a process restart during a Redis outage.
+- `TELEGRAM_TRANSIENT_MAX_ATTEMPTS` (default `3`, bounded to 1–5): reference read retries and explicit Telegram flood rejections. Ambiguous send network failures are never replayed.
+- `TELEGRAM_RETRY_AFTER_MAX_SECONDS` (default `30`): maximum flood delay retried inline. Longer delays remain reported failures.
+- `AI_ASSISTANT_AUDIO_MODEL` (default `google/gemini-3.8-flash`): audio-capable model on the existing authenticated OpenRouter adapter. Independent of `PHOTO_PROMPT_MODEL` and the text assistant's Qwen model. `OPENROUTER_API_KEY`/`OPENROUTER_BASE_URL` apply. Audio is sent as inline base64 `input_audio`; no public recording URL is created.
+- `AI_ASSISTANT_AUDIO_TIMEOUT_SECONDS` (default `120`, bounded to 1–300) and `AI_ASSISTANT_AUDIO_MAX_ATTEMPTS` (default `2`, bounded to 1–3): finite audio timeouts/retries. HTTP/application 408/429/5xx and transport failures can retry; permanent errors cannot. Provider response bodies and audio are not logged.
+
+Transient PostgreSQL connection failures escaping handlers return JSON HTTP 503 with `Retry-After: 2`; the HTTP middleware never replays POST operations. Wan chunk transport interruptions return HTTP 499 / `upload_interrupted`. The Mini App retries the same owned chunk once as JSON, then uses its existing cancellation/reconciliation flow. Auth/validation failures and explicit aborts do not retry.
+
+`REDIS_OPERATION_TIMEOUT_SECONDS` (default `3`) bounds primary FSM calls and each recovery batch. The FSM Redis client additionally has finite connection/read timeouts; successful keys retire incrementally so a large recovery backlog cannot restart forever at its first key. Temporary changes remain readable while later batches drain.

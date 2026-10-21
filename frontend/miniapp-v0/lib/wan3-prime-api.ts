@@ -411,16 +411,16 @@ export async function uploadWan3PrimeReference(kind: Wan3PrimeUploadKind, file: 
         const chunk_base64 = await chunkToBase64(chunk, activeSignal)
         return wan3PostJson<{ ok: true }>('upload/chunk', { upload_id: init.upload_id, index, total, chunk_base64 }, activeSignal, initData)
       }, signal)
-      if (jsonChunks) await sendJsonChunk()
-      else {
-        const form = new FormData()
-        form.append('init_data', initData)
-        form.append('start_param_fallback', getStartParamFallback())
-        form.append('upload_id', init.upload_id)
-        form.append('index', String(index))
-        form.append('total', String(total))
-        form.append('chunk', chunk, file.name)
-        try {
+      try {
+        if (jsonChunks) await sendJsonChunk()
+        else {
+          const form = new FormData()
+          form.append('init_data', initData)
+          form.append('start_param_fallback', getStartParamFallback())
+          form.append('upload_id', init.upload_id)
+          form.append('index', String(index))
+          form.append('total', String(total))
+          form.append('chunk', chunk, file.name)
           await mediaRequest(async activeSignal => {
             const response = await fetch(`${getApiBasePath()}/wan3/upload/chunk`, {
               method: 'POST',
@@ -432,13 +432,16 @@ export async function uploadWan3PrimeReference(kind: Wan3PrimeUploadKind, file: 
             })
             return parseWan3Json<{ ok: true }>(response, 'Wan 3.0: не удалось загрузить часть файла.')
           }, signal)
-        } catch (error) {
-          if (!(error instanceof Wan3PrimeApiError) || error.status !== 400 || error.code !== 'invalid_upload_multipart') throw error
-          // Retry only a rejected parser transport, with the same owned session
-          // and chunk index. Ownership, size and digest checks remain server-side.
-          jsonChunks = true
-          await sendJsonChunk()
         }
+      } catch (error) {
+        if (signal?.aborted) throw error
+        const interrupted = error instanceof TypeError || (error instanceof Wan3PrimeApiError && error.status === 499 && error.code === 'upload_interrupted')
+        const malformedMultipart = error instanceof Wan3PrimeApiError && error.status === 400 && error.code === 'invalid_upload_multipart'
+        if (!interrupted && !malformedMultipart) throw error
+        // One retry of the same idempotent chunk; never recreate a reservation,
+        // retry authorization/validation failures, or restart an aborted upload.
+        jsonChunks = true
+        await sendJsonChunk()
       }
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
       onProgress?.(Math.min(file.size, (index + 1) * chunkSize), file.size)

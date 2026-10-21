@@ -491,6 +491,11 @@ def _http_boundary(handler):
             return _json_error(str(exc), status=exc.status, code=exc.code)
         except PermissionError:
             return _json_error("Нет доступа к этой операции.", status=403, code="permission_denied")
+        except ConnectionResetError:
+            logger.info("Wan3 client upload interrupted: path=%s", request.path)
+            return _json_error("Загрузка была прервана. Повторите попытку.", status=499, code="upload_interrupted")
+        except TimeoutError:
+            return _json_error("Время ожидания запроса истекло.", status=408, code="request_timeout")
         except (ValueError, UnicodeError):
             return _json_error("Некорректные данные запроса.", status=400, code="validation_error")
         except web.HTTPException as exc:

@@ -209,3 +209,64 @@ async def test_unknown_route_probe_is_ignored_without_authentication():
         payments_module=_payments_module({"ok": True}),
     )
     assert response.status == 200
+
+
+@pytest.mark.asyncio
+async def test_order_hint_cannot_bind_another_invoice_to_a_transaction(monkeypatch):
+    from unittest.mock import AsyncMock
+    tx = SimpleNamespace(provider='lava', payment_id='invoice-A', order_id='order-A')
+    monkeypatch.setattr(safety, 'get_transaction_by_order', AsyncMock(return_value=tx))
+    monkeypatch.setattr(safety, '_invoice_id_for_contract', AsyncMock(return_value='invoice-B'))
+    result = await safety._lookup_lava_transaction(contract_id='contract-B', order_id='order-A')
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_known_invoice_accepts_the_operator_configured_sender_but_still_verifies_provider(monkeypatch):
+    from unittest.mock import AsyncMock
+    monkeypatch.setenv('LAVA_WEBHOOK_ALLOWED_IPS', '158.160.60.174,192.0.2.10')
+    monkeypatch.setattr(safety, '_auth_configuration_present', lambda: False)
+    transaction = SimpleNamespace(order_id='order-1', payment_id='invoice-1', provider='lava', amount_rub=500)
+    monkeypatch.setattr(safety, '_lookup_lava_transaction', AsyncMock(return_value=transaction))
+    provider = AsyncMock(return_value=('in_progress', 'invoice-1'))
+    monkeypatch.setattr(safety, '_provider_status', provider)
+    payments = _payments_module({'ok': True, 'already_completed': True})
+    payments._complete_transaction = AsyncMock(return_value={'ok': True, 'already_completed': True})
+    request = FakeRequest(_success_body(), headers={'X-Real-IP': '192.0.2.10'})
+    assert (await safety.safe_handle_lava_webhook(request, payments_module=payments)).status == 503
+    payments._complete_transaction.assert_not_awaited()
+    provider.return_value = ('completed', 'invoice-1')
+    assert (await safety.safe_handle_lava_webhook(request, payments_module=payments)).status == 200
+    payments._complete_transaction.assert_awaited_once_with('order-1', bot=None)
+
+
+@pytest.mark.asyncio
+async def test_unknown_sender_remains_rejected_before_payment_lookup(monkeypatch):
+    from unittest.mock import AsyncMock
+    monkeypatch.setenv('LAVA_WEBHOOK_ALLOWED_IPS', '158.160.60.174')
+    monkeypatch.setattr(safety, '_auth_configuration_present', lambda: False)
+    lookup = AsyncMock()
+    monkeypatch.setattr(safety, '_lookup_lava_transaction', lookup)
+    response = await safety.safe_handle_lava_webhook(FakeRequest(_success_body(), headers={'X-Real-IP': '192.0.2.10'}), payments_module=_payments_module({'ok': True}))
+    assert response.status == 403
+    lookup.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_installed_discovery_accepts_unmapped_legacy_invoice_but_not_wrong_order(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from bot.services.lava_invoice_compat import _make_lookup_with_discovery
+    tx = SimpleNamespace(provider='lava', payment_id='invoice-A', order_id='order-A')
+    mapping = {}
+    monkeypatch.setattr(safety, 'get_transaction_by_order', AsyncMock(return_value=tx))
+    async def lookup(contract):
+        return mapping.get(contract)
+    async def discover(contract):
+        mapping[contract] = 'invoice-A' if contract == 'contract-A' else 'invoice-B'
+        return mapping[contract]
+    monkeypatch.setattr(safety, '_invoice_id_for_contract', lookup)
+    monkeypatch.setattr(safety, '_discover_invoice_id_by_contract', discover)
+    wrapped = _make_lookup_with_discovery(safety._lookup_lava_transaction)
+    assert await wrapped(contract_id='contract-A', order_id='order-A') is tx
+    assert await wrapped(contract_id='contract-B', order_id='order-A') is None
