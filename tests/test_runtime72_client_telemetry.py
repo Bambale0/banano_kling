@@ -178,3 +178,33 @@ async def test_failed_upload_response_remains_warning(monkeypatch):
     assert infos == []
     assert len(warnings) == 1
     assert warnings[0]["status"] == 503
+
+
+@pytest.mark.asyncio
+async def test_wan_upload_failure_preserves_safe_session_stage_without_image_content(monkeypatch):
+    captured = []
+    monkeypatch.setattr(miniapp.logger, 'warning', lambda _message, data: captured.append(data))
+    response = await miniapp.miniapp_client_log(ClientLogRequest({
+        'event': 'wan3-upload-error', 'upload_id': 'a' * 32, 'upload_stage': 'read',
+        'error_code': 'image_read_failed', 'file_size': 184025,
+        'data_base64': 'PRIVATE_IMAGE', 'init_data': 'PRIVATE_AUTH', 'recipe': 'PRIVATE_PROMPT',
+    }))
+    assert response.status == 200
+    assert captured[0]['upload_id'] == 'a' * 32
+    assert captured[0]['upload_stage'] == 'read'
+    assert captured[0]['error_code'] == 'image_read_failed'
+    assert 'PRIVATE_' not in json.dumps(captured)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('bad_value', [{}, [], 'token=SECRET'])
+async def test_invalid_wan_diagnostic_identifiers_cannot_raise_or_leak(monkeypatch, bad_value):
+    captured = []
+    monkeypatch.setattr(miniapp.logger, 'warning', lambda _message, data: captured.append(data))
+    response = await miniapp.miniapp_client_log(ClientLogRequest({
+        'event': 'wan3-upload-error', 'upload_id': bad_value, 'upload_stage': bad_value,
+    }))
+    assert response.status == 200
+    assert captured[0]['upload_id'] == ''
+    assert captured[0]['upload_stage'] == ''
+    assert 'SECRET' not in json.dumps(captured)

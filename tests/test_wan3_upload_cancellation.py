@@ -100,7 +100,7 @@ def harness(tmp_path, monkeypatch):
         "_check_dimensions": lambda *args, **kwargs: None,
         "_check_duration": lambda *args, **kwargs: None,
     })
-    for path in ("wan3_prime_schema", "wan3_prime_storage_policy", "wan3_prime_files", "wan3_prime_retention"):
+    for path in ("wan3_prime_schema", "wan3_prime_storage_policy", "wan3_prime_files", "wan3_prime_retention", "wan3_public_errors"):
         loaded = module("bot.services." + path, {})
         exec(compile((ROOT / f"bot/services/{path}.py").read_text(), path, "exec"), loaded.__dict__)  # noqa: S102 - allowed feature files, synthetic bot/db
 

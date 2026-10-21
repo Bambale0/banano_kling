@@ -168,7 +168,7 @@ test.each(['init', 'chunk', 'complete'])('aborting %s captures init then awaits 
   const controller = new AbortController()
   const promise = uploadWan3PrimeReference('image', new File(['01234'], 'Фото.jpg', { type: 'image/jpeg' }), controller.signal)
   const rejected = expect(promise).rejects.toMatchObject({ name: 'AbortError' })
-  for (let turn = 0; turn < 20 && !pendingSignal; turn += 1) await Promise.resolve()
+  for (let turn = 0; turn < 100 && !pendingSignal; turn += 1) await new Promise<void>(resolve => jest.requireActual('timers').setImmediate(resolve))
   expect(pendingSignal).toBeDefined()
   const count = fetchMock.mock.calls.length
   controller.abort()
@@ -192,6 +192,8 @@ test('a stalled chunk times out, aborts its request and exposes a retryable erro
       .mockResolvedValueOnce(jsonResponse({ ok: true, status: 'cancelled' }))
     const result = uploadWan3PrimeReference('image', new File(['012345'], 'Фото.jpg', { type: 'image/jpeg' }))
     const rejected = expect(result).rejects.toThrow('Сервер не ответил за 15 минут')
+    for (let turn = 0; turn < 100 && fetchMock.mock.calls.length < 2; turn += 1) await new Promise<void>(resolve => jest.requireActual('timers').setImmediate(resolve))
+    expect(fetchMock).toHaveBeenCalledTimes(2)
     await jest.advanceTimersByTimeAsync(WAN3_PRIME_MEDIA_TIMEOUT_MS)
     await rejected
     expect(fetchMock).toHaveBeenCalledTimes(3)

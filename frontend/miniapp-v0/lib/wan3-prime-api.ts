@@ -1,6 +1,6 @@
 'use client'
 
-import { getApiBasePath, getInitData, getStartParamFallback } from './api'
+import { getApiBasePath, getInitData, getStartParamFallback, sendMiniAppClientLog } from './api'
 import type { UploadedFile } from './types'
 
 export type Wan3PrimeScenario = 'text' | 'first_frame' | 'first_last' | 'reference' | 'edit' | 'file' | 'link'
@@ -163,7 +163,7 @@ export function wan3SafeError(error: unknown, fallback: string): string {
     'Предыдущая загрузка ещё завершается. Дождитесь подтверждения отмены.',
     'Сервер не ответил за 15 минут. Проверьте сеть и повторите загрузку.',
   ].includes(error.message))) return error.message
-  if (error instanceof Wan3PrimeUploadCleanupError) return error.message
+  if (error instanceof Wan3PrimeUploadCleanupError || error instanceof Wan3ImageReadError) return error.message
   return fallback
 }
 
@@ -350,6 +350,53 @@ function preferJsonChunks(): boolean {
     || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
 }
 
+export class Wan3ImageReadError extends Error {
+  constructor() {
+    super('Не удалось прочитать выбранное фото. Выберите его заново из памяти телефона.')
+    this.name = 'Wan3ImageReadError'
+  }
+}
+
+const preparedImages = new WeakSet<File>()
+
+function snapshotPickedImage(file: File, signal: AbortSignal): Promise<File> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    const cleanup = () => { signal.removeEventListener('abort', abort); reader.onload = reader.onerror = reader.onabort = null }
+    const abort = () => { cleanup(); reader.abort(); reject(new DOMException('Aborted', 'AbortError')) }
+    reader.onerror = () => { cleanup(); reject(new Wan3ImageReadError()) }
+    reader.onabort = () => { cleanup(); reject(new DOMException('Aborted', 'AbortError')) }
+    reader.onload = () => {
+      const bytes = reader.result
+      cleanup()
+      if (!(bytes instanceof ArrayBuffer) || bytes.byteLength !== file.size) { reject(new Wan3ImageReadError()); return }
+      const prepared = new File([bytes], file.name, { type: file.type, lastModified: file.lastModified })
+      preparedImages.add(prepared)
+      resolve(prepared)
+    }
+    signal.addEventListener('abort', abort, { once: true })
+    if (signal.aborted) { abort(); return }
+    // Start while the native picker still owns the original handle. Later
+    // network awaits and chunk reads operate only on this bounded memory copy.
+    try { reader.readAsArrayBuffer(file) } catch { cleanup(); reject(new Wan3ImageReadError()) }
+  })
+}
+
+export function prepareWan3Image(file: File, signal?: AbortSignal): Promise<File> {
+  if (file.size <= 0) return Promise.reject(new Error('Файл пустой.'))
+  if (file.size > WAN3_PRIME_MAX_IMAGE_BYTES) return Promise.reject(new Error(`Wan 3.0 принимает этот тип файла до ${Math.round(WAN3_PRIME_MAX_IMAGE_BYTES / 1024 / 1024)} MB.`))
+  if (signal?.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'))
+  if (preparedImages.has(file)) return Promise.resolve(file)
+  const startedAt = Date.now()
+  return mediaRequest(activeSignal => snapshotPickedImage(file, activeSignal), signal).catch(error => {
+    if (!(error instanceof Error && error.name === 'AbortError')) sendMiniAppClientLog?.('wan3-upload-error', {
+      upload_stage: 'read', error_code: 'image_read_failed', file_kind: 'image',
+      file_size: file.size, duration_ms: Date.now() - startedAt, status: 0,
+    })
+    throw error
+  })
+}
+
 function chunkToBase64(chunk: Blob, signal: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -388,10 +435,17 @@ export async function uploadWan3PrimeReference(kind: Wan3PrimeUploadKind, file: 
   if (activeUploads.has(scope.key)) throw new Error('Предыдущая загрузка ещё завершается. Дождитесь подтверждения отмены.')
   activeUploads.add(scope.key)
   let pending: PendingWanUpload | undefined
+  let stage = kind === 'image' ? 'read' : 'init'
+  const startedAt = Date.now()
   try {
+    // Provider image limits bound this copy to 20 MiB. Keep video/audio/file
+    // uploads streamed through their existing chunk transport.
+    if (kind === 'image') file = await prepareWan3Image(file, signal)
+    stage = 'cleanup'
     const previous = previousUpload(scope)
     if (previous) await releaseUpload(scope, previous, initData)
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+    stage = 'init'
     const contentType = file.type || 'application/octet-stream'
     pending = { upload_id: crypto.randomUUID().replace(/-/g, ''), kind, filename: file.name,
       size: file.size, content_type: contentType, phase: 'initializing' }
@@ -404,6 +458,7 @@ export async function uploadWan3PrimeReference(kind: Wan3PrimeUploadKind, file: 
     const chunkSize = Number.isFinite(init.chunk_size) && init.chunk_size > 0 ? init.chunk_size : WAN3_PRIME_CHUNK_BYTES
     const total = Math.ceil(file.size / chunkSize)
     let jsonChunks = preferJsonChunks()
+    stage = 'chunk'
 
     for (let index = 0; index < total; index += 1) {
       const chunk = file.slice(index * chunkSize, Math.min(file.size, (index + 1) * chunkSize), contentType)
@@ -447,6 +502,7 @@ export async function uploadWan3PrimeReference(kind: Wan3PrimeUploadKind, file: 
       onProgress?.(Math.min(file.size, (index + 1) * chunkSize), file.size)
     }
 
+    stage = 'complete'
     const completed = await mediaRequest(activeSignal => wan3PostJson<Wan3PrimeUploadCompleteResponse>('upload/complete', {
       upload_id: init.upload_id,
     }, activeSignal, initData), signal)
@@ -454,6 +510,14 @@ export async function uploadWan3PrimeReference(kind: Wan3PrimeUploadKind, file: 
     rememberUpload(scope, null)
     return uploadedFileFromWan3(file, completed)
   } catch (error) {
+    if (stage !== 'read' && !(error instanceof Error && error.name === 'AbortError')) {
+      sendMiniAppClientLog?.('wan3-upload-error', {
+        upload_id: pending?.upload_id || previousUpload(scope)?.upload_id || '', upload_stage: stage,
+        error_code: error instanceof Wan3PrimeApiError ? error.code : error instanceof Wan3ImageReadError ? 'image_read_failed' : 'upload_failed',
+        file_kind: kind, file_size: file.size, duration_ms: Date.now() - startedAt,
+        status: error instanceof Wan3PrimeApiError ? error.status : 0,
+      })
+    }
     if (pending) {
       if (pending.phase === 'initializing' && rejectedBeforeReservation(error)) {
         rememberUpload(scope, null)

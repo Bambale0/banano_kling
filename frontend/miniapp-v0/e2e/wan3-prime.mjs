@@ -26,12 +26,30 @@ const bootstrap = { ok: true, telegram_id: 424242, first_name: 'Synthetic', last
   video_models: [wan, ...extraModels], recent_tasks: [], saved_references: [] }
 let browser
 async function setup(width = 375, behavior = {}) {
-  const context = await browser.newContext({ viewport: { width, height: 840 } })
+  const context = await browser.newContext({ viewport: { width, height: 840 }, ...(behavior.expiringPicker ? { userAgent: 'Mozilla/5.0 (Linux; Android 15; Samsung) Telegram-Android' } : {}) })
   const page = await context.newPage(); page.setDefaultTimeout(12000)
   const errors = [], quotes = [], generations = [], uploads = new Map(), completedUploads = new Set(), chunks = []
   page.on('pageerror', error => errors.push(error.message))
   await page.addInitScript(() => {
     window.Telegram = { WebApp: { initData: 'query_id=wan3-browser-fixture', initDataUnsafe: {}, ready() {}, expand() {}, onEvent() {}, offEvent() {} } }
+  })
+  if (behavior.expiringPicker) await page.addInitScript(() => {
+    const originals = [], expired = new WeakSet()
+    document.addEventListener('change', event => {
+      if (event.target instanceof HTMLInputElement && event.target.type === 'file') {
+        originals.push(...Array.from(event.target.files || []))
+      }
+    }, true)
+    const slice = File.prototype.slice
+    File.prototype.slice = function (...args) {
+      if (expired.has(this)) throw new DOMException('Picked content URI expired after await', 'NotReadableError')
+      return slice.apply(this, args)
+    }
+    const fetch = window.fetch.bind(window)
+    window.fetch = (input, init) => {
+      if (String(input).endsWith('/wan3/upload/init')) originals.forEach(file => expired.add(file))
+      return fetch(input, init)
+    }
   })
   await page.route('**/*', async route => {
     const req = route.request(), url = new URL(req.url())
@@ -47,7 +65,10 @@ async function setup(width = 375, behavior = {}) {
       else if (url.pathname.endsWith('/wan3/upload/init')) {
         const id = body.upload_id; assert.match(id, /^[a-f0-9]{32}$/); uploads.set(id, body)
         result = { ok: true, upload_id: id, chunk_size: 7 * 1024 * 1024 }
-      } else if (url.pathname.endsWith('/wan3/upload/chunk')) chunks.push(true)
+      } else if (url.pathname.endsWith('/wan3/upload/chunk')) {
+        if (behavior.expiringPicker) assert.deepEqual(Buffer.from(body.chunk_base64, 'base64'), image, 'Exact photo bytes survive native handle expiry')
+        chunks.push(true)
+      }
       else if (url.pathname.endsWith('/wan3/upload/complete')) {
         const upload = uploads.get(body.upload_id); assert.ok(upload, 'Unknown upload session')
         completedUploads.add(body.upload_id)
@@ -207,6 +228,19 @@ try {
   assert.deepEqual(retry.errors, [])
   await retry.context.close()
   console.log('PASS browser unknown acknowledgement preserves composer and idempotency key')
+  const picker = await setup(375, { expiringPicker: true })
+  await picker.page.getByRole('button', { name: 'По референсам', exact: true }).click()
+  await picker.page.getByLabel('Загрузить фото-референсы', { exact: true }).setInputFiles([
+    { name: 'native-first.png', mimeType: 'image/png', buffer: image },
+    { name: 'native-second.png', mimeType: 'image/png', buffer: image },
+  ])
+  await picker.page.getByText('native-second.png', { exact: true }).waitFor()
+  assert.equal(picker.uploads.size, 2)
+  assert.equal(picker.chunks.length, 2)
+  assert.equal(picker.generations.length, 0)
+  assert.deepEqual(picker.errors, [])
+  await picker.context.close()
+  console.log('PASS Android native picker expiry: both photos prepared before network, exact bytes uploaded, zero generation calls')
 } finally {
   if (browser) await browser.close()
   server.kill('SIGTERM')

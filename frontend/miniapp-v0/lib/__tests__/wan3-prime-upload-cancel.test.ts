@@ -11,7 +11,7 @@ const bodyOf = (options: RequestInit) => JSON.parse(String(options.body))
 const cancelled = () => response({ ok: true, status: 'cancelled' })
 const completed = () => response({ ok: true, url: 'https://owned.test/upload.jpg', kind: 'image', filename: 'upload.jpg', size: 10 })
 async function until(condition: () => boolean) {
-  for (let index = 0; index < 100 && !condition(); index += 1) await Promise.resolve()
+  for (let index = 0; index < 100 && !condition(); index += 1) await new Promise<void>(resolve => jest.requireActual('timers').setImmediate(resolve))
   expect(condition()).toBe(true)
 }
 function serveSuccess(url: string, options: RequestInit): Promise<Response> {
@@ -70,6 +70,7 @@ test('cancel during init captures its delayed ID and waits for cleanup without a
   const controller = new AbortController()
   const upload = api.uploadWan3PrimeReference('image', file(), controller.signal)
   const rejection = expect(upload).rejects.toMatchObject({ name: 'AbortError' })
+  await until(() => initSignal !== undefined)
   controller.abort()
   expect(initSignal?.aborted).toBe(false)
   await expect(api.uploadWan3PrimeReference('image', file())).rejects.toThrow('Предыдущая загрузка ещё завершается')
@@ -131,6 +132,7 @@ test('init timeout retains its chosen ID; replay and cancellation fence a late i
     fetchMock.mockImplementationOnce(() => new Promise(resolve => { resolveLate = resolve }))
     const upload = api.uploadWan3PrimeReference('image', file())
     const rejection = expect(upload).rejects.toMatchObject({ name: 'Wan3PrimeUploadCleanupError' })
+    await until(() => fetchMock.mock.calls.length > 0)
     const oldId = bodyOf(fetchMock.mock.calls[0][1]).upload_id
     await jest.advanceTimersByTimeAsync(api.WAN3_PRIME_MEDIA_TIMEOUT_MS)
     // A bounded chunk retry may finish FileReader on a later event turn.
@@ -202,8 +204,7 @@ test.each(['timeout', 'invalid-status'])('cancel %s retains known cleanup and bl
     })
     const pending = api.uploadWan3PrimeReference('image', file())
     const rejection = expect(pending).rejects.toMatchObject({ name: 'Wan3PrimeUploadCleanupError' })
-    await jest.advanceTimersByTimeAsync(api.WAN3_PRIME_MEDIA_TIMEOUT_MS)
-    // A bounded chunk retry may finish FileReader on a later event turn.
+    await until(() => fetchMock.mock.calls.some(call => call[0].endsWith('/cancel')))
     await jest.advanceTimersByTimeAsync(api.WAN3_PRIME_MEDIA_TIMEOUT_MS); await rejection
     const id = bodyOf(fetchMock.mock.calls[0][1]).upload_id
     expect(JSON.parse(sessionStorage.getItem(STORAGE_KEY)!)).toMatchObject({ upload_id: id, phase: 'known' })
