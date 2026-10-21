@@ -402,3 +402,94 @@ def test_private_profile_photo_repeat_requires_explicit_file_selection():
     source = {'private_recipe': True, 'request_data': {'source_reference_images': [own]}}
     assert miniapp._merge_remix_image_references(card, source, []) == ([], 0)
     assert miniapp._merge_remix_image_references(card, source, [own]) == ([own], 0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prefix", ["repeat_result_", "repeat_run_confirm_"])
+async def test_private_owner_quick_photo_repeat_requires_new_selection(monkeypatch, prefix):
+    owner = await make_task("trend")
+    task = await database.get_task_by_id("repeat-privacy")
+    task.request_data = json.dumps({"img_service": "banana_pro", "prompt": SECRET,
+                                   "source_reference_images": ["https://example.test/ancestor.png"]})
+    monkeypatch.setattr(generation, "get_task_by_id", AsyncMock(return_value=task))
+    screen = AsyncMock()
+    monkeypatch.setattr(generation, "_show_repeat_image_screen", screen)
+    debit, launch = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(generation, "deduct_credits", debit)
+    monkeypatch.setattr(generation, "_start_image_generation_task", launch)
+    callback = SimpleNamespace(data=prefix+task.task_id, from_user=SimpleNamespace(id=owner.telegram_id),
+                               answer=AsyncMock(), message=SimpleNamespace(answer=AsyncMock()))
+    state = FSMContext(storage=MemoryStorage(), key=StorageKey(bot_id=1, chat_id=owner.telegram_id, user_id=owner.telegram_id))
+    await state.update_data(reference_images=["https://example.test/ancestor.png"])
+    handler = generation.quick_repeat_image_result if prefix == "repeat_result_" else generation.quick_repeat_image_confirm
+    await handler(callback, state)
+    data = await state.get_data()
+    assert data["reference_images"] == []
+    assert data["repeat_prompt"] == SECRET
+    assert data["repeat_prompt_hidden"] is True
+    screen.assert_awaited_once()
+    debit.assert_not_awaited()
+    launch.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stale_alias", [None, "https://tanyapp.xn--e1aikcel5c5a.online/uploads/synthetic-ancestor.png"])
+async def test_private_owner_stale_photo_launch_blocks_before_billing(monkeypatch, stale_alias):
+    owner = await make_task("trend")
+    task = await database.get_task_by_id("repeat-privacy")
+    task.request_data = json.dumps({"img_service": "banana_pro", "prompt": SECRET,
+        "source_reference_images": ["https://tanyapi.chillcreative.ru/uploads/synthetic-ancestor.png"]})
+    monkeypatch.setattr(generation, "get_task_by_id", AsyncMock(return_value=task))
+    debit, launch = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(generation, "deduct_credits", debit)
+    monkeypatch.setattr(generation, "_start_image_generation_task", launch)
+    callback = SimpleNamespace(data="repeat_run_"+task.task_id, from_user=SimpleNamespace(id=owner.telegram_id),
+                               answer=AsyncMock(), message=SimpleNamespace(answer=AsyncMock()))
+    state = FSMContext(storage=MemoryStorage(), key=StorageKey(bot_id=1, chat_id=owner.telegram_id, user_id=owner.telegram_id))
+    if stale_alias:
+        await state.update_data(repeat_source_task_id=task.task_id, reference_images=[stale_alias])
+    await generation.run_repeat_image_generation(callback, state)
+    debit.assert_not_awaited()
+    launch.assert_not_awaited()
+    assert callback.answer.await_args.kwargs["show_alert"] is True
+
+
+@pytest.mark.asyncio
+async def test_private_child_owner_cannot_implicitly_reuse_ancestor_grant():
+    task = SimpleNamespace(id=84, user_id=2, source_feed_gen_id=42, is_public_feed=True,
+        request_data=json.dumps({"source_reference_images": ["https://example.test/ancestor.png"],
+                                 "private_repeat_reference_images": ["https://example.test/ancestor.png"]}))
+    assert await generation._image_repeat_private_context(task, 2, fresh_repeat=True) == ([], 84)
+
+
+@pytest.mark.asyncio
+async def test_unpublished_private_trend_repeat_with_own_photo_persists_hidden_recipe(monkeypatch):
+    owner = await make_task("trend")
+    task = await database.get_task_by_id("repeat-privacy")
+    task.request_data = json.dumps({"img_service": "banana_pro", "prompt": SECRET,
+                                   "source_reference_images": ["https://example.test/ancestor.png"]})
+    monkeypatch.setattr(generation, "get_task_by_id", AsyncMock(return_value=task))
+    monkeypatch.setattr(generation, "_available_reference_images", lambda refs: (refs, []))
+    provider = AsyncMock(return_value={"task_id": "synthetic-private-trend-repeat"})
+    monkeypatch.setattr(generation.nano_banana_pro_service, "generate_image", provider)
+    own = "https://example.test/own-selected.png"
+    progress = SimpleNamespace(delete=AsyncMock(), edit_text=AsyncMock())
+    callback = SimpleNamespace(data="repeat_run_"+task.task_id, from_user=SimpleNamespace(id=owner.telegram_id),
+                               answer=AsyncMock(), message=SimpleNamespace(answer=AsyncMock(return_value=progress)))
+    state = FSMContext(storage=MemoryStorage(), key=StorageKey(bot_id=1, chat_id=owner.telegram_id, user_id=owner.telegram_id))
+    await state.update_data(repeat_source_task_id=task.task_id, repeat_prompt=SECRET,
+                            repeat_prompt_hidden=True, reference_images=[own])
+    await generation.run_repeat_image_generation(callback, state)
+    provider.assert_awaited_once()
+    assert provider.await_args.kwargs["image_input"] == [own]
+    result = await database.get_generation_task_payload("synthetic-private-trend-repeat")
+    assert result is not None
+    assert result["request_data"]["private_recipe"] is True
+    assert result["parent_generation_id"] == task.id
+    assert database.generation_has_private_recipe(result)
+    monkeypatch.setattr(miniapp, "DATABASE_PATH", database.DATABASE_PATH)
+    monkeypatch.setattr(miniapp, "_get_user_context", AsyncMock(return_value=(owner.telegram_id, {"user": owner})))
+    response = await miniapp.miniapp_task_detail(Request("synthetic-private-trend-repeat"))
+    assert response.status == 200
+    assert SECRET not in response.text
+    assert json.loads(response.text)["task"]["prompt_hidden"] is True

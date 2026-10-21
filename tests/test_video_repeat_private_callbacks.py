@@ -132,3 +132,39 @@ async def test_legacy_derivative_with_missing_parent_never_enters_automatic_reus
     callback.answer.assert_awaited_once()
     assert callback.answer.await_args.kwargs['show_alert'] is True
     callback.message.answer.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("available", [True, False])
+async def test_owner_private_trend_without_parent_or_grant_never_reuses_legacy_inputs(monkeypatch, available):
+    payload = {"id": 42, "user_id": 2, "type": "video", "model": "seedance_2_5",
+               "action_type": "trend", "request_data": {"v_type": "imgtxt",
+               "v_image_url": "https://example.test/ancestor.png"}}
+    task = SimpleNamespace(**payload, task_id="private-own-trend", source_feed_gen_id=None)
+    monkeypatch.setattr(database, "get_or_create_user", AsyncMock(return_value=SimpleNamespace(id=2)))
+    monkeypatch.setattr(continuity, "get_generation_task_payload", AsyncMock(return_value=payload))
+    monkeypatch.setattr(miniapp, "_get_repeat_source_card", AsyncMock(
+        return_value={"id": 42, "gen_type": "video"} if available else None))
+    monkeypatch.setattr("bot.keyboards._mini_app_url_with_start_param",
+                        lambda value: "https://example.test/mini-app?startapp=" + value)
+    callback = SimpleNamespace(from_user=SimpleNamespace(id=880202), answer=AsyncMock(),
+                               message=SimpleNamespace(answer=AsyncMock()))
+    assert await continuity.redirect_typed_video_repeat(callback, task) is True
+    if available:
+        markup = callback.message.answer.await_args.kwargs["reply_markup"]
+        assert markup.inline_keyboard[0][0].web_app.url.endswith("startapp=remix_42")
+    else:
+        callback.message.answer.assert_not_awaited()
+        assert callback.answer.await_args.kwargs["show_alert"] is True
+
+
+@pytest.mark.asyncio
+async def test_published_wan_private_owner_uses_selected_post_repeat(monkeypatch):
+    monkeypatch.setattr(database, "get_or_create_user", AsyncMock(return_value=SimpleNamespace(id=2)))
+    task = SimpleNamespace(id=84, task_id="private-wan-child", user_id=2, model="wan_3",
+                           source_feed_gen_id=42, is_public_feed=True)
+    callback = SimpleNamespace(from_user=SimpleNamespace(id=880202), answer=AsyncMock(),
+                               message=SimpleNamespace(answer=AsyncMock()))
+    assert await continuity.redirect_typed_video_repeat(callback, task) is True
+    markup = callback.message.answer.await_args.kwargs["reply_markup"]
+    assert markup.inline_keyboard[0][0].callback_data == "wan3_repeat:84"

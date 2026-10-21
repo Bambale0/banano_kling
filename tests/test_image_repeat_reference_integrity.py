@@ -48,13 +48,14 @@ async def test_image_repeat_preserves_authorized_recipe_before_billing(monkeypat
     request = SimpleNamespace(app={}, json=AsyncMock(return_value=body))
     response = await (miniapp.miniapp_feed_remix if endpoint == "remix" else miniapp.miniapp_generate_image)(request)
     assert fixed not in response.text and original not in response.text
-    if case in {"missing_replacement", "unavailable", "owner_selected_gap"}:
+    private_owner = derived_source and case in {"owner_selected", "owner_selected_gap"}
+    if case in {"missing_replacement", "unavailable"} or (case == "owner_selected_gap" and not private_owner):
         assert response.status == 400
         debit.assert_not_awaited()
         launch.assert_not_awaited()
     else:
         assert response.status == 500  # mocked provider failure, never a real launch
-        expected = [fixed] if all_fixed else [own] if case == "revoked" else [own, fixed]
+        expected = [fixed] if all_fixed else [own] if case == "revoked" or private_owner else [own, fixed]
         assert launch.await_args.kwargs["reference_images"] == expected
         assert launch.await_args.kwargs["private_repeat_reference_images"] == grant
         debit.assert_awaited_once()
