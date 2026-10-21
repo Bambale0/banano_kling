@@ -12,8 +12,8 @@ from bot.services.lava_service import lava_service
 
 @pytest.fixture(autouse=True)
 def reset_database_schema_cache(monkeypatch):
-    from bot.services import lava_binding_schema_compat
     from bot.handlers import miniapp_regression_safety
+    from bot.services import lava_binding_schema_compat
     monkeypatch.setattr(lava_binding_schema_compat, '_BINDINGS_SCHEMA_READY', False)
     monkeypatch.setattr(miniapp_regression_safety, '_PAYMENT_EMAIL_SCHEMA_READY', False)
 
@@ -172,4 +172,3 @@ async def test_signed_checkout_outage_has_safe_503_without_post_replay(monkeypat
             assert len(posts) == 1
         finally:
             await lava_service.close()
-
