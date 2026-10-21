@@ -357,8 +357,8 @@ try {
   batch.uploads.push(...photoUrls.map((url, i) => ({ url, kind: 'image', filename: i ? 'portrait-profile.png' : 'portrait-front.png' })))
   const picker = batch.page.locator('input[type=file][accept="image/*"]').first()
   await picker.setInputFiles(photoUrls.map((_, i) => ({ name: i ? 'portrait-profile.png' : 'portrait-front.png', mimeType: 'image/png', buffer: image })))
-  const deadline = Date.now() + 5000
-  while (!batch.behavior.uploadStarted && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10))
+  const uploadDeadline = Date.now() + 5000
+  while (!batch.behavior.uploadStarted && Date.now() < uploadDeadline) await new Promise(resolve => setTimeout(resolve, 10))
   assert.equal(batch.behavior.uploadStarted, true)
   assert.equal(await picker.isDisabled(), true, 'Picker must remain closed for the entire original batch')
   await picker.evaluate(element => element.click())
