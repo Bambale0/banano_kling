@@ -479,6 +479,37 @@ export async function createPayment(payload: {
   })
 }
 
+export async function fetchTaskHistory(cursor?: string, signal?: AbortSignal): Promise<{ recent_tasks: Task[]; next_cursor: string | null }> {
+  const initData = getInitData()
+  if (!initData) throw new Error('Откройте Mini App из Telegram и попробуйте снова.')
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+  const controller = new AbortController()
+  const abort = () => controller.abort()
+  signal?.addEventListener('abort', abort, { once: true })
+  const timeout = setTimeout(abort, 10_000)
+  let rejectOnAbort: (() => void) | undefined
+  try {
+    const aborted = new Promise<never>((_, reject) => {
+      rejectOnAbort = () => reject(new DOMException('Aborted', 'AbortError'))
+      controller.signal.addEventListener('abort', rejectOnAbort, { once: true })
+    })
+    const page = await Promise.race([
+      postJson<{ ok: true; recent_tasks: Task[]; next_cursor: string | null }>('task-history', {
+        init_data: initData, cursor, start_param_fallback: getStartParamFallback(),
+      }, controller.signal), aborted,
+    ])
+    if (!Array.isArray(page.recent_tasks) || page.recent_tasks.some(task => !task || typeof task.task_id !== 'string' || !task.task_id)
+      || (page.next_cursor !== null && (typeof page.next_cursor !== 'string' || !page.next_cursor))) {
+      throw new Error('Не удалось загрузить историю. Попробуйте ещё раз.')
+    }
+    return page
+  } finally {
+    clearTimeout(timeout)
+    signal?.removeEventListener('abort', abort)
+    if (rejectOnAbort) controller.signal.removeEventListener('abort', rejectOnAbort)
+  }
+}
+
 export async function fetchTaskDetail(taskId: string, signal?: AbortSignal): Promise<TaskDetail> {
   const initData = getInitData()
   if (!initData) {
