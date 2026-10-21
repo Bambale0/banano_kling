@@ -23,7 +23,6 @@ async def test_task_detail_hides_legacy_child_recipe_but_preserves_owner_inputs(
     monkeypatch, scope, references_visible
 ):
     monkeypatch.setattr(miniapp, "DATABASE_PATH", database.DATABASE_PATH)
-    monkeypatch.setattr(trend_task_privacy, "DATABASE_PATH", database.DATABASE_PATH)
     author = await database.get_or_create_user(810001)
     viewer = await database.get_or_create_user(810002)
     author_reference = "https://example.test/author-private-face.png"
@@ -226,17 +225,7 @@ async def test_foreign_repeat_does_not_inherit_references_through_legacy_child()
     await database.complete_video_task(
         "legacy-published-child", "https://example.test/child-result.png"
     )
-    # Modern share rejects remix children. Exercise an already-published legacy row.
-    async with db_backend.connect(database.DATABASE_PATH) as connection:
-        await connection.execute(
-            """UPDATE generation_tasks
-               SET is_public_feed = 1, is_profile_visible = 1,
-                   feed_references_visible = 1, feed_reference_selection = ?
-               WHERE task_id = ?""",
-            (json.dumps({"images": [inherited_reference], "videos": []}),
-             "legacy-published-child"),
-        )
-        await connection.commit()
+    assert await database.share_to_feed("legacy-published-child", author.id) is not None
     payload = await database.get_generation_task_payload("legacy-published-child")
     card = await database.get_feed_generation_card(payload["id"], viewer_user_id=viewer.id)
 
@@ -364,8 +353,8 @@ async def test_curated_trend_references_stay_private_for_foreign_viewers():
         reference_video_indices=[0],
     )
     assert owner_card is not None
-    assert set(owner_card["reference_images"]) == {start_image, outfit}
-    assert owner_card["reference_videos"] == [motion]
+    assert owner_card["reference_images"] == []
+    assert owner_card["reference_videos"] == []
 
     public_card = await database.get_feed_generation_card(
         owner_card["id"], viewer_user_id=viewer.id

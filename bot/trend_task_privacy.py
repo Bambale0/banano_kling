@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from bot import db as db_backend
-from bot.database import DATABASE_PATH, generation_has_private_recipe
+from bot.database import generation_has_private_recipe
 
 logger = logging.getLogger(__name__)
 
@@ -65,11 +65,11 @@ async def _protected_task_ids(task_ids: list[str]) -> set[str]:
         return set()
 
     placeholders = ",".join("?" for _ in normalized)
-    async with db_backend.connect(DATABASE_PATH) as db:
+    async with db_backend.connect() as db:
         db.row_factory = db_backend.Row
         cursor = await db.execute(
             f"""
-            SELECT task_id, source_feed_gen_id, action_type, prompt, request_data
+            SELECT task_id, user_id, source_feed_gen_id, action_type, prompt, request_data
             FROM generation_tasks
             WHERE task_id IN ({placeholders})
             """,
@@ -78,31 +78,51 @@ async def _protected_task_ids(task_ids: list[str]) -> set[str]:
         rows = await cursor.fetchall()
 
     protected: set[str] = set()
-    legacy_candidates: dict[str, str] = {}
+    legacy_candidates: dict[str, tuple[str, int]] = {}
     for row in rows:
         task_id = str(row["task_id"] or "").strip()
         prompt = str(row["prompt"] or "").strip()
         if generation_has_private_recipe(row):
             protected.add(task_id)
         elif prompt:
-            legacy_candidates[task_id] = prompt
+            legacy_candidates[task_id] = (prompt, row["user_id"])
 
     if legacy_candidates:
         # Privacy only needs recipes, not public cards, settings or success metrics.
         # Do not paginate: historical matches must remain protected beyond page one.
-        async with db_backend.connect(DATABASE_PATH) as db:
+        async with db_backend.connect() as db:
             cursor = await db.execute(
-                """SELECT prompt_text FROM user_prompts
+                """SELECT prompt_text, author_id FROM user_prompts
                    WHERE status = 'approved' AND is_public = 1 AND tags LIKE ?""",
                 ('%"trend"%',),
             )
             recipes = await cursor.fetchall()
-        trend_prompts = {str(row[0] or "").strip() for row in recipes}
+        trend_authors: dict[str, set[int]] = {}
+        for recipe in recipes:
+            trend_authors.setdefault(str(recipe[0] or "").strip(), set()).add(recipe[1])
+        # Publishing a trend must not retroactively turn its author's ordinary
+        # originals into foreign repeats. Explicit privacy markers above win.
         protected.update(
-            task_id for task_id, prompt in legacy_candidates.items()
-            if prompt in trend_prompts
+            task_id for task_id, (prompt, owner_id) in legacy_candidates.items()
+            if prompt in trend_authors and owner_id not in trend_authors[prompt]
         )
     return protected
+
+
+async def recipe_privacy_rows(rows: list[Any]) -> list[dict[str, Any]]:
+    """Classify stored legacy recipes once for an entire publication/card batch.
+
+    Reads annotate copies only. Publication and repeat/grant checks consume
+    the same classification without rewriting historical source metadata.
+    Lookup failures propagate rather than guessing a privacy decision.
+    """
+    snapshots = [dict(row) for row in rows]
+    candidates = [row for row in snapshots if row.get("task_id") and not generation_has_private_recipe(row)]
+    protected = await _protected_task_ids([str(row["task_id"]) for row in candidates])
+    for row in candidates:
+        if str(row["task_id"]) in protected:
+            row["private_recipe"] = True
+    return snapshots
 
 
 def _task_objects(payload: Mapping[str, Any]) -> list[dict[str, Any]]:

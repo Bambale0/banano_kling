@@ -1115,11 +1115,17 @@ def _merge_repeat_private_reference_slots(
     return list(dict.fromkeys(merged))
 
 
-async def _image_repeat_private_context(task, viewer_user_id: int) -> tuple[list[str], int | None]:
+async def _image_repeat_private_context(
+    task, viewer_user_id: int, *, fresh_repeat: bool = False,
+) -> tuple[list[str], int | None]:
     """Resolve hidden inputs and canonical lineage without copying URLs into FSM."""
     request_data = json.loads(task.request_data) if task.request_data else {}
     hidden = _private_repeat_reference_images(request_data)
     source_id = getattr(task, "source_feed_gen_id", None)
+    if fresh_repeat and generation_has_private_recipe(task):
+        if getattr(task, "is_public_feed", False) or getattr(task, "is_profile_visible", False):
+            source_id = task.id
+        return [], source_id
     if source_id and task.user_id != viewer_user_id:
         return [], source_id
     if source_id:
@@ -1166,6 +1172,16 @@ def _repeat_source_prompt_hidden(task: Any, viewer_user_id: int | None) -> bool:
     ))
 
 
+async def _classify_repeat_image_task(task):
+    if task and not generation_has_private_recipe(task) and getattr(task, "task_id", None):
+        from bot.trend_task_privacy import recipe_privacy_rows
+
+        classified = (await recipe_privacy_rows([vars(task)]))[0]
+        if generation_has_private_recipe(classified):
+            task.private_recipe = True
+    return task
+
+
 def _can_inherit_repeat_source_references(task: Any, viewer_user_id: int | None) -> bool:
     try:
         owner_id = int(getattr(task, "user_id", None) or 0)
@@ -1175,7 +1191,7 @@ def _can_inherit_repeat_source_references(task: Any, viewer_user_id: int | None)
         viewer_id = int(viewer_user_id or 0)
     except (TypeError, ValueError):
         viewer_id = 0
-    return bool(owner_id and viewer_id and owner_id == viewer_id)
+    return bool(owner_id and viewer_id and owner_id == viewer_id and not generation_has_private_recipe(task))
 
 
 def _is_identity_sensitive_prompt(prompt: str) -> bool:
@@ -1261,6 +1277,7 @@ async def _start_image_generation_task(
     parent_generation_id: Optional[int] = None,
     action_type: Optional[str] = None,
     prompt_source_id: Optional[int] = None,
+    private_recipe: bool = False,
     on_task_created=None,
 ):
     """Launch one image generation task and persist enough data for repeats."""
@@ -1366,6 +1383,7 @@ async def _start_image_generation_task(
         "parent_generation_id": parent_generation_id,
         "action_type": action_type,
         "prompt_source_id": prompt_source_id,
+        **({"private_recipe": True} if private_recipe else {}),
     }
     if effective_prompt:
         request_snapshot["effective_prompt"] = effective_prompt
@@ -1743,6 +1761,11 @@ async def _restore_image_task_to_state(
     if not task or task.type != "image":
         return False, "Не удалось найти данные задачи."
 
+    task = await _classify_repeat_image_task(task)
+    if generation_has_private_recipe(task):
+        include_references = False
+        hide_prompt = True
+
     try:
         request_data = json.loads(task.request_data) if task.request_data else {}
     except Exception:
@@ -1751,11 +1774,14 @@ async def _restore_image_task_to_state(
     img_service = request_data.get("img_service", task.model or "banana_pro")
     img_ratio = request_data.get("img_ratio", task.aspect_ratio or "1:1")
     if getattr(task, "source_feed_gen_id", None):
-        hidden_refs, _ = await _image_repeat_private_context(task, task.user_id)
+        hidden_refs, _ = await _image_repeat_private_context(task, task.user_id, fresh_repeat=True)
         request_data = {**request_data, "private_repeat_reference_images": hidden_refs}
     else:
-        hidden_refs = generation_repeat_reference_selection(task) if not include_references else []
-    original_reference_images = _source_reference_images_from_request(request_data)
+        hidden_refs = (generation_repeat_reference_selection(task)
+                       if not include_references and not generation_has_private_recipe(task) else [])
+    original_reference_images = (_snapshot_reference_images(
+        request_data.get("source_reference_images") or request_data.get("reference_images", [])
+    ) if generation_has_private_recipe(task) else _source_reference_images_from_request(request_data))
     img_quality = request_data.get("img_quality", "2K")
     img_nsfw_checker = bool(request_data.get("img_nsfw_checker", False))
     nsfw_enabled = bool(request_data.get("nsfw_enabled", False))
@@ -2495,13 +2521,13 @@ async def _resolve_repeat_image_task(raw_task_id: str):
     task_id = str(raw_task_id or "").strip()
     task = await get_task_by_id(task_id)
     if task or not task_id.isdigit():
-        return task_id, task
+        return task_id, await _classify_repeat_image_task(task)
 
     card = await get_feed_generation_card(task_id)
     resolved_task_id = str((card or {}).get("task_id") or "").strip()
     if not resolved_task_id or resolved_task_id == task_id:
         return task_id, None
-    return resolved_task_id, await get_task_by_id(resolved_task_id)
+    return resolved_task_id, await _classify_repeat_image_task(await get_task_by_id(resolved_task_id))
 
 
 @router.callback_query(F.data.startswith("repeat_image_"))
@@ -2640,7 +2666,7 @@ async def repeat_image_show_changes_hint(callback: types.CallbackQuery, state: F
 async def run_repeat_image_generation(callback: types.CallbackQuery, state: FSMContext):
     """Launches repeat generation after explicit user confirmation."""
     task_id = callback.data.replace("repeat_run_", "", 1)
-    task = await get_task_by_id(task_id)
+    task_id, task = await _resolve_repeat_image_task(task_id)
 
     if not task or task.type != "image":
         await callback.answer("Не удалось найти данные для повтора.", show_alert=True)
@@ -2669,17 +2695,23 @@ async def run_repeat_image_generation(callback: types.CallbackQuery, state: FSMC
             for ref in _snapshot_reference_images(data.get("reference_images", []))
             if not is_reference_contact_sheet_url(ref)
         ]
-    elif task.user_id == user.id:
+    elif _can_inherit_repeat_source_references(task, user.id):
         raw_reference_images = _source_reference_images_from_request(request_data)
     else:
         raw_reference_images = []
-    private_refs, source_feed_gen_id = await _image_repeat_private_context(task, user.id)
-    if getattr(task, "source_feed_gen_id", None) and task.user_id != user.id:
+    private_refs, source_feed_gen_id = await _image_repeat_private_context(task, user.id, fresh_repeat=True)
+    if generation_has_private_recipe(task):
         # A stale/legacy FSM must not bypass the non-transitive child boundary.
-        inherited = set(_snapshot_reference_images(
+        inherited = {reference_source_identity(ref) for ref in _snapshot_reference_images(
             request_data.get("source_reference_images") or request_data.get("reference_images", [])
-        ))
-        raw_reference_images = [ref for ref in raw_reference_images if ref not in inherited]
+        )}
+        from bot.services.media_input_utils import reference_upload_owner_telegram_id
+
+        raw_reference_images = [
+            ref for ref in raw_reference_images
+            if reference_source_identity(ref) not in inherited
+            or reference_upload_owner_telegram_id(ref) == callback.from_user.id
+        ]
     if state_matches_repeat and data.get("repeat_private_reference_fingerprint") not in (
         None, _private_repeat_fingerprint(private_refs)
     ):
@@ -2724,6 +2756,13 @@ async def run_repeat_image_generation(callback: types.CallbackQuery, state: FSMC
             "Часть старых фото уже очищена. Добавьте фото заново.",
             show_alert=True,
         )
+        return
+
+    if generation_has_private_recipe(task) and (
+        request_data.get("source_reference_images") or request_data.get("reference_images")
+    ) and not reference_images:
+        await callback.answer("Добавьте свои фото для повтора.", show_alert=True)
+        await state.set_state(GenerationStates.uploading_reference_images)
         return
 
     if img_service in {"grok_imagine_i2i", "seedream_edit"} and not reference_images:
@@ -2783,9 +2822,10 @@ async def run_repeat_image_generation(callback: types.CallbackQuery, state: FSMC
             nsfw_enabled=nsfw_enabled,
             callback_url=callback_url,
             source_feed_gen_id=source_feed_gen_id,
-            parent_generation_id=task.id if source_feed_gen_id else None,
+            parent_generation_id=task.id if source_feed_gen_id or generation_has_private_recipe(task) else None,
             private_repeat_reference_images=private_refs,
-            action_type="repeat" if source_feed_gen_id else None,
+            private_recipe=generation_has_private_recipe(task),
+            action_type="repeat" if source_feed_gen_id or generation_has_private_recipe(task) else None,
             on_task_created=notify_local_task_created,
         )
         await progress_message.delete()
@@ -2879,7 +2919,7 @@ async def run_repeat_image_generation(callback: types.CallbackQuery, state: FSMC
 async def quick_repeat_image_result(callback: types.CallbackQuery, state: FSMContext):
     """Показывает подтверждение перед повтором: без списаний и запуска сразу."""
     task_id = callback.data.replace("repeat_result_", "", 1)
-    task = await get_task_by_id(task_id)
+    task_id, task = await _resolve_repeat_image_task(task_id)
 
     if not task or task.type != "image":
         await callback.answer("Не удалось найти данные для повтора.", show_alert=True)
@@ -2892,6 +2932,17 @@ async def quick_repeat_image_result(callback: types.CallbackQuery, state: FSMCon
         return
 
     user = await get_or_create_user(callback.from_user.id)
+    if generation_has_private_recipe(task):
+        restored, error = await _restore_image_task_to_state(
+            task, state, include_references=False, repeat_source_task_id=task_id, hide_prompt=True,
+        )
+        if restored:
+            await _show_repeat_image_screen(callback, state)
+            await callback.answer("Выберите свои фото для повтора")
+        else:
+            await callback.answer(error or "Не удалось открыть повтор.", show_alert=True)
+        return
+
     img_service = request_data.get("img_service", task.model or "banana_pro")
     img_ratio = request_data.get("img_ratio", task.aspect_ratio or "1:1")
     is_admin = config.is_admin(callback.from_user.id)
@@ -2945,7 +2996,7 @@ async def quick_repeat_image_cancel(callback: types.CallbackQuery, state: FSMCon
 async def quick_repeat_image_confirm(callback: types.CallbackQuery, state: FSMContext):
     """Запускает повтор только после явного подтверждения пользователя."""
     task_id = callback.data.replace("repeat_run_confirm_", "", 1)
-    task = await get_task_by_id(task_id)
+    task_id, task = await _resolve_repeat_image_task(task_id)
 
     if not task or task.type != "image":
         await callback.answer("Не удалось найти данные для повтора.", show_alert=True)
@@ -2959,6 +3010,17 @@ async def quick_repeat_image_confirm(callback: types.CallbackQuery, state: FSMCo
 
     user = await get_or_create_user(callback.from_user.id)
 
+    if generation_has_private_recipe(task):
+        restored, error = await _restore_image_task_to_state(
+            task, state, include_references=False, repeat_source_task_id=task_id, hide_prompt=True,
+        )
+        if restored:
+            await _show_repeat_image_screen(callback, state)
+            await callback.answer("Выберите свои фото для повтора")
+        else:
+            await callback.answer(error or "Не удалось открыть повтор.", show_alert=True)
+        return
+
     img_service = request_data.get("img_service", task.model or "banana_pro")
     prompt = _repeat_source_prompt(request_data, task)
     img_ratio = request_data.get("img_ratio", task.aspect_ratio or "1:1")
@@ -2971,7 +3033,7 @@ async def quick_repeat_image_confirm(callback: types.CallbackQuery, state: FSMCo
     else:
         reference_images = []
 
-    private_refs, source_feed_gen_id = await _image_repeat_private_context(task, user.id)
+    private_refs, source_feed_gen_id = await _image_repeat_private_context(task, user.id, fresh_repeat=True)
     if not await validate_private_repeat_reference_access(
         source_feed_gen_id=source_feed_gen_id, private_reference_images=private_refs
     ):
@@ -3044,9 +3106,10 @@ async def quick_repeat_image_confirm(callback: types.CallbackQuery, state: FSMCo
             nsfw_enabled=nsfw_enabled,
             callback_url=callback_url,
             source_feed_gen_id=source_feed_gen_id,
-            parent_generation_id=task.id if source_feed_gen_id else None,
+            parent_generation_id=task.id if source_feed_gen_id or generation_has_private_recipe(task) else None,
             private_repeat_reference_images=private_refs,
-            action_type="repeat" if source_feed_gen_id else None,
+            private_recipe=generation_has_private_recipe(task),
+            action_type="repeat" if source_feed_gen_id or generation_has_private_recipe(task) else None,
             on_task_created=notify_local_task_created,
         )
         await progress_message.delete()

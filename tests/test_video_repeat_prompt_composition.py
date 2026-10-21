@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from bot import database, miniapp, trend_task_privacy
+from bot import database, miniapp
 from bot.creator_tariff import VideoQuote
 from bot.handlers import miniapp_video_continuity_compat as continuity
 from bot.handlers import seedance_25_public_release as public
@@ -54,7 +54,6 @@ async def repeat_endpoint(monkeypatch):
     monkeypatch.setattr(miniapp, "get_generation_task_payload", source_read)
     monkeypatch.setattr(continuity, "get_generation_task_payload", source_read)
     monkeypatch.setattr(miniapp, "DATABASE_PATH", database.DATABASE_PATH)
-    monkeypatch.setattr(trend_task_privacy, "DATABASE_PATH", database.DATABASE_PATH)
     monkeypatch.setattr(miniapp, "quote_video_for_actor", quote)
     monkeypatch.setattr(public, "quote_video_for_actor", quote)
     monkeypatch.setattr(miniapp.config, "is_admin", lambda _actor: False)

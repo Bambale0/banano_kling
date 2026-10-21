@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from aiogram.dispatcher.event.bases import SkipHandler
@@ -122,6 +123,9 @@ async def test_repeat_seedance25_restores_multimodal_references_and_original_sha
             data=await launch_state.get_data(),
         )
 
+    from bot.handlers import miniapp_video_continuity_compat as continuity
+
+    monkeypatch.setattr(continuity, "get_generation_task_payload", AsyncMock(return_value=vars(task)))
     monkeypatch.setattr(module.generation_module, "get_task_by_id", fake_get_task)
     monkeypatch.setattr(module.generation_module, "get_or_create_user", fake_get_user)
     monkeypatch.setattr("bot.database.get_or_create_user", fake_get_user)

@@ -130,4 +130,19 @@ describe('TaskDetailPanel publication references', () => {
     expect(screen.getByRole('link', { name: 'Открыть видео-референс 1' })).toHaveAttribute('href', expectedVideo)
     expect(screen.getByLabelText('Видео-референс 1')).toHaveAttribute('src', expect.stringContaining(expectedVideo))
   })
+  it.each(['image', 'video'])('lets a non-admin publish a private %s result without exporting its recipe', async (type) => {
+    const context = mockedUseApp.getMockImplementation()!()
+    mockedUseApp.mockReturnValue({ ...context, taskDetail: {
+      ...context.taskDetail!, type, prompt: '', prompt_hidden: true,
+      prompt_actions_allowed: false, publication_reference_images: [],
+      publication_reference_videos: [], request_data: {},
+    } } as ReturnType<typeof useApp>)
+    render(<TaskDetailPanel />)
+    expect(screen.getByText('Промпт автора скрыт. Результат можно опубликовать и повторить.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /^Опубликовать$/i }))
+    fireEvent.click(screen.getAllByRole('button', { name: /^Опубликовать$/i })[0])
+    await waitFor(() => expect(mockedPublish).toHaveBeenCalledTimes(1))
+    expect(mockedPublish).toHaveBeenCalledWith('seedance-task', expect.objectContaining({ promptVisible: false }))
+  })
+
 })

@@ -17,7 +17,7 @@ from typing import Any
 
 from aiohttp import web
 
-from bot.database import get_generation_task_payload
+from bot.database import generation_has_private_recipe, get_generation_task_payload
 from bot.services.media_input_utils import (
     missing_local_upload_sources,
     resolve_reference_source,
@@ -595,8 +595,11 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
         raise web.HTTPBadRequest(reason="Исходное описание видео недоступно")
     # A publicly shared repeat/result is a new publication in its own right.
     # Keep this source task, rather than silently substituting its ancestor.
-    source_task = {**source_task, "_repeat_is_owner": (
-        source_task.get("user_id") == context["user"].id and not source_task.get("source_feed_gen_id")
+    from bot.trend_task_privacy import recipe_privacy_rows
+
+    source_task = (await recipe_privacy_rows([source_task]))[0]
+    source_task = {**source_task, "_repeat_consumer_telegram_id": _telegram_id, "_repeat_is_owner": (
+        source_task.get("user_id") == context["user"].id and not generation_has_private_recipe(source_task)
     )}
     # Only this authenticated boundary can authorize the owner's legacy reuse.
     # A foreign legacy post has no implicit grant: all source slots require
@@ -636,7 +639,10 @@ async def redirect_typed_video_repeat(callback, task) -> bool:
         from bot.database import get_or_create_user
 
         viewer = await get_or_create_user(callback.from_user.id)
-        own = task.user_id == viewer.id
+        published_private = generation_has_private_recipe(task) and (
+            getattr(task, "is_public_feed", False) or getattr(task, "is_profile_visible", False)
+        )
+        own = task.user_id == viewer.id and not published_private
         target = f"wan3_recipe:{task.task_id}" if own else f"wan3_repeat:{task.id}"
         await callback.answer()
         await callback.message.answer("Откройте редактор Wan: роли и порядок материалов будут сохранены.",
@@ -648,17 +654,6 @@ async def redirect_typed_video_repeat(callback, task) -> bool:
     ))
     request_data = source_request({"request_data": getattr(task, "request_data", None)})
     tagged_child = request_data.get("video_repeat_contract_version") == 1
-    raw = getattr(task, "feed_repeat_reference_selection", None)
-    if not parent_id:
-        try:
-            if parse_video_repeat_grant(raw) is None:
-                from bot.database import get_or_create_user
-
-                viewer = await get_or_create_user(callback.from_user.id)
-                if getattr(task, "user_id", None) == viewer.id:
-                    return False
-        except VideoRepeatContractError:
-            pass
     # For an unpublished derived result, the old callback can still link to
     # its original feed item. Once the result is itself published, link to
     # THAT video's generation ID, never its ancestor.
@@ -667,6 +662,9 @@ async def redirect_typed_video_repeat(callback, task) -> bool:
         source = await get_generation_task_payload(source_id)
         if not source:
             raise VideoRepeatReferenceError("Исходная публикация недоступна.")
+        from bot.trend_task_privacy import recipe_privacy_rows
+
+        source = (await recipe_privacy_rows([source]))[0]
         typed = parse_video_repeat_grant(source.get("feed_repeat_reference_selection"))
         if typed is None and not published_child and tagged_child:
             raise VideoRepeatReferenceError("Разрешение на повтор изменилось.")
@@ -674,7 +672,7 @@ async def redirect_typed_video_repeat(callback, task) -> bool:
         from bot.database import get_or_create_user
 
         user = await get_or_create_user(callback.from_user.id)
-        if not parent_id and source.get("user_id") == user.id:
+        if not parent_id and source.get("user_id") == user.id and not generation_has_private_recipe(source):
             return False
         card = await miniapp_module._get_repeat_source_card(source_id, viewer_user_id=user.id)
         descriptors = video_repeat_descriptors(source)

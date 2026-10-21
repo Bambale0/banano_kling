@@ -133,6 +133,17 @@ def is_local_upload_source(source: str) -> bool:
     return _local_upload_candidate(source) is not None
 
 
+def reference_upload_owner_telegram_id(source: str) -> int | None:
+    """Read ownership only from a trusted local reference-upload identity."""
+    kind, path = reference_source_identity(source)
+    parts = path.split("/")
+    if kind != "local" or len(parts) < 6 or parts[:3] != ["static", "uploads", "refs"]:
+        return None
+    if parts[3] not in {"image", "video", "audio"} or not parts[4].isdigit():
+        return None
+    return int(parts[4])
+
+
 def missing_local_upload_sources(
     sources: Iterable[str | bytes | bytearray] | None,
 ) -> list[str]:

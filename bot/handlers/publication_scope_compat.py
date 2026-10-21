@@ -175,6 +175,9 @@ async def _profile_card(
     )
     if not row:
         return None
+    from bot.trend_task_privacy import recipe_privacy_rows
+
+    row = (await recipe_privacy_rows([row]))[0]
     card = database._generation_row_to_card(
         row,
         viewer_user_id=viewer_user_id,
@@ -200,7 +203,7 @@ async def get_user_profile_generations(
     if profile_visible_only:
         visibility_clause = "(COALESCE(gt.is_profile_visible, 0) = 1 OR gt.is_public_feed = 1)"
     if include_unpublished_owned:
-        visibility_clause = "gt.source_feed_gen_id IS NULL"
+        visibility_clause = "1=1"
 
     async with db_backend.connect(database.DATABASE_PATH, timeout=15) as db:
         db.row_factory = db_backend.Row
@@ -242,6 +245,9 @@ async def get_user_profile_generations(
         cursor = await db.execute(query, params)
         rows = await cursor.fetchall()
 
+    from bot.trend_task_privacy import recipe_privacy_rows
+
+    rows = await recipe_privacy_rows(rows)
     cards: list[dict[str, Any]] = []
     for row in rows:
         card = database._generation_row_to_card(
@@ -322,11 +328,13 @@ async def share_to_profile(
             or row["type"] not in database.FEED_PUBLIC_TYPES
             or row["status"] != "completed"
             or not row["result_url"]
-            or row["source_feed_gen_id"] is not None
             or not database._feed_result_urls(row)
         ):
             return None
 
+        from bot.trend_task_privacy import recipe_privacy_rows
+
+        row = (await recipe_privacy_rows([row]))[0]
         request_data = database._parse_json_dict(row["request_data"])
         image_candidates = database._feed_reference_image_candidates(request_data)
         video_candidates = database._feed_reference_video_candidates(request_data)
