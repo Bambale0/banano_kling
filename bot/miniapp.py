@@ -354,6 +354,23 @@ def _payment_package_payload(package: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _lava_unavailable_response(result: Any) -> web.Response | None:
+    status = result.get("status") if isinstance(result, dict) else None
+    if status is None or status in {401, 403, 429} or (
+        isinstance(status, int) and status >= 500
+    ):
+        logger.warning("Lava checkout unavailable: provider_status=%s", status)
+        return web.json_response(
+            {
+                "ok": False,
+                "code": "payment_provider_unavailable",
+                "error": "Lava временно недоступна. Выберите другой способ оплаты или попробуйте позже.",
+            },
+            status=503,
+        )
+    return None
+
+
 def _miniapp_package_lava_offer_config(package: dict[str, Any]) -> tuple[str, str]:
     package_id = str(package.get("id") or "")
     offer_id = str(package.get("lava_offer_id") or "").strip()
@@ -3657,6 +3674,9 @@ async def miniapp_create_payment(request: web.Request) -> web.Response:
             )
 
             if not result or not result.get("ok"):
+                unavailable = _lava_unavailable_response(result)
+                if unavailable is not None:
+                    return unavailable
                 return web.json_response(
                     {"ok": False, "error": result or "Failed to create payment"},
                     status=500,

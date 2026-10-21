@@ -233,7 +233,7 @@ class TestLavaGetInvoice:
     @pytest.mark.asyncio
     async def test_get_invoice_not_ok_returns_none(self, service):
         with patch.object(service, "_request", AsyncMock()) as mock_request:
-            mock_request.return_value = {"ok": False, "error": "not found"}
+            mock_request.return_value = {"ok": False, "status": 404, "error": "not found"}
             result = await service.get_invoice("inv_missing")
             assert result is None
 

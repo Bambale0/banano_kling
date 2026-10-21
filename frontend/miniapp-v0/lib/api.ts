@@ -685,33 +685,53 @@ function uploadFileWithXhr(
   })
 }
 
-function fileToBase64(file: File): Promise<string> {
+function fileToBase64(file: File, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
-    reader.onerror = () => reject(new Error('Не удалось прочитать файл для загрузки.'))
+    const cleanup = () => {
+      signal?.removeEventListener('abort', abort)
+      reader.onload = reader.onerror = reader.onabort = null
+    }
+    const abort = () => {
+      cleanup()
+      reader.abort()
+      reject(new DOMException('Aborted', 'AbortError'))
+    }
+    reader.onerror = () => { cleanup(); reject(new Error('Не удалось прочитать файл для загрузки.')) }
+    reader.onabort = abort
     reader.onload = () => {
       const result = String(reader.result || '')
       const [, encoded = ''] = result.split(',', 2)
+      cleanup()
       if (!encoded) {
         reject(new Error('Не удалось подготовить файл для загрузки.'))
         return
       }
       resolve(encoded)
     }
-    reader.readAsDataURL(file)
+    signal?.addEventListener('abort', abort, { once: true })
+    if (signal?.aborted) { abort(); return }
+    try { reader.readAsDataURL(file) } catch (error) { cleanup(); reject(error) }
   })
 }
 
 const TELEGRAM_JSON_UPLOAD_MAX_BYTES = 16 * 1024 * 1024
 
+export type MediaUploadKind = 'image_reference' | 'video_reference' | 'audio_reference'
+  | 'assistant_audio' | 'trend_video_preview' | 'seedance25_image_reference'
+  | 'seedance25_video_reference' | 'seedance25_video_chunk'
+
 function shouldPreferJsonUpload(
-  fileKind: 'image_reference' | 'video_reference' | 'audio_reference' | 'assistant_audio' | 'trend_video_preview',
+  fileKind: MediaUploadKind,
   file: File,
 ): boolean {
   const jsonFriendlyKind =
     fileKind === 'image_reference' ||
     fileKind === 'video_reference' ||
-    fileKind === 'trend_video_preview'
+    fileKind === 'trend_video_preview' ||
+    fileKind === 'seedance25_image_reference' ||
+    fileKind === 'seedance25_video_reference' ||
+    fileKind === 'seedance25_video_chunk'
   if (!jsonFriendlyKind || file.size > TELEGRAM_JSON_UPLOAD_MAX_BYTES) {
     return false
   }
@@ -722,39 +742,57 @@ function shouldPreferJsonUpload(
 }
 
 async function uploadFileAsJson(
-  fileKind: 'image_reference' | 'video_reference' | 'audio_reference' | 'assistant_audio' | 'trend_video_preview',
+  fileKind: MediaUploadKind,
   file: File,
   initData: string,
   logPayload: Record<string, unknown>,
   startedAt: number,
 ) {
   sendMiniAppClientLog('upload-json-fallback-start', logPayload)
-  const response = await fetch(getUploadApiUrl(), {
-    method: 'POST',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      init_data: initData,
-      file_kind: fileKind,
-      filename: file.name,
-      content_type: file.type,
-      data_base64: await fileToBase64(file),
-    }),
-    cache: 'no-store',
-    credentials: 'same-origin',
+  const controller = new AbortController()
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = globalThis.setTimeout(() => {
+      // Settle even if a WebView transport fails to honor AbortSignal.
+      reject(new Error('Загрузка не завершилась за 15 минут. Проверьте сеть и повторите.'))
+      controller.abort()
+    }, Math.max(1, MEDIA_UPLOAD_TIMEOUT_MS - (Date.now() - startedAt)))
   })
-  sendMiniAppClientLog('upload-json-fallback-response', {
-    ...logPayload,
-    duration_ms: Date.now() - startedAt,
-    status: response.status,
-  })
-  return parseUploadJson(await response.text(), response.status)
+  const upload = async () => {
+    const encoded = await fileToBase64(file, controller.signal)
+    const response = await fetch(getUploadApiUrl(), {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        init_data: initData,
+        file_kind: fileKind,
+        filename: file.name,
+        content_type: file.type,
+        data_base64: encoded,
+      }),
+      cache: 'no-store',
+      credentials: 'same-origin',
+      signal: controller.signal,
+    })
+    sendMiniAppClientLog('upload-json-fallback-response', {
+      ...logPayload,
+      duration_ms: Date.now() - startedAt,
+      status: response.status,
+    })
+    return parseUploadJson(await response.text(), response.status)
+  }
+  try {
+    return await Promise.race([upload(), timeout])
+  } finally {
+    globalThis.clearTimeout(timeoutId)
+  }
 }
 
 export async function uploadFile(
-  fileKind: 'image_reference' | 'video_reference' | 'audio_reference' | 'assistant_audio' | 'trend_video_preview',
+  fileKind: MediaUploadKind,
   file: File
 ): Promise<UploadedFile> {
   const initData = getInitData()

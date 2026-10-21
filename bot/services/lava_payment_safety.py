@@ -20,7 +20,7 @@ from bot.database import (
     get_telegram_id_by_user_id,
     get_transaction_by_order,
 )
-from bot.services.lava_service import lava_service
+from bot.services.lava_service import LavaProviderUnavailable, lava_service
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +146,8 @@ async def _discover_invoice_id_by_contract(contract_id: str) -> str | None:
     for page_index in range(10):
         response = await lava_service._request("GET", path, params=params)
         if not response.get("ok"):
+            if response.get("status") != 404:
+                raise LavaProviderUnavailable(response.get("status"))
             if page_index == 0 and params and params.get("page") == 0:
                 params = {"page": 1, "size": 100}
                 continue
@@ -503,10 +505,14 @@ async def safe_handle_lava_webhook(
         logger.warning("Rejected Lava webhook without contractId event=%s", event_type)
         return web.Response(status=400)
 
-    transaction = await _lookup_lava_transaction(
-        contract_id=contract_id,
-        order_id=str(order_id) if order_id else None,
-    )
+    try:
+        transaction = await _lookup_lava_transaction(
+            contract_id=contract_id,
+            order_id=str(order_id) if order_id else None,
+        )
+    except LavaProviderUnavailable as exc:
+        logger.warning("Lava webhook lookup unavailable: provider_status=%s", exc.status)
+        return web.Response(status=503)
     if not transaction:
         logger.warning(
             "Lava transaction not ready contract_id=%s; requesting webhook retry",
@@ -522,10 +528,17 @@ async def safe_handle_lava_webhook(
         )
         return web.Response(status=409)
 
-    provider_status, invoice_id = await _provider_status(
-        transaction,
-        contract_id=contract_id,
-    )
+    try:
+        provider_status, invoice_id = await _provider_status(
+            transaction,
+            contract_id=contract_id,
+        )
+    except LavaProviderUnavailable as exc:
+        logger.warning(
+            "Lava webhook verification unavailable: order=%s provider_status=%s",
+            transaction.order_id, exc.status,
+        )
+        return web.Response(status=503)
     logger.info(
         "Lava provider verification order=%s contract_id=%s invoice_id=%s status=%s",
         transaction.order_id,
@@ -647,10 +660,20 @@ async def safe_reconcile_lava_pending_transactions(
             elif status in _FAILED_STATUSES:
                 changed = await _mark_failed_if_pending(order_id)
                 item["action"] = "failed" if changed else "already_final"
-            elif status in _PENDING_STATUSES:
+            elif status and status in _PENDING_STATUSES:
                 item["action"] = "still_pending"
             else:
                 item.update(action="error", error="invoice_lookup_failed")
+        except LavaProviderUnavailable as exc:
+            # A provider-wide failure must not fan out across the whole batch.
+            # Leave all balances/statuses unchanged for the next scheduled pass.
+            item.update(action="error", status="unavailable", error="provider_unavailable")
+            results.append(item)
+            logger.warning(
+                "Lava reconcile paused: provider_status=%s checked=%s remaining=%s",
+                exc.status, len(results), len(rows) - len(results),
+            )
+            break
         except Exception as exc:
             logger.exception(
                 "Safe Lava reconcile failed order_id=%s payment_id=%s",

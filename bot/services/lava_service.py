@@ -11,6 +11,14 @@ from bot.config import config
 
 logger = logging.getLogger(__name__)
 
+
+class LavaProviderUnavailable(RuntimeError):
+    """Invoice state is unknown because the provider could not be queried."""
+
+    def __init__(self, status: int | None):
+        self.status = status
+        super().__init__("Lava invoice lookup unavailable")
+
 _EMAIL_RE = re.compile(
     r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@"
     r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
@@ -415,6 +423,11 @@ class LavaService:
     async def get_invoice(self, invoice_id: str) -> dict[str, Any] | None:
         response = await self._request("GET", f"/api/v2/invoices/{invoice_id}")
         if not response.get("ok"):
+            # Only a missing identifier warrants contract/catalog discovery.
+            # Authentication, rate limits, network errors and provider outages
+            # cannot establish that an invoice is absent.
+            if response.get("status") != 404:
+                raise LavaProviderUnavailable(response.get("status"))
             return None
         return response
 

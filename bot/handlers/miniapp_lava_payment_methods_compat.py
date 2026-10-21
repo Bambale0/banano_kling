@@ -343,6 +343,9 @@ def install_miniapp_lava_payment_methods() -> None:
             )
 
             if not result or not result.get("ok"):
+                unavailable = miniapp_module._lava_unavailable_response(result)
+                if unavailable is not None:
+                    return unavailable
                 return web.json_response(
                     {"ok": False, "error": _payment_error_message(result)},
                     status=500,

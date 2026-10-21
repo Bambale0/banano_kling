@@ -32,7 +32,9 @@ const bootstrap = {
 }
 let browser
 async function setup(width, isAdmin = false, credits = 1000) {
-  const context = await browser.newContext({ viewport: { width, height: 820 } })
+  const context = await browser.newContext({ viewport: { width, height: 820 },
+    userAgent: width === 375 ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) Mobile/15E148'
+      : 'Mozilla/5.0 (Linux; Android 15) Telegram-Android' })
   const page = await context.newPage()
   page.setDefaultTimeout(30000)
   page.setDefaultNavigationTimeout(30000)
@@ -63,6 +65,10 @@ async function setup(width, isAdmin = false, credits = 1000) {
       else if (url.pathname.endsWith('/prompts')) response = { ok: true, prompts: [] }
       else if (url.pathname.endsWith('/upload')) {
         assert.ok(uploads.length, 'Unexpected upload')
+        assert.ok(req.headers()['content-type']?.includes('application/json'), 'Mobile references must avoid native multipart')
+        assert.ok(['seedance25_image_reference', 'seedance25_video_reference', 'seedance25_video_chunk'].includes(body.file_kind))
+        const bytes = Buffer.from(body.data_base64, 'base64')
+        assert.ok(bytes.equals(image) || bytes.equals(video) || bytes.equals(shortVideo), 'Exact selected bytes must reach upload')
         response = { ok: true, ...uploads.shift(), reference: null }
       } else if (url.pathname.endsWith('/generate-video')) {
         if (body.seedance25_quote_only && body.seedance25_identity_transfer !== true) {
