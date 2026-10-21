@@ -5947,7 +5947,7 @@ async def miniapp_task_history(request: web.Request) -> web.Response:
             round((time.monotonic() - started_at) * 1000),
         )
         return web.json_response(payload, headers={"Cache-Control": "no-store"})
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - HTTP boundary uses the shared safe error mapping
         return _miniapp_error_response(
             error, log_message="Mini App task history failed",
             default_error="Не удалось загрузить историю. Попробуйте ещё раз.",

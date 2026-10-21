@@ -47,7 +47,8 @@ test('an older pending card follows its confirmed detail status and publication 
   const view = render(<TaskHistoryList />)
   fireEvent.click(screen.getByRole('button', { name: 'Загрузить ещё' }))
   expect(await screen.findByRole('button', { name: /Video 12.*В обработке/ })).toBeInTheDocument()
-  taskDetail = { ...task(12), is_public_feed: true }
+  const { prompt_preview, ...detailWithoutPreview } = task(12)
+  taskDetail = { ...detailWithoutPreview, prompt: prompt_preview, is_public_feed: true }
   view.rerender(<TaskHistoryList />)
   expect(screen.getByRole('button', { name: /Video 12.*Готово/ })).toBeInTheDocument()
   taskDetail = null
@@ -65,6 +66,17 @@ test('failed page is retryable and raw errors are hidden', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Загрузить ещё' }))
   await screen.findByText('Video 12')
   expect(history.mock.calls.map(call => call[0])).toEqual(['task-13', 'task-13'])
+})
+
+test('a later privacy change clears an older cached preview', async () => {
+  history.mockResolvedValue({ recent_tasks: [task(12)], next_cursor: null })
+  const view = render(<TaskHistoryList />)
+  fireEvent.click(screen.getByRole('button', { name: 'Загрузить ещё' }))
+  await screen.findByText('Video 12')
+  const { prompt_preview, ...detailWithoutPreview } = task(12)
+  taskDetail = { ...detailWithoutPreview, prompt: '', prompt_hidden: true }
+  view.rerender(<TaskHistoryList />)
+  expect(screen.queryByText(prompt_preview)).not.toBeInTheDocument()
 })
 
 test('account switch aborts a pending page and discards its late results', async () => {

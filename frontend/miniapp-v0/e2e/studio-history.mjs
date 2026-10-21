@@ -61,7 +61,8 @@ try {
           else throw new Error('Unexpected history cursor')
         } else if (url.pathname.endsWith('/task-detail')) {
           assert.equal(body.task_id, current.task_id)
-          result = { ok: true, task: current }
+          const { prompt_preview, ...detail } = current
+          result = { ok: true, task: detail }
         } else if (url.pathname.endsWith('/generations/share')) {
           publications.push(body)
           assert.equal(body.task_id, current.task_id)

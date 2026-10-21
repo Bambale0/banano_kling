@@ -9,7 +9,11 @@ import { History } from 'lucide-react'
 
 function mergeTasks(previous: Task[], current: Task[]): Task[] {
   const tasks = new Map(previous.map(task => [task.task_id, task]))
-  for (const task of current) tasks.set(task.task_id, task)
+  for (const task of current) {
+    const merged = { ...tasks.get(task.task_id), ...task }
+    if (merged.prompt_hidden) merged.prompt_preview = ''
+    tasks.set(task.task_id, merged)
+  }
   return Array.from(tasks.values()).sort((a, b) =>
     (Date.parse(b.created_at) - Date.parse(a.created_at) || 0) || (b.feed_id || 0) - (a.feed_id || 0))
 }
