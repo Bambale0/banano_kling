@@ -112,6 +112,7 @@ test('the same initial recipe object on an ordinary rerender preserves edits and
   const view = render(<Wan3PrimeForm credits={10} initialRecipe={initialRecipe} />)
   fireEvent.change(screen.getByLabelText('Инструкции Wan'), { target: { value: 'My changes' } })
   fireEvent.change(screen.getByLabelText('Загрузить фото-референсы'), { target: { files: [new File(['x'], 'new.png', { type: 'image/png' })] } })
+  await waitFor(() => expect(mocked.uploadWan3PrimeReference).toHaveBeenCalledTimes(1))
   const signal = mocked.uploadWan3PrimeReference.mock.calls[0][2]!
   view.rerender(<Wan3PrimeForm credits={11} initialRecipe={initialRecipe} />)
   expect(signal.aborted).toBe(false)

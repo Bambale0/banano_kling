@@ -92,6 +92,8 @@ test('cancelling during JSON file reading aborts the reader and releases the sam
   let reader: FileReader | undefined
   global.FileReader = class {
     onload: (() => void) | null = null; onerror: (() => void) | null = null; onabort: (() => void) | null = null
+    result: ArrayBuffer | null = null
+    readAsArrayBuffer = () => { this.result = new Uint8Array(5).buffer; this.onload?.() }
     abort = jest.fn(() => { this.onabort?.() })
     readAsDataURL = jest.fn(() => { reader = this as unknown as FileReader })
   } as unknown as typeof FileReader
@@ -109,7 +111,11 @@ test('a stalled JSON read times out and releases its reservation', async () => {
   jest.useFakeTimers()
   jest.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Android')
   const abort = jest.fn()
-  global.FileReader = class { readAsDataURL = jest.fn(); abort = abort } as unknown as typeof FileReader
+  global.FileReader = class {
+    result: ArrayBuffer | null = null; onload: (() => void) | null = null
+    readAsArrayBuffer = () => { this.result = new Uint8Array(5).buffer; this.onload?.() }
+    readAsDataURL = jest.fn(); abort = abort
+  } as unknown as typeof FileReader
   try {
     const result = api.uploadWan3PrimeReference('image', new File(['01234'], 'photo.jpeg'))
     const rejected = expect(result).rejects.toThrow('Сервер не ответил за 15 минут')
@@ -148,4 +154,51 @@ test('persistent disconnection stops after two chunk attempts and cancels the re
     ? response({ ok: false, code: 'upload_interrupted', error: 'Connection lost' }, 499) : success(url, options))
   await expect(api.uploadWan3PrimeReference('image', new File(['01234'], 'photo.jpeg'))).rejects.toThrow('Connection lost')
   expect(fetchMock.mock.calls.map(([url]) => url.split('/').at(-1))).toEqual(['init', 'chunk', 'chunk', 'cancel'])
+})
+
+// Models an Android picker/content-provider handle that cannot be re-opened
+// after the event turn has yielded to remote initialization.
+test('snapshots the picked image before awaiting a remote upload session', async () => {
+  jest.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Telegram-Android Samsung')
+  const picked = new File(['0123456789'], 'picked.jpeg', { type: 'image/jpeg' })
+  const slice = picked.slice.bind(picked)
+  let networkStarted = false
+  jest.spyOn(picked, 'slice').mockImplementation((...args) => {
+    if (networkStarted) throw new DOMException('Native picker handle expired', 'NotReadableError')
+    return slice(...args)
+  })
+  fetchMock.mockImplementation(async (url: string, options: RequestInit) => {
+    networkStarted = true
+    return success(url, options)
+  })
+  await expect(api.uploadWan3PrimeReference('image', picked)).resolves.toMatchObject({ url: 'https://owned.test/photo.jpeg' })
+  const chunks = fetchMock.mock.calls.filter(([url]) => url.endsWith('/chunk'))
+  expect(chunks).toHaveLength(2)
+  expect(chunks.map(([, opts]) => atob(JSON.parse(opts.body).chunk_base64)).join('')).toBe('0123456789')
+  expect(fetchMock.mock.calls.filter(([url]) => url.endsWith('/cancel'))).toHaveLength(0)
+})
+
+test('unreadable picked photo fails before reserving server quota', async () => {
+  global.FileReader = class {
+    onerror: (() => void) | null = null
+    readAsArrayBuffer() { this.onerror?.() }
+  } as unknown as typeof FileReader
+  await expect(api.uploadWan3PrimeReference('image', new File(['photo'], 'photo.jpeg'))).rejects.toBeInstanceOf(api.Wan3ImageReadError)
+  expect(fetchMock).not.toHaveBeenCalled()
+  expect(api.wan3SafeError(new api.Wan3ImageReadError(), 'fallback')).toContain('Выберите его заново')
+})
+
+test('cancelling the initial picked-photo read creates no server reservation', async () => {
+  let reader: FileReader | undefined
+  global.FileReader = class {
+    readAsArrayBuffer() { reader = this as unknown as FileReader }
+    abort = jest.fn()
+  } as unknown as typeof FileReader
+  const controller = new AbortController()
+  const result = api.uploadWan3PrimeReference('image', new File(['photo'], 'photo.jpeg'), controller.signal)
+  const rejected = expect(result).rejects.toMatchObject({ name: 'AbortError' })
+  expect(reader).toBeDefined()
+  controller.abort(); await rejected
+  expect(reader!.abort).toHaveBeenCalledTimes(1)
+  expect(fetchMock).not.toHaveBeenCalled()
 })

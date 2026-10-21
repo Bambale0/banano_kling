@@ -3171,6 +3171,11 @@ async def miniapp_client_log(request: web.Request) -> web.Response:
             "init_data_len": _miniapp_client_log_number(payload.get("init_data_len")),
             "message": _miniapp_client_log_text(payload.get("message"), 500),
             "source": _miniapp_client_log_url(payload.get("source"), 200),
+            "upload_id": (str(payload.get("upload_id") or "")
+                          if re.fullmatch(r"[a-f0-9]{32}", str(payload.get("upload_id") or "")) else ""),
+            "upload_stage": (str(payload.get("upload_stage") or "")
+                             if str(payload.get("upload_stage") or "") in {"read", "cleanup", "init", "chunk", "complete"} else ""),
+            "error_code": _miniapp_client_log_text(payload.get("error_code"), 80),
             "file_kind": _miniapp_client_log_text(payload.get("file_kind"), 80),
             "file_name": _miniapp_client_log_text(payload.get("file_name"), 200),
             "file_type": _miniapp_client_log_text(payload.get("file_type"), 120),

@@ -119,3 +119,12 @@ errors, malformed responses and lineage mismatches preserve the marker and retry
 with the same bounded backoff until a valid canonical observation is available.
 Terminal success/failure still comes only from canonical provider status and the
 original settlement fence. No schema change or additional paid task is involved.
+
+
+### Android picked-image lifetime (2026-10-21)
+
+The Wan image form reads selected images before the first network await and preserves an owned memory File for upload, one-time JPEG normalization and explicit retry. Every photo in one selection begins reading together; existing per-file and field-count limits bound memory use. The native file input is cleared before a new picker opens or after all uploads succeed, rather than immediately on change. Video/audio/document transport remains chunked. A failed or aborted initial read creates no new server reservation. Existing signed owner, same-ID uncertain-init reconciliation and cancellation rules remain unchanged.
+
+Wan upload diagnostics use `wan3-upload-error` with allowlisted `upload_stage` (`read`, `cleanup`, `init`, `chunk`, `complete`), valid 32-hex `upload_id` when available, technical code and byte count. They omit image content, names, prompts, URLs and authentication credentials. Server client-log sanitation remains authoritative.
+
+The browser regression expires original picker handles at upload-init, then verifies exact bytes for two selected photos. This reproduces the observed pre-chunk failure mechanism, not a claim of testing the physical Samsung device. Relevant upstream context: [Chromium native-file lifetime issue](https://issues.chromium.org/issues/40123366).

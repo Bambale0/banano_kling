@@ -8,7 +8,7 @@ import { Wan3DurationSelect } from './wan3-duration-select'
 import { normalizeWan3ImageForRetry, Wan3ImagePreparationError } from '@/lib/wan3-image-normalize'
 import {
   fetchWan3PrimeOwnerRecipe, fetchWan3PrimeRepeatPlan, fetchWan3PrimeTrendPlan, generateWan3Prime, importWan3PrimeReference,
-  quoteWan3Prime, uploadWan3PrimeReference, wan3SafeError, Wan3PrimeApiError,
+  quoteWan3Prime, prepareWan3Image, uploadWan3PrimeReference, wan3SafeError, Wan3PrimeApiError,
   type Wan3PrimeGenerateRequest, type Wan3PrimeGenerateResponse,
   type Wan3PrimeQuoteResponse, type Wan3PrimeRecipe, type Wan3PrimeScenario,
   type Wan3PrimeUploadKind, type Wan3PrimeRepeatPlan, type Wan3PrimeRepeatSlot,
@@ -83,6 +83,7 @@ function MediaField({ title, label, prefix, kind, values, limit, offset = 1, dis
   const [retryFiles, setRetryFiles] = useState<File[]>([])
   const blocked = Boolean(fieldError || retryFiles.length)
   useEffect(() => () => onUploadIssue(fieldId, false), [fieldId, onUploadIssue])
+  const input = useRef<HTMLInputElement | null>(null)
   const lock = useRef(false)
   const active = useRef<AbortController | null>(null)
   useEffect(() => {
@@ -97,7 +98,16 @@ function MediaField({ title, label, prefix, kind, values, limit, offset = 1, dis
     lock.current = true; onBusy(1); onUploadIssue(fieldId, false); setFieldError(''); setRetryFiles([]); onError('')
     let next = [...values]
     let index = 0
+    let preparing = kind === 'image'
     try {
+      if (preparing) {
+        setProgress('Подготавливаю «' + files[0].name + '»…')
+        // Start every native picker read in the selection event, before the
+        // first network await. Keep owned bytes for JPEG recovery/manual retry.
+        await Promise.all(files.map((file, position) => prepareWan3Image(file, controller.signal)
+          .then(prepared => { files[position] = prepared })))
+        preparing = false
+      }
       for (; index < files.length; index += 1) {
         const file = files[index]
         const caption = `«${file.name}» (${index + 1}/${files.length})`
@@ -125,8 +135,10 @@ function MediaField({ title, label, prefix, kind, values, limit, offset = 1, dis
         setNames(old => ({ ...old, [stored.url]: file.name }))
         onChange(next)
       }
+      if (input.current) input.current.value = ''
     } catch (error) {
       if (active.current === controller) {
+        if (preparing) controller.abort()
         setRetryFiles(files.slice(index))
         const imageRejected = kind === 'image' && (
           error instanceof Wan3ImagePreparationError ||
@@ -135,7 +147,7 @@ function MediaField({ title, label, prefix, kind, values, limit, offset = 1, dis
         const reason = imageRejected
           ? 'Фото не прошло проверку даже после преобразования. Сохраните его как обычный JPEG или PNG и попробуйте снова.'
           : wan3SafeError(error, 'Не удалось загрузить файл. Повторите загрузку.')
-        fail('«' + files[index].name + '»: ' + reason)
+        fail((preparing ? 'Выбранные фото' : '«' + files[index].name + '»') + ': ' + reason)
       }
     } finally { if (active.current === controller) { active.current = null; setProgress('') }; lock.current = false; onBusy(-1) }
   }
@@ -162,9 +174,10 @@ function MediaField({ title, label, prefix, kind, values, limit, offset = 1, dis
       <button type="button" disabled={disabled} aria-label={`Удалить ${prefix}${offset + index}`} onClick={() => onChange(values.filter((_, i) => i !== index))} className="shrink-0 rounded px-2 py-1 hover:bg-secondary disabled:opacity-40">×</button>
     </div>)}
     {kind !== 'link' ? <label className="block space-y-1 text-xs">
-      <span>{label}</span><input type="file" aria-label={label} accept={ACCEPT[kind]} multiple={limit > 1} disabled={disabled || (blockFailedUploads && retryFiles.length > 0) || values.length >= limit}
+      <span>{label}</span><input ref={input} type="file" aria-label={label} accept={ACCEPT[kind]} multiple={limit > 1} disabled={disabled || (blockFailedUploads && retryFiles.length > 0) || values.length >= limit}
         className="block w-full min-w-0 text-xs file:mr-2 file:rounded-lg file:border-0 file:bg-secondary file:px-3 file:py-2 file:text-foreground"
-        onChange={event => { const files = Array.from(event.target.files || []); event.target.value = ''; void upload(files) }} />
+        onClick={event => { event.currentTarget.value = '' }}
+        onChange={event => { void upload(Array.from(event.target.files || [])) }} />
     </label> : null}
     {progress ? <div className="space-y-1">
       <p role="status" className="break-words text-xs">{progress}</p>

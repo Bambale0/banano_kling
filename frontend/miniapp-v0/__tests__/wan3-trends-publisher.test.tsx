@@ -54,7 +54,7 @@ async function openWan(model: 'wan_3' | 'wan_3_prime' = 'wan_3') {
 }
 async function upload(label: string, name: string, type?: string) {
   fireEvent.change(screen.getByLabelText(label), { target: { files: [file(name, type)] } })
-  await waitFor(() => expect(screen.queryByText(/Загружаю «/)).not.toBeInTheDocument())
+  await waitFor(() => expect(screen.queryByText(/Подготавливаю «|Загружаю «/)).not.toBeInTheDocument())
 }
 
 test.each(['wan_3', 'wan_3_prime'] as const)('rendered manual editor publishes full owned %s recipe without generation', async model => {
@@ -114,7 +114,7 @@ test('numbered first/last frame slots are exact and changing draft mode clears m
   await upload('Загрузить первый кадр', 'first.png')
   await upload('Загрузить последний кадр', 'last.png')
   expect(screen.getByLabelText('При повторе: Первый кадр')).toHaveValue('replaceable')
-  fireEvent.change(screen.getByLabelText('При повторе: Последний кадр'), { target: { value: 'fixed' } })
+  fireEvent.change(await screen.findByLabelText('При повторе: Последний кадр'), { target: { value: 'fixed' } })
   fireEvent.click(screen.getByRole('button', { name: 'Опубликовать тренд' }))
   expect(apiMock.submitPrompt.mock.calls[0][0].generationSettings).toMatchObject({ wan3_replacement_keys: ['first_frame_url'], wan3_recipe: { first_frame_url: 'https://owned/first.png', last_frame_url: 'https://owned/last.png' } })
 })
@@ -127,6 +127,7 @@ test('pending uploads block publication; model changes and closing abort stale u
   wanMock.uploadWan3PrimeReference.mockImplementationOnce(() => pending.promise)
   fireEvent.change(screen.getByLabelText('Загрузить фото-референсы'), { target: { files: [file('private.png')] } })
   expect(screen.getByRole('button', { name: 'Опубликовать тренд' })).toBeDisabled()
+  await waitFor(() => expect(wanMock.uploadWan3PrimeReference).toHaveBeenCalledTimes(1))
   const signal = wanMock.uploadWan3PrimeReference.mock.calls[0][2]!
   fireEvent.change(screen.getByLabelText('Видео-нейросеть'), { target: { value: 'wan_3_prime' } })
   expect(signal.aborted).toBe(true)
@@ -162,7 +163,7 @@ test('failed owned upload is safe and retryable; cancelling never adds a referen
   await openWan()
   fireEvent.click(screen.getByRole('button', { name: 'По референсам' }))
   fireEvent.change(screen.getByLabelText('Инструкции Wan'), { target: { value: 'Image1' } })
-  wanMock.uploadWan3PrimeReference.mockRejectedValueOnce(new wanApi.Wan3PrimeApiError('private backend detail', 'validation_error', 400))
+  wanMock.uploadWan3PrimeReference.mockRejectedValueOnce(new wanApi.Wan3PrimeApiError('private backend detail', 'temporary_unavailable', 503))
   fireEvent.change(screen.getByLabelText('Загрузить фото-референсы'), { target: { files: [file('retry.png')] } })
   fireEvent.click(await screen.findByRole('button', { name: 'Повторить загрузку' }))
   expect(await screen.findByLabelText('При повторе: Image1')).toHaveValue('replaceable')
@@ -170,6 +171,7 @@ test('failed owned upload is safe and retryable; cancelling never adds a referen
   const pending = deferred<any>()
   wanMock.uploadWan3PrimeReference.mockImplementationOnce(() => pending.promise)
   fireEvent.change(screen.getByLabelText('Загрузить фото-референсы'), { target: { files: [file('cancelled.png')] } })
+  await waitFor(() => expect(wanMock.uploadWan3PrimeReference).toHaveBeenCalledTimes(3))
   const signal = wanMock.uploadWan3PrimeReference.mock.calls[2][2]!
   fireEvent.click(screen.getByRole('button', { name: 'Отменить загрузку' }))
   expect(signal.aborted).toBe(true)
@@ -192,7 +194,7 @@ test('removing a fixed slot never silently fixes a different file or restores a 
   expect(await screen.findByLabelText('При повторе: Image1')).toHaveValue('replaceable')
 })
 
-test('a preview failure stays safe when upload starts before switching to WAN', async () => {
+test('a stale preview failure cannot restore media or expose raw errors after switching to WAN', async () => {
   const pending = deferred<any>()
   apiMock.uploadFile.mockImplementationOnce(() => pending.promise)
   render(<TrendsTab />)
@@ -201,7 +203,8 @@ test('a preview failure stays safe when upload starts before switching to WAN', 
   fireEvent.click(screen.getByRole('button', { name: 'Видео-тренд' }))
   fireEvent.change(screen.getByRole('combobox', { name: 'Видео-нейросеть' }), { target: { value: 'wan_3' } })
   await act(async () => pending.reject(new Error('private provider detail')))
-  expect(await screen.findByText('Не удалось загрузить превью. Повторите загрузку файла.')).toBeInTheDocument()
+  expect(screen.queryByAltText('Preview тренда')).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Опубликовать тренд' })).toBeDisabled()
   expect(screen.queryByText(/private provider detail/)).not.toBeInTheDocument()
 })
 

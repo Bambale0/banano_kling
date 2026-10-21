@@ -1040,3 +1040,6 @@ await import('./seedance-trend-upload.mjs')
 
 // Explicit identity-transfer pricing, reference roles, and ordinary mode regression.
 await import('./seedance25-identity-transfer.mjs')
+
+// Wan mobile picked-file lifetime and owned upload transport regression.
+await import('./wan3-prime.mjs')
