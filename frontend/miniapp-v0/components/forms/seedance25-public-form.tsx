@@ -242,10 +242,10 @@ function UploadButton({
         multiple={multiple}
         disabled={disabled}
         className="sr-only"
+        onClick={(event) => { event.currentTarget.value = '' }}
         onChange={(event) => {
           const files = Array.from(event.target.files || [])
           if (files.length) onFiles(files)
-          event.currentTarget.value = ''
         }}
       />
     </label>

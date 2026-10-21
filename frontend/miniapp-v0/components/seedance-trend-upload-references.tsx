@@ -136,9 +136,9 @@ export function SeedanceTrendUploadReferences({ value, onChange, onUploadingChan
               accept={accept}
               aria-label={`${label}-референсы тренда`}
               disabled={busy}
+              onClick={(event) => { event.currentTarget.value = '' }}
               onChange={(event) => {
                 const files = Array.from(event.target.files || [])
-                event.target.value = ''
                 void upload(kind, files)
               }}
               className="block w-full min-w-0 max-w-full rounded-xl border border-border/50 bg-background/55 p-2 text-xs text-foreground file:mr-2 file:rounded-lg file:border-0 file:bg-secondary file:px-2 file:py-2 disabled:opacity-50"

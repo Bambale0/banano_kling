@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { chromium } from 'playwright'
+import { expireClearedPickerFiles } from './native-picker-lifetime.mjs'
 
 const port = Number(process.env.SEEDANCE_UPLOAD_E2E_PORT || 4185)
 const externalBaseUrl = process.env.SEEDANCE_UPLOAD_E2E_BASE_URL
@@ -45,7 +46,9 @@ try {
     ...['seedance_2', 'seedance_2_5'].map(model => ({ width: 390, model, singlePhoto: true })),
   ]
   for (const { width, model, singlePhoto } of scenarios) {
-    const context = await browser.newContext({ viewport: { width, height: 820 }, serviceWorkers: 'block' })
+    const context = await browser.newContext({ viewport: { width, height: 820 }, serviceWorkers: 'block',
+      userAgent: width === 360 ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) Mobile/15E148'
+        : 'Mozilla/5.0 (Linux; Android 15) Telegram-Android' })
     const page = await context.newPage()
     page.setDefaultTimeout(30000)
     page.setDefaultNavigationTimeout(30000)
@@ -55,6 +58,7 @@ try {
     await page.addInitScript(() => {
       window.Telegram = { WebApp: { initData: 'query_id=seedance-upload-e2e', initDataUnsafe: {}, ready() {}, expand() {}, onEvent() {}, offEvent() {} } }
     })
+    await page.addInitScript(expireClearedPickerFiles)
     // Intercept the whole context so popups cannot bypass the API mocks.
     await context.route('**/*', async route => {
       const request = route.request(), url = new URL(request.url())
@@ -70,6 +74,9 @@ try {
         else if (url.pathname.endsWith('/prompts')) response = { ok: true, prompts: published ? [published] : [] }
         else if (url.pathname.endsWith('/upload')) {
           assert.ok(uploads.length, 'Unexpected upload')
+          assert.ok(request.headers()['content-type']?.includes('application/json'), 'Mobile files must avoid native multipart')
+          const bytes = Buffer.from(body.data_base64, 'base64')
+          assert.ok(bytes.equals(image) || bytes.equals(video), 'Original picked bytes must survive asynchronous upload')
           response = { ok: true, ...uploads.shift(), reference: null }
         } else if (url.pathname.endsWith('/admin/trends/seedance/publish-upload')) {
           assert.equal(body.preview_url, 'https://example.test/cover.png')

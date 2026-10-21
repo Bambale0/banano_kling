@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { chromium } from 'playwright'
+import { expireClearedPickerFiles } from './native-picker-lifetime.mjs'
 
 // Everything except the isolated static export is intercepted. No provider,
 // billing service or real upload is contacted by this browser test.
@@ -32,16 +33,19 @@ const bootstrap = {
 }
 let browser
 async function setup(width, isAdmin = false, credits = 1000) {
-  const context = await browser.newContext({ viewport: { width, height: 820 } })
+  const context = await browser.newContext({ viewport: { width, height: 820 },
+    userAgent: width === 375 ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) Mobile/15E148'
+      : 'Mozilla/5.0 (Linux; Android 15) Telegram-Android' })
   const page = await context.newPage()
   page.setDefaultTimeout(30000)
   page.setDefaultNavigationTimeout(30000)
   const errors = [], generation = [], quotes = [], uploads = [], detailRequests = []
-  const behavior = { quoteCost: null, rejectNext: false, feedItem: null, detailError: false, detailGate: null }
+  const behavior = { quoteCost: null, rejectNext: false, feedItem: null, detailError: false, detailGate: null, uploadGate: null, uploadStarted: false }
   page.on('pageerror', error => errors.push(error.message))
   await page.addInitScript(() => {
     window.Telegram = { WebApp: { initData: 'query_id=identity-e2e', initDataUnsafe: {}, ready() {}, expand() {}, onEvent() {}, offEvent() {} } }
   })
+  await page.addInitScript(expireClearedPickerFiles)
   await page.route('**/*', async route => {
     const req = route.request(), url = new URL(req.url())
     if (url.pathname.endsWith('/telegram-web-app.js')) return route.fulfill({ contentType: 'application/javascript', body: '// fixture' })
@@ -63,6 +67,16 @@ async function setup(width, isAdmin = false, credits = 1000) {
       else if (url.pathname.endsWith('/prompts')) response = { ok: true, prompts: [] }
       else if (url.pathname.endsWith('/upload')) {
         assert.ok(uploads.length, 'Unexpected upload')
+        assert.ok(req.headers()['content-type']?.includes('application/json'), 'Mobile references must avoid native multipart')
+        assert.ok(['image_reference', 'seedance25_image_reference', 'seedance25_video_reference', 'seedance25_video_chunk'].includes(body.file_kind))
+        const bytes = Buffer.from(body.data_base64, 'base64')
+        assert.ok(bytes.equals(image) || bytes.equals(video) || bytes.equals(shortVideo), 'Exact selected bytes must reach upload')
+        if (behavior.uploadGate) {
+          const gate = behavior.uploadGate
+          behavior.uploadGate = null
+          behavior.uploadStarted = true
+          await gate
+        }
         response = { ok: true, ...uploads.shift(), reference: null }
       } else if (url.pathname.endsWith('/generate-video')) {
         if (body.seedance25_quote_only && body.seedance25_identity_transfer !== true) {
@@ -336,6 +350,26 @@ try {
     await repeat.context.close()
     console.log('Seedance identity repeat ' + mode + ' passed')
   }
+  const batch = await setup(390)
+  await batch.page.getByRole('button', { name: 'Фото', exact: true }).click()
+  let releaseUpload
+  batch.behavior.uploadGate = new Promise(resolve => { releaseUpload = resolve })
+  batch.uploads.push(...photoUrls.map((url, i) => ({ url, kind: 'image', filename: i ? 'portrait-profile.png' : 'portrait-front.png' })))
+  const picker = batch.page.locator('input[type=file][accept="image/*"]').first()
+  await picker.setInputFiles(photoUrls.map((_, i) => ({ name: i ? 'portrait-profile.png' : 'portrait-front.png', mimeType: 'image/png', buffer: image })))
+  const uploadDeadline = Date.now() + 5000
+  while (!batch.behavior.uploadStarted && Date.now() < uploadDeadline) await new Promise(resolve => setTimeout(resolve, 10))
+  assert.equal(batch.behavior.uploadStarted, true)
+  assert.equal(await picker.isDisabled(), true, 'Picker must remain closed for the entire original batch')
+  await picker.evaluate(element => element.click())
+  releaseUpload()
+  await batch.page.getByText('portrait-profile.png', { exact: true }).waitFor()
+  assert.equal(batch.uploads.length, 0, 'Both original selected files must upload')
+  assert.equal(await picker.isEnabled(), true, 'The same-file picker must become available after completion')
+  assert.equal(batch.generation.length, 0)
+  assert.deepEqual(batch.errors, [])
+  await batch.context.close()
+  console.log('Generic mobile picker reopening blocked until both original file bytes finish uploading')
 } finally {
   await browser?.close()
   server.kill('SIGTERM')
