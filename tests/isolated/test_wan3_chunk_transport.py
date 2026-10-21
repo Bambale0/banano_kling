@@ -56,6 +56,7 @@ class ChunkTransportTests(unittest.IsolatedAsyncioTestCase):
                      'wan3_prime_storage': self.storage, '_actor_from_request': AsyncMock(return_value=self.owner)}
         # Trusted repository AST only; avoids importing application/database modules.
         exec(compile(ast.Module(body=selected, type_ignores=[]), str(source), 'exec'), namespace)  # noqa: S102
+        self.namespace = namespace
         self.actor = namespace['_actor_from_request']
         app = web.Application(client_max_size=220 * 1024 * 1024)
         app.router.add_post('/chunk', namespace['_http_boundary'](namespace['_upload_chunk_route']))
@@ -72,6 +73,18 @@ class ChunkTransportTests(unittest.IsolatedAsyncioTestCase):
 
     async def post_json(self, payload):
         return await self.client.post('/chunk', json=payload, headers={'X-Telegram-Init-Data': 'synthetic'})
+
+    async def test_disconnect_is_retryable_and_retry_keeps_the_owned_chunk(self):
+        read = self.namespace['_read_upload_chunk']
+        self.namespace['_read_upload_chunk'] = AsyncMock(side_effect=ConnectionResetError('Connection lost'))
+        response = await self.post_json(self.payload())
+        self.assertEqual(response.status, 499, await response.text())
+        self.assertEqual((await response.json())['code'], 'upload_interrupted')
+        self.storage.save_chunk.assert_not_awaited()
+        self.namespace['_read_upload_chunk'] = read
+        response = await self.post_json(self.payload())
+        self.assertEqual(response.status, 200, await response.text())
+        self.storage.save_chunk.assert_awaited_once()
 
     async def test_json_chunk_preserves_exact_bytes_and_owner(self):
         response = await self.post_json(self.payload())

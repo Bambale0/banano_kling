@@ -50,6 +50,18 @@ def parse_video_repeat_grant(raw: Any) -> dict[str, Any] | None:
     return result
 
 
+def foreign_video_repeat_task(task: dict[str, Any]) -> dict[str, Any]:
+    """Missing legacy consent requires replacements; it never grants reuse.
+
+    This consumer-only copy does not modify publication settings or persist a
+    grant. Owners keep the existing editable source flow.
+    """
+    grant = parse_video_repeat_grant(task.get("feed_repeat_reference_selection"))
+    return {**task, "feed_repeat_reference_selection": grant or {
+        "version": 1, "images": [], "videos": [],
+    }}
+
+
 def _first(data: dict[str, Any], keys: tuple[str, ...]) -> str | None:
     for key in keys:
         value = data.get(key)
@@ -264,7 +276,7 @@ def video_repeat_descriptors(
     task: dict[str, Any], *, tariff: str = "standard",
 ) -> dict[str, Any] | None:
     try:
-        plan = build_video_repeat_plan(task)
+        plan = build_video_repeat_plan(foreign_video_repeat_task(task))
         if plan is None:
             plan = _legacy_selection_descriptor_plan(task)
         if plan is None:

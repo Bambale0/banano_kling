@@ -64,3 +64,9 @@ The periodic reconciliation loop no longer marks stale pending rows as failed be
 ## Deployment safety
 
 Rotate previously exposed Basic credentials before enabling credential verification. Deploy the code, restart the Telegram service, then run the existing Lava success audit over the period that may contain missed payments. Atomic payment completion prevents duplicate crediting when a webhook is resent.
+
+### Sender changes and transaction binding
+
+Keep `LAVA_WEBHOOK_ALLOWED_IPS` as explicit operator configuration when Lava changes delivery infrastructure; do not infer trust from a callback's claimed IP or add new production senders to source-code defaults. Configured secret/Basic authentication always takes precedence. Every accepted payment still requires a matching local transaction and independent invoice-API confirmation; sender admission never grants balance by itself. An `order_id` hint cannot associate a different invoice with a transaction. The invoice identifier or its persisted contract mapping must match before provider verification or completion.
+
+The 2026-10-21 audit compared 100 recent provider invoices with local final states (33 paid/completed, 67 failed), plus pending invoices. No provider-paid/local-uncredited item was found in that sample. This is a bounded incident audit, not certification of all historical payments.

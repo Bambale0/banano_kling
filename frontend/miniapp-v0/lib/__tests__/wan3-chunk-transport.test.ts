@@ -120,3 +120,32 @@ test('a stalled JSON read times out and releases its reservation', async () => {
     expect(jest.getTimerCount()).toBe(0)
   } finally { jest.useRealTimers() }
 })
+
+
+test.each(['Desktop Chrome', 'iPhone'])('retries a disconnected chunk once with the same upload and bytes on %s', async userAgent => {
+  jest.spyOn(navigator, 'userAgent', 'get').mockReturnValue(userAgent)
+  let interrupted = false
+  fetchMock.mockImplementation(async (url: string, options: RequestInit) => {
+    if (url.endsWith('/chunk') && !interrupted) {
+      interrupted = true
+      return response({ ok: false, code: 'upload_interrupted', error: 'Connection lost' }, 499)
+    }
+    return success(url, options)
+  })
+  await api.uploadWan3PrimeReference('image', new File(['01234'], 'photo.jpeg'))
+  const chunks = fetchMock.mock.calls.filter(([url]) => url.endsWith('/chunk'))
+  expect(chunks).toHaveLength(2)
+  const firstId = chunks[0][1].body instanceof FormData ? chunks[0][1].body.get('upload_id') : JSON.parse(chunks[0][1].body).upload_id
+  const retried = JSON.parse(chunks[1][1].body)
+  expect(retried.upload_id).toBe(firstId)
+  expect(retried.index).toBe(0)
+  expect(atob(retried.chunk_base64)).toBe('01234')
+  expect(fetchMock.mock.calls.filter(([url]) => url.endsWith('/init'))).toHaveLength(1)
+})
+
+test('persistent disconnection stops after two chunk attempts and cancels the reservation', async () => {
+  fetchMock.mockImplementation(async (url: string, options: RequestInit) => url.endsWith('/chunk')
+    ? response({ ok: false, code: 'upload_interrupted', error: 'Connection lost' }, 499) : success(url, options))
+  await expect(api.uploadWan3PrimeReference('image', new File(['01234'], 'photo.jpeg'))).rejects.toThrow('Connection lost')
+  expect(fetchMock.mock.calls.map(([url]) => url.split('/').at(-1))).toEqual(['init', 'chunk', 'chunk', 'cancel'])
+})

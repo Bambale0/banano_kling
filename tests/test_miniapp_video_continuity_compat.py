@@ -374,7 +374,7 @@ async def test_generic_video_repeat_keeps_private_author_refs_out_of_viewer_libr
         "v_duration": 5,
         "v_ratio": "9:16",
         "v_image_url": viewer,
-        "reference_images": [viewer, private_outfit],
+        "reference_images": [viewer],
         "_private_repeat_reference_images": [private_outfit],
     }
     monkeypatch.setattr(
@@ -392,7 +392,8 @@ async def test_generic_video_repeat_keeps_private_author_refs_out_of_viewer_libr
         "user_id": 1, "type": "video", "status": "completed", "is_public_feed": True,
         "feed_references_visible": True,
         "feed_reference_selection": {"images": [private_outfit], "videos": []},
-        "request_data": {"reference_images": [
+        "feed_repeat_reference_selection": {"version": 1, "images": [private_outfit], "videos": []},
+        "request_data": {"v_type": "imgtxt", "v_image_url": "https://example.test/author-face.png", "reference_images": [
             "https://example.test/author-face.png", private_outfit,
         ]},
     }
@@ -404,17 +405,25 @@ async def test_generic_video_repeat_keeps_private_author_refs_out_of_viewer_libr
         continuity, "get_generation_task_payload", AsyncMock(return_value=source_task),
     )
     monkeypatch.setattr(miniapp, "missing_local_upload_sources", lambda _refs: [])
+    # This synthetic-unit test covers the library/provider boundary; durable
+    # receipt concurrency is verified separately with real temporary rows.
+    monkeypatch.setattr(continuity, "reserve_video_repeat_launch", AsyncMock(return_value=(None, None)))
     touch = AsyncMock()
     monkeypatch.setattr(miniapp, "touch_saved_references", touch)
     monkeypatch.setattr(miniapp.config, "is_admin", lambda _telegram_id: True)
     launch = AsyncMock(return_value={"status": "failed", "error": "synthetic"})
     monkeypatch.setattr(miniapp, "_launch_video_generation_task", launch)
 
-    response = await miniapp.miniapp_generate_video(
-        SimpleNamespace(app={}, json=AsyncMock(return_value=body))
-    )
+    import json
+    class Request:
+        app = {}
+        def __init__(self):
+            self._read_bytes = json.dumps(body).encode()
+        async def json(self):
+            return json.loads(self._read_bytes)
+    response = await miniapp.miniapp_generate_video(Request())
 
-    assert response.status == 500
+    assert response.status == 500, response.text
     assert launch.await_args.kwargs["image_url"] == viewer
     assert private_outfit in launch.await_args.kwargs["image_references"]
     touched = [
@@ -580,6 +589,7 @@ async def test_video_repeat_api_rejects_incomplete_fixed_reference_slots(
         "model": "seedance_2_5",
         "feed_references_visible": True,
         "feed_reference_selection": {"images": [], "videos": [], kind: [fixed]},
+        "feed_repeat_reference_selection": {"version": 1, "images": [], "videos": [], kind: [fixed]},
         "request_data": {
             "v_type": "video", "seedance25_scenario": "multimodal",
             target: [*source_identity, fixed],
@@ -720,6 +730,7 @@ async def test_restored_video_media_is_validated_before_launch(
     entry = video_repeat_entrypoint
     private_url = "/uploads/synthetic-private-reference.bin"
     value = [private_url] if list_value else private_url
+    entry.source.return_value["user_id"] = 501  # This test validates the original owner's media.
     entry.source.return_value["request_data"] = {
         "seedance25_scenario": scenario, field: value,
     }
@@ -818,6 +829,7 @@ async def test_selected_video_recipe_cannot_silently_lose_stored_references(
     entry.source.return_value.update(
         feed_references_visible=True,
         feed_reference_selection={"images": [], "videos": [], kind: [first, second]},
+        feed_repeat_reference_selection={"version": 1, "images": [], "videos": [], kind: [first, second]},
         request_data=request_data,
     )
     response = await entry.call(entry.request({"source_feed_gen_id": 42}))
@@ -842,7 +854,8 @@ async def test_selected_scalar_video_reference_is_a_valid_stored_candidate(
         model="seedance_2" if scenario == "imgtxt" else "seedance_2_5",
         feed_references_visible=True,
         feed_reference_selection={"images": [fixed], "videos": []},
-        request_data={field: fixed, "seedance25_scenario": scenario, "v_type": "imgtxt"},
+        feed_repeat_reference_selection={"version": 1, "images": [fixed], "videos": []},
+        request_data={field: fixed, "seedance25_scenario": scenario, "v_type": "imgtxt", **({"first_frame_url": fixed} if scenario == "first_last" else {})},
     )
     request = entry.request({"source_feed_gen_id": 42})
     response = await entry.call(request)
@@ -948,7 +961,7 @@ async def test_source_candidate_guard_is_not_bypassed_outside_explicit_identity(
      ["https://example.test/viewer.png", "https://media.chillcreative.ru/uploads/shared-reference.png"]),
     ("https://media.chillcreative.ru/uploads/shared-reference.png?alias=1", None),
 ])
-async def test_video_repeat_keeps_distinct_alias_slots_unmerged(
+async def test_foreign_repeat_cannot_claim_author_aliases_without_a_reuse_grant(
     video_repeat_entrypoint, selected, expected,
 ):
     entry = video_repeat_entrypoint
@@ -965,19 +978,14 @@ async def test_video_repeat_keeps_distinct_alias_slots_unmerged(
         "source_feed_gen_id": 42, "reference_images": ["https://example.test/viewer.png"],
     })
     response = await entry.call(request)
-    if expected is None:
-        assert response.status == 400
-        entry.delegate.assert_not_awaited()
-    else:
-        assert response.status == 200
-        assert (await request.json())["reference_images"] == expected
-        entry.delegate.assert_awaited_once()
+    assert response.status == 400
+    entry.delegate.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case", ["replacement", "too_many", "missing_fixed", "revoked", "owner"])
 @pytest.mark.parametrize("scenario", ["imgtxt", "video"])
-async def test_legacy_seedance25_repeat_preserves_hidden_slots_at_http_boundary(
+async def test_legacy_seedance25_repeat_replaces_all_author_slots_at_http_boundary(
     video_repeat_entrypoint, case, scenario,
 ):
     from bot.handlers import miniapp_video_continuity_compat as continuity
@@ -1001,11 +1009,12 @@ async def test_legacy_seedance25_repeat_preserves_hidden_slots_at_http_boundary(
         source["prompt"] += " @Video1"
     entry.source.return_value = source
     body = {"source_feed_gen_id": 42, "v_model": "seedance_2_5", "v_type": scenario,
-            "reference_images": [viewer]}
+            "reference_images": [viewer] if case == "owner" else [viewer, "https://example.test/viewer-style.png"],
+            "v_reference_videos": ["https://example.test/viewer-motion.mp4"] if videos and case != "owner" else []}
     if case == "too_many":
-        body["reference_images"].append("https://example.test/extra.png")
+        body["reference_images"].append("https://example.test/third-extra.png")
     if case == "missing_fixed":
-        entry.availability.return_value = [fixed]
+        entry.availability.return_value = [viewer]
     request = entry.request(body)
     response = await entry.call(request)
     assert fixed not in response.text
@@ -1020,8 +1029,9 @@ async def test_legacy_seedance25_repeat_preserves_hidden_slots_at_http_boundary(
         assert restored["reference_images"] == [viewer]
         assert not hasattr(request, "_video_repeat_guard")
         return
-    assert restored["reference_images"] == [viewer, fixed]
-    assert restored["_private_repeat_reference_images"] == [fixed]
+    assert restored["reference_images"] == [viewer, "https://example.test/viewer-style.png"]
+    assert not restored.get("_private_repeat_reference_images")
+    assert fixed not in restored["reference_images"]
     assert face not in restored["reference_images"]
     assert request._video_repeat_guard["source_id"] == 42
     assert request._video_repeat_guard["viewer_user_id"] == 501
@@ -1030,8 +1040,8 @@ async def test_legacy_seedance25_repeat_preserves_hidden_slots_at_http_boundary(
         video_urls=restored.get("v_reference_videos", []), audio_urls=[],
     ) == source["prompt"]
     if videos:
-        assert restored["v_reference_videos"] == videos
-        assert restored["_private_repeat_reference_videos"] == videos
+        assert restored["v_reference_videos"] == ["https://example.test/viewer-motion.mp4"]
+        assert not restored.get("_private_repeat_reference_videos")
     if case == "revoked":
         entry.card.return_value = None
         rejection = await continuity.verify_video_repeat_before_charge(request)
@@ -1088,6 +1098,10 @@ async def test_visible_legacy_seedance25_repeat_accepts_multiple_photos_at_http_
         "v_type": "imgtxt", "reference_images": images,
     })
     response = await entry.call(request)
+    if not replace_all:
+        assert response.status == 400
+        entry.delegate.assert_not_awaited()
+        return
     assert response.status == 200
     entry.delegate.assert_awaited_once()
     assert (await request.json())["reference_images"] == images
@@ -1095,7 +1109,7 @@ async def test_visible_legacy_seedance25_repeat_accepts_multiple_photos_at_http_
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("upload_count", [0, 1, 2])
+@pytest.mark.parametrize("upload_count", [0, 1, 2, 4])
 async def test_reported_legacy_four_image_shape_matches_descriptor_and_server_validation(
     video_repeat_entrypoint, upload_count,
 ):
@@ -1115,21 +1129,21 @@ async def test_reported_legacy_four_image_shape_matches_descriptor_and_server_va
     }
     entry.source.return_value = source
     descriptor = video_repeat_descriptors(source)
-    assert sum(slot["binding"] == "upload" for slot in descriptor["images"]) == 2
+    assert sum(slot["binding"] == "upload" for slot in descriptor["images"]) == 4
     own = [f"https://example.test/viewer-{i}.png" for i in range(upload_count)]
     request = entry.request({
         "source_feed_gen_id": 42, "v_model": "seedance_2_5", "v_type": "imgtxt",
         "reference_images": own,
     })
     response = await entry.call(request)
-    if upload_count < 2:
+    if upload_count < 4:
         assert response.status == 400
         entry.delegate.assert_not_awaited()
     else:
         assert response.status == 200
         restored = await request.json()
-        assert restored["reference_images"] == [*own, *images[2:]]
-        assert restored["_private_repeat_reference_images"] == images[2:]
+        assert restored["reference_images"] == own
+        assert not restored.get("_private_repeat_reference_images")
         assert Seedance25Service.prepare_prompt(
             restored["prompt"], image_urls=restored["reference_images"], video_urls=[], audio_urls=[],
         ) == source["prompt"]

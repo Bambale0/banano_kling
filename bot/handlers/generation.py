@@ -92,6 +92,7 @@ from bot.services.nano_banana_2_service import nano_banana_2_service
 from bot.services.nano_banana_pro_service import nano_banana_pro_service
 from bot.services.preset_manager import preset_manager
 from bot.services.reference_storage_service import save_reference_file
+from bot.services.telegram_transport import telegram_api_call
 from bot.services.seedream_service import seedream_service
 from bot.services.veo_service import veo_service
 from bot.services.wan27_service import wan27_service
@@ -339,10 +340,13 @@ async def _save_reference_image_from_message(
     else:
         return None, "Пожалуйста, отправьте фото JPEG, PNG или WEBP."
 
-    try:
+    async def download_reference():
         file = await message.bot.get_file(media.file_id)
         image_bytes = await message.bot.download_file(file.file_path)
-        image_data = image_bytes.read()
+        return image_bytes.read()
+
+    try:
+        image_data = await telegram_api_call(download_reference, retry_network=True)
     except Exception:
         logger.exception(
             "Failed to download reference image for user_id=%s",

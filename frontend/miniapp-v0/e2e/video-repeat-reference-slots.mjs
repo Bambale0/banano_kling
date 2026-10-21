@@ -331,6 +331,30 @@ try {
     assert.equal(await page.getByRole('button', { name: /Рассчитать точную стоимость|Подтвердить цену и запустить|Запустить видео/ }).isEnabled(), true)
     assert.equal(generations.length, beforePending + 1)
 
+    // Legacy posts now receive replacement-only descriptors from the server.
+    // A hidden author photo must never fill an empty consumer input.
+    generationPending = false
+    pendingTask = null
+    currentCard = { ...card, id: 778, task_id: 'legacy-replacement-source',
+      repeat_reference_slots: { version: 1, available: true, cost_multiplier: 1,
+        duration_costs: { '5': 5 }, pricing_quality: '720p',
+        images: [{ index: 0, role: 'reference', binding: 'upload' }], videos: [] } }
+    const beforeLegacy = generations.length
+    await page.goto(baseUrl + '?startapp=remix_778')
+    const ownPhoto = page.getByRole('group', { name: 'Фото 1', exact: true })
+    await ownPhoto.waitFor()
+    const legacyLaunch = page.getByRole('button', { name: /Рассчитать точную стоимость|Подтвердить цену и запустить|Запустить видео/ })
+    assert.equal(await legacyLaunch.isDisabled(), true)
+    assert.equal(generations.length, beforeLegacy)
+    await ownPhoto.getByRole('button', { name: 'first.jpg', exact: true }).click()
+    assert.equal(await legacyLaunch.isEnabled(), true)
+    await legacyLaunch.click()
+    await page.getByText('Разрешения автора изменились. Откройте публикацию заново.', { exact: true }).waitFor()
+    assert.equal(generations.length, beforeLegacy + 1)
+    assert.deepEqual(generations.at(-1).reference_images, ['https://example.test/first.jpg'])
+    assert.equal(generations.at(-1).source_feed_gen_id, 778)
+    assert.equal(generations.at(-1).prompt || '', '')
+
     assert.equal(sourceRequests.some(path => path.includes('private')), false)
     assert.deepEqual(errors, [])
     console.log(`PASS ${width}px: typed owner consent/full withdrawal with failure preservation; accepted pending survives Feed/Profile/deep-link reopen and reconciles owned local alias with canonical history; Feed/Profile/deep-link slots; ordered payload; full retained/upload price and affordability; retained480p quote and Seedance replacement upload; rejected stale recipe; unavailable recipe`)

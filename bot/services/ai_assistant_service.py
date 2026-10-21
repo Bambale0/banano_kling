@@ -1,5 +1,6 @@
 """Сервис AI-ассистента для пользовательских подсказок внутри бота."""
 
+import asyncio
 import base64
 import json
 import logging
@@ -66,6 +67,12 @@ def _extract_responses_output_text(data: dict[str, Any]) -> str:
     if parts:
         return "\n".join(parts).strip()
 
+    choices = data.get("choices") or []
+    if choices and isinstance(choices[0], dict):
+        message = choices[0].get("message") or {}
+        if isinstance(message, dict) and isinstance(message.get("content"), str):
+            return message["content"].strip()
+
     if isinstance(data.get("output_text"), str):
         return data["output_text"].strip()
     if isinstance(data.get("text"), str):
@@ -88,6 +95,7 @@ def _build_assistant_audio_content(
     }
 
 
+
 def _load_json(path: str) -> dict:
     """Загрузить JSON-файл. При ошибке вернуть пустой словарь."""
     try:
@@ -99,8 +107,6 @@ def _load_json(path: str) -> dict:
 
 class AIAssistantService:
     """Сервис AI-ассистента для помощи с моделями, промптами и настройками."""
-
-    AUDIO_ENDPOINT = "/codex/v1/responses"
 
     async def get_assistant_response(
         self,
@@ -156,8 +162,8 @@ class AIAssistantService:
         audio_format: str = "ogg",
     ) -> Optional[str]:
         """Получить ответ от ассистента, передав аудио напрямую в модель."""
-        if not config.KIE_AI_API_KEY:
-            logger.error("Kie.ai API key not configured for AI Assistant audio")
+        if not config.OPENROUTER_API_KEY or not config.AI_ASSISTANT_AUDIO_MODEL:
+            logger.error("OpenRouter audio is not configured for AI Assistant")
             return None
         if not audio_bytes:
             return await self.get_assistant_response(
@@ -192,82 +198,55 @@ class AIAssistantService:
 
         try:
             headers = {
-                "Authorization": f"Bearer {config.KIE_AI_API_KEY}",
+                "Authorization": f"Bearer {config.OPENROUTER_API_KEY}",
                 "Content-Type": "application/json",
             }
             payload = {
-                "model": config.PHOTO_PROMPT_MODEL,
+                "model": config.AI_ASSISTANT_AUDIO_MODEL,
                 "stream": False,
-                "input": [
-                    {
-                        "role": "system",
-                        "content": [
-                            {
-                                "type": "input_text",
-                                "text": f"{system_prompt}\n\n{audio_rules}",
-                            }
-                        ],
-                    },
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "input_text", "text": full_message},
-                            _build_assistant_audio_content(
-                                audio_bytes=audio_bytes,
-                                audio_format=audio_format or "ogg",
-                            ),
-                        ],
-                    },
+                "messages": [
+                    {"role": "system", "content": f"{system_prompt}\n\n{audio_rules}"},
+                    {"role": "user", "content": [
+                        {"type": "text", "text": full_message},
+                        _build_assistant_audio_content(audio_bytes=audio_bytes, audio_format=audio_format or "ogg"),
+                    ]},
                 ],
-                "reasoning": {"effort": "medium"},
             }
-
-            timeout = aiohttp.ClientTimeout(total=120)
+            # Audio uses a separately configured multimodal model, independent
+            # of photo prompt and text-only assistant model selection.
+            endpoint = "/chat/completions"
+            timeout = aiohttp.ClientTimeout(total=max(1, min(300, config.AI_ASSISTANT_AUDIO_TIMEOUT_SECONDS)))
+            attempts = max(1, min(3, config.AI_ASSISTANT_AUDIO_MAX_ATTEMPTS))
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(
-                    f"{config.KIE_BASE_URL}{self.AUDIO_ENDPOINT}",
-                    headers=headers,
-                    json=payload,
-                ) as response:
-                    response_text = await response.text()
-                    logger.info(
-                        "Kie.ai Assistant audio response status: %s, content-type: %s",
-                        response.status,
-                        response.headers.get("content-type", "none"),
-                    )
-                    logger.info("Assistant audio response preview: %s...", response_text[:500])
-
-                    if response.status != 200:
-                        logger.error(
-                            "Kie.ai Assistant audio error %s: %s",
-                            response.status,
-                            response_text[:1000],
-                        )
-                        return None
-
+                for attempt in range(attempts):
                     try:
-                        data = json.loads(response_text)
-                    except json.JSONDecodeError as json_err:
-                        logger.error(
-                            "Assistant audio JSON decode error: %s. Raw response: %s",
-                            json_err,
-                            response_text[:1000],
-                        )
-                        return None
-
-                    try:
-                        body_code = int(data.get("code", 0) or 0)
-                    except (TypeError, ValueError):
-                        body_code = 0
-                    if body_code >= 400:
-                        logger.error("Kie.ai Assistant audio body error: %s", data)
-                        return None
-
-                    output_text = _extract_responses_output_text(data)
-                    return output_text or None
-
-        except Exception as e:
-            logger.exception(f"Kie.ai Assistant audio call failed: {e}")
+                        async with session.post(
+                            f"{config.OPENROUTER_BASE_URL.rstrip('/')}{endpoint}", headers=headers, json=payload,
+                        ) as response:
+                            logger.info("Assistant audio response: status=%s attempt=%s", response.status, attempt + 1)
+                            retryable = response.status in {408, 429} or response.status >= 500
+                            if response.status != 200 and not retryable:
+                                logger.error("Assistant audio rejected: status=%s", response.status)
+                                return None
+                            if response.status == 200:
+                                data = await response.json(content_type=None)
+                                if not isinstance(data, dict):
+                                    return None
+                                body_code = int(data.get("code", 0) or 0)
+                                retryable = body_code in {408, 429} or body_code >= 500
+                                if not retryable:
+                                    if body_code >= 400:
+                                        logger.error("Assistant audio rejected: body_code=%s", body_code)
+                                        return None
+                                    return _extract_responses_output_text(data) or None
+                    except (aiohttp.ClientError, TimeoutError) as exc:
+                        logger.warning("Assistant audio transport failed: attempt=%s error_type=%s", attempt + 1, type(exc).__name__)
+                    if attempt + 1 < attempts:
+                        await asyncio.sleep(2 ** attempt)
+            logger.error("Assistant audio attempts exhausted: attempts=%s", attempts)
+            return None
+        except Exception as exc:  # noqa: BLE001 - provider boundary returns a safe failure without payloads
+            logger.error("Assistant audio call failed: error_type=%s", type(exc).__name__)
             return None
 
     def _get_system_prompt(self, *, is_admin: bool = False) -> str:

@@ -38,3 +38,18 @@ restoration before reaching the generation handler. Private inputs remain server
 Known canonical and legacy local-upload aliases represent one source identity for
 permission checks; unrelated external hosts do not. Existing grants/revocation and
 reference-display settings retain their separate meanings.
+
+## Ordinary video replacements (2026-10-21)
+
+For foreign ordinary-video repeats, the authenticated request boundary uses the
+publication's prompt and requires the consumer's files for every replaceable
+source slot. A missing/legacy repeat grant grants no implicit provider use:
+consumer descriptors mark the source slots as `upload`; absent, failed or partial
+uploads reject before billing. Public reference visibility alone does not
+constitute repeat-use consent. The original owner's own editable source flow
+remains available. Explicit current fixed-slot grants keep their separate,
+server-validated contract; no migration or silent grant is written to old posts.
+
+Old Telegram callbacks redirect foreign legacy videos to this same Mini App
+replacement flow. A derivative with a missing parent fails closed and cannot
+fall through to replaying inherited private media from its saved request.

@@ -310,15 +310,19 @@ async def _lookup_lava_transaction(
     contract_id: str,
     order_id: str | None,
 ) -> Any | None:
-    if order_id:
-        transaction = await get_transaction_by_order(order_id)
-        if transaction and str(getattr(transaction, "provider", "")).lower() == "lava":
-            return transaction
-
     invoice_id = await _invoice_id_for_contract(contract_id)
     candidate_ids = [contract_id]
     if invoice_id and invoice_id not in candidate_ids:
         candidate_ids.append(invoice_id)
+
+    if order_id:
+        transaction = await get_transaction_by_order(order_id)
+        if transaction and str(getattr(transaction, "provider", "")).lower() == "lava":
+            # The callback's order hint must never select a different invoice
+            # and poison its contract binding during provider verification.
+            if str(getattr(transaction, "payment_id", "")) in candidate_ids:
+                return transaction
+            return None
 
     async with db_backend.connect() as db:
         db.row_factory = db_backend.Row

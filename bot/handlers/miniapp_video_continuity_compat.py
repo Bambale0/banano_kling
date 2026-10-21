@@ -26,6 +26,7 @@ from bot.services.remix_prompt import compose_feed_remix_prompt
 from bot.video_repeat_reference_contract import (
     MEDIA_KEYS,
     VideoRepeatContractError,
+    foreign_video_repeat_task,
     merge_typed_video_inputs,
     parse_video_repeat_grant,
     source_request,
@@ -597,7 +598,11 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
     source_task = {**source_task, "_repeat_is_owner": (
         source_task.get("user_id") == context["user"].id and not source_task.get("source_feed_gen_id")
     )}
-    enriched = enrich_video_repeat_body(body, source_task)
+    # Only this authenticated boundary can authorize the owner's legacy reuse.
+    # A foreign legacy post has no implicit grant: all source slots require
+    # caller-supplied replacements, even for stale clients with empty presets.
+    consumer_task = source_task if source_task["_repeat_is_owner"] else foreign_video_repeat_task(source_task)
+    enriched = enrich_video_repeat_body(body, consumer_task)
     # This authenticated boundary wraps both legacy video handlers and the
     # separate Seedance 2.5 endpoint. Compose once from the original client
     # changes, keeping the author's base server-side just like photo remixes.
@@ -647,7 +652,11 @@ async def redirect_typed_video_repeat(callback, task) -> bool:
     if not parent_id:
         try:
             if parse_video_repeat_grant(raw) is None:
-                return False
+                from bot.database import get_or_create_user
+
+                viewer = await get_or_create_user(callback.from_user.id)
+                if getattr(task, "user_id", None) == viewer.id:
+                    return False
         except VideoRepeatContractError:
             pass
     # For an unpublished derived result, the old callback can still link to
@@ -657,13 +666,9 @@ async def redirect_typed_video_repeat(callback, task) -> bool:
     try:
         source = await get_generation_task_payload(source_id)
         if not source:
-            if not tagged_child and parent_id:
-                return False
             raise VideoRepeatReferenceError("Исходная публикация недоступна.")
         typed = parse_video_repeat_grant(source.get("feed_repeat_reference_selection"))
-        if typed is None and not published_child:
-            if not tagged_child:
-                return False
+        if typed is None and not published_child and tagged_child:
             raise VideoRepeatReferenceError("Разрешение на повтор изменилось.")
         import bot.miniapp as miniapp_module
         from bot.database import get_or_create_user
