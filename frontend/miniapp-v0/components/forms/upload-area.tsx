@@ -70,6 +70,8 @@ export function UploadArea({
 }: UploadAreaProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const filesRef = useRef(files)
+  const batchActiveRef = useRef(false)
+  const [batchActive, setBatchActive] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
 
@@ -83,72 +85,80 @@ export function UploadArea({
   }, [onFilesChange])
 
   const handleFiles = useCallback(async (fileList: FileList | File[]) => {
-    setUploadError(null)
+    if (batchActiveRef.current) return
+    batchActiveRef.current = true
+    setBatchActive(true)
+    try {
+      setUploadError(null)
 
-    for (const sourceFile of Array.from(fileList)) {
-      const file = normalizedBrowserFile(sourceFile)
-      sendMiniAppClientLog('upload-file-selected', {
-        accept,
-        file_name: file.name,
-        file_type: file.type,
-        file_size: file.size,
-      })
-      const currentFiles = filesRef.current
-      if (currentFiles.length >= maxFiles) break
-      if (!matchesAcceptedType(file, accept)) {
-        sendMiniAppClientLog('upload-file-rejected', {
+      for (const sourceFile of Array.from(fileList)) {
+        const file = normalizedBrowserFile(sourceFile)
+        sendMiniAppClientLog('upload-file-selected', {
           accept,
           file_name: file.name,
           file_type: file.type,
           file_size: file.size,
-          reason: 'type_mismatch',
         })
-        setUploadError(
-          accept.startsWith('image/')
-            ? 'Можно загружать только изображения'
-            : accept.startsWith('video/')
-              ? 'Можно загружать только видео'
-              : 'Можно загружать только аудио'
-        )
-        continue
-      }
+        const currentFiles = filesRef.current
+        if (currentFiles.length >= maxFiles) break
+        if (!matchesAcceptedType(file, accept)) {
+          sendMiniAppClientLog('upload-file-rejected', {
+            accept,
+            file_name: file.name,
+            file_type: file.type,
+            file_size: file.size,
+            reason: 'type_mismatch',
+          })
+          setUploadError(
+            accept.startsWith('image/')
+              ? 'Можно загружать только изображения'
+              : accept.startsWith('video/')
+                ? 'Можно загружать только видео'
+                : 'Можно загружать только аудио'
+          )
+          continue
+        }
 
-      const localUrl = file.type.startsWith('image/') || file.type.startsWith('video/')
-        ? URL.createObjectURL(file)
-        : ''
-      const pendingFile: UploadedFile = {
-        id: `file_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-        name: file.name,
-        url: localUrl,
-        preview_url: localUrl,
-        type: file.type.startsWith('video/') ? 'video' : file.type.startsWith('audio/') ? 'audio' : 'image',
-        size: file.size,
-        uploading: true,
-      }
+        const localUrl = file.type.startsWith('image/') || file.type.startsWith('video/')
+          ? URL.createObjectURL(file)
+          : ''
+        const pendingFile: UploadedFile = {
+          id: `file_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+          name: file.name,
+          url: localUrl,
+          preview_url: localUrl,
+          type: file.type.startsWith('video/') ? 'video' : file.type.startsWith('audio/') ? 'audio' : 'image',
+          size: file.size,
+          uploading: true,
+        }
 
-      publishFiles([...filesRef.current, pendingFile])
+        publishFiles([...filesRef.current, pendingFile])
 
-      try {
-        const uploadedFile = onUpload
-          ? await onUpload(file)
-          : {
-              ...pendingFile,
-              uploading: false,
-            }
-        const latestFiles = filesRef.current
-        const nextFiles = latestFiles.map((item) =>
-          item.id === pendingFile.id
-            ? { ...uploadedFile, id: pendingFile.id, preview_url: localUrl || uploadedFile.preview_url, uploading: false }
-            : item
-        )
-        publishFiles(nextFiles)
-      } catch (error) {
-        publishFiles(filesRef.current.filter((item) => item.id !== pendingFile.id))
-        setUploadError(
-          error instanceof Error ? error.message : 'Не удалось загрузить файл'
-        )
-        if (localUrl) URL.revokeObjectURL(localUrl)
+        try {
+          const uploadedFile = onUpload
+            ? await onUpload(file)
+            : {
+                ...pendingFile,
+                uploading: false,
+              }
+          const latestFiles = filesRef.current
+          const nextFiles = latestFiles.map((item) =>
+            item.id === pendingFile.id
+              ? { ...uploadedFile, id: pendingFile.id, preview_url: localUrl || uploadedFile.preview_url, uploading: false }
+              : item
+          )
+          publishFiles(nextFiles)
+        } catch (error) {
+          publishFiles(filesRef.current.filter((item) => item.id !== pendingFile.id))
+          setUploadError(
+            error instanceof Error ? error.message : 'Не удалось загрузить файл'
+          )
+          if (localUrl) URL.revokeObjectURL(localUrl)
+        }
       }
+    } finally {
+      batchActiveRef.current = false
+      setBatchActive(false)
     }
   }, [accept, maxFiles, onUpload, publishFiles])
 
@@ -205,7 +215,9 @@ export function UploadArea({
             type="file"
             accept={accept}
             multiple={maxFiles > 1}
+            disabled={batchActive}
             onClick={(event) => {
+              if (batchActiveRef.current) { event.preventDefault(); return }
               event.currentTarget.value = ''
               sendMiniAppClientLog('upload-input-click', { accept })
             }}
