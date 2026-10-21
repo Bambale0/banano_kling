@@ -20,8 +20,8 @@ from aiohttp import web
 from bot import creator_tariff_display
 from bot import db as db_backend
 from bot.config import config
-from bot.services.runtime_http import database_error_response
 from bot.creator_tariff import VideoQuote, quote_video_for_actor
+from bot.services.runtime_http import database_error_response
 from bot.trend_user_fields import (
     TrendUserFieldsError,
     normalize_user_fields_settings,

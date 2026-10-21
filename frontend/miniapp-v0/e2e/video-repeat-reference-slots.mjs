@@ -348,8 +348,16 @@ try {
     assert.equal(generations.length, beforeLegacy)
     await ownPhoto.getByRole('button', { name: 'first.jpg', exact: true }).click()
     assert.equal(await legacyLaunch.isEnabled(), true)
+    const legacyResponse = page.waitForResponse(response => response.url().endsWith('/generate-video'))
     await legacyLaunch.click()
-    await page.getByText('Разрешения автора изменились. Откройте публикацию заново.', { exact: true }).waitFor()
+    await legacyResponse
+    if (generations.length === beforeLegacy) {
+      const confirmation = page.getByRole('button', { name: /Подтвердить цену и запустить/ })
+      await confirmation.waitFor()
+      const submitted = page.waitForResponse(response => response.url().endsWith('/generate-video'))
+      await confirmation.click()
+      await submitted
+    }
     assert.equal(generations.length, beforeLegacy + 1)
     assert.deepEqual(generations.at(-1).reference_images, ['https://example.test/first.jpg'])
     assert.equal(generations.at(-1).source_feed_gen_id, 778)

@@ -416,8 +416,8 @@ async def test_generic_video_repeat_keeps_private_author_refs_out_of_viewer_libr
 
     import json
     class Request:
-        app = {}
         def __init__(self):
+            self.app = {}
             self._read_bytes = json.dumps(body).encode()
         async def json(self):
             return json.loads(self._read_bytes)

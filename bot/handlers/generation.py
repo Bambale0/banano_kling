@@ -92,8 +92,8 @@ from bot.services.nano_banana_2_service import nano_banana_2_service
 from bot.services.nano_banana_pro_service import nano_banana_pro_service
 from bot.services.preset_manager import preset_manager
 from bot.services.reference_storage_service import save_reference_file
-from bot.services.telegram_transport import telegram_api_call
 from bot.services.seedream_service import seedream_service
+from bot.services.telegram_transport import telegram_api_call
 from bot.services.veo_service import veo_service
 from bot.services.wan27_service import wan27_service
 from bot.states import GenerationStates

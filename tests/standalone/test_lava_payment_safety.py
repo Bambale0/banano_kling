@@ -255,6 +255,7 @@ async def test_unknown_sender_remains_rejected_before_payment_lookup(monkeypatch
 @pytest.mark.asyncio
 async def test_installed_discovery_accepts_unmapped_legacy_invoice_but_not_wrong_order(monkeypatch):
     from unittest.mock import AsyncMock
+
     from bot.services.lava_invoice_compat import _make_lookup_with_discovery
     tx = SimpleNamespace(provider='lava', payment_id='invoice-A', order_id='order-A')
     mapping = {}
