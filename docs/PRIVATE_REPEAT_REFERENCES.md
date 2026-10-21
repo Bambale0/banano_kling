@@ -9,7 +9,7 @@ Ordinary image publications now have two independent owner controls:
 
 `generation_tasks.feed_repeat_reference_selection` is nullable JSON containing an `images` URL snapshot. The migration is additive, with no backfill. The owner publication API accepts `repeat_reference_image_indices`; an omitted, null or empty selection grants no private reuse. Owner task detail returns only indices in `feed_repeat_reference_selection`, using the existing canonical source-index mapping. Public cards do not include the grant snapshot.
 
-Only an original, completed image generation may supply a grant. New Mini App repeats require that original author publication; legacy child publication sources are rejected. Owner Telegram repeats of a child retain provenance and re-check the original permission. Foreign callers cannot edit it. Child/legacy remix rows cannot re-authorize inherited inputs. Each new provider submission checks the current original publication, exact selected URL membership, and availability. A persisted child snapshot records inputs to re-check, never permission by itself. Revocation or missing assets reject the affected new repeat/retry rather than silently changing its composition. Already submitted generation requests cannot be recalled from a provider.
+Only an original, completed image generation may supply a grant. Published repeat/trend results are also repeat sources: use the selected result’s server-side prompt and require the next consumer’s replacement files. Root lineage is retained for accounting; the immediate publication is the permission boundary. Owner Telegram repeats of a child retain provenance and re-check the original permission. Foreign callers cannot edit it. Child/legacy remix rows cannot re-authorize inherited inputs. Each new provider submission checks the current original publication, exact selected URL membership, and availability. A persisted child snapshot records inputs to re-check, never permission by itself. Revocation or missing assets reject the affected new repeat/retry rather than silently changing its composition. Already submitted generation requests cannot be recalled from a provider.
 
 Hiding public previews does not revoke the separate private-use permission. To revoke reuse, clear the private-repeat selection or withdraw the whole publication. Removing only the feed placement while retaining the published profile leaves the publication shared. Full withdrawal clears the grant. Re-publishing from an older client with no private-use field also clears it, fail-closed.
 
@@ -53,3 +53,26 @@ server-validated contract; no migration or silent grant is written to old posts.
 Old Telegram callbacks redirect foreign legacy videos to this same Mini App
 replacement flow. A derivative with a missing parent fails closed and cannot
 fall through to replaying inherited private media from its saved request.
+
+
+## Publishing generated results
+
+Every authenticated user can publish their own completed image/video result to
+Feed and Profile, including curated trend runs and repeat/remix results. Output
+publication does not depend on whether the underlying prompt is private.
+Task-detail publication controls therefore remain available with `prompt_hidden`.
+Copying/exporting a private prompt stays unavailable; prompts and inherited
+reference URLs are never included in the published result or child task DTO.
+Private descendants cannot grant inherited inputs to the next consumer.
+
+The legacy prompt-text privacy heuristic recognizes the original author of an
+approved trend: publishing that trend does not hide their ordinary source works.
+Explicit trend/lineage/private-recipe markers still take precedence. Other
+users' legacy trend recipes retain privacy matching and fail-closed lookup.
+
+Completed private Genjutsu results can publish through the existing output
+publisher with the executable plan kept server-side. Their published repeat
+contract requires a new consumer video and each photo, including slots that were
+fixed in the ancestor recipe. Publication verifies ownership of the final output,
+completion, quote integrity and mutable privacy state; it does not transfer the
+ancestor's fixed files or disclose the hidden plan.

@@ -1489,7 +1489,9 @@ def _merge_remix_image_references(
     """
     references = list(dict.fromkeys(submitted_references))
     retained: list[str] = []
-    if source_card.get("is_mine"):
+    from bot.database import generation_has_private_recipe
+
+    if source_card.get("is_mine") and not generation_has_private_recipe(task_payload):
         retained = _selected_published_image_references(task_payload, source_card)
         if retained:
             references = _merge_image_reference_slots(
@@ -1499,6 +1501,7 @@ def _merge_remix_image_references(
     if (
         not references
         and source_card.get("is_mine")
+        and not generation_has_private_recipe(task_payload)
         and _can_restore_private_profile_references(source_card)
     ):
         references = _source_image_references_from_task_payload(task_payload)
@@ -1526,7 +1529,10 @@ def _filter_foreign_feed_source_references(
     *,
     viewer_telegram_id: int | None = None,
 ) -> list[str]:
-    if not references or source_card.get("is_mine"):
+    from bot.database import generation_has_private_recipe
+    from bot.services.media_input_utils import reference_upload_owner_telegram_id
+
+    if not references or (source_card.get("is_mine") and not generation_has_private_recipe(task_payload)):
         return references
 
     source_references = set(_source_image_references_from_task_payload(task_payload))
@@ -1545,7 +1551,8 @@ def _filter_foreign_feed_source_references(
         if not url or url in filtered:
             continue
         owner_telegram_id = _reference_upload_owner_telegram_id(url)
-        if reference_source_identity(url) in source_identities:
+        owned_upload = viewer_telegram_id is not None and reference_upload_owner_telegram_id(url) == viewer_telegram_id
+        if reference_source_identity(url) in source_identities and not owned_upload:
             continue
         if (
             owner_telegram_id is not None
@@ -4618,6 +4625,9 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
             source_task.get("is_public_feed") or source_task.get("is_profile_visible")
         ):
             return web.json_response({"ok": False, "error": "Эта работа не опубликована"}, status=403)
+        from bot.trend_task_privacy import recipe_privacy_rows
+
+        source_task = (await recipe_privacy_rows([source_task]))[0]
         source_prompt = str(source_task.get("prompt") or "").strip()
         if not source_prompt:
             return web.json_response({"ok": False, "error": "У исходной генерации нет prompt"}, status=400)
@@ -4662,6 +4672,10 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
         model_meta = next((item for item in IMAGE_MODELS if item["id"] == img_service), None)
         if not model_meta:
             return web.json_response({"ok": False, "error": f"Неизвестная модель: {img_service}"}, status=400)
+        if _source_image_references_from_task_payload(source_task) and not references:
+            return web.json_response(
+                {"ok": False, "error": "Добавьте своё фото или референс для повтора"}, status=400,
+            )
         if model_meta["requires_reference"] and not references:
             return web.json_response({"ok": False, "error": "Для этой модели нужен референс"}, status=400)
         if len(references) > model_meta["max_references"]:
@@ -4817,6 +4831,9 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
                     {"ok": False, "error": "Пост ленты не найден"},
                     status=404,
                 )
+            from bot.trend_task_privacy import recipe_privacy_rows
+
+            source_feed_payload = (await recipe_privacy_rows([source_feed_payload]))[0]
             # Use the immediate derived task's own recipe only if its author
             # published that result, not merely its ancestor.
             if (source_feed_payload.get("source_feed_gen_id") or str(source_feed_payload.get("action_type") or "").lower() == "remix") and not (

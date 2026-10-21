@@ -363,6 +363,25 @@ try {
     assert.equal(generations.at(-1).source_feed_gen_id, 778)
     assert.equal(generations.at(-1).prompt || '', '')
 
+    // Hidden recipes do not prevent publishing the generated result.
+    currentTask = { ...task, prompt: '', prompt_preview: '', prompt_hidden: true,
+      prompt_actions_allowed: false, request_data: {},
+      publication_reference_images: [], publication_reference_videos: [],
+      publication_reference_image_indices: [], publication_reference_video_indices: [] }
+    await page.goto(baseUrl)
+    await page.getByRole('button', { name: 'Студия', exact: true }).click()
+    await page.getByRole('button').filter({ hasText: 'Seedance 2.5' }).filter({ hasText: 'Готово' }).first().click()
+    await page.getByText('Промпт автора скрыт. Результат можно опубликовать и повторить.').waitFor()
+    await page.getByRole('button', { name: 'Опубликовать', exact: true }).click()
+    assert.equal(await page.getByRole('button', { name: 'Prompt', exact: true }).isDisabled(), true)
+    await page.getByRole('button', { name: 'Только профиль', exact: true }).click()
+    await page.getByRole('button', { name: 'Опубликовать', exact: true }).first().click()
+    await page.getByRole('button', { name: 'Настроить публикацию', exact: true }).waitFor()
+    assert.equal(publications.at(-1).publication_scope, 'profile')
+    assert.equal(publications.at(-1).prompt_visible, false)
+    assert.deepEqual(publications.at(-1).repeat_reference_image_indices, [])
+    assert.deepEqual(publications.at(-1).repeat_reference_video_indices, [])
+
     assert.equal(sourceRequests.some(path => path.includes('private')), false)
     assert.deepEqual(errors, [])
     console.log(`PASS ${width}px: typed owner consent/full withdrawal with failure preservation; accepted pending survives Feed/Profile/deep-link reopen and reconciles owned local alias with canonical history; Feed/Profile/deep-link slots; ordered payload; full retained/upload price and affordability; retained480p quote and Seedance replacement upload; rejected stale recipe; unavailable recipe`)

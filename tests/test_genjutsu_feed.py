@@ -74,7 +74,7 @@ async def setup_owned_run(*, variants=1, step_count=1):
         await db.execute("UPDATE genjutsu_steps SET status='completed',output_asset_id=?,actual_credits=10 WHERE run_id=?", (output["id"], run["id"]))
     copy = AsyncMock(return_value="https://example.test/uploads/feed/public-output.mp4")
     publisher = FeedPublisher(repo, recipes, copy)
-    pipeline = SimpleNamespace(repository=repo)
+    pipeline = SimpleNamespace(repository=repo, media=SimpleNamespace(configured=False))
     api = API(pipeline, AsyncMock(return_value=(101, False)), recipes=recipes, feed=publisher)
     return SimpleNamespace(owner=owner, repo=repo, recipes=recipes, publisher=publisher, api=api,
                            run=run, step=step, project=project, source=source, photo=photo, fixed=fixed,
@@ -202,7 +202,7 @@ async def test_publish_rejects_intermediate_output_and_foreign_output():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("archived", [False, True])
-async def test_private_recipe_binding_cannot_be_copied_even_with_stale_privacy_flag(archived):
+async def test_private_recipe_binding_preserves_result_publication_and_archival(archived):
     from bot.genjutsu.contract import PipelineError
 
     ctx = await setup_owned_run()
@@ -214,24 +214,25 @@ async def test_private_recipe_binding_cannot_be_copied_even_with_stale_privacy_f
     if archived:
         await ctx.recipes.archive(101, original["recipe"]["id"])
     ctx.copy.reset_mock()
-    with pytest.raises(PipelineError, match="private_recipe_publication_forbidden"):
-        await publish(ctx)
-    ctx.copy.assert_not_awaited()
+    if archived:
+        with pytest.raises(PipelineError, match="recipe_unavailable"):
+            await publish(ctx)
+    else:
+        result = await publish(ctx)
+        assert result["card"]["id"] == original["card"]["id"]
+        assert "PRIVATE_PROMPT" not in repr(result)
 
 
 @pytest.mark.asyncio
-async def test_private_flag_and_archived_recipe_fail_closed():
+async def test_private_result_can_publish_but_archived_publication_stays_unavailable():
     from bot.genjutsu.contract import PipelineError
 
     ctx = await setup_owned_run()
     async with ctx.repo.transaction() as db:
         await db.execute("UPDATE genjutsu_runs SET private_recipe=1 WHERE id=?", (ctx.run["id"],))
-    with pytest.raises(PipelineError, match="private_recipe_publication_forbidden"):
-        await publish(ctx)
-    ctx.copy.assert_not_awaited()
-    async with ctx.repo.transaction() as db:
-        await db.execute("UPDATE genjutsu_runs SET private_recipe=0 WHERE id=?", (ctx.run["id"],))
     original = await publish(ctx)
+    assert len(original["recipe"]["slots"]) == 2
+    assert original["recipe"]["source_slot"]["kind"] == "video"
     await ctx.recipes.archive(101, original["recipe"]["id"])
     with pytest.raises(PipelineError, match="recipe_unavailable"):
         await publish(ctx)
@@ -747,3 +748,29 @@ async def test_recipe_preview_fails_closed_if_publication_is_revoked_during_reso
         })
         assert response.status == 404
         assert (await response.json())["code"] == "recipe_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_private_result_can_publish_and_next_viewer_replaces_every_input():
+    ctx = await setup_owned_run()
+    async with ctx.repo.transaction() as db:
+        await db.execute('UPDATE genjutsu_runs SET private_recipe=1 WHERE id=?', (ctx.run['id'],))
+        # Private runs may contain fixed files belonging to the source author.
+        await db.execute('UPDATE genjutsu_assets SET owner=202 WHERE id=?', (ctx.fixed['id'],))
+    result = await publish(ctx, source_binding='fixed')
+    public = result['recipe']
+    assert public['source_slot']['kind'] == 'video'
+    assert len(public['slots']) == 2
+    assert 'PRIVATE_FIXED_LABEL' not in repr(result)
+    assert 'PRIVATE_PROMPT' not in repr(result)
+    assert ctx.fixed['id'] not in repr(result)
+    photo1, photo2, source = await ctx.asset('image', 202), await ctx.asset('image', 202), await ctx.asset('video', 202)
+    instance = await ctx.recipes.instantiate(202, public['id'], [photo1['id'], photo2['id']], {}, source_asset_id=source['id'])
+    project = await ctx.repo.get_project(202, instance['id'])
+    plan, grants, private = await ctx.recipes.resolve_project(202, instance['id'], 1, project['plan'])
+    assert private is True
+    assert grants == set()
+    assert plan['source_asset_id'] == source['id']
+    assert [r['asset_id'] for r in plan['steps'][0]['references']] == [photo1['id'], photo2['id']]
+    assert plan['steps'][0]['prompt'] == 'PRIVATE_PROMPT'
+    assert (await ctx.api.run_view(101, ctx.run['id'])).get('plan') is None

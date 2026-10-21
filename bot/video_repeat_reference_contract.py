@@ -11,6 +11,7 @@ from typing import Any
 
 from bot.services.media_input_utils import (
     canonicalize_local_upload_url,
+    reference_upload_owner_telegram_id,
     resolve_reference_source,
 )
 
@@ -363,7 +364,9 @@ def merge_typed_video_inputs(
                 inherited = resolve_reference_source(value, candidates)
             except ValueError as exc:
                 raise VideoRepeatContractError("Загрузите свои файлы для заменяемых референсов.") from exc
-            if inherited is not None:
+            consumer = task.get("_repeat_consumer_telegram_id")
+            owned_upload = consumer is not None and reference_upload_owner_telegram_id(value) == consumer
+            if inherited is not None and not owned_upload:
                 raise VideoRepeatContractError("Загрузите свои файлы для заменяемых референсов.")
         iterator = iter(uploads)
         private: list[str] = []

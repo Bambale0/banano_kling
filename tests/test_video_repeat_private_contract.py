@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from bot import creator_tariff, database, miniapp, trend_task_privacy
+from bot import creator_tariff, database, miniapp
 from bot.handlers import miniapp_video_continuity_compat as continuity
 from bot.video_repeat_reference_contract import video_repeat_descriptors
 
@@ -606,7 +606,6 @@ async def test_protected_child_detail_never_returns_private_provider_asset_ids(m
         request_data={key: [secret] for key in ("omni_audio_ids", "omni_character_ids", "omni_character_audio_ids")},
     )
     monkeypatch.setattr(miniapp, "DATABASE_PATH", database.DATABASE_PATH)
-    monkeypatch.setattr(trend_task_privacy, "DATABASE_PATH", database.DATABASE_PATH)
     monkeypatch.setattr(miniapp, "_get_user_context", AsyncMock(return_value=(viewer.telegram_id, {"user": viewer})))
     request = SimpleNamespace(app={}, json=AsyncMock(return_value={"init_data": "signed", "task_id": "omni-private-child"}))
     response = await miniapp.miniapp_task_detail(request)

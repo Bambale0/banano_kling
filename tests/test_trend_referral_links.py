@@ -41,7 +41,7 @@ async def sharing_client(monkeypatch):
     monkeypatch.setattr(partner_approval_service, "_SCHEMA_LOCK", None)
     partner_approval_service.install_partner_referral_approval_guard()
     monkeypatch.setattr(miniapp, "process_referral_click", referral_service.process_referral_click)
-    for module_name in ("bot.handlers.trend_success_compat", "bot.trend_task_privacy"):
+    for module_name in ("bot.handlers.trend_success_compat",):
         module = sys.modules.get(module_name)
         if module is not None:
             monkeypatch.setattr(module, "DATABASE_PATH", database.DATABASE_PATH)

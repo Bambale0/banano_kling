@@ -101,7 +101,7 @@ export function TaskDetailPanel() {
       return
     }
 
-    setFeedPromptVisible(Boolean(taskDetail?.feed_prompt_visible))
+    setFeedPromptVisible(Boolean(!taskDetail?.prompt_hidden && taskDetail?.feed_prompt_visible))
     setFeedReferencesVisible(Boolean(taskDetail?.feed_references_visible))
     setFeedBlurred(Boolean(taskDetail?.feed_blurred))
     setPublicationScope(taskDetail?.publication_scope === 'profile' ? 'profile' : 'feed')
@@ -291,9 +291,7 @@ export function TaskDetailPanel() {
 
   const canPublishToFeed = Boolean(
     taskDetail &&
-      (taskDetail.type === 'image' || taskDetail.type === 'video') &&
-      taskDetail.prompt_actions_allowed !== false &&
-      !taskDetail.prompt_hidden
+      (taskDetail.type === 'image' || taskDetail.type === 'video')
   )
   const canSavePrompt = Boolean(
     taskDetail &&
@@ -520,7 +518,7 @@ export function TaskDetailPanel() {
                   ) : null}
                 </div>
                 <p className="text-sm text-muted-foreground leading-relaxed p-3 rounded-xl bg-secondary/50 whitespace-pre-wrap break-words">
-                  {taskDetail.prompt_hidden ? 'Описание автора уже использовано для этой работы.' : taskDetail.prompt || '—'}
+                  {taskDetail.prompt_hidden ? 'Промпт автора скрыт. Результат можно опубликовать и повторить.' : taskDetail.prompt || '—'}
                 </p>
               </div>
 
@@ -640,6 +638,7 @@ export function TaskDetailPanel() {
                   <div className="grid grid-cols-3 gap-2">
                         <button
                           type="button"
+                          disabled={taskDetail.prompt_hidden}
                           onClick={() => setFeedPromptVisible((prev) => !prev)}
                           className={cn(
                             'flex h-10 items-center justify-center gap-2 rounded-lg border px-3 text-xs font-medium transition-colors',

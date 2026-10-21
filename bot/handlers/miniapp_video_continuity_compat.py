@@ -17,7 +17,7 @@ from typing import Any
 
 from aiohttp import web
 
-from bot.database import get_generation_task_payload
+from bot.database import generation_has_private_recipe, get_generation_task_payload
 from bot.services.media_input_utils import (
     missing_local_upload_sources,
     resolve_reference_source,
@@ -595,8 +595,11 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
         raise web.HTTPBadRequest(reason="Исходное описание видео недоступно")
     # A publicly shared repeat/result is a new publication in its own right.
     # Keep this source task, rather than silently substituting its ancestor.
-    source_task = {**source_task, "_repeat_is_owner": (
-        source_task.get("user_id") == context["user"].id and not source_task.get("source_feed_gen_id")
+    from bot.trend_task_privacy import recipe_privacy_rows
+
+    source_task = (await recipe_privacy_rows([source_task]))[0]
+    source_task = {**source_task, "_repeat_consumer_telegram_id": _telegram_id, "_repeat_is_owner": (
+        source_task.get("user_id") == context["user"].id and not generation_has_private_recipe(source_task)
     )}
     # Only this authenticated boundary can authorize the owner's legacy reuse.
     # A foreign legacy post has no implicit grant: all source slots require

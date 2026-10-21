@@ -7089,6 +7089,8 @@ def _repeat_reference_selection_for_publication(
     videos = [video_candidates[index] for index in selected_videos]
     if any(not _is_feed_result_url_available(row, value) for value in [*images, *videos]):
         raise ValueError("Выбранные референсы больше недоступны. Обновите исходные файлы.")
+    if (images or videos) and generation_has_private_recipe(row):
+        raise ValueError("Нельзя передать разрешение на чужие исходные референсы.")
     if task_type == "image":
         return json.dumps({"images": images}, ensure_ascii=False, separators=(",", ":"))
     existing = _generation_attr(row, "feed_repeat_reference_selection")
@@ -7099,8 +7101,6 @@ def _repeat_reference_selection_for_publication(
     if image_indices is None and video_indices is None and old_grant is None:
         # Historical clients never selected typed private video consent.
         return json.dumps({"images": []}, separators=(",", ":"))
-    if (images or videos) and generation_has_private_recipe(row):
-        raise ValueError("Нельзя передать разрешение на чужие исходные референсы.")
     grant = {"version": 1, "images": images, "videos": videos}
     if images or videos:
         # Verify active slot membership and reject unsupported private audio
@@ -7431,6 +7431,8 @@ def _feed_reference_videos(row: db_backend.Row, request_data: dict[str, Any]) ->
 def generation_publication_references(
     generation: db_backend.Row | dict[str, Any],
 ) -> dict[str, list[Any]]:
+    if generation_has_private_recipe(generation):
+        return {"images": [], "videos": [], "image_indices": [], "video_indices": []}
     raw_request_data = _generation_attr(generation, "request_data")
     request_data = (
         _parse_json_dict(raw_request_data)
@@ -7581,7 +7583,7 @@ def _generation_row_to_card(
     # separately granted private inputs server-side, but never receive raw
     # source image/video URLs through feed or profile payloads.
     references_allowed_for_viewer = bool(
-        viewer_is_owner and references_visible and not is_remix
+        viewer_is_owner and references_visible and not is_remix and not generation_has_private_recipe(row)
     )
     all_reference_images = _feed_reference_images(row, request_data)
     all_reference_videos = _feed_reference_videos(row, request_data)
@@ -7619,7 +7621,7 @@ def _generation_row_to_card(
             logger.exception("Failed to resolve feed thumbnail url")
     repeat_slots = (
         video_repeat_descriptors(dict(row))
-        if str(row["type"]) == "video" and not viewer_is_owner else None
+        if str(row["type"]) == "video" and (not viewer_is_owner or generation_has_private_recipe(row)) else None
     )
     return {
         **({"repeat_reference_slots": repeat_slots} if repeat_slots is not None else {}),
@@ -7769,6 +7771,9 @@ async def get_feed_generations(
         cursor = await db.execute(query, params)
         rows = await cursor.fetchall()
 
+    from .trend_task_privacy import recipe_privacy_rows
+
+    rows = await recipe_privacy_rows(rows)
     cards = [
         card
         for row in rows
@@ -7811,7 +7816,6 @@ async def get_user_feed_generations(
               AND gt.type IN ('image', 'video')
               AND gt.status = 'completed'
               AND gt.result_url IS NOT NULL
-              AND gt.source_feed_gen_id IS NULL
         """
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
@@ -7842,6 +7846,9 @@ async def get_user_feed_generations(
         params: tuple[Any, ...] = (user_id, limit, offset) if limit else (user_id,)
         cursor = await db.execute(query, params)
         rows = await cursor.fetchall()
+    from .trend_task_privacy import recipe_privacy_rows
+
+    rows = await recipe_privacy_rows(rows)
     cards = [
         card
         for row in rows
@@ -7934,6 +7941,9 @@ async def get_feed_generation_card(
         row = await cursor.fetchone()
     if not row:
         return None
+    from .trend_task_privacy import recipe_privacy_rows
+
+    row = (await recipe_privacy_rows([row]))[0]
     return _generation_row_to_card(row, viewer_user_id=viewer_user_id, include_unavailable=include_unavailable)
 
 
@@ -7983,6 +7993,9 @@ async def get_profile_generation_card(
         row = await cursor.fetchone()
     if not row:
         return None
+    from .trend_task_privacy import recipe_privacy_rows
+
+    row = (await recipe_privacy_rows([row]))[0]
     return _generation_row_to_card(
         row,
         viewer_user_id=viewer_user_id,
@@ -8155,11 +8168,13 @@ async def share_to_feed(
             or row["type"] not in FEED_PUBLIC_TYPES
             or row["status"] != "completed"
             or not row["result_url"]
-            or row["source_feed_gen_id"] is not None
             or not _feed_result_urls(row)
         ):
             return None
 
+        from .trend_task_privacy import recipe_privacy_rows
+
+        row = (await recipe_privacy_rows([row]))[0]
         request_data = _parse_json_dict(row["request_data"])
         image_candidates = _feed_reference_image_candidates(request_data)
         video_candidates = _feed_reference_video_candidates(request_data)

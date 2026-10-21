@@ -23,8 +23,8 @@ export function GenjutsuFeedPublisher({ run, step, disabled = false }: { run: Ru
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
 
   const finalOrdinal = Math.max(...run.steps.filter(item => item.variant === step.variant).map(item => item.ordinal))
-  if (run.state !== 'completed' || run.private_recipe || !run.plan || step.status !== 'completed'
-      || !step.output_asset || step.ordinal !== finalOrdinal || step.ordinal !== run.plan.steps.length - 1) return null
+  if (run.state !== 'completed' || (!run.private_recipe && !run.plan) || step.status !== 'completed'
+      || !step.output_asset || step.ordinal !== finalOrdinal || (run.plan && step.ordinal !== run.plan.steps.length - 1)) return null
 
   async function publish() {
     if (inFlight.current || disabled || !canRetry || !title.trim()) return
@@ -56,13 +56,13 @@ export function GenjutsuFeedPublisher({ run, step, disabled = false }: { run: Ru
       <label className="block space-y-1 text-sm">Название публикации<input className={field} maxLength={120} value={title} onChange={event => setTitle(event.target.value)} /></label>
       <label className="block space-y-1 text-sm">Видео при повторе<select className={field} value={sourceBinding} onChange={event => setSourceBinding(event.target.value as 'user' | 'fixed')}>
         <option value="user">Пользователь загружает своё видео</option>
-        <option value="fixed">Скрытое видео автора без замены</option>
+        {!run.private_recipe && <option value="fixed">Скрытое видео автора без замены</option>}
       </select></label>
     </fieldset>
     <p className="text-xs text-muted-foreground">{sourceBinding === 'user'
       ? 'Для повтора нужно своё видео. Исходное видео автора не показывается.'
       : 'Повтор использует исходное видео автора. Оно скрыто и не заменяется.'}</p>
-    {run.plan.steps.some(item => item.references.length > 0) && <div className="space-y-1 text-xs text-muted-foreground">
+    {run.plan?.steps.some(item => item.references.length > 0) && <div className="space-y-1 text-xs text-muted-foreground">
       <p className="font-medium">Фото при повторе — из настроек завершённой работы:</p>
       {run.plan.steps.flatMap((item, stepIndex) => item.references.map((reference, index) => <p key={stepIndex + ':' + index}>
         {reference.label || roleLabels[reference.role] || 'Фото ' + (index + 1)}: {reference.binding === 'fixed' ? 'скрытый закреплённый референс' : 'своё фото при повторе'}

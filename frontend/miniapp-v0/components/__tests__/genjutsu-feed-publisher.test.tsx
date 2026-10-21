@@ -40,7 +40,6 @@ test('owner publishes a final output with explicit replacement policy and immuta
 })
 
 test.each([
-  ['private', { ...run, private_recipe: 1 }],
   ['incomplete', { ...run, state: 'running' }],
   ['redacted', { ...run, plan: undefined }],
   ['intermediate', { ...run, steps: [...run.steps, { ...run.steps[0], id: 'next', ordinal: 1 }] }],
@@ -107,4 +106,15 @@ test('late success from an unmounted result does not mark another result publish
   await waitFor(() => expect(notifyFeedChanged).toHaveBeenCalledWith({ id: 24 }))
   expect(screen.getByRole('button', { name: 'Опубликовать в ленту' })).toBeInTheDocument()
   expect(screen.queryByText('Опубликовано в ленте')).not.toBeInTheDocument()
+})
+
+test('publishes a redacted private result with replacement-only inputs', async () => {
+  call.mockResolvedValue({ card: { id: 25 } })
+  const privateRun = { ...run, private_recipe: 1, plan: undefined }
+  render(<GenjutsuFeedPublisher run={privateRun} step={privateRun.steps[0]} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Опубликовать в ленту' }))
+  expect(screen.queryByRole('option', { name: 'Скрытое видео автора без замены' })).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Опубликовать результат' }))
+  await screen.findByText('Опубликовано в ленте')
+  expect(call).toHaveBeenCalledWith('feed_publish', expect.objectContaining({ source_binding: 'user' }))
 })

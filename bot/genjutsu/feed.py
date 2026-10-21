@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import os
 import shutil
@@ -54,8 +55,9 @@ class FeedPublisher:
             raise PipelineError("invalid_source_binding")
 
         run = await self.repository.get_run(owner, run_id)
-        if run["private_recipe"] or await self.recipes.is_private_project(run["project_id"]):
-            raise PipelineError("private_recipe_publication_forbidden", status=403)
+        private = bool(run["private_recipe"] or await self.recipes.is_private_project(run["project_id"]))
+        if private:
+            source_binding = "user"
         step = next((item for item in run["steps"] if item["id"] == step_id), None)
         if (
             run["state"] != "completed"
@@ -65,10 +67,17 @@ class FeedPublisher:
             or not step["output_asset_id"]
         ):
             raise PipelineError("completed_output_required", status=409)
-        # Publication grants access only to this owner's original inputs.
-        # A copied/rebound private recipe must never become a new public recipe.
+        # A private result is publishable, but its ancestor's inputs are not
+        # transferable. Every input in its next repeat must be supplied afresh.
+        published_plan = copy.deepcopy(run["plan"])
+        if private:
+            for item in published_plan["steps"]:
+                for reference in item.get("references", []):
+                    if reference.get("binding") == "fixed":
+                        reference["label"] = ""
+                    reference["binding"] = "user"
         owned = await self.repository.get_assets(
-            owner, asset_ids(run["plan"]) | {step["output_asset_id"]}
+            owner, ({step["output_asset_id"]} if private else asset_ids(run["plan"]) | {step["output_asset_id"]})
         )
         output = owned[step["output_asset_id"]]
         if output["kind"] != "video":
@@ -90,9 +99,9 @@ class FeedPublisher:
             current = await one(db, """SELECT r.state,r.private_recipe,s.status,s.output_asset_id
                 FROM genjutsu_runs r JOIN genjutsu_steps s ON s.run_id=r.id
                 WHERE r.id=? AND r.owner=? AND s.id=?""", (run_id, owner, step_id))
-            private = await one(db, "SELECT project_id FROM genjutsu_recipe_projects WHERE project_id=?", (run["project_id"],))
-            if private or (current and current["private_recipe"]):
-                raise PipelineError("private_recipe_publication_forbidden", status=403)
+            binding = await one(db, "SELECT project_id FROM genjutsu_recipe_projects WHERE project_id=?", (run["project_id"],))
+            if bool(binding or (current and current["private_recipe"])) != private:
+                raise PipelineError("recipe_integrity_failed", status=409)
             if not current or current["state"] != "completed" or current["status"] != "completed" or current["output_asset_id"] != output["id"]:
                 raise PipelineError("completed_output_required", status=409)
             user = await one(db, "SELECT id FROM users WHERE telegram_id=?", (owner,))
@@ -119,7 +128,7 @@ class FeedPublisher:
                     source_binding,active,created_ms,updated_ms
                     ) VALUES(?,?,?,?,?,?,?,?,?,1,?,?)""",
                     (recipe_id, owner, run["project_id"], quote["revision"], run_id, title,
-                     encode(run["plan"]), "[]", source_binding, now, now))
+                     encode(published_plan), "[]", source_binding, now, now))
                 cost = 0 if run["admin_free"] else sum(
                     int(item["actual_credits"] or 0) for item in run["steps"]
                     if item["variant"] == step["variant"]
