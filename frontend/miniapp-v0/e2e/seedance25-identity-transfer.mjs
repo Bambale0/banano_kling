@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { chromium } from 'playwright'
+import { expireClearedPickerFiles } from './native-picker-lifetime.mjs'
 
 // Everything except the isolated static export is intercepted. No provider,
 // billing service or real upload is contacted by this browser test.
@@ -44,6 +45,7 @@ async function setup(width, isAdmin = false, credits = 1000) {
   await page.addInitScript(() => {
     window.Telegram = { WebApp: { initData: 'query_id=identity-e2e', initDataUnsafe: {}, ready() {}, expand() {}, onEvent() {}, offEvent() {} } }
   })
+  await page.addInitScript(expireClearedPickerFiles)
   await page.route('**/*', async route => {
     const req = route.request(), url = new URL(req.url())
     if (url.pathname.endsWith('/telegram-web-app.js')) return route.fulfill({ contentType: 'application/javascript', body: '// fixture' })

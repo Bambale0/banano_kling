@@ -205,12 +205,12 @@ export function UploadArea({
             type="file"
             accept={accept}
             multiple={maxFiles > 1}
-            onClick={() => {
+            onClick={(event) => {
+              event.currentTarget.value = ''
               sendMiniAppClientLog('upload-input-click', { accept })
             }}
             onChange={(event) => {
               const selectedFiles = Array.from(event.target.files || [])
-              event.target.value = ''
               if (selectedFiles.length > 0) {
                 void handleFiles(selectedFiles)
                 return
