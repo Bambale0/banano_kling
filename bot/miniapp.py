@@ -21,6 +21,7 @@ from bot import creator_tariff_display
 from bot import db as db_backend
 from bot.config import config
 from bot.creator_tariff import VideoQuote, quote_video_for_actor
+from bot.kling4_api import catalog_entry as kling4_catalog_entry
 from bot.services.runtime_http import database_error_response
 from bot.trend_user_fields import (
     TrendUserFieldsError,
@@ -1839,7 +1840,7 @@ async def _notify_miniapp_image_task_queued(
 
 def _public_task_status(row) -> str:
     status = str(row["status"] or "pending")
-    if status == "processing" and str(row["task_id"] or "").startswith(("video_repeat_receipt_", "wan3_")):
+    if status == "processing" and str(row["task_id"] or "").startswith(("video_repeat_receipt_", "wan3_", "kling4_")):
         return "pending"
     return status
 
@@ -3322,7 +3323,7 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
                     ),
                 }, tariff=tariff)
                 for item in VIDEO_MODELS
-            ],
+            ] + ([kling4_catalog_entry()] if config.is_admin(telegram_id) else []),
             "recent_tasks": recent_tasks,
             "saved_references": [
                 _saved_reference_payload(item)
@@ -5112,6 +5113,8 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
         if not isinstance(body, dict) or not isinstance(body.get("pricing_quote_only", False), bool):
             return web.json_response({"ok": False, "error": "Неверный запрос расчёта стоимости"}, status=400)
         pricing_quote_only = body.get("pricing_quote_only") is True
+        if isinstance(body, dict) and str(body.get('model') or body.get('v_model') or '') in {'kling_4', 'kling4', 'kling-4.0/reference-to-video', 'kling-4.0/keyframe-to-video'}:
+            return web.json_response({'error': 'Используйте редактор Kling 4.'}, status=403)
         if isinstance(body, dict) and str(body.get('model') or body.get('v_model') or '') in {'wan_3_prime', 'wan3_prime', 'wan/3-0-video-prime', 'wan_3', 'wan3', 'wan/3-0-video'}:
             from bot.wan3_prime_api import miniapp_generate_wan
             return await miniapp_generate_wan(request, body)
@@ -6219,6 +6222,8 @@ def setup_miniapp_routes(app: web.Application):
     app.router.add_get("/telegram-web-app.js", _miniapp_root_file)
     app.router.add_get(miniapp_root, _miniapp_frontend_redirect)
     app.router.add_get(f"{miniapp_root}/", _miniapp_frontend_redirect)
+    from bot.kling4_api import setup_kling4_routes
+    setup_kling4_routes(app, miniapp_root)
     from bot.wan3_prime_api import setup_wan3_prime_routes
     setup_wan3_prime_routes(app, miniapp_root)
     from bot.trend_catalog_api import setup_trend_catalog_routes
