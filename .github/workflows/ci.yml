@@ -160,8 +160,8 @@ jobs:
           done
           sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq
           sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y -qq ffmpeg
-          ffmpeg -version | head -1
-          ffprobe -version | head -1
+          ffmpeg -version | sed -n '1p'
+          ffprobe -version | sed -n '1p'
 
       - name: Run full safe regression suite
         id: full_suite
