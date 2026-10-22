@@ -606,7 +606,18 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
     # Foreign repeats retain only explicit typed or validated historical slots.
     # Every other source slot requires a caller-supplied replacement.
     try:
-        consumer_task = source_task if source_task["_repeat_is_owner"] else foreign_video_repeat_task(source_task)
+        # The dedicated identity form owns its inputs, including omissions and
+        # empty lists. Its own validator must never inherit legacy author media
+        # or depend on an obsolete source selection it replaces entirely.
+        legacy_identity = (
+            not source_task["_repeat_is_owner"]
+            and body.get("seedance25_identity_transfer") is True
+            and str(body.get("v_model") or source_task.get("model") or "") == "seedance_2_5"
+            and parse_video_repeat_grant(source_task.get("feed_repeat_reference_selection")) is None
+        )
+        consumer_task = source_task if source_task["_repeat_is_owner"] else foreign_video_repeat_task(
+            source_task, retain_legacy_selection=not legacy_identity,
+        )
         enriched = enrich_video_repeat_body(body, consumer_task)
     except VideoRepeatContractError as exc:
         raise VideoRepeatReferenceError(str(exc)) from exc
@@ -628,7 +639,7 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
             "snapshot": _video_repeat_snapshot(source_task), "active_media": active_media,
         }
         request._video_repeat_guard = authorization
-        if effective_video_repeat_grant(source_task) is not None:
+        if not legacy_identity and effective_video_repeat_grant(source_task) is not None:
             request._video_repeat_authorization = authorization
     return enriched
 

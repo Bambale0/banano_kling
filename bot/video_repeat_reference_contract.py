@@ -51,13 +51,16 @@ def parse_video_repeat_grant(raw: Any) -> dict[str, Any] | None:
     return result
 
 
-def foreign_video_repeat_task(task: dict[str, Any]) -> dict[str, Any]:
+def foreign_video_repeat_task(
+    task: dict[str, Any], *, retain_legacy_selection: bool = True,
+) -> dict[str, Any]:
     """Honor explicit saved selections; absent consent requires replacements.
 
     This consumer-only copy does not modify publication settings or persist a
     grant. Owners keep the existing editable source flow.
     """
-    grant = effective_video_repeat_grant(task)
+    grant = (effective_video_repeat_grant(task) if retain_legacy_selection
+             else parse_video_repeat_grant(task.get("feed_repeat_reference_selection")))
     return {**task, "feed_repeat_reference_selection": grant or {
         "version": 1, "images": [], "videos": [],
     }}
