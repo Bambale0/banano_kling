@@ -51,16 +51,37 @@ def parse_video_repeat_grant(raw: Any) -> dict[str, Any] | None:
     return result
 
 
-def foreign_video_repeat_task(task: dict[str, Any]) -> dict[str, Any]:
-    """Missing legacy consent requires replacements; it never grants reuse.
+def foreign_video_repeat_task(
+    task: dict[str, Any], *, retain_legacy_selection: bool = True,
+) -> dict[str, Any]:
+    """Honor explicit saved selections; absent consent requires replacements.
 
     This consumer-only copy does not modify publication settings or persist a
     grant. Owners keep the existing editable source flow.
     """
-    grant = parse_video_repeat_grant(task.get("feed_repeat_reference_selection"))
+    grant = (effective_video_repeat_grant(task) if retain_legacy_selection
+             else parse_video_repeat_grant(task.get("feed_repeat_reference_selection")))
     return {**task, "feed_repeat_reference_selection": grant or {
         "version": 1, "images": [], "videos": [],
     }}
+
+
+def effective_video_repeat_grant(task: dict[str, Any]) -> dict[str, Any] | None:
+    """Typed consent wins, including an explicit empty/revoked grant.
+
+    Older Seedance publications stored their retained slots in the publication
+    selection. Preserve only that validated, explicit legacy contract; public
+    visibility by itself never grants access to any source media.
+    """
+    grant = parse_video_repeat_grant(task.get("feed_repeat_reference_selection"))
+    if grant is not None:
+        return grant
+    from bot.database import generation_has_private_recipe
+
+    if generation_has_private_recipe(task):
+        return None
+    legacy = _legacy_selected_reference_plan(task)
+    return legacy["grant"] if legacy is not None else None
 
 
 def _first(data: dict[str, Any], keys: tuple[str, ...]) -> str | None:
@@ -235,9 +256,10 @@ def build_video_repeat_plan(
     return {"version": 1, "grant": grant, **recipe}
 
 
-def _legacy_selection_descriptor_plan(task: dict[str, Any]) -> dict[str, Any] | None:
-    # This is a display-only bridge. The launch still uses the original legacy
-    # grant/selection and its authenticated, before-charge permission checks.
+def _legacy_selected_reference_plan(task: dict[str, Any]) -> dict[str, Any] | None:
+    # Resolve the historical retained-slot contract for descriptors, owner
+    # editing and authenticated launches. Reads never rewrite stored consent;
+    # launches still recheck the original selection before charging.
     if not task.get("feed_references_visible") or str(task.get("model") or "") != "seedance_2_5":
         return None
     selection = task.get("feed_reference_selection")
@@ -263,14 +285,14 @@ def _legacy_selection_descriptor_plan(task: dict[str, Any]) -> dict[str, Any] | 
         raise VideoRepeatContractError("Исходные референсы для повтора сохранены не полностью.") from exc
     if supported is None:
         return None
-    # Reuse validation, capability/rate metadata and alias safety. This temporary
-    # copy is never saved, returned as consent, or used to authorize a launch.
-    descriptor_task = {
+    # Validate the compatibility grant using the same capability/alias checks as
+    # typed consent. This temporary copy is never saved or exposed to clients.
+    selected_task = {
         **task, "feed_repeat_reference_selection": {
             "version": 1, "images": selection.get("images", []), "videos": selection.get("videos", []),
         },
     }
-    return build_video_repeat_plan(descriptor_task)
+    return build_video_repeat_plan(selected_task)
 
 
 def video_repeat_descriptors(
@@ -279,7 +301,7 @@ def video_repeat_descriptors(
     try:
         plan = build_video_repeat_plan(foreign_video_repeat_task(task))
         if plan is None:
-            plan = _legacy_selection_descriptor_plan(task)
+            plan = _legacy_selected_reference_plan(task)
         if plan is None:
             return None
         # Presence-only ×2 has been retired. Input duration is measured by the

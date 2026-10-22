@@ -447,3 +447,22 @@ Pinterest identity transfer:
 4. provider adapter code in `bot/services/*`;
 5. Pinterest contract and privacy tests;
 6. this document.
+
+### Historical published Seedance video selections
+
+Older ordinary Seedance 2.5 multimodal publications can store explicitly retained
+image/video slots in `feed_reference_selection`, with public references enabled
+and no versioned repeat grant. The existing validated retained-tail layout is
+recognized for both URL-free repeat descriptors and authenticated server-side
+input assembly. Known historical media-origin aliases resolve to the original
+slot; excluded author images always require new uploads. Visibility alone and
+missing selections do not authorize reuse. Private/derived historical recipes
+cannot obtain a grant through this compatibility path.
+
+A versioned `feed_repeat_reference_selection` always takes precedence, including
+an empty grant. The owner editor reflects recognized historical retained indices
+and saves explicit typed choices through the existing publication API. Removing
+a video publication persists a typed empty revocation, so republishing through an
+older client cannot restore the previous retained references. All source media
+and permission snapshots are rechecked before charging; reads never rewrite the
+publication's saved choices.
