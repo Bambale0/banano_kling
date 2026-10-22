@@ -244,18 +244,6 @@ def test_freekassa_checkout_creates_only_signed_card_or_sbp_payments() -> None:
     assert "status=410" not in checkout_block
 
 
-def test_miniapp_ios_payment_uses_same_window_navigation() -> None:
-    source = _read("frontend/miniapp-v0/components/balance-sheet.tsx")
-
-    assert "webApp?.platform?.toLowerCase() === 'ios'" in source
-    assert "navigator.maxTouchPoints > 1" in source
-    ios_branch = source.split("if (isIOSPaymentWebView())", 1)[1].split(
-        "const webApp = getTelegramPaymentBridge()", 1
-    )[0]
-    assert "window.location.assign(url)" in ios_branch
-    assert "window.open" not in ios_branch
-
-
 def test_legacy_lava_route_still_preserves_dynamic_package_context() -> None:
     source = _read("bot/miniapp.py")
     lava_block = source.split('if provider == "lava":', 1)[1].split(

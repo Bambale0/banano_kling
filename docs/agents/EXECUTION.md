@@ -2351,3 +2351,5 @@ Coverage: pure contract tests and existing chunk HTTP regression run locally wit
 - PR #355 opened; native SQUASH auto-merge verified armed for head b5749efa. Branch protection verified strict=true with all four required CI gates. Workflow coverage follow-up creates a new exact head; checks must pass for it before merge.
 
 - First iOS CI payment scenario reached its final privacy assertions but the fixture failed parsing a missing WebKit sendBeacon request body (null), not a checkout assertion. Harness corrected to capture the actual Blob payload before sendBeacon, assert ready/open events exist, and inspect those payloads for signed URL leakage. No production logic change was needed.
+
+- Full CI safe suite on 50db65f0: 3962 passed, 113 skipped, one obsolete source-text test failed because it explicitly demanded iOS same-window navigation. Removed that implementation assertion; it is superseded by seven rendered payment regressions and the mandatory mobile browser journey. No backend processing implementation changed. Full isolated local safe-suite rerun started to verify the remaining contracts.
