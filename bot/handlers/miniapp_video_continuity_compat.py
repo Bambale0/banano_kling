@@ -26,6 +26,7 @@ from bot.services.remix_prompt import compose_feed_remix_prompt
 from bot.video_repeat_reference_contract import (
     MEDIA_KEYS,
     VideoRepeatContractError,
+    effective_video_repeat_grant,
     foreign_video_repeat_task,
     merge_typed_video_inputs,
     parse_video_repeat_grant,
@@ -602,8 +603,8 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
         source_task.get("user_id") == context["user"].id and not generation_has_private_recipe(source_task)
     )}
     # Only this authenticated boundary can authorize the owner's legacy reuse.
-    # A foreign legacy post has no implicit grant: all source slots require
-    # caller-supplied replacements, even for stale clients with empty presets.
+    # Foreign repeats retain only explicit typed or validated historical slots.
+    # Every other source slot requires a caller-supplied replacement.
     consumer_task = source_task if source_task["_repeat_is_owner"] else foreign_video_repeat_task(source_task)
     enriched = enrich_video_repeat_body(body, consumer_task)
     # This authenticated boundary wraps both legacy video handlers and the
@@ -624,7 +625,7 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
             "snapshot": _video_repeat_snapshot(source_task), "active_media": active_media,
         }
         request._video_repeat_guard = authorization
-        if parse_video_repeat_grant(source_task.get("feed_repeat_reference_selection")) is not None:
+        if effective_video_repeat_grant(source_task) is not None:
             request._video_repeat_authorization = authorization
     return enriched
 

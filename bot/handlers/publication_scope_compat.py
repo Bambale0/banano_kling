@@ -474,13 +474,10 @@ async def remove_publication(gen_id: int | str, user_id: int) -> bool:
         if not row:
             return False
         revoked_grant = None
-        if row["type"] == "video" and row["feed_repeat_reference_selection"] is not None:
-            try:
-                typed_grant = database.parse_video_repeat_grant(row["feed_repeat_reference_selection"])
-            except ValueError:
-                typed_grant = {}
-            if typed_grant is not None:
-                revoked_grant = json.dumps({"version": 1, "images": [], "videos": []})
+        if row["type"] == "video":
+            # A typed tombstone also revokes historical publication selections;
+            # a later legacy republish cannot resurrect the old retained slots.
+            revoked_grant = json.dumps({"version": 1, "images": [], "videos": []})
         await db.execute(
             """
             UPDATE generation_tasks

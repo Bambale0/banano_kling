@@ -52,15 +52,33 @@ def parse_video_repeat_grant(raw: Any) -> dict[str, Any] | None:
 
 
 def foreign_video_repeat_task(task: dict[str, Any]) -> dict[str, Any]:
-    """Missing legacy consent requires replacements; it never grants reuse.
+    """Honor explicit saved selections; absent consent requires replacements.
 
     This consumer-only copy does not modify publication settings or persist a
     grant. Owners keep the existing editable source flow.
     """
-    grant = parse_video_repeat_grant(task.get("feed_repeat_reference_selection"))
+    grant = effective_video_repeat_grant(task)
     return {**task, "feed_repeat_reference_selection": grant or {
         "version": 1, "images": [], "videos": [],
     }}
+
+
+def effective_video_repeat_grant(task: dict[str, Any]) -> dict[str, Any] | None:
+    """Typed consent wins, including an explicit empty/revoked grant.
+
+    Older Seedance publications stored their retained slots in the publication
+    selection. Preserve only that validated, explicit legacy contract; public
+    visibility by itself never grants access to any source media.
+    """
+    grant = parse_video_repeat_grant(task.get("feed_repeat_reference_selection"))
+    if grant is not None:
+        return grant
+    from bot.database import generation_has_private_recipe
+
+    if generation_has_private_recipe(task):
+        return None
+    legacy = _legacy_selection_descriptor_plan(task)
+    return legacy["grant"] if legacy is not None else None
 
 
 def _first(data: dict[str, Any], keys: tuple[str, ...]) -> str | None:
