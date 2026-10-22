@@ -18,6 +18,28 @@ def test_project_env_loading_can_be_disabled(monkeypatch, tmp_path: Path) -> Non
     env.load_project_env(tmp_path)
 
 
+def test_explicit_miniapp_url_survives_env_loading(monkeypatch, tmp_path):
+    monkeypatch.setenv(env.SKIP_PROJECT_ENV_VAR, "1")
+    monkeypatch.setenv("MINI_APP_URL", "https://configured.example/mini-app/")
+    env.load_project_env(tmp_path)
+    assert env.os.environ["MINI_APP_URL"] == "https://configured.example/mini-app/"
+
+
+def test_unconfigured_miniapp_uses_new_public_domain(monkeypatch, tmp_path):
+    monkeypatch.setenv(env.SKIP_PROJECT_ENV_VAR, "1")
+    monkeypatch.delenv("MINI_APP_URL", raising=False)
+    env.load_project_env(tmp_path)
+    assert env.os.environ["MINI_APP_URL"] == "https://neuromixbot.com/mini-app/"
+
+
+def test_miniapp_url_from_env_file_is_respected(monkeypatch, tmp_path):
+    monkeypatch.delenv(env.SKIP_PROJECT_ENV_VAR, raising=False)
+    monkeypatch.delenv("MINI_APP_URL", raising=False)
+    (tmp_path / ".env").write_text("MINI_APP_URL=https://configured.example/mini-app/\n")
+    env.load_project_env(tmp_path)
+    assert env.os.environ["MINI_APP_URL"] == "https://configured.example/mini-app/"
+
+
 class TestConfig:
     def test_admin_ids(self):
         cfg = Config()

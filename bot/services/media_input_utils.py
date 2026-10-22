@@ -17,7 +17,8 @@ DEFAULT_LOCAL_UPLOAD_HOSTS = {
     "media.chillcreative.ru",  # legacy media host backed by static/uploads
     "cdn.chillcreative.ru",  # legacy frontend upload URLs
     "tanyapp.chillcreative.ru",  # legacy Mini App origin
-    "tanyapp.xn--e1aikcel5c5a.online",  # current Mini App origin
+    "tanyapp.xn--e1aikcel5c5a.online",  # historical Mini App origin
+    "neuromixbot.com",  # current Mini App origin
 }
 
 

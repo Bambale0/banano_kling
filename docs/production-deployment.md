@@ -1,14 +1,14 @@
 # Production deployment NEUROMIX
 
-Документ описывает схему ветки `tanyapi`, сверенную 2026-10-07. Текущий frontend и media используют один домен; разделы про отдельный `cdn` host ниже обозначены как legacy и не являются текущим release path.
+Документ описывает схему ветки `tanyapi`, сверенную 2026-10-22. Текущий frontend и media используют один домен; разделы про отдельный `cdn` host ниже обозначены как legacy и не являются текущим release path.
 
 ## 1. Целевая инфраструктура
 
 | Роль | Домен | IP | Путь/сервис |
 | --- | --- | --- | --- |
 | Backend/webhooks | `tanyapi.chillcreative.ru` | `144.76.188.75` | Docker `banano-kling-bot`, compose service `bot`, `/root/tanya/banano_kling` |
-| Frontend | `tanyapp.xn--e1aikcel5c5a.online` | `144.76.188.75` | `/var/www/tanyapp.xn--e1aikcel5c5a.online/mini-app` |
-| Media | `tanyapp.xn--e1aikcel5c5a.online` | `144.76.188.75` | Nginx `/uploads/` -> backend `static/uploads` |
+| Frontend | `neuromixbot.com` | `144.76.188.75` | `/var/www/neuromixbot.com/mini-app` |
+| Media | `neuromixbot.com` | `144.76.188.75` | Nginx `/uploads/` -> backend `static/uploads` |
 
 Production release branch:
 
@@ -72,10 +72,10 @@ A  tanyapi  -> 144.76.188.75
 
 ### Текущий frontend и media
 
-Проверенное публичное разрешение DNS 2026-10-07:
+Проверенное публичное разрешение DNS 2026-10-22:
 
 ```text
-tanyapp.xn--e1aikcel5c5a.online -> 144.76.188.75
+neuromixbot.com -> 144.76.188.75
 ```
 
 Один TLS vhost обслуживает `/mini-app/`, проксирует `/mini-app/api/*`, `/uploads/*` и подписанные `/genjutsu/*` на backend. Старые `cdn.chillcreative.ru` и `media.chillcreative.ru` остаются legacy именами в сохранённых ссылках; это не указание менять их DNS или удалять инфраструктуру. Proxy status и TTL нового домена здесь не предполагаются.
@@ -84,9 +84,35 @@ Read-only проверка:
 
 ```bash
 getent ahostsv4 tanyapi.chillcreative.ru
-getent ahostsv4 tanyapp.xn--e1aikcel5c5a.online
-curl -fsSI https://tanyapp.xn--e1aikcel5c5a.online/mini-app/
+getent ahostsv4 neuromixbot.com
+curl -fsSI https://neuromixbot.com/mini-app/
 ```
+
+### Domain migration verified 2026-10-22
+
+`neuromixbot.com` uses Reg.ru DNS and an A record to `144.76.188.75`.
+`/var/www/neuromixbot.com` is a symlink to the existing shared static root;
+`tanyapp.xn--e1aikcel5c5a.online` redirects launch pages to the new domain while retaining API, hashed assets, uploads
+and signed Genjutsu routes for old clients. Redirects preserve the query string.
+The active vhost is `/etc/nginx/sites-available/neuromixbot.com.conf`, with its
+reviewable copy in `ops/nginx/neuromixbot.com.conf`.
+
+TLS uses the existing Let's Encrypt account, HTTP webroot `/var/www/html`,
+certificate `/etc/letsencrypt/live/neuromixbot.com/fullchain.pem` and a private key
+stored only on the server. Initial certificate expiry: 2027-01-20. `certbot.timer`
+is active; the certificate deploy hook validates and reloads Nginx after renewal.
+Verify renewal with:
+
+```bash
+certbot renew --cert-name neuromixbot.com --dry-run --run-deploy-hooks --no-random-sleep-on-renew
+```
+
+`MINI_APP_URL` remains an environment setting; bot/env.py respects an explicit
+value. Production deploy selects `PRODUCTION_MINI_APP_URL` (defaulting to the new
+origin) and verifies it before and after cutover. `STATIC_BASE_URL` and
+`GENJUTSU_PUBLIC_BASE_URL` must use `https://neuromixbot.com`. Telegram and payment webhook origin remains `https://tanyapi.chillcreative.ru`.
+New Genjutsu signed media URLs and provider callbacks use the new shared origin;
+existing signed URLs on the previous origin remain supported.
 
 ## 4. Backend checkout и административные цены
 
@@ -136,8 +162,8 @@ WEBHOOK_HOST=https://tanyapi.chillcreative.ru
 WEBHOOK_BIND_HOST=127.0.0.1
 WEBHOOK_PORT=1888
 MINI_APP_PATH=/mini-app
-MINI_APP_URL=https://tanyapp.xn--e1aikcel5c5a.online/mini-app/
-STATIC_BASE_URL=https://tanyapp.xn--e1aikcel5c5a.online
+MINI_APP_URL=https://neuromixbot.com/mini-app/
+STATIC_BASE_URL=https://neuromixbot.com
 ```
 
 Точные обязательные provider/payment значения перечислены в [environment.md](environment.md).
@@ -195,19 +221,19 @@ journalctl -u banano-kling.service -f
 Production media uses the same public origin as the Mini App:
 
 ```text
-https://tanyapp.xn--e1aikcel5c5a.online/uploads/...
+https://neuromixbot.com/uploads/...
 ```
 
 Required runtime values:
 
 ```dotenv
-STATIC_BASE_URL=https://tanyapp.xn--e1aikcel5c5a.online
-GENJUTSU_PUBLIC_BASE_URL=https://tanyapp.xn--e1aikcel5c5a.online
+STATIC_BASE_URL=https://neuromixbot.com
+GENJUTSU_PUBLIC_BASE_URL=https://neuromixbot.com
 ```
 
-`WEBHOOK_HOST` remains the backend/webhook origin `https://tanyapi.chillcreative.ru`; do not replace payment/provider webhook URLs as part of the media-origin change.
+`WEBHOOK_HOST` remains the backend/webhook origin `https://tanyapi.chillcreative.ru`; payment and Telegram webhook URLs stay unchanged. New signed Genjutsu provider callback URLs follow GENJUTSU_PUBLIC_BASE_URL; both old and new vhosts retain the signed /genjutsu/ routes.
 
-The active Nginx vhost `/etc/nginx/sites-available/tanyapp.xn--e1aikcel5c5a.online.conf` proxies `/uploads/` and signed `/genjutsu/` routes to backend port `1888`. Validate config before reload:
+The active Nginx vhost `/etc/nginx/sites-available/neuromixbot.com.conf` proxies `/uploads/` and signed `/genjutsu/` routes to backend port `1888`. Validate config before reload:
 
 ```bash
 sudo nginx -t
@@ -217,10 +243,10 @@ sudo systemctl reload nginx
 Smoke a real stored media path, including Range support used by video clients:
 
 ```bash
-curl -sSI https://tanyapp.xn--e1aikcel5c5a.online/uploads/feed/<real-file.webp>
+curl -sSI https://neuromixbot.com/uploads/feed/<real-file.webp>
 curl -sS -o /dev/null -H 'Range: bytes=0-1023' \
   -w '%{http_code}\n' \
-  https://tanyapp.xn--e1aikcel5c5a.online/uploads/<real-video.mp4>
+  https://neuromixbot.com/uploads/<real-video.mp4>
 ```
 
 Expected: ordinary media returns `200`; a valid ranged video request returns `206`. Old `tanyapi.chillcreative.ru/uploads/...` links stay readable only for backward compatibility and must not be generated for new media.
@@ -302,13 +328,13 @@ Frontend static assets предыдущей сборки не должны уд�
 ### Frontend HTML
 
 ```bash
-curl -fsSI https://tanyapp.xn--e1aikcel5c5a.online/mini-app/
+curl -fsSI https://neuromixbot.com/mini-app/
 ```
 
 ### Brand metadata
 
 ```bash
-curl -fsS https://tanyapp.xn--e1aikcel5c5a.online/mini-app/ \
+curl -fsS https://neuromixbot.com/mini-app/ \
   | grep -o '<title>[^<]*</title>'
 ```
 
@@ -321,19 +347,19 @@ curl -fsS https://tanyapp.xn--e1aikcel5c5a.online/mini-app/ \
 ### Asset
 
 ```bash
-ASSET=$(curl -fsS https://tanyapp.xn--e1aikcel5c5a.online/mini-app/ \
+ASSET=$(curl -fsS https://neuromixbot.com/mini-app/ \
   | grep -oE '/mini-app/_next/static/[^" ]+\.(js|css)' \
   | head -n1)
 
 echo "$ASSET"
-curl -fsSI "https://tanyapp.xn--e1aikcel5c5a.online${ASSET}"
+curl -fsSI "https://neuromixbot.com${ASSET}"
 ```
 
 ### API proxy
 
 ```bash
 curl -i -X POST \
-  https://tanyapp.xn--e1aikcel5c5a.online/mini-app/api/bootstrap \
+  https://neuromixbot.com/mini-app/api/bootstrap \
   -H 'Content-Type: application/json' \
   --data '{}'
 ```
@@ -352,7 +378,7 @@ curl -i -X POST \
 - создаётся тестовая задача;
 - готовый результат появляется в карточке;
 - публикация и profile/feed работают;
-- новые media-превью используют `tanyapp.xn--e1aikcel5c5a.online`; legacy `/uploads/` ссылки нормализуются без массовой перезаписи истории.
+- новые media-превью используют `neuromixbot.com`; legacy `/uploads/` ссылки нормализуются без массовой перезаписи истории.
 
 ## 13. Rollback frontend
 
@@ -364,7 +390,7 @@ curl -i -X POST \
 
 1. Найти последнюю подтверждённую backup-директорию.
 2. Сравнить её содержимое с текущим deployment.
-3. Для текущего frontend восстановить в `/var/www/tanyapp.xn--e1aikcel5c5a.online`; legacy backup нельзя автоматически применять к новому vhost.
+3. Для текущего frontend восстановить в `/var/www/neuromixbot.com`; legacy backup нельзя автоматически применять к новому vhost.
 4. Проверить права.
 5. Выполнить `nginx -t`.
 6. Проверить HTML и реальный asset.

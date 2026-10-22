@@ -222,7 +222,7 @@ HTML должен иметь `no-store/no-cache`. Hashed chunks — immutable.
 Публичные сохранённые media должны использовать:
 
 ```text
-https://tanyapp.xn--e1aikcel5c5a.online/uploads/...
+https://neuromixbot.com/uploads/...
 ```
 
 Feed grid должна предпочитать WebP thumbnail, если backend его предоставляет.

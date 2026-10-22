@@ -2,7 +2,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PRODUCTION_MINI_APP_URL = "https://tanyapp.xn--e1aikcel5c5a.online/mini-app/"
+PRODUCTION_MINI_APP_URL = "https://neuromixbot.com/mini-app/"
 
 
 def test_production_backend_deploy_pins_frontend_url_only_on_tanyapi():
@@ -30,5 +30,12 @@ def test_backend_and_static_production_deploy_share_the_same_miniapp_url():
     )
 
     assert PRODUCTION_MINI_APP_URL in backend_deploy
-    assert "tanyapp.xn--e1aikcel5c5a.online" in frontend_deploy
-    assert "tanyapp.xn--e1aikcel5c5a.online/mini-app/revision.txt" in production_workflow
+    assert 'DEFAULT_FRONTEND_DOMAIN="neuromixbot.com"' in frontend_deploy
+    assert "neuromixbot.com/mini-app/revision.txt" in production_workflow
+
+
+def test_reliable_deploy_verifies_the_new_public_origin():
+    workflow = (ROOT / ".github/workflows/deploy-production-reliable.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "https://neuromixbot.com/mini-app/revision.txt" in workflow

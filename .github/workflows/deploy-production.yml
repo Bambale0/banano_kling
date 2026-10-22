@@ -306,7 +306,7 @@ jobs:
 
           live_frontend_revision="$(
             curl -fsS --max-time 20 \
-              "https://tanyapp.xn--e1aikcel5c5a.online/mini-app/revision.txt?revision=${EXPECTED_SHA}"
+              "https://neuromixbot.com/mini-app/revision.txt?revision=${EXPECTED_SHA}"
           )"
           [ "$live_frontend_revision" = "$EXPECTED_SHA" ]
 
@@ -345,7 +345,7 @@ jobs:
           docker compose -f compose.backend.yml ps
           docker compose -f compose.backend.yml logs --tail=200 bot
           echo '=== Mini App ==='
-          curl -fsS --max-time 10 https://tanyapp.xn--e1aikcel5c5a.online/mini-app/revision.txt || true
+          curl -fsS --max-time 10 https://neuromixbot.com/mini-app/revision.txt || true
           REMOTE
 
       - name: Record GitHub SSH result
@@ -543,7 +543,7 @@ jobs:
           bash scripts/deploy_miniapp_local.sh "$EXPECTED_SHA"
           live_frontend_revision="$(
             curl -fsS --max-time 20 \
-              "https://tanyapp.xn--e1aikcel5c5a.online/mini-app/revision.txt?revision=${EXPECTED_SHA}"
+              "https://neuromixbot.com/mini-app/revision.txt?revision=${EXPECTED_SHA}"
           )"
           [ "$live_frontend_revision" = "$EXPECTED_SHA" ]
 
@@ -582,7 +582,7 @@ jobs:
           docker compose -f compose.backend.yml ps
           docker compose -f compose.backend.yml logs --tail=200 bot
           echo "=== Mini App ==="
-          curl -fsS --max-time 10 https://tanyapp.xn--e1aikcel5c5a.online/mini-app/revision.txt || true'
+          curl -fsS --max-time 10 https://neuromixbot.com/mini-app/revision.txt || true'
 
           if [ "$(id -u)" -eq 0 ]; then
             bash -c "$diagnostic" -- "$project_dir"

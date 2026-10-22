@@ -15,7 +15,7 @@ exec </dev/null
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 EXPECTED_SHA="${1:-$(git -C "$PROJECT_DIR" rev-parse HEAD)}"
-DEFAULT_FRONTEND_DOMAIN="tanyapp.xn--e1aikcel5c5a.online"
+DEFAULT_FRONTEND_DOMAIN="neuromixbot.com"
 FRONTEND_DOMAIN="${MINIAPP_FRONTEND_DOMAIN:-$DEFAULT_FRONTEND_DOMAIN}"
 PROFILE_FILE="/etc/banano-miniapp/profiles/${FRONTEND_DOMAIN}.env"
 WEB_ROOT="/var/www/${FRONTEND_DOMAIN}"
