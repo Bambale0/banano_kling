@@ -56,6 +56,7 @@ jobs:
         run: |
           node e2e/critical-flows.mjs
           node e2e/trend-share-clipboard.mjs
+          node e2e/payment-browser.mjs
 
       - name: Capture locked dependency audit report
         if: always()

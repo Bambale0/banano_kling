@@ -8,7 +8,7 @@ import { useApp } from '@/lib/app-context'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import { bootstrapApp } from '@/lib/api'
+import { bootstrapApp, sendMiniAppClientLog } from '@/lib/api'
 import { createPayment } from '@/lib/payment-api'
 import type { PaymentProvider } from '@/lib/types'
 
@@ -71,6 +71,19 @@ export function BalanceSheet() {
   const emailInputRef = useRef<HTMLInputElement>(null)
   const [loadingPayment, setLoadingPayment] = useState<string | null>(null)
   const [customerEmail, setCustomerEmail] = useState('')
+  const [readyPayment, setReadyPayment] = useState<{
+    url: string; orderId: string; provider: PaymentProvider; credits: number; amountRub: number | null
+  } | null>(null)
+  const paymentReadyRef = useRef<HTMLElement>(null)
+  const balanceOpenRef = useRef(isBalanceOpen)
+
+  useEffect(() => { balanceOpenRef.current = isBalanceOpen }, [isBalanceOpen])
+
+  useEffect(() => {
+    if (readyPayment && isBalanceOpen) {
+      paymentReadyRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
+    }
+  }, [readyPayment, isBalanceOpen])
 
   const normalizedCustomerEmail = normalizeCustomerEmail(customerEmail)
   const customerEmailValid = isValidCustomerEmail(normalizedCustomerEmail)
@@ -108,15 +121,6 @@ export function BalanceSheet() {
   }
 
   const openExternalPayment = (url: string) => {
-    // Telegram iOS runs Mini Apps inside WKWebView. After the awaited payment
-    // creation request, opening a new window can lose the original user gesture
-    // and iOS silently blocks the popup. Same-window navigation is not subject
-    // to that popup gate and keeps the payment flow reliable on iPhone/iPad.
-    if (isIOSPaymentWebView()) {
-      window.location.assign(url)
-      return
-    }
-
     const webApp = getTelegramPaymentBridge()
     if (webApp?.openLink) {
       try {
@@ -156,6 +160,7 @@ export function BalanceSheet() {
     if (!selectedPackage) return
 
     const loadingKey = `${packageId}:${provider}`
+    setReadyPayment(null)
     setLoadingPayment(loadingKey)
     try {
       if (provider === ('tribute' as PaymentProvider)) {
@@ -197,6 +202,22 @@ export function BalanceSheet() {
       }
 
       if (payment.payment_url) {
+        // Keep the exact signed string. A fresh click can open externally even
+        // when the API response consumed Telegram's user-interaction TTL.
+        setReadyPayment({
+          url: payment.payment_url, orderId: payment.order_id, provider: payment.provider,
+          credits: payment.credits,
+          amountRub: payment.provider.startsWith('lava_foreign') ? null : selectedPackage.price_rub,
+        })
+        sendMiniAppClientLog('payment-checkout-ready', {
+          provider: payment.provider, order_id: payment.order_id,
+          message: `provider=${payment.provider} order_id=${payment.order_id} requires_tap=${isIOSPaymentWebView()}`,
+        })
+        if (!balanceOpenRef.current) return
+        if (isIOSPaymentWebView()) {
+          toast.message('Счёт готов', { description: 'Нажмите «Перейти к оплате», чтобы открыть платёжную страницу.' })
+          return
+        }
         openExternalPayment(payment.payment_url)
         toast.message(
           provider === 'lava_sbp'
@@ -270,6 +291,34 @@ export function BalanceSheet() {
             </div>
 
             <div className="space-y-5 px-5 pb-6">
+              {readyPayment ? (
+                <section ref={paymentReadyRef} aria-label="Готовый счёт" className="rounded-2xl border border-gold/40 bg-gold/10 p-4">
+                  <p className="font-medium text-foreground">Счёт готов: {readyPayment.amountRub !== null ? `${readyPayment.amountRub} ₽ · ` : ''}{readyPayment.credits}🍌</p>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    Откройте платёжную страницу. Если она не открылась, нажмите ещё раз — счёт останется тем же.
+                  </p>
+                  <Button asChild className="mt-3 w-full bg-gold text-primary-foreground hover:bg-gold/90">
+                    <a href={readyPayment.url} target="_blank" rel="noopener noreferrer" onClick={(event) => {
+                      const bridge = getTelegramPaymentBridge()
+                      let method = 'browser-link'
+                      if (bridge?.openLink) {
+                        try {
+                          // Native open must run synchronously inside this fresh click.
+                          bridge.openLink(readyPayment.url)
+                          event.preventDefault()
+                          method = 'telegram-open-link'
+                        } catch {
+                          // Leave the native anchor action intact if the bridge fails.
+                          method = 'browser-link-fallback'
+                        }
+                      }
+                      sendMiniAppClientLog('payment-checkout-open-requested', {
+                        message: `provider=${readyPayment.provider} order_id=${readyPayment.orderId} method=${method}`,
+                      })
+                    }}>Перейти к оплате</a>
+                  </Button>
+                </section>
+              ) : null}
               <div className="rounded-2xl border border-gold/20 bg-gold/10 p-4">
                 <div className="flex items-center justify-between gap-4">
                   <div>
