@@ -32,10 +32,19 @@ try {
     const page = await context.newPage()
     page.setDefaultTimeout(20_000)
     let paymentRequests = 0
-    const errors = [], externalRequests = [], clientLogs = []
+    const errors = [], externalRequests = []
     page.on('pageerror', error => errors.push(error.message))
     await context.addInitScript(({ platform, bridge }) => {
       window.__openedPayments = []; window.__staleOpenAttempts = 0; window.__lastTap = 0
+      window.__paymentClientLogs = []
+      // WebKit does not always expose sendBeacon Blob bodies through request
+      // interception. Capture the actual client payload before it is sent.
+      Object.defineProperty(navigator, 'sendBeacon', { configurable: true, value: (_url, data) => {
+        Promise.resolve(data instanceof Blob ? data.text() : String(data)).then(body => {
+          window.__paymentClientLogs.push(JSON.parse(body))
+        })
+        return true
+      } })
       document.addEventListener('click', () => { window.__lastTap = performance.now() }, true)
       window.Telegram = { WebApp: { platform, initData: 'query_id=synthetic-payment', initDataUnsafe: {},
         ready() {}, expand() {}, onEvent() {}, offEvent() {},
@@ -71,7 +80,7 @@ try {
           await new Promise(resolve => setTimeout(resolve, 1250))
           data = { ok: true, provider: 'robokassa', order_id: '9007199254740993123', payment_id: 'fixture', payment_url: exactUrl, credits: 50 }
         }
-        else if (url.pathname.endsWith('/client-log')) clientLogs.push(request.postDataJSON())
+        else if (url.pathname.endsWith('/client-log')) return route.fulfill({ json: { ok: true } })
         else if (url.pathname.endsWith('/prompts')) data = { ok: true, prompts: [] }
         else if (url.pathname.endsWith('/feed')) data = { ok: true, feed: [], models: [] }
         else if (url.pathname.endsWith('/genjutsu')) data = { ok: true, visible: false }
@@ -108,6 +117,9 @@ try {
     assert.equal(page.url(), baseUrl)
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
     assert.deepEqual(errors, [])
+    await page.waitForFunction(() => window.__paymentClientLogs.some(item => item.event === 'payment-checkout-open-requested'))
+    const clientLogs = await page.evaluate(() => window.__paymentClientLogs)
+    assert.equal(clientLogs.some(item => item.event === 'payment-checkout-ready'), true)
     for (const log of clientLogs.filter(item => item.event.startsWith('payment-checkout'))) {
       assert.equal(JSON.stringify(log).includes('SignatureValue'), false, 'No signed URLs in telemetry')
     }
