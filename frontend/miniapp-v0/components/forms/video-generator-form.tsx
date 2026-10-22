@@ -675,7 +675,7 @@ export function VideoGeneratorForm({
     publicationSourceId={wanPublicationSource}
     modelSelector={<ModelSelect models={visibleModels.map(item => ({
       id: item.id, label: item.label, description: item.description,
-      cost: (item.id === 'wan_3_prime' || item.id === 'wan_3') ? undefined : getVideoModelPerSecondCost(item, 5, qualityForModel(item)),
+      cost: (item.id === 'wan_3_prime' || item.id === 'wan_3' || item.id === 'kling_4') ? undefined : getVideoModelPerSecondCost(item, 5, qualityForModel(item)),
     }))} value={selectedModel} onChange={handleModelChange} />}
   />
 
