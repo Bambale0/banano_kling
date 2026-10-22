@@ -18,7 +18,7 @@ SKIP_BACKUP="${SKIP_BACKUP:-0}"
 PULL_IMAGE="${PULL_IMAGE:-0}"
 ACTION="${1:-deploy}"
 PRODUCTION_BRANCH="${PRODUCTION_BRANCH:-tanyapi}"
-PRODUCTION_MINI_APP_URL="${PRODUCTION_MINI_APP_URL:-https://tanyapp.xn--e1aikcel5c5a.online/mini-app/}"
+PRODUCTION_MINI_APP_URL="${PRODUCTION_MINI_APP_URL:-https://neuromixbot.com/mini-app/}"
 
 log() {
     printf '[docker-deploy] %s\n' "$*"
@@ -354,7 +354,7 @@ Environment overrides:
   RENDERGRID_DEPLOY_BACKFILL_CONCURRENCY=4
   RENDERGRID_DEPLOY_BACKFILL_MAX_BATCHES=1
   PRODUCTION_BRANCH=tanyapi
-  PRODUCTION_MINI_APP_URL=https://tanyapp.xn--e1aikcel5c5a.online/mini-app/
+  PRODUCTION_MINI_APP_URL=https://neuromixbot.com/mini-app/
 USAGE
 }
 

@@ -20,6 +20,7 @@ export function normalizeMiniAppMediaUrl(value?: string | null): string {
       'cdn.chillcreative.ru',
       'tanyapp.chillcreative.ru',
       'tanyapp.xn--e1aikcel5c5a.online',
+      'neuromixbot.com',
     ])
     if (
       url.pathname.startsWith('/uploads/')

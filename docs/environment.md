@@ -26,8 +26,8 @@ WEBHOOK_PORT=1888
 
 # Mini App
 MINI_APP_PATH=/mini-app
-MINI_APP_URL=https://cdn.chillcreative.ru/mini-app/
-STATIC_BASE_URL=https://tanyapp.xn--e1aikcel5c5a.online
+MINI_APP_URL=https://neuromixbot.com/mini-app/
+STATIC_BASE_URL=https://neuromixbot.com
 
 # Storage
 DATABASE_URL=REPLACE_ME
@@ -125,7 +125,7 @@ Frontend export также собирается с `/mini-app` basePath.
 Публичный URL, который открывает Telegram:
 
 ```dotenv
-MINI_APP_URL=https://cdn.chillcreative.ru/mini-app/
+MINI_APP_URL=https://neuromixbot.com/mini-app/
 ```
 
 Trailing slash рекомендуется сохранить.
@@ -135,13 +135,13 @@ Trailing slash рекомендуется сохранить.
 Публичная база сохранённых uploads:
 
 ```dotenv
-STATIC_BASE_URL=https://tanyapp.xn--e1aikcel5c5a.online
+STATIC_BASE_URL=https://neuromixbot.com
 ```
 
 Backend формирует URLs вида:
 
 ```text
-https://tanyapp.xn--e1aikcel5c5a.online/uploads/...
+https://neuromixbot.com/uploads/...
 ```
 
 Не добавлять `/uploads` в значение, если код уже добавляет этот segment.
@@ -287,7 +287,7 @@ Runtime variables:
 
 - `HIGGSFIELD_API_KEY` — server credential `key_id:key_secret`;
 - `HIGGSFIELD_API_BASE_URL` — default `https://api.higgsfield.ai`;
-- `GENJUTSU_PUBLIC_BASE_URL` — public HTTPS origin for signed media and callback routes; production: `https://tanyapp.xn--e1aikcel5c5a.online`;
+- `GENJUTSU_PUBLIC_BASE_URL` — public HTTPS origin for signed media and callback routes; production: `https://neuromixbot.com`;
 - `GENJUTSU_MEDIA_SIGNING_KEY` — high-entropy HMAC secret;
 - `GENJUTSU_MEDIA_ROOT` — private durable storage, production default `/app/data/genjutsu_media`.
 

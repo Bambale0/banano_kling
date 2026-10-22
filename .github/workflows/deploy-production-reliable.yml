@@ -290,7 +290,7 @@ jobs:
           run_root bash scripts/deploy_miniapp_local.sh "$EXPECTED_SHA"
 
           curl -fsS --max-time 20 https://tanyapi.chillcreative.ru/health >/dev/null
-          live_frontend_revision="$(curl -fsS --max-time 20 "https://tanyapp.xn--e1aikcel5c5a.online/mini-app/revision.txt?revision=${EXPECTED_SHA}")"
+          live_frontend_revision="$(curl -fsS --max-time 20 "https://neuromixbot.com/mini-app/revision.txt?revision=${EXPECTED_SHA}")"
           [ "$live_frontend_revision" = "$EXPECTED_SHA" ]
 
           tribute_http="$(curl -sS --max-time 20 -o /tmp/tribute-probe.json -w '%{http_code}' \

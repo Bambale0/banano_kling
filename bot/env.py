@@ -7,23 +7,20 @@ from dotenv import dotenv_values, load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SKIP_PROJECT_ENV_VAR = "BANANO_SKIP_PROJECT_ENV"
-DEFAULT_MINI_APP_URL = "https://tanyapp.xn--e1aikcel5c5a.online/mini-app/"
+DEFAULT_MINI_APP_URL = "https://neuromixbot.com/mini-app/"
 
 
 def _apply_runtime_defaults() -> None:
-    """Force Telegram WebApp buttons to the deployed public frontend."""
+    """Use the public frontend unless the runtime explicitly configures one."""
 
-    # This repository/branch has one production Mini App frontend. Do not trust
-    # stale MINI_APP_URL values from systemd, Docker Compose or old .env files:
-    # they previously pointed users to the backend HTML fallback.
-    os.environ["MINI_APP_URL"] = DEFAULT_MINI_APP_URL
+    os.environ.setdefault("MINI_APP_URL", DEFAULT_MINI_APP_URL)
 
 
 def load_project_env(project_root: Path | None = None) -> None:
     """Load project env files with Postgres overriding local SQLite defaults.
 
-    Real process environment variables keep highest priority, except for the
-    public Mini App URL which is pinned to the production frontend host above.
+    Real process environment variables keep highest priority, including the
+    public Mini App URL. The canonical production URL is only a fallback.
     """
 
     if os.getenv(SKIP_PROJECT_ENV_VAR, "").strip().lower() in {

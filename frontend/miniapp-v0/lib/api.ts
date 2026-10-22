@@ -293,7 +293,7 @@ function rewriteBackendUploadUrl(value: string): string {
     const url = new URL(value)
     const host = url.hostname.toLowerCase()
     if (
-      (host === 'tanyapi.chillcreative.ru' || host === 'tanyapp.xn--e1aikcel5c5a.online')
+      (host === 'tanyapi.chillcreative.ru' || host === 'tanyapp.xn--e1aikcel5c5a.online' || host === 'neuromixbot.com')
       && url.pathname.startsWith('/uploads/feed/thumbs/')
     ) {
       return `${window.location.origin}${url.pathname}${url.search}${url.hash}`
