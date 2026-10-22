@@ -77,7 +77,7 @@ def effective_video_repeat_grant(task: dict[str, Any]) -> dict[str, Any] | None:
 
     if generation_has_private_recipe(task):
         return None
-    legacy = _legacy_selection_descriptor_plan(task)
+    legacy = _legacy_selected_reference_plan(task)
     return legacy["grant"] if legacy is not None else None
 
 
@@ -253,9 +253,10 @@ def build_video_repeat_plan(
     return {"version": 1, "grant": grant, **recipe}
 
 
-def _legacy_selection_descriptor_plan(task: dict[str, Any]) -> dict[str, Any] | None:
-    # This is a display-only bridge. The launch still uses the original legacy
-    # grant/selection and its authenticated, before-charge permission checks.
+def _legacy_selected_reference_plan(task: dict[str, Any]) -> dict[str, Any] | None:
+    # Resolve the historical retained-slot contract for descriptors, owner
+    # editing and authenticated launches. Reads never rewrite stored consent;
+    # launches still recheck the original selection before charging.
     if not task.get("feed_references_visible") or str(task.get("model") or "") != "seedance_2_5":
         return None
     selection = task.get("feed_reference_selection")
@@ -281,14 +282,14 @@ def _legacy_selection_descriptor_plan(task: dict[str, Any]) -> dict[str, Any] | 
         raise VideoRepeatContractError("Исходные референсы для повтора сохранены не полностью.") from exc
     if supported is None:
         return None
-    # Reuse validation, capability/rate metadata and alias safety. This temporary
-    # copy is never saved, returned as consent, or used to authorize a launch.
-    descriptor_task = {
+    # Validate the compatibility grant using the same capability/alias checks as
+    # typed consent. This temporary copy is never saved or exposed to clients.
+    selected_task = {
         **task, "feed_repeat_reference_selection": {
             "version": 1, "images": selection.get("images", []), "videos": selection.get("videos", []),
         },
     }
-    return build_video_repeat_plan(descriptor_task)
+    return build_video_repeat_plan(selected_task)
 
 
 def video_repeat_descriptors(
@@ -297,7 +298,7 @@ def video_repeat_descriptors(
     try:
         plan = build_video_repeat_plan(foreign_video_repeat_task(task))
         if plan is None:
-            plan = _legacy_selection_descriptor_plan(task)
+            plan = _legacy_selected_reference_plan(task)
         if plan is None:
             return None
         # Presence-only ×2 has been retired. Input duration is measured by the
