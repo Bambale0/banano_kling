@@ -97,7 +97,7 @@ def test_production_frontend_is_built_on_the_same_server() -> None:
     assert 'remote_sha="$(git rev-parse origin/tanyapi)"' in deploy_workflow
     assert '"$remote_sha" = "$EXPECTED_SHA"' in deploy_workflow
     assert 'scripts/deploy_miniapp_local.sh "$EXPECTED_SHA"' in deploy_workflow
-    assert "tanyapp.xn--e1aikcel5c5a.online/mini-app/revision.txt" in deploy_workflow
+    assert "neuromixbot.com/mini-app/revision.txt" in deploy_workflow
     assert "tanyafrontend" not in deploy_workflow
     assert "cdn.chillcreative.ru" not in deploy_workflow
     assert "--remote-deploy" not in deploy_workflow
@@ -108,7 +108,7 @@ def test_production_frontend_is_built_on_the_same_server() -> None:
     assert "false-green partial deployment" in backend_script
 
     deploy_script = read("scripts/deploy_miniapp_local.sh")
-    assert 'DEFAULT_FRONTEND_DOMAIN="tanyapp.xn--e1aikcel5c5a.online"' in deploy_script
+    assert 'DEFAULT_FRONTEND_DOMAIN="neuromixbot.com"' in deploy_script
     assert "exec </dev/null" in deploy_script
     assert 'npm ci' in deploy_script
     assert 'npm run lint' in deploy_script
