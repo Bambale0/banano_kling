@@ -12,6 +12,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Input } from '@/components/ui/input'
 import { ModelSelect } from './model-select'
 import { Wan3PrimeForm } from './wan3-prime-form'
+import { Kling4Form } from './kling4-form'
 import type { Wan3PrimeGenerateResponse, Wan3PrimeRecipe } from '@/lib/wan3-prime-api'
 import { RatioSelect } from './ratio-select'
 import { UploadArea } from './upload-area'
@@ -664,6 +665,8 @@ export function VideoGeneratorForm({
     setWanLastFrame([])
   }
 
+  if (selectedModel === 'kling_4' && isAdmin) return <Kling4Form modelSelector={<ModelSelect models={visibleModels.map(item => ({ id: item.id, label: item.label, description: item.description }))} value={selectedModel} onChange={handleModelChange}/>} />
+
   if (isWanPrime) return <Wan3PrimeForm
     key={selectedModel + ':' + (wanOwnerTaskId || (wanPublicationSource ? `publication-${wanPublicationSource}` : 'wan-composer'))}
     model={selectedModel === 'wan_3' ? 'wan_3' : 'wan_3_prime'}
@@ -672,7 +675,7 @@ export function VideoGeneratorForm({
     publicationSourceId={wanPublicationSource}
     modelSelector={<ModelSelect models={visibleModels.map(item => ({
       id: item.id, label: item.label, description: item.description,
-      cost: (item.id === 'wan_3_prime' || item.id === 'wan_3') ? undefined : getVideoModelPerSecondCost(item, 5, qualityForModel(item)),
+      cost: (item.id === 'wan_3_prime' || item.id === 'wan_3' || item.id === 'kling_4') ? undefined : getVideoModelPerSecondCost(item, 5, qualityForModel(item)),
     }))} value={selectedModel} onChange={handleModelChange} />}
   />
 
@@ -693,7 +696,7 @@ export function VideoGeneratorForm({
                     ? m.omni_character_cost ?? 5
                     : requiresDurationQuote && m.id === selectedModel
                       ? baseCost / Math.max(selectedDuration, 1)
-                      : getVideoModelPerSecondCost(m, selectedDuration, qualityForModel(m), m.id === selectedModel ? repeatCostMultiplier : 1),
+                      : m.id === 'kling_4' ? undefined : getVideoModelPerSecondCost(m, selectedDuration, qualityForModel(m), m.id === selectedModel ? repeatCostMultiplier : 1),
             }))}
             value={selectedModel}
             onChange={handleModelChange}

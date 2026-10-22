@@ -2785,7 +2785,7 @@ async def _cleanup_loop():
                 max_age_seconds=UPLOAD_RETENTION_SECONDS,
                 skip_filenames=set(),
                 # Author template assets are durable inputs, not temporary uploads.
-                skip_dirnames={"refs", "feed", "wan3_prime", "trend-assets"},
+                skip_dirnames={"refs", "feed", "wan3_prime", "kling4", "trend-assets"},
                 protected_paths=public_feed_paths,
             )
             await _remove_old_files(
@@ -2816,6 +2816,9 @@ async def _start_wan_for_polling(bot: Bot) -> None:
         return  # The aiohttp application owns the webhook-mode lifecycle.
     from bot.services.wan3_prime_lifecycle import wan3_prime_lifecycle
 
+    from bot.services.kling4_lifecycle import kling4_lifecycle
+    kling4_lifecycle.telegram_bot = bot
+    await kling4_lifecycle.start()
     wan3_prime_lifecycle.telegram_bot = bot
     await wan3_prime_lifecycle.startup()
     await wan3_prime_lifecycle.start_worker()
@@ -2927,6 +2930,8 @@ async def on_shutdown(bot: Bot):
         from bot.services.wan3_prime_lifecycle import wan3_prime_lifecycle
 
         await wan3_prime_lifecycle.cleanup()
+        from bot.services.kling4_lifecycle import kling4_lifecycle
+        await kling4_lifecycle.close()
     try:
         from bot.services.cryptobot_service import cryptobot_service
 
