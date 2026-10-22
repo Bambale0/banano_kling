@@ -605,8 +605,11 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
     # Only this authenticated boundary can authorize the owner's legacy reuse.
     # Foreign repeats retain only explicit typed or validated historical slots.
     # Every other source slot requires a caller-supplied replacement.
-    consumer_task = source_task if source_task["_repeat_is_owner"] else foreign_video_repeat_task(source_task)
-    enriched = enrich_video_repeat_body(body, consumer_task)
+    try:
+        consumer_task = source_task if source_task["_repeat_is_owner"] else foreign_video_repeat_task(source_task)
+        enriched = enrich_video_repeat_body(body, consumer_task)
+    except VideoRepeatContractError as exc:
+        raise VideoRepeatReferenceError(str(exc)) from exc
     # This authenticated boundary wraps both legacy video handlers and the
     # separate Seedance 2.5 endpoint. Compose once from the original client
     # changes, keeping the author's base server-side just like photo remixes.
