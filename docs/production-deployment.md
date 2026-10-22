@@ -109,8 +109,9 @@ certbot renew --cert-name neuromixbot.com --dry-run --run-deploy-hooks --no-rand
 `MINI_APP_URL` remains an environment setting; bot/env.py respects an explicit
 value. Production deploy selects `PRODUCTION_MINI_APP_URL` (defaulting to the new
 origin) and verifies it before and after cutover. `STATIC_BASE_URL` and
-`GENJUTSU_PUBLIC_BASE_URL` must use `https://neuromixbot.com`. Provider/payment and
-Telegram webhook origin remains `https://tanyapi.chillcreative.ru`.
+`GENJUTSU_PUBLIC_BASE_URL` must use `https://neuromixbot.com`. Telegram and payment webhook origin remains `https://tanyapi.chillcreative.ru`.
+New Genjutsu signed media URLs and provider callbacks use the new shared origin;
+existing signed URLs on the previous origin remain supported.
 
 ## 4. Backend checkout и административные цены
 
@@ -229,7 +230,7 @@ STATIC_BASE_URL=https://neuromixbot.com
 GENJUTSU_PUBLIC_BASE_URL=https://neuromixbot.com
 ```
 
-`WEBHOOK_HOST` remains the backend/webhook origin `https://tanyapi.chillcreative.ru`; do not replace payment/provider webhook URLs as part of the media-origin change.
+`WEBHOOK_HOST` remains the backend/webhook origin `https://tanyapi.chillcreative.ru`; payment and Telegram webhook URLs stay unchanged. New signed Genjutsu provider callback URLs follow GENJUTSU_PUBLIC_BASE_URL; both old and new vhosts retain the signed /genjutsu/ routes.
 
 The active Nginx vhost `/etc/nginx/sites-available/neuromixbot.com.conf` proxies `/uploads/` and signed `/genjutsu/` routes to backend port `1888`. Validate config before reload:
 
