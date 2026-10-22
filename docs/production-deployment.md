@@ -92,7 +92,8 @@ curl -fsSI https://neuromixbot.com/mini-app/
 
 `neuromixbot.com` uses Reg.ru DNS and an A record to `144.76.188.75`.
 `/var/www/neuromixbot.com` is a symlink to the existing shared static root;
-`tanyapp.xn--e1aikcel5c5a.online` remains available for saved links and old buttons.
+`tanyapp.xn--e1aikcel5c5a.online` redirects launch pages to the new domain while retaining API, hashed assets, uploads
+and signed Genjutsu routes for old clients. Redirects preserve the query string.
 The active vhost is `/etc/nginx/sites-available/neuromixbot.com.conf`, with its
 reviewable copy in `ops/nginx/neuromixbot.com.conf`.
 

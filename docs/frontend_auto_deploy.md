@@ -11,8 +11,8 @@ the frontend domain; the optional root-only profile is
 `/etc/banano-miniapp/profiles/<domain>.env`. This script does not manage DNS or TLS.
 
 `/var/www/neuromixbot.com` shares the existing static root with
-`/var/www/tanyapp.xn--e1aikcel5c5a.online`; historical URLs continue to serve the
-same release. The Nginx vhost is recorded in `ops/nginx/neuromixbot.com.conf`.
+`/var/www/tanyapp.xn--e1aikcel5c5a.online`; historical launch pages redirect to the new domain, while old assets/API/media
+continue to serve the same release. The Nginx vhost is recorded in `ops/nginx/neuromixbot.com.conf`.
 
 The standalone 91.200.84.187 host and `cdn.sh` domain installer are legacy paths.
 Do not run them for normal production releases. See [production-deployment.md](production-deployment.md)
