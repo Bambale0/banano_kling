@@ -120,12 +120,17 @@ def setup_kling4_routes(app, miniapp_root):
 
     app.on_startup.append(startup)
     app.on_cleanup.append(cleanup)
-    app.router.add_post(
+    # The legacy add_post guard eagerly reads request bodies and exhausts
+    # multipart streams. Our actor boundary checks Telegram signature, current
+    # admin access and bans itself, before the bounded media parser reads bytes.
+    app.router.add_route(
+        "POST",
         miniapp_root
         + "/api/kling4/{action:quote|generate|status|history|recipe|adopt|settings}",
         route,
     )
-    app.router.add_post(
+    app.router.add_route(
+        "POST",
         miniapp_root + "/api/kling4/media/{action:init|chunk|complete|cancel|import}",
         media_route,
     )
