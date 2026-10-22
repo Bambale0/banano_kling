@@ -15,8 +15,25 @@ logger = logging.getLogger(__name__)
 
 
 async def _actor(request, body):
+    # Reject nonadmins before channel probes or user creation. Cryptographic
+    # Telegram verification must precede reading the claimed user ID.
+    from bot import miniapp
+    from bot.config import config
     from bot.wan3_prime_api import _actor_from_request
 
+    init_data = (
+        request.headers.get("X-Telegram-Init-Data")
+        or body.get("init_data")
+        or body.get("initData")
+        or ""
+    )
+    try:
+        verified = miniapp._validate_init_data(str(init_data), config.BOT_TOKEN)
+        telegram_id = int(verified["user"]["id"])
+    except (ValueError, TypeError, KeyError) as exc:
+        raise Kling4Error("Откройте Mini App заново из Telegram.", status=401) from exc
+    if not config.is_admin(telegram_id):
+        raise Kling4Error("Kling 4 доступен только администратору.", status=403)
     actor = await _actor_from_request(request, body)
     require_admin(actor)
     return actor

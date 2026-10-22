@@ -718,3 +718,27 @@ async def test_retention_serializes_with_publication_and_skips_full_protected_pa
         await conn.commit()
     await engine.cleanup_results()
     assert path.exists() and not private.exists()
+
+
+@pytest.mark.asyncio
+async def test_nonadmin_denied_before_user_creation_or_channel_probe(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from bot import kling4_api, miniapp
+    from tests.test_wan3_http_flow import signed_user
+
+    context = AsyncMock(
+        side_effect=AssertionError("Nonadmin must be denied before user context")
+    )
+    monkeypatch.setattr(miniapp, "_get_user_context", context)
+    app = web.Application()
+    app.router.add_post("/kling4/{action:quote}", kling4_api.route)
+    async with TestClient(TestServer(app)) as client:
+        response = await client.post(
+            "/kling4/quote", json={"init_data": signed_user(123123), "is_admin": True}
+        )
+        assert response.status == 403
+    context.assert_not_awaited()
