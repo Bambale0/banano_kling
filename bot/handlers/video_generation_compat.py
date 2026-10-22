@@ -122,6 +122,9 @@ async def _render_video_model_page(callback, state, *, family="all", page=0, cur
         "Выберите семейство или листайте общий каталог. Все режимы сохранены."
     )
     markup = _advanced_video_models_keyboard(current_model, family=family, page=page)
+    from bot.config import config
+    if config.is_admin(callback.from_user.id):
+        markup.inline_keyboard.insert(0, [types.InlineKeyboardButton(text="🎬 Kling 4 · админ", callback_data="k4:open")])
     try:
         await callback.message.edit_text(text, parse_mode="HTML", reply_markup=markup)
     except TelegramBadRequest as exc:

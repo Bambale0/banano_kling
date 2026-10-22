@@ -55,6 +55,7 @@ async def get_stuck_tasks(minutes: int = STUCK_THRESHOLD_MINUTES) -> list[Dict[s
               AND task_id NOT LIKE 'video_repeat_receipt_%'
               AND task_id NOT LIKE 'wan3_%'
               AND substr(task_id, 1, 5) <> 'wan3_'
+              AND substr(task_id, 1, 7) <> 'kling4_'
               AND {age_expr} >= ?
             ORDER BY COALESCE(updated_at, created_at) ASC
             LIMIT 50
@@ -210,6 +211,7 @@ async def force_fail_task(
               AND task_id NOT LIKE 'video_repeat_receipt_%'
               AND task_id NOT LIKE 'wan3_%'
               AND substr(task_id, 1, 5) <> 'wan3_'
+              AND substr(task_id, 1, 7) <> 'kling4_'
             """ + provider_guard + " RETURNING request_data",
             parameters,
         )

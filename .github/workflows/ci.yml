@@ -265,6 +265,7 @@ jobs:
           node e2e/bot-start-media-targets.mjs
           node e2e/bot-start-genjutsu.mjs
           node e2e/creator-tariff.mjs
+          node e2e/kling4.mjs
 
       - name: Record Mini App E2E result
         id: result

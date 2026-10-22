@@ -116,5 +116,5 @@ async def lock_publication(db, generation_id: int | str, user_id: int) -> None:
     clause, value = database._generation_identifier_clause(generation_id)
     row = await (await db.execute(f'SELECT task_id, model FROM generation_tasks WHERE {clause} AND user_id = ?',
                                   (value, user_id))).fetchone()
-    if row and (str(row[0] or '').startswith('wan3_') or row[1] == 'wan_3_prime'):
+    if row and (str(row[0] or '').startswith(('wan3_', 'kling4_')) or row[1] in {'wan_3_prime', 'kling_4'}):
         await lock_storage(db)

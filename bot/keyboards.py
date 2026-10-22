@@ -247,6 +247,7 @@ SUPPORTED_RATIOS = {
 }
 
 VIDEO_MODEL_LABELS = {
+    "kling_4": "Kling 4",
     "v3_std": "Kling v3",
     "v3_pro": "Kling 3.0",
     "v26_pro": "Kling 2.5 Turbo Pro",

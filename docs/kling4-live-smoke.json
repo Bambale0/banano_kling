@@ -1,0 +1,263 @@
+{
+  "date_utc": "2026-10-22T19:56:35.190566+00:00",
+  "total_tasks": 12,
+  "all_success": true,
+  "actual_credit_total": 1328.5,
+  "credit_cap": 2000,
+  "reserved_max_total": 1482.0,
+  "tasks": [
+    {
+      "case": "reference_text_720p",
+      "taskId": "3a6bd5787b4db63c2592e1f86e821c15",
+      "payload_sha256": "b09020d87a4dd5275f39c77bb47fb04b86bc3b9e5a8d5444ac7f6809bee83cce",
+      "state": "success",
+      "actual_credits": 85.5,
+      "reserved_max_credits": 85.5,
+      "costTime_seconds": 180,
+      "output_dimensions": [
+        1280,
+        720
+      ],
+      "output_duration": "3.041995",
+      "output_sha256": "290be738df8f251211d7719720d800dd4b001daaaf9e651cfddfe00236e1f26c",
+      "output_size": 2377139,
+      "audio": {
+        "codec": "aac",
+        "sample_rate": "44100",
+        "channels": 2
+      }
+    },
+    {
+      "case": "reference_text_1080p",
+      "taskId": "172215adf422a167cb4e760eb74d2a9d",
+      "payload_sha256": "ed3978a043bbe5665d3a7c8c0285bbeae154bae6129c2d86fd3596cde6e500c9",
+      "state": "success",
+      "actual_credits": 127.5,
+      "reserved_max_credits": 127.5,
+      "costTime_seconds": 170,
+      "output_dimensions": [
+        1920,
+        1080
+      ],
+      "output_duration": "3.041995",
+      "output_sha256": "79fd92f17837a9e26b732d8a610b3d901bc79700b9fe9c5dea9cc9ca9851db3f",
+      "output_size": 4983378,
+      "audio": {
+        "codec": "aac",
+        "sample_rate": "44100",
+        "channels": 2
+      }
+    },
+    {
+      "case": "reference_video_720p",
+      "taskId": "da0b496a7aaa837590b2f9e5a98dd02c",
+      "payload_sha256": "e688907581ab6351aca53069ac564704c5da9fbb28b5057c768648937da1c00a",
+      "state": "success",
+      "actual_credits": 102.0,
+      "reserved_max_credits": 102,
+      "costTime_seconds": 62,
+      "output_dimensions": [
+        1280,
+        720
+      ],
+      "output_duration": "3.041995",
+      "output_sha256": "8c882a6cea65ae9319043f78da4d3db5306ee59c63ec36534c420025efc1c28e",
+      "output_size": 744692,
+      "audio": {
+        "codec": "aac",
+        "sample_rate": "44100",
+        "channels": 2
+      }
+    },
+    {
+      "case": "reference_video_1080p",
+      "taskId": "0ce389a58a6ce229e3b9972c7f4f73a5",
+      "payload_sha256": "98b8fc85691693f2596c8bf8684914e800c4a0df21cea5660679838c405bf8e1",
+      "state": "success",
+      "actual_credits": 153.0,
+      "reserved_max_credits": 153.0,
+      "costTime_seconds": 81,
+      "output_dimensions": [
+        1920,
+        1080
+      ],
+      "output_duration": "3.041995",
+      "output_sha256": "324432cccb83030b760000fa55786331d08b8430d35d2c6bc56052ebc64bfb9f",
+      "output_size": 1166832,
+      "audio": {
+        "codec": "aac",
+        "sample_rate": "44100",
+        "channels": 2
+      }
+    },
+    {
+      "case": "keyframe_720p",
+      "taskId": "e3d92967ad294a3fdbe68d22329128cf",
+      "payload_sha256": "7b5e18e0d48ab4afb384f8245d78f460f13a500d17d3de6cc3140abf33c61667",
+      "state": "success",
+      "actual_credits": 85.5,
+      "reserved_max_credits": 85.5,
+      "costTime_seconds": 125,
+      "output_dimensions": [
+        1280,
+        720
+      ],
+      "output_duration": "3.041995",
+      "output_sha256": "a5846e4542ed9cebb113f65dae73e307a0a83a99e4865b62517e0b7c6ff39c12",
+      "output_size": 596625,
+      "audio": {
+        "codec": "aac",
+        "sample_rate": "44100",
+        "channels": 2
+      }
+    },
+    {
+      "case": "keyframe_1080p",
+      "taskId": "8c9aa63fe5f291b1be93b7275c064f00",
+      "payload_sha256": "b5e6a0adb18c0af83b1db888e60cf6ccc7beaafe21d086bc196cbb7e18d6ae91",
+      "state": "success",
+      "actual_credits": 127.5,
+      "reserved_max_credits": 127.5,
+      "costTime_seconds": 134,
+      "output_dimensions": [
+        1920,
+        1080
+      ],
+      "output_duration": "3.041995",
+      "output_sha256": "d4047c8739110c2fae513432173bff3a4e917d7438024538da3b94bad2a95cce",
+      "output_size": 926320,
+      "audio": {
+        "codec": "aac",
+        "sample_rate": "44100",
+        "channels": 2
+      }
+    },
+    {
+      "case": "video_element_only",
+      "taskId": "5b722fc855f287b2cb10ef079e2bc3f8",
+      "payload_sha256": "c1f7e02cf014c5f28e5d3b9c90a7496f1875ef38f436b2a3b28004871a368d25",
+      "state": "success",
+      "actual_credits": 85.5,
+      "reserved_max_credits": 171.0,
+      "costTime_seconds": 93,
+      "output_dimensions": [
+        1280,
+        720
+      ],
+      "output_duration": "3.041995",
+      "output_sha256": "ff58d8efada65915b24f638cf37ab5a3d55f9f11121739aabb388b57bf2eb711",
+      "output_size": 641228,
+      "audio": {
+        "codec": "aac",
+        "sample_rate": "44100",
+        "channels": 2
+      }
+    },
+    {
+      "case": "fractional_video",
+      "taskId": "8c2895a29c778f7dc9b0015a33bbf35c",
+      "payload_sha256": "e350077d294474d63d7b08bb263383495a9ff5919bc1b33e914416bbd496dfa0",
+      "state": "success",
+      "actual_credits": 119.0,
+      "reserved_max_credits": 119.0,
+      "costTime_seconds": 60,
+      "output_dimensions": [
+        1280,
+        720
+      ],
+      "output_duration": "3.041995",
+      "output_sha256": "9ab11894d7ea218cd8661adfc1ea9f199c883a3898d1b5ba7eade27842e79bbb",
+      "output_size": 547111,
+      "audio": {
+        "codec": "aac",
+        "sample_rate": "44100",
+        "channels": 2
+      }
+    },
+    {
+      "case": "keyframe_missing_first",
+      "taskId": "3908262f73880bd0e5fae379483a3aca",
+      "payload_sha256": "4419b24255d9c7bb40329d7e0f3f04f6b79729889df22b77fc87c37e40c7d4a5",
+      "state": "success",
+      "actual_credits": 85.5,
+      "reserved_max_credits": 85.5,
+      "costTime_seconds": 134,
+      "output_dimensions": [
+        1280,
+        720
+      ],
+      "output_duration": "3.041995",
+      "output_sha256": "6f3922fff524f55c96ab46a5c033eaad1ea472fd1ce02f271865dac85253f072",
+      "output_size": 508496,
+      "audio": {
+        "codec": "aac",
+        "sample_rate": "44100",
+        "channels": 2
+      }
+    },
+    {
+      "case": "standalone_voice",
+      "taskId": "02f252fe06251f972a67810e3b6b5fc4",
+      "payload_sha256": "12703115e6919927316e26e51147afe8f8e83c3cd4cbb9db315950668fa3fb3a",
+      "state": "success",
+      "actual_credits": 85.5,
+      "reserved_max_credits": 85.5,
+      "costTime_seconds": 164,
+      "output_dimensions": [
+        1280,
+        720
+      ],
+      "output_duration": "3.041995",
+      "output_sha256": "54140414ee78280685d4a4a00e25e5b4a1508605e6c1b5f9839c369eed1fd44c",
+      "output_size": 968983,
+      "audio": {
+        "codec": "aac",
+        "sample_rate": "44100",
+        "channels": 2
+      }
+    },
+    {
+      "case": "mixed_video_and_element",
+      "taskId": "f710867b828375add8d3db4dadab8ed9",
+      "payload_sha256": "e63c59c0df19c42858553d9b51f8d02c7c4d54d5ce165a228c9ba3e4daa92acd",
+      "state": "success",
+      "actual_credits": 102.0,
+      "reserved_max_credits": 153.0,
+      "costTime_seconds": 98,
+      "output_dimensions": [
+        1280,
+        720
+      ],
+      "output_duration": "3.041995",
+      "output_sha256": "b7db6317a0c5da4cd5ebe19b9fb3376704f9fa47a4400cfeadbf8d14e28cc351",
+      "output_size": 611816,
+      "audio": {
+        "codec": "aac",
+        "sample_rate": "44100",
+        "channels": 2
+      }
+    },
+    {
+      "case": "two_fractional_videos",
+      "taskId": "5fa814b5ae81d53d7b576d6778f282d5",
+      "payload_sha256": "b6fbafea92abe916adbced4bde19d7cabb158e6115ba57ac5f61c5b4f2ada6ab",
+      "state": "success",
+      "actual_credits": 170.0,
+      "reserved_max_credits": 187.0,
+      "costTime_seconds": 65,
+      "output_dimensions": [
+        1280,
+        720
+      ],
+      "output_duration": "3.041995",
+      "output_sha256": "40a89658a18e9b32166fe1f6f59d584ac022c80698ca06b7fbef19d2ffb42024",
+      "output_size": 846295,
+      "audio": {
+        "codec": "aac",
+        "sample_rate": "44100",
+        "channels": 2
+      }
+    }
+  ],
+  "balance_attribution": "Other account activity observed; ticket cost is the sum of these task creditsConsumed."
+}
