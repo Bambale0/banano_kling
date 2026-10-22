@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import html
 import uuid
+import weakref
+from functools import wraps
 
 from aiogram import F, Router, types
 from aiogram.filters import Command, StateFilter
@@ -17,6 +20,29 @@ from bot.services.kling4_lifecycle import kling4_lifecycle
 from bot.services.wan3_prime_media import Wan3PrimeValidationError
 
 router = Router(name="kling4")
+
+
+_ACTOR_LOCKS: weakref.WeakValueDictionary[tuple[int, int], asyncio.Lock] = (
+    weakref.WeakValueDictionary()
+)
+
+
+def actor_lock(event, state):
+    key = (state.key.bot_id, event.from_user.id)
+    lock = _ACTOR_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _ACTOR_LOCKS[key] = lock
+    return lock
+
+
+def serialized(handler):
+    @wraps(handler)
+    async def wrapped(event, state, **_context):
+        async with actor_lock(event, state):
+            return await handler(event, state)
+
+    return wrapped
 
 
 class Kling4States(StatesGroup):
@@ -136,6 +162,7 @@ async def save(state, recipe):
 
 
 @router.message(Command("kling4"))
+@serialized
 async def command(message: types.Message, state: FSMContext):
     if not await admin(message):
         return
@@ -145,6 +172,7 @@ async def command(message: types.Message, state: FSMContext):
 
 
 @router.callback_query(F.data.startswith("k4:"))
+@serialized
 async def callback(query: types.CallbackQuery, state: FSMContext):
     if not await admin(query):
         return
@@ -309,7 +337,7 @@ async def callback(query: types.CallbackQuery, state: FSMContext):
                 )
             if path not in allowed:
                 raise Kling4Error("Поле недоступно в этом режиме.")
-            await state.update_data(k4_field=path)
+            await state.update_data(k4_field=path, k4_media_session=uuid.uuid4().hex)
             await state.set_state(Kling4States.media)
             await media_menu(query.message, recipe, path)
         elif action in {"delete", "up"}:
@@ -431,6 +459,7 @@ async def media_menu(message, recipe, path):
 
 
 @router.message(StateFilter(Kling4States.text))
+@serialized
 async def text(message: types.Message, state: FSMContext):
     if not await admin(message):
         return
@@ -533,24 +562,30 @@ async def media(message: types.Message, state: FSMContext):
                 kind=kind,
                 declared_size=file.file_size,
             )
-        # Reload after I/O so earlier slots are preserved.
-        latest = await state.get_data()
-        if (
-            latest.get("k4_field") != path
-            or await state.get_state() != Kling4States.media.state
-        ):
-            return
-        recipe = latest.get("k4_recipe", recipe)
-        value = get_path(recipe, path)
-        set_path(
-            recipe,
-            path,
-            [*(value or []), result["url"]]
-            if path.endswith("_urls")
-            else result["url"],
-        )
-        await save(state, recipe)
-        await media_menu(message, recipe, path)
+        # Serialize only the state mutation, not Telegram/download network I/O.
+        # A newly selected field/session cancels stale uploads, even if its path matches.
+        async with actor_lock(message, state):
+            latest = await state.get_data()
+            if (
+                latest.get("k4_field") != path
+                or latest.get("k4_media_session") != current.get("k4_media_session")
+                or await state.get_state() != Kling4States.media.state
+            ):
+                return
+            recipe = latest.get("k4_recipe", recipe)
+            value = get_path(recipe, path)
+            if isinstance(value, list) and len(value) >= maximum:
+                raise Kling4Error("Лимит поля достигнут. Удалите лишний материал.")
+            set_path(
+                recipe,
+                path,
+                [*(value or []), result["url"]]
+                if path.endswith("_urls")
+                else result["url"],
+            )
+            await save(state, recipe)
+            await media_menu(message, recipe, path)
+
     except (Wan3PrimeValidationError, ValueError, KeyError, TypeError) as exc:
         await message.answer(
             str(exc)

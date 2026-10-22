@@ -742,3 +742,80 @@ async def test_nonadmin_denied_before_user_creation_or_channel_probe(monkeypatch
         )
         assert response.status == 403
     context.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_telegram_parallel_uploads_preserve_both_materials_and_cancel_stale_session(
+    engine_context, monkeypatch
+):
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from aiogram.fsm.context import FSMContext
+    from aiogram.fsm.storage.base import StorageKey
+    from aiogram.fsm.storage.memory import MemoryStorage
+
+    from bot import wan3_prime_api
+    from bot.handlers import kling4 as handler
+
+    _engine, actor, _transport = engine_context
+    state = FSMContext(
+        storage=MemoryStorage(),
+        key=StorageKey(bot_id=1, chat_id=actor.telegram_id, user_id=actor.telegram_id),
+    )
+    message = lambda file_id: SimpleNamespace(
+        from_user=SimpleNamespace(id=actor.telegram_id),
+        answer=AsyncMock(),
+        text=None,
+        document=SimpleNamespace(
+            file_id=file_id, file_name=file_id + ".png", file_size=100
+        ),
+        voice=None,
+        photo=None,
+        bot=object(),
+    )
+    await handler.command(message("command"), state)
+    query = SimpleNamespace(
+        from_user=SimpleNamespace(id=actor.telegram_id),
+        message=message("menu"),
+        answer=AsyncMock(),
+        data="k4:media:image_urls",
+    )
+    await handler.callback(query, state)
+    original = state.get_data
+
+    async def yielding_read():
+        value = await original()
+        await asyncio.sleep(0)
+        return value
+
+    monkeypatch.setattr(state, "get_data", yielding_read)
+
+    async def upload(**kwargs):
+        await asyncio.sleep(0.01)
+        return {"url": "https://owned/" + kwargs["file_id"] + ".png"}
+
+    monkeypatch.setattr(wan3_prime_api, "store_telegram_wan3_prime_media", upload)
+    await asyncio.gather(
+        handler.media(message("one"), state), handler.media(message("two"), state)
+    )
+    assert set((await state.get_data())["k4_recipe"]["input"]["image_urls"]) == {
+        "https://owned/one.png",
+        "https://owned/two.png",
+    }
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def delayed(**kwargs):
+        started.set()
+        await release.wait()
+        return {"url": "https://owned/stale.png"}
+
+    monkeypatch.setattr(wan3_prime_api, "store_telegram_wan3_prime_media", delayed)
+    pending = asyncio.create_task(handler.media(message("stale"), state))
+    await started.wait()
+    await handler.command(message("new-session"), state)
+    await handler.callback(query, state)
+    release.set()
+    await pending
+    assert not (await state.get_data())["k4_recipe"]["input"].get("image_urls")
