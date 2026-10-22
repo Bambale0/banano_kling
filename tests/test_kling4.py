@@ -575,6 +575,7 @@ async def test_telegram_editor_modes_quote_and_double_confirm(
 async def test_real_owned_upload_quote_and_foreign_media_denied(
     engine_context, monkeypatch
 ):
+    import asyncio
     import io
 
     from aiohttp import FormData, web
@@ -583,6 +584,7 @@ async def test_real_owned_upload_quote_and_foreign_media_denied(
 
     from bot import kling4_api
     from bot.config import config
+    from bot.handlers import miniapp_regression_safety as safety
     from bot.services.wan3_prime_storage import ActualWan3PrimeProbe, wan3_prime_storage
     from tests.test_wan3_http_flow import signed_user
 
@@ -594,15 +596,16 @@ async def test_real_owned_upload_quote_and_foreign_media_denied(
     raw = image.getvalue()
     app = web.Application()
     app["kling4_lifecycle"] = engine
-    app.router.add_post("/kling4/{action:quote}", kling4_api.route)
-    app.router.add_post(
-        "/kling4/media/{action:init|chunk|complete|cancel|import}",
-        kling4_api.media_route,
-    )
+    # Install the actual production add_post guard, including its eager payload
+    # read. A bare /kling4 test route misses this /mini-app/api integration.
+    original = safety._ORIGINAL_ADD_POST or web.UrlDispatcher.add_post
+    monkeypatch.setattr(safety, "_ORIGINAL_ADD_POST", original)
+    monkeypatch.setattr(web.UrlDispatcher, "add_post", safety._guarded_add_post)
+    kling4_api.setup_kling4_routes(app, "/mini-app")
     async with TestClient(TestServer(app)) as client:
         auth = {"init_data": signed_user(actor.telegram_id)}
         init = await client.post(
-            "/kling4/media/init",
+            "/mini-app/api/kling4/media/init",
             json={
                 **auth,
                 "kind": "image",
@@ -618,14 +621,17 @@ async def test_real_owned_upload_quote_and_foreign_media_denied(
         form.add_field("index", "0")
         form.add_field("total", "1")
         form.add_field("chunk", raw, filename="frame.png", content_type="image/png")
-        uploaded = await client.post(
-            "/kling4/media/chunk",
-            data=form,
-            headers={"X-Telegram-Init-Data": auth["init_data"]},
+        uploaded = await asyncio.wait_for(
+            client.post(
+                "/mini-app/api/kling4/media/chunk",
+                data=form,
+                headers={"X-Telegram-Init-Data": auth["init_data"]},
+            ),
+            timeout=3,
         )
         assert uploaded.status == 200, await uploaded.text()
         complete = await client.post(
-            "/kling4/media/complete", json={**auth, "upload_id": upload_id}
+            "/mini-app/api/kling4/media/complete", json={**auth, "upload_id": upload_id}
         )
         assert complete.status == 200, await complete.text()
         url = (await complete.json())["url"]
@@ -637,11 +643,29 @@ async def test_real_owned_upload_quote_and_foreign_media_denied(
                 "first_frame_url": url,
             },
         }
-        quote = await client.post("/kling4/quote", json={**auth, "recipe": recipe})
+        quote = await client.post(
+            "/mini-app/api/kling4/quote", json={**auth, "recipe": recipe}
+        )
         assert quote.status == 200, await quote.text()
         # Admin status does not grant another administrator ownership of private media.
         with pytest.raises(Wan3PrimeValidationError):
             await engine.quote(replace_actor(actor, user_id=actor.user_id + 1), recipe)
+
+        # Direct registration must retain the authoritative ban check as well
+        # as the admin gate; bypassing eager body reads cannot bypass auth.
+        from bot import database
+
+        async def banned(_telegram_id):
+            return True
+
+        monkeypatch.setattr(database, "is_user_banned", banned)
+        for action in ("quote", "media/init", "media/chunk"):
+            denied = await client.post(
+                "/mini-app/api/kling4/" + action,
+                json={**auth, "recipe": recipe},
+                headers={"X-Telegram-Init-Data": auth["init_data"]},
+            )
+            assert denied.status == 403, await denied.text()
 
 
 @pytest.mark.asyncio
