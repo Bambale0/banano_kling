@@ -1,8 +1,10 @@
 """Kling4 intents through the real production PG adapter, isolated CI DB only."""
 
 import asyncio
+import json
 import os
 import uuid
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -21,8 +23,9 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("provider_state", ["fail", "success"])
 async def test_pg_kling4_idempotency_settings_failure_and_ambiguous_restart(
-    delivery_postgres_schema,
+    delivery_postgres_schema, monkeypatch, tmp_path, provider_state
 ):
     class Provider:
         calls = 0
@@ -36,13 +39,53 @@ async def test_pg_kling4_idempotency_settings_failure_and_ambiguous_restart(
             return {
                 "taskId": task,
                 "model": "kling-4.0/reference-to-video",
-                "state": "fail",
-                "creditsConsumed": 0,
+                "state": provider_state,
+                "creditsConsumed": 85.5 if provider_state == "success" else 0,
+                **(
+                    {
+                        "resultJson": json.dumps(
+                            {"resultUrls": ["https://provider.example.test/kling4.mp4"]}
+                        )
+                    }
+                    if provider_state == "success"
+                    else {}
+                ),
             }
 
     provider = Provider()
     engine = Kling4Lifecycle(transport=provider)
     await engine.init_schema()
+    from bot.config import config
+    from bot.services import kling4_lifecycle as module
+    from bot.services.wan3_prime_media import MediaInfo
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(config, "STATIC_BASE_URL", "https://media.example.test")
+    monkeypatch.setattr(config, "is_admin", lambda uid: uid == 999999999)
+
+    async def download(_url, *, destination, **_kwargs):
+        destination.write_bytes(b"original-kling4-output")
+
+    class ResultProbe:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def probe_file(self, _path, *, kind):
+            return MediaInfo(kind=kind, duration_seconds=3, size_bytes=21)
+
+    class Telegram:
+        sent = 0
+
+        async def send_message(self, *_args, **_kwargs):
+            self.sent += 1
+
+        async def send_video(self, _user, *, video, **_kwargs):
+            assert Path(video.path).read_bytes() == b"original-kling4-output"
+            self.sent += 1
+
+    engine.telegram_bot = Telegram()
+    monkeypatch.setattr(module, "fetch_public_asset", download)
+    monkeypatch.setattr(module, "ActualWan3PrimeProbe", ResultProbe)
     async with db.connect(database.DATABASE_PATH) as conn:
         await conn.execute("DELETE FROM kling4_intents")
         row = await (
@@ -64,8 +107,18 @@ async def test_pg_kling4_idempotency_settings_failure_and_ambiguous_restart(
         )
     )
     assert len({result["task_id"] for result in results}) == 1 and provider.calls == 1
-    await engine.reconcile(results[0]["task_id"])
-    assert (await engine.status(actor, results[0]["task_id"]))["status"] == "failed"
+    await engine.tick()
+    expected = "done" if provider_state == "success" else "failed"
+    terminal = await engine.status(actor, results[0]["task_id"])
+    assert terminal["status"] == expected
+    if expected == "done":
+        assert terminal["actual_credits"] == "85.5"
+        assert "/uploads/kling4/results/" in terminal["result_url"]
+    await engine.tick()
+    assert (await engine.status(actor, results[0]["task_id"]))[
+        "delivery_status"
+    ] == "delivered"
+    assert engine.telegram_bot.sent == 1 and provider.calls == 1
     settings, revision = await engine.settings()
     settings["max_active"] = 4
     await engine.update_settings(actor, settings, revision)

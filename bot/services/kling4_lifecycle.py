@@ -594,7 +594,9 @@ class Kling4Lifecycle:
                 )
             ).fetchall()
             await conn.commit()
-        for task_id, status in rows:
+        for row in rows:
+            # PG rows are mappings: iteration yields column names, not values.
+            task_id, status = row[0], row[1]
             try:
                 if status == "pending":
                     await self.reconcile(task_id)
