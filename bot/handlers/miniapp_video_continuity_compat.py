@@ -26,6 +26,7 @@ from bot.services.remix_prompt import compose_feed_remix_prompt
 from bot.video_repeat_reference_contract import (
     MEDIA_KEYS,
     VideoRepeatContractError,
+    effective_video_repeat_grant,
     foreign_video_repeat_task,
     merge_typed_video_inputs,
     parse_video_repeat_grant,
@@ -602,10 +603,24 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
         source_task.get("user_id") == context["user"].id and not generation_has_private_recipe(source_task)
     )}
     # Only this authenticated boundary can authorize the owner's legacy reuse.
-    # A foreign legacy post has no implicit grant: all source slots require
-    # caller-supplied replacements, even for stale clients with empty presets.
-    consumer_task = source_task if source_task["_repeat_is_owner"] else foreign_video_repeat_task(source_task)
-    enriched = enrich_video_repeat_body(body, consumer_task)
+    # Foreign repeats retain only explicit typed or validated historical slots.
+    # Every other source slot requires a caller-supplied replacement.
+    try:
+        # The dedicated identity form owns its inputs, including omissions and
+        # empty lists. Its own validator must never inherit legacy author media
+        # or depend on an obsolete source selection it replaces entirely.
+        legacy_identity = (
+            not source_task["_repeat_is_owner"]
+            and body.get("seedance25_identity_transfer") is True
+            and str(body.get("v_model") or source_task.get("model") or "") == "seedance_2_5"
+            and parse_video_repeat_grant(source_task.get("feed_repeat_reference_selection")) is None
+        )
+        consumer_task = source_task if source_task["_repeat_is_owner"] else foreign_video_repeat_task(
+            source_task, retain_legacy_selection=not legacy_identity,
+        )
+        enriched = enrich_video_repeat_body(body, consumer_task)
+    except VideoRepeatContractError as exc:
+        raise VideoRepeatReferenceError(str(exc)) from exc
     # This authenticated boundary wraps both legacy video handlers and the
     # separate Seedance 2.5 endpoint. Compose once from the original client
     # changes, keeping the author's base server-side just like photo remixes.
@@ -624,7 +639,7 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
             "snapshot": _video_repeat_snapshot(source_task), "active_media": active_media,
         }
         request._video_repeat_guard = authorization
-        if parse_video_repeat_grant(source_task.get("feed_repeat_reference_selection")) is not None:
+        if not legacy_identity and effective_video_repeat_grant(source_task) is not None:
             request._video_repeat_authorization = authorization
     return enriched
 

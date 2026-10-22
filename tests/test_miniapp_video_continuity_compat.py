@@ -956,12 +956,12 @@ async def test_source_candidate_guard_is_not_bypassed_outside_explicit_identity(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("selected,expected", [
-    ("/uploads/shared-reference.png", ["/uploads/shared-reference.png", "https://example.test/viewer.png"]),
+    ("/uploads/shared-reference.png", None),
     ("https://media.chillcreative.ru/uploads/shared-reference.png",
      ["https://example.test/viewer.png", "https://media.chillcreative.ru/uploads/shared-reference.png"]),
     ("https://media.chillcreative.ru/uploads/shared-reference.png?alias=1", None),
 ])
-async def test_foreign_repeat_cannot_claim_author_aliases_without_a_reuse_grant(
+async def test_legacy_selected_aliases_preserve_only_valid_retained_tail_slots(
     video_repeat_entrypoint, selected, expected,
 ):
     entry = video_repeat_entrypoint
@@ -978,8 +978,13 @@ async def test_foreign_repeat_cannot_claim_author_aliases_without_a_reuse_grant(
         "source_feed_gen_id": 42, "reference_images": ["https://example.test/viewer.png"],
     })
     response = await entry.call(request)
-    assert response.status == 400
-    entry.delegate.assert_not_awaited()
+    if expected is None:
+        assert response.status == 400
+        entry.delegate.assert_not_awaited()
+    else:
+        assert response.status == 200
+        assert (await request.json())["reference_images"] == expected
+        entry.delegate.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -1129,24 +1134,24 @@ async def test_reported_legacy_four_image_shape_matches_descriptor_and_server_va
     }
     entry.source.return_value = source
     descriptor = video_repeat_descriptors(source)
-    assert sum(slot["binding"] == "upload" for slot in descriptor["images"]) == 4
+    assert sum(slot["binding"] == "upload" for slot in descriptor["images"]) == 2
     own = [f"https://example.test/viewer-{i}.png" for i in range(upload_count)]
     request = entry.request({
         "source_feed_gen_id": 42, "v_model": "seedance_2_5", "v_type": "imgtxt",
         "reference_images": own,
     })
     response = await entry.call(request)
-    if upload_count < 4:
+    if upload_count != 2:
         assert response.status == 400
         entry.delegate.assert_not_awaited()
     else:
         assert response.status == 200
         restored = await request.json()
-        assert restored["reference_images"] == own
-        assert not restored.get("_private_repeat_reference_images")
+        assert restored["reference_images"] == own + images[2:]
+        assert restored["_private_repeat_reference_images"] == images[2:]
         assert Seedance25Service.prepare_prompt(
             restored["prompt"], image_urls=restored["reference_images"], video_urls=[], audio_urls=[],
         ) == source["prompt"]
-        assert not hasattr(request, "_video_repeat_authorization")
+        assert request._video_repeat_authorization["source_id"] == 42
         assert request._video_repeat_guard["source_id"] == 42
     assert not any(url in response.text for url in images)

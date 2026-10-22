@@ -232,8 +232,17 @@ jobs:
         id: build
         run: npm run build
 
+      - name: Use Ubuntu archive for browser dependencies
+        run: |
+          set -Eeuo pipefail
+          for source in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list; do
+            [ -f "$source" ] || continue
+            sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$source"
+          done
+
       - name: Install Chromium and WebKit runtimes
         id: chromium
+        timeout-minutes: 10
         run: npx playwright install --with-deps chromium webkit
 
       - name: Prepare mounted static export

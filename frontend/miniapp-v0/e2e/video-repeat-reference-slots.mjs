@@ -331,7 +331,39 @@ try {
     assert.equal(await page.getByRole('button', { name: /Рассчитать точную стоимость|Подтвердить цену и запустить|Запустить видео/ }).isEnabled(), true)
     assert.equal(generations.length, beforePending + 1)
 
-    // Legacy posts now receive replacement-only descriptors from the server.
+    // Historical explicit selections keep two fixed tail images. The client
+    // sends only the two new photos, never the retained author's URLs.
+    generationPending = false
+    pendingTask = null
+    currentCard = { ...card, id: 779, task_id: 'legacy-retained-tail-source',
+      repeat_reference_slots: { version: 1, available: true, cost_multiplier: 1,
+        duration_costs: { '5': 5 }, pricing_quality: '720p', videos: [],
+        images: [0, 1, 2, 3].map(index => ({ index, role: 'reference', binding: index < 2 ? 'upload' : 'fixed' })) } }
+    const beforeRetained = generations.length
+    await page.goto(baseUrl + '?startapp=remix_779')
+    const historicalLaunch = page.getByRole('button', { name: /Рассчитать точную стоимость|Подтвердить цену и запустить|Запустить видео/ })
+    await page.getByText('Сохранено автором: 2', { exact: true }).waitFor()
+    assert.equal(await page.getByRole('group', { name: /^Фото [1-4]$/ }).count(), 2)
+    assert.equal(await historicalLaunch.isDisabled(), true)
+    await page.getByRole('group', { name: 'Фото 1', exact: true }).getByRole('button', { name: 'first.jpg', exact: true }).click()
+    assert.equal(await historicalLaunch.isDisabled(), true)
+    await page.getByRole('group', { name: 'Фото 2', exact: true }).getByRole('button', { name: 'third.jpg', exact: true }).click()
+    assert.equal(await historicalLaunch.isEnabled(), true)
+    const retainedResponse = page.waitForResponse(response => response.url().endsWith('/generate-video'))
+    await historicalLaunch.click()
+    await retainedResponse
+    if (generations.length === beforeRetained) {
+      const confirmation = page.getByRole('button', { name: /Подтвердить цену и запустить/ })
+      await confirmation.waitFor()
+      const submitted = page.waitForResponse(response => response.url().endsWith('/generate-video'))
+      await confirmation.click()
+      await submitted
+    }
+    assert.equal(generations.length, beforeRetained + 1)
+    assert.deepEqual(generations.at(-1).reference_images, ['https://example.test/first.jpg', 'https://example.test/third.jpg'])
+    assert.equal(generations.at(-1).source_feed_gen_id, 779)
+
+    // Legacy posts without an explicit retained selection need replacements.
     // A hidden author photo must never fill an empty consumer input.
     generationPending = false
     pendingTask = null

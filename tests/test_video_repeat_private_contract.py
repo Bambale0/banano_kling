@@ -1097,7 +1097,7 @@ async def test_canonical_source_audio_is_replaced_only_by_explicit_viewer_audio(
 
 
 @pytest.mark.asyncio
-async def test_legacy_visibility_does_not_grant_provider_reuse_without_repeat_consent():
+async def test_legacy_explicit_selection_keeps_retained_slots_without_rewriting_consent():
     owner = await database.get_or_create_user(880199)
     images = [f"https://example.test/legacy-slot-{i}.png" for i in range(4)]
     await database.add_generation_task(
@@ -1116,7 +1116,7 @@ async def test_legacy_visibility_does_not_grant_provider_reuse_without_repeat_co
     slots = public["repeat_reference_slots"]
     assert slots["available"] is True
     assert slots["images"] == [
-        {"index": i, "role": "reference", "binding": "upload"}
+        {"index": i, "role": "reference", "binding": "upload" if i < 2 else "fixed"}
         for i in range(4)
     ]
     assert not any(url in json.dumps(slots) for url in images)
@@ -1124,6 +1124,50 @@ async def test_legacy_visibility_does_not_grant_provider_reuse_without_repeat_co
     after = await database.get_generation_task_payload(card["id"])
     assert after["feed_repeat_reference_selection"] == before["feed_repeat_reference_selection"]
     assert after["feed_reference_selection"] == before["feed_reference_selection"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("legacy_grant", [None, {"images": []}])
+async def test_legacy_selected_images_reach_provider_in_original_slots(
+    monkeypatch, typed_video_entrypoint, legacy_grant,
+):
+    from bot.handlers import seedance_25_public_release as public
+
+    entry = typed_video_entrypoint
+    images = [f"https://example.test/legacy-slot-{index}.png" for index in range(4)]
+    uploads = ["https://example.test/viewer-one.png", "https://example.test/viewer-two.png"]
+    entry.source.update(
+        is_public_feed=True, feed_repeat_reference_selection=legacy_grant,
+        feed_references_visible=True, feed_reference_selection={"images": images[2:], "videos": []},
+        request_data={"seedance25_scenario": "multimodal", "reference_images": images},
+    )
+
+    async def delegate(request):
+        return await public._public_miniapp_generate(request, await request.json())
+
+    entry.delegate.side_effect = delegate
+    monkeypatch.setattr(miniapp, "_get_repeat_source_card", AsyncMock(return_value={
+        "id": 42, "gen_type": "video", "model": "seedance_2_5",
+    }))
+    monkeypatch.setattr(miniapp, "get_generation_task_payload", AsyncMock(return_value=entry.source))
+    monkeypatch.setattr(miniapp.config, "is_admin", lambda _: False)
+    monkeypatch.setattr(public, "_validate_public_payload", AsyncMock())
+    monkeypatch.setattr(miniapp, "check_can_afford", AsyncMock(return_value=True))
+    debit, refund = AsyncMock(return_value=True), AsyncMock(return_value=True)
+    monkeypatch.setattr(miniapp, "deduct_credits", debit)
+    monkeypatch.setattr(miniapp, "add_credits", refund)
+    launch = AsyncMock(return_value={"error": "synthetic provider rejection"})
+    monkeypatch.setattr(public, "_launch_provider", launch)
+    response = await entry.call(entry.request({
+        "v_model": "seedance_2_5", "v_type": "video", "v_duration": 5,
+        "v_ratio": "9:16", "reference_images": uploads,
+    }))
+    assert response.status == 502, response.text
+    assert launch.await_args.args[0]["image_urls"] == uploads + images[2:]
+    debit.assert_awaited_once()
+    refund.assert_awaited_once_with(*debit.await_args.args)
+    for image in images:
+        assert image not in response.text
 
 
 def test_legacy_descriptor_aliases_keep_exact_source_positions():
@@ -1141,7 +1185,7 @@ def test_legacy_descriptor_aliases_keep_exact_source_positions():
     }
     slots = video_repeat_descriptors(source)
     assert slots["available"] is True
-    assert [slot["binding"] for slot in slots["images"]] == ["upload", "upload", "upload", "upload"]
+    assert [slot["binding"] for slot in slots["images"]] == ["upload", "upload", "fixed", "fixed"]
     assert "/uploads/" not in json.dumps(slots)
     source["feed_repeat_reference_selection"] = {"version": 1, "images": [], "videos": []}
     revoked = video_repeat_descriptors(source)

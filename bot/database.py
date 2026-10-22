@@ -39,6 +39,7 @@ from bot.video_repeat_reference_contract import (
     VideoRepeatContractError,
     active_video_recipe,
     build_video_repeat_plan,
+    effective_video_repeat_grant,
     parse_video_repeat_grant,
     video_repeat_descriptors,
 )
@@ -7043,7 +7044,8 @@ def generation_repeat_reference_selection_by_kind(generation: Any) -> dict[str, 
     raw = _generation_attr(generation, "feed_repeat_reference_selection")
     if _generation_attr(generation, "type") == "video":
         try:
-            grant = parse_video_repeat_grant(raw)
+            task = vars(generation) if isinstance(generation, GenerationTask) else dict(generation)
+            grant = effective_video_repeat_grant(task)
         except VideoRepeatContractError:
             grant = None
         return {kind: grant[kind] if grant is not None else [] for kind in ("images", "videos")}
