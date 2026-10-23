@@ -107,13 +107,15 @@ class AutomaticComposer:
                 return
             mid = getattr(message, "message_id", None)
             if isinstance(mid, int):
-                if mid <= current.get("k4_prompt_highwater", 0):
+                receipts = current.get("k4_prompt_messages", {})
+                if str(mid) in receipts:
                     return
-                await state.update_data(k4_prompt_highwater=mid)
+                receipts[str(mid)] = True
+                await state.update_data(k4_prompt_messages=receipts)
         key = self.key(state, session)
         middleware = self.coalescers.get(key)
         if middleware is None:
-            middleware = PromptFragmentCoalescingMiddleware()
+            middleware = PromptFragmentCoalescingMiddleware(order_by_message_id=True)
             self.coalescers[key] = middleware
         PROMPT_TEXT_STATES.add(editor.Kling4States.editing.state)
 

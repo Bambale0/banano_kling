@@ -72,7 +72,15 @@ def serialized_text(handler):
                 or current.get("k4_text_session") != expected
             ):
                 return
-            return await handler(message, state)
+            if field != "prompt":
+                return await handler(message, state)
+            if not await admin(message):
+                return
+            # A prompt field opened before this release uses the same intake
+            # readiness checks as new editing-state messages.
+            await state.set_state(Kling4States.editing)
+            await state.update_data(k4_field=None, k4_text_session=None)
+        return await automatic_composer.handle(message, state)
 
     return wrapped
 
@@ -396,6 +404,10 @@ async def callback(query: types.CallbackQuery, state: FSMContext):
             await show(query.message, state)
         elif action == "text":
             field = parts[2]
+            if field == "prompt":
+                await show(query.message, state)
+                await query.answer()
+                return
             if field not in {"prompt", "duration"} and not field.startswith(
                 ("elements.", "voices.")
             ):
@@ -540,37 +552,9 @@ async def callback(query: types.CallbackQuery, state: FSMContext):
                 inp.pop("keep_original_sound", None)
             await save(state, recipe)
             await media_menu(query.message, recipe, path)
-        elif action == "quote":
-            quote = await kling4_lifecycle.quote(
-                await actor(query.from_user.id), recipe
-            )
-            await state.update_data(k4_quote=quote)
-            b = InlineKeyboardBuilder()
-            b.button(text="Подтвердить и создать", callback_data="k4:launch")
-            b.adjust(1)
-            await state.set_state(Kling4States.editing)
-            await query.message.answer(
-                f"Расход KIE: {quote['provider_credits']} credits. Бананы: 0.\nОплачиваемых секунд: {quote['billed_seconds']}.",
-                reply_markup=navigation(b),
-            )
-        elif action == "launch":
-            quote = current.get("k4_quote") or {}
-            result = await kling4_lifecycle.launch(
-                await actor(query.from_user.id),
-                recipe,
-                quote.get("quote_hash"),
-                current.get("k4_key", ""),
-            )
-            await state.update_data(k4_last_task=result["task_id"])
-            await state.set_state(Kling4States.editing)
-            await query.message.answer(
-                f"Kling 4: {result['status']}\n{result['task_id']}\nРезультат появится в истории и придёт в Telegram.",
-                reply_markup=navigation(
-                    InlineKeyboardBuilder().button(
-                        text="📋 История", callback_data="k4:history"
-                    )
-                ),
-            )
+        elif action in {"quote", "launch"}:
+            # Old message keyboards cannot bypass automatic reference readiness.
+            await show(query.message, state)
         elif action == "history":
             history = await kling4_lifecycle.history(await actor(query.from_user.id))
             b = InlineKeyboardBuilder()
@@ -701,8 +685,6 @@ async def text(message: types.Message, state: FSMContext):
                 value = int(value)
                 if not 3 <= value <= 30:
                     raise Kling4Error("Допустимо 3–30 секунд.")
-            elif field == "prompt" and len(value) > 8000:
-                raise Kling4Error("Промпт: до 8000 символов.")
             elif field.endswith(".description") and len(value) > 100:
                 raise Kling4Error("Описание: до 100 символов.")
             set_path(
@@ -711,9 +693,6 @@ async def text(message: types.Message, state: FSMContext):
                 None if value == "-" and field.endswith(".description") else value,
             )
             await save(state, recipe)
-            if field == "prompt":
-                await launch_prompt(message, state, recipe)
-                return
         await show(message, state)
     except (Wan3PrimeValidationError, ValueError) as exc:
         await message.answer(str(exc), reply_markup=navigation(back_label="← Отмена"))

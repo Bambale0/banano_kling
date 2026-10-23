@@ -112,7 +112,9 @@ async def test_input_can_be_cancelled_and_catalog_exit_releases_fsm(telegram, ac
     original = (await state.get_data())["k4_recipe"]
     query.data = action
     await kling4.callback(query, state)
-    assert "k4:done" in buttons(message)
+    assert (
+        "video_models:kling:0" if action == "k4:text:prompt" else "k4:done"
+    ) in buttons(message)
     assert "back_main" not in buttons(message)
     query.data = "k4:done"
     await kling4.callback(query, state)
@@ -161,7 +163,9 @@ async def test_task_quote_history_recovery_and_error_screens_have_navigation(
     query.data = action
     await kling4.callback(query, state)
     assert "back_main" not in buttons(message)
-    assert "k4:done" in buttons(message)
+    assert (
+        "video_models:kling:0" if action in {"k4:quote", "k4:launch"} else "k4:done"
+    ) in buttons(message)
     if action == "k4:task:test":
         assert "k4:history" in buttons(message)
 
@@ -289,6 +293,9 @@ async def test_queued_text_cannot_mutate_cancelled_or_replaced_input(
     await kling4.callback(query, state)
     query.data = "k4:text:prompt"
     await kling4.callback(query, state)
+    # Input state persisted by an older deployment before automatic intake.
+    await state.set_state(kling4.Kling4States.text)
+    await state.update_data(k4_field="prompt", k4_text_session="old-screen")
     if legacy_session:
         data = await state.get_data()
         data.pop("k4_text_session")
@@ -323,7 +330,11 @@ async def test_active_text_session_saves_value_and_returns_to_editor(
     await kling4.callback(query, state)
     message.from_user = query.from_user
     message.text = value
-    await kling4.text(message, state)
+    await (
+        kling4.automatic(message, state)
+        if field == "prompt"
+        else kling4.text(message, state)
+    )
     assert (await state.get_data())["k4_recipe"]["input"][field] == expected
     assert await state.get_state() == kling4.Kling4States.editing.state
     assert "back_main" not in buttons(message)
@@ -336,6 +347,8 @@ async def test_text_input_started_before_session_tokens_still_saves(telegram):
     await kling4.callback(query, state)
     query.data = "k4:text:prompt"
     await kling4.callback(query, state)
+    await state.set_state(kling4.Kling4States.text)
+    await state.update_data(k4_field="prompt", k4_text_session="old-screen")
     data = await state.get_data()
     data.pop("k4_text_session")
     await state.set_data(data)

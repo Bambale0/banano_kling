@@ -83,8 +83,8 @@ def engine(monkeypatch):
     monkeypatch.setattr(
         auto,
         "PromptFragmentCoalescingMiddleware",
-        lambda: PromptFragmentCoalescingMiddleware(
-            quiet_seconds=0.01, long_quiet_seconds=0.02
+        lambda **kwargs: PromptFragmentCoalescingMiddleware(
+            quiet_seconds=0.01, long_quiet_seconds=0.02, **kwargs
         ),
     )
     monkeypatch.setattr(auto, "PROMPT_FRAGMENT_LONG_QUIET_SECONDS", 0.02)
@@ -452,3 +452,61 @@ async def test_nonadmin_message_cannot_upload_or_launch(telegram, engine, monkey
     await settled()
     engine.launch.assert_not_awaited()
     upload.assert_not_awaited()
+
+
+async def test_out_of_order_first_delivery_keeps_every_prompt_fragment(
+    telegram, engine
+):
+    state, _message, query = telegram
+    query.data = "k4:open"
+    await kling4.callback(query, state)
+    await kling4.automatic(incoming(query, 11, "Then move the camera"), state)
+    await kling4.automatic(incoming(query, 10, "Start from the photo"), state)
+    await settled()
+    engine.launch.assert_awaited_once()
+    assert (
+        engine.launch.await_args.args[1]["input"]["prompt"]
+        == "Start from the photo\nThen move the camera"
+    )
+
+
+@pytest.mark.parametrize("old_action", ["k4:text:prompt", "k4:quote", "k4:launch"])
+async def test_old_controls_cannot_bypass_pending_or_failed_references(
+    telegram, engine, monkeypatch, old_action
+):
+    from bot import wan3_prime_api
+
+    state, _message, query = telegram
+    query.data = "k4:open"
+    await kling4.callback(query, state)
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def upload(**_kwargs):
+        started.set()
+        await release.wait()
+        return {"url": "https://owned.test/face.png"}
+
+    monkeypatch.setattr(wan3_prime_api, "store_telegram_wan3_prime_media", upload)
+    pending = asyncio.create_task(
+        kling4.automatic(incoming(query, 10, document=file("face.png")), state)
+    )
+    await started.wait()
+    query.data = old_action
+    await kling4.callback(query, state)
+    engine.launch.assert_not_awaited()
+    engine.quote.assert_not_awaited()
+    await kling4.automatic(incoming(query, 11, "Animate the photo"), state)
+    await settled()
+    engine.launch.assert_not_awaited()
+    release.set()
+    await pending
+    await settled()
+    engine.launch.assert_awaited_once()
+    assert engine.launch.await_args.args[1]["input"]["image_urls"] == [
+        "https://owned.test/face.png"
+    ]
+    await state.update_data(k4_upload_errors={"failed": True})
+    await kling4.callback(query, state)
+    await kling4.automatic(incoming(query, 12, "Another prompt"), state)
+    await settled()
+    engine.launch.assert_awaited_once()

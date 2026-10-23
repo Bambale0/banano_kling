@@ -78,12 +78,22 @@ class _PendingPrompt:
     event: Any
     data: dict[str, Any]
     parts: list[str] = field(default_factory=list)
+    message_ids: list[int] = field(default_factory=list)
+    order_by_message_id: bool = False
     version: int = 0
     task: asyncio.Task | None = None
 
     @property
     def text(self) -> str:
-        return "\n".join(part for part in self.parts if part)
+        parts = self.parts
+        if self.order_by_message_id:
+            parts = [
+                part
+                for _, part in sorted(
+                    zip(self.message_ids, parts), key=lambda item: item[0]
+                )
+            ]
+        return "\n".join(part for part in parts if part)
 
     @property
     def is_long(self) -> bool:
@@ -99,10 +109,12 @@ class PromptFragmentCoalescingMiddleware(BaseMiddleware):
         quiet_seconds: float = PROMPT_FRAGMENT_QUIET_SECONDS,
         long_quiet_seconds: float = PROMPT_FRAGMENT_LONG_QUIET_SECONDS,
         max_chars: int = PROMPT_FRAGMENT_MAX_CHARS,
+        order_by_message_id: bool = False,
     ) -> None:
         self.quiet_seconds = max(0.01, float(quiet_seconds))
         self.long_quiet_seconds = max(self.quiet_seconds, float(long_quiet_seconds))
         self.max_chars = max(4096, int(max_chars))
+        self.order_by_message_id = order_by_message_id
         self._pending: dict[PromptKey, _PendingPrompt] = {}
         # One chat/user/state key may be reused by a new generation while an older
         # synchronous provider adapter is still awaiting its result. Track the
@@ -293,6 +305,7 @@ class PromptFragmentCoalescingMiddleware(BaseMiddleware):
                     handler=handler,
                     event=event,
                     data=dict(data),
+                    order_by_message_id=self.order_by_message_id,
                 )
                 self._pending[key] = pending
             else:
@@ -301,6 +314,7 @@ class PromptFragmentCoalescingMiddleware(BaseMiddleware):
                 pending.event = event
 
             pending.parts.append(text)
+            pending.message_ids.append(getattr(event, "message_id", 0) or 0)
             pending.version += 1
             version = pending.version
             if pending.task and not pending.task.done():
