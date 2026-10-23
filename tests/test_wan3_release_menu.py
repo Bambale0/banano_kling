@@ -10,12 +10,17 @@ from bot.handlers import video_generation_compat as video
 class State:
     def __init__(self):
         self.data = {}
+        self.state = None
+
+    async def set_state(self, state):
+        self.state = state
 
     async def get_data(self):
         return dict(self.data)
 
     async def clear(self):
         self.data.clear()
+        self.state = None
 
     async def update_data(self, **kwargs):
         self.data.update(kwargs)
