@@ -41,3 +41,7 @@ The shared server validator accepts copied `@Image1`/`@Image2`/`@Video1` notatio
 Read-only runtime verification found the stored reference image/video order and prompt identical to KIE's existing-task echo. No paid comparison was performed, so this audit does not establish the cause of any particular face-similarity result. No identity instructions are injected, media grouped into characters, or provider modes changed speculatively.
 
 Original-sound controls preserve or omit the input video audio only when ordinary reference videos exist. Without them the button explains native audio generation and adds no unsupported audio field. Explicit mode/quality callbacks are validated, repeat selection is stable, and older toggle callbacks remain compatible.
+
+## MOV reference preparation — 2026-10-23
+
+Kling quote/launch now prepares owned MOV clips as MP4 before applying the KIE contract, including existing Telegram drafts and Mini App requests. The original file and recipe remain unchanged; the provider snapshot uses the prepared MP4. Preparation remuxes video and optional audio with stream copy (no re-encoding or trimming), checks measured duration/dimensions, and saves through the existing owner/quota-protected media storage. A per-owner/content lock bounds concurrent preparation; repeated quotes reuse the verified stored copy. Failed or timed-out preparation does not create a provider task. Video element and ordinary-reference duration limits remain distinct and enforced.
