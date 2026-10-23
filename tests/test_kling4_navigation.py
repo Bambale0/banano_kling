@@ -260,8 +260,9 @@ async def test_forged_kling4_callback_from_nonadmin_does_not_change_state(telegr
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("next_action", ["k4:done", "k4:text:duration"])
+@pytest.mark.parametrize("legacy_session", [False, True])
 async def test_queued_text_cannot_mutate_cancelled_or_replaced_input(
-    telegram, next_action
+    telegram, next_action, legacy_session
 ):
     import asyncio
 
@@ -270,6 +271,10 @@ async def test_queued_text_cannot_mutate_cancelled_or_replaced_input(
     await kling4.callback(query, state)
     query.data = "k4:text:prompt"
     await kling4.callback(query, state)
+    if legacy_session:
+        data = await state.get_data()
+        data.pop("k4_text_session")
+        await state.set_data(data)
     incoming = SimpleNamespace(from_user=query.from_user, text="10", answer=AsyncMock())
     lock = kling4.actor_lock(query, state)
     async with lock:
@@ -304,3 +309,18 @@ async def test_active_text_session_saves_value_and_returns_to_editor(
     assert (await state.get_data())["k4_recipe"]["input"][field] == expected
     assert await state.get_state() == kling4.Kling4States.editing.state
     assert "back_main" in buttons(message)
+
+
+@pytest.mark.asyncio
+async def test_text_input_started_before_session_tokens_still_saves(telegram):
+    state, message, query = telegram
+    query.data = "k4:open"
+    await kling4.callback(query, state)
+    query.data = "k4:text:prompt"
+    await kling4.callback(query, state)
+    data = await state.get_data()
+    data.pop("k4_text_session")
+    await state.set_data(data)
+    message.from_user, message.text = query.from_user, "Prompt from an existing screen"
+    await kling4.text(message, state)
+    assert (await state.get_data())["k4_recipe"]["input"]["prompt"] == message.text

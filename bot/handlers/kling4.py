@@ -55,12 +55,15 @@ def serialized_text(handler):
     @wraps(handler)
     async def wrapped(message, state, **_context):
         # StateFilter ran before this handler could wait for a navigation callback.
-        expected = (await state.get_data()).get("k4_text_session")
+        initial = await state.get_data()
+        expected = initial.get("k4_text_session")
+        field = initial.get("k4_field")
         async with actor_lock(message, state):
             current = await state.get_data()
             if (
                 await state.get_state() != Kling4States.text.state
-                or not expected
+                or not isinstance(field, str)
+                or current.get("k4_field") != field
                 or current.get("k4_text_session") != expected
             ):
                 return
