@@ -18,16 +18,13 @@ telegram = navigation_tests.telegram
 buttons = navigation_tests.buttons
 
 
-async def test_open_shows_direct_duration_and_ratio_controls_only(telegram):
+async def test_open_keeps_direct_controls_and_automatic_prompt_launch(telegram):
     state, message, query = telegram
     query.data = "k4:open"
     await kling4.callback(query, state)
     actions = buttons(message)
     assert "back_main" not in actions
-    assert (
-        not {"k4:text:prompt", "k4:quote", "k4:launch", "k4:mode", "k4:materials"}
-        & actions.keys()
-    )
+    assert not {"k4:text:prompt", "k4:quote", "k4:launch"} & actions.keys()
     assert {
         "k4:duration:-1",
         "k4:duration:1",

@@ -166,20 +166,91 @@ async def materials_menu(message, recipe):
     b.button(text="+ Персонаж / объект по фото", callback_data="k4:new:image")
     b.button(text="+ Персонаж по видео", callback_data="k4:new:video")
     b.button(text="+ Голос", callback_data="k4:new:voice")
-    for i, item in enumerate(data.get("elements", [])):
-        b.button(text=f"Материал @{item['name']}", callback_data=f"k4:element:{i}")
-    for i, item in enumerate(data.get("voices", [])):
+    for i, item in enumerate(data.get("elements") or []):
+        b.button(text=f"Element @{item['name']}", callback_data=f"k4:element:{i}")
+    for i, item in enumerate(data.get("voices") or []):
         b.button(text=f"Голос @{item['name']}", callback_data=f"k4:voice:{i}")
     b.adjust(1)
     await message.answer(
-        "Персонажи, объекты и голоса\nДобавьте материал, затем откройте его для загрузки файлов. Используйте @имя в промпте.",
+        "Elements и голоса\nФотоэлемент: 2–4 ракурса одного персонажа или объекта. "
+        "Видеоэлемент: один непрерывный план 3–8с. Используйте @имя в промпте.",
         reply_markup=navigation(b),
+    )
+
+
+async def material_menu(message, recipe, kind, index):
+    items = recipe["input"].get("elements" if kind == "element" else "voices") or []
+    if not 0 <= index < len(items):
+        raise Kling4Error("Материал больше не существует.")
+    item = items[index]
+    prefix = ("elements" if kind == "element" else "voices") + f".{index}."
+    b = InlineKeyboardBuilder()
+    b.button(text="Имя: @" + item["name"], callback_data="k4:text:" + prefix + "name")
+    for field, label in (
+        ("image_urls", "Фото"),
+        ("video_url", "Видео"),
+        ("audio_url", "Аудио"),
+    ):
+        if field in item:
+            count = (
+                len(item[field]) if isinstance(item[field], list) else bool(item[field])
+            )
+            b.button(
+                text=f"{label} ({int(count)})",
+                callback_data="k4:media:" + prefix + field,
+            )
+    if kind == "element":
+        b.button(text="Описание", callback_data="k4:text:" + prefix + "description")
+        if item.get("tag") in (None, "character"):
+            b.button(
+                text="Привязанный голос",
+                callback_data="k4:media:" + prefix + "voice_url",
+            )
+        if "image_urls" in item:
+            b.button(
+                text="Тип: " + item.get("tag", "Авто"), callback_data=f"k4:tag:{index}"
+            )
+    b.button(text="Удалить", callback_data=f"k4:remove:{kind}:{index}")
+    b.adjust(2)
+    guidance = (
+        "\nНажмите «Фото» и загрузите 2–4 фото. Первое — основной ракурс, остальные — дополнительные."
+        if "image_urls" in item
+        else "\nОдно видео 3–8с, без склеек, короткая сторона от 700px."
+        if "video_url" in item
+        else "\nMP3/WAV с речью, до 30с."
+    )
+    await message.answer(
+        "Материал @" + html.escape(item["name"]) + guidance,
+        reply_markup=navigation(
+            b, back="k4:materials", back_label="← Elements и голоса"
+        ),
     )
 
 
 def keyboard(recipe):
     b = InlineKeyboardBuilder()
     data = recipe["input"]
+    b.row(
+        *[
+            types.InlineKeyboardButton(
+                text=("✅ " if recipe["mode"] == value else "") + label,
+                callback_data="k4:mode:" + value,
+            )
+            for value, label in (
+                ("reference", "🧩 По референсам"),
+                ("keyframe", "🎞 По кадрам"),
+            )
+        ]
+    )
+    b.row(
+        *[
+            types.InlineKeyboardButton(
+                text=("✅ " if data["resolution"] == value else "") + value,
+                callback_data="k4:resolution:" + value,
+            )
+            for value in ("720p", "1080p")
+        ]
+    )
     ratio = data.get("aspect_ratio", "auto")
     for values in (("auto",), RATIOS[1:4], RATIOS[4:]):
         b.row(
@@ -199,6 +270,33 @@ def keyboard(recipe):
         ),
         types.InlineKeyboardButton(text="+ 1с", callback_data="k4:duration:1"),
     )
+    if recipe["mode"] == "keyframe":
+        b.row(
+            *[
+                types.InlineKeyboardButton(text=label, callback_data="k4:media:" + path)
+                for label, path in (
+                    ("Первый кадр", "first_frame_url"),
+                    ("Средние", "keyframe_urls"),
+                    ("Последний", "last_frame_url"),
+                )
+            ]
+        )
+    else:
+        b.row(
+            types.InlineKeyboardButton(
+                text=f"🧩 Elements ({len(data.get('elements') or [])}) · Голоса ({len(data.get('voices') or [])})",
+                callback_data="k4:materials",
+            ),
+            types.InlineKeyboardButton(
+                text=(
+                    "🔊 Исходный звук: "
+                    + ("вкл" if data.get("keep_original_sound") else "выкл")
+                    if data.get("video_urls")
+                    else "🔊 Звук: авто"
+                ),
+                callback_data="k4:sound",
+            ),
+        )
     b.row(types.InlineKeyboardButton(text="Очистить медиа", callback_data="k4:clear"))
     b.row(
         types.InlineKeyboardButton(
@@ -248,7 +346,12 @@ async def show(message, state):
         + f"{mode_label(recipe)} · {inp['duration']}с · {inp['resolution']}\n"
         + "Отправьте фото, видео или аудио — бот сам добавит референсы.\n"
         + reference_labels(recipe)
-        + "Отправка промпта сразу запускает генерацию.\n"
+        + (
+            "С кадрами формат видео задаёт первый загруженный кадр.\n"
+            if recipe["mode"] == "keyframe"
+            else ""
+        )
+        + "Отправка промпта (до 8000 символов) сразу запускает генерацию.\n"
         + html.escape(inp["prompt"] or "")
         + "\nБананы не списываются.",
         parse_mode="HTML",
@@ -392,7 +495,19 @@ async def callback(query: types.CallbackQuery, state: FSMContext):
             await state.set_state(Kling4States.editing)
             await materials_menu(query.message, recipe)
         elif action == "mode":
-            other = "keyframe" if recipe["mode"] == "reference" else "reference"
+            other = (
+                parts[2]
+                if len(parts) > 2
+                else "keyframe"
+                if recipe["mode"] == "reference"
+                else "reference"
+            )
+            if other not in {"reference", "keyframe"}:
+                raise Kling4Error("Неверный режим Kling 4.")
+            if other == recipe["mode"]:
+                await show(query.message, state)
+                await query.answer()
+                return
             # Preserve each mode draft; switching never silently discards media.
             drafts = current.get("k4_drafts", {})
             drafts[recipe["mode"]] = recipe
@@ -420,7 +535,16 @@ async def callback(query: types.CallbackQuery, state: FSMContext):
             await show(query.message, state)
         elif action in {"resolution", "ratio", "sound"}:
             if action == "resolution":
-                inp["resolution"] = "1080p" if inp["resolution"] == "720p" else "720p"
+                selected = (
+                    parts[2]
+                    if len(parts) > 2
+                    else "1080p"
+                    if inp["resolution"] == "720p"
+                    else "720p"
+                )
+                if selected not in {"720p", "1080p"}:
+                    raise Kling4Error("Разрешение: 720p или 1080p.")
+                inp["resolution"] = selected
             elif action == "ratio":
                 selected = (
                     ":".join(parts[2:])
@@ -435,6 +559,12 @@ async def callback(query: types.CallbackQuery, state: FSMContext):
                 inp["aspect_ratio"] = selected
             elif recipe["mode"] == "reference" and inp.get("video_urls"):
                 inp["keep_original_sound"] = not inp.get("keep_original_sound", False)
+            else:
+                await query.answer(
+                    "Без видеореференса Kling 4 создаёт звук автоматически.",
+                    show_alert=True,
+                )
+                return
             await save(state, recipe)
             await show(query.message, state)
         elif action == "text":
@@ -472,62 +602,43 @@ async def callback(query: types.CallbackQuery, state: FSMContext):
             items = inp.setdefault(key, [])
             if len(items) >= (3 if kind == "voice" else 7):
                 raise Kling4Error("Лимит материалов достигнут.")
+            names = {
+                entry["name"].casefold()
+                for group in ("elements", "voices")
+                for entry in inp.get(group) or []
+            }
+            stem = "Voice" if kind == "voice" else "Hero"
+            number = 1
+            while f"{stem}{number}".casefold() in names:
+                number += 1
+            name = f"{stem}{number}"
             if kind == "voice":
-                item = {"name": f"Voice{len(items) + 1}", "audio_url": ""}
+                item = {"name": name, "audio_url": ""}
             else:
                 item = {
-                    "name": f"Hero{len(items) + 1}",
-                    "tag": "character",
-                    **({"image_urls": []} if kind == "image" else {"video_url": ""}),
+                    "name": name,
+                    **(
+                        {"image_urls": []}
+                        if kind == "image"
+                        else {"video_url": "", "tag": "character"}
+                    ),
                 }
             items.append(item)
             await save(state, recipe)
             await state.set_state(Kling4States.editing)
-            await materials_menu(query.message, recipe)
-        elif action in {"element", "voice"}:
-            index = int(parts[2])
-            items = inp.get("elements" if action == "element" else "voices", [])
-            if not 0 <= index < len(items):
-                raise Kling4Error("Материал больше не существует.")
-            item = items[index]
-            prefix = ("elements" if action == "element" else "voices") + f".{index}."
-            b = InlineKeyboardBuilder()
-            b.button(text="Имя", callback_data="k4:text:" + prefix + "name")
-            for field in (
-                ("image_urls", "Фото"),
-                ("video_url", "Видео"),
-                ("audio_url", "Аудио"),
-            ):
-                if field[0] in item:
-                    b.button(
-                        text=field[1], callback_data="k4:media:" + prefix + field[0]
-                    )
-            if action == "element":
-                b.button(
-                    text="Описание", callback_data="k4:text:" + prefix + "description"
-                )
-                if item.get("tag") in (None, "character"):
-                    b.button(
-                        text="Привязанный голос",
-                        callback_data="k4:media:" + prefix + "voice_url",
-                    )
-                if "image_urls" in item:
-                    b.button(
-                        text="Тип: " + item.get("tag", "character"),
-                        callback_data=f"k4:tag:{index}",
-                    )
-            b.button(text="Удалить", callback_data=f"k4:remove:{action}:{index}")
-            b.adjust(2)
-            await state.set_state(Kling4States.editing)
-            await query.message.answer(
-                "Материал @" + item["name"],
-                reply_markup=navigation(
-                    b, back="k4:materials", back_label="← Материалы"
-                ),
+            await material_menu(
+                query.message,
+                recipe,
+                "voice" if kind == "voice" else "element",
+                len(items) - 1,
             )
+        elif action in {"element", "voice"}:
+            await state.set_state(Kling4States.editing)
+            await material_menu(query.message, recipe, action, int(parts[2]))
         elif action == "tag":
             item = inp["elements"][int(parts[2])]
             tags = (
+                None,
                 "character",
                 "animal",
                 "prop",
@@ -536,17 +647,21 @@ async def callback(query: types.CallbackQuery, state: FSMContext):
                 "effect",
                 "others",
             )
-            item["tag"] = tags[
-                (tags.index(item.get("tag", "character")) + 1) % len(tags)
-            ]
-            if item["tag"] != "character":
+            tag = tags[(tags.index(item.get("tag")) + 1) % len(tags)]
+            if tag is None:
+                item.pop("tag", None)
+            else:
+                item["tag"] = tag
+            if tag not in {None, "character"}:
                 item.pop("voice_url", None)
             await save(state, recipe)
-            await show(query.message, state)
+            await state.set_state(Kling4States.editing)
+            await material_menu(query.message, recipe, "element", int(parts[2]))
         elif action == "remove":
             inp["elements" if parts[2] == "element" else "voices"].pop(int(parts[3]))
             await save(state, recipe)
-            await show(query.message, state)
+            await state.set_state(Kling4States.editing)
+            await materials_menu(query.message, recipe)
         elif action == "media":
             path = parts[2]
             # Restrict paths to the current recipe, not arbitrary state keys.
@@ -569,7 +684,12 @@ async def callback(query: types.CallbackQuery, state: FSMContext):
                 )
             if path not in allowed:
                 raise Kling4Error("Поле недоступно в этом режиме.")
-            await state.update_data(k4_field=path, k4_media_session=uuid.uuid4().hex)
+            await state.update_data(
+                k4_field=path,
+                k4_media_session=uuid.uuid4().hex,
+                k4_media_uploads=[],
+                k4_media_receipts={},
+            )
             await state.set_state(Kling4States.media)
             await media_menu(query.message, recipe, path)
         elif action in {"delete", "up"}:
@@ -585,6 +705,8 @@ async def callback(query: types.CallbackQuery, state: FSMContext):
                 set_path(recipe, path, None)
             if path == "video_urls" and not inp.get("video_urls"):
                 inp.pop("keep_original_sound", None)
+            # A manual reorder becomes the fixed prefix for subsequent uploads.
+            await state.update_data(k4_media_uploads=[])
             await save(state, recipe)
             await media_menu(query.message, recipe, path)
         elif action in {"quote", "launch"}:
@@ -692,6 +814,8 @@ async def media_menu(message, recipe, path):
         + (
             " Видео персонажа должно быть одним непрерывным планом."
             if path.endswith(".video_url")
+            else " Для элемента нужно 2–4 фото; первое — основной ракурс."
+            if path.startswith("elements.") and path.endswith(".image_urls")
             else ""
         ),
         reply_markup=navigation(b, back=field_parent(path), back_label="← Готово"),
@@ -729,7 +853,16 @@ async def text(message: types.Message, state: FSMContext):
                 None if value == "-" and field.endswith(".description") else value,
             )
             await save(state, recipe)
-        await show(message, state)
+        if field.startswith(("elements.", "voices.")):
+            await state.set_state(Kling4States.editing)
+            await material_menu(
+                message,
+                recipe,
+                "element" if field.startswith("elements.") else "voice",
+                int(field.split(".")[1]),
+            )
+        else:
+            await show(message, state)
     except (Wan3PrimeValidationError, ValueError) as exc:
         await message.answer(str(exc), reply_markup=navigation(back_label="← Отмена"))
 
@@ -747,6 +880,9 @@ async def media(message: types.Message, state: FSMContext):
     recipe = current.get("k4_recipe", fresh())
     path = current.get("k4_field", "")
     if await state.get_state() != Kling4States.media.state or not isinstance(path, str):
+        return
+    mid = getattr(message, "message_id", None)
+    if isinstance(mid, int) and str(mid) in current.get("k4_media_receipts", {}):
         return
     kind = (
         "audio"
@@ -819,15 +955,35 @@ async def media(message: types.Message, state: FSMContext):
                 return
             recipe = latest.get("k4_recipe", recipe)
             value = get_path(recipe, path)
+            receipts = latest.get("k4_media_receipts", {})
+            if isinstance(mid, int) and str(mid) in receipts:
+                return
             if isinstance(value, list) and len(value) >= maximum:
                 raise Kling4Error("Лимит поля достигнут. Удалите лишний материал.")
+            if path.endswith("_urls") and isinstance(mid, int):
+                value = value or []
+                previous = latest.get("k4_media_uploads", [])
+                known = {entry["url"] for entry in previous}
+                prefix = [url for url in value if url not in known]
+                ordered = sorted(
+                    [entry for entry in previous if entry["url"] in value]
+                    + [{"url": result["url"], "message_id": mid}],
+                    key=lambda entry: entry["message_id"],
+                )
+                urls = prefix + [entry["url"] for entry in ordered]
+                await state.update_data(k4_media_uploads=ordered)
+            else:
+                urls = (
+                    [*(value or []), result["url"]] if path.endswith("_urls") else None
+                )
             set_path(
                 recipe,
                 path,
-                [*(value or []), result["url"]]
-                if path.endswith("_urls")
-                else result["url"],
+                urls if path.endswith("_urls") else result["url"],
             )
+            if isinstance(mid, int):
+                receipts[str(mid)] = True
+                await state.update_data(k4_media_receipts=receipts)
             await save(state, recipe)
             await media_menu(message, recipe, path)
 

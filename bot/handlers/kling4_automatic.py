@@ -268,6 +268,44 @@ class AutomaticComposer:
                 ):
                     return
                 recipe = deepcopy(latest.get("k4_recipe", editor.fresh()))
+                drafts = deepcopy(latest.get("k4_drafts", {}))
+                if recipe["mode"] == "keyframe":
+                    drafts["keyframe"] = deepcopy(recipe)
+                    # Restored references and ordered frames form a fixed
+                    # prefix. Old automatic-upload receipts must not move
+                    # those images behind the newly restored frame images.
+                    latest["k4_auto_uploads"] = [
+                        entry
+                        for entry in latest.get("k4_auto_uploads", [])
+                        if entry["kind"] != "image"
+                    ]
+                    reference = drafts.get("reference")
+                    if reference:
+                        # Resume the reference draft as well as keeping the
+                        # frame images; automatic switching must not hide its
+                        # existing elements, voices or ordinary references.
+                        frame_data = recipe["input"]
+                        recipe = deepcopy(reference)
+                        recipe["input"].update(
+                            {
+                                k: frame_data[k]
+                                for k in (
+                                    "prompt",
+                                    "duration",
+                                    "resolution",
+                                    "aspect_ratio",
+                                )
+                                if k in frame_data
+                            }
+                        )
+                        images = recipe["input"].setdefault("image_urls", [])
+                        for url in (
+                            frame_data.get("first_frame_url"),
+                            *(frame_data.get("keyframe_urls") or []),
+                            frame_data.get("last_frame_url"),
+                        ):
+                            if url and url not in images:
+                                images.append(url)
                 self.attach(
                     recipe,
                     latest,
@@ -281,6 +319,7 @@ class AutomaticComposer:
                 errors.pop(receipt, None)
                 await editor.save(state, recipe)
                 await state.update_data(
+                    k4_drafts=drafts,
                     k4_auto_uploads=latest["k4_auto_uploads"],
                     k4_media_messages=receipts,
                     k4_upload_errors=errors,
