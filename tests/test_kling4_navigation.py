@@ -22,6 +22,23 @@ def buttons(message):
     }
 
 
+@pytest.fixture(autouse=True)
+def lifecycle_boundary(monkeypatch):
+    engine = SimpleNamespace(
+        quote=AsyncMock(
+            return_value={
+                "quote_hash": "checked",
+                "provider_credits": "1",
+                "billed_seconds": "5",
+            }
+        ),
+        launch=AsyncMock(return_value={"task_id": "test", "status": "pending"}),
+    )
+    monkeypatch.setattr(kling4, "actor", AsyncMock(return_value=object()))
+    monkeypatch.setattr(kling4, "kling4_lifecycle", engine)
+    return engine
+
+
 @pytest.fixture
 def telegram():
     state = FSMContext(
@@ -61,10 +78,10 @@ async def test_editor_groups_optional_materials_and_has_catalog_exits(telegram):
     await kling4.callback(query, state)
     actions = buttons(message)
     assert {
-        "k4:materials",
+        "k4:duration:-1",
+        "k4:duration:1",
+        "k4:ratio:9:16",
         "video_models:kling:0",
-        "video_models:all:0",
-        "back_main",
     } <= actions.keys()
     assert "k4:new:voice" not in actions
     assert "reference" not in message.answer.call_args.args[0]
@@ -75,7 +92,6 @@ async def test_editor_groups_optional_materials_and_has_catalog_exits(telegram):
         "k4:new:video",
         "k4:new:voice",
         "k4:done",
-        "back_main",
     } <= buttons(message).keys()
 
 
@@ -96,7 +112,8 @@ async def test_input_can_be_cancelled_and_catalog_exit_releases_fsm(telegram, ac
     original = (await state.get_data())["k4_recipe"]
     query.data = action
     await kling4.callback(query, state)
-    assert {"k4:done", "back_main"} <= buttons(message).keys()
+    assert "k4:done" in buttons(message)
+    assert "back_main" not in buttons(message)
     query.data = "k4:done"
     await kling4.callback(query, state)
     assert await state.get_state() == kling4.Kling4States.editing.state
@@ -143,7 +160,7 @@ async def test_task_quote_history_recovery_and_error_screens_have_navigation(
     await kling4.callback(query, state)
     query.data = action
     await kling4.callback(query, state)
-    assert "back_main" in buttons(message)
+    assert "back_main" not in buttons(message)
     assert "k4:done" in buttons(message)
     if action == "k4:task:test":
         assert "k4:history" in buttons(message)
@@ -190,7 +207,7 @@ async def test_nested_material_fields_return_to_material_and_keep_draft(telegram
         await kling4.callback(query, state)
         query.data = f"k4:{parent}:0"
         await kling4.callback(query, state)
-        assert {"k4:materials", "back_main"} <= buttons(message).keys()
+        assert "k4:materials" in buttons(message)
         query.data = f"k4:media:{field}"
         await kling4.callback(query, state)
         assert f"k4:{parent}:0" in buttons(message)
@@ -202,7 +219,8 @@ async def test_nested_material_fields_return_to_material_and_keep_draft(telegram
     for field in ("first_frame_url", "keyframe_urls", "last_frame_url"):
         query.data = f"k4:media:{field}"
         await kling4.callback(query, state)
-        assert {"k4:done", "back_main"} <= buttons(message).keys()
+        assert "k4:done" in buttons(message)
+        assert "back_main" not in buttons(message)
     query.data = "k4:mode"
     await kling4.callback(query, state)
     recipe = (await state.get_data())["k4_recipe"]
@@ -308,7 +326,7 @@ async def test_active_text_session_saves_value_and_returns_to_editor(
     await kling4.text(message, state)
     assert (await state.get_data())["k4_recipe"]["input"][field] == expected
     assert await state.get_state() == kling4.Kling4States.editing.state
-    assert "back_main" in buttons(message)
+    assert "back_main" not in buttons(message)
 
 
 @pytest.mark.asyncio
