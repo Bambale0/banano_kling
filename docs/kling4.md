@@ -1,6 +1,6 @@
 # Kling 4 — administrator release
 
-Kling 4 is available only to current administrators in Telegram and the Mini App. Use `/kling4` in Telegram or choose Kling 4 in the video catalog. Public rollout requires Igor's separate instruction; this release has no public billing path.
+Kling 4 is available only to current administrators in Telegram and the Mini App. Use `/kling4` in Telegram or open **Создание видео → Kling → Kling 4** (also listed once in **Все**). It is not pinned above unrelated model families. Public rollout requires Igor's separate instruction; this release has no public billing path.
 
 Provider contracts: [Reference](https://docs.kie.ai/market/kling/v4-reference-to-video), [Keyframe](https://docs.kie.ai/market/kling/v4-keyframe-to-video), [pricing](https://kie.ai/pricing), [task details](https://docs.kie.ai/market/common/get-task-detail), [webhook verification](https://docs.kie.ai/common-api/webhook-verification).
 
@@ -17,3 +17,9 @@ Settings are versioned in the DB and edited through authenticated `/api/kling4/s
 ## Verified paid smoke — 2026-10-22
 
 12/12 tasks succeeded; total1328.5 KIE credits ($6.6425), below2000 cap. Six tariff rows, video-element-only, mixed ordinary+element, fractional/multiple videos, missing-first keyframes and spoken WAV passed. Every output downloaded, SHA256+ffprobe checked (720p/1080p H264+AAC). See [structured evidence](kling4-live-smoke.json). Balance delta included230.5 credits of unrelated account activity and is not used as this ticket expense. Ratio precedence with differently sized keyframes and other audio profiles remain unverified; request acceptance alone is not proof of voice identity.
+
+## Telegram navigation
+
+The editor groups prompt, duration/quality, format/mode and ordinary photo/video references. Modes are labelled «Референсы» and «По кадрам». Optional named elements and voices live under **Персонажи и голоса**; their file/name controls remain available there. Switching modes preserves each draft.
+
+Each editor, upload, text input, material, quote, history, task and recovery screen offers a route back plus Kling, all video models and the main menu. Text/recovery input can be cancelled; uploads return to their parent material where applicable. Leaving for the model catalog releases the input FSM and ignores late uploads. Cancelling input does not alter the saved recipe or launch generation. Quote confirmation, idempotency and server-side admin checks remain required.

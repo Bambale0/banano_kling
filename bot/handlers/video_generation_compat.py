@@ -65,11 +65,13 @@ VIDEO_MODEL_FAMILIES = (
 VIDEO_MODEL_PAGE_SIZE = 6
 
 
-def _video_model_page(family: str = "all", page: int = 0):
+def _video_model_page(family: str = "all", page: int = 0, *, is_admin: bool = False):
     groups = {key: models for key, _label, models in VIDEO_MODEL_FAMILIES}
     if family not in groups:
         family = "all"
     models = tuple(key for key in groups[family] if key in VIDEO_MODEL_CAPABILITIES)
+    if is_admin and family in {"all", "kling"}:
+        models = ("kling_4", *models)
     pages = max(1, (len(models) + VIDEO_MODEL_PAGE_SIZE - 1) // VIDEO_MODEL_PAGE_SIZE)
     try:
         page = max(0, min(int(page), pages - 1))
@@ -80,11 +82,11 @@ def _video_model_page(family: str = "all", page: int = 0):
 
 
 def _advanced_video_models_keyboard(
-    current_model: str | None = None, *, family: str = "all", page: int = 0,
+    current_model: str | None = None, *, family: str = "all", page: int = 0, is_admin: bool = False,
 ) -> types.InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     selected = normalize_video_model_key(current_model)
-    family, page, pages, model_keys = _video_model_page(family, page)
+    family, page, pages, model_keys = _video_model_page(family, page, is_admin=is_admin)
     tabs = [types.InlineKeyboardButton(
         text=("• " if key == family else "") + label,
         callback_data=f"video_models:{key}:0",
@@ -92,6 +94,12 @@ def _advanced_video_models_keyboard(
     for offset in range(0, len(tabs), 3):
         builder.row(*tabs[offset:offset + 3])
     for model_key in model_keys:
+        if model_key == "kling_4":
+            prefix = "✅ " if selected == model_key else ""
+            builder.row(types.InlineKeyboardButton(
+                text=f"{prefix}🎬 Kling 4 · админ", callback_data="k4:open",
+            ))
+            continue
         capability = VIDEO_MODEL_CAPABILITIES[model_key]
         prefix = "✅ " if selected == model_key else ""
         callback_data = (
@@ -115,16 +123,16 @@ def _advanced_video_models_keyboard(
 
 
 async def _render_video_model_page(callback, state, *, family="all", page=0, current_model=None):
-    family, page, _pages, _models = _video_model_page(family, page)
+    is_admin = config.is_admin(callback.from_user.id)
+    family, page, _pages, _models = _video_model_page(family, page, is_admin=is_admin)
+    # Leaving an input screen must stop routing messages into its old editor.
+    await state.set_state(None)
     await state.update_data(video_model_family=family, video_model_page=page, video_flow_step="select_model")
     text = (
         "🎬 <b>Создание видео</b>\n<b>Шаг 1. Выберите модель</b>\n\n"
         "Выберите семейство или листайте общий каталог. Все режимы сохранены."
     )
-    markup = _advanced_video_models_keyboard(current_model, family=family, page=page)
-    from bot.config import config
-    if config.is_admin(callback.from_user.id):
-        markup.inline_keyboard.insert(0, [types.InlineKeyboardButton(text="🎬 Kling 4 · админ", callback_data="k4:open")])
+    markup = _advanced_video_models_keyboard(current_model, family=family, page=page, is_admin=is_admin)
     try:
         await callback.message.edit_text(text, parse_mode="HTML", reply_markup=markup)
     except TelegramBadRequest as exc:
