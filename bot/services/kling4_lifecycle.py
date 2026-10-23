@@ -149,7 +149,10 @@ class Kling4Lifecycle:
         )
         settings, revision = await self.settings()
         prepared = request
-        if isinstance(probe, ActualWan3PrimeProbe) and probe.storage is not None:
+        if (
+            isinstance(probe, ActualWan3PrimeProbe)
+            and getattr(probe, "storage", None) is not None
+        ):
             from bot.services.kling4_media import prepare_request
 
             prepared = await prepare_request(
@@ -233,7 +236,10 @@ class Kling4Lifecycle:
         )
         settings, revision = await self.settings()
         prepared = request
-        if isinstance(probe, ActualWan3PrimeProbe) and probe.storage is not None:
+        if (
+            isinstance(probe, ActualWan3PrimeProbe)
+            and getattr(probe, "storage", None) is not None
+        ):
             from bot.services.kling4_media import prepare_request
 
             prepared = await prepare_request(
