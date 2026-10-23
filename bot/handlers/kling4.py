@@ -208,6 +208,35 @@ def keyboard(recipe):
     return b.as_markup()
 
 
+def reference_labels(recipe):
+    data = recipe["input"]
+    if recipe["mode"] == "reference":
+        groups = [
+            (
+                "Фото",
+                [f"image_{i}" for i in range(1, len(data.get("image_urls") or []) + 1)],
+            ),
+            (
+                "Видео",
+                [f"video_{i}" for i in range(1, len(data.get("video_urls") or []) + 1)],
+            ),
+            ("Материалы", [item["name"] for item in data.get("elements") or []]),
+            ("Голоса", [item["name"] for item in data.get("voices") or []]),
+        ]
+    else:
+        frames = ["first_frame"] if data.get("first_frame_url") else []
+        frames += [
+            f"keyframe_{i}" for i in range(1, len(data.get("keyframe_urls") or []) + 1)
+        ]
+        frames += ["last_frame"] if data.get("last_frame_url") else []
+        groups = [("Кадры", frames)]
+    return "".join(
+        label + ": " + html.escape(", ".join("@" + name for name in names)) + "\n"
+        for label, names in groups
+        if names
+    )
+
+
 async def show(message, state):
     data = await state.get_data()
     recipe = data.get("k4_recipe", fresh())
@@ -218,6 +247,7 @@ async def show(message, state):
         "<b>Kling 4 · администратор</b>\n"
         + f"{mode_label(recipe)} · {inp['duration']}с · {inp['resolution']}\n"
         + "Отправьте фото, видео или аудио — бот сам добавит референсы.\n"
+        + reference_labels(recipe)
         + "Отправка промпта сразу запускает генерацию.\n"
         + html.escape(inp["prompt"] or "")
         + "\nБананы не списываются.",
