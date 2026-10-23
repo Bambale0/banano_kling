@@ -164,6 +164,10 @@ async def _run_seedance25_trend(
     except ValueError as exc:
         raise trend_api.TrendRunValidationError(str(exc)) from exc
 
+    # Validation resolves the effective provider geometry before billing and
+    # persistence. Do not store the template's stale fixed frame-mode ratio.
+    ratio = payload["ratio"]
+
     pricing_trend = trend
     if video_editing and any(
         item.get("media_type") == "video" for item in user_inputs

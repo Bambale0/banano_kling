@@ -268,6 +268,7 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
   const referenceScenario = scenario === 'multimodal' || identityTransfer
   const [resolution, setResolution] = useState<Seedance25Resolution>('720p')
   const [ratio, setRatio] = useState<(typeof RATIOS)[number]>('adaptive')
+  const frameMode = scenario === 'first_frame' || scenario === 'first_last'
   const [duration, setDuration] = useState(5)
   const [videoEditing, setVideoEditing] = useState(false)
   const sourceSettings = identityTransfer || videoEditing
@@ -543,7 +544,7 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
         identityQuote: identityQuote?.seedance25_identity_quote,
         referenceQuoteHash: regularQuote?.quote_hash,
         prompt: prompt.trim(),
-        ratio: sourceSettings ? 'adaptive' : ratio,
+        ratio: sourceSettings || frameMode ? 'adaptive' : ratio,
         duration: sourceSettings ? -1 : duration,
         videoEditing: !identityTransfer && videoEditing,
         resolution,
@@ -873,11 +874,11 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
           </fieldset>
         </div>
 
-        <fieldset disabled={sourceSettings} className="space-y-2">
-          <div className="text-xs font-medium text-foreground">Формат кадра{sourceSettings ? ' · как в исходном видео' : ''}</div>
+        <fieldset disabled={sourceSettings || frameMode} className="space-y-2">
+          <div className="text-xs font-medium text-foreground">Формат кадра{frameMode ? ' · как в первом кадре' : sourceSettings ? ' · как в исходном видео' : ''}</div>
           <div className="flex flex-wrap gap-2">
             {RATIOS.map((value) => (
-              <Option key={value} active={(sourceSettings ? 'adaptive' : ratio) === value} onClick={() => setRatio(value)}>
+              <Option key={value} active={(sourceSettings || frameMode ? 'adaptive' : ratio) === value} onClick={() => setRatio(value)}>
                 {value === 'adaptive' ? 'Авто' : value}
               </Option>
             ))}

@@ -88,6 +88,15 @@ class Seedance25Service(KlingService):
     MAX_REFERENCE_VIDEOS = 10
     MAX_REFERENCE_AUDIO = 10
 
+    @classmethod
+    def normalize_aspect_ratio(cls, value: str, *, scenario: str) -> str:
+        ratio = str(value or "adaptive").strip().lower()
+        if ratio not in cls.ALLOWED_RATIOS:
+            raise ValueError(f"Unsupported Seedance 2.5 aspect ratio: {ratio}")
+        # Confirmed by KIE createTask 422 on 2026-10-23. Frame modes inherit
+        # input geometry; the generic schema's fixed ratios apply to other modes.
+        return "adaptive" if scenario in {"first_frame", "first_last"} else ratio
+
     @staticmethod
     def _clean_urls(values: Iterable[str] | None) -> list[str]:
         cleaned: list[str] = []
@@ -301,6 +310,8 @@ class Seedance25Service(KlingService):
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
 
+        normalized_ratio = self.normalize_aspect_ratio(normalized_ratio, scenario=scenario)
+
         # Editing intent is local application metadata, not a KIE API field.
         # Validate normal inputs first so stale valid settings can be normalized
         # without allowing invalid settings to bypass the provider contract.
@@ -370,6 +381,21 @@ class Seedance25Service(KlingService):
         )
         result = await self._kie_post("/api/v1/jobs/createTask", payload)
         if isinstance(result, dict):
+            if not result.get("task_id"):
+                # Avoid logging provider text: it can echo the private prompt or
+                # uploaded media. Keep the confirmed rejection class and code.
+                reason = (
+                    "frame_ratio_requires_adaptive"
+                    if "first-frame and first-last-frame tasks only support adaptive aspect ratio"
+                    in str(result.get("message") or "")
+                    else "provider_create_failed"
+                )
+                logger.warning(
+                    "Seedance 2.5 create rejected: model=%s scenario=%s provider_code=%s reason=%s",
+                    self.MODEL_NAME, scenario,
+                    result.get("status_code") if isinstance(result.get("status_code"), int) else 0,
+                    reason,
+                )
             result.setdefault("success", bool(result.get("task_id")))
             result.setdefault("scenario", scenario)
             result.setdefault("provider_model", self.MODEL_NAME)
