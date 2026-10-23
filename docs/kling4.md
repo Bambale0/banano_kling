@@ -45,3 +45,42 @@ Original-sound controls preserve or omit the input video audio only when ordinar
 ## MOV reference preparation — 2026-10-23
 
 Kling quote/launch now prepares owned MOV clips as MP4 before applying the KIE contract, including existing Telegram drafts and Mini App requests. The original file and recipe remain unchanged; the provider snapshot uses the prepared MP4. Preparation remuxes video and optional audio with stream copy (no re-encoding or trimming), checks measured duration/dimensions, and saves through the existing owner/quota-protected media storage. A per-owner/content lock bounds concurrent preparation; repeated quotes reuse the verified stored copy. Failed or timed-out preparation does not create a provider task. Video element and ordinary-reference duration limits remain distinct and enforced.
+
+### Repeat retention after MOV preparation
+
+Unused-media cleanup checks both `kling4_intents.recipe` (original input) and
+`kling4_intents.snapshot` (prepared provider input), in addition to existing task,
+trend and saved-reference checks. This protects existing and future ordinary MOV
+references and video elements without rewriting historical recipes or requiring
+a backfill. All intent states retain their inputs: private, failed and unknown
+jobs can still be restored by the owner. Retention is not a grant of access;
+owner/admin checks and original-file verification before cached MP4 reuse are
+unchanged.
+
+Only a genuinely absent Kling intent table is optional. Table-discovery or
+reference-query failures abort cleanup before unlinking the affected candidate.
+Unreferenced uploads still expire under `WAN3_UNUSED_MEDIA_TTL_SECONDS`; protected
+media continue to count toward storage quotas. The configured production TTL and
+actual historical file loss have not been verified. This prevents future cleanup
+of existing referenced files; it cannot recover files already removed.
+
+Regression coverage in `tests/test_kling4_mov.py` ages synthetic uploads, runs
+paged cleanup, restores the original owner recipe, quotes and launches a repeat
+through a fake transport. It also covers intent-only snapshots, malformed/failed
+lookups, absent schemas and unrelated orphan cleanup. Focused verification at `e714f275`: 22 tests passed (19 MOV and 3 existing
+retention tests) using Python 3.12.14, FFmpeg 7.1.5, isolated SQLite and fake
+provider transport. The isolated runner disables plugin autoload, clears the
+environment, substitutes only the eager services package initializer with a
+namespace package, and blocks network, PostgreSQL imports and forbidden-file
+access before loading the unchanged modules/tests. No guard violations occurred.
+Ruff and compilation passed for the two changed Python files. Replaying the
+done/ordinary regression against baseline retention failed because cleanup
+removed the original as well as the orphan; restoring the fix passed.
+
+The focused results above do not substitute for full CI or production validation.
+The owner subsequently authorized the existing automated CI tests for this PR,
+including read/import of the PostgreSQL adapter without modifying it, and release
+only after mandatory checks are green. A follow-up commit resumes normal CI
+without changing workflows or protections. Local adapter access remains
+prohibited. Keep the PR draft until the genuine required checks and review pass;
+then use the normal protected merge and exact-SHA deployment pipeline.

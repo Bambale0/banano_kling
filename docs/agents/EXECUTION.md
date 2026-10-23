@@ -2570,3 +2570,31 @@ Final local verification at60897e01: full safe `python -m pytest tests/ --ignore
 - Implementation: shared lifecycle preparation used by both Telegram and Mini App, bounded local stream-copy remux and verified owner-scoped derivative reuse. No production provider requests in tests.
 - Guidance: diagnosing-bugs (Bambale0/skills), provider metadata/idempotency rules (Bambale0/claw); anthropics webapp-testing considered, not applicable to backend media conversion.
 - Verification: 100 focused Kling tests passed, including four new MOV tests; Ruff and diff whitespace checks passed. Synthetic MOV/MP4 video and audio packet hashes match. Exact-head CI and post-deploy replay of the affected draft quote pending.
+
+## 2026-10-23 — Preserve Kling MOV inputs for Repeat
+
+- Baseline: `847e316357f23d1effcd6da55d4bc9d8a713b651`, current `tanyapi`; inspected open PRs and found no active MOV-retention fix.
+- Evidence: MOV preparation changes provider URLs; history stores that snapshot while owner Repeat restores `kling4_intents.recipe`. Existing cleanup did not inspect intents. Actual production file loss and configured TTL are not established.
+- Scope: retain original and prepared intent references, including historical/terminal/private intents, under the existing storage lock and cursor. No backfill, schema/config/UI/API/access/pricing/provider-payload changes. No new lifecycle metadata duplication.
+- Steps: (1) inspect shared lifecycle/retention/probe and CI; (2) add aged-MOV Repeat, snapshot, orphan and failure regressions; (3) include intent recipe/snapshot in optional lookup sources; (4) document and review the isolated draft; (5) execute safe verification when a compliant executor is available.
+- Failure safety: absent table stays compatible; discovery/query errors propagate rather than permit deletion of the affected candidate. Existing filename-boundary and owner/admin semantics remain unchanged.
+- Tests prepared: ordinary and element MOV across submitting/pending/unknown/done/failed, paged orphan cleanup, actual owner-recipe/quote/repeat with synthetic FFmpeg files and fake transport, snapshot without history, failed discovery, malformed recipe/snapshot columns, absent Kling table. Existing ownership/idempotency/conversion tests remain.
+- Verification limitation: shell returned “No usable execution environment is available.” No Python/pytest/Ruff/FFmpeg checks have run in this task. No claimed red/green test result. Guided by Bambale0/skills diagnosing-bugs (execution phases blocked), Bambale0/claw small-change/test/idempotency guidance; anthropics webapp-testing considered but no frontend changes.
+- CI safety audit: normal PR workflows include Wan Prime and Creator Tariff PostgreSQL jobs that would import the prohibited adapter. GitHub documents `[skip ci]` for push/pull_request; all repository workflow triggers were inspected. The only pull_request_target workflow is Tanya Auto Merge, whose job excludes draft PRs and runs no application code. No workflow_run trigger found. Publish only a draft with `[skip ci]`; do not bypass or change required checks. Unrun checks block release.
+- Release boundary: no merge, auto-merge, production deployment, DB access, paid generation or live monitoring authorized or performed. Do not remove the CI skip directive while the import prohibition applies. A compliant isolated executor is needed for focused SQLite tests; release needs separately authorized verification and deployment. Retained bytes still consume normal quotas; deleted originals cannot be reconstructed by this fix.
+
+### Follow-up verification at e714f275
+
+- A fresh isolated executor became available. Initial execution exposed a test-fixture defect: the existing 320x320 MOV was too small for a video element (minimum short side 700). Corrected only the synthetic fixture to 720x720 in `e714f275d606e5eeb5b78d0fcfd1b67aa250f661`.
+- Final exact changed source blobs verified: retention `b2df1e9bcc61fe4926de251235fc87f7b48e8dca`; MOV tests `f64aa455abc6cda9438d107682f48f8eafc95f43`.
+- Isolated pytest runner invoked `pytest -p pytest_asyncio.plugin -q tests/test_kling4_mov.py tests/test_wan3_retention.py --tb=short`: **22 passed in 13.21s**, exit 0 (19 MOV + 3 existing retention).
+- Execution isolation: Python 3.12.14/FFmpeg 7.1.5; allowlisted source only, actual application/test files, SQLite, fake transport, cleared environment and project dotenv disabled. Plugin autoload disabled; the eager `bot.services` package initializer was replaced by a namespace package. Network, PostgreSQL import and forbidden-file audit guards installed before pytest; zero guard violations. This does not validate package startup or PostgreSQL behavior.
+- `ruff check --isolated bot/services/wan3_prime_retention.py tests/test_kling4_mov.py`: all checks passed. `python -m py_compile` on the same two files: exit 0.
+- Red/green: with baseline `847e316` retention only, the done/ordinary expiry regression failed (`removed == 2` instead of 1, original incorrectly removed). Restoring the patch passed; final full focused run above used exact final source blobs.
+- Independent static review found no blocking defect. Required CI/full-suite/PostgreSQL/build/release checks remain unrun. Keep draft and `[skip ci]`; no prohibited adapter access, paid generation, production DB access, merge or deployment occurred.
+
+### CI and conditional release authorization — 2026-10-23
+
+- The owner approved the narrow exception: the existing automated tests for PR #368 may read/import the PostgreSQL adapter, without changing it. Local read/import/restore remains prohibited. The prior CI hold above is historical and superseded only to this extent.
+- Release is authorized only after genuine mandatory checks pass. Keep draft until checks/review are resolved; do not bypass protection, fabricate statuses, change workflows or run paid tests.
+- Resume normal CI with this no-skip follow-up commit. The implementation and tested Python blobs are unchanged. Track current-head checks, then merge-SHA CI and the standard deployment pipelines; report deployed only with exact-SHA evidence. No ongoing runtime monitor is started.

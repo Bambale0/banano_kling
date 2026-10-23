@@ -49,8 +49,25 @@ async def cleanup_expired(*, limit: int = 100) -> dict[str, int]:
             await db.execute("UPDATE wan3_prime_upload_sessions SET status = 'expired', updated_at = ? "
                              "WHERE upload_id = ?", (stamp, session['upload_id']))
             removed_sessions += 1
-        optional_tables = [(table, column) for table, column in (('trend_reference_assets', 'file_url'),
-            ('saved_references', 'file_url'), ('wan3_prime_trend_recipes', 'recipe_json')) if await _table_exists(db, table)]
+        # Repeat restores the original recipe, not the provider snapshot. MOV
+        # preparation replaces its URLs with MP4s, so generation_tasks alone
+        # cannot protect the original. Read intents directly for existing jobs
+        # too; terminal/private intents still own repeatable inputs. Keep both
+        # sides of the conversion even if a history row is absent.
+        # Only an absent table is optional. Discovery/query errors propagate
+        # before unlinking the candidate; never interpret lookup failure as
+        # proof that the file is unused.
+        optional_tables = [
+            (table, column)
+            for table, column in (
+                ('trend_reference_assets', 'file_url'),
+                ('saved_references', 'file_url'),
+                ('wan3_prime_trend_recipes', 'recipe_json'),
+                ('kling4_intents', 'recipe'),
+                ('kling4_intents', 'snapshot'),
+            )
+            if await _table_exists(db, table)
+        ]
         cursor = await (await db.execute('SELECT last_media_id FROM wan3_prime_cleanup_cursor WHERE id = 1')).fetchone()
         after_id = int(cursor[0]) if cursor else 0
         rows = await (await db.execute(
