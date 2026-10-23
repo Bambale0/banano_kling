@@ -283,7 +283,7 @@ async def test_prompt_fragments_launch_once_and_filename_in_prompt_is_not_a_refe
 async def test_actual_telegram_router_receives_prompt_in_editing_state(
     telegram, engine, monkeypatch
 ):
-    from datetime import datetime, timezone
+    from datetime import UTC, datetime
 
     from aiogram import Bot, types
 
@@ -297,7 +297,7 @@ async def test_actual_telegram_router_receives_prompt_in_editing_state(
     try:
         msg = types.Message(
             message_id=30,
-            date=datetime.now(timezone.utc),
+            date=datetime.now(UTC),
             chat=types.Chat(id=999999999, type="private"),
             from_user=types.User(id=999999999, is_bot=False, first_name="Test"),
             text="A landscape",
