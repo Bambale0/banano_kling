@@ -28,7 +28,7 @@ async def mov_context(engine_context, tmp_path, monkeypatch):
             "-f",
             "lavfi",
             "-i",
-            "color=c=blue:s=320x320:r=24",
+            "color=c=blue:s=720x720:r=24",
             "-f",
             "lavfi",
             "-i",
