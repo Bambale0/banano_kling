@@ -17,6 +17,26 @@ jest.mock('@/lib/seedance25-api', () => ({
 jest.mock('@/lib/api', () => ({ uploadFile: jest.fn() }))
 beforeEach(() => jest.clearAllMocks())
 
+it.each(['Оживить фото', 'Между двумя кадрами'])('inherits frame geometry for %s and restores reference ratio', (mode) => {
+  render(<Seedance25PublicForm credits={1000} isAdmin={false} />)
+  fireEvent.click(screen.getByRole('button', { name: '16:9' }))
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(mode) }))
+  expect(screen.getByText(/как в первом кадре/)).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '16:9' })).toBeDisabled()
+  expect(screen.getByLabelText('Длительность видео')).toBeEnabled()
+  fireEvent.click(screen.getByRole('button', { name: /По референсам/ }))
+  expect(screen.getByRole('button', { name: '16:9' })).toBeEnabled()
+})
+
+it('locks frame geometry in the legacy admin form too', () => {
+  render(<Seedance25AdminForm />)
+  fireEvent.click(screen.getByRole('button', { name: /Первый кадр/ }))
+  expect(screen.getByText(/как в первом кадре/)).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '16:9' })).toBeDisabled()
+  fireEvent.click(screen.getByRole('button', { name: /Первый \+ последний/ }))
+  expect(screen.getByRole('button', { name: '16:9' })).toBeDisabled()
+})
+
 it('sends editing settings, locks controls, and restores generation choices', async () => {
   render(<Seedance25PublicForm credits={1000} isAdmin />)
   fireEvent.change(screen.getByLabelText('Длительность видео'), { target: { value: '12' } })

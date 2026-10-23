@@ -181,6 +181,8 @@ async def _public_show_screen(target, state: FSMContext, *, edit: bool = True, a
     display_data = dict(data, seedance25_editing_allowed=is_admin)
     if editing:
         display_data.update(v_duration=-1, v_ratio="adaptive")
+    elif scenario in {"first_frame", "first_last"}:
+        display_data["v_ratio"] = "adaptive"
     duration = int(display_data.get("v_duration", 5))
     quote = None
     identity_error = ""
@@ -409,6 +411,7 @@ async def _validate_public_payload(
     seedance_25_service.normalize_duration(payload["duration"])
     if payload["ratio"] not in seedance_25_service.ALLOWED_RATIOS:
         raise ValueError("Некорректный формат Seedance 2.5")
+    payload["ratio"] = seedance_25_service.normalize_aspect_ratio(payload["ratio"], scenario=scenario)
     if payload["resolution"] not in seedance_25_service.ALLOWED_RESOLUTIONS:
         raise ValueError("Некорректное качество Seedance 2.5")
     if payload["output_format"] not in seedance_25_service.ALLOWED_OUTPUT_FORMATS:

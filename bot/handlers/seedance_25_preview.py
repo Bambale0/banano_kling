@@ -138,6 +138,9 @@ def _seedance_25_keyboard(data: dict):
     scenario = data.get("seedance25_scenario", "text")
     resolution = data.get("seedance25_resolution", "720p")
     ratio = data.get("v_ratio", "adaptive")
+    frame_mode = scenario in {"first_frame", "first_last"}
+    if frame_mode:
+        ratio = "adaptive"
     duration = int(data.get("v_duration", 5))
 
     for key, label in (
@@ -162,7 +165,8 @@ def _seedance_25_keyboard(data: dict):
             callback_data=f"s25_resolution_{value}",
         )
 
-    for value in ("adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9"):
+    ratios = ("adaptive",) if frame_mode else ("adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9")
+    for value in ratios:
         builder.button(
             text=("✅ " if ratio == value else "") + value,
             callback_data=f"s25_ratio_{value.replace(':', '_')}",
@@ -569,7 +573,9 @@ async def seedance25_ratio(callback: types.CallbackQuery, state: FSMContext):
         return
     value = callback.data.replace("s25_ratio_", "", 1).replace("_", ":")
     if value == "adaptive" or value in seedance_25_service.ALLOWED_RATIOS:
-        await state.update_data(v_ratio=value)
+        await state.update_data(v_ratio=seedance_25_service.normalize_aspect_ratio(
+            value, scenario=data.get("seedance25_scenario", "text"),
+        ))
     await _show_seedance_25_screen(callback, state)
     await callback.answer()
 

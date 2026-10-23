@@ -91,9 +91,9 @@ def _clear_seedance_keyboard(data: dict):
         ("3:4", "3:4"),
         ("21:9", "21:9"),
     ):
-        if not editing:
+        if not editing and (scenario not in {"first_frame", "first_last"} or value == "adaptive"):
             builder.button(
-                text=_selected(ratio == value, label),
+                text=_selected(ratio == value or scenario in {"first_frame", "first_last"}, label),
                 callback_data=f"s25_ratio_{value.replace(':', '_')}",
             )
 
