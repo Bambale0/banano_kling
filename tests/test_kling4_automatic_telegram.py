@@ -225,8 +225,10 @@ async def test_failed_reference_blocks_prompt_until_successful_resend(
     ]
 
 
-@pytest.mark.parametrize("exit_action", ["k4:clear", "video_models:kling:0"])
-async def test_clear_or_catalog_exit_cancels_pending_caption_and_upload(
+@pytest.mark.parametrize(
+    "exit_action", ["k4:clear", "video_models:kling:0", "k4:repeat:saved"]
+)
+async def test_replacing_or_leaving_draft_cancels_pending_caption_and_upload(
     telegram, engine, monkeypatch, exit_action
 ):
     from bot import wan3_prime_api
@@ -235,6 +237,11 @@ async def test_clear_or_catalog_exit_cancels_pending_caption_and_upload(
     state, _message, query = telegram
     query.data = "k4:open"
     await kling4.callback(query, state)
+    saved = kling4.fresh()
+    saved["input"].update(
+        prompt="Saved recipe", duration=12, image_urls=["https://owned.test/saved.png"]
+    )
+    engine.owner_recipe = AsyncMock(return_value=saved)
     started, release = asyncio.Event(), asyncio.Event()
 
     async def upload(**_kwargs):
@@ -259,7 +266,20 @@ async def test_clear_or_catalog_exit_cancels_pending_caption_and_upload(
     await pending
     await settled()
     engine.launch.assert_not_awaited()
-    assert not (await state.get_data())["k4_recipe"]["input"].get("image_urls")
+    data = (await state.get_data())["k4_recipe"]["input"]
+    if exit_action == "k4:repeat:saved":
+        assert data == saved["input"]
+        assert not (await state.get_data()).get("k4_upload_errors")
+        await kling4.automatic(
+            incoming(query, 11, "New prompt for saved recipe"), state
+        )
+        await settled()
+        engine.launch.assert_awaited_once()
+        data = engine.launch.await_args.args[1]["input"]
+        assert data["image_urls"] == ["https://owned.test/saved.png"]
+        assert data["duration"] == 12
+    else:
+        assert not data.get("image_urls")
 
 
 async def test_prompt_fragments_launch_once_and_filename_in_prompt_is_not_a_reference(

@@ -230,6 +230,16 @@ async def save(state, recipe):
     await state.update_data(k4_recipe=recipe, k4_quote=None, k4_key=uuid.uuid4().hex)
 
 
+async def reset_intake(state):
+    await state.update_data(
+        k4_session=uuid.uuid4().hex,
+        k4_auto_uploads=[],
+        k4_media_messages={},
+        k4_upload_errors={},
+        k4_album_pending=False,
+    )
+
+
 async def launch_prompt(message, state, recipe):
     """Resolve the measured quote internally, preserving durable idempotency."""
     identity = await actor(message.from_user.id)
@@ -343,12 +353,7 @@ async def callback(query: types.CallbackQuery, state: FSMContext):
                     if k in inp
                 }
             )
-            await state.update_data(
-                k4_session=uuid.uuid4().hex,
-                k4_auto_uploads=[],
-                k4_media_messages={},
-                k4_upload_errors={},
-            )
+            await reset_intake(state)
             await save(state, clean)
             await show(query.message, state)
         elif action == "materials":
@@ -600,6 +605,7 @@ async def callback(query: types.CallbackQuery, state: FSMContext):
             repeat = await kling4_lifecycle.owner_recipe(
                 await actor(query.from_user.id), parts[2]
             )
+            await reset_intake(state)
             await save(state, repeat)
             await show(query.message, state)
         elif action == "adopt":
