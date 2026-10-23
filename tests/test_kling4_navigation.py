@@ -1,3 +1,4 @@
+from itertools import count
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -8,6 +9,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from bot.handlers import kling4
 from bot.handlers import video_generation_compat as catalog
+
+_BOT_IDS = count(1000)
 
 
 def buttons(message):
@@ -23,7 +26,7 @@ def buttons(message):
 def telegram():
     state = FSMContext(
         storage=MemoryStorage(),
-        key=StorageKey(bot_id=1, chat_id=999999999, user_id=999999999),
+        key=StorageKey(bot_id=next(_BOT_IDS), chat_id=999999999, user_id=999999999),
     )
     message = SimpleNamespace(answer=AsyncMock(), edit_text=AsyncMock())
     query = SimpleNamespace(
@@ -253,3 +256,51 @@ async def test_forged_kling4_callback_from_nonadmin_does_not_change_state(telegr
         await kling4.callback(query, state)
     assert await state.get_data() == {"sentinel": "preserved"}
     assert await state.get_state() is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("next_action", ["k4:done", "k4:text:duration"])
+async def test_queued_text_cannot_mutate_cancelled_or_replaced_input(
+    telegram, next_action
+):
+    import asyncio
+
+    state, _message, query = telegram
+    query.data = "k4:open"
+    await kling4.callback(query, state)
+    query.data = "k4:text:prompt"
+    await kling4.callback(query, state)
+    incoming = SimpleNamespace(from_user=query.from_user, text="10", answer=AsyncMock())
+    lock = kling4.actor_lock(query, state)
+    async with lock:
+        query.data = next_action
+        navigate = asyncio.create_task(kling4.callback(query, state))
+        await asyncio.sleep(0)
+        late = asyncio.create_task(kling4.text(incoming, state))
+        await asyncio.sleep(0)
+    await navigate
+    await late
+    recipe = (await state.get_data())["k4_recipe"]
+    assert recipe["input"]["prompt"] == ""
+    assert recipe["input"]["duration"] == 5
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value", "expected"),
+    [("prompt", "A quiet landscape", "A quiet landscape"), ("duration", "10", 10)],
+)
+async def test_active_text_session_saves_value_and_returns_to_editor(
+    telegram, field, value, expected
+):
+    state, message, query = telegram
+    query.data = "k4:open"
+    await kling4.callback(query, state)
+    query.data = f"k4:text:{field}"
+    await kling4.callback(query, state)
+    message.from_user = query.from_user
+    message.text = value
+    await kling4.text(message, state)
+    assert (await state.get_data())["k4_recipe"]["input"][field] == expected
+    assert await state.get_state() == kling4.Kling4States.editing.state
+    assert "back_main" in buttons(message)

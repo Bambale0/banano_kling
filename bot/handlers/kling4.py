@@ -51,6 +51,24 @@ class Kling4States(StatesGroup):
     media = State()
 
 
+def serialized_text(handler):
+    @wraps(handler)
+    async def wrapped(message, state, **_context):
+        # StateFilter ran before this handler could wait for a navigation callback.
+        expected = (await state.get_data()).get("k4_text_session")
+        async with actor_lock(message, state):
+            current = await state.get_data()
+            if (
+                await state.get_state() != Kling4States.text.state
+                or not expected
+                or current.get("k4_text_session") != expected
+            ):
+                return
+            return await handler(message, state)
+
+    return wrapped
+
+
 def fresh():
     return {
         "mode": "reference",
@@ -193,7 +211,7 @@ async def show(message, state):
     recipe = data.get("k4_recipe", fresh())
     inp = recipe["input"]
     await state.set_state(Kling4States.editing)
-    await state.update_data(k4_field=None, k4_media_session=None)
+    await state.update_data(k4_field=None, k4_media_session=None, k4_text_session=None)
     await message.answer(
         "<b>Kling 4 · администратор</b>\n"
         + f"{mode_label(recipe)} · {inp['duration']}с · {inp['resolution']}\n"
@@ -290,7 +308,7 @@ async def callback(query: types.CallbackQuery, state: FSMContext):
                 ("elements.", "voices.")
             ):
                 raise Kling4Error("Неверное поле.")
-            await state.update_data(k4_field=field)
+            await state.update_data(k4_field=field, k4_text_session=uuid.uuid4().hex)
             await state.set_state(Kling4States.text)
             await query.message.answer(
                 "Отправьте "
@@ -510,7 +528,9 @@ async def callback(query: types.CallbackQuery, state: FSMContext):
             await show(query.message, state)
         elif action == "adopt":
             await kling4_lifecycle.status(await actor(query.from_user.id), parts[2])
-            await state.update_data(k4_adopt=parts[2], k4_field="adopt")
+            await state.update_data(
+                k4_adopt=parts[2], k4_field="adopt", k4_text_session=uuid.uuid4().hex
+            )
             await state.set_state(Kling4States.text)
             await query.message.answer(
                 "Отправьте ID уже созданной задачи из кабинета KIE. Новая генерация не создаётся.",
@@ -567,7 +587,7 @@ async def media_menu(message, recipe, path):
 
 
 @router.message(StateFilter(Kling4States.text))
-@serialized
+@serialized_text
 async def text(message: types.Message, state: FSMContext):
     if not await admin(message):
         return
@@ -611,6 +631,8 @@ async def media(message: types.Message, state: FSMContext):
     current = await state.get_data()
     recipe = current.get("k4_recipe", fresh())
     path = current.get("k4_field", "")
+    if await state.get_state() != Kling4States.media.state or not isinstance(path, str):
+        return
     kind = (
         "audio"
         if path.endswith(("voice_url", "audio_url"))
