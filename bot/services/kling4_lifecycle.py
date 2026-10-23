@@ -147,8 +147,18 @@ class Kling4Lifecycle:
             if hasattr(self.probe, "for_actor")
             else self.probe
         )
-        recipe = await validate_recipe(request, probe)
         settings, revision = await self.settings()
+        prepared = request
+        if (
+            isinstance(probe, ActualWan3PrimeProbe)
+            and getattr(probe, "storage", None) is not None
+        ):
+            from bot.services.kling4_media import prepare_request
+
+            prepared = await prepare_request(
+                actor, request, probe, timeout=settings["result_timeout_seconds"]
+            )
+        recipe = await validate_recipe(prepared, probe)
         return recipe.quote(settings, revision)
 
     async def _row(self, task_id):
@@ -224,8 +234,18 @@ class Kling4Lifecycle:
             if hasattr(self.probe, "for_actor")
             else self.probe
         )
-        recipe = await validate_recipe(request, probe)
         settings, revision = await self.settings()
+        prepared = request
+        if (
+            isinstance(probe, ActualWan3PrimeProbe)
+            and getattr(probe, "storage", None) is not None
+        ):
+            from bot.services.kling4_media import prepare_request
+
+            prepared = await prepare_request(
+                actor, request, probe, timeout=settings["result_timeout_seconds"]
+            )
+        recipe = await validate_recipe(prepared, probe)
         quote = recipe.quote(settings, revision)
         if not quote_hash or quote["quote_hash"] != quote_hash:
             raise Kling4Error("Расчёт устарел. Пересчитайте стоимость.", status=409)
