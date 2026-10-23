@@ -67,7 +67,17 @@ of existing referenced files; it cannot recover files already removed.
 Regression coverage in `tests/test_kling4_mov.py` ages synthetic uploads, runs
 paged cleanup, restores the original owner recipe, quotes and launches a repeat
 through a fake transport. It also covers intent-only snapshots, malformed/failed
-lookups, absent schemas and unrelated orphan cleanup. These new tests have not
-yet been executed in this task: no usable local executor is available, and normal
-PR CI includes an adapter whose import is prohibited for this task. The draft
-commit intentionally uses `[skip ci]`; it is not validated or eligible for release.
+lookups, absent schemas and unrelated orphan cleanup. Focused verification at `e714f275`: 22 tests passed (19 MOV and 3 existing
+retention tests) using Python 3.12.14, FFmpeg 7.1.5, isolated SQLite and fake
+provider transport. The isolated runner disables plugin autoload, clears the
+environment, substitutes only the eager services package initializer with a
+namespace package, and blocks network, PostgreSQL imports and forbidden-file
+access before loading the unchanged modules/tests. No guard violations occurred.
+Ruff and compilation passed for the two changed Python files. Replaying the
+done/ordinary regression against baseline retention failed because cleanup
+removed the original as well as the orphan; restoring the fix passed.
+
+This is focused offline verification, not full-suite/CI/PostgreSQL or production
+validation. Normal PR CI includes a prohibited adapter import, so the draft
+retains `[skip ci]`. Required release checks remain unsatisfied; no merge or
+deployment is authorized.
