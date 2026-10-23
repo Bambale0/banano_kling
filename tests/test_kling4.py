@@ -515,7 +515,7 @@ async def test_retention_respects_publication(engine_context, tmp_path, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_telegram_editor_modes_quote_and_double_confirm(
+async def test_telegram_legacy_modes_and_controls_use_automatic_prompt(
     engine_context, monkeypatch
 ):
     from unittest.mock import AsyncMock
@@ -560,10 +560,14 @@ async def test_telegram_editor_modes_quote_and_double_confirm(
     await handler.callback(query, state)
     query.data = "k4:quote"
     await handler.callback(query, state)
-    assert (await state.get_data())["k4_quote"]["cost"] == 0
+    assert transport.calls == 0
     query.data = "k4:launch"
     await handler.callback(query, state)
     await handler.callback(query, state)
+    assert transport.calls == 0
+    message.text = "A quiet landscape"
+    await handler.automatic(message, state)
+    assert (await state.get_data())["k4_quote"]["cost"] == 0
     assert transport.calls == 1
     denied = SimpleNamespace(from_user=SimpleNamespace(id=123123), answer=AsyncMock())
     before = await state.get_data()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import logging
 import uuid
 import weakref
 from functools import wraps
@@ -19,7 +20,11 @@ from bot.services.kling4_contract import RATIOS, Kling4Error, require_admin
 from bot.services.kling4_lifecycle import kling4_lifecycle
 from bot.services.wan3_prime_media import Wan3PrimeValidationError
 
+from .kling4_automatic import AutomaticComposer
+
 router = Router(name="kling4")
+logger = logging.getLogger(__name__)
+automatic_composer = AutomaticComposer()
 
 
 _ACTOR_LOCKS: weakref.WeakValueDictionary[tuple[int, int], asyncio.Lock] = (
@@ -67,7 +72,15 @@ def serialized_text(handler):
                 or current.get("k4_text_session") != expected
             ):
                 return
-            return await handler(message, state)
+            if field != "prompt":
+                return await handler(message, state)
+            if not await admin(message):
+                return
+            # A prompt field opened before this release uses the same intake
+            # readiness checks as new editing-state messages.
+            await state.set_state(Kling4States.editing)
+            await state.update_data(k4_field=None, k4_text_session=None)
+        return await automatic_composer.handle(message, state)
 
     return wrapped
 
@@ -132,7 +145,6 @@ def navigation(builder=None, *, back="k4:done", back_label="← В редакт�
             text="Все модели", callback_data="video_models:all:0"
         ),
     )
-    b.row(types.InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_main"))
     return b.as_markup()
 
 
@@ -168,45 +180,32 @@ async def materials_menu(message, recipe):
 def keyboard(recipe):
     b = InlineKeyboardBuilder()
     data = recipe["input"]
-    b.button(text="✏️ Промпт", callback_data="k4:text:prompt")
-    b.button(text=f"⏱ {data['duration']}с", callback_data="k4:text:duration")
-    b.button(text="Качество: " + data["resolution"], callback_data="k4:resolution")
     ratio = data.get("aspect_ratio", "auto")
-    b.button(
-        text="Формат: " + ("Авто" if ratio == "auto" else ratio),
-        callback_data="k4:ratio",
-    )
-    b.button(text="Режим: " + mode_label(recipe), callback_data="k4:mode")
-    if recipe["mode"] == "reference":
-        b.button(
-            text=f"Фото ({len(data.get('image_urls', []))}/10)",
-            callback_data="k4:media:image_urls",
+    for values in (("auto",), RATIOS[1:4], RATIOS[4:]):
+        b.row(
+            *[
+                types.InlineKeyboardButton(
+                    text=("✅ " if ratio == value else "")
+                    + ("Авто" if value == "auto" else value),
+                    callback_data="k4:ratio:" + value,
+                )
+                for value in values
+            ]
         )
-        b.button(
-            text=f"Видео ({len(data.get('video_urls', []))}/5)",
-            callback_data="k4:media:video_urls",
-        )
-        if data.get("video_urls"):
-            b.button(
-                text="Исходный звук: "
-                + ("да" if data.get("keep_original_sound") else "нет"),
-                callback_data="k4:sound",
-            )
-        count = len(data.get("elements", [])) + len(data.get("voices", []))
-        b.button(text=f"Персонажи и голоса ({count})", callback_data="k4:materials")
-    else:
-        for path, label in [
-            ("first_frame_url", "Первый кадр"),
-            ("keyframe_urls", "Промежуточные кадры"),
-            ("last_frame_url", "Последний кадр"),
-        ]:
-            b.button(text=label, callback_data="k4:media:" + path)
-    b.adjust(1, 2, 2, 2, 1)
     b.row(
-        types.InlineKeyboardButton(text="💰 Рассчитать", callback_data="k4:quote"),
-        types.InlineKeyboardButton(text="📋 История", callback_data="k4:history"),
+        types.InlineKeyboardButton(text="− 1с", callback_data="k4:duration:-1"),
+        types.InlineKeyboardButton(
+            text=f"⏱ {data['duration']}с", callback_data="k4:duration:0"
+        ),
+        types.InlineKeyboardButton(text="+ 1с", callback_data="k4:duration:1"),
     )
-    return navigation(b, back=None)
+    b.row(types.InlineKeyboardButton(text="Очистить медиа", callback_data="k4:clear"))
+    b.row(
+        types.InlineKeyboardButton(
+            text="К моделям", callback_data="video_models:kling:0"
+        )
+    )
+    return b.as_markup()
 
 
 async def show(message, state):
@@ -218,8 +217,10 @@ async def show(message, state):
     await message.answer(
         "<b>Kling 4 · администратор</b>\n"
         + f"{mode_label(recipe)} · {inp['duration']}с · {inp['resolution']}\n"
-        + html.escape(inp["prompt"] or "Добавьте промпт.")
-        + "\n\nБананы не списываются. Расход KIE рассчитывается перед подтверждением.",
+        + "Отправьте фото, видео или аудио — бот сам добавит референсы.\n"
+        + "Отправка промпта сразу запускает генерацию.\n"
+        + html.escape(inp["prompt"] or "")
+        + "\nБананы не списываются.",
         parse_mode="HTML",
         reply_markup=keyboard(recipe),
     )
@@ -227,6 +228,67 @@ async def show(message, state):
 
 async def save(state, recipe):
     await state.update_data(k4_recipe=recipe, k4_quote=None, k4_key=uuid.uuid4().hex)
+
+
+async def launch_prompt(message, state, recipe):
+    """Resolve the measured quote internally, preserving durable idempotency."""
+    identity = await actor(message.from_user.id)
+    current = await state.get_data()
+    mid = getattr(message, "message_id", None)
+    key = (
+        f"k4_tg_{state.key.bot_id}_{state.key.chat_id}_{mid}"
+        if isinstance(mid, int)
+        else current["k4_key"]
+    )
+    quote = await kling4_lifecycle.quote(identity, recipe)
+    latest = await state.get_data()
+    if latest.get("k4_session") != current.get(
+        "k4_session"
+    ) or await state.get_state() not in {
+        Kling4States.editing.state,
+        Kling4States.text.state,
+    }:
+        return
+    await state.update_data(k4_quote=quote, k4_key=key)
+    result = await kling4_lifecycle.launch(identity, recipe, quote["quote_hash"], key)
+    latest = await state.get_data()
+    active = latest.get("k4_session") == current.get(
+        "k4_session"
+    ) and await state.get_state() in {
+        Kling4States.editing.state,
+        Kling4States.text.state,
+    }
+    if active:
+        await state.update_data(
+            k4_last_task=result["task_id"], _prompt_fragment_submit_token=None
+        )
+        await state.set_state(Kling4States.editing)
+    logger.info(
+        "Kling4 Telegram prompt submitted: telegram_id=%s task_id=%s request_id=%s status=%s",
+        message.from_user.id,
+        result["task_id"],
+        key,
+        result["status"],
+    )
+    status = result["status"]
+    heading = (
+        "Kling 4: проверяю статус запуска. Повторно отправлять этот промпт не нужно."
+        if status in {"unknown", "submitting"}
+        else "Kling 4: сервис отклонил запуск."
+        if status == "failed"
+        else "Kling 4: задача принята."
+    )
+    await message.answer(
+        heading + "\n"
+        f"{result['task_id']}\n"
+        f"Расход KIE: {quote['provider_credits']} credits. Бананы: 0.\n"
+        + (
+            "Проверьте промпт и референсы перед следующим запуском."
+            if status == "failed"
+            else "Результат придёт в Telegram. Можно отправить следующий промпт."
+        ),
+        reply_markup=keyboard(recipe) if active else None,
+    )
 
 
 @router.message(Command("kling4"))
@@ -240,6 +302,7 @@ async def command(message: types.Message, state: FSMContext):
         v_model="kling_4",
         video_model_family="kling",
         video_model_page=0,
+        k4_session=uuid.uuid4().hex,
     )
     await save(state, fresh())
     await show(message, state)
@@ -265,10 +328,28 @@ async def callback(query: types.CallbackQuery, state: FSMContext):
                 v_model="kling_4",
                 video_model_family="kling",
                 video_model_page=0,
+                k4_session=uuid.uuid4().hex,
             )
             await save(state, fresh())
             await show(query.message, state)
         elif action == "done":
+            await show(query.message, state)
+        elif action == "clear":
+            clean = fresh()
+            clean["input"].update(
+                {
+                    k: inp[k]
+                    for k in ("duration", "resolution", "aspect_ratio")
+                    if k in inp
+                }
+            )
+            await state.update_data(
+                k4_session=uuid.uuid4().hex,
+                k4_auto_uploads=[],
+                k4_media_messages={},
+                k4_upload_errors={},
+            )
+            await save(state, clean)
             await show(query.message, state)
         elif action == "materials":
             if recipe["mode"] != "reference":
@@ -294,19 +375,39 @@ async def callback(query: types.CallbackQuery, state: FSMContext):
             )
             await save(state, next_recipe)
             await show(query.message, state)
+        elif action == "duration":
+            delta = int(parts[2])
+            if delta not in {-1, 0, 1}:
+                raise Kling4Error("Неверное изменение длительности.")
+            inp["duration"] = max(3, min(30, inp["duration"] + delta))
+            if delta:
+                await save(state, recipe)
+            await show(query.message, state)
         elif action in {"resolution", "ratio", "sound"}:
             if action == "resolution":
                 inp["resolution"] = "1080p" if inp["resolution"] == "720p" else "720p"
             elif action == "ratio":
-                inp["aspect_ratio"] = RATIOS[
-                    (RATIOS.index(inp.get("aspect_ratio", "auto")) + 1) % len(RATIOS)
-                ]
+                selected = (
+                    ":".join(parts[2:])
+                    if len(parts) > 2
+                    else RATIOS[
+                        (RATIOS.index(inp.get("aspect_ratio", "auto")) + 1)
+                        % len(RATIOS)
+                    ]
+                )
+                if selected not in RATIOS:
+                    raise Kling4Error("Неверный формат кадра.")
+                inp["aspect_ratio"] = selected
             elif recipe["mode"] == "reference" and inp.get("video_urls"):
                 inp["keep_original_sound"] = not inp.get("keep_original_sound", False)
             await save(state, recipe)
             await show(query.message, state)
         elif action == "text":
             field = parts[2]
+            if field == "prompt":
+                await show(query.message, state)
+                await query.answer()
+                return
             if field not in {"prompt", "duration"} and not field.startswith(
                 ("elements.", "voices.")
             ):
@@ -451,37 +552,9 @@ async def callback(query: types.CallbackQuery, state: FSMContext):
                 inp.pop("keep_original_sound", None)
             await save(state, recipe)
             await media_menu(query.message, recipe, path)
-        elif action == "quote":
-            quote = await kling4_lifecycle.quote(
-                await actor(query.from_user.id), recipe
-            )
-            await state.update_data(k4_quote=quote)
-            b = InlineKeyboardBuilder()
-            b.button(text="Подтвердить и создать", callback_data="k4:launch")
-            b.adjust(1)
-            await state.set_state(Kling4States.editing)
-            await query.message.answer(
-                f"Расход KIE: {quote['provider_credits']} credits. Бананы: 0.\nОплачиваемых секунд: {quote['billed_seconds']}.",
-                reply_markup=navigation(b),
-            )
-        elif action == "launch":
-            quote = current.get("k4_quote") or {}
-            result = await kling4_lifecycle.launch(
-                await actor(query.from_user.id),
-                recipe,
-                quote.get("quote_hash"),
-                current.get("k4_key", ""),
-            )
-            await state.update_data(k4_last_task=result["task_id"])
-            await state.set_state(Kling4States.editing)
-            await query.message.answer(
-                f"Kling 4: {result['status']}\n{result['task_id']}\nРезультат появится в истории и придёт в Telegram.",
-                reply_markup=navigation(
-                    InlineKeyboardBuilder().button(
-                        text="📋 История", callback_data="k4:history"
-                    )
-                ),
-            )
+        elif action in {"quote", "launch"}:
+            # Old message keyboards cannot bypass automatic reference readiness.
+            await show(query.message, state)
         elif action == "history":
             history = await kling4_lifecycle.history(await actor(query.from_user.id))
             b = InlineKeyboardBuilder()
@@ -612,8 +685,6 @@ async def text(message: types.Message, state: FSMContext):
                 value = int(value)
                 if not 3 <= value <= 30:
                     raise Kling4Error("Допустимо 3–30 секунд.")
-            elif field == "prompt" and len(value) > 8000:
-                raise Kling4Error("Промпт: до 8000 символов.")
             elif field.endswith(".description") and len(value) > 100:
                 raise Kling4Error("Описание: до 100 символов.")
             set_path(
@@ -625,6 +696,11 @@ async def text(message: types.Message, state: FSMContext):
         await show(message, state)
     except (Wan3PrimeValidationError, ValueError) as exc:
         await message.answer(str(exc), reply_markup=navigation(back_label="← Отмена"))
+
+
+@router.message(StateFilter(Kling4States.editing))
+async def automatic(message: types.Message, state: FSMContext):
+    await automatic_composer.handle(message, state)
 
 
 @router.message(StateFilter(Kling4States.media))
