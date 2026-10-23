@@ -185,6 +185,7 @@ export function Seedance25AdminForm({ model: rawModel, onQueued, onSavedReferenc
   const [scenario, setScenario] = useState<Seedance25Scenario>('text')
   const [resolution, setResolution] = useState<Seedance25Resolution>('720p')
   const [ratio, setRatio] = useState<(typeof RATIOS)[number]>('adaptive')
+  const frameMode = scenario === 'first_frame' || scenario === 'first_last'
   const [duration, setDuration] = useState(5)
   const [videoEditing, setVideoEditing] = useState(false)
   const [outputFormat, setOutputFormat] = useState<Seedance25OutputFormat>('mp4')
@@ -337,7 +338,7 @@ export function Seedance25AdminForm({ model: rawModel, onQueued, onSavedReferenc
       const result = await generateSeedance25({
         scenario,
         prompt: prompt.trim(),
-        ratio: videoEditing ? 'adaptive' : ratio,
+        ratio: videoEditing || frameMode ? 'adaptive' : ratio,
         duration: videoEditing ? -1 : duration,
         videoEditing,
         resolution,
@@ -409,11 +410,11 @@ export function Seedance25AdminForm({ model: rawModel, onQueued, onSavedReferenc
           <p className="text-xs text-muted-foreground">Одно исходное видео, 4–30 секунд. Результат сохранит длительность и формат исходного видео. Для обычной генерации по референсам оставьте переключатель выключенным.</p>
         </section>
       ) : null}
-      <fieldset disabled={videoEditing} className="space-y-2">
-        <label className="text-sm font-medium">Формат кадра{videoEditing ? ' · как в исходном видео' : ''}</label>
+      <fieldset disabled={videoEditing || frameMode} className="space-y-2">
+        <label className="text-sm font-medium">Формат кадра{frameMode ? ' · как в первом кадре' : videoEditing ? ' · как в исходном видео' : ''}</label>
         <div className="flex flex-wrap gap-2">
           {RATIOS.map((value) => (
-            <PillButton key={value} active={(videoEditing ? 'adaptive' : ratio) === value} onClick={() => setRatio(value)}>{value}</PillButton>
+            <PillButton key={value} active={(videoEditing || frameMode ? 'adaptive' : ratio) === value} onClick={() => setRatio(value)}>{value}</PillButton>
           ))}
         </div>
       </fieldset>

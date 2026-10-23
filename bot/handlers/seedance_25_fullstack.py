@@ -445,6 +445,7 @@ async def _miniapp_seedance25_generate(request: web.Request, body: dict[str, Any
                 raise ValueError("Для редактирования исходное видео должно быть 4–30 секунд")
             duration = -1
             ratio = "adaptive"
+        ratio = seedance_25_service.normalize_aspect_ratio(ratio, scenario=scenario)
         await _validate_seedance_sources(
             first_frame_url=first_frame,
             last_frame_url=last_frame,
