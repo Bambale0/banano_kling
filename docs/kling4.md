@@ -77,7 +77,10 @@ Ruff and compilation passed for the two changed Python files. Replaying the
 done/ordinary regression against baseline retention failed because cleanup
 removed the original as well as the orphan; restoring the fix passed.
 
-This is focused offline verification, not full-suite/CI/PostgreSQL or production
-validation. Normal PR CI includes a prohibited adapter import, so the draft
-retains `[skip ci]`. Required release checks remain unsatisfied; no merge or
-deployment is authorized.
+The focused results above do not substitute for full CI or production validation.
+The owner subsequently authorized the existing automated CI tests for this PR,
+including read/import of the PostgreSQL adapter without modifying it, and release
+only after mandatory checks are green. A follow-up commit resumes normal CI
+without changing workflows or protections. Local adapter access remains
+prohibited. Keep the PR draft until the genuine required checks and review pass;
+then use the normal protected merge and exact-SHA deployment pipeline.

@@ -2592,3 +2592,9 @@ Final local verification at60897e01: full safe `python -m pytest tests/ --ignore
 - `ruff check --isolated bot/services/wan3_prime_retention.py tests/test_kling4_mov.py`: all checks passed. `python -m py_compile` on the same two files: exit 0.
 - Red/green: with baseline `847e316` retention only, the done/ordinary expiry regression failed (`removed == 2` instead of 1, original incorrectly removed). Restoring the patch passed; final full focused run above used exact final source blobs.
 - Independent static review found no blocking defect. Required CI/full-suite/PostgreSQL/build/release checks remain unrun. Keep draft and `[skip ci]`; no prohibited adapter access, paid generation, production DB access, merge or deployment occurred.
+
+### CI and conditional release authorization — 2026-10-23
+
+- The owner approved the narrow exception: the existing automated tests for PR #368 may read/import the PostgreSQL adapter, without changing it. Local read/import/restore remains prohibited. The prior CI hold above is historical and superseded only to this extent.
+- Release is authorized only after genuine mandatory checks pass. Keep draft until checks/review are resolved; do not bypass protection, fabricate statuses, change workflows or run paid tests.
+- Resume normal CI with this no-skip follow-up commit. The implementation and tested Python blobs are unchanged. Track current-head checks, then merge-SHA CI and the standard deployment pipelines; report deployed only with exact-SHA evidence. No ongoing runtime monitor is started.
