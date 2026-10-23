@@ -316,7 +316,25 @@ async def validate_recipe(body: dict, probe) -> Kling4Recipe:
             await asset(voice["audio_url"], "audio")
         if video_seconds > 30:
             raise Kling4Error("Суммарно входные видео не должны превышать 30 секунд.")
-    for token in re.findall(r"@([\w\u4E00-\u9FA5]+)", prompt):
-        if token not in tags:
-            raise Kling4Error(f"Тег @{token} не соответствует загруженному материалу.")
+
+    declared_names = {tag.casefold(): tag for tag in tags}
+
+    def mention(match):
+        token = match.group(1)
+        # Exact declared names win: a subject named Image1 is a distinct asset.
+        if token in tags:
+            return match.group(0)
+        alias = re.fullmatch(r"(image|video)_?([1-9]\d*)", token, re.IGNORECASE)
+        if alias:
+            target = alias[1].lower() + "_" + alias[2]
+            if (
+                target in tags
+                and declared_names.get(token.casefold(), target) == target
+            ):
+                return "@" + target
+        raise Kling4Error(f"Тег @{token} не соответствует загруженному материалу.")
+
+    data["prompt"] = re.sub(r"@([\w\u4E00-\u9FA5]+)", mention, prompt)
+    if len(data["prompt"]) > 8000:
+        raise Kling4Error("Промпт: от 1 до 8000 символов.")
     return Kling4Recipe(mode, json.loads(canonical(data)), tuple(media), video_seconds)
