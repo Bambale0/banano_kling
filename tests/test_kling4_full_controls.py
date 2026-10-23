@@ -304,3 +304,44 @@ async def test_native_sound_without_video_is_explained_without_unsupported_field
         await kling4.callback(query, state)
     assert "keep_original_sound" not in (await state.get_data())["k4_recipe"]["input"]
     assert "автоматически" in query.answer.await_args.args[0]
+
+
+async def test_saved_image_numbering_survives_automatic_frame_return(
+    telegram, engine, monkeypatch
+):
+    from bot import wan3_prime_api
+    from bot.handlers import kling4
+
+    state, _message, query = telegram
+    monkeypatch.setattr(
+        wan3_prime_api,
+        "store_telegram_wan3_prime_media",
+        AsyncMock(side_effect=lambda **kw: {"url": "https://owned/" + kw["file_id"]}),
+    )
+    query.data = "k4:open"
+    await kling4.callback(query, state)
+    await kling4.automatic(
+        automatic_tests.incoming(query, 5, photo=[automatic_tests.file("saved.png")]),
+        state,
+    )
+    query.data = "k4:mode:keyframe"
+    await kling4.callback(query, state)
+    recipe = (await state.get_data())["k4_recipe"]
+    recipe["input"].update(
+        first_frame_url="https://owned/first.png",
+        last_frame_url="https://owned/last.png",
+    )
+    await kling4.save(state, recipe)
+    await kling4.automatic(
+        automatic_tests.incoming(query, 10, photo=[automatic_tests.file("new.png")]),
+        state,
+    )
+    recipe = (await state.get_data())["k4_recipe"]
+    assert recipe["mode"] == "reference"
+    assert recipe["input"]["image_urls"] == [
+        "https://owned/saved.png",
+        "https://owned/first.png",
+        "https://owned/last.png",
+        "https://owned/new.png",
+    ]
+    engine.launch.assert_not_awaited()

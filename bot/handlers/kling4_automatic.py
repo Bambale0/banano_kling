@@ -271,6 +271,14 @@ class AutomaticComposer:
                 drafts = deepcopy(latest.get("k4_drafts", {}))
                 if recipe["mode"] == "keyframe":
                     drafts["keyframe"] = deepcopy(recipe)
+                    # Restored references and ordered frames form a fixed
+                    # prefix. Old automatic-upload receipts must not move
+                    # those images behind the newly restored frame images.
+                    latest["k4_auto_uploads"] = [
+                        entry
+                        for entry in latest.get("k4_auto_uploads", [])
+                        if entry["kind"] != "image"
+                    ]
                     reference = drafts.get("reference")
                     if reference:
                         # Resume the reference draft as well as keeping the
