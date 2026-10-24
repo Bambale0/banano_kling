@@ -710,6 +710,7 @@ export function Kling4Form({ modelSelector }: { modelSelector: ReactNode }) {
           )}
           {task && (
             <div className="space-y-2 text-sm" role="status">
+              <p>Задача: {task.task_id}</p>
               <p>{taskStatus(task.status)}</p>
               {task.result_url && (
                 <>
@@ -755,13 +756,13 @@ export function Kling4Form({ modelSelector }: { modelSelector: ReactNode }) {
           >
             Обновить историю
           </Button>
-          {history.map((item, index) => (
+          {history.map((item) => (
             <div
               key={item.task_id}
               className="space-y-2 border-b border-border py-3 text-xs"
             >
               <p className="break-all">
-                Видео {index + 1} · {taskStatus(item.status)}
+                {item.task_id} · {taskStatus(item.status)}
               </p>
               {item.result_url && (
                 <a

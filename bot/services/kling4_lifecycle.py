@@ -584,7 +584,7 @@ class Kling4Lifecycle:
             if row["status"] == "failed":
                 await self.telegram_bot.send_message(
                     row["telegram_id"],
-                    "Kling 4: не удалось создать видео. Баланс не списан.",
+                    f"Kling 4: не удалось создать видео. Баланс не списан.\nЗадача: {task_id}",
                 )
             elif (
                 row["result_path"]
@@ -596,7 +596,7 @@ class Kling4Lifecycle:
                 await self.telegram_bot.send_video(
                     row["telegram_id"],
                     video=FSInputFile(row["result_path"]),
-                    caption="Kling 4: видео готово.",
+                    caption=f"Kling 4: видео готово.\nЗадача: {task_id}",
                     supports_streaming=True,
                 )
             else:
@@ -604,7 +604,7 @@ class Kling4Lifecycle:
 
                 await self.telegram_bot.send_message(
                     row["telegram_id"],
-                    "Kling 4: видео готово.",
+                    f"Kling 4: видео готово.\nЗадача: {task_id}",
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                         InlineKeyboardButton(text="Скачать оригинал", url=str(row["result_url"]))
                     ]]),

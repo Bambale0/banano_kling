@@ -310,7 +310,7 @@ try {
   );
   assert.deepEqual(retry.generations[0].recipe, retry.generations[1].recipe);
   const visibleText = await retry.page.getByTestId("kling4-form").innerText();
-  assert.doesNotMatch(visibleText, /KIE|credits|provider_task_id|Расход|pending|kling4_/);
+  assert.doesNotMatch(visibleText, /KIE|credits|provider_task_id|Расход|pending/);
   assert.deepEqual(retry.errors, []);
   await retry.context.close();
   const ordinary = await setup(false, 430);

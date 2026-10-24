@@ -1,4 +1,4 @@
-"""User-facing Kling 4 notifications never disclose provider diagnostics."""
+"""User-facing Kling 4 notifications preserve task IDs without provider diagnostics."""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -14,7 +14,7 @@ engine = auto.engine
 
 
 def assert_clean(text):
-    for token in ("KIE", "credits", "kling4_", "pending", "unknown", "427.5"):
+    for token in ("KIE", "credits", "pending", "unknown", "427.5"):
         assert token not in text
 
 
@@ -32,6 +32,7 @@ async def test_launch_only_shows_user_status(telegram, engine, status):
     await kling4.launch_prompt(message, state, kling4.fresh())
     text = message.answer.await_args.args[0]
     assert_clean(text)
+    assert "kling4_private_identifier" in text
 
 
 @pytest.mark.asyncio
@@ -73,7 +74,7 @@ engine_context = lifecycle_tests.engine_context
 @pytest.mark.parametrize(
     "status,local_video", [("failed", False), ("done", True), ("done", False)]
 )
-async def test_delivery_has_no_internal_identifier(
+async def test_delivery_preserves_internal_identifier_without_provider_costs(
     engine_context, tmp_path, status, local_video
 ):
     from bot import database, db
@@ -106,7 +107,7 @@ async def test_delivery_has_no_internal_identifier(
     )
     text = call.kwargs["caption"] if local_video else call.args[1]
     assert_clean(text)
-    assert result["task_id"] not in text
+    assert result["task_id"] in text
     assert "https://" not in text
     assert (await engine.status(actor, result["task_id"]))[
         "delivery_status"

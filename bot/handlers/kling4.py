@@ -332,6 +332,7 @@ async def launch_prompt(message, state, recipe):
     )
     await message.answer(
         heading + "\n"
+        f"Задача: {result['task_id']}\n"
         + (
             "Проверьте промпт и референсы перед следующим запуском."
             if status == "failed"
@@ -622,9 +623,9 @@ async def callback(query: types.CallbackQuery, state: FSMContext):
         elif action == "history":
             history = await kling4_lifecycle.history(await actor(query.from_user.id))
             b = InlineKeyboardBuilder()
-            for number, task in enumerate(history[:10], 1):
+            for task in history[:10]:
                 b.button(
-                    text=f"Видео {number} · {task_status_label(task['status'])}",
+                    text=f"{task['task_id']} · {task_status_label(task['status'])}",
                     callback_data="k4:task:" + task["task_id"],
                 )
             b.adjust(1)
@@ -652,7 +653,7 @@ async def callback(query: types.CallbackQuery, state: FSMContext):
             )
             await state.set_state(Kling4States.editing)
             await query.message.answer(
-                task_status_label(task["status"]),
+                f"Задача: {task['task_id']}\n{task_status_label(task['status'])}",
                 reply_markup=navigation(b),
             )
         elif action == "repeat":
