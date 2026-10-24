@@ -641,3 +641,66 @@ async def test_navigation_cancels_prompt_queued_from_targeted_media_screen(
     await settled()
 
     engine.launch.assert_not_awaited()
+
+
+async def test_command_escapes_targeted_media_prompt_handler(telegram, engine):
+    state, _message, query = telegram
+    query.data = "k4:open"
+    await kling4.callback(query, state)
+    query.data = "k4:media:image_urls"
+    await kling4.callback(query, state)
+
+    with pytest.raises(auto.SkipHandler):
+        await kling4.media(incoming(query, 60, "/start"), state)
+
+    await settled()
+    engine.quote.assert_not_awaited()
+    engine.launch.assert_not_awaited()
+
+
+async def test_navigation_clears_canceled_targeted_upload_marker(
+    telegram, engine, monkeypatch
+):
+    from bot import wan3_prime_api
+
+    state, _message, query = telegram
+    query.data = "k4:open"
+    await kling4.callback(query, state)
+    query.data = "k4:media:image_urls"
+    await kling4.callback(query, state)
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def upload(**_kwargs):
+        started.set()
+        await release.wait()
+        return {"url": "https://owned.test/canceled.png"}
+
+    monkeypatch.setattr(wan3_prime_api, "store_telegram_wan3_prime_media", upload)
+    pending = asyncio.create_task(
+        kling4.media(incoming(query, 61, document=file("canceled.png")), state)
+    )
+    await started.wait()
+    query.data = "k4:done"
+    await kling4.callback(query, state)
+    release.set()
+    await pending
+
+    assert not (await state.get_data()).get("k4_upload_errors")
+    engine.launch.assert_not_awaited()
+
+
+async def test_new_picker_prompt_survives_old_picker_quiet_window(telegram, engine):
+    state, _message, query = telegram
+    query.data = "k4:open"
+    await kling4.callback(query, state)
+    query.data = "k4:media:image_urls"
+    await kling4.callback(query, state)
+    await kling4.media(incoming(query, 70, "stale picker prompt"), state)
+
+    query.data = "k4:media:video_urls"
+    await kling4.callback(query, state)
+    await kling4.media(incoming(query, 71, "current picker prompt"), state)
+    await settled()
+
+    engine.launch.assert_awaited_once()
+    assert engine.launch.await_args.args[1]["input"]["prompt"] == "current picker prompt"
