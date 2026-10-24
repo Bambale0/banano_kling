@@ -84,6 +84,9 @@ def test_kling4_nominal_price_message_keeps_admin_charge_zero():
         {"tariff": "video", "resolution": "1080p", "billed_seconds": "12"},
         price_config=price_config(),
     )
+    assert format_admin_price(quote) == (
+        "Цена: 42 🍌 бананов.\nДля администратора списание отключено."
+    )
 
 
 def test_kling4_editor_price_is_nominal_before_prompt_and_admin_is_free():
@@ -113,9 +116,6 @@ def test_kling4_editor_price_is_explicit_when_tariff_or_video_measurement_is_mis
     measured = format_editor_admin_price(recipe, price_config=price_config())
     assert "после проверки длительности" in measured
     assert "Для администратора списание отключено" in measured
-    assert format_admin_price(quote) == (
-        "Цена: 42 🍌 бананов.\nДля администратора списание отключено."
-    )
 
 
 class Manager:
