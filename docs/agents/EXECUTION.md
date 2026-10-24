@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 122955)
-Total output lines: 2692
-
 ## 2026-10-23 — Kling 4 catalog placement and Telegram navigation
 
 - Baseline: `ae8053d3b7ea27f1c94a8a3210198836d20ac9b0`, current origin/tanyapi. Isolated branch `fix/kling4-catalog-navigation-20261023`; production checkout and dirty runtime price.json preserved.
@@ -240,7 +237,2163 @@ Total output lines: 2692
 - Verification: Genjutsu backend matrix **22 passed**; full Mini App **27 suites / 99 tests passed**; ESLint passes from a clean generated-artifact state; production Next.js export/build passes; critical browser E2E passes at **320/375/390/430 px**, including an explicit Genjutsu no-horizontal-overflow assertion and full-width 430px mobile dialog check.
 - Plan: [x] production/config/log diagnosis; [x] RED backend/frontend regressions; [x] recipe schema + source-slot backend; [x] mobile/trend UI; [x] provider receipt-origin root cause/fix; [x] final full regression + lint/build/browser E2E; [ ] deploy exact fix SHA; [ ] live admin coverage matrix; [ ] enable public runtime setting after release gate; [ ] production user-surface smoke/log review.
 
-## 2026-10-05 — Restore photo-first defaults for Seedance 2.0 …92955 tokens truncated…r publication editor. Add a shared effective grant resolver; no broad provider refactor.
+## 2026-10-05 — Restore photo-first defaults for Seedance 2.0 video
+
+- Baseline: `origin/tanyapi` `2d276814151b5c8cd44f4b37524a2e53b71147a7`; branch `fix/restore-video-photo-defaults`.
+- Reported production symptom: after selecting Seedance 2.0, Telegram opens `Текст → Видео`; users can attach a photo-reference but the screen still shows text mode, so the request is treated as text/reference generation instead of the familiar photo-first flow.
+- Runtime/code evidence: the active advanced selector sets every ordinary model to `text`; `seedance_multimodal_compat` already documents `imgtxt` as the ordinary Seedance default, but that default is bypassed by `video_generation_compat._initial_type_for_model`. Production logs confirm Seedance 2.0 can send image references correctly at the provider boundary. Grok already has the corresponding photo-first normalization from the 2026-10-02 regression fix.
+- Root cause: the newer advanced video selector bypassed the older Seedance defaulting seam. A stale Seedance FSM can also remain `text` after a photo-reference was attached, reproducing the screenshot even though the reference URL is present.
+- Intended result: selecting Seedance 2.0 opens in `Фото + Текст` by default; an existing Seedance `text` session with photo references self-recovers to `imgtxt`; explicit text-only Seedance with no photo remains supported. Grok photo-first behavior is preserved.
+- Scope: Telegram FSM/UI only. No pricing, provider IDs, payload schema, DB schema, Mini App API, balance/refund or Seedance 2.5 behavior changes.
+- TDD: before fix, selection regressions failed `text != imgtxt` (2 failed / 6 passed in the focused red run). After the minimal fix, the focused Grok + Seedance video matrix is **131 passed**; final local full suite is **1571 passed, 18 skipped**.
+- Review: explicit Seedance `Текст → Видео` remains available. Switching to text-only now clears Seedance photo/video media so stale references cannot silently turn the session back into photo mode. Mini App was audited but is not changed by this Telegram-FSM regression fix; Seedance 2.5 is also unchanged.
+- Verification: changed-line Ruff **0 relevant** (89 legacy diagnostics outside touched lines ignored by the repository gate); changed Python compiles and `git diff --check` passes.
+- TODO: [x] production evidence; [x] RED regression; [x] minimal fix; [x] focused/full tests; [x] changed-line lint/final review; [ ] PR/CI/auto-merge; [ ] exact deployed SHA + production smoke/log verification.
+
+## 2026-10-03 — Profile remix retains published outfit reference
+
+- Baseline: production/origin `tanyapi` `14588e1172a2b5b95290a179d1b3c840ebc87d6c`; branch `fix/profile-remix-retain-selected-references`.
+- Production evidence: repeat task `img_051f6e19c900` launched Banana Pro with exactly one submitted reference. Its source task had two image references and `feed_reference_selection` retained only the second (outfit) image, so the provider never received the outfit.
+- Root cause: `/mini-app/api/feed/remix` restored source references only when the user submitted no new files. Uploading a replacement face therefore replaced the entire reference array instead of replacing identity while preserving the explicitly published supporting reference.
+- Contract: prepend submitted images and append only image URLs explicitly retained in the source publication selection and present in the canonical source task. This applies to owner and template-user repeats. Never restore an excluded face or a selected URL absent from the source; foreign repeats may inherit only this explicit public subset. Legacy private restoration remains owner-only and only as the no-upload fallback.
+- TDD: endpoint regression reproduced `[new face]` instead of `[new face, retained outfit]`; after the minimal merge helper it passes. A replay against the real source snapshot resolves exactly the uploaded face followed by the selected outfit. Foreign-repeat coverage proves that an excluded source face is removed while the explicit published outfit remains.
+- Impact: no schema, provider, pricing, balance, prompt or frontend contract change. Adds count-only launch telemetry without reference URLs.
+- Verification: focused publication/privacy/remix matrix **45 passed**; full backend **1667 passed, 12 skipped, 4 established unrelated failures** (dispatcher attachment, two stale KIE webhook fixtures, Seedream 6000-vs-5000 expectation); compileall, Ruff on new/changed tests and diff whitespace passed. Self-review expanded the fix from owner-only to all template repeaters, but only for the explicit canonical public subset.
+- TODO: [x] production evidence; [x] red endpoint regression; [x] minimal fix; [x] focused/full verification and review; [ ] PR/CI/merge/deploy/exact-SHA smoke.
+
+## 2026-10-03 — Replaceable typed Seedance trend references
+
+- Baseline: `origin/tanyapi` `96dfb63688339c14976816a3d7ab80cad017a91c` plus the changed-line Ruff correction from draft PR #234; task branch `feature/seedance-replaceable-reference-slots`.
+- Intended result: when publishing a Seedance 2.0/2.5 trend, the author removes their identity and marks each remaining image/video/audio reference independently as hidden-fixed, user-replaceable, or excluded. A repeater uploads media matching each replaceable slot; face, clothing image and especially video references can therefore be replaced without exposing retained assets.
+- Current state/root cause: the private trend v1 contract hardcodes one user photo as `@Image1`; every retained image/video/audio is persisted as `fixed_hidden`. The runner accepts image uploads only and sends an untyped `reference_urls` array, so `@VideoN` can never be replaced.
+- Reuse: existing Seedance snapshot extraction/tag remapping, durable hidden asset storage, upload ownership checks, provider adapters, trend runner/idempotency and public prompt sanitizer. No new table or provider field is needed.
+- Contract: reference-plan v2 stores only public-safe user slot metadata (`media_type`, provider `position`, label) in generation settings. Submitted typed slot values must exactly match that server-owned plan and belong to the authenticated Telegram user. Fixed asset URLs and source positions remain private. Provider arrays are assembled server-side in exact `@ImageN/@VideoN/@AudioN` order. V1 trends remain backward compatible.
+- Security/data risks: reject missing, duplicate, extra, wrong-type and non-owned uploads; never accept client-supplied fixed URLs or provider positions outside the saved plan; preserve hidden prompt/assets and idempotency hashing. No billing, balance, referral or schema mutation.
+- Public test seams: recipe compiler/assembler, admin publish HTTP contract, sanitized trend catalog payload, authenticated trend run/provider launch, Mini App publisher and typed runner uploads. Add RED regressions before implementation, then focused backend/frontend suites, full safe regression, build/lint/E2E and exact-SHA release checks.
+- Rollout: keep PR draft until all gates pass; squash to `tanyapi`, verify exact merge CI/autodeploy, backend health, Mini App static revision and focused typed-slot telemetry. No paid live generation unless necessary; rollback by reverting the PR. Production is not updated yet.
+- TDD/progress: compiler lacked typed slots (RED import/API), then v2 recipe and exact assembler GREEN. Publisher/runner regressions cover face + replaceable video, typed upload and API DTO. Security regressions reject missing/extra/duplicate/wrong-type slots; plan limit is 12; stale generated guards are replaced. Catalog and runtime pricing both count replaceable video. Editing replacement must match the published ceil-second duration and is rejected before debit if it would change price.
+- Review: independent spec and standards reviews initially found catalog/charge mismatch, frontend format drift, duplicate URL reuse, >12-slot plans and stale guards. All were corrected; both re-reviews report no remaining blocker and confirm privacy/ownership/v1 compatibility/provider order.
+- Verification so far: backend focused matrix **89 passed**; all frontend **23 suites / 66 tests passed**; TypeScript and ESLint passed; production build passed; critical browser E2E passed; Python compileall, Ruff on touched files and diff whitespace passed. Final full safe backend suite: **1665 passed, 12 skipped, 4 established unrelated failures** (order-dependent dispatcher attachment, two stale KIE webhook fixtures without `request.json()`, and the pre-existing Seedream 6000-vs-runtime-5000 expectation). The earlier feature-caused static contract failure was corrected and is green.
+- TODO: [x] RED compiler/runtime typed-slot tests; [x] compiler/admin settings; [x] backend validation/assembly; [x] publisher controls; [x] typed runner uploads; [x] docs/observability; [x] final full verification; [ ] commit/PR/CI; [ ] merge/deploy/smoke.
+
+## 2026-10-03 — Selective reference publication (Seedance included)
+
+- Baseline: `2287c4827afb1345cae65da3e163a3234277d24b`; branch `fix/seedance-publication-reference-removal`.
+- User-visible result: publication editor shows each photo/video reference separately. The author can exclude their face while retaining outfit/image/video references; excluded media is not returned by public feed/profile cards.
+- Audit/root cause: publication had one `feed_references_visible` boolean, so UI/API/DB supported only all-or-none exposure. Seedance 2/2.5 uses typed image/video arrays, making this especially visible. Existing generation recipe, provider payload, prompt privacy and repeat routing remain unchanged.
+- Contract/data: optional `reference_image_indices` and `reference_video_indices` on `/mini-app/api/generations/share`; task detail pairs each available preview with its stable source-list position. Backend validates those source indices before availability filtering and resolves them to stable URL selections persisted as JSON in nullable `generation_tasks.feed_reference_selection`. This prevents drift both before and after save when an earlier ref expires. Legacy null rows publish all references when enabled. SQLite/PostgreSQL additive migration; no manual SQL, config/admin, billing or provider changes.
+- Privacy/security: task detail exposes only the owner's canonical publishable references; public serialization filters to saved selection. Invalid/out-of-range indices fail closed. Remix anti-transitive-reference protection remains in force.
+- TDD: backend RED was `TypeError` for missing typed selection; UI RED could not find the per-reference exclusion control. Both are GREEN. Public seams are database/feed serialization and the Mini App publication component/API options.
+- Verification: focused feed/privacy/API/profile matrix **105 passed**; all frontend **23 suites / 64 tests passed**; TypeScript, ESLint and production static build passed; changed Python compileall, changed-line Ruff and diff whitespace passed. Full safe backend: **1652 passed, 12 skipped, 4 unrelated failures**; isolated rerun confirms three deterministic pre-existing failures (two KIE webhook fixtures lack `request.json()`, Seedream test expects 6000 while runtime uses 5000) and the order-dependent dispatcher failure passes alone. System Python's initial database run lacked `aiogram`; project-venv rerun was green.
+- Review: two-axis review found and resolved protected-task top-level leakage, malformed persisted selection fail-open, pre/post-save index drift, and the installed publication-scope wrapper path. Final standards/spec reviews report no implementation blockers.
+- Remaining: PR/CI/merge and exact-SHA deploy/smoke. Production is unchanged.
+
+## 2026-10-02 — Mini App Telegram availability and upload telemetry
+
+- Baseline: `origin/tanyapi` / production `7c5431061f2eae448087aa56219e56873fe8aeba`; branch `fix/miniapp-chat-telemetry`.
+- Production evidence: Mini App users who had never opened the bot generated repeated `TelegramBadRequest: chat not found` warnings/errors during start/result/failure notifications. Normal upload lifecycle events (`upload-start`, fallback start and HTTP 200 response) were all logged through one unconditional `logger.warning` call.
+- Root causes: terminal Telegram delivery was conflated with generation/delivery failure (`failed`) or left retryable (`pending` in Seedance 2.5); client telemetry had no severity classifier. Frontend status values were checked and successful responses genuinely carried HTTP 200.
+- Contract: completed generation results remain available in Mini App. `chat not found`, blocked bot and deactivated user become terminal delivery status `unavailable` with stable reason codes and no automatic retry; transient network/rate-limit failures remain `pending`. These expected availability states log at INFO without tracebacks. Upload interactions log at DEBUG, successful upload responses at INFO, and failed/network/unknown client events remain WARNING.
+- TDD: public-seam regressions cover severity classification, structured Telegram reasons, DB persistence/claim behavior, Mini App start notification, image-result/failure notifications, Seedance 2.5 terminal and transient delivery, and no fallback download after a terminal send error.
+- Scope: request-data delivery metadata, Telegram notification/error handling and log severity only. No schema migration, prices, balances, refunds, provider payloads, model routing or frontend wire fields change.
+- Verification: focused delivery/telemetry/database matrix `143 passed`; full safe backend suite `1269 passed, 13 skipped`; Python compileall, import-order lint and diff whitespace passed. Static propagation review confirms `unavailable` is internal request metadata, old `failed/delivered` behavior is preserved, and transient failures remain retryable.
+- Rollout: PR to `tanyapi`, exact-SHA CI/autodeploy, then production telemetry checks for HTTP 200 upload events and terminal Telegram availability without WARNING/ERROR or repeated Seedance retries.
+
+## 2026-10-02 — Telegram backup part retention leak
+
+- Baseline after rebase: `origin/tanyapi` `cb76a3b2656bb4444f29ec4f74208b29cbca12e8`; branch `fix/backup-telegram-parts-retention`.
+- Production evidence: root filesystem is 81% used with 167 GiB free; project backups occupy ~58 GiB and `backups/telegram-parts` alone occupies ~53 GiB. `static/uploads` is a separate 293 GiB lifecycle concern and is not touched by this fix.
+- Root cause: every backup uses a timestamped `archive_name`, but `backup_db.sh` deletes only `${archive_name}.part-*` before splitting. A new timestamp can never match chunks from earlier backups, so every Telegram transport chunk is retained permanently.
+- Intended result: the dedicated part directory contains no stale/current `*.part-*` after a completed send; unrelated files are preserved. The backup archive/dumps and Telegram delivery behavior remain unchanged.
+- TDD: an integration test copies the real script into a temporary project, stubs SQLite and Telegram transport, creates a stale chunk, forces archive splitting, and asserts the directory is clean. RED retained six part files. A second RED pass showed stale chunks also survived a later direct/small-archive send. GREEN removes stale chunks before either send path and current split chunks after all admins are processed, while preserving unrelated files.
+- Scope: `scripts/backup_db.sh`, one integration regression and this ledger. No DB schema, generation, payment, provider, Mini App, pricing or user-data mutation.
+- Safety: cleanup is limited to direct files matching `*.part-*` inside the dedicated `telegram-parts` directory while the existing backup flock serializes invocations. Non-part files are retained.
+- Verification: shell syntax, Ruff format/check, diff whitespace and focused integration test passed; full safe suite after rebase `1256 passed, 13 skipped`. Five-axis review found no scope, symlink, concurrency or unrelated-file deletion blocker.
+- Rollout: changed-line Ruff, rebase onto current `tanyapi`, separate PR, exact-SHA CI/deploy verification. Existing production chunks will be cleaned only after the code is deployed and no backup invocation is active.
+
+## 2026-10-02 — Seedance private-trend implicit reference bindings
+
+- Baseline: `origin/tanyapi` / production merge `82ccc5651e092a152e2e042b4b8e6d789896aa2e`; branch `fix/seedance-trend-implicit-bindings`.
+- Production audit: checkout, container and Mini App are on the exact merge SHA; CI/deploy statuses are green; schema/indexes are present; no private-reference trends have been published yet.
+- Real-data read-only compatibility check: among 250 recent completed Seedance tasks, 90 contained an identity image plus at least one additional image/video/audio reference. The compiler accepted 27 and blocked 63: 54 prompts had no explicit `@ImageN/@VideoN/@AudioN` bindings and 9 omitted the identity slot.
+- Exact user-visible failure: the admin selects the creator identity and hidden outfit/object/video refs, but publication returns `Prompt must reference every retained media slot` or cannot produce a usable recipe even though the compiler's own identity guard already defines those roles.
+- Root cause: `compile_seedance_trend_recipe()` validates that every retained slot is mentioned **before** appending `SEEDANCE_TREND_IDENTITY_CONTRACT_V1`, while that appended guard is the canonical source of automatically generated bindings for admin-selected assets.
+- Invariant: explicit prompt references to excluded/missing media must still fail closed. Selected retained assets may be absent from the original prompt; the compiler must add exact bindings in its guard, keep `@Image1` as the sole identity source, and preserve independent image/video/audio numbering.
+- Scope: compiler + focused tests + reference documentation only. No schema, prices, provider routing, billing, auth, UI controls or external API fields change.
+- TDD loop: implicit prompt regression failed with `Prompt must reference every retained media slot: @Image1, @Image2, @Video1`; after moving completeness validation to the final compiled prompt, it passes. A second regression covers an explicit fixed asset with an omitted identity binding. Review then found that a blank source prompt could become guard-only; a new regression failed because no exception was raised, then passed after adding an explicit non-empty source-prompt invariant. Existing excluded-media and over-limit cases remain fail-closed.
+- Verification: compiler/admin/runtime/privacy/storage matrix `105 passed`; final compiler suite `14 passed`; focused Mini App publisher/runner/idempotency `3 suites / 8 tests`; final full safe backend suite `1255 passed, 13 skipped`; Ruff format/check, compileall, changed-line gate and diff whitespace passed. Candidate compiler replay against the same production sample accepts `90/90` eligible tasks with the default first image as identity, never persists that identity, and includes every selected image/video/audio slot. All `10/10` eligible tasks from the latest 24 hours have locally available fixed assets for durable persistence. Five-axis review found no remaining correctness/security/architecture/performance blocker; empty prompts, excluded media and prompt limits remain fail-closed before provider launch.
+- Production health audit: exact merge SHA across branch/checkout/container/Mini App; healthy container with zero restarts/OOM; schema/indexes present; no stale idempotency claims or orphan assets. One unrelated Telegram `chat not found` notification error occurred after a correct failure/refund commit. Disk usage is 81% with 167 GiB free.
+- Rollout: focused tests, changed-line Ruff, full safe regression, PR to `tanyapi`, exact-SHA CI/autodeploy and post-deploy read-only smoke. No paid KIE generation.
+
+## 2026-10-01 — Seedance 2.0 photo-reference prompt regression
+
+- Baseline: `origin/tanyapi` `1840ba0dd4f39ceadfd58023f10b0654c1fbcbb8`; branch `fix/seedance20-photo-ref-prompt`.
+- Reported production symptom: Telegram Seedance 2.0 shows `Фото-референсы: 1/9`, but typing a prompt can answer `Сначала отправьте стартовое фото.` instead of launching.
+- Runtime evidence: at `2026-10-01 09:59:56 UTC` user prompt reached `handle_video_prompt_text`; no video launch followed. Source inspection reproduced the contradiction: Seedance compatibility stores every photo in `reference_images` with `v_image_url=None`, while the legacy prompt guard still requires `v_image_url` whenever `video_flow_step != configure`.
+- Root cause: the reference-only compatibility layer patches Seedance media/provider launch semantics, but the legacy text-prompt precondition runs before that launcher wrapper and still assumes first-frame semantics.
+- Intended result: Seedance 2.0 `Фото + Текст` accepts a non-empty `reference_images` set as its required media even when the flow is still on the media step; other models retain their existing start-frame validation. Empty Seedance photo mode asks for a photo-reference, not a start frame.
+- No-hardcode/schema/provider impact: no pricing, provider routing, DB schema, payment/referral, Mini App or Seedance provider payload changes. Existing `seedance_2` technical model contract is reused.
+- TDD: added a regression that reproduces `v_model=seedance_2`, `v_type=imgtxt`, `v_image_url=None`, one `reference_images` URL, `video_flow_step=media`. Before fix: 1 failed / 3 passed because launch was blocked. After fix: 4 passed.
+- Focused verification: Seedance reference-only, multimodal, 2.5 compatibility and prompt-flow suites — 53 passed; `py_compile` for generation and compatibility handlers passed.
+- Full safe regression on the task worktree: 1081 passed, 3 skipped, 87 warnings in 44.42s. Targeted Ruff on the regression test and `git diff --check` passed.
+- Rollout: PR to `tanyapi`, CI, merge, automatic production deploy, then exact deployed SHA/health and Telegram reference-only smoke. No manual paid generation unless explicitly needed; use admin/free smoke path.
+- Changed-line Ruff gate: relevant=0, ignored legacy findings=93 across the two touched Python files; `git diff --check origin/tanyapi...HEAD` passed.
+- Remaining: [x] changed-line lint/diff review; [x] full safe regression; [ ] PR/CI/merge; [ ] production exact-SHA + smoke/log verification.
+
+## 2026-09-29 — Gemini photo-analysis instructions
+
+- User clarified: improve Gemini instructions for photo analysis. Baseline fresh tanyapi cba7d59. Branch fix/gemini-photo-instructions.
+- Audit: both PhotoPromptService and PromptAnalyzerV2Service route photo-only input through Gemini3.1Pro and fall back to Qwen. They currently reuse generic system prompts with editorial/photorealistic bias and conflicting reference-preservation guidance. Output contracts differ: classic structured9fields and V2 RU/EN only. Voice/video keep existing prompts/providers.
+- Goal: faithful visual reconstruction in the reference medium, explicit edits take precedence over defaults, concrete composition/pose/light/material cues, no invented unseen details/EXIF/identity, equivalent RU/EN prompts, proportional detail without filler.
+- Reuse provider adapter, bot_settings (audited author/time), existing parser and billing. Shared Gemini-only guidance with per-surface fixed JSON contracts; admin-only /gemini_photo_prompt view/set/reset. No schema, price, FSM, UI or provider changes.
+- No-hardcode: editable analysis guidance stored via existing bot_settings with versioned default; schema/output constraints remain technical constants. Validation bounds content size; prompt revision logged without source text or media.
+- Test seams preselected by AGENTS: public analysis services against local HTTP provider + real isolated settings DB; authenticated admin handler via mocked Telegram boundary; full regression; synthetic live Gemini result inspected for fidelity and explicit edits.
+- Verification:1054 passed/3skipped before final trace changes. Live synthetic V2 Gemini30.0s and classic14.3s both retained two colored shapes/positions/flat2D medium, applied only requested pink background, agreed RU/EN. No customer data or credits. Spec/Standards reviews no blockers; trace-correlation suggestion implemented with RED→GREEN tests linking selected instruction revision/request/outcome and clearing Gemini revision on Qwen fallback. Added inline admin editing and unauthorized download regressions.
+- Progress: public-service HTTP tests RED (configured guidance absent from Gemini request on both surfaces) → GREEN; admin tests RED (command absent) → GREEN.46 focused tests passed. Full regression and synthetic live evaluation running.
+- TODO: [x] RED configured guidance reaches both public photo surfaces; [x] minimal shared builder/integration; [x] admin auth/edit/reset regressions; [ ] regressions/real synthetic eval/review; [ ] PR exact CI/merge/autodeploy; [ ] runtime SHA/health/prompt revision.
+- Checklist: both schemas retained; custom guidance applies without release; default/reset works; unauthorized/empty/oversized updates rejected without mutation; Qwen/voice/video behavior preserved; user intent and image remain present; no prompts/media/secrets in telemetry; normal responsiveness retained.
+- Rollout: normal PR to tanyapi, exact merge CI and autodeploy, production read-only config inspection plus synthetic photo analysis (no user balances/media). Rollback via PR revert or admin config reset. Final release evidence in PR.
+
+
+## 2026-09-29 — Ordinary bot command/button latency incident
+
+- Additional root cause before release: unconditional startup tracemalloc.start(25) traces every allocation. Synthetic JSON workload inside production container: tracing off0.0156s,1frame0.2123s,25frames0.7143s (~46x overhead). SQL/privacy optimizations alone cannot explain/fix this shared-event-loop CPU tax.
+- TDD memory diagnostics:6 regressions RED on unconditional tracing/default dump/config, then explicit opt-in implementation. MEMORY_TRACING_ENABLED defaults0; MEMORY_TRACING_FRAMES defaults1, validated/clamped1..25. RSS/GC/process reports remain available without allocation tracing; dumps report tracing enabled/disabled explicitly. External pre-existing tracing remains respected.
+- Additional memory Spec/Standards reviews: no blockers. Six memory regressions and combined diagnostics/privacy/completion13 passed; pre-existing runtime tracing regression added on review recommendation. New test force-added despite tests/* ignore.
+- Full local suite before this addition1039 passed/3skipped; previous-head CI checks succeeded through browser E2E. Rerun affected suite/review and exact final-head CI; no merge before these changes pass.
+
+- User reports slow ordinary Telegram commands/buttons after combined release; baseline production and origin/tanyapi `3c3b96a`. Dedicated branch `fix/bot-response-latency`.
+- Evidence: healthy container occupies ~100% of one CPU; Telegram pending_update_count0; update durations reach34,649ms. Initial external health3.317s; six local health samples0.086–0.349s show intermittent rather than constant stalls.
+- Twenty-second nonblocking py-spy sample: heavy Mini App bootstrap/privacy work on shared event loop. 15-minute logs:915 bootstrap requests,373 updates. Ten-minute bootstrap response median13,844bytes/max21,705bytes, so no huge response payload.
+- PostgreSQL diagnosis: history query by telegram_id/created_at has no matching index; EXPLAIN ANALYZE visits~279k rows/47,869blocks,68.44ms at low contention. Concurrent completion/repeat queries use task_id OR JSON alias EXISTS and scan every row even for indexed canonical IDs; observed active queries4–27s.
+- Privacy resolver calls enriched public trend list merely to compare prompt text, unnecessarily deserializing settings and computing success counters.
+- Ranked hypotheses: shared event-loop work; expensive DB scans/pool pressure; Telegram network. Evidence supports first2; queue0.
+- Plan: add concurrent history index (non-destructive; persist in schema setup), fast canonical task resolution retaining alias fallback and repeat-credit idempotency, lean privacy lookup preserving fail-closed/legacy behavior. No prices/provider defaults/referral economics changed.
+- Public test seams: database task completion/repeat invariants + isolated DB alias cases, task API sanitization/privacy, backend regression and deployed latency/telemetry. Add regression before code for identified scan pattern where feasible. Fresh read-only EXPLAIN and update duration/CPU samples compare production before/after.
+- Rollout: normal task PR to tanyapi with CI; verify exact deployment and original latency signals. No customer messages/synthetic paid generation. Temporary profiler output only under/tmp.
+- Index applied online: `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_generation_tasks_telegram_created ON generation_tasks (telegram_id, created_at DESC)`. PostgreSQL EXPLAIN changed parallel sequential scan~279k rows/47,869blocks (68.440ms) to index scan~15blocks (0.133ms). Schema bootstrap now keeps the index for future installs. Rollback if necessary: DROP INDEX CONCURRENTLY; retaining this additive index across code rollback is safe.
+- RED canonical completion regression on200 historical tasks observed400 irrelevant json_valid evaluations across update/reward lookup. GREEN after indexed canonical fast paths:0. Original alias fallback retained.
+- RED privacy regression: oldest approved recipe outside top100 leaked through legacy task sanitization; GREEN with raw recipe projection instead of enriched/paginated catalog. No prompt/settings/counter expansion needed; explicit trend/source tasks skip recipe lookup.
+- Focused database/task/alias/privacy/referral/watchdog suites:85 passed. Additional persisted alias→canonical→alias completion replay: reward credited once; combined new privacy/completion tests7 passed.
+- Read-only production-data privacy benchmark (8recent tasks, no user media/logged prompts): legacy un-enriched implementation11.7/8.9ms, candidate4.8/6.5ms. Actual running legacy path also computes catalog success counters, which this conservative comparison omits.
+- Two independent reviews (Spec/Standards): no blockers. Nonblocking full-catalog recipe scaling remains, measured above; avoid speculative caching of privacy decisions. New ignored test file explicitly force-added for CI. Existing mock-SQL completion tests adjusted for canonical parameter count; behavior tests cover persisted completion and reward.
+- Source syntax and whitespace checks; changed-line Ruff before PR. Full safe suite in progress.
+- TODO: [x] history index/preflight; [x] regression RED; [x] fixes GREEN; [x] expanded focused regressions/review; [ ] full suite/PR/CI/merge/autodeploy; [ ] production measurements. Final release SHA/telemetry recorded in PR/delivery report.
+
+## 2026-09-29 — Resumed combined release verification
+
+- Recovered task branch at `8ac64fa`; remote PR #208 still at `6b919ee`; production and fresh `origin/tanyapi` both `932e48d`.
+- Read/updated engineering sources: Bambale0/skills `tdd`, `code-review`; Bambale0/claw README release/config discipline; anthropics/skills `webapp-testing`. Two independent review axes: Spec found no blockers; Standards identified missing operation correlation in Gemini/fallback logs, addressed before release.
+- Targeted backend run initially: 62 passed / 1 failed. Failure exposed order-dependent partner approval fixture pointing at stale SQLite path after admin imports. Fixed fixture to use isolated DB, installed real approval guard, explicitly approved referral test partners; production eligibility unchanged.
+- Corrected targeted run: 63 passed. Additional referral checks (approved self-referral, unapproved referrer blocked): 11 passed.
+- Frontend: all 19 suites / 50 tests passed; production build/typecheck/static export passed; critical browser E2E passed against freshly copied build.
+- Frontend lint initially scanned untracked generated `.e2e-server` output (4,096 generated-file errors); source lint `npx eslint . --ignore-pattern .e2e-server` passed. Generated fixture is not committed.
+- Deployment shell syntax and diff whitespace passed.
+- Live synthetic Gemini smoke: photo JPEG data URI returned "Red" in 126.8s; video URL returned "blue" in 9.1s; actual PhotoPromptService with its production system prompt/parser returned populated Russian/English prompts in 31.4s with Gemini confirmed by terminal telemetry. No user media or account balance was used. Temporary video fixture removed.
+- Initial diagnostic photo attempt timed out at120s, exposing nginx120s as a real release risk. Corrected only exact `/mini-app/api/photo-to-prompt` locations in production backend and both frontend vhosts to900s (default bounded Gemini+Qwen chain ~722s plus overhead). Existing proxy/CORS/security headers copied intact. Original broader route timeouts and dev/VK untouched.
+- Nginx files: `/etc/nginx/sites-enabled/banano-kling.conf` (first production HTTPS block), `/etc/nginx/sites-available/tanyapp.chillcreative.ru.conf`, `/etc/nginx/sites-available/tanyapp.xn--e1aikcel5c5a.online.conf`. Backups: `/root/<filename>.pre-gemini-20260929T152124Z`; restore those files, `nginx -t`, reload for rollback. Successful syntax test/reload; all3 analysis endpoints reject unsigned requests with401; health remains200. Existing unrelated nginx TLS warnings preserved.
+- Diagnostic video fixture initially used wrong URL then restrictive temporary-directory permissions; corrected to readable `/uploads/` fixture before the successful provider call.
+- Full safe backend regression: 1,029 passed / 3 skipped in 249.36s (run started before final observability edits). Final affected media/handler/billing suites: 61 passed. Final PR CI reruns the entire tree.
+- Standards finding resolved with task-local correlation across provider/fallback/terminal outcomes and caller user identity; RED test failed on missing correlation context, then GREEN. Sanitized failure categories and no media/prompt/key in logs. Changed-line Ruff: 0; new files formatted.
+- Remaining: exact-head CI, authorized merge to `tanyapi`, exact merge CI/autodeploy, production read-only API/static/telemetry verification. Final merge/deploy evidence is recorded in PR #208 and the delivery report because the release SHA cannot be embedded in its own commit.
+
+## 2026-09-29 — KIE Gemini 3.1 Pro media analysis (scope addition)
+
+- User supplied https://kie.ai/gemini-3-1-pro for photo/video analysis. Existing photo, video and V2 photo analyzer share user flows and parsers; Qwen primary, GPT/Claude voice and video fallback exist. Assume replacement of current media primary, preserving text-only/voice paths.
+- Contract verified: https://docs.kie.ai/market/gemini/gemini-3-1-pro, POST `/gemini-3.1-pro/v1/chat/completions`, Bearer KIE key; photo/video both use content `type=image_url`, `image_url.url`; `stream=false`, `include_thoughts=false`, supported `reasoning_effort=high`. Do not send undocumented max_tokens or OpenRouter reasoning fields.
+- TODO/TDD: (1) adapter HTTP tests RED with media payload/response and finite errors; (2) implement explicit adapter; (3) public photo/video service tests RED then route through Gemini; (4) preserve existing voice/text behavior and fallback; (5) add validated DB setting `media_analysis_provider` and authenticated `/analysis_provider` command with audit; (6) regression/refund checks; (7) review, documentation, combined CI/release.
+- Runtime choice: `kie_gemini31` default / `qwen38` rollback; database setting avoids source changes for selection. Existing `KIE_AI_API_KEY` secret; no new credential or migration. Timeout/retry managed config with bounded values. Existing billing unchanged.
+- Observability: provider/model, request correlation ID, attempt, HTTP status and duration; never log media, prompt, credentials or provider response body.
+- Risks: external media access and malformed/provider failure; finite timeout/retry and existing user refund handling. Native video URL preserves full video (not just frames); existing fallback remains available. Live smoke uses synthetic media only if run.
+- Test seams: local HTTP provider server, public analysis services with external provider boundary fake, admin command/real settings DB, existing billing suites. No generation-provider migration or new UI.
+- Progress: adapter contract RED (module absent, 2 cases) → GREEN; photo/video/V2 public services RED (old Qwen path, 3 cases) → GREEN; admin switch RED (missing command) → implemented. Existing Qwen tests explicitly select the supported rollback setting. Transport invalid-response, 401, 429 retry, timeout and fallback regression tests added.
+
+
+## 2026-09-29 — Personalized trend links and combined production release
+
+### Scope and audit
+- Authorized: user requests trend referral links, detailed TODO/TDD/checklist and merge into `tanyapi`.
+- Fresh baseline `origin/tanyapi`: `932e48dec9de5be2f84cc92cf351377c92c3491c`; existing PR #208 head `6b919ee671882d73a2e5dfc6681d3f5a4d80b3fe`, previous CI fully green. Continue same isolated task branch for combined release.
+- Existing: authenticated `/mini-app/api/prompts/link` and v1 alias; builder supports `prompt_ID_ref_CODE`; backend referral parser and frontend navigation support combined parameter. Each registered account already has its own referral code. Missing: endpoint supplies no code.
+- Reuse real user context, persisted referral code, existing builder/parser, attribution and privacy middleware. No prefactor or schema/config/admin change required. No hardcoded business values.
+- Product result: copying a trend link attaches the copying account's code (including partners), opens the chosen trend, and applies existing referral eligibility/commission rules. Links preserve existing eligibility: attribution requires an approved/admin/legacy partner under the existing approval guard; copying never upgrades partner status.
+- Security: never accept caller-supplied referral_code/user_id, never use trend author's code. Existing template permissions and hidden prompt protection remain. Legacy links stay valid. No payment/provider mutation in link generation.
+- Observability: existing HTTP logs plus attribution events (`source`, start_param, user/referrer IDs, reason) cover the flow. Tests verify rejection/idempotency; no raw initData/prompt logging.
+- Telegram: links deliberately use Mini App `startapp`; Telegram trend navigation remains unchanged. Bot `/start` legacy sharing is not a new surface in this task.
+
+### Detailed TODO / acceptance checklist
+1. [x] RED: actual HTTP copy-link response contains authenticated sharer's code, not template author's or supplied spoof code.
+2. [x] GREEN: minimal endpoint change reusing link builder. No referral mutation while copying.
+3. [x] Security/API: invalid/missing signature rejected; missing/private template denied; public response hides prompt; no-code fallback retains plain link; v1 alias has same ownership behavior.
+4. [x] Attribution: combined link attaches eligible visitor once; self-referral and reassignment rejected; repeated clicks do not duplicate bonus. Existing payment/partner suites remain green.
+5. [x] UI/navigation: copy button copies exact response URL; old/new startapp parameters open same template; errors remain visible; browser E2E exercises clipboard.
+6. [x] Seedance combined regression: 30,000 accepted / 30,001 rejected and no truncation; both forms Unicode-aware.
+7. [x] Documentation: describe copying-account attribution, existing eligibility, legacy links and no changes to economics.
+8. [x] Verification: focused backend; referral regressions; all frontend tests/build; browser E2E; changed-line Ruff; deployment shell syntax; clean diff.
+9. [x] Review: Standards and Spec against baseline/spec here, fix blockers; update PR title/body to combined final scope.
+10. [ ] Release: push, exact-head CI green, merge PR to `tanyapi`, record exact merge SHA.
+11. [ ] Production: exact merge CI/autodeploy success; container revision/health; Mini App revision/static content; authenticated copy-link read-only smoke; prompt limit; fresh error telemetry. No paid generation or live referral mutation needed.
+
+### Test seams and rollout
+- Public HTTP (signed Telegram initData + isolated DB; mock Telegram network only), public referral service/DB interfaces, UI clipboard and start-param navigation, browser E2E, deployed read-only smoke. These are the repository-mandated public seams; no separate permission pause required under AGENTS.md autonomy.
+- DB integration applies for identity/attribution; migrations N/A; payment/refund regressions apply without economic changes; provider contract remains Seedance maxLength only.
+- Rollback: revert combined PR through `tanyapi` CI/CD. No manual deployment while autodeploy is healthy.
+- Progress: signed HTTP test RED (missing `_ref_`) → minimal endpoint change → GREEN. Isolated referral/Seedance/privacy suites: 77 passed; frontend: 19 suites / 50 tests passed; browser E2E (clipboard included): passed. Broad-run fixture failures identified stale module DB path/schema-cache state and fixed in test isolation only. Review Standards/Spec: no blockers; requested no-code fallback test added. Release checks pending combined Gemini addition.
+
+
+## 2026-09-29 — Seedance 2.5 prompt limit
+
+- Baseline: `932e48dec9de5be2f84cc92cf351377c92c3491c` (`origin/tanyapi`). Isolated branch `fix/seedance25-prompt-limit`.
+- Intended result: accept up to 30,000 prompt characters without truncation in Seedance 2.5, aligning Telegram, public/admin Mini App and provider validation.
+- Audit: provider adapter and both forms enforce 5,000; Telegram checks use the adapter constant but messages duplicate 5,000. Existing provider/handler tests can be reused. No prefactor required beyond shared UI contract constant.
+- Provider evidence: https://docs.kie.ai/market/bytedance/seedance-2-5 retrieved 2026-09-29; embedded OpenAPI prompt schema states `maxLength: 30000`, description “Max length: 30000 characters”.
+- No-hardcode decision: this is an external API technical maximum, not a business quota; retain adapter constant and share one frontend contract constant. No admin setting, pricing, schema, migration, routing or payment change.
+- Related inquiry: trend copy endpoint currently omits referral code although link builder/parser support `prompt_ID_ref_CODE`. Explanation only pending clarification of requested behavior.
+- Logs: targeted scan of current/previous bot log found no prompt-length error matches. No production mutation.
+- Risks: JavaScript UTF-16 length must count Unicode code points to match Python. Telegram single-message size remains a separate constraint; Mini App supports long text.
+- Verification: provider payload boundary at 5,001/30,000/30,001; public scenario guard; relevant Seedance regression suites; frontend type/build checks. Existing auth/payment/provider-response/refund behavior is unchanged. No DB/migration integration required; no live paid generation required.
+- Observability: preserve existing validation errors and generation telemetry; no new log of prompt text.
+- Rollout: PR to `tanyapi`; production update must be verified separately after merge. Rollback through reverting the PR.
+- Steps: (1) regression tests red; (2) align adapter, Telegram copy and forms; (3) tests/build/review; (4) PR and report.
+- Progress: implemented adapter maximum 30,000, shared frontend constant, Unicode-aware counters and Telegram text derived from adapter constant. Public/admin forms and shared server guard accept the boundary and reject 30,001.
+- Skills/guidance: Bambale0/skills `diagnosing-bugs` (reproduction/regression loop; narrowed to an outdated documented limit); Bambale0/claw README (existing architecture/config/release discipline); anthropics/skills `webapp-testing` inspected (browser guidance; component tests used here).
+- Verification evidence:
+  - `/root/tanya/banano_kling/venv/bin/python -m pytest tests/test_seedance_25_spec.py -q -k 'long_prompt or overlong_prompt'` before implementation: 3 expected failures, old 5,000-character rejection.
+  - `/root/tanya/banano_kling/venv/bin/python -m pytest tests/test_seedance_25_spec.py tests/test_seedance_25_fullstack.py tests/test_seedance_25_new_priority.py tests/test_seedance_25_telegram_compat.py tests/test_trend_seedance_25_compat.py -q`: 33 passed.
+  - `npm --prefix frontend/miniapp-v0 test -- --runInBand seedance25-prompt-limit`: 19 suites / 49 tests passed (worktree path matches the filter, so all frontend suites ran), including both forms' Unicode boundaries.
+  - `npm run build` in frontend: passed, including TypeScript and static export.
+  - `eslint components/forms/seedance25-public-form.tsx components/forms/seedance25-admin-form.tsx components/forms/seedance25-prompt-limit.test.tsx lib/seedance25-api.ts`: passed.
+  - `python -m compileall -q` for the three touched backend modules and `git diff --check`: passed.
+  - Full-file Ruff reports 12 pre-existing findings in adapter/preview. `PATH=/root/tanya/banano_kling/venv/bin:$PATH python scripts/ruff_changed_lines.py --base origin/tanyapi --head HEAD` with the five touched Python files: passed, relevant=0 / ignored_legacy=12. Initial attempt lacked Ruff in PATH; rerun succeeded. `bash -n scripts/deploy_backend_docker.sh scripts/backup_db.sh cdn.sh`: passed.
+  - Initial broader pytest invocation referenced `test_video_generation_compat.py`, which exists only in the original checkout, not the baseline Git tree; no tests ran for that invocation. Corrected invocation above passes.
+- Remaining verification: CI for PR, browser E2E and live generation/deployment smoke have not been run. No production update claimed. No DB/config/admin migration.
+
+
+## 2026-09-28 — Seedance 2.5 feed publication diagnosis
+
+### Incident
+- Baseline: `tanyapi` at `b5cf3ecc27e55086cf39796754ca4a422b7db3f8`.
+- User symptom: a Seedance 2.5 video cannot be published to the public feed from the bot; one user reportedly cannot publish the same model from Studio/Mini App either.
+- Concrete production row from the screenshot: task `4d622e9b69934e975d5bcb3ca957e395`, DB id `274093`, model `seedance_2_5`, type `video`, status `completed`, result `https://tempfile.aiquickdraw.com/seedance/...mp4`, `completed_at=NULL`, not yet public/profile-visible.
+- Production logs show repeated media reads for that task through `/mini-app/api/media/...`, but no nearby `POST /mini-app/api/generations/share` line tied to that task id. Separate bot logs show feed publication can be rejected before share when the callback task id points to a row the guard does not consider ready.
+
+### Intended result
+- Completed Seedance 2.5 videos can be published to the general feed and profile from both Telegram result buttons and Mini App Studio.
+- Publication returns a normal feed/profile card and preserves prompt/reference visibility options.
+- External provider video results are localized to durable feed storage when possible; publication does not fail merely because localization falls back for video.
+
+### Current-state audit
+- Reuse: `share_to_feed`, `publication_scope_compat.share_to_feed_scoped`, `persist_feed_result_urls`, Mini App `/generations/share`, Telegram `feedpub_*`.
+- Seedance 2.5 completion is handled by `bot/handlers/seedance_25_fullstack.py` and stores `result_url/result_urls/status`, but currently leaves `completed_at` unset.
+- Feed availability uses shared `_feed_result_urls` TTL policy and timestamps from `completed_at`, `updated_at`, `created_at`.
+- No schema or pricing change expected.
+
+### Test plan
+- Add a focused backend regression for a completed `seedance_2_5` video with `completed_at=NULL` and a `tempfile.aiquickdraw.com/seedance/*.mp4` result.
+- Verify both generic `database.share_to_feed` and scoped publication behavior remain able to return a public card.
+- Run focused pytest plus py_compile for touched modules.
+
+### Result
+- Root cause confirmed for the Telegram side: Seedance 2.5 result delivery used its own send path and did not attach the standard video result keyboard, so users had no bot-side publication action for completed Seedance 2.5 videos.
+- Mini App API/core publication guard accepts the reported completed Seedance 2.5 video shape; no model-specific publication block was found there.
+- Fix: attach `get_video_result_keyboard(..., model="seedance_2_5")` to Seedance 2.5 result messages for direct URL send, downloaded-file send and fallback text send paths.
+- Fix: set `completed_at` when the Seedance 2.5 webhook stores a successful result, keeping feed TTL/card metadata aligned with other completed generations.
+- Verification:
+  - `./venv/bin/python -m pytest tests/test_seedance_25_fullstack.py -q -k 'result_message_has_feed_keyboard or seedance25_model_meta or miniapp_repeat_keeps_source_lineage'` — passed, 4 tests.
+  - `./venv/bin/python -m pytest tests/test_database.py -q -k 'seedance25_video_without_completed_at'` — passed, 1 test.
+  - `./venv/bin/python -m py_compile bot/handlers/seedance_25_fullstack.py bot/handlers/seedance_25_public_release.py` — passed.
+  - `./venv/bin/python -m pytest tests/test_seedance_25_fullstack.py tests/test_video_generation_compat.py tests/test_trend_seedance_25_compat.py -q` — passed, 14 tests.
+  - `./venv/bin/python -m pytest tests/test_seedance_25_fullstack.py tests/test_database.py -q` — passed, 49 tests.
+- No production write/deploy was performed during diagnosis.
+
+## 2026-09-24 — RenderGrid Banana delivery recovery
+
+### Incident
+- Baseline: `tanyapi` at `510a520a22f42d1a1b64190fdeeed234e6634bd4`.
+- User symptom: Banana 2/Pro shows “generation started”, then no result/failure message arrives.
+- Confirmed example: local task `img_9225b661def2`, RenderGrid creation `01a0d4a9-f4a2-798b-902e-f4140b506744`.
+- RenderGrid later returned terminal `failed` (safety filter); watchdog marked the DB task failed and refunded 1.5 bananas, but the user was not notified.
+- In the preceding 24h, logs showed 6 watchdog-recovered Banana failures (4 `banana_pro`, 2 `banana_2`) that followed the same silent-refund recovery path.
+
+### Root cause
+1. The shared image-provider poller selected a bounded set of the oldest pending image rows **before** filtering for managed providers. A backlog of unmanaged/KIE image rows could therefore exclude RenderGrid tasks from every poll cycle.
+2. Watchdog recovery correctly failed/refunded a terminal upstream failure, but had no failed-task notification callback. Recovery could therefore leave the user with only the original “generation started” message.
+
+### Intended result
+- Pending RenderGrid/Nexus image tasks cannot be starved by unrelated pending image providers.
+- Normal poller handles RenderGrid terminal states promptly.
+- If watchdog still recovers a failed/expired provider task, it sends the user a failure/refund message with the existing retry keyboard instead of refunding silently.
+- Refund remains single and atomic; notification failure never causes a second refund.
+- Poller/watchdog races are idempotent: whichever path atomically claims the pending task performs the refund and user notification; a late second path is a no-op.
+
+### Scope / safety
+- No DB schema or migration.
+- No provider payload/model/routing changes: Banana 2/Pro remain on RenderGrid.
+- No pricing/referral/payment changes.
+- No Mini App contract change.
+- Telegram `chat not found` remains a terminal Telegram delivery condition; completed media remains persisted by the existing delivery path.
+- The separate 28.1 MB Telegram error observed in the same log window came from the saved-reference preview screen, not generation-result delivery, and is outside this incident fix.
+
+### RED → GREEN
+- RED command covered the exact two failure modes:
+  - managed RenderGrid task behind older unmanaged pending image rows returned no poll candidate;
+  - `run_watchdog_cycle(on_failed=...)` was unsupported.
+- RED result: **2 failed**.
+- Added direct user-notification regression asserting the failure card includes the public task ID, refund text and retry keyboard.
+- GREEN focused regressions: **3 passed**.
+- Added poller/watchdog race regression: a watchdog refund followed by a late poller must not change balance or send a duplicate failure card.
+- Expanded RenderGrid/watchdog/delivery suite after the race fix: **48 passed**.
+- Full safe regression suite: **991 passed, 3 skipped**.
+
+### Implementation
+- `bot/services/nexus_task_poller.py`: scan pending image rows in bounded pages until the requested managed-provider batch is collected, eliminating pre-filter starvation.
+- `bot/services/task_watchdog.py`: support `on_failed` callback after an atomic fail/refund, including max-age forced failures; callback exceptions are isolated from financial state.
+- `bot/main.py`: wire watchdog failed recovery to Telegram using existing failure/retry UX and start watchdog only after the Bot instance exists.
+- Regression tests in `tests/test_rendergrid_provider_id_contract.py` and `tests/test_task_watchdog.py`.
+
+### Rollout
+- Task branch: `fix/rendergrid-delivery-recovery`.
+- Next: lint/compile/diff review → PR to `tanyapi` → required CI → native auto-merge when green → exact-SHA production deploy verification and post-deploy telemetry.
+
+---
+
+## 2026-09-19 — admin partner applications pagination
+
+- Baseline: `tanyapi` at `4e56b65a8b9748ba7d3bb351039ede643cf7f1ba`.
+- Finding: production has `138` pending partner applications, while the first implementation displayed only the first 20.
+- Intended result: admins can access every pending application through a paginated Telegram admin queue without exceeding Telegram message/keyboard limits.
+- Implementation: add pending count + offset pagination in `partner_approval_service`; show total and visible range in the admin text; add page navigation callbacks `admin_partner_applications:<page>`.
+- Verification before merge:
+  - `./venv/bin/python -m pytest tests/test_database.py -q -k 'pending_partner_applications or admin_partner_applications or safe_admin_edit'` → 3 passed.
+  - `./venv/bin/python -m py_compile bot/services/partner_approval_service.py bot/handlers/admin.py tests/test_database.py` → passed.
+  - `./venv/bin/python -m ruff check --select I bot/services/partner_approval_service.py bot/handlers/admin.py tests/test_database.py` → passed.
+  - `git diff --check` → passed.
+
+---
+
+## 2026-09-19 — admin partner applications button hotfix
+
+- Baseline: `tanyapi` at `6eadf4236544f853b87e243a43fb0d0b8b9bc74f`.
+- Symptom: admin pressed `✅ Заявки на активацию`; Telegram showed no visible result.
+- Evidence: production logs showed `TypeError: _safe_admin_edit() got an unexpected keyword argument 'disable_web_page_preview'` in `admin_partner_applications`; the callback reached the handler and failed during message rendering.
+- Fix: `_safe_admin_edit` now accepts `disable_web_page_preview` and passes it to `edit_text`, fallback `answer`, and direct `send_message`.
+- Regression: added `test_safe_admin_edit_accepts_disable_web_page_preview` for the exact argument combination used by the queue screen.
+- Verification before merge:
+  - `./venv/bin/python -m pytest tests/test_database.py -q -k 'pending_partner_applications or admin_partner_applications or safe_admin_edit'` → 3 passed.
+  - `./venv/bin/python -m py_compile bot/handlers/admin.py tests/test_database.py` → passed.
+  - `./venv/bin/python -m ruff check --select I bot/handlers/admin.py tests/test_database.py` → passed.
+  - `git diff --check` → passed.
+- Rollout plan: merge hotfix branch back to `tanyapi`, push, verify exact CI/deploy SHA, health, container revision and filtered logs.
+
+---
+
+## 2026-09-19 — partner activation application queue
+
+- Baseline: `tanyapi` at current workspace head before task branch `fix/partner-activation-queue`.
+- Intended result: admins can open a visible list of pending partner activation applications from the partner admin menu and approve/reject them even when the original Telegram notification is buried.
+- Existing state: `partner_applications` already stores `pending/approved/rejected`, user submissions notify admins with inline approve/reject buttons, and `review_partner_application` performs the atomic activation by setting `users.partner_agreed_at`.
+- Gap: there is no admin queue screen that re-lists pending applications after the original notification is missed.
+- Reuse: keep the existing `partner_approval_service`, callback IDs `partner_app_approve_*` / `partner_app_reject_*`, and admin partner menu.
+- No-hardcode decision: no new mutable business values; the list limit is a bounded UI page size, not business configuration.
+- Schema/API/UI/FSM impact: no schema migration; Telegram admin UI gets one new callback screen. Mini App and user FSM are unchanged.
+- Security: admin-only callback guard remains server-side; pending list exposes Telegram profile links only to configured admins.
+- Observability: existing review path logs review-card update failures and user notification failures; queue retrieval is deterministic from DB.
+- Test plan: add service regression for pending-only ordering/limit and handler formatting/keyboard checks, then run focused pytest and compile touched modules.
+- Implementation: added `get_pending_partner_applications()`, a new admin partner-menu button, queue text/keyboard helpers, and `admin_partner_applications` callback using existing approve/reject callback IDs.
+- Verification:
+  - `./venv/bin/python -m pytest tests/test_database.py -q -k 'pending_partner_applications or admin_partner_applications'` → 2 passed.
+  - `python -m py_compile bot/services/partner_approval_service.py bot/handlers/admin.py tests/test_database.py` → passed.
+  - `./venv/bin/python -m ruff check --select I bot/services/partner_approval_service.py bot/handlers/admin.py tests/test_database.py` → passed.
+  - Full `ruff check` on the same files still fails on pre-existing unrelated `bot/handlers/admin.py` findings (timezone calls, old string concatenation style, broad exceptions, executable bit).
+
+---
+
+## 2026-09-15 — payment provider priority
+
+- Baseline: tanyapi @ ac4f35c7c6f5.
+- Intended result: Robokassa is the first/default visible RUB option and is labeled СБП / карта; FK Kassa is second and explicitly marked reserve; Lava is moved below the primary/reserve and alternative methods.
+- Existing state: backend config already selects Robokassa as primary, but Telegram and Mini App UI plus regression tests still encode Lava-first / Robokassa-reserve behavior.
+- Scope: presentation/routing order only. Provider webhook validation, transaction creation, amounts, bonuses, idempotency and crediting are unchanged.
+- Surfaces: Telegram flat payment menu, legacy provider keyboards, Mini App balance sheet, E2E/static regression contracts.
+- Risk: duplicate choose_pay handlers make router order important; the production flat menu is owned by lava_checkout and decorated by miniapp_lava_payment_methods_compat.
+- Test plan: first update regression expectations and confirm RED, then implement order/labels, run focused pytest, Mini App E2E/build checks, review diff, CI, merge to tanyapi, verify exact deployed SHA and production smoke/logs.
+- RED evidence: focused contract suite initially failed 9 assertions on the old Lava-first / Robokassa-reserve ordering.
+- Implementation: Telegram flat menu, legacy reserve keyboards, Mini App balance UI and E2E were aligned to Robokassa → KASSA reserve → alternatives → Lava.
+- Documentation: robokassa.md and freekassa.md now describe the same verified priority.
+- Verification so far:
+  - focused Python payment contract suite: 57 passed;
+  - Ruff on all changed Python/test files: passed;
+  - Mini App Jest: 17 suites / 46 tests passed;
+  - Mini App ESLint: passed;
+  - Next.js production export/build: passed;
+  - critical Playwright browser E2E: passed.
+
+## 2026-09-15 — tanyapi automatic merge gate
+
+- Root cause: PRs could become fully green but stay open indefinitely because no auto-merge mechanism existed.
+- Added `.github/workflows/tanyapi-auto-merge.yml`.
+- The workflow runs only for non-draft same-repository PRs targeting `tanyapi`.
+- It does not checkout PR code while holding write permissions.
+- GitHub repository native auto-merge is enabled. `tanyapi` branch protection is `strict=true` and requires four GitHub Actions checks: Python/deployment validation, safe regression suite, Mini App browser E2E, and production Docker image.
+- Regression contract added in `tests/test_tanyapi_auto_merge_workflow.py`.
+- The workflow only arms native `--auto --squash`; GitHub performs the eventual protected merge, so the normal `tanyapi` push CI/CD fan-out remains intact.
+
+---
+
+## 2026-09-15 — RenderGrid legacy media and reference retention
+
+### Task
+Repair legacy RenderGrid media and reference-retention behavior without rewriting the working RenderGrid adapter.
+
+### Baseline
+- Original baseline SHA: `ac4f35c7c6f5726d586bfc17a9859f2161ac83d8`.
+- Rebasing target before PR: current `origin/tanyapi`, including payment-priority commit `cf6ce28`.
+- Task branch: `fix/rendergrid-legacy-storage-policy`.
+- Production container: `banano-kling-bot`.
+- Production DB: PostgreSQL database `banano_kling`.
+
+### Intended user-visible result
+- Old RenderGrid results are localized while their provider URLs are still alive.
+- A historical generation that can be repeated keeps its snapshot references even after the saved-reference row is pruned.
+- RenderGrid external result URLs stop leaking through history/task-detail and are treated with a 24h provider-specific lifetime.
+- Feed, profile, Mini App history/detail and repeat flows agree on media availability.
+- Backfill becomes an idempotent deploy/reconciliation step with bounded batches and telemetry.
+
+### Current-state audit
+Existing and reusable:
+- Fresh RenderGrid completion already localizes image results in `bot.main._persist_result_url_if_needed`.
+- `scripts/backfill_rendergrid_image_results.py` already verified a non-empty local file, updated `result_url/result_urls` with compare-and-swap, and emitted counters.
+- Feed/profile already use the database media availability resolver.
+- Production baseline found exactly 7,133 completed image rows still pointing at `cdn.rendergrid.io`.
+
+Confirmed gaps at task start:
+- Backfill had no cursor/checkpoint and could retry the same dead rows indefinitely.
+- Backfill was not part of deploy/reconciliation.
+- Orphan reference cleanup protected `saved_references` and active prompt previews, but not generation snapshots.
+- RenderGrid shared the generic ephemeral TTL (72h) instead of 24h.
+- Mini App recent-task history and task-detail used a separate URL parser and could expose old RenderGrid URLs directly.
+- Requested legacy/repeat regression matrix was incomplete.
+
+### Production evidence
+- Baseline 2026-09-15: exactly 7,133 completed image rows pointed at `cdn.rendergrid.io`.
+- Controlled batch 1: `scanned=100 localized=100 updated=100 skipped_race=0 failed=0`.
+- Controlled batch 2 localized another 500 rows; DB verification after commit showed 6,533 external RenderGrid rows remaining.
+- During the 500-row run PostgreSQL reported a deadlock while the old script held its DB connection across provider downloads. The backfill was then changed to fetch candidates, close DB, localize remotely, and reopen DB only for short CAS updates.
+- Production bot health remained `healthy`; no additional recovery batch is started until the merged transaction-safe version is deployed.
+- Snapshot-retention PostgreSQL query was executed against production successfully and resolved 95,982 unique historical local snapshot-ref URLs without transferring request_data JSON blobs to Python.
+
+### Data-safety / no-hardcode decisions
+- No blind bulk UPDATE: preserve compare-and-swap guard and validate the local file before mutation.
+- Backfill is bounded by batch size and cursor/checkpoint; failures are counted, not silently dropped.
+- Provider TTL is explicit and configurable; RenderGrid default is 24h.
+- Reference cleanup errs toward retention when a completed generation snapshot owns a local reference.
+- No schema rewrite is required.
+- Deploy reconciliation cursor is persisted under the existing `/app/data` persistent volume.
+
+### Observability
+Backfill/reconciliation emits:
+- scanned;
+- localized;
+- updated;
+- failed;
+- skipped_race;
+- next_before_id;
+- exhausted.
+
+Reference cleanup reports how many generation snapshot refs are protected.
+
+### Test seams / acceptance
+1. RenderGrid completed → local file → DB canonical URL.
+2. Old RenderGrid card resolves through shared availability policy.
+3. Repeat remains viable beyond 24h when canonical media/refs are local.
+4. Pruned saved-reference file remains while referenced by historical generation snapshot.
+5. Mini App profile/remix and history/task-detail do not emit stale direct RenderGrid URLs.
+6. Telegram repeat uses retained snapshot refs.
+7. Provider payload still receives correct references; no adapter rewrite/regression.
+8. Backfill cursor progresses past failures and CAS prevents races.
+9. Deploy reconciliation is bounded, persistent, idempotent and fail-safe.
+
+### Implementation status
+- [x] Audit current branch/runtime and confirm live legacy count.
+- [x] Run initial controlled production backfill batches; 600 rows localized.
+- [x] Add red regressions for snapshot retention, provider TTL/shared resolver and cursor progress.
+- [x] Implement generation-snapshot protection in orphan cleanup.
+- [x] Add provider-specific RenderGrid TTL and shared public result resolver.
+- [x] Route Mini App history/task-detail/media proxy through shared resolver.
+- [x] Add cursor/checkpoint-aware backfill telemetry and reconciliation entrypoint.
+- [x] Persist deploy reconciliation cursor under `/app/data`.
+- [x] Wire bounded reconciliation into production deploy.
+- [x] Add requested Mini App/Telegram/provider regression coverage.
+- [x] Update environment/provider docs to match async RenderGrid + durable localization reality.
+- [x] Focused regression matrix: 20/20 green before checkpoint change; 14/14 targeted green after checkpoint change; 11/11 cleanup/backfill tests green after query optimization.
+- [x] Run two-axis review (standards + spec), fix blockers.
+  - blocker fixed: deploy reconciliation now persists cursor across deploys;
+  - blocker fixed: orphan cleanup no longer fetches/parses ~198k request_data JSON blobs in Python;
+  - no unresolved high-severity review issue remains.
+- [ ] Full safe pytest suite / changed-lines CI lint on rebased PR head.
+- [ ] Push branch, open PR to `tanyapi`, verify CI, merge only when green.
+- [ ] Verify exact production SHA, health, smoke and telemetry.
+- [ ] Continue controlled production backfill and report current recovered/remaining totals.
+
+### Rollback
+- Code changes are normal git rollback.
+- Backfill only replaces provider URLs with verified local durable URLs; it does not delete source data/files.
+- CAS guard prevents overwriting concurrently changed rows.
+
+
+---
+
+## 2026-09-23 — Seedance video-reference binding regression
+
+### Incident
+- Production branch: `tanyapi`.
+- Symptom: Seedance 2.0/2.5 accepted video references but frequently preserved performers from the donor video instead of replacing them with people from uploaded image references.
+- Reproduced from live generation metadata on 2026-09-23 with 3 image references + 1 video reference.
+- Reference video transport is healthy: sampled donor files are H.264/AAC, 720x1280, 30 fps, ~14.8s, ~5.7 MB.
+- When a video survives the UI/FSM path, provider transport is healthy and KIE receives separate `reference_image_urls` and `reference_video_urls`.
+- A second bug was confirmed in live logs: at 19:52:11 a prompt that still referenced `@video1` was sent with `ref_images=3 ref_videos=0`; at 20:05:29 the same flow sent `ref_images=3 ref_videos=1`.
+
+### Root cause
+- Runtime passed prompt reference aliases through verbatim.
+- Live prompts used incompatible variants such as `@image1`, `@video1`, `@IMAGE 1`, and a legacy combined ordinal where the fourth uploaded asset was called `@IMAGE 4` although the provider receives it as `reference_video_urls[0]`.
+- Seedance reference-to-video expects type-specific aliases such as `@Image1` and `@Video1`; invalid aliases can fail to bind the intended media role.
+- The Seedance 2.0 media screen exposed `Без видео-рефов` even after a video had already been uploaded. Its generic callback unconditionally cleared `v_reference_videos`, allowing a prompt containing `@Video1` to reach KIE with zero video references.
+- Historical note: a global Seedance prompt injection was intentionally removed in commit `cff2eb4`; this fix does not restore that global semantic injection.
+
+### Fix
+- Add a shared provider-boundary alias normalizer for Seedance 2.0 and 2.5.
+- Canonicalize case/spacing: `@image1` / `@IMAGE 1` -> `@Image1`, `@video1` -> `@Video1`, and equivalent audio aliases.
+- Repair legacy combined ordinals using actual media counts: with 3 images + 1 video, `@IMAGE 4` -> `@Video1`.
+- Preserve prompt wording and existing KIE request fields/endpoints; no global role lock is injected.
+- Reject a Seedance request before provider submission when the canonical prompt references `@ImageN`/`@VideoN`/`@AudioN` that has no matching uploaded media.
+- Hide `Без видео-рефов` after a Seedance video has been uploaded, and make stale skip callbacks non-destructive.
+- Emit count-only telemetry when aliases are normalized or a request is blocked; do not log prompt contents or media URLs.
+
+### Verification
+- RED: 4 focused binding tests failed before implementation.
+- GREEN: 4/4 focused tests after implementation.
+- Expanded Seedance/continuity/repeat/trend regression set: 57/57 passed before the stale-callback regression was added; final focused suite is rerun before PR.
+- Real production media files validated with ffprobe and are within reference-video constraints.
+- Example transformation verified offline:
+  - before: `@IMAGE 1 ... @IMAGE 4 = видеореференс`
+  - after: `@Image1 ... @Video1 = видеореференс`
+
+### Rollback
+- Revert the shared alias normalizer integration in `seedance_service.py` and `seedance_25_service.py`.
+- No schema migration or persisted-data mutation is involved.
+
+---
+
+## 2026-09-26 — Seedance 2.5 trend launch regression
+
+### Incident
+- Production branch baseline: tanyapi at 9edef3dcdb9bdf98ef1c54ac365680250b3f7aed.
+- User report: curated trends configured for Seedance 2.5 do not generate.
+- Direct Seedance 2.5 generation is healthy in production: provider tasks are accepted, KIE callbacks arrive, tasks reach completed, and result MP4 URLs are persisted.
+- Trend history contains recent banana_pro, seedream_5_pro, and legacy seedance_2 tasks, but no seedance_2_5 trend task.
+- Production /mini-app/api/trends/run returned HTTP 400 during the reported flow before any Seedance provider task was created or credits were deducted.
+
+### Root cause
+- The dedicated Seedance 2.5 trend adapter called the legacy miniapp._find_video_model_meta("seedance_2_5").
+- Seedance 2.5 is intentionally injected dynamically by its compatibility/bootstrap layer and is not present in the legacy static VIDEO_MODELS registry.
+- Therefore every Seedance 2.5 curated trend that passed earlier user-field validation was rejected locally as "Seedance 2.5 сейчас недоступна" before provider submission.
+- Existing unit coverage masked the defect by monkeypatching the legacy lookup to return Seedance metadata.
+- A separate preflight on current trend #1605 also demonstrated its configured required "Цифры" user field; missing that field is correctly rejected before launch. Current frontend source has a regression test proving required trend fields are rendered and sent.
+
+### Fix
+- Resolve Seedance 2.5 trend capabilities from the dedicated public Seedance metadata provider instead of the legacy generic video-model registry.
+- Keep ratio/duration normalization, billing, provider payloads, task persistence, refunds, and all non-Seedance trend routing unchanged.
+- Update the regression test so the legacy lookup explicitly returns None; the Seedance trend must still reach its dedicated provider runtime.
+
+### Verification
+- RED: tests/test_trend_seedance_25_compat.py failed with TrendRunValidationError: Seedance 2.5 сейчас недоступна.
+- GREEN: focused Seedance trend regression passes after the fix.
+- Expanded backend trend/Seedance suite: 43/43 passed.
+- Frontend required-user-field contract: 1/1 passed.
+- Ruff on changed Python files: clean.
+- Full backend suite: 991 passed, 3 skipped; exit code 0.
+
+### Rollout
+- Task branch: fix/tanyapi-seedance25-trend-runtime.
+- PR target: tanyapi.
+- No schema/data migration.
+- No business-value hardcode added.
+- After merge: verify exact deployed SHA, submit a controlled Seedance 2.5 trend through the real Mini App path, confirm provider task creation/callback/result delivery, and inspect post-deploy logs.
+
+---
+
+## 2026-09-26 — Production pipeline observability status repair
+
+### Incident
+- Production observability workflow failed after the Seedance 2.5 rollout while the actual reliable production deploy succeeded.
+- GitHub reports `.github/workflows/deploy-production.yml` as `disabled_manually` and `.github/workflows/deploy-production-reliable.yml` as `active`.
+- `publish-pipeline-pending-status.yml` still tried to discover runs for the disabled workflow, so it failed after publishing only the `tanya/ci` pending status.
+- The active reliable deploy workflow did not publish a terminal `tanya/deploy` commit status, so merely repointing observability would leave that context pending forever.
+
+### Fix
+- Point pending deploy status discovery at `deploy-production-reliable.yml`.
+- Add an always-running terminal status job to the reliable deployment workflow.
+- Publish `tanya/deploy=success` only when both exact-SHA CI verification and deployment succeed; otherwise publish failure with the release run URL.
+- Keep the disabled legacy production workflow disabled to avoid duplicate production deployments.
+
+### Verification
+- RED: new workflow-contract tests failed on the stale deploy filename and missing terminal status publisher.
+- GREEN: both workflow-contract tests pass after the change.
+- YAML parsing succeeds for both changed workflows.
+- Existing deployment workflow regression matrix: 19/19 passed before PR.
+
+### Rollout
+- Task branch: `fix/tanyapi-pipeline-observability`.
+- PR target: `tanyapi` with auto-merge only after CI is green.
+- After merge/deploy: verify exact production SHA, `tanya/ci` and `tanya/deploy` commit statuses, then inspect fresh backend logs for trend/Seedance/webhook/errors.
+
+---
+
+## 2026-09-26 — Seedance 2.5 tagged trend production smoke
+
+### Incident
+- A controlled production smoke of published trend #1605 reached the dedicated Seedance 2.5 runtime but returned HTTP 502 before task creation.
+- Billing safety worked: the 72-credit debit was rolled back and the smoke account balance stayed unchanged.
+- Exact provider-bound error: Prompt references missing Seedance media: @Image1.
+
+### Root cause
+- The curated prompt uses a Seedance image binding (@Image1 after canonicalization).
+- Trend compatibility mapped every single uploaded photo to Seedance first_frame.
+- In first-frame mode the photo is not present in reference_image_urls, so the provider binding layer sees @Image1 as unbound and rejects the request before KIE task creation.
+
+### Fix
+- Keep ordinary single-photo Seedance trends on first_frame.
+- If the curated prompt explicitly binds an image reference, keep even one uploaded image in Seedance multimodal reference_image_urls.
+- Multi-photo trends remain multimodal.
+- No pricing, billing, task persistence, callback, or delivery contract changed.
+
+### Verification
+- RED regression: tagged single-photo trend launched as first_frame.
+- GREEN regression: tagged single-photo trend launches as multimodal; untagged single-photo behavior remains first_frame.
+- Expanded Seedance/trend suite: 59/59 passed.
+- Ruff changed Python: clean.
+- Full backend suite: 994 passed, 3 skipped; exit code 0.
+- Production smoke will be repeated after exact-SHA deployment and followed through provider callback, DB completion and Telegram delivery.
+
+### Rollout
+- Task branch: fix/tanyapi-seedance25-trend-image-binding.
+- PR target: tanyapi.
+
+---
+
+## 2026-09-27 — Trend repeat price preview
+
+### Goal
+- Show the user the exact retail cost of repeating a curated photo/video trend before they upload references or launch generation.
+- Keep pricing server-owned and derived from the administrator-configured model, duration, quality and resolution stored in generation_settings.
+
+### Implementation
+- Added a single backend repeat-cost estimator that resolves current pricing from the same runtime pricing functions used by trend execution.
+- Image trend execution, generic video trend execution and dedicated Seedance 2.5 trend execution now reuse that estimator for the actual debit amount.
+- Trend list/detail responses include repeat_cost; newly created admin trends receive the price immediately in the submit response.
+- Mini App trend cards render `Повторить · <price>🍌`.
+- Trend runner renders `Сгенерировать · <price>🍌`; the old photo-count label was removed from the launch button while reference counts remain in the upload UI.
+- No pricing values are hardcoded in the frontend.
+
+### Verification
+- Backend pricing/trend focused suite: 24/24 passed.
+- Expanded production backend suite: 996 passed, 3 skipped.
+- Mini App Jest: 47/47 passed.
+- Mini App ESLint: clean.
+- Mini App production build/TypeScript: clean.
+- Mini App critical browser E2E: passed after updating the expected repeat-price labels.
+- Added regressions for dynamic backend photo/video pricing, trend-card price display and runner price display.
+
+### Rollout
+- Task branch: feature/tanyapi-trend-repeat-price.
+- PR target: tanyapi with auto-merge after required CI gates.
+- After deployment verify exact backend/Mini App SHA and live repeat_cost values for existing production trends.
+
+---
+
+## 2026-09-30 — Gemini 3.1 media analysis stays on Gemini
+
+### Incident
+- Production tanyapi logged 13 provider_failure provider=kie_gemini31 error=invalid_response events in the previous 10 hours.
+- Fresh example request_id=95f5d5ee6b694ae0bcf7e7876cce41e7 received HTTP 200 from KIE, was classified as invalid_response, and automatically fell back to Qwen 3.8.
+- Product requirement: when media_analysis_provider=kie_gemini31, photo/video/v2 media analysis must remain on Gemini; Qwen may only run when explicitly selected by the admin setting.
+
+### Baseline
+- Branch: tanyapi
+- SHA: 0ac2d3e3f4a951b216b5fd1d8cc82297a7d42920
+- KIE Gemini adapter treated malformed/empty HTTP-200 responses as terminal on the first attempt.
+- Photo, video and v2 services caught Gemini runtime errors and automatically routed to Qwen.
+
+### Fix
+- Retry malformed/empty successful HTTP responses within the bounded Gemini attempt budget.
+- Accept standard string content and text-block content without logging provider/user content.
+- Add sanitized response-shape telemetry (keys/types/finish reason/body code only) for malformed responses.
+- Remove implicit Qwen fallback when Gemini is selected. Explicit media_analysis_provider=qwen38 behavior remains supported.
+
+### Verification
+- RED regression before implementation: 5/5 focused tests failed on the old behavior.
+- GREEN focused regression after implementation: 5/5 passed.
+- Full Gemini media-analysis file: 21/21 passed in project venv.
+- Adjacent suite exposed one pre-existing prompt_analyzer_v2 text-only Qwen test failure; the same test fails unchanged at baseline SHA, so it is outside this fix.
+
+### Rollout
+- Task branch: fix/gemini31-invalid-response-retry.
+- PR target: tanyapi.
+- After merge: verify exact deployed SHA, bot health, live Gemini-only media-analysis smoke and telemetry (provider_retry/provider_success, no automatic fallback provider=qwen38).
+
+### Review
+- Standards axis: bounded retry remains configuration-driven; no secrets or provider/user content are logged; response telemetry records structural metadata only; no payment/FSM/schema contract changed; no debug instrumentation remains.
+- Spec axis: when media_analysis_provider=kie_gemini31, photo/video/v2 image analysis no longer falls through to Qwen; malformed/empty HTTP-200 responses retry Gemini within the existing attempt budget. Qwen executes only when explicitly selected.
+- Explicit Qwen routing tests now select qwen38 through the same bot setting used in production. Existing prompt-v2 text-only explicit-Qwen routing was aligned with that contract.
+- Production bot setting re-verified as kie_gemini31 after isolated tests.
+- Final isolated backend gate: ruff checks passed; full pytest 1344 passed, 2 skipped, 123 warnings.
+
+---
+
+## 2026-09-30 — Gemini 3.1 provider-to-provider fallback
+
+### Incident
+- Production smoke after PR #211 confirmed KIE Gemini 3.1 Pro can return HTTP 200 with application body code=500.
+- KIE retry remained on Gemini but two consecutive body=500 responses still caused terminal failure.
+- KIE Gemini 3 Flash and Gemini 2.5 Flash channels returned application 422 (channel not supported) for this account.
+- OpenRouter exposes google/gemini-3.1-pro-preview and live smoke succeeded for both image and video inputs.
+
+### Fix
+- Keep KIE gemini-3.1-pro as primary transport.
+- On KIE upstream/transient exhaustion or body code>=500, fall back to OpenRouter google/gemini-3.1-pro-preview.
+- Preserve media kind so image fallback sends image_url and video fallback sends video_url.
+- Qwen is not part of this fallback chain.
+
+### Verification
+- Focused body-500 fallback tests cover image and video.
+- Timeout fallback regression updated to Gemini->Gemini behavior.
+- Full isolated backend gate: 1346 passed, 2 skipped.
+- Ruff focused checks passed.
+
+### WAN audit
+- Production model is wan/2-7-image-pro through KIE.
+- Latest 100 WAN rows: 89 completed / 11 failed; completed p50 31.3s, p95 38.8s, max 41.1s.
+- Fresh failures on Sep 28 were KIE green-net moderation (input/output image), not transport failures.
+- Existing WAN auto-retry intentionally covers timeout failures only; moderation failures were not auto-retried.
+
+---
+
+## 2026-09-30 — KIE-only Gemini fallback
+
+### Requirement
+- Media analysis must not use OpenRouter as an automatic fallback.
+- Primary: KIE Gemini 3.1 Pro.
+- Fallback: another Gemini model through KIE only.
+
+### Evidence
+- KIE Gemini 3 Flash and Gemini 2.5 Flash returned application code 422 (channel not supported) on the production KIE key.
+- KIE Gemini 3.5 Flash OpenAI-compatible endpoint /gemini-3-5-flash-openai/v1/chat/completions with model gemini-3-5-flash-thinking succeeded live for both image and video inputs.
+
+### Fix
+- Removed automatic OpenRouter Gemini 3.1 fallback adapter and config.
+- KIE Gemini 3.1 Pro remains primary.
+- KIE Gemini 3.5 Flash is the only automatic fallback for body code>=500, retry exhaustion, malformed/empty terminal responses, or network exhaustion.
+- Fallback endpoint/model/max attempts are env-configurable.
+
+### Verification
+- Focused regression: 8 passed.
+- Full isolated backend gate: 1346 passed, 2 skipped.
+- Ruff focused checks passed.
+- No openrouter_gemini31 / OPENROUTER_GEMINI31 references remain in bot/tests/deployment/.env.example.
+
+
+---
+
+## 2026-09-30 — KIE Gemini 3.8 Flash fallback
+
+### Requirement
+- Keep media analysis entirely on KIE when Gemini is selected.
+- Primary remains KIE Gemini 3.1 Pro.
+- Automatic fallback must use KIE Gemini 3.8 Flash, not OpenRouter and not Qwen.
+
+### Baseline
+- Branch baseline: tanyapi.
+- Baseline SHA: 028214567f2ade09dca1b5d7dac8faa8c56e82ae.
+- PR #213 already removed OpenRouter from the automatic fallback chain but defaulted the KIE fallback to Gemini 3.5 Flash.
+- Production container observed before this patch was still on older SHA 7545686254b36a468008a4af86b3c216448d901c, where OpenRouter fallback was still active.
+
+### Provider contract
+- Official KIE endpoint: /gemini-3-8-flash-openai/v1/chat/completions.
+- Fallback model identifier retained for configuration and telemetry: gemini-3-8-flash; the endpoint-specific request body omits model.
+- KIE documents the endpoint as multimodal and uses the unified image_url media envelope for media inputs.
+- KIE's endpoint-specific request example omits the model field; live contract testing confirmed this matters for video on the production key.
+- Existing bounded timeout/retry behavior is preserved.
+
+### Implementation
+- Default KIE media-analysis fallback model changed from Gemini 3.5 Flash to Gemini 3.8 Flash.
+- Default fallback endpoint changed to the Gemini 3.8 Flash OpenAI-compatible endpoint.
+- Fallback requests omit the redundant model field and rely on the model-specific KIE endpoint; the configured model name is retained for telemetry.
+- Fallback trace provider changed from the stale model-specific kie_gemini35_flash label to kie_gemini_fallback; the concrete KIE model remains present in the structured provider log.
+- No OpenRouter fallback is introduced.
+- Fallback model/endpoint/attempt count remain environment-configurable.
+
+### TDD evidence
+- RED: body-code-500 image/video fallback regression failed because telemetry still reported kie_gemini35_flash.
+- GREEN: body-code-500 image/video fallback regression passed after telemetry fix.
+- RED: timeout fallback regression failed against the Gemini 3.8 endpoint while defaults still pointed to Gemini 3.5.
+- GREEN: timeout fallback regression passed after updating the defaults.
+- Focused media-analysis suite after implementation: 23 passed.
+- Focused Ruff checks passed.
+- Full backend gate from the isolated worktree before the provider-contract refinement: 1058 passed, 3 skipped.
+- Live KIE 3.8 image smoke on the production API key succeeded.
+- Live KIE 3.8 video smoke with an explicit model field timed out at 120s; the same 107 KB public MP4 without the model field returned HTTP 200 in 20.13s with a valid description.
+- Added a regression asserting the fallback request body does not include model; RED before the fix, GREEN after the fix.
+- Final full backend gate after the provider-contract refinement: 1058 passed, 3 skipped, 88 warnings.
+
+### Rollout plan
+1. Run focused lint and full backend pytest from the isolated worktree.
+2. Review diff against tanyapi.
+3. Commit/push task branch and open PR to tanyapi.
+4. Merge only after required CI is green.
+5. Verify exact production SHA, container health, and live telemetry shows KIE Gemini 3.1 primary with KIE Gemini 3.8 fallback and no openrouter_gemini31 fallback.
+
+## 2026-09-30 — Complete PR #216: Seedance delivery and refund recovery
+
+- Baseline: `tanyapi` at `5b33cdf86074b0314955151d76b5147824abc5ae`; reviewed PR head `f159adc13dcde099e3ee46449c93bd0de17afa66`.
+- Scope: Seedance 2.5 provider completion, Telegram file delivery and failed-generation refunds. Banana changes explicitly excluded; isolated worktree preserves unrelated working changes.
+- Existing: provider adapters, dedicated webhook, periodic reconciliation and request_data JSON delivery metadata. Partial: refund atomicity and delivery leases. Missing: markerless completion recovery, distinction between link and media delivery, protection against duplicate success overwriting a lease.
+- Evidence: production logs show CDN timeout/connection reset followed by fallback text and a misleading delivered marker. This PR fixes the Seedance 2.5 path; legacy Seedance 2.0/Grok sender in bot/main.py is outside this PR.
+- Reuse: existing DB facade, periodic reconciliation, provider lookup, Telegram adapter. No migration, provider schema, pricing, admin UI or Mini App API change. Financial invariant: at most one refund, committed with its marker; transient DB errors leave recovery eligible.
+- Risks: webhook/watchdog concurrency, process death between completion and delivery, unavailable CDN, expired Telegram delivery lease, starvation by older failed deliveries.
+- No-hardcode: download retry/timeout/backoff and delivery timeout/retry age use environment configuration. Delivery window uses immutable completed_at, not updated_at. No secrets added.
+- Observability: task ID and delivery_status distinguish pending media, link_sent, delivering and delivered; delivery_link_sent suppresses repeated fallback texts. Existing refund logs retain task ID.
+- Verification layers: backend/domain and DB integration required; PostgreSQL contention check required; webhook/reconcile and Mini App backend regression required. UI/FSM contracts and provider payload unchanged; existing CI browser E2E retained. No new migration. Production health/SHA/log smoke after CI deploy.
+- Steps:
+  1. Inspect PR, CI, production evidence and three GitHub review findings — complete.
+  2. Independent standards/spec review via Bambale0/skills code-review — identified link-only false delivery, success replay race, retry window and missing docs.
+  3. Add regressions — refund exception, link-only delivery and markerless completion reproduced failures before fixes.
+  4. Fix recovery and concurrency, document settings — in progress.
+  5. Focused/full checks, review final changes, push same PR — pending.
+  6. Merge to tanyapi after CI, verify exact deployed SHA/health/telemetry — pending.
+- Guidance: Bambale0/skills diagnosing-bugs, code-review; Bambale0/claw QA_AUDIT_CHECKLIST; anthropics/skills webapp-testing (existing browser CI, no frontend changes).
+- Refinement after second review: persisting link_sent retains the delivering lease until the attempt finishes; dedicated DB regression checks a concurrent claim remains blocked. Delivery has an explicit total timeout shorter than its lease; cancellation removes partial downloads.
+- Local verification: full safe backend suite `1072 passed, 3 skipped`; final focused suite after link-lease regression `87 passed`. PostgreSQL 16 isolated contention harness passed: watchdog waited on webhook row lock and observed the committed refund marker; concurrent webhook refund transactions credited once. No production writes during checks.
+
+- Rollout audit found 200 legacy completed Seedance 2.5 tasks without delivery markers. To avoid resending previously delivered videos, completion and result_ready now commit atomically under the task row lock. Missing-marker legacy tasks are excluded from automatic replay; this supersedes the earlier missing-marker query approach. Added explicit legacy replay regression.
+- Final code verification at b2e4027: full safe suite `1076 passed, 3 skipped` (39.19s); changed-line Ruff gate passed; deployment shell syntax passed. Additional regressions prove result+marker rollback and refund+credit rollback. Isolated PostgreSQL confirmed atomic completion marker, duplicate-success lease preservation and single credit under webhook/watchdog contention. Final independent spec review found no confirmed blocker.
+- Excluded Banana tracked WIP is preserved as stash `fad97979e13142b792d86268f385efd308cbfb8d`; production checkout now has no tracked edits blocking CI deploy. No Banana changes are included in PR #216.
+- Steps 1–5 complete locally; latest-head GitHub CI and subsequent merge/deploy verification remain release gates. Post-merge SHA, CI/deploy links and smoke evidence will be recorded in the PR delivery report.
+
+
+## 2026-10-01 — KIE durable result delivery recovery
+
+- Baseline: `tanyapi` / `origin/tanyapi` at `1840ba0dd4f39ceadfd58023f10b0654c1fbcbb8`; task branch `fix/kie-result-delivery-recovery`.
+- Production evidence: KIE returned provider `state=success` and a `tempfile.aiquickdraw.com` result, while media retrieval intermittently timed out/truncated and Telegram returned `failed to get HTTP URL content`. Example Seedream task `8f4c6fc0c07ecc592fe819cf5b75a2ee` recovered on a later download attempt.
+- Root cause: provider generation and webhook completion were healthy; temporary KIE CDN delivery was intermittent. Legacy KIE paths amplified the outage by treating a plain result link as delivered and, in one path, calling `complete_video_task()` even when media delivery failed.
+- Scope: KIE/Kling result delivery in `bot/main.py`, shared delivery metadata in `bot/database.py`, durable localization of ephemeral provider URLs, and regression tests. No provider payload, model selection, pricing, balance/refund or frontend changes.
+- Runtime contract: `success -> delivery lease -> durable localization with bounded retry/backoff -> persist canonical result_url/result_ready metadata -> Telegram media -> completed+delivered`.
+- Link fallback is intermediate only: `delivery_link_sent=true` suppresses duplicate links, then delivery returns to `pending` so watchdog/reconciliation can retry the media after the lease expires.
+- Ephemeral result hosts from `FEED_EPHEMERAL_RESULT_HOSTS` are force-localized for image/video delivery even with `PERSIST_PROVIDER_RESULTS=false`. Defaults: two attempts, 1s linear delay. KIE delivery lease defaults to 600s.
+- Concurrency: `claim_task_delivery()` prevents webhook/watchdog double-send; `store_task_result_ready()` uses compare-and-swap on request metadata and preserves an active `delivering` lease while storing the canonical URL.
+- Regression coverage: generic KIE image success + failed Telegram media/link fallback remains recoverable; Kling KIE `code=200` video path does not complete on link-only fallback; ephemeral KIE video is localized when global persistence is off; localization retries after the first transient failure; DB result-ready persistence preserves the lease.
+- Focused verification: `92 passed`; focused Ruff and `git diff --check` passed; changed-line Ruff across modified Python files reported 0 issues.
+- Full backend verification: `1372 passed, 2 skipped, 1 failed`. The sole failure is pre-existing/out-of-scope `tests/test_seedream_service.py::test_seedream_text_prompt_limit_increased_to_six_thousand_chars`: test expects 6000 while current `seedream_service.py` truncates to 5000. Neither Seedream file is changed by this branch.
+- Review: standards/spec pass found and corrected one ordering issue in the legacy KIE payload so all three active KIE success paths now claim the lease before localization/result-ready persistence. No confirmed KIE delivery blocker remains locally.
+- Release gates: push task branch, open PR to `tanyapi`, merge only with required GitHub CI green, then verify exact deployed SHA/container health and passive production telemetry. No paid generation is required for smoke.
+
+## 2026-10-01 — Seedance 2.5 explicit video editing
+
+- Baseline: `tanyapi` / `b5fcf18f0025c91e684233798bea06d232c177e7`; isolated branch `fix/seedance25-edit-duration`.
+- Reported provider task `703fa69cddd2c08a3a2c2dcc25dc7fe7`: read-only KIE record confirmed terminal `fail`, code `400`, input duration `12`, ratio `adaptive`, one video reference. Provider classified the prompt as editing and required duration `-1`. Production image label matched baseline SHA; no generation replay or production write performed.
+- Existing: adapter supports Auto, shared public Telegram/Mini App launch, atomic failure refund, reference normalization, local ffprobe validation, repeat restoration. Missing: explicit editing intent and consistent constrained settings. Reuse those seams; no preliminary refactor needed.
+- Ranked hypotheses: (1) prompt-classified editing with numeric duration causes this error (confirmed by provider record); (2) source below four seconds could cause a further rejection (validate local media); (3) non-adaptive ratio could fail editing (already adaptive in this incident); (4) duplicate callback/accounting issues cannot explain provider duration validation.
+- Intended result: explicit admin editing sends `-1/adaptive` with exactly one source video; ordinary reference generation retains selected settings. Editing controls explain source length 4–30 and preserved source ratio/duration. Public editing rejected before any debit or provider call.
+- No-hardcode: `-1`, `adaptive`, source duration bounds and one chosen edit source are technical contract/product input constraints, not prices. Existing admin price configuration, video-reference multiplier and admin-free entitlement preserved. No DB migration/env/admin pricing change; editing stored in request_data JSON.
+- Risks: provider chooses task type from prompt; KIE publishes no explicit task-intent field. Mode makes settings compatible, not a promise of provider intent. Admin external URLs/asset IDs have no trusted local metadata; provider validates duration. Public editing remains unavailable until deterministic server-probed source-duration pricing is designed. No automatic retry of failed paid tasks.
+- Observability: log editing intent and effective duration/ratio; retain provider/task IDs; actionable hint for the captured provider constraint failure. Never log source URLs or full prompts for this change.
+- Verification layers: provider payload, public API/admin permission, Telegram controls, request persistence/repeat, media preflight and frontend user submission require regressions. DB migration N/A (JSON flag); payment invariants preserved and failure/refund regressions run. Trends photo-only and unchanged. Backend safe suite, frontend Jest/type/build and changed-line lint required. Production smoke/SHA/telemetry only if released; no paid live generation authorized by this fix.
+- Acceptance: explicit editing normalizes stale fixed settings; normal video-reference generation unchanged; malformed flags/no or multiple source videos fail prelaunch; paid users cannot bypass restriction; local source <4s fails; repeat restores intent; UI wire settings agree with backend; refund idempotency remains intact.
+- Guidance: Bambale0/skills diagnosing-bugs → TDD → code-review; Bambale0/claw QA_AUDIT_CHECKLIST; anthropics/skills webapp-testing. Three subagents independently audited provider, flows/billing and frontend, then received separate file ownership for implementation.
+- Steps:
+  1. Inspect exact production failure, current tanyapi and provider contract — complete.
+  2. Independent provider/flow/UI diagnosis and minimal scope — complete.
+  3. Regression RED → implementation GREEN at adapter, launch, controls and frontend seams — in progress. Adapter 10 failures before fix, 21 tests pass after. Telegram controls four failures reproduce missing editing toggle/locks/repeat flag.
+  4. Focused/full regression, type/build/lint, independent review — pending.
+  5. Commit/push and PR to tanyapi; release only after CI gate — pending.
+- Original source read-only ffprobe: 12.095 seconds, 720×1280, 30 FPS; one image and one video reference in actual KIE request. Source duration is valid, isolating the wrong request parameter as the cause.
+- Independent Standards and Spec reviews found UI Auto-estimate mismatch and missing Mini App source-repeat enrichment. Both fixed: UI/backend share existing five-second Auto estimate; real repeat enrichment preserves strict editing flag and effective parameters. No confirmed high-severity issue remains after follow-up review.
+- Final local verification: safe backend `BOT_TOKEN=<test> PYTHONPATH=. python -m pytest tests/ --ignore=tests/live -m 'not live_smoke' -q --tb=short`: **1122 passed, 3 skipped**, 40.69s. Initial full gate before continuity refinement: 1117 passed, 3 skipped. Public launch/continuity focused regressions: 27 passed; adapter: 21 passed; Telegram controls/compat: 8 passed.
+- Frontend: `npm --prefix frontend/miniapp-v0 test -- --runInBand seedance25 video-tab-repeat feed-video-repeat`: **21 suites / 58 tests passed**. `tsc --noEmit --incremental false`, targeted ESLint, `npm run build` static export passed. `node e2e/critical-flows.mjs` passed against rebuilt export, including existing payment/trend/Pinterest journeys and new admin editing/public fixed-duration wire-payload assertions; API/provider transport mocked, no charged generation.
+- `git diff --check`, backend deployment/backup/cdn shell syntax passed. Full-file Ruff has legacy diagnostics outside changed lines; final changed-line gate is the repository release check. New ignored regression files explicitly staged with `git add -f`.
+- Steps 1–4 complete locally. Commit/PR and GitHub gates remain; no production release or live generation claimed at this point.
+- PR #222 opened at `f9020210d6d8bf17a22928aabf982d086de38e22`. GitHub Python/deploy validation and safe backend suite passed. Secondary browser CI stopped at existing npm audit vulnerabilities (Next.js and brace-expansion), before browser execution; automatic merge disabled until resolved.
+- Release-blocker refinement: Next.js minimum `^16.3.6`, locked `16.3.8`; brace-expansion patched in each existing major (`1.1.21`, `2.1.7`, `5.0.12`). Official advisories: [Next.js](https://github.com/advisories/GHSA-vcvr-r3jv-pc5j), [brace-expansion](https://github.com/advisories/GHSA-q2hr-2g5m-vwhr). Only these dependency families updated; no force upgrade. An isolated node_modules install avoids changing the production checkout's dependencies.
+- Corrected legacy admin-form reference estimate to include the existing x2 multiplier, matching shared public launch; no charge/pricing policy change. Its editing regression checks the five-second Auto estimate.
+- Final dependency verification: `npm ci --ignore-scripts` passed; `npm audit --audit-level=high` reports **0 vulnerabilities**; full frontend Jest **21 suites / 59 tests passed**; TypeScript without incremental output, full ESLint, production export build (Next 16.3.8), expanded Chromium E2E all passed. Backend unchanged since the 1122-test safe gate. Generated browser export moved outside checkout; git diff check clean. New latest-head GitHub CI remains mandatory before merge.
+
+
+## Project-wide 72-hour diagnosis — 2026-10-01
+
+- Baseline: current `tanyapi` SHA `d5b4d27e1fdf67189da5a2f4fd70cc491bdd3f1a`; isolated branch `agent/project-debug-72h-20261001`. Production worktree and existing untracked files preserved.
+- Requested window: 2026-09-28 18:42:55 UTC through 2026-10-01 18:42:55 UTC (21:42:55 Moscow). Destination: evidence-backed inventory of runtime failures, data/payment invariants, infrastructure availability and frontend critical journeys; reproduce and address confirmed defects within this scope.
+- Guidance refreshed: Bambale0/skills diagnosing-bugs (evidence → minimal reproduction → regression), wayfinder-style investigation map; Bambale0/claw QA audit checklist; anthropics/skills webapp-testing.
+- Investigation ownership: runtime/providers/Telegram; DB/payments/refunds; deploy/nginx/history coverage; Mini App/auth/browser; root cross-cutting observability and synthesis. All production investigation read-only. No customer generation/payment replay or balance repair is implied.
+- Current audit: backend healthy at baseline. Actual application file history begins Sep30; handler retains one rotation; Docker current container begins Oct1 18:38 UTC. Need older journal/nginx/archive discovery before claiming 72h coverage. Runtime error totals include synthetic pytest fixture activity and must be separated from real production incidents. Actual DB is PostgreSQL, SQLite path is fallback only.
+- Reuse: existing logs, task/provider IDs, generation/payment repositories, frontend guarded browser smoke, safe pytest suite and deployed revision endpoints. No preliminary refactor planned.
+- Risks/blockers: incomplete historical application logs, test pollution of application logs, secrets/private prompts in raw logs, incomplete billing/delivery markers. Only sanitized aggregates/code evidence enter Git; private diagnostics remain in restricted /tmp directory.
+- No-hardcode/config/migration: no business policy changes planned. Any retention/observability adjustment must use typed environment configuration where mutable; schema/API/UI/FSM changes only if confirmed evidence requires them.
+- Verification plan: DB read-only invariants; classified log counts and coverage; health/SHA/nginx/backup metadata; browser journeys with all mutations mocked; test-first fixes at applicable public seams. Existing full regression evidence from immediately preceding release may be reused where code unchanged; new tests only for new findings.
+- Rollout: findings/report first; any code fix receives focused and applicable full checks, independent review, PR to tanyapi and exact-SHA CI/autodeploy/smoke. Documentation-only findings do not require a manual production deploy.
+- Steps:
+  1. Establish fixed window, baseline and archive coverage — complete; application history limitation documented.
+  2. Parallel runtime, DB, infrastructure and frontend investigations — complete.
+  3. Correlate real incidents, reproduce actionable defects and classify resolved/external/unknown cases — complete.
+  4. Apply verified fixes with regressions where justified; document limitations — complete.
+  5. Independent review and local checks complete; PR, CI and exact deployment verification pending.
+
+- Coverage established: PostgreSQL and nginx span requested72h; application files only Sep30 00:00:04..Oct1 18:42:55UTC (~42h43), first29h17 irrecoverable from available archives. Shared nginx lacks host/timing fields, so5xx subset is not full service rate. Found historical255-upstream-timeout outage Sep29 12:31:19..12:53:58UTC; missing application history prevents root-cause claim.
+- Confirmed RED/GREEN: oversized saved reference photo (8 runtime failures), media→More edit (1), concurrent saved reference None row (6), insufficient log retention/test log pollution, latent telemetry credential logging. SQLite reference tests passed; actual isolatedPG16 exposed weaker initial fix, now per-user FOR UPDATE verified with observed lock contention and cap preserved. Standards review caught additional telemetry credential forms, now covered.
+- Data totals:8024tasks=7494completed+530failed; no older2h nonterminal or completedmissingURL. Watchdog19/19timeouttasks laterdelivered.349completedpayments; negative balances/orphans/duplicatecommission/referral/promo keys zero. Refund history has incomplete markers; no blanket financial-clean claim.
+- New critical evidence: missing/unreliable KIEHMAC lets callback payload drive status; repeated generic failure refunded twice in an isolatedpublic-handler repro. Igor clarified HMAC does not work (alreadytested). Design adjusted: allthreeKIE endpoints treat callback only as taskIDsignal and fetch authoritative provider record; no HMAC requirement. Unknown/currentID/terminal guards, pending nofail, transientlookup503, atomic genericrefund with expectedproviderID required. No manualfinancialrepair or callbackreplay.
+- Verification seams expanded to provider trust/refundconcurrency/retryalias and actualPostgreSQL. No schema/businesspricing changes. Runtime log retention newtypedenv BANANO_LOG_RETENTION_DAYS defaults7minimum3; UTC sharedcleanup. README corrected toactualDocker/frontenddeployment and strict tanyapiworkflow.
+- Independent review underway: Standards(ops) and Spec separate; dedicatedsecurityreview for KIE. Comprehensive sanitized report: docs/agents/PROJECT_DEBUG_72H_2026-10-01.md.
+
+- Final local gate: `BANANO_SKIP_PROJECT_ENV=1 BANANO_DISABLE_FILE_LOGGING=1 PYTHONPATH=. /root/tanya/banano_kling/venv/bin/python -m pytest tests/ --ignore=tests/live -m 'not live_smoke' -q --tb=short` → **1179 passed, 8 skipped**, 66.00s. Skips include dedicated PostgreSQL-only cases; separate disposable PostgreSQL16 run `pytest tests/test_runtime72_saved_references.py tests/test_runtime72_postgres_refunds.py -q --tb=short` with guarded runtime test flags → **7 passed**. Temporary PG container/socket removed after verification.
+- Focused callback/Telegram/watchdog regressions **86 passed**; independent security review **80 passed**, exact actual paid-retry helper differential: serialization bypassed creates2 provider tasks, current handler creates1 (all transport mocked). Both Standards and Spec reviews cleared final changes; previous findings (PG isolation and additional credential representations) corrected.
+- Published baseline Mini App Chromium critical journeys passed with all API writes mocked, no uncaught JS exceptions; current frontend code unchanged by this patch. Existing API/auth/telemetry focused suite45 passed. New logging filesystem/subprocess suite9 passed after9 RED failures. Bash syntax of deploy/backup/CDN and diff checks passed.
+- Delivery is not yet claimed: mandatory PR CI, runtime PostgreSQL CI, production exact SHA/autodeploy/health/log smoke remain. No migrations, price changes, manual financial repair, credential rotation or Nginx mutation. New technical retention environment setting is optional (default7days).
+
+- Final changed-line Ruff gate: **0 relevant diagnostics**, 470 legacy diagnostics outside changed lines ignored by repository policy (16 changed Python files). New optional type and touched import order corrected; focused Telegram/reference suite then **8 passed, 1 PG-only skipped**. Changed runtime files compile; final diff check clean.
+
+---
+
+## 2026-10-02 — Seedance 2.5 provider-classified edit fallback
+
+### Incident and root cause
+- Baseline and production before this change: `tanyapi` at `efba53e0818c5f72cce58851d6b1513e271975b1`.
+- Provider task `703fa69cddd2c08a3a2c2dcc25dc7fe7` used one valid 13.087-second video reference but was submitted with `duration=12`; KIE classified the prompt as video editing and required `duration=-1`.
+- After the explicit-edit release, task `f8137388b44852d38c03f639e1ba26c3` reproduced the same failure with the edit toggle off and additionally required `ratio=adaptive`. This proved that the manual mode fixed only explicit intent; KIE can still reclassify an ordinary multimodal prompt server-side.
+
+### Fix
+- Before normal failure/refund handling, a matching admin-free Seedance 2.5 video task receives one atomic fallback attempt with `video_editing=true`, `duration=-1` and `ratio=adaptive`.
+- The fallback is limited to pending multimodal tasks with exactly one locally valid 4–30 second source video. Legacy rows without the explicit edit flag remain eligible; malformed, already-editing, paid, wrong-model and wrong-type rows are rejected.
+- A compare-and-swap claim in `request_data` deduplicates webhook/reconciler races. The successful replacement keeps the same generation row, replaces the provider task ID and stores old/new aliases so stale callbacks cannot complete, fail or refund the replacement.
+- Paid tasks are not silently converted to editing because their quoted duration can differ from source duration. They retain the existing atomic failure/refund path.
+
+### Billing invariant
+- Seedance admin/test launches now persist `cost=0`, `charged=false` and `charged_cost=0`; the nominal configured price is retained separately as `price_quote` (and `admin_price_quote` on admin-only paths).
+- Free admin repeats no longer reward a trend author from credits that were never charged.
+- The generic watchdog now treats explicit `admin_free=true`, `charged=false` or `refund_on_failure=false` as non-refundable even if a legacy row contains a non-zero nominal cost. Legacy paid rows without these markers remain refundable.
+- Production read-only audit found no pending/processing admin Seedance row requiring a cost backfill; historical terminal failures were not mutated.
+
+### Verification
+- RED reproduced the original ordering bug: the public failure wrapper refunded before any compatible retry. Separate unit and PostgreSQL RED tests proved that the watchdog credited 5 bananas to an explicitly uncharged task.
+- Focused Seedance/KIE/refund/watchdog gate: **123 passed, 6 skipped**.
+- Disposable PostgreSQL 16 gate: **9 passed**, including concurrent callback deduplication, atomic provider task replacement and no credit for uncharged admin tasks.
+- Final safe backend suite: **1191 passed, 10 skipped**, 87 pre-existing warnings.
+- `git diff --check` and changed Python compilation passed. No paid provider generation, balance mutation, old-task replay or database migration was performed.
+
+### Rollout and observability
+- New technical setting `SEEDANCE25_EDIT_RETRY_CLAIM_TTL_SECONDS` defaults to 300 seconds with a minimum of 30 seconds; no production override is required.
+- Success log: `Seedance 2.5 auto-retried provider-classified edit` with old/new task IDs and effective settings. Watchdog failure logs include actual refunded credits and whether billing markers disabled refund.
+- Release gates: latest-head GitHub CI, independent PR review where available, automatic merge to `tanyapi`, exact deployed SHA/health/source verification and post-deploy error-log audit. No live paid smoke is authorized for this change.
+- Residual risk: provider task creation and local task-ID attachment cannot be one distributed transaction. A hard process death in that narrow window can orphan an upstream task; CAS failures record the replacement ID and emit a critical log for reconciliation.
+
+---
+
+## 2026-10-02 — Prompt-repeat reward and admin billing invariants
+
+### Release interception
+- Seedance PR #224 merged as `7d9626b8cc8d1f4345a03ab5006da83afcf19299`, but its automatic deploy run `36931442700` was cancelled before the SSH/deploy step after a final financial review found a generic reward-path defect.
+- Production stayed on `efba53e0818c5f72cce58851d6b1513e271975b1`; container image label, start time, public Mini App revision and health endpoint all confirmed that no partial deploy occurred.
+
+### Root cause
+- `_credit_prompt_repeat_reward_in_db()` trusted the caller's nominal `credits_spent` value. Admin generation paths skip the actual credit debit but several generic image/video repeat paths still passed the displayed positive price, so an admin repeat could credit the source author 10 RUB.
+- Task completion calls the same helper again. The old idempotency sequence was `SELECT` followed by `INSERT` without a UNIQUE constraint, so launch and webhook completion could race and both award the author.
+- `force_fail_task()` could also refund a legacy admin task whose row contained a nominal non-zero `cost` but lacked newer `admin_free/charged/refund_on_failure` markers.
+
+### Fix
+- Repeat rewards now require positive finite spend and a positive finite reward amount. The repeater is resolved from the database and current admins are rejected centrally, independent of the launch path.
+- `prompt_repeat_events` has a partial UNIQUE index on non-empty `repeat_task_id`. Reward creation uses `INSERT OR IGNORE`, translated to `ON CONFLICT DO NOTHING` on PostgreSQL; only the transaction that inserts the event may update author balances.
+- The author balance update must affect exactly one row or the transaction fails. Duplicate callbacks log the claimed task ID; admin attempts log the internal repeater ID without exposing Telegram identifiers.
+- The watchdog now resolves the task owner's Telegram identity inside the same transaction and disables refunds for admins even when a legacy row has no billing markers.
+
+### Production audit
+- Read-only audit before migration: 36,985 repeat reward events, 34,431 non-empty task IDs, zero duplicate task-ID groups and no existing unique index. The index is therefore safe to create on deployment; the duplicate audit must be repeated immediately before rollout.
+- Historical audit found 187 reward events (1,870 RUB) associated with current admin accounts across 36 authors. Five events (50 RUB) are explicitly marked `admin_free=true` / `charged=false`; 182 older rows predate billing markers. Some affected authors have completed withdrawals, so no automatic clawback, event deletion or balance mutation was performed.
+- This release stops new admin rewards and duplicate awards. Historical reconciliation remains a separate accounting operation requiring confirmation of admin membership at event time and treatment of already withdrawn funds.
+
+### Verification
+- RED: four concurrent SQLite calls created four events and credited 40 RUB for one repeat task. Separate RED tests proved that a positive-price admin repeat credited an author and that watchdog refunded a legacy admin task.
+- Focused database/task/watchdog/Seedance gate: 182 passed.
+- Disposable PostgreSQL 16 workflow: 12 passed, including four concurrent connections, exactly one event / 10 RUB, admin reward rejection and admin refund rejection.
+- Final safe backend suite: **1211 passed, 13 skipped**, 96 pre-existing warnings. No production writes, balance repairs, withdrawals, paid provider calls or old-task replays were performed.
+
+### Rollout requirements
+- Repeat the production duplicate audit immediately before deployment. If any duplicate `repeat_task_id` appears, stop rollout and reconcile before creating the UNIQUE index.
+- Require exact-head validation, safe suite, browser E2E and production Docker image checks; deploy only the final merged `tanyapi` SHA.
+- Post-deploy verify the UNIQUE index, exact image/container/public revision, health, changed runtime sources and error logs. Re-audit new admin reward events and pending admin tasks with refundable nominal cost.
+
+
+---
+
+## 2026-10-02 - Grok start-frame Telegram regression
+
+- Baseline: `0b2263c7fed108007506cfb347ead6cb410162ab`; isolated branch `fix/grok-start-frame-20261002`.
+- User-visible failure: after selecting Grok in the public video menu, a photo is rejected as text-only input; the following prompt fails for missing start image.
+- Root cause: `video_generation_compat.select_advanced_video_model` uses `_initial_type_for_model`, whose default `text` incorrectly applies to both Grok image-to-video models. Legacy model-selection handlers already use `imgtxt`, so testing only those handlers misses the public-menu defect.
+- Separate safety defect: the direct message launcher checks the mandatory Grok start frame after debiting credits, then compensates and clears the session.
+- RED: offline production-image test container ran `pytest tests/test_grok_start_frame_flow.py -q --tb=short`: **20 failed, 7 passed**. Failures reproduce wrong initial mode, discarded photo/document, stale session rejection, and debit-before-validation for both Grok models.
+- Plan: reuse the existing Grok model set; correct the actual public selector; normalize stale Grok state at screen/upload/launch boundaries without discarding media; reject missing images before any monetary/provider side effect, preserving prompt/settings. No prices, providers, model identifiers, schema or migrations change.
+- Verification: real FSM and handlers through provider payload/task persistence with external IO mocked; include Telegram photo, JPEG/PNG/WebP documents, legacy state, both models and unaffected model types. Then relevant and full safe suites, lint/diff review, CI and exact-SHA deployment verification. No paid generations or production database writes.
+- Mini App is not changed: this defect is the Telegram selector/FSM path. Provider payloads and shared model capabilities remain unchanged.
+- Diagnosis considered: incorrect selector state (reproduced); failed media download (ruled out in the reproducer: handler exits before download); upstream rejection (ruled out: no provider request is made).
+
+### Verification results
+- GREEN: 35 Grok regression cases, including the registered aggregate router and real prompt-coalescing middleware; synthetic image bytes, Telegram IO, provider HTTP and monetary side effects are isolated.
+- Focused regression gate: **129 passed** (Grok flow, advanced video contract, keyboard/provider contracts, Mini App continuity, prompt coalescing).
+- Full safe suite in a disposable production-image container with networking disabled: **1304 passed, 13 skipped**, 96 existing warnings.
+- First full-container run exposed three harness issues, not patched application tests: inherited `WEBHOOK_BIND_HOST=0.0.0.0` masked the configuration default, and nested pytest processes did not inherit `/testdeps` after resetting PYTHONPATH. Removing that image-level override in the test process and adding a disposable test-dependency `.pth` fixed them; the original failing config/logging tests pass unchanged.
+- No production/container source edits, balance updates, paid provider calls, task replays, schema changes or routing changes were made. Release remains gated on PR checks and exact deployed-SHA verification.
+- Review: original Grok model names, modes, resolutions and reference limits are preserved. Missing-photo rejection retains the prompt and settings; only the erroneous Grok input type is normalized. Other video models return unchanged from the normalizer.
+
+## 2026-10-03 — Gemini 3 Pro Image / OpenRouter admin lab
+
+- Baseline: `d50ea3bc2b18908d4b87b64b04f2ea9772bdaf64` (`origin/tanyapi`); isolated worktree and `feature/admin-gemini3-openrouter`.
+- Result/spec: Main menu → Test → Gemini 3 Pro Image. Admin can enter a prompt, attach up to provider-declared reference limit, choose provider/aspect ratio/resolution, generate, download original, repeat, edit the previous output, and recover the last result after reopening. No bananas charged or public feed entry. OpenRouter usage is paid by the configured provider account.
+- Existing: admin-only Telegram lab, OpenRouter credentials/base URL, reusable media saving, bot_settings audited persistence, durable outputs volume. Missing: image adapter and Gemini lab. Mini App has no corresponding test surface and public generation catalog must not expose the lab. No prefactor required.
+- Contract checked live: GET `/images/models/google/gemini-3-pro-image/endpoints`: Studio 1K/2K/4K; Vertex 1K/2K; ten ratios; n=1; references 0–14; no streaming. Implement the dedicated POST `/images` contract; do not invent unsupported search, mask, seed, transparency or quality parameters. Iterative editing uses the saved output as an image reference.
+- No-hardcode: capabilities fetched from provider; per-admin prompt/options/references persisted using bot_settings with updated_by audit; timeout configurable in lab. Fixed model ID is the identity of this model-specific screen. Existing secret config reused.
+- Risks: duplicate paid POST, timeout with uncertain outcome, concurrent album uploads, stale callbacks, revoked admin access, delivery failure and restart. Consume persisted run nonce before starting; serialize admin mutations; bounded POST with no automatic retry; persist status and results before Telegram delivery; expose status/recovery. Sanitize errors and do not log prompts/URLs/keys/base64.
+- Schema/API/UI/FSM: no migration/new public API; new admin FSM/router + access-control recognition; bot_settings and outputs volume reused. No payment adapter mutation.
+- Observability: request UUID, admin ID, model/provider, reference count, resolution, elapsed time, provider response ID/cost when supplied, completion/delivery/error stage; runtime SHA is container label.
+- Public test seams: provider HTTP adapter, Telegram handlers/FSM/auth, persistence through bot_settings, existing access middleware. Selected from repository instructions; no extra approval required.
+- Verification: focused tests then safe backend regression suite, changed-line Ruff, syntax and deployment shell checks, existing Mini App E2E/Docker required CI. Frontend-specific E2E/migrations/payment/refund tests not newly required because no web UI/schema/billing changes; existing CI regressions remain required.
+- Runtime preflight: production container healthy, /health 200; no existing Gemini lab telemetry. Recent runtime error count baseline: 1 in 15 minutes (not attributed to this change).
+- Steps: (1) adapter contract + failing test; (2) persisted admin screen and generation/recovery flow + handler tests; (3) docs, review and safe checks; (4) PR to tanyapi with native squash auto-merge; (5) exact SHA CI/deploy + health/telemetry/smoke.
+- Playbooks refreshed: Bambale0/skills implement, tdd, code-review; Bambale0/claw PR review checklist; anthropics/skills webapp-testing inspected (no new web surface).
+- Progress: preflight complete; implementation starting.
+- Implementation: dedicated dynamic-capability Image API adapter; persisted per-admin dashboard; prompt/ref FSM, serialized album uploads, nonce-based duplicate guard, original delivery/recovery and edit/repeat flows. Private result files; existing bot_settings storage; access middleware recognizes new FSM states.
+- Red/green evidence: initial adapter test failed on missing module, then passed; handler persistence/auth test failed before router existed, then passed. Focused suite (Gemini + GPT25 + Seedance): **45 passed**. New Gemini suite: **23 passed**. Ruff, compileall and deploy shell syntax passed; full safe regression running.
+- Live provider smoke: existing configured key; one text-to-image 1K/1:1 request, 2026-10-03. Success in 15.4 s; PNG 1024×1024, 762569 bytes, SHA256 `d12dc49e1a417ae44a50a2e86fda73b8af9d648112d9f0ceeddc2c8e64d45d4f`; usage.cost `$0.134436`. Image API returned no provider ID. No Telegram message or public feed entry created by smoke.
+- Release gate discovery: GET branch protection required_status_checks returned HTTP 403, “Upgrade to GitHub Pro or make this repository public to enable this feature.” Cannot yet verify required strict protection. Do not bypass or report production deployment. Preparing reviewed PR/checks while investigating.
+- Independent code-review (standards/spec agents): initially 2 standards and 2 spec P2 findings; all resolved and re-reviewed, no remaining blockers. Added adapter capability shape validation, safe error codes in telemetry, last_success retention across failed repeats, and metadata on original-only delivery.
+- Added full registered `setup_dispatcher()` journey (lab menu → prompt → photo reference → generate) through AccessGuard with mocked transport; passes, including subscription-bypass behavior only for authorized admin lab events.
+- Review red/green: 5 new cases failed before hardening, then passed; final focused new suite currently **29 passed**. Last-success recovery, preview rejection, malformed capabilities and route registration covered. Test settings cache isolated between temporary databases.
+- PR: https://github.com/Bambale0/banano_kling/pull/232 (draft). Read-only branch query confirms `protected=false`, enforcement off and required checks empty. Required protection APIs/rulesets both return plan-related 403. No auto-merge armed because PR is ineligible draft and protection cannot be confirmed/restored under current plan.
+- Final local safe regression after review fixes: `python -m pytest tests/ --ignore=tests/live -m 'not live_smoke' -q` → **1366 passed, 13 skipped**, 74 existing warnings, 75.63 s. Changed-line Ruff at `0db4eed` → relevant=0/legacy=0, six Python files. Focused new suite 29 passed; aggregate routing included.
+- Live multi-reference smoke after hardening: two generated synthetic reference images served through the actual configured `STATIC_BASE_URL` (`tanyapi.chillcreative.ru`), Image API `1K`, `16:9`, automatic compatible provider routing. Success: PNG 1376×768, 553039 bytes, 17.5 s, usage.cost `$0.136704`, SHA256 `3b3aef06f52af99158004dc2a1c0e97aa5bcd8c1a2141b492d20162719892154`. Both temporary source files removed. No real user media, DB reference rows, Telegram delivery or feed writes used. Total of the two successful provider checks: `$0.271140`.
+- Preflight smoke correction: historical media.chillcreative.ru URL failed hostname certificate verification before any provider POST; actual configured reference origin is tanyapi.chillcreative.ru and succeeded. Existing media-domain documentation/certificate discrepancy is outside this change; no TLS verification disabled.
+- Current implementation commits: `1db97bf`, `0db4eed`; final evidence recorded in following documentation commit. Exact final-head CI results will be attached to PR delivery report, avoiding a commit solely to record its own CI.
+- Final rollout status: implementation/test/review complete; production unchanged. Waiting for final-head GitHub CI and resolution/explicit owner exception for missing required branch protection. No merge or manual deploy attempted.
+# 2026-10-03 — Mini App users without a bot chat and refund-record consistency
+
+- Baseline: `tanyapi` / production `821ec6a1f6068a939479788b7beb2697c7df0ffa`; branch `fix/miniapp-chatless-delivery-audit`.
+- Intended result: a user created by opening a Mini App referral before starting the bot keeps the generated result in Mini App without any Telegram send attempt. Starting the bot later enables Telegram delivery. Provider failures keep refund crediting and task refund markers in one atomic path.
+- Production evidence: two first-time referral users were created through Mini App, completed image tasks and persisted results, then received `chat not found` on generation-start, preview and link sends. Their task delivery state is terminal `unavailable`; generation accounting completed normally. In the reported 147-task window, 136 tasks completed, 134 were delivered in Telegram, two were unavailable, and exactly two completed images were successfully public in both feed and profile. There is no feed-publication failure in those rows.
+- Refund audit: ordinary failed tasks record `refund_claimed=true` and `refund_state=refunded`. Four failed KIE Motion Control tasks costing 15+15+40+10 credits used the legacy Kling webhook branch, which credited balances before notification but persisted no refund marker. Logs and the application confirmation establish that 80 credits were already returned; this task must not credit them again.
+- Root causes: users have no persisted tri-state Telegram-chat capability, so Mini App-created users are indistinguishable from users who started the bot. Separately, the legacy KIE Kling failure branch calls `add_credits`, sends the notification, and only then marks the task failed instead of using the shared atomic `force_fail_task` path.
+- Reuse/prefactor: reuse terminal task delivery state and `force_fail_task`. Add a nullable/tri-state user chat capability: legacy rows remain `unknown` and preserve current behavior; newly created Mini App-only rows are `unavailable`; `/start` marks them `available`. Provider callbacks persist and complete chatless results before recording terminal `delivery_status=unavailable`, so Mini App retains the media while Telegram is not called. A first terminal send error also marks the current task and user unavailable.
+- Security/data/config: additive users-column migration only; no provider payload, pricing, auth, admin configuration, payment, balance or referral-economics change. No retrospective credit mutation and no automatic 80-credit replay. Logs retain stable user/task/reason identifiers without secrets or media content.
+- Public test seams: database user/task delivery contract; Mini App generation-start notification boundary; KIE Kling webhook failure/refund boundary. RED precedes each implementation slice.
+- Acceptance: a newly created Mini App-only user causes zero Telegram sends and a terminal task delivery state; `/start` enables later sends; existing unknown users preserve behavior; KIE failure calls one atomic refund/failure operation and notification failure cannot roll back or duplicate it; the two public completed images remain public; the audited 80 credits are not credited again.
+- Verification/rollout: focused regressions, SQLite/PostgreSQL migration compatibility, safe backend suite, compile/lint/diff review, PR to `tanyapi`, exact-SHA CI/autodeploy and production read-only smoke/telemetry. No paid live generation is required.
+- Progress: RED reproduced three gaps: Mini App user creation had no chat capability argument, the start notifier attempted a known unavailable chat, and legacy KIE Motion failure never invoked the atomic failure/refund service. GREEN adds the tri-state column and callback gate, makes terminal task delivery update the user capability, restores it on `/start`, skips direct images/start/failure notifications, and routes legacy Motion failure through `force_fail_task` before notification. Independent reviews then found that pre-seeding terminal task state prevented generic KIE results from being persisted, dedicated Seedance 2.5 reset the terminal marker, and legacy/canonical KIE plus image-poller fallbacks could continue after `chat not found`. Corrected callbacks persist/complete first and then mark delivery unavailable; terminal errors stop file/link fallbacks immediately; Seedance last-frame terminal errors update the user capability without reclassifying an already delivered main video. Queued image-poller success/failure and Seedance/KIE webhook regressions assert zero further Telegram calls.
+- Read-only publication verification: the two image rows from the reported snapshot both resolve through `get_feed_generation_card`, have `publication_scope=feed`, remain profile-visible, retain result media, and report `media_unavailable=false`. They were successful publications, not 11 publication failures.
+- Verification: focused SQLite delivery/database/refund matrix **84 passed** before final additions; final targeted acceptance matrix **14 passed**; broader KIE/Seedance/Telegram matrix **67 passed**; isolated PostgreSQL 16 matrix **13 passed** including chat capability and refund idempotency. Final affected callback/database files are **128 passed**, with dedicated generic KIE, canonical/legacy terminal fallback, queued image poller, watchdog/prompt follow-up and both Seedance 2.5 delivery implementations covered; a fresh PostgreSQL 16 legacy-schema run without `users.telegram_chat_state` passed **2 tests** and proved the runtime helper adds the column. The last full safe backend run before the final three notification-only regressions is **1680 passed, 13 skipped, 4 established unrelated failures**: order-dependent dispatcher attachment, two stale KIE fixtures without `request.json()`, and Seedream test expecting 6000 while runtime uses 5000. The new webhook integration initially exposed its own fixture-path order dependency (`task_watchdog.DATABASE_PATH` imported before per-test DB setup); after pinning it to the isolated DB, the full run contains no feature-caused failure. Python compileall, changed-line Ruff gate (**relevant=0**) and diff whitespace passed. Frontend ESLint passed; all **23 suites / 66 tests** passed; TypeScript production static build and critical browser E2E passed.
+
+
+## 2026-10-03 — Reference privacy and durable generation completion
+
+- Baseline: `af11c3affb05aee79a03648690065a77ee554b88`, fresh `origin/tanyapi`; isolated branch `fix/privacy-and-result-durability-20261003`. Production tracked files unchanged; two pre-existing untracked operational files are excluded. Runtime healthy at baseline.
+- Intended behavior: hidden source reference URLs never propagate into another user’s repeat request or detail response; source owners retain private inputs. Visible references retain existing repeat behavior. Successful provider output is durably persisted regardless of Telegram capability or start-notification failure. `/start`, callback retries and recovery cannot silently discard the result.
+- Audit: PR #236 selected-reference retention does not consistently enforce references visibility. PR #237 conflates notification capability with terminal task delivery; generic KIE delivery claim can reject before completion persistence. No confirmed production incident is claimed.
+- Constraints: no paid provider calls, old-task replay, refunds, real private media fixtures, credential changes or production-data mutations. Preserve prices, provider choices and unaffected flows. No schema/config additions intended.
+- Test seams: Mini App public repeat/share/detail API with synthetic refs; Telegram generation-start and `/start`; real task persistence/claim integration and callback retries with mocked providers/transport. Existing safe suite, changed-line Ruff, compile, required Mini App E2E and Docker CI remain release gates.
+- Plan: (1) red regressions per issue; (2) minimal fixes; (3) focused and baseline-comparison full safe tests; (4) independent standards/spec review; (5) draft PR and exact-head CI; (6) merge only after all applicable gates and authorization; (7) exact-merge CI/autodeploy SHA, health and read-only telemetry.
+- Playbooks inspected: Bambale0/skills diagnosing-bugs, tdd, code-review; Bambale0/claw review checklist; anthropics/skills webapp-testing.
+- Release blocker verified: `tanyapi` reports protected=false, enforcement off, zero required contexts. Protection endpoint returns HTTP 403 requiring GitHub Pro/public repository. Do not change access/security settings or mark a draft ready (auto-merge may merge immediately); parent notified for explicit owner decision if the gate remains unavailable.
+- Progress: implementation and independent regressions in progress; baseline safe suite running on archived exact af11c3a code with sanitized environment and no production .env.
+
+- Updated release authorization: owner explicitly approved a one-time exception to the unavailable branch-protection gate for these two fixes after successful tests/review (2026-10-03 05:44 UTC). No protection settings will change. Keep draft until exact-head checks/review pass, then release only reviewed code.
+- Baseline safe suite on archived exact af11c3a: **1399 passed, 14 skipped**, 104 warnings, 77.62 s. Earlier ledger failures are not reproduced at this exact baseline; no baseline failures are waived. Read-only 20-minute runtime log summary: zero ERROR/CRITICAL/Traceback; four ordinary chatless-result retention messages. Image label confirms af11c3affb05aee79a03648690065a77ee554b88.
+
+- Implementation: foreign image repeats intersect selected source URLs with current visibility/publication and viewer-card policy; hidden originals and provider contact-sheet derivatives cannot be retained/submitted as a foreign source. Ordinary owners retain their original private inputs. Direct task-detail reuses existing recipe redaction, complementing the already-present response middleware; no customer exposure is asserted.
+- Durability: successful provider result, completed state/timestamp and recovery metadata now commit atomically before Telegram eligibility/lease checks. Start-notification failure changes user capability only. Explicitly retryable completed results reconcile from stored media without provider re-query; terminal/legacy completed results stay excluded. Callback persistence failures request retry. Late failure/callback races cannot refund or restart an already successful task. No schema/config/pricing changes.
+- RED evidence: hidden-reference launch/retention failed before privacy gate; legacy detail/contact-sheet cases also red. Nine initial KIE/Kling ordering tests failed on baseline. A full-verifier processing→processing→completed failure interleaving triggered automatic retry when the final guard was removed in memory, then passed with the guard. No paid call occurred.
+- Privacy focused matrix: 105 passed. Durability focused matrix: 188 passed; final durability regression file: 30 passed. Fresh isolated PostgreSQL 16 matrix: **15 passed**, including storage/delivery CAS and completion-versus-refund race. Safe aggregate before final test strengthening: **1443 passed, 16 skipped**, 157 warnings, 75.33 s; exact final aggregate rerun in progress.
+- Integration test corrections preserve runtime behavior: feed removal can intentionally downgrade to profile; full withdrawal regression now calls the real remove_publication API. Reused PostgreSQL test user state required a fresh disposable database; no production fixture/data change.
+- Independent standards review: approved, zero unresolved findings. Spec runtime review: no remaining blocker; final regression sensitivity corrected and rechecked. Review caught and resolved unbound retry logging, generic callback duplicate delivery, and stale-failure retry/refund races before release.
+- Read-only rollout preflight 05:59 UTC: zero existing completed tasks with result URL and retryable delivery markers. Public frontend revision and backend image both af11c3a; public/local health pass. Recheck immediately before release and verify exact merged SHA after automatic deployment.
+
+
+## Private ordinary image-repeat permission (2026-10-03)
+- Baseline: dfdaa6f382516e158485d72dff20a871e3670cd9, fresh origin/tanyapi verified.
+- Goal: independent explicit owner permission for selected source images to participate server-side in repeats without publishing their URLs or previews. Legacy publication selections are not permission.
+- Reuse: publication owner checks, source availability, PR238 client redaction, server model limits and isolated synthetic tests.
+- Add nullable permission snapshot; no backfill; empty selection revokes. Retain publication and Seedance rules. Never authorize inherited refs on remix children.
+- Risks: descendant serialization, cached media, stale source selection, logging/provider recipe exposure, owner vs nonowner, prompt image ordering.
+- Plan: (1) DB/HTTP permission and tests; (2) server assembly plus privacy boundaries; (3) owner UI and tests; (4) focused/full gates and independent review.
+- Test seams: publication DB/API, remix launch provider payload, task-detail/bootstrap/history, public card/media, frontend publication journey. Synthetic data only. No paid generation, production mutation, merge or deploy.
+- Rollout: draft review only after verification and authorization. New nullable schema is additive; old code ignores it.
+
+### Private repeat verification / review progress
+- Refreshed `/root/igor-skills`, `/root/claw-tools`, `/root/anthropic-skills` playbooks; used implement/TDD/code-review, frontend QA, security-review, webapp-testing guidance.
+- API/DB runtime implemented: explicit nullable grant with no backfill; installed compatibility publication wrapper supports both feed/profile; owner detail returns indices; old clients clear grant. Original source and exact URL availability validated before provider use, including automatic KIE/Nexus/Wan retries and legacy child provenance.
+- New descendants persist private input provenance; task/history/bootstrap/card/FSM and error boundaries redact inherited recipe. Mini App new repeats require original author publication rather than legacy child publications; owner Telegram child repeats preserve lineage and revalidate root permission.
+- ImageN slot-preserving merge, combined reference-limit checks, and all-or-nothing Grok/Banana/Gemini reference transports prevent silent partial recipes. Gemini native fallback cannot drop URL-backed inputs.
+- Independent review caught and closed production compatibility wrapper drop, child-owned Mini App bypass, Wan retry omission, profile-only Telegram hydration, stale UI consent after unpublish, remaining shared adapter URL logging, and partial provider transports.
+- Backend full safe suite at ea6459c: **1533 passed, 16 skipped**, 81.10s; skips are pre-existing environment/live/PostgreSQL gates. Latest private API/runtime focused recheck after shared KIE log guard: **91 passed**, 5.34s. New ignored backend regression files explicitly added to Git.
+- Frontend final: **25 suites / 82 tests**, full ESLint, TypeScript noEmit, production export, and aggregate browser critical flows passed. New browser coverage at widths 320/375/390/430: grant/restoration/revoke/unpublish→republish, no overflow/page errors; screenshot inspected. Mocked backend/provider; no real private assets or paid generation.
+- `pip check`, compileall, deployment shell syntax, and diff checks passed; changed-line Ruff at ea6459c: 0 relevant, 603 existing diagnostics ignored by repository gate. Final exact-head aggregate gates and independent closure review follow before publication/merge.
+- Release status: implementation isolated from production. User authorized draft PR publication and conditional merge after all exact-head checks/review. GitHub branch protection currently unavailable (protected=false; API403 plan restriction); parent owns explicit one-PR exception approval. Never change security settings or remove checks.
+- Additive schema: feed_repeat_reference_selection TEXT; PostgreSQL schema + existing SQLite/PostgreSQL startup migration and publication compatibility ensure path. No production DB mutation performed.
+- Cache restriction is prospective: cannot erase media already downloaded/cached. Full publication withdrawal clears grant; changing public preview visibility alone does not revoke separate private-use permission.
+
+- Full safe suite at 0546425: **1536 passed, 16 skipped**, 80.68s. Independent closure review: no remaining blocking findings in reviewed scope; **91 focused security tests passed**.
+- Narrow CI safety change: auto-merge command now matches the event's exact PR head SHA; no new workflow permissions or removed checks. This does not replace the all-green gate. Since pull_request_target uses the base workflow, current-PR controlled release must pause only the pre-existing auto-merge workflow after recording its state, verify every exact-head CI check/review, guarded-merge, then restore its prior state. Parent authorized this sequencing and the one-PR protection exception after user confirmation.
+
+### PR239 CI lifecycle correction
+- Remote CI exposed a real publication-editor lifecycle defect: 5-second bootstrap/focus refresh rebuilt reference arrays and triggered initialization effects, closing the editor and overwriting unsaved consent. Standalone E2E had passed; the main gate correctly blocked Docker/release.
+- Added four deterministic failing React regressions and a real focus/timer refresh browser step, then fixed same-task draft-session hydration. Refresh preserves manual draft values, prunes unavailable/explicitly revoked private refs, never selects newly arriving refs, and resets on task switch/dismissal. No assertions/timeouts relaxed and no test retries introduced.
+- Final frontend verification: **25 suites / 86 tests**; focused permission **17 tests on three consecutive runs**; full lint, typecheck and production build passed. Browser grant/revoke/refresh/unpublish flows passed at 320/375/390/430px on **three consecutive runs**, plus complete critical E2E gate.
+- Existing backend and CI code are unchanged in this correction. Remote required checks will rerun for the new exact head before merge.
+
+## Private-repeat PostgreSQL startup correction (2026-10-03)
+- Baseline: 7d3a281e6bb1d0388ede1fedd3b1dd0329e5f43f (PR239). Code/container/frontend and exact post-merge CI were verified, but final production schema smoke found feed_repeat_reference_selection absent. Feature completion was withheld.
+- Root cause: postgres_aiosqlite intentionally skips generic DDL; its separate raw _ensure_postgres_helpers migration list lacked the new field. SQLite tests covered the generic migration, while previous PG gates covered unrelated retention/refund behavior.
+- Immediate recovery: one idempotent nullable TEXT ADD COLUMN, no default and no existing-value writes/backfill. Short lock attempts rolled back safely; bounded30s lock-timeout attempt succeeded. No restart or workflow/security setting changes. Read-only schema recheck passed; post-repair logs had zero errors/tracebacks/schema errors. Column can safely remain if app code is rolled back.
+- Durable correction: add the same IF NOT EXISTS statement to raw adapter startup. A code-only helper test failed before the change and passes after; real-PG regression starts from absent legacy column, proves nullable/no default/no legacy grant, explicit grant persistence, and idempotent fresh startup.
+- Local focused checks: 101 passed, 3 real-PG tests skipped; diff check clean. Local disposable PG launch was cancelled and not retried. The existing Runtime PostgreSQL CI job must pass the real-PG regression before this correction can merge; no equivalent local container workaround was used.
+- Scope: three-line runtime migration and focused regressions only. No provider calls, customer data reads, billing changes, destructive migration, or permission expansion. Follow-up PR requires all exact-head CI/review; production schema + backend/frontend SHA revalidated after normal autodeploy.
+
+## Full Higgsfield Genjutsu pipeline (2026-10-03)
+- Task: complete the current branch as a full Genjutsu integration: Motion Transfer, Object Swap and Restyle across normal creation, saved-video editing, private Trends recipes, history, delivery and the admin control plane.
+- Baseline: `ea36cf86564ed8b4ef9c2963c5326a975c15ad73` (`tanyapi` head at task start).
+- User-visible result: one Genjutsu studio reachable from Telegram and Mini App, with projects/drafts, source trimming, ordered/role-labelled references, live Restyle presets, variants, chains, exact server quotes, durable status, stored results, repeat/edit/redelivery actions and admin recovery.
+- Current-state audit: the branch only contained an inert Higgsfield Seedance 2.5 adapter. A separate unfinished worktree contained a substantial Genjutsu pipeline; its focused suite passed, but the catalog still used legacy `higgsfiled/...` endpoints and submit omitted the required `Idempotency-Key`. The reusable pipeline was ported into this current task branch and corrected against current official model docs.
+- Contract: canonical production paths are `higgsfield/genjutsu/{motion-transfer|object-swap|restyle}/v1.0`; source duration is 4–30 seconds; Motion/Object require 1–8 ordered images; Restyle accepts 0–5 character images plus a current preset UUID; all advertise 480p/720p/1080p; Object Swap additionally requires at least 409,600 source pixels per frame.
+- Architecture/data: dedicated provider, contract, media, repository, pipeline, delivery, recipe and API modules; new SQLite/PostgreSQL-compatible Genjutsu tables are created on startup. The PostgreSQL adapter exposes a narrow trusted-DDL seam because its general SQLite translator intentionally ignores DDL; the clean-deploy reference schema contains the same tables. Generation, financial and delivery states are separate. Fenced leases recover workers after restart. Provider request/status/cancel URLs, attempt ID and correlation ID are persisted.
+- Finance: mutable per-operation/per-resolution prices, limits and admission live in validated/audited DB settings. Fresh installs fail closed (`public_enabled=false`, null prices, no verified operations). Quote, balance reservation, capture and refund are serialized transactionally; user request keys and provider idempotency keys prevent double charge/generation.
+- Media/security: authenticated bounded uploads, ffprobe/ffmpeg validation and trimming, owner/total quotas, signed expiring provider/preview URLs, SSRF-safe bounded result download, private durable storage and server-side ownership checks. Webhook is wake-up only; authenticated polling establishes provider truth.
+- Surfaces: Telegram `/genjutsu` and menu deep-link; Mini App studio/video/history entry points; completed videos can be reopened as source; private Trends expose only an opaque recipe ID and user slots; admin settings, verification coverage, reconciliation/adoption/refund/redelivery and event history are included.
+- No-hardcode decisions: credentials and media origins remain env-only; model schemas are pinned to official docs; Restyle presets are fetched live; business prices/limits/availability are managed settings. Hidden recipe prompts/fixed assets never enter public Trend payloads.
+- Public test seams: exact provider HTTP contract; pure plan/payload/quote contract; transactional repository; recipe privacy and substitution; runtime route coexistence/auth; Trend privacy/routing; Mini App studio component; full frontend build/browser E2E.
+- Rollout: ship fail-closed, configure secrets and prices, perform paid admin verification for every exposed operation/resolution, then enable public admission. Disabling admission must not stop already accepted generation, persistence, delivery or refunds.
+- Progress evidence: official contract research saved in `docs/research/higgsfield-genjutsu-api.md`; initial imported backend suite 50/50 green; red-green regressions added for canonical endpoints/idempotency/correlation, Object Swap pixel floor, configuration versioning and the native PostgreSQL DDL seam. Final focused backend matrix is 60 passed. A disposable real PostgreSQL 16 test passed repeated schema initialization, concurrent request idempotency and exact-once refund through the production adapter; the dedicated PostgreSQL CI workflow now runs it. All frontend tests are 26 suites / 89 tests passed; source ESLint and production static build passed. The critical browser E2E passes and now opens the real lazy-loaded Genjutsu studio from the shared shell. E2E exposed a malformed recipe-list response crash; the boundary now fails closed to an empty recipe list. Full safe backend is 1836 passed, 16 skipped, with six failures: the feature-caused create-hub keyboard regression was corrected and passes; the remaining five are established baseline issues (order-dependent dispatcher test that passes alone, two stale KIE fixtures, profile remix fixture and Seedream 6000-vs-runtime-5000 mismatch), each reproduced independently as applicable.
+- Pending before PR: run two-axis review; commit/push; open PR to `tanyapi`; arm squash auto-merge only after exact-head CI eligibility. Paid live generation and production enablement require configured credentials/budget and are not inferred from local tests.
+
+- Final review fixes: PostgreSQL recipe DDL now includes `verification_run_id`; recipe publication requires a completed admin-free run of the exact project revision; Object Swap validates the 409,600-pixel floor on every chain step; provider correlation is visible in admin recovery; accepted tasks are never auto-refunded on status/storage transport uncertainty and instead enter `recovery_review`; trend cards batch-load the live server-side recipe price. Current gates: Genjutsu focused backend **19 passed**, tracked safe backend **1561 passed / 17 skipped**, frontend **26 suites / 91 tests**, source lint/build green, PostgreSQL 16 Genjutsu test green, critical Chromium E2E green at 320/375/390/430 px. Fresh official docs check reconfirmed canonical `higgsfield/...` endpoints while `open.higgsfield.ai` still displays the callable legacy `higgsfiled/...` alias. Public admission remains fail-closed until paid account verification coverage and configured tariffs are present.
+
+## Genjutsu owned-output Feed bridge (2026-10-05)
+- Baseline: f70f84738981f145c630265664e87913437a1bb9; isolated feature/genjutsu-feed-bridge worktree. PR251 must be integrated separately with its source/quote/privacy safeguards preserved.
+- Audit: ordinary Feed reads generation_tasks while Genjutsu results live in private assets/steps. Curated recipe_publish requires a verified admin run and must retain that gate. Existing RecipeStore already validates owned image/video replacements and explicit fixed/user bindings.
+- Result: an ordinary owner may publish a completed final output and a private immutable repeat recipe; public cards expose output and opaque recipe ID only. Original prompts and inputs remain server-side. Recipe-derived runs cannot export another author's private recipe.
+- Design: authenticated feed_publish API; atomic generation-task adapter + private recipe + step-idempotency binding; durable copy of final output only; exact declaration retries converge; changed declarations fail closed. Withdrawal blocks new repeats. No provider, balance, reward or price behavior change.
+- Test seams: authenticated API, shared Feed DB/card helpers, RecipeStore substitution/revocation, durable media copy, Telegram button, existing SQLite and native PostgreSQL migration. Fixtures only; no paid runs, production data or publications.
+- Steps: 1) failing API regression; 2) output/recipe adapter; 3) privacy, bindings, withdrawal and idempotency negatives; 4) frontend integration by separate worker; 5) full relevant gates and independent review; 6) parent-owned PR/release.
+- Schema: additive genjutsu_feed_publications; startup native-DDL seam and clean PostgreSQL schema. Rollback leaves additive table unused. Public copying is outside DB transactions; deterministic output destination avoids repeat-copy proliferation.
+- Progress: preflight/skills complete (Igor TDD/code-review, Claw security/release checklist, Anthropic webapp testing). No production runtime or database writes.
+- Implemented: FeedPublisher copies only the validated final output, then atomically records private recipe, synthetic Feed task, step binding and a safe event. Public cards carry only opaque recipe ID/title and output. RecipeStore enforces shared Feed/Profile visibility; start admission takes the same publication-row lock used by withdrawal before reservation. Curated admin publication remains unchanged.
+- Legacy routes: Telegram buttons redirect to Genjutsu before billing; generic Mini App repeat returns genjutsu_recipe_required. Synthetic rows are excluded from generic recent task history while safe owner detail remains available to the existing Profile publication editor.
+- Review corrections: match existing shared-Profile semantics; do not resurrect a withdrawn/discovery-removed post on a stale publish retry; preserve completed snapshot chains/variants and full quote; put schema addition before COMMIT; retain idempotent accepted-run retries after withdrawal.
+- Verification: 32 new Feed bridge tests; focused Genjutsu matrix 62 passed, 2 PostgreSQL tests skipped locally. Full safe backend suite 1614 passed, 19 skipped in 92.19s. Real PostgreSQL bridge regression added to the existing runtime CI file and must pass in CI before merge. Isolated tests used env-i, BANANO_SKIP_PROJECT_ENV=1, BANANO_DISABLE_FILE_LOGGING=1. No production data, provider/balance calls or real user publications.
+- Parent owns frontend integration, PR251 conflict resolution, independent review, exact-head CI and authorized merge/release. Backend artifact is ready for that integration after remaining static checks.
+
+## 2026-10-05: clarify hidden versus replaceable Seedance references
+
+- Baseline: f70f84738981f145c630265664e87913437a1bb9 (tanyapi). Audit confirmed PR226/227/235 server-only fixed references and typed replacement slots are present.
+- No permission, provider payload, billing, or fixed-binding behavior changes. Publisher copy now distinguishes hidden fixed references from hidden originals replaced by user uploads. Added mode-switch and fixed-preservation UI regression tests.
+- Checks: isolated backend reference/admin/trend/privacy suite 78 passed on baseline; frontend publisher/runner/API/settings suite 14 passed on final edits; targeted ESLint passed. No paid generation or production publication. Browser verification remains part of the combined Genjutsu Feed integration.
+- Genjutsu ordinary Feed publication is a separate implementation; do not describe this clarity patch as that bridge.
+
+
+
+## 2026-10-06 — Direct-upload Seedance trend references (in progress)
+
+- Baseline: `3fd259c`, task branch `feature/seedance-trend-upload-refs`, isolated checkout; production remains untouched.
+- Request: add the existing hidden-fixed / user-replaceable / excluded reference choices to ordinary Trends → Add for Seedance 2.0/2.5. Preview is separate from generation references. No other models, old-trend rewrites, publication or deployment are authorized.
+- Audit: generic `trends-tab.tsx` has preview/prompt/settings but no source-reference editor; generic `prompts/submit` does not compile a private recipe. Completed-task Seedance publisher already has a private compiler, durable typed assets, server-owned ordered slots, hidden prompt, exact input validation and measured editing pricing. Reuse these, not Feed grants or Genjutsu recipes.
+- Existing contracts: `seedance_trend_admin_api.py`, `seedance_trend_recipe.py`, `trend_api.py`, `trend_reference_storage.py`. No database schema changes intended.
+- Plan: (1) add synthetic failing API and component tests; (2) validated admin direct-upload API reusing private compiler/storage/settings; (3) model-specific source-reference editor and matching API client; (4) mobile browser upload/mode/reset/publish/repeat checks; (5) full applicable checks and independent review; (6) report patch and limitations without push/deploy.
+- API: `admin/trends/seedance/publish-upload`, owner-bound typed source URL arrays, 1-based identity/fixed/replaceable selections, title/description/private prompt, separate preview and validated generation settings. Existing task-based endpoint remains compatible.
+- Security: authenticate admin server-side; local owned upload and actual media validation; no raw fixed assets in responses; keep type/order/duration/provider constraints and pre-charge run validation. No paid calls, refunds, resends, production mutations or real customer media used.
+- UI acceptance: controls are visible during generic Seedance creation, each selected ref can be hidden-fixed/replaced/excluded, pending uploads cannot publish, reset/cancel/model switch cannot resurrect stale references, other model forms unchanged.
+- Test seams: HTTP creation API, compiler/runtime recipe assembly, rendered React interaction, browser wire request with all external providers denied/mocked. Reuse runtime pricing and provider adapters; no new prices or mutable business hardcodes.
+- Operational context: related read-only production audit was completed separately; this is a verified missing feature, not a provider incident. No production logs/DB changes required for implementation.
+- Review sources: repository AGENTS/README/reference contract; Bambale0 skills implement/TDD/code-review; claw PR/QA checklist; anthropics webapp-testing.
+- Rollout: explicitly out of scope until separate approval.
+
+### Verification checkpoint (2026-10-06 13:06 UTC)
+
+- Backend focused: 146 passed. Full safe backend: 1791 passed, 19 skipped, 262 warnings in 113.47 s; `tests/ --ignore=tests/live -m "not live_smoke"`, isolated venv/database and synthetic media. No provider calls.
+- Frontend full: 32 suites / 170 tests passed; API transport has 3 tests, new rendered creation flow has 13 tests. Full lint, TypeScript and production static build passed.
+- Existing critical browser aggregate passed, including private Feed and Genjutsu suites. New direct-upload mobile fixture passed at 320/360/390/430 px, confirms typed wire selections and repeat form privacy.
+- Visual QA found clipped long replacement text at 320 px; compact selector text plus wrapping explanation was added. Final copy-only build `20261006130258` passes focused tests/lint/build. After explicit retry approval, final mobile rerun passed all four widths at 13:07 UTC; the final 320 px screenshot was inspected, compact option and wrapping explanation are readable and controls are hit-test reachable above navigation.
+- Independent review found header-only Seedance 2 video/audio validation insufficient; fixed by upload-only bounded ffprobe, file/pipe protocol allowlist, stream kind/positive duration checks, cancellation/timeout kill and reap. Focused malformed-container/audio-only-MP4 tests added. Independent read-only peer recheck completed at 13:10 UTC with no blocking specification findings.
+- Standards review of frontend reported no blocking issue. Optional improvement: show the 12-replaceable-slot count before server validation.
+- Source publication idempotency is best effort via per-author content fingerprint and process-local lock; concurrent requests across separate workers do not have a database uniqueness guarantee. No charge/generation occurs during publication.
+- No schema migration, rates/provider changes, old-trend rewrites or production mutation. Dependencies retained for authorized subsequent combined integration; no push/PR/merge/deploy performed.
+## 2026-10-06: Robokassa nomenclature (isolated, not released)
+
+- Baseline: tanyapi 3fd259c4704ae13593018b90da4b8b0a40bb8ab9.
+- Scope: new checkout Receipt for Telegram/Mini App. No production/credentials,
+  provider calls, receipt registration, refunds, cabinet changes, push or deploy.
+- Audit: shared adapter omitted Receipt completely; Description is not an item.
+  Existing amount normalization/signature helpers and both shared callers reused.
+- Invariants: one package = one item; sum equals normalized OutSum; Receipt bound
+  to checkout signature; result signature/idempotent payment completion unchanged.
+- Configuration: explicit receipt tax; optional method/object; no invented SNO.
+  NPD confirmed by owner; RoboChecks SMZ activation unverified release blocker.
+- No schema/API response changes, frontend or migration required. Receipt name
+  derives from actual selected credits; prices/bonus rules remain existing config.
+- Steps: (1) official docs and code audit; (2) red regression (11 passed, 1 failed
+  KeyError Receipt); (3) signed encoded Receipt; (4) both callers, config guard before
+  pending transaction; (5) offline decimal/negative/signature tests; (6) review.
+- Test seam: public checkout URL and callback verifier, synthetic credentials only.
+  33 focused service tests passed. Final combined run: 63 passed (one existing aiohttp NotAppKeyWarning), covering both checkout surfaces and invalid-config guards, existing payment/partner regressions. Ruff, py_compile and git diff --check passed.
+- Observability: invalid config logged without secrets or personal information.
+- Real payment/receipt/end-to-end provider smoke deliberately not run.
+- Rollout: separately approve release, configure ROBOKASSA_RECEIPT_TAX=none for
+  confirmed self-employed seller, verify active SMZ/My Tax integration, run normal
+  CI. No automatic repair of historical payments. Existing callbacks stay enabled.
+
+- Release continuation 2026-10-06: owner approved separate PR/merge/deploy and tax=none. Rebased on PR259 squash 2c080035; preserved both execution entries. Merge serialized after verified PR259 deployment. No actual checkout/payment is authorized by this continuation.
+
+
+## 2026-10-06 — Seedance 2.5 explicit identity transfer (in progress)
+
+- Baseline: `origin/tanyapi` b7c71a51727d4d5953536a50b9c0c2d15ef3dee6; isolated `feature/seedance25-identity-transfer` worktree. Production and the separate bot-start removal release are untouched.
+- User outcome: an explicit character-replacement scenario for ordinary users as well as admins, using the APIX role-separated reference contract. Normal multimodal/reference generation remains unchanged.
+- Fresh audit: Tanya already passes ordered image/video reference arrays to KIE `bytedance/seedance-2-5`; its dedicated form has no identity-role prompt contract. Explicit editing controls provider duration -1/adaptive but ordinary auto/edit is admin-restricted. APIX identity transfer assigns image identity and video motion/scene roles; its old Seedance 2 direct-video bypass is unrelated and must not be copied.
+- Reuse: existing media upload/validation, source-duration probing, preset-manager rates, provider adapter, task persistence and failure/refund lifecycle. No provider migration, new tariff, schema migration, secret or production configuration change planned.
+- Immutable technical contract: 1–3 identity photos of the same person plus exactly one 4–30 second source video; stable per-media ordering and @ImageN/@Video1 bindings; source-video identity must not compete with identity photos. Additional user instruction is preserved separately from the generated provider role instructions.
+- Billing invariant: provider duration remains auto (-1), while paid identity uses server-measured source seconds rounded up for existing per-second pricing. Unknown/unverifiable duration is rejected before debit. Quote and launch must agree; admin-free tests are insufficient. Unrelated auto/edit restrictions stay intact.
+- Security: validate roles/counts/final prompt before paid submission; do not log full prompts/media/secrets; accept only supported KIE fields; no implicit paid retry, actual generation, refund, resend or external customer communication during implementation.
+- Steps: (1) red/mock provider and paid launch regressions; (2) shared server identity contract and safe billing/quote seam; (3) explicit UI with ordered role labels and mode-switch preservation; (4) focused/full backend and frontend tests, lint/types/build; (5) mocked mobile browser/visual QA; (6) independent review, draft PR. Merge/deploy require separate approval.
+- Test seams: provider request capture, authenticated Mini App quote/start with synthetic media, Telegram shared validation, negative missing/extra references, ordinary 15-second reference versus auto source-length edit, stale quote or unknown-duration rejection, role-binding and mode-change regressions.
+- Verification layers: DB schema unchanged; task metadata compatibility and charge/refund invariants require mocked tests. No runtime or paid quality test is claimed. Full safe suites exclude live providers.
+- Guidance: AGENTS.md, .agents/README, README and current provider/reference code; primary engineering playbook discovery plus claw code-review and anthropics webapp-testing guidance.
+
+### Implementation checkpoint (18:24 UTC)
+
+- Provider tracer RED: identity keyword unsupported; GREEN after the shared role contract. Initial 22 provider/spec tests passed.
+- Review fixed existing video-reference price multiplier omission before release: current quote/debit/persist use ceil(source seconds) × existing rate × existing multiplier, no tariff change.
+- Added fail-closed owner/canonical local path validation before probing; both original and expanded prompts/tags are validated before debit. Provider receives only documented KIE fields.
+- Telegram effective keyboard/repeat state preserve identity, measured quote is shown and rechecked, and callback launch attributes payer/owner to the callback actor instead of bot-authored message.from_user.
+- Quote-only validates a strict boolean and cannot create/debit. Provider auto-retry explicitly excludes identity. Original prompt is persisted without the generated role prefix.
+- Latest focused backend 130 passed; prior full safe suite 1921 passed / 19 skipped. Exact final full rerun in progress after repeat/quote lineage guards. Legacy Ruff comparison has zero newly introduced findings.
+- Frontend full lint/type/Jest checkpoint: 197 tests passed. Mocked paid identity and ordinary 15-second reference browser paths passed at 320/375/390/430px; final repeat and validation rerun still pending.
+- Owner-only task-detail hydration is reused by Feed/Profile/deep-link own repeats, with stale-route checks. No public reference metadata or database schema expansion. Mode switches clear lineage; explicit empty inputs stay empty; quote uses current prompt.
+- Two Sentinel calls were canceled and not bypassed; after explicit user continuation approval, the exact calls were retried once and succeeded. No production mutation or real generation occurred.
+
+### Final isolated verification (18:38 UTC)
+
+- Frozen backend full safe suite: **1930 passed, 19 skipped**, 308 warnings. Repeated with a newly created `PYTHONPYCACHEPREFIX` to guarantee freshly compiled source: same result, exit 0 in 121.68 seconds. Focused backend: **130 passed**. Compilation and diff checks passed; new code Ruff clean, 17 existing modified-legacy findings exactly match baseline.
+- Final frontend: full lint and TypeScript passed; **201 Jest tests passed**. Production static export rebuilt after clearing only isolated generated webpack cache because source-preserving writes retain mtimes.
+- Full critical browser aggregate: **passed**, exit 0 in 187.05 seconds. Includes existing critical, private-repeat, Genjutsu and Seedance upload suites plus identity mobile at 320/375/390/430px, paid quote/start, normal 15-second reference, invalid/short/external inputs, balance, resolution, stale-price recalculation, owner/denied/foreign repeats, Close during hydration and stale/deep-link navigation. All provider/application transports mocked.
+- Pixel QA: inspected fresh 320px input screenshot and 430px price/CTA screenshot. Role labels wrap, counts and source-length/price are readable, no horizontal clipping; CTA remains above bottom navigation in viewport screenshot. Screenshots are local QA artifacts, not committed.
+- Independent read-only review: no remaining source-level security, financial, provider-contract or repeat/navigation blockers after fixes.
+- No production service/static change, real generation, payment/refund, resend, migration or new tariff. Draft PR only; merge/deploy require separate approval.
+
+
+## 2026-10-06 — Single-photo Seedance trends
+- Baseline: tanyapi 7ade537898ce9250be50bfc32c7756aec8670144.
+- Goal: allow one primary replaceable identity image plus prompt, with no additional template media, for Seedance 2.0 and 2.5.
+- Audit: upload frontend and shared compiler both required another included reference. The version-2 slot assembler already supports zero fixed assets. Owner/type checks and excluded-reference prompt validation stay unchanged.
+- Scope: remove redundant minimum-two checks; retain mandatory valid identity, overlap checks and private media handling. No database migration, config, pricing, provider or permission change.
+- Regression plan: compiler and upload-to-serialized-recipe-to-repeat for both models, excluded extras, missing identity, privacy, frontend publication, existing multimodal suites, browser mocks, lint/type/build/CI.
+- Evidence before fix: focused backend run produced six expected failures with “Keep or replace at least one template reference”; two missing-identity cases passed.
+- Guidance used: Bambale0 skills diagnosing-bugs (red regression first), Bambale0 claw QA source-to-action contract checks, anthropics webapp-testing browser verification.
+- Release plan: dedicated fix branch -> reviewed PR to tanyapi -> required green gates and native squash auto-merge -> exact deployed SHA and read-only/mocked production UI verification. No real trend publication or paid generation.
+- Review found the same minimum-two rule in Studio source inspection and its publisher button; both are included so uploads and completed source tasks share the one-photo contract. Access/model/completion/repeat-origin checks remain unchanged.
+- Interim verification: 1940 passed / 19 skipped full safe backend suite, 208 frontend Jest tests, static production build; final reruns follow the Studio regression additions.
+- Final local verification: 1949 passed / 19 skipped full safe backend tests; 35 Jest suites / 216 tests passed; full Mini App ESLint, TypeScript, targeted Ruff, deployment shell syntax, production static build and git diff --check passed. Six mocked browser cases passed (four mobile multimodal widths plus one-photo Seedance 2.0 and 2.5). Independent final source review found no blockers.
+- Security: no live trend publication or provider generation; all browser API calls mocked, SQLite tests isolated. Existing production checkout left untouched.
+- Release status: PR/CI and exact production revision verification pending; do not claim deployed yet.
+
+
+## 2026-10-07 — Telegram promo buttons for existing trends
+
+- Baseline: tanyapi 8885e4b5f07012167343997159495731633c1318; isolated feature/promo-trend-buttons.
+- User scope: existing Telegram admin flow, not a new Mini App editor.
+- Audit: reuse notification_campaigns, notification_deliveries and bot-owned queue worker;
+  existing internal API was single-text/button, Telegram FSM single media and no tested-content gate.
+- Public interfaces under test (explicit user specification): Telegram handlers, normalized
+  Bot API payload, campaign operations, PostgreSQL transactions, worker delivery/recovery.
+- Implementation: 0–2 text+trend_id buttons; server-paginated approved/public trend lookup;
+  existing prompt_link builder; albums then text+vertical keyboard; persistent draft revisions;
+  queued tests for config.admin_ids through the same renderer/worker; matching tested hash
+  required for launch; immutable snapshot; atomic audience materialization; persisted part receipts.
+- Historical running campaigns are not converted to new drafts. New Telegram promos, including
+  zero-button promos, require an admin test. Internal legacy endpoints cannot launch/test a v2
+  promo around this gate. Old Telegram confirmation reopens the new editor.
+- Additive migration extends existing tables. No new queue infrastructure or credentials.
+  Uncertain Telegram acceptance is terminal and requires reconciliation, not blind replay.
+- Provider generation, payment, balance, referral attribution and optional bot-start offer:
+  unchanged. No paid generation, real admin test, mass send, production migration or release run.
+- Guidance used: current repository AGENTS; existing Bambale0/skills implement/tdd/code-review,
+  Bambale0/claw safety/QA guidance. External playbook updates were denied and not retried.
+- Progress: first 17 real PostgreSQL acceptance tests passed on isolated localhost test DB;
+  renderer/worker tests and Telegram handler tests passing separately. Independent safety review
+  and broader regressions still in progress.
+- Release remaining: final checks/review, publication authorization, confirmed safe smoke content
+  and eligible admin recipients, real Telegram link click checks, release and exact revision check.
+
+- Final verification: broad safe backend suite 2042 passed / 41 skipped; latest changed-path
+  retest 117 passed; isolated PostgreSQL suite 27 passed including real Telegram handler→DB
+  composition, revoked/no admins, edit during in-flight album, concurrent edit/launch,
+  row-lock availability guarantee, remaining admin tests after launch and crash recovery.
+- Independent review found and resolved ambiguous 5xx replay, revoked-admin pending deadlock,
+  and availability TOCTOU. Schema constraint upgrade now runs only when its definition needs
+  changing. No unresolved high-severity finding remained in the reviewed queue/backend scope.
+- Deployment caveat: no mixed old/new worker versions or code rollback with active v2 work.
+  Previously failed legacy attempts remain as-is; their past Telegram acceptance is unknown.
+- Acceptance not yet performed: real Telegram delivery/click-through, production logs,
+  GitHub publication/CI and release. Tests use synthetic recipients and mocked Bot API only.
+
+
+## 2026-10-07 — Production promo lease clock correction
+
+- PR266 deployed as 6351c208eddf248e4e2ddc01b3cef825daf6340d; Git/container/public
+  revision matched and health was OK. The approved synthetic admin test exposed a runtime
+  deadline bug: production PostgreSQL uses Europe/London, while leases were naive UTC values.
+- Both test recipients lost the lease fence before the first Telegram part call. Persisted
+  part lists stayed empty; their rows are retained as uncertain. No mass delivery rows were
+  created. The separately approved upload album succeeded and its file IDs can be reused.
+- Reproduced through the real pooled PostgreSQL adapter: a new 90-second lease measured
+  -3510 seconds. The first non-UTC acceptance run had 11 failures / 18 passes.
+- Correction uses database clock arithmetic for claims, lease renewal, completion retry
+  deadlines and legacy retry scheduling. No production timezone/server setting changes.
+- Regression runs exercise UTC, Europe/London and Asia/Kolkata through test-process PGOPTIONS.
+  Real admin smoke must be repeated only after verifying the corrected deployed revision;
+  preserved evidence proves the first campaign test never reached Telegram.
+
+- PR266 review follow-up: fixed fifth in-flight test replacement, safe recovery of fenced
+  claims before intent (including reclaiming unused fifth attempts), and prospective
+  transactional revision attribution. Existing unfenced or in-flight uncertain attempts
+  are not automatically retried. tested_at is serialized with its database timezone.
+- Combined isolated PostgreSQL acceptance: 47 passed; focused non-PG regressions: 104 passed.
+  Dynamic policy configuration was assessed as a separate operational improvement, not
+  a current P1 correctness failure; validated 60/90-second technical defaults remain.
+## 2026-10-07 — canonical public media origin
+
+- Baseline: `6351c208eddf` on `tanyapi`; task branch `fix/media-public-origin-neironych`.
+- User-visible result: all newly generated public media URLs use `https://tanyapp.xn--e1aikcel5c5a.online`; legacy `https://tanyapi.chillcreative.ru/uploads/*` remains readable for backward compatibility.
+- Scope decision: change media origin only. Telegram/payment/provider webhook origins remain on `tanyapi.chillcreative.ru` to avoid breaking external callbacks.
+- Existing infrastructure: `tanyapp.xn--e1aikcel5c5a.online` already has valid TLS and proxies `/uploads/` to backend port 1888.
+- Config: production `STATIC_BASE_URL` and `GENJUTSU_PUBLIC_BASE_URL` moved to the canonical Mini App/media origin.
+- Compatibility: backend local-upload resolver accepts both canonical and legacy hosts; reference ranking prefers configured canonical host while retaining old saved URLs.
+- Frontend: local/provider media rewrites now use the live Mini App origin instead of restoring media to the backend hostname.
+- Tests: add regression coverage for canonical and legacy local upload hosts; update Mini App media contract.
+- Verification pending at time of entry: focused pytest/Jest, diff review, runtime restart/deploy path, HTTPS media smoke.
+
+- Follow-up audit after PR #267 merge: production CI/deploy for merge SHA `4c6fab2` failed because Ruff reported `I001` on `bot/services/media_input_utils.py`; Mini App production revision therefore remained on `6351c20`.
+- Additional root causes found: Motion Control uploads still built public URLs from `WEBHOOK_HOST`; legacy local result URLs were recognized only when already on the configured origin; valid legacy references could still be handed to providers with the old hostname.
+- Follow-up branch: `fix/media-public-origin-neironych-followup`. Motion Control now uses `config.static_base_url`; local `/uploads/*` URLs are canonicalized onto the configured media origin while unrelated external URLs remain untouched; legacy local result URLs are rebased instead of leaking the old hostname.
+- Production database read-only audit: legacy `tanyapi.chillcreative.ru/uploads/` strings remain primarily inside historical `generation_tasks.request_data` (283166 rows at audit time) and four prompt rows. No destructive bulk rewrite is used; runtime canonicalization preserves historical compatibility and new writes use the canonical origin.
+- Genjutsu uses one public base for signed media and provider callbacks. Because production `GENJUTSU_PUBLIC_BASE_URL` now points at the Mini App/media origin, Nginx on `tanyapp.xn--e1aikcel5c5a.online` was extended with a signed `/genjutsu/` reverse-proxy path to backend port 1888. `nginx -t` passed and Nginx reloaded; invalid signed-media probe returns the same 403 on old and new domains, and a ranged `/uploads/` probe on the new origin returns HTTP 206 with 1024 bytes.
+- Focused backend verification after follow-up changes: 88 passed, 1 skipped across config, durable-result, Seedream reference transport, saved-reference and trend API suites. Mini App: 216/216 Jest tests passed; ESLint passed; production static build passed.
+- Full safe backend regression suite started after focused verification; final CI/deploy acceptance still pending.
+
+- Follow-up TDD uncovered one more runtime override: `seedance_multimodal_compat` replaces `generation._seedance_media_inputs` at import time, so canonicalization in the generic generation helper alone was insufficient. Its reference cleaner now canonicalizes legacy local image/video URLs before runtime/provider use.
+- Canonicalization is also enforced in ordinary Mini App media lists, Seedance 2.0, Seedance 2.5, first/last frames, and shared video-reference normalization. External non-local URLs remain unchanged.
+- Clean-checkout-equivalent safe suite was run using only Git-tracked tests (local ignored historical tests excluded, matching GitHub CI checkout): `2056 passed, 45 skipped`. Focused media/Seedance/private-repeat tests also passed. The earlier 6-failure local run included ignored historical tests that are not present in the GitHub checkout; only the tracked Seedance regression was relevant and was fixed before the green run.
+
+
+## 2026-10-07 — media migration reconciliation
+
+- Imported the existing follow-up patch into an isolated worktree at `ac9365d`; preserved the original tracked diff and separated runtime `data/price.json`. No production checkout reset, price change, or untracked receipt cleanup was performed.
+- Added a failing regression for alternate frontend upload origins, then canonicalized the already supported CDN and legacy Mini App origins at the backend boundary. Frontend display stays same-origin; provider references are normalized to configured `STATIC_BASE_URL` regardless of the supported frontend entry point. External hosts and non-upload paths remain unchanged.
+- Read-only live checks: Mini App and its public `icon.svg` return HTTPS 200 with successful certificate validation; DNS resolves to 144.76.188.75. The live nginx file already proxies `/genjutsu/`; unsigned synthetic media IDs return 403 on old and new domains. No user media or signed credentials were fetched.
+- Live selected public configuration: static and Genjutsu origins use the new Mini App host; webhook origin stays on the old backend host. These observations do not prove deployment of this isolated source change.
+- Historical database links are retained; canonicalization is applied at runtime rather than destructive bulk rewriting. Production deployment and final exact-SHA smoke remain owned by the coordinated release task.
+- Provisioning drift regression: the repository frontend installer omitted the existing live `/genjutsu/` route. Added the same reverse-proxy location to both generated server variants, with a failing-then-passing contract test and synthetic signed-media/callback URL-builder verification. The installer was not executed and live nginx was not changed.
+
+## 2026-10-07 — hidden repeat prompt boundary
+
+- Baseline: `ac9365d96459a3932c4a934600cc071a2ccec63b` on `tanyapi`; isolated task branch `fix/hidden-repeat-prompt-20261007`.
+- Goal: hidden source recipes must not reappear in repeat fields, even from contradictory stale cards. Preserve ordinary visible owner prompts and user-authored additional instructions.
+- Preflight: generic video and Seedance identity forms ignored `promptHidden`; feed/profile/deep-link callers supplied it. Image repeat already cleared source text. Server task, publication and Telegram predicates diverged.
+- Regression-first: three frontend suites produced 7 failing synthetic privacy cases before the fix; ordinary controls passed. Backend API/card/FSM tests reproduced the separate stored-marker and direct bootstrap gaps. No live account data or actual recipe text was fetched.
+- Frontend implementation: one repeat-preset normalizer combines card/detail privacy denials, then both video forms enforce it again on preset consumption. All three video-repeat entry points share hydration.
+- Backend: shared intrinsic private-recipe classification for task APIs, Feed/Profile cards and both Telegram repeat callbacks; direct bootstrap now sanitizes history. JSON request snapshots and malformed explicit privacy markers fail closed. Focused 147 tests and broader database/trend/Genjutsu compatibility 388 tests passed, including 33 new API/card/FSM cases. compileall passed.
+- Verification completed: static export build, `tsc --noEmit`, full Jest 35 suites / 224 tests; new mocked browser E2E covers Feed/Profile/deep-link, reopening and visible-owner control at 360px and 430px. Full frontend lint and existing critical browser aggregate also passed. Initial aggregate attempt lacked the required `.e2e-server` fixture; rerun after the CI preparation passed. Changed-line Ruff and final commit verification are recorded in the handoff.
+- Existing playbooks used: evidence-first `Bambale0/skills` diagnosing-bugs, architecture/privacy/release discipline from `Bambale0/claw`, and isolated Playwright approach from `anthropics/skills` webapp-testing. No external playbook clones were modified.
+- No schema migration, mutable pricing/provider configuration, generation submission or production checkout mutation. Only synthetic API/media fixtures are used in browser tests; external requests are denied.
+- Release: local commit handoff to the single coordinated release owner; no independent push, merge or deployment. Exact deployed SHA/production smoke remain unverified.
+
+
+## 2026-10-07 — Coordinated Tanya completion release
+
+- Single integration branch starts at ac9365d and preserves the already merged promo
+  database-clock fixes. Production still requires reconciliation of the captured domain
+  patch before any deployment retry; runtime price and untracked receipts are preserved.
+- Integrated domain commits94d28be/9a97ead, private-repeat commit36dec6e, optional Start/Skip
+  packagef43f326. Code merged automatically; append-only ledger conflicts retain both sides.
+- Source verification: domain2054 safe tests plus30 config/routing tests; privacy147 focused
+  backend +388 broader,224 frontend tests and mobile/privacy/critical E2E passed; optional2079
+  safe backend,243 frontend, TypeScript/lint/build, four-width offer flows, eight media
+  targets and final critical E2E passed (job5b0404fa6e50, exit0).
+- Integrated full backend/frontend/build/E2E, PostgreSQL regression and independent
+  integration review remain the next gate before publication and serial release.
+- No new Nginx runtime writes, provider generations, mass broadcasts or extra admin test
+  content are part of this integration. Previously approved synthetic smoke is retained.
+
+- Final integrated backend passed 2,121 tests / 66 skipped on caf53145; 47 isolated PostgreSQL campaign tests passed. All backend source, Python tests, dependency and configuration inputs remained identical after the final frontend-only fix. A redundant repeat full-backend invocation was cancelled and was not retried; the existing complete result remains applicable.
+- Integrated frontend passed all 251 tests, TypeScript, lint and export. Independent review reproduced a Genjutsu/optional-offer modal collision; explicit open-state coordination fixes direct-query, startapp, prompt-linked and no-preview recipe entry without discarding drafts. Four regression scenarios passed after a fresh build. Required CI now runs all five browser suites; redundant extra checks were removed from the separate optional workflow.
+- The task-owned isolated PostgreSQL container was stopped after verification; its data and all source/test artifacts are retained. No production messages, configuration or runtime checkout changes were made during integration.
+- Final aggregate job_4836411f0b73 succeeded (347.6 seconds): 251 Jest tests and all five browser suites, including four Genjutsu entry regressions. Independent review has no remaining source blockers. Changed-line Ruff found zero relevant violations across 18 Python files. Production rollout and the bounded real Telegram test remain the subsequent verification step.
+- PR #269 follow-up review identified the documented historical media.chillcreative.ru upload origin. Added only that exact compatibility alias, canonical/local-path/lookalike-host regressions, durable-result coverage and corrected the remaining current-topology documentation. Final full safe suite on 6858b2d passed 2,122 tests / 66 skipped (112.47 seconds); 82 focused domain tests also passed.
+- Required CI exposed an E2E waiter race: an unrelated prior bootstrap response was selected during the 430px focus case. A deterministic delayed-response fixture reproduced the exact failure before the test-only correction. The waiter now follows the new marked capability request and its own response; server flag, real dialog closure, draft/referral and timeout assertions remain unchanged. All four widths passed (90.9 seconds), with no product-code change. Independent re-review found no remaining concern.
+
+
+## 2026-10-07 — repeat reference integrity hotfix
+
+- Baseline: `2fe684f78c4236ac98bfce9ef1e5fe3eabb6d952` (`tanyapi`, merged PR269); isolated `fix/repeat-reference-integrity-20261007`. Production is deliberately untouched by this task.
+- User outcome: keep every authorized fixed reference in its numbered slot, or reject an incomplete recipe before billing/provider submission. Hidden display remains distinct from private reuse consent.
+- Reproductions: four video wrapper cases silently dropped fixed Image3/Video3 with insufficient replacements; image `generate-image` lost the owner's selected fixed input and rejected explicit all-fixed recipes while `feed/remix` worked (four cases/two models). Another four photo cases showed owner ImageN slots could shift when a replacement was missing.
+- Changes: unify image source assembly between APIs; validate input sufficiency after private recipe merge; preserve original ImageN positions for owner's selected refs. Video restoration rejects incomplete/unavailable/unreadable recipes rather than delegating a partial request.
+- Domain boundary: compare known local upload identities across canonical/legacy origins; a source alias is never a new viewer-owned input. Unknown external origins remain distinct; visibility selections do not create private grants.
+- Tests use synthetic URLs/assets and mocked billing/providers only. Full API/frame/order/permission and safe-suite results recorded in handoff. No real user recipe, media, generation or publication was accessed.
+- No schema or mutable configuration change. Frontend unchanged. Rollout uses the single release coordinator; no independent deployment. Existing diagnosing-bugs, TDD and privacy/release guidance reused.
+
+## 2026-10-07 — coordinated repeat-reference release
+
+- Integrated the exact reviewed backend tree eedd8022 onto merged #269 (2fe684f). Full safe backend: 2,195 passed / 66 skipped; changed-line Ruff, compileall and independent review passed. Existing consent remains authoritative; no generic private-video grant was introduced.
+- End-to-end acceptance review found a client-side blocker for all-fixed source repeats on Seedream Edit and Grok Image-to-Image. The image form now delegates source-recipe completeness to the existing backend boundary while standalone edit generation still requires its local upload.
+- A rejected submission previously cleared source ID, prompt and references. Explicit accepted-submission results now preserve fully rejected drafts for correction; partial accepted batches retain accepted tasks/balance, report their accepted count and reset to avoid replay. No automatic retries were added.
+- Regression-first frontend verification: both edit-model disabled-button failures and rejected-draft/partial-batch failures reproduced before the repair. Seventeen focused tests across four suites pass, including actual picker correction and manual retry with the original source ID and ordered references. Standard lint and TypeScript pass; final aggregate frontend/build result follows.
+- Production remains on image/frontend 6351c208. Deployment of #269 was explicitly cancelled before SSH cutover; no new paid generations, audience broadcasts or admin tests were launched during this repair.
+- Final frontend aggregate succeeded: 262 tests / 37 suites, TypeScript, standard ESLint and production export (job_232ca31b4063, 43.55 seconds). Independent frontend re-review confirms rejection recovery and partial-batch handling are fixed. Backend source/test inputs remain exactly the reviewed eedd8022 tree. No real provider or Telegram requests were used in these tests.
+
+
+## 2026-10-07 — PR270 review follow-ups
+
+- Baseline: `48766372ab33c1094d3b31eea35b29d2832277ab`; isolated `fix/repeat-review-followups-20261007`. Production remains owned by the release coordinator.
+- Independently reproduced all four review reports with synthetic data: obsolete generic frame alias blocks a valid replacement; explicit complete identity inputs blocked by unused source snapshot; Telegram authorized alias rejected by raw subset checks; identity-keyed map moves an exact selected occurrence to another ImageN slot.
+- Scope: validate only active/inherited video inputs; preserve identity-form explicit lists while validating omitted source-dependent types; exact stored URL wins before unique known-origin alias resolution; reject ambiguous slot aliasing; align central Telegram launch metadata to actual input URLs and preserve private redaction. No new reuse permissions.
+- Before fix: six video regressions failed with five controls passing, four image/Telegram regressions failed with three controls passing. Targeted and full final results recorded in release handoff.
+- No schema, frontend, grant backfill, production metadata/media, paid generation or external messaging changes. All provider/debit tests are mocked.
+
+
+## 2026-10-07 — preserve admin prices during standard deployment
+
+- Baseline: `48766372ab33c1094d3b31eea35b29d2832277ab`, isolated branch `fix/preserve-runtime-admin-prices-20261007`; production checkout/runtime remain outside this source-only task.
+- Preflight: reliable SSH plus standard fallback SSH/local replaced existing admin prices when defaults changed or contained `force_apply_runtime_price=true`. Existing static tests encoded that behavior. Standard backend/frontend scripts do not reset source or publish tariffs; dated legacy hotfix workflows remain outside this bounded fix.
+- Contract: standard deployment never writes an existing runtime `data/price.json`, including concurrent admin saves. Missing runtime is seeded only with an atomic create-if-absent. No tariff values, provider/payment code, security settings, schema, CI gates or timeout budgets change.
+- Real Git experiments proved excluded-path `git restore --worktree` plus index-only `git reset --mixed --no-refresh`: source additions/deletions/renames update; HEAD/index match the target; runtime bytes remain untouched. Experiments also exposed a parent-path collision: a target file replacing `data/` can defeat child exclusion. The workflow rejects that target tree before any source writes.
+- Implementation: require the checkout already be on `tanyapi`; reject invalid runtime JSON/non-object/file types and incompatible target path shapes; save a validated read-only recovery snapshot; always exclude the runtime path from source restoration; update HEAD/index without worktree reset. Exit traps retain backups on failure and never copy stale snapshots over later admin edits.
+- First install: prepare the exact commit default in the same directory, validate it, then atomically hard-link it into place without replacement. An admin file created after the existence check wins. Existing file inode and permissions remain unchanged by checkout.
+- Regression evidence: original force/default behavior produced 27 failures / 6 passing controls. The initial snapshot/restore fix still failed 15 stronger cases covering concurrent writes, forbidden copy-back, first-install races and branch switching; it was superseded before publication.
+- Final verification: 91 related pytest checks passed with standard project conftest in 10.18 seconds. Coverage executes the actual workflow shell against temporary local Git repositories: force flag unchanged/changed; changed/removed defaults; clean/dirty runtime; malformed/non-object runtime; isolated admin writes before source restore and index reset; first-install seed race; source deletion/rename/addition; exact HEAD/index; inode/permissions; partial backup failure; source/index failures; later admin edits; unrelated tracked drift; parent-path collisions and wrong checked-out branch.
+- Checks: Ruff passes for both changed Python test files; both YAML workflows parse; all 18 run blocks pass `bash -n`; standard backend/frontend/backup/cdn shell syntax and `git diff --check` pass. No Docker, provider, Telegram, payment or live configuration is used by the regression seam. Full app/frontend suites are not repeated for workflow-only behavior.
+- Review: independent review caught a removed fallback `actual_sha` assignment; executing its actual success line reproduced four failures, and the assignment was restored. A subsequent reviewer source read was user-cancelled; no retry or alternate review route was used. Independent re-review of the stronger final implementation remains on hold for coordinator authorization.
+- Failure boundary: interrupted source restoration may leave a partial source checkout, so deployment stops before service/build steps and may require checkout reconciliation before retry. Runtime prices are never restored from the old snapshot. Dated one-shot hotfix workflows remain unchanged and outside this standard-release guarantee.
+- Playbooks: existing Bambale0/skills diagnosing-bugs and TDD; Bambale0/claw release-hardening; anthropics/skills webapp-testing inspected (browser QA is inapplicable to shell-only behavior). External playbook clones remain unchanged.
+- Delivery: local commit only, handed to the single release coordinator. No production checkout, actual tariff, service, configuration, admin message, payment, deployment, push or PR was changed. Exact-SHA CI and production verification remain release-owner work.
+
+
+## 2026-10-08 — explicit private video repeat references
+
+- Baseline: `f5b3888da7d541ea970c37fe2c911899208f66c4` on `tanyapi`. Existing isolated branch `fix/video-repeat-reference-permission-20261008` contained a partial unpublished patch; user explicitly consolidated and authorized completing that work here. Existing edits are preserved.
+- User outcome: authors of video works can choose typed references retained privately for repeats; repeat users can identify and upload their replacement slots without receiving private source URLs or hidden prompts.
+- Preflight: PR239 originally added image-only private reuse consent; generic video still depended on public-display selection. PR243 withheld source media URLs from foreign cards. Author permission UI and API were partially expanded in the inherited patch, but consumer slot descriptors and complete authorization checks were missing.
+- Scope: reuse the existing publication JSON grant and video recipe pipeline; distinguish legacy absent/image-only metadata from explicit typed video consent, empty revocation and invalid metadata. No grant backfill, source-media migration or new provider behavior.
+- Contract in implementation: optional versioned, URL-free typed slot descriptors; fixed references stay server-side, upload slots keep original ordering and frame roles. Current source permissions and mandatory input availability must be checked before billing/provider calls. Preserve ordinary owner editing and existing photo/Trend/Genjutsu behavior.
+- Verification plan: synthetic publication/API/continuity/debit regressions; typed ordering, frames, explicit empty/revocation, malformed metadata, foreign/owner, stale descriptors, legacy records and missing files; frontend author selection plus replacement forms and browser entry paths. No real generation, user media/prompt reads or external messages.
+- Guidance: existing Bambale0/skills diagnosing-bugs and code-review; Bambale0/claw privacy/API/release QA; anthropics/skills webapp-testing. Existing playbook clones are read only.
+- Configuration/schema: no new DB column or tariff changes intended; production `price.json` is outside this source task.
+- Release: prepare tested draft PR only; merge/deployment requires the release decision and exact-head CI. No production state claim.
+- Status: backend and frontend completion in progress; independent review and final checks pending.
+
+- Regression evidence: a clean baseline component failed the new video-author permission test (missing group); the consumer initially allowed launch with required typed upload slots empty. Both regressions now pass. Pre-existing dirty patch also broke image owner-detail shape; the image-only contract is preserved.
+- Frontend candidate verification: 37 Jest suites / 272 tests, TypeScript, ESLint and production static export pass. New browser scenarios pass at 320/390/430px for author selection/revocation, Feed/Profile/deep-link, ordered uploads, all-fixed recipes, source-bound model/scenario, unavailable recipes and rejected API draft retention. Existing critical browser aggregate passed in 192.05 seconds, including photo permissions, Genjutsu, Seedance uploads and identity entry/exit/navigation. Twelve frontend/CI files are frozen by hash.
+- Cancellation recovery: execution paused after a cancelled isolated patch/test and status read. Fresh user confirmation allowed one exact status retry, which established that the cancelled edits had not landed; only missing changes were then applied. No production mutation occurred.
+- Backend intermediate verification: 188 focused tests pass, including six generic/Seedance handler races that revoke consent, unpublish or change the source recipe during affordability checks; billing/provider calls stay untouched. Final negative matrix, safe suite and review remain pending.
+- Compatibility boundary: the new versioned private contract covers image/video slots. Source audio is never implicitly granted; unsupported private-audio recipes receive a safe validation error. Existing owner and legacy paths remain separate. No automatic conversion/backfill of historical author selections.
+
+- Backend candidate frozen: typed source plans preserve active image/video order and first/last frame roles, require exact replacement counts, validate ownership and reject ambiguous source aliases. New foreign typed recipes bind to their source model/scenario; owner repeats retain their editable legacy form. Withdrawal preserves an explicit versioned empty marker so an older client cannot revive revoked access.
+- Final focused matrix: 30 new API cases cover malformed/forged consent, first/last frames, image-only multimodal snapshots, current permissions, file loss during affordability await and old-client republication. Telegram callback regression first reproduced 11 failures with one control, then all 12 passed. Selected combined suite passed 173 tests. Full safe suite and independent review are pending.
+- Telegram consistency: newly created typed-repeat children carry only a contract-version marker alongside their existing source identity. Generic, advanced-video and Seedance result-repeat buttons route these new recipes to the same source Mini App replacement flow before any billing. Withdrawn source publications refuse the repeat; ordinary owner and legacy callbacks are unchanged. No private media or prompt is included in the redirect.
+
+- Final verification: full safe backend suite passed 2,371 tests / 66 skipped in 137.32 seconds (379 existing warnings), with all 12 frozen backend source/test hashes verified afterward. Changed-line Ruff reports zero violations; changed-file syntax and diff checks pass. Frontend remains the exact verified 272-test/export/browser manifest.
+- Independent review found and reproduced an inter-read withdrawal race plus a legacy-to-typed transition gap; both are closed by checking current authoritative source publication/status and consent snapshots before charging. Public typed scenario now uses the same stored-recipe inference as reconstruction. Canonical duplicate list slots that downstream providers would collapse are rejected; equal first/last scalar frames remain supported. Typed-context provider failures are sanitized before returning errors. Final focused suite: 280 passed.
+- Release status: tested candidate prepared for a draft PR to `tanyapi`; merge/deployment await the user's release decision. No production checkout, prices, database records, media, generation or external message changed during this task.
+
+
+## 2026-10-08 — Seedance admin dashboard reference routing
+
+- Baseline: b07ab430de2b354a134ea4ef451be30dfcb2ba8d, branch fix/seedance-admin-routing-20261008
+- Symptom: photo after choosing Seedance Reference mode opens NanoBanana quick creation.
+- Evidence: open/Done callbacks set None; mode selector changes data only. Generation router runs first and its idle StateFilter correctly accepts None, clearing the Seedance data.
+- Regression: offline extraction executes real callbacks and real aiogram filters without application/config/database imports. Baseline fails on the actual idle interception; fix passes eight tests, including ordered router propagation, repeat dashboard returns, mode switching, non-admin guard and unchanged idle shortcut.
+- Changes: dedicated dashboard state; dashboard media delegates to existing refs/edit/frames validation; text mode gives instructions; admin test access allowlist includes dashboard. No provider/billing/data model/config/migration changes. Mini App uses separate HTTP routes and is unaffected.
+- Checks: eight isolated routing tests PASS; six existing source-contract tests PASS; syntax compilation of changed Python PASS; focused Ruff PASS; diff whitespace PASS.
+- Constraints: no paid generation, real Telegram sends, database access, credentials reads, or production edits. Full application tests and deployed smoke not run in this isolated diagnosis; coordinated release owner handles aggregate CI and deployment verification.
+- Rollout/rollback: ordinary reviewed task PR to tanyapi under release owner; revert the scoped commit if needed. No runtime data migration.
+- Playbooks: Bambale0/skills diagnosing-bugs (red-first evidence), Bambale0/claw architecture/FSM consistency, anthropics webapp-testing reviewed (browser-only workflow not applicable to Telegram handler regression).
+
+## 2026-10-08 — Feed clipboard recovery
+
+- Baseline: tanyapi b07ab430de2b354a134ea4ef451be30dfcb2ba8d. Isolated fix/feed-copy-fallback-20261008 worktree; production dirty data remains untouched.
+- Audit: Feed awaits share API before Clipboard API and execCommand fallback. Both failures previously discarded the usable server URL and showed a generic red banner. Success did not clear stale errors.
+- Outcome: retain the exact server link in a selectable mobile-width field; fresh-gesture copy retry without another share request, one-tap success feedback and separate API/clipboard failure handling. Request sequence protects against stale completions and unmount.
+- No API/schema/configuration/pricing changes; no private prompt/reference exposure or URL reconstruction. No paid generation or external messaging.
+- Regression: all four new component tests failed against baseline, then passed after implementation. Full frontend suite: 311 tests passed. Typecheck, lint, static export, mobile-width browser fixture and independent review pending.
+- Browser coverage adds clipboard rejection plus failed execCommand, exact deep/referral link preservation, successful fresh click, single API request and 320/360/390/430 width constraints.
+- Guidance: Bambale0/skills diagnosing-bugs, Bambale0/claw debugger, anthropics/skills webapp-testing. Real Telegram/iOS device behavior remains unverified.
+- Rollout: parent coordinates one release after combined checks; no deployment performed by this branch.
+- Final verified revision: 42 Jest suites / 311 tests, TypeScript, ESLint and production static export passed; synthetic Chromium mobile E2E passed at 320/360/390/430px. The lower-card test confirms recovery enters the viewport without locator auto-scrolling. Full check chain job_838ca54a2078 succeeded.
+- Independent review identified off-screen recovery after sharing a lower card; failure-only scroll into view plus a lower-card regression addressed it. Reviewer independently verified final hashes and found no remaining code blocker. Clipboard refusal is simulated; no physical iOS device was tested.
+
+## Seedance creator tariff (2026-10-09, implementation in progress)
+
+- Baseline: tanyapi `12a747e0e8f940351ed060bbdb2ffb69aa6a5bfc`; isolated safe source snapshot, denied credential-bearing source excluded. Existing live checkout untouched.
+- Goal: Tanya assigns/revokes separate pricing membership by Telegram ID and configures independent Seedance 2.0 / 2.5 prices in admin. Membership never grants admin access.
+- Audit: ordinary pricing is live `data/price.json`; 2.0 base/duration costs; 2.5 quality rates per second, current UI supports480p/720p, runtime has1080p configuration too. Preserve all configured quality keys and existing ×2 video-reference charge. Provider models, capabilities and ordinary economics unchanged.
+- Existing gap: Mini App launch recalculates stored price after provider response; replace with one immutable server quote captured before debit and supplied to persistence. Refund uses original charged amount.
+- Configuration: optional `creator_tariff` section in existing price store, disabled/unconfigured when absent. No numeric creator defaults, no live rates changed, no real memberships assigned. Enable requires valid complete model/quality rates. Ordinary fallback explicit in admin.
+- Migration: additive independent membership + append-only audit tables, idempotent SQLite/PostgreSQL-compatible startup schema. No deployment or production migration is authorized in this task.
+- Security: authenticated actor only, server admin checks on every configuration/membership mutation, positive Telegram IDs, existing target users, no client tariff selection, no global per-user price caches.
+- Steps: (1) pricing domain/config validation; (2) DB/admin controls; (3) bot/Mini App/trend/repeat quote integration; (4) viewer-scoped display metadata; (5) regression, type/build, review; (6) report patch, unresolved verification limits. Publish/merge/deploy require separate approval.
+- Tests: isolated disposable SQLite and fake providers only. No paid/live tests, production SQL, credentials, real grants or customer messages. Python dependency environment isolated under this snapshot.
+- Playbooks: read repository AGENTS + local test-driven-development guidance; consulted Bambale0/skills README (TDD source paths unavailable), Bambale0/claw review checklist, anthropics/skills webapp-testing. Tests written before implementation; initial test run was blocked by missing dependencies, not an observed behavioral failure. Regression sensitivity will be checked explicitly.
+- Progress: pricing service covers independent model/quality rates, aliases, stable ordinary/admin-free precedence, zero/nonfinite validation, preserved reference multiplier, immutable revision-tagged quotes. First focused run: 15 passed.
+- Implemented: DB membership/audit + Telegram admin editor; validated independent per-model/per-quality rates; authenticated viewer metadata; unified Seedance quote capture in Telegram, Mini App, repeats and trends; original-charge refund precedence.
+- Independent review found and resolved post-provider-acceptance UI/refund races, nested repeat double-refund propagation and bot-message-vs-actor display identity. Regression tests now exercise accepted/persisted jobs with failed notifications/FSM cleanup and a subsequent single asynchronous refund, plus grant/revoke/rate changes during provider waits.
+- Focused integration verification after fixes: 457 passed (59 existing warnings). New pricing rates also reject non-finite, zero/negative, too-small-to-round-positive and overflow-at-long-duration values. Adjacent ordinary-model repeat economics remain historical as before; actor-aware repeat repricing is restricted to the requested Seedance models.
+- Frontend: 43 focused Jest tests, TypeScript noEmit, changed-file ESLint and production build/static export passed. Browser E2E never reached a scenario: Chromium archive download invalid; existing Chromium launch denied sandbox socket access. No restriction bypass attempted.
+- Full-suite attempt cannot collect PostgreSQL-pool-dependent tests because the credential-bearing pool source is intentionally absent. Initial collection errors: test_genjutsu_postgres, test_promo_campaigns_postgres, test_result_durability_postgres, test_runtime72_postgres_refunds, test_runtime_reliability_contract, test_video_repeat_receipts_postgres. Excluded test_postgres_connection_pool_contract for the same denied source.
+- Supported-suite command excludes `tests/*postgres*`, `tests/test_runtime_reliability_contract.py`, `tests/test_runtime72_saved_references.py` (three cases import the absent PostgreSQL pool), and `tests/test_public_offer_contract.py` (public offer PDF intentionally not materialized in safe source snapshot), plus all paid/live tests. An intermediate run passed2608 with only snapshot-environment failures; subsequent run exposed an old mocked pricing import, updated to exercise the real shared reference-multiplier path.
+- PostgreSQL startup DDL routing is verified against the real allowed PostgresConnection adapter with a fake raw connection; a live ephemeral PostgreSQL migration run remains unverified. Independent read-only review reports no remaining code blocker conditional on the final supported-suite rerun. No publication, merge, deploy, real assignment, live configuration write or paid generation performed.
+- Final supported-suite result on reviewed sources: **2648 passed, 1 skipped, 12 subtests passed**, 393 existing warnings, 140.30s. Exact command: `.venv/bin/python -m pytest tests/ --ignore=tests/live --ignore-glob='tests/*postgres*' --ignore=tests/test_runtime_reliability_contract.py --ignore=tests/test_runtime72_saved_references.py --ignore=tests/test_public_offer_contract.py -m 'not live_smoke' -q --tb=short`.
+- Final static checks: changed-line Ruff passed all34 touched Python files; full Ruff passed new pricing/admin/membership/display modules and all new tests; compilation, dependency consistency and `git diff --check` passed. Patch applies cleanly to the isolated safe baseline. `data/price.json` unchanged byte-for-byte, SHA256 `65405b135cfc204b195ce8335f0da332f1a1e079b8f8c312ac7f517922036b79`.
+- Delivery: reviewable patch only, no publication commit or PR. Workspace branch is based on a synthetic safe snapshot of the stated tanyapi SHA; apply the patch to an authorized real task branch before future publication. Full CI, live PostgreSQL migration and browser E2E are release gates still requiring a suitable environment. No additional code changes after the final passing test run.
+
+### Creator tariff release verification (2026-10-09)
+
+- Creator-only publication/merge was approved. Draft PR275 starts directly from `12a747e0e8f940351ed060bbdb2ffb69aa6a5bfc`; separate referral work is excluded.
+- Added an explicitly disposable PostgreSQL16 CI service. Its15 acceptance cases verify both schema bootstrap paths, concurrent membership mutation, atomic/immutable audit, fractional quote retention, role/rate changes and exactly-once refund races. All15 plus11 fixture-safety checks passed at `52c4d0a`.
+- Initial published head passed the normal full safe Python suite and existing runtime PostgreSQL suite, closing the local materialization gaps; final-head CI remains mandatory.
+- Added creator browser journeys to the required main CI browser gate: distinct viewer/model prices, server half-step totals, quality/duration changes, reference factor once and no client tariff fields. No external provider or paid request is used.
+- This revealed a pre-existing normal Seedance2 reference-price UI mismatch. A focused red/green regression and independently reviewed fix now follow actual submitted references, including multiple refs and scenario changes. The authoritative repeat descriptor still wins.
+- The separate npm-audit gate found critical advisories against baseline test-only Handlebars4.7.9. Updated only its lockfile entry to official4.7.10 (compatible with ts-jest's existing range); no advisory suppression or gate weakening. `npm audit --audit-level=high` passes;20 moderate transitive test-dependency advisories remain. Official advisory: https://github.com/advisories/GHSA-8r5x-fm3f-whwj.
+- Full frontend Jest:43 suites /313 tests passed after the dependency patch. Release remains gated on exact-head CI/browser/Docker, then exact deployed SHA and read-only smoke. Existing runtime prices and dirty/untracked files must be preserved by normal deployment.
+
+## Clickable feed share-link action — 2026-10-09
+
+- Fresh baseline: `tanyapi` at `45add2bd9e6a73b684cc55f73a75b5ea11cac4a9`. Isolated fix branch; held referral work is excluded.
+- Screenshot/current-code audit: Feed share recovery rendered a read-only selectable input and Copy button, but no navigable link. The server-generated share URL and existing `start`/`startapp` selection are intentional and must remain byte-identical.
+- Add accessible «Открыть ссылку» anchor beside Copy. A synchronous user click uses the same Telegram WebApp navigation pattern as the bot-start gate for `t.me`. Missing/throwing bridge and other HTTP(S) URLs use the native `_blank` anchor with `noopener noreferrer`; modified clicks retain browser semantics.
+- Validate executable URLs without rewriting them; unsafe schemes, credential-bearing, relative, control-character and backslash URLs receive no anchor. Selectable input, automatic copy, direct Copy retry and failure feedback remain intact.
+- No backend, provider, schema, pricing, referral policy, deep-link builder or generation changes. Browser fixtures intercept every API/destination and prohibit paid calls. Dedicated PR workflow covers Android/Chromium and iOS/WebKit emulation, not real-device Telegram certification.
+- Regression-first: six new opening/fallback cases failed on baseline; all existing copy/manual-recovery cases continued to pass. Final unit/type/lint/build and independent review evidence follows. Publication/merge/deploy require separate approval for this fix.
+- Guidance: repository AGENTS, Bambale0/skills README (specific TDD file unavailable), Bambale0/claw engineering workflow, and anthropics/skills webapp-testing.
+- Local final checks: 15 focused share cases and 324 frontend tests across 43 suites passed; TypeScript, full ESLint, production static build, script syntax and diff checks passed. Official Playwright browser download failed with a truncated ZIP, so Android/iOS emulation has not run locally. The dedicated PR gate must pass before release; no browser security/sandbox bypass was attempted.
+- Independent read-only review found no blocking application defect and verified the bundled SDK skips `_blank` anchors, avoiding double dispatch. Its test-hardening suggestion is applied: unrecognized API routes/actions are aborted and fail the emulation assertions rather than receiving an implicit success response. Browser execution remains pending.
+
+## 2026-10-09 — Explicit feed links use the authenticated sharer
+
+- Baseline: remote `45add2bd9e6a73b684cc55f73a75b5ea11cac4a9`; refreshed to `90e39dd7bac63b408fd2d064b142c8f734fe0ab0` after independent clickable-link PR #276. Safe local snapshot overlays that exact six-file PR. Backend source blobs unchanged by #276; Open UI preserved.
+- Repro: signed HTTP Feed share by a different user returned the source author's code. Telegram CopyText/bfs matched that behavior. Prompt-template sharing already used the authenticated sharer.
+- Scope: new explicit share-link issuance only. Reuse validated Mini App context, existing persisted user code, builders and referral parser. Never overwrite source author/card or `source_feed_gen_id`; no referral remapping, economics, payment, schema, migration, provider or config changes.
+- Tests first: signed HTTP regression RED → source fix GREEN; Telegram callbacks/keyboards RED → per-sharer fix; shared-chat review found negative chat-ID risk, resolved with per-click callback instead of static CopyText; profile-only callback regression RED → existing visibility-aware increment service.
+- Security: body spoof fields ignored; invalid signatures rejected before share count; no-code fallback stays plain; no-store preserved; hidden/withdrawn cards rejected. Shared caches retain author identity only.
+- Observability: existing share log contains actor Telegram ID and source card ID. No extra secrets, initData, prompts or media logging.
+- Skills: Bambale0/skills diagnosing-bugs + tdd (HTTP/callback/public service seams), Bambale0/claw architecture/release discipline, anthropics/skills webapp-testing guidance. Browser UI code unchanged; existing frontend clipboard tests remain applicable.
+- Runtime diagnostic was cancelled. No retry or alternative live lookup; reported username/code ownership remains unverified. No production mutations, generation requests or paid tests.
+- Verified: 21 new attribution cases; 203 focused backend tests; 324 frontend tests across 43 suites (including 21 clipboard/API tests); Python syntax and diff whitespace; changed-line Ruff 0 new violations (100 legacy diagnostics ignored by the normal gate). Independent review has no remaining blocker.
+- All five modified pre-existing files have base blob hashes identical to real `90e39dd7`; the two remaining files are new. Full safe collection is blocked by seven PostgreSQL/runtime modules importing excluded `bot/postgres_pool.py`; no attempt to retrieve or recreate it. Broad run excluding those seven collection blockers: 2,687 passed, 18 skipped, 12 subtests passed; one failure is the absent unchanged legal/public-offer.pdf asset, and three fixture errors are additional PostgreSQL tests importing the same excluded module. No changed-feature failure was observed; this is not a full-suite pass. These missing sources were not retrieved or reconstructed.
+- Publication/merge/deploy require separate approval; rollback would revert this isolated change, without data repair. Previously issued links/static Telegram CopyText buttons retain their embedded code; reopen/navigate to obtain rebuilt buttons.
+
+
+## 2026-10-09: direct Seedance 2.5 character edit
+
+- Baseline: `05199e7357a221e34c6afd5ab17e3b48f36ed4a6`; task branch `fix/seedance25-direct-edit`, isolated worktree. Production has unrelated runtime price changes; do not touch them.
+- User approved the direct image + original video -> Seedance route, not LAS/Seedream/keyframe preprocessing or a provider migration.
+- Current route already submits image/video arrays but prepends the long `apix-v1` prompt to all user instructions. Pure payload regression is reproducible; the cause of model-quality failure is NOT established.
+- Preflight: AGENTS, README/current production layout, identity/service/public handlers, tests, APIX comparison from preceding audit, admin editable-instruction pattern and current KIE schema. Use diagnosing-bugs, Claw release discipline and webapp-testing guidance. No general refactor.
+- Existing seams to preserve: owned local media validation, measured source duration, quote-before-debit, ordinary references, owner-only repeats, one provider submit/no identity auto-retry, callback reconciliation and delivery.
+- New contract: direct-edit-v1; complete non-empty edit prompt is not wrapped; an empty instruction uses an admin-editable direct template. One to three same-person photos, exactly one original video. duration=-1/aspect_ratio=adaptive. Explicit edit field only for this route; KIE accepted/saved it in the earlier experiment, but upstream semantics remain unproven.
+- Configuration: use audited bot_settings for the default edit template, with server-side admin command and validation. Freeze resolved provider prompt at pre-debit validation; do not read a different template after charge. Record revision/hash, not raw private prompts in logs. No DB migration, tariff/provider switch or new fees.
+- Compatibility: keep public identity flags and original user prompt in task metadata/repeat data. Update UI/TG wording from additional wishes to a full optional edit instruction. Default still permits an empty instruction.
+- Verification: provider contract, invalid/missing references, 1/2/3 order, full/empty prompt, admin settings, quote/launch snapshot, ordinary behavior, API/TG/repeats and frontend tests. Model quality requires separate visual acceptance and is not proven by mocked tests.
+- RED: `python -m pytest -q tests/test_seedance25_direct_edit.py --disable-warnings --tb=short`: 4 failed / 1 passed. Existing prompt wrapper causes exact-prompt and direct-default assertions to fail.
+- Rollout: focused tests -> appropriate regressions/frontend build/browser checks -> review -> PR to tanyapi with guarded native auto-merge -> exact SHA CI/deploy/health verification. Do not manually deploy or change production settings during implementation.
+- Status: implementing; no production fix claimed, no new paid generation yet.
+
+### Direct-edit implementation evidence
+
+- Completed direct prompt composition, one-call KIE edit payload, frozen pre-debit prompt and hash, audited editable default/admin command, and aligned Telegram/Mini App wording. Short legacy wishes keep a concise replacement command; complete prompts naming both references are not wrapped.
+- New regression file is explicitly unignored so CI receives it; no runtime diagnostics, media, secrets, build caches or unrelated production price files are part of the change.
+- Focused backend: 197 passed before the final template-token edge case; original red provider assertions now pass. Full safe suite: 2,976 passed / 89 skipped / 12 subtests passed (174.10s). Final new token-boundary regression is included in the subsequent focused rerun.
+- Frontend: 338 tests / 44 suites passed; ESLint, TypeScript no-emit and static production build passed. Browser aggregate is running separately.
+- Review (self-review; no independent sub-agent available): standards axis uses existing audited bot_settings and admin authorization, no new billing/provider route; spec axis keeps direct image+original-video flow and ordinary behavior unchanged. Tightened template video-role token matching to reject suffix lookalikes. Existing PR #280 was inspected for overlap; no changes from it were copied or merged.
+- Known limitation: these checks prove direct request composition, not model identity fidelity. The earlier KIE edit-field experiment succeeded but its visual result was not accepted by the user. No quality fix is claimed from HTTP status or unit tests.
+
+- Final focused direct/identity rerun: 94 passed (2.64s), including the new `@Video1abc` rejection. New-module Ruff is clean; exact code-head changed-line gate reports 0 new findings / 22 unchanged legacy findings.
+- Full mocked browser aggregate completed: critical flows; private reference permissions; feed/profile/deep-link repeats; Seedance uploads; identity paid/ordinary flows at 320/375/390/430px; missing/excess refs; source duration; insufficient balance; resolution requote; stale quote recovery and private repeat dismissal/navigation all passed. This is an isolated static build with mocked providers, not a real paid provider run.
+- PR #281 targets tanyapi. Branch protection verified `strict=true` with Python/deploy, safe regression, Mini App browser E2E and production Docker gates. CI is running; production deployment is not yet claimed.
+
+### Review follow-up and current-base verification
+- Merged the released private-video-repeat prompt fix (#280, `23b52ad9c20ef3d78434d4da9322ea9f8e66cb29`) into this task branch without overwriting it. Combined-head full safe suite: 3075 passed, 89 skipped, 12 subtests passed.
+- Read the automated Codex review and temporarily returned #281 to draft before release. Confirmed both P2 findings: compact `@img1` expansion could exceed the direct limit; the 8000-character template cap exceeded the text-only admin setter capacity.
+- Regression-first reproduction: 3 failures / 4 passes on the new boundary tests before fixes. Final provider text is now checked against the 20480 direct cap after canonicalization; oversized requests fail before quote/debit/submission. Ordinary prompt behavior is unchanged.
+- Restricted editable templates to 4096 characters and verified the full-size reply-to-message admin setter. This avoids adding an unnecessary document-upload surface.
+- Focused combined direct/identity/private-repeat tests after review fixes: 199 passed. Identity/template module and new tests are Ruff-clean; diff whitespace check passed. Full exact-head CI must run again before release. No new paid provider task or production mutation in this follow-up.
+
+
+## 2026-10-09 — Durable referral notifications and guarded delivery
+
+- Initial diagnosis used deployed PR280 `23b52ad9c20ef3d78434d4da9322ea9f8e66cb29`; PR282 publication was based on PR281 `31d02d43dd0d2bb18904eea588ac90ea40e2fe1f`. Follow-up baseline is merged `482c424c971e86404666bc7dfc04010ba7923bc9`.
+- PR279 suppressed both attachment notices and omitted the accepted-generation bonus receipt. PR282 adds a transactional, unique per-event outbox and reuses the existing safe snapshot sender. Financial terms, one-time qualification, prices and historical claims remain unchanged.
+- PR282 passed all four required CI gates plus real PostgreSQL and independent review. Its exact-SHA deploy was cancelled before SSH after later review identified Mini-App-only recipient deferral and retry-claim budget gaps; no production success is claimed.
+- Follow-up preserves queued receipts for known never_started recipients until private-chat lifecycle permits delivery, and counts durable send attempts rather than unstarted leases. Explicitly blocked/uncertain historical outcomes are not replayed.
+- Retry policy and both templates use typed, validated existing bot_settings plus an authenticated admin read/set/reset command. Templates freeze at enqueue; lease/attempt policy freezes per claim. Invalid stored configuration falls back safely without raw payload/error logging.
+- Existing registry stores last-editor/time metadata, not a new immutable audit history. No new schema beyond the original empty outbox, no live configuration changes, no paid generations, no real test messages and no historical backfill.
+- New functional regressions reproduced 5 failures before correction; 114 offline notification tests now pass. Full current-base backend, real PostgreSQL, changed-line lint, independent review and exact-head GitHub gates remain mandatory before the corrected release.
+- Detailed test evidence: [referral notification verification](REFERRAL_NOTIFICATIONS_20261009.md). Preserve all earlier ledger history; this is an appended entry only.
+
+- PR283 review follow-up: six reproduced edge cases now pass. Editable templates reject code/pre overlaps after placeholder expansion. Existing schema startup adds nullable missing bot_settings audit columns idempotently, preserving legacy values without inventing historical audit metadata. Unit suite: 120 passed; new real PostgreSQL legacy-table test is required in updated-head CI. Repeated code/security reviews and exact-head CI remain release gates.
+
+## 2026-10-10 - WAN post-#284 regression repair
+
+- Baseline: `tanyapi` at deployed commit `6b1621b83bd7b7b1fe39a1cb3774ac49c0cf45e9`; isolated branch `fix/wan3-post-284-regressions`. Open PRs and remote branches were checked before editing; no overlapping current repair was found.
+- Scope is limited to review discussions `r4237110298`, `r4237110295`, and `r4237110299`: multipart upload compatibility, late canonical results after provider-wait escalation, and visible optional-source restoration. Prices, referral terms, historical ledger entries, provider selection and schemas remain unchanged.
+- Upload contract: `/wan3/upload/chunk` accepts the frontend's bounded `start_param_fallback` multipart field while retaining duplicate/unknown-field rejection and header-based signed authentication. Real multipart regressions cover image, video, audio and document chunks.
+- Lifecycle contract: only `result_attention` rows carrying `provider_wait_timeout` remain eligible for canonical polling/callback leasing and success settlement. Invalid/missing/download-failed results retain their finite repair budget and operator-only queue. Settlement still claims `settled = 0`; replay cannot double-refund, double-charge, redeliver or create another paid provider task.
+- Form contract: every owner or `initialRecipe` restore synchronizes `extraSource` from the saved document/link arrays. Tests cover visibility, removal, replacement, repeated link-to-document restoration and the actual quote recipe.
+- Observability: existing timeout escalation, canonical polling, settlement and delivery logs remain the source of task/provider correlation; no new sensitive payload logging was added.
+- Test plan: focused signed HTTP/multipart, timeout-late-result/delivery, callback authentication, bounded invalid-result/download repair, frontend form/API Jest, TypeScript, ESLint, production build, then exact-head CI and review. No paid generation or third-party message is permitted.
+- Rollback: revert this isolated commit/PR. No migration or data repair is required. Merge and deployment remain explicitly out of scope until the parent verifies the draft PR head and gives the next release instruction.
+- Local verification: 19 focused backend regressions passed; Python compilation and Ruff passed; full frontend Jest passed 49 suites / 355 tests; TypeScript passed; changed frontend ESLint had 0 errors and 2 pre-existing hook-dependency warnings; Windows-equivalent Next.js static production build passed. The repository's Unix-style `npm run build` wrapper cannot set `NEXT_EXPORT` under PowerShell, so the same locked Next command and post-build Telegram patch script were run explicitly. Exact-head GitHub CI remains required.
+
+
+## 2026-10-10 - Bound WAN timeout polling and clear successful diagnostics
+
+- Baseline: PR285 squash `b5d0ce427baad370ade9dc0b2ab4f37317810a2d`. Follow-up addresses review discussions r4237287138 (P1 unbounded attention polling) and r4237287141 (stale error metadata).
+- Active submitted/unknown/settlement-pending work has precedence over attention backlog in each batch. Timeout attention remains automatically polled for a configurable 24-hour window after the normal provider pending limit, with age-based delay from 300 to 3600 seconds by default. Existing positive_setting configuration validation is reused. No production environment settings are changed.
+- After that window the row remains operator-visible, unsettled, and eligible for authenticated callbacks or explicit canonical task reconciliation. The finite automatic window does not refund, drop, replace, or resubmit a task. Polling-only late results need explicit operator review. Invalid-result attention stays excluded.
+- Successful settlement atomically clears obsolete error_code, error_message and next_attempt_at. Existing settled=0 transactional fences remain unchanged. Prices, referrals, historical financial records, schema, and paid provider POST paths are unchanged.
+- Local checks: Python compilation passed; exact scheduler/lease/defer methods executed against synthetic in-memory SQLite with no application imports, covering active-first batch ordering, finite automatic window, explicit late canonical lookup, and three bounded backoff ages. This is not a full application integration-suite claim.
+- Added application integration regressions for active priority, aged attention exclusion, preserved explicit reconciliation, configured backoff, signed callback beyond automatic window, and cleared completed diagnostics. Full safe suite, WAN PostgreSQL contract, Docker, browser CI, and independent review are required on the published head before merge.
+- Verification boundary: forbidden PostgreSQL pool/runtime sources were not read or imported. No production DB, filesystem, service, or configuration changes were performed. Existing standard deployment of the baseline continues independently.
+- Rollback: revert this follow-up; no migration or financial data repair is needed.
+
+- Independent review found the expired-window/future-backoff callback boundary: returning 200 could lose the only late completion signal. Corrected by persisting a unique callback_pending marker after authentication, respecting lease/backoff, and allowing one marked canonical lookup beyond the age window. An older in-flight pending poll preserves a newer marker. Added signed HTTP deferred-callback and marker-race/consumption regressions; exact-method synthetic SQLite checks pass. Pending/unconfirmed canonical outcomes consume the notification and retain operator attention rather than restarting unbounded automatic polling.
+
+- Second review correction: unconfirmed/transport-error/malformed/wrong-lineage observations must preserve the authenticated callback marker, retrying under the capped delay until a valid canonical observation is available. Only validated canonical pending consumes a marker. Signed HTTP tests cover deferred success after transport errors, malformed payloads, wrong task IDs and wrong models. No lease bypass or provider resubmission was introduced.
+
+
+## 2026-10-10 - WAN direct Telegram references and clear duration/upload controls
+
+- Baseline: tanyapi 65dbe01ffb0fd4bf477a3800a76c6e7e08fcf18f; fresh branch/PR audit found no duplicate WAN task. Existing operator-recheck work remains outside this release.
+- Evidence-first audit: Telegram media handler registered eight distinct State filters with AND semantics, making every intended media state unreachable. Dashboard had no direct media intake. Concurrent album/state writes could overwrite references or prompts. Unicode-only filename stems lost their extension separator. MiniApp duration was a select and upload feedback appeared only near the cost block.
+- User-visible result: open WAN and attach mixed media or an album immediately, type a prompt, inspect the actual duration, calculate price, then explicitly confirm launch. The compact Telegram keyboard has a single minus/current-seconds/plus row and sound control; advanced frame/edit roles and all provider fields remain in Settings. MiniApp gets a range slider with separate Auto and field-local upload progress/error/cancel/retry.
+- Implementation: (1) OR StateFilter and direct dashboard intake; (2) per-actor serialization, pre-lock draft identity/reset fencing, message ordering and atomic quote commit; (3) automatic scenario from actual references without guessing frame/edit roles; (4) preserve advanced snapshots and safe Unicode filename suffixes; (5) duration controls invalidate quotes; (6) field-local uploads with bounded cancellable requests and stale-response suppression.
+- API/schema/config: no schema or route/body changes, migration or production config changes. Client upload/import accepts an optional AbortSignal. A 15-minute per-request budget matches the existing MiniApp media budget rather than imposing a short whole-file deadline. Provider 2..30/Auto duration bounds and authoritative combined source-plus-output <=30-second server quote validation are unchanged; unknown source duration is not invented by the UI.
+- Provider/payment impact: no generation before explicit quoted-cost confirmation; prices, referral rules, debit/refund paths, paid provider POSTs and historical financial data unchanged. Client cancellation discards late UI attachment; it does not promise server-file deletion.
+- Observability: immediate safe Telegram progress/error messages and kind/count logs without prompt, file URL or provider secrets. MiniApp progress uses acknowledged chunks; retries retain only unfinished files.
+- Local verification: Telegram actual aiogram filters and isolated public handler seams: 48 passed; changed Python Ruff passed. MiniApp focused Jest: 37 passed/3 suites; selected dependency-closure typecheck passed; lint 0 errors with 2 pre-existing hook warnings; isolated production fixture build/export passed. No application DB/bootstrap imports or paid calls were used. Full application/CI checks remain required on the exact published head.
+- Independent review: Telegram v2 patch 8846094c05ccbc4c96bc989ecd6ca4df4b42a53deb4c64e08efc5394e73be70d clean with independent 48-test rerun; frontend spec/standards reviews clean after fixing equal-value recipe reselection. Combined exact-head review is a release gate.
+- Verification limits: local Chromium launch failed with socket() Operation not permitted, including the permitted escalation attempt. No browser, mobile WebView, real-device or production/provider pass is claimed. No alternative path is used to bypass that restriction; normal repository CI remains required.
+- Rollout: dedicated draft PR to tanyapi, exact-head safe-suite/browser/Docker gates and clean combined review; parent coordinates the single merge owner under user authorization. Verify installed backend and frontend SHA after normal deployment. Rollback is an isolated revert with no migration or financial repair.
+
+
+- Exact-head CI follow-up: fixed full-repository import ordering. The existing edit-source-removal regression exposed constructor defaults enabling Auto on explicit advanced recipes; constructors now pin first_frame/first_last/edit, with explicit Auto remaining available. Added legacy recipe/intent regressions; isolated Telegram count is now 52 passed. WAN browser E2E was updated from the removed select to exact slider/switch roles, retaining all old payload assertions and adding duration bounds/manual restoration/locked retry assertions. Node syntax and patch checks passed; normal exact-head CI and delta review remain required.
+
+
+## 2026-10-10 — WAN post-review UI and upload-session guards
+
+- Baseline: merged PR287 `0bedef3db0131a463e1a1372499c7822951c37e6`. Its production deployment run38052967637 was cancelled before SSH on user request; read-only verification confirmed production remains65dbe01f, healthy with zero restarts. This follow-up addresses all four postmerge P2 findings, not the paused operator extension.
+- Telegram: unchanged duration/Auto callbacks acknowledge without replacing the message or invalidating a valid quote; identical duration-screen rendering tolerates Telegram's unchanged-message error. Image/video/audio slot limits are validated before any download/import, while explicit source replacement remains available. In-flight and queued inputs check current FSM/model and draft identity; exiting to model picker rotates the reset token before continuing the existing generic route. Stale setting callbacks outside WAN do not reopen it; explicit WAN entry still works.
+- Telegram verification: 68 isolated real-aiogram/handler regressions passed, including endpoints, all reference limits, source replacement, queued media/prompt/options during model/state departure and genuine reentry. Independent frozen-diff review is clean; Python lint passed.
+- Client protocol: capture a random32hex upload ID and metadata before init; same-ID recovery establishes unknown init outcome before owner cancellation. Await cleanup before creating a fresh reservation. Per-owner sessionStorage contains only upload ID/phase/file metadata, never auth/initData/tokens. Account changes never authorize cleanup of another owner's reservation. Cancel while init is pending remains visibly cancelling until its bounded request resolves; cancellation then removes only unfinished server work. Unknown outcomes stay fail-closed through explicit retry instead of guessing expiry or making new IDs.
+- Client verification: 57 tests across4 suites, selected TypeScript closure, changed-file lint (0 errors;2 pre-existing hook warnings), and node syntax check passed. E2E fixture now echoes chosen IDs and supports cancel. Independent frontend review is clean. Browser launch was not retried after the known local socket restriction; standard repository browser CI remains a gate.
+- Release gate: publish a dedicated draft PR, complete exact-head normal CI and combined internal review, then mark ready and await the already configured automated review before merge. All remarks must be closed; parent coordinates the single merge owner. No paid provider generation, production data/config mutation or unrelated changes are included.
+## 2026-10-10 — WAN upload cancellation and uncertain-init recovery
+
+- Baseline: `tanyapi` `0bedef3db0131a463e1a1372499c7822951c37e6`. Narrow backend follow-up for owner-cancelled temporary Mini App uploads exhausting the five unfinished-session slots. Client changes are coordinated separately.
+- Evidence-first audit: client abort did not alter server reservations; storage already has owner-scoped session rows, a global quota lock, per-row chunk/finalization locks, assembly stamps, and bounded retention. These existing mechanisms are reused. No migration, credentials, security setting, provider/payment operation, generation/history mutation, or production state change is added.
+- API: existing signed Telegram auth protects new `POST /mini-app/api/wan3/upload/cancel` (`upload_id`). It returns `ok: true` and `status: cancelled`, `completed`, or `not_found`. Foreign and unknown IDs are indistinguishable. Owner terminal/completed replays are safe; completed media is never deleted. Malformed IDs are rejected before any session query/mutation.
+- Init accepts optional lowercase 32-hex `upload_id`. Existing matching owner, normalized filename, kind, size and content type replays an open/unexpired reservation without consuming another quota slot or extending expiry. Existing foreign/changed/expired/terminal IDs return generic HTTP 409 `upload_session_conflict`. Older callers can omit the ID. Existing primary-key rows remain durable, including after retention.
+- Recovery rule: after an uncertain init result, replay the same ID and metadata until success or explicit `upload_session_conflict`, then cancel. `not_found` alone never establishes that an earlier request cannot arrive later. No blind new-ID retry, server-side tombstone, new status endpoint, polling process, or guessed TTL clearance is introduced. Quota/disk/auth/transport failures are not a durable fence; the client retains pending metadata for explicit bounded retry.
+- Concurrency: cancellation takes the existing global storage lock then owner row lock. In-flight chunks finish under their existing row lock. A cancelled assembling session fails the existing status/lease check at final persistence and cannot reopen in the completion error path. Final persistence winning the lock returns `completed`; cancellation does not remove media or history.
+- An additional deterministic regression reproduced HTTP task cancellation during `copy_atomic`: its thread could finish after transaction rollback and create an untracked final file. The shared `save_owned_file` boundary now shields its final DB/copy transaction and waits before propagating request cancellation. This covers chunk completion, URL imports and Telegram callers without duplicating wrappers, retaining the owner/quota lock until persistence finishes. Probe cancellation behavior remains unchanged. An import-specific actual `task.cancel()` regression verifies that `discard_import` removes only temporary files after successful final persistence and preserves completed media. No network or provider call is added. Existing size/probe bounds remain; copy/fsync still has no hard wall-clock bound under a stalled filesystem, so waiting is necessary to prevent an orphan writer. Host/process termination is outside the guarantee.
+- Session and byte capacity remain distinct: cancellation immediately releases the five-session admission slot; cancelled declared bytes stay reserved until existing retention actually removes the temporary directory. Retention now considers cancelled sessions after the existing assembly-lease grace period, without waiting for their original expiry. Removal failure keeps the reservation and retries later. Repeated cancel does not renew the cleanup grace.
+- Observability: retained session status/updated_at show cancellation; existing HTTP boundary retains sanitized errors. No signed initData, file content, public media URL, prompt or credentials are logged.
+- Verification: 28 exact-method/service regressions pass against synthetic temporary SQLite and mocked auth. They cover six cancel/retry cycles; max-five live sessions; same-ID concurrent init; Cyrillic normalization; owner/metadata/terminal/expiry conflicts; missing/foreign/replayed cancel; byte-quota accounting; deferred and failed physical cleanup; chunk/assembly/final-copy races; task-abort during chunk and import copy; preserved completed media and generation history; signed-auth enforcement; and endpoint registration/conflict-code mapping. Focused syntax compilation and Ruff pass.
+- Added normal-CI HTTP coverage in `tests/test_wan3_http_flow.py`: actual HMAC-signed aiohttp requests and real isolated application storage, missing/expired/forged auth rejected before cancellation, forged body owner IDs ignored, same-ID init replay, owner cancel/replay, foreign/unknown equivalence, terminal init fence and unchanged balances. These four cases were authored and syntax/lint checked, but deliberately not executed locally because the normal app test fixtures import the restricted database runtime.
+- Verification boundary: locally executed tests use mock auth only and execute unchanged selected storage/API definitions and allowed file/policy/retention/schema code with synthetic dependencies; they do not import the application database or restricted PostgreSQL runtime. No real PostgreSQL integration, full application suite, browser, deployed smoke, or production pass is claimed. Exact-head normal CI, frontend integration and independent review remain release gates.
+- Guidance: repository AGENTS, README, `.agents/README`, recent execution ledger, and relevant source/schema were read. `Bambale0/skills` README was available, but diagnosing-bugs/TDD paths and targeted searches returned no matching skill; evidence-first regression-first workflow followed repository guidance. `Bambale0/claw` AGENTS and `anthropics/skills` webapp-testing were inspected; browser work belongs to the frontend sibling. No external helper code was executed.
+- Rollback: prefer a forward correction. A blind full revert is unsafe while cancelled rows/files remain, because older code neither cleans cancelled directories nor counts their reserved bytes. If rolling back client/API behavior, retain forward-compatible cancelled-state retention and byte accounting until normal cleanup has drained those temporary files, then assess reverting the remainder. No manual production cleanup or DB change is performed here. No schema reverse migration or release has been performed by this worker.
+
+
+## 2026-10-10 - Seedance default Telegram video catalog tab
+
+- Baseline: tanyapi `0bedef3db0131a463e1a1372499c7822951c37e6`. Prepared separately from PR #288; publication/merge must wait for the parent's release gate because the baseline still contains superseded WAN behavior.
+- Evidence: the screenshot matches `video_generation_compat.show_complete_video_model_selection`; a new `create_video_new` explicitly rendered family `all`. Existing family tabs, pagination and model-specific routes are already implemented and reused.
+- Change: only the fresh-entry family argument becomes `seedance`. No model is automatically selected; `video_change_model`, explicit family/page callbacks, trends, repeat and deep-link model restoration are unchanged.
+- Scope: Telegram presentation-only default. Mini App, provider routing, availability, pricing, payments, database, migrations, persistent settings and runtime configuration are unchanged. No new operational control or hardcoded provider/model choice was introduced.
+- Verification: regression first failed (`all` versus `seedance`), then 19 isolated public-handler tests passed using real aiogram and the actual capability table. Coverage includes fresh/repeated entry, all four general-catalog pages, seven family tabs and preservation of existing model/media/navigation when changing models.
+- Checks: syntax compilation passed. Ruff passed with the full-repository `bot` namespace explicitly classified as first-party for this sparse source copy; the unconfigured sparse copy misclassifies missing sibling modules equally on baseline and candidate.
+- Safety/limits: dependency stubs isolate application bootstrap, DB and provider imports. `bot/postgres_pool.py` was never read, restored or imported. No runtime, database, paid generation, production smoke or deployment was run. Full normal CI and independent review remain release gates.
+- Rollback: revert this presentation-only change; no migration or financial repair.
+
+- Release coordination: user approved including this isolated catalog change in PR #288 at 13:34 UTC; applied on the fully green WAN head `87072dace66147d9ad4f1c9b2def362d5c54f5b5`, preserving every existing WAN fix. Fresh exact-head CI and automatic review remain required.
+
+## 2026-10-10 — Tanya WAN standard, measured video-reference quotes and safety
+
+- Baseline: origin/tanyapi aa64bb8b8ee90559bec695fc5466ff3df8cbe9d3. Dedicated sparse worktree and agent/tanya-wan3-videoref-20261010. Live checkout has unrelated dirty data/price.json, diagnostics/receipts and restart_check.py; untouched. Restricted database pool module is excluded from checkout, reads and imports.
+- Scope: ordinary KIE wan/3-0-video with separate model/admin rate; measured input plus explicitly selected output seconds retail quote; removal of old videoref multiplier; Motion finance safety; Seedance uncertain delivery. Do not change historical accepted quotes/ledger, admin rates, live configuration, or other bots.
+- Preflight: Prime already provides durable launch/quote/media lifecycle. Standard WAN must reuse it with immutable model identity through recipe, quote, submit, recovery and delivery. Motion presently trusts client duration and refunds any exception, including admin/no debit and accepted submissions. Seedance send timeouts fall through to file/link and are requeued.
+- Decisions pending: Auto and Omni output without independent selector require an explicit reserve/settlement policy; no fabricated output duration will be introduced. Motion duration must come from trusted measured source and documented provider constraints.
+- Vertical slice 1: Seedance public/admin URL, downloaded media and link send exceptions now permit fallback only on explicit Telegram API rejection. Unknown acceptance raises a typed uncertainty outcome; outer dispatch records uncertain, which blocks automatic claims/replay. Auxiliary photo uncertainty does not retry as a link. Stored generated results and balances are unchanged.
+- Evidence: isolated selected-function public send and dispatcher tests initially reproduced four failures (timeout retried and dispatcher pending). After change the isolated tests pass; no application/database/bootstrap imports, paid generation or real messages run. Full application CI remains a release gate.
+- Guidance: read AGENTS, README, local agent instructions, execution ledger, Bambale0/skills diagnosing-bugs/TDD/implement and Bambale0/claw QA checklist, anthropics/webapp-testing. Shared skills updated only after specific user authorization.
+- Remaining: Motion durable receipt/refund and trusted duration; shared pricing/frontends; WAN standard; exact-head tests and independent review; draft PR then release gates. No merge/deploy yet.
+
+- Delivery review follow-up: explicit Telegram 429 is retryable rejection with persisted retry_after deadline honored by atomic claim; it does not trigger immediate fallback or permanent uncertain. Timeout before any active send remains pending, while in-flight send timeout remains uncertain. Nine isolated behavior regressions pass and changed Python parses; database claim/deadline integration requires normal CI.
+
+## 2026-10-10 — Ordinary KIE WAN3 and fixed WAN retail quotes (review pending)
+
+- Ordinary wan_3 / wan/3-0-video is a separate immutable model using the existing shared WAN lifecycle and media contract (14 provider fields, all seven scenarios). No duplicate worker/table or storage split.
+- Model identity is preserved through quote, rate lookup, intent/task, provider submit/recovery, status, delivery, Telegram drafts, owner restore, public repeats and curated trends. Prime legacy recipe fingerprints preserved.
+- New WAN fixed-duration quote v2 freezes input measured video seconds + selected output seconds at current admin model/quality rate. Auto retains the documented 30-total-second reserve; old accepted quote snapshots retain legacy settlement.
+- Mini App recalculates eligible quotes after settings/reference edits; launch remains explicit. Separate ordinary admin quality selectors added without writing rates. Read-only production check found ordinary wan_3 rates absent; launch remains missing_rate until admin assigns rates.
+- Verified locally: nine isolated backend contract/identity/rate/legacy/settlement tests; full existing frontend Jest suite 393 passed before one additional ordinary-editor journey (targeted suite20 passed); TypeScript passed, ESLint zero errors (existing hook warnings). Full lifecycle tests added for CI, not locally run because restricted pool module must not be imported.
+- Independent exact-head review and full CI are required before publication release. No paid generation, real Telegram message, live checkout edit, secret read or history repricing.
+
+- WAN review follow-up: ordinary now enters full publication reference contract, Telegram continuity redirect, internal admin replay lifecycle, strict quality tariff, and trend editor guard. Added ordinary first/last/audio, own/public redirect and admin replay regressions. Actual Chromium against local production static build passed all 14 Prime+ordinary scenario journeys plus model navigation and unknown-ack retry. Start hit-test remains mandatory after quote layout settles; safe-area bottom padding added. Interrupted Prime upload -> ordinary switch component test passed.
+
+## 2026-10-10 — Tanya Motion durable launch safety (review pending)
+
+- Scope: owner-bound measured source + locked output quote, atomic receipt/debit and proven-rejection refund; no historical balance changes.
+- Accepted-but-unbound receipts recover through watchdog without browser presence. Unknown provider acceptance is held, never retried or refunded automatically.
+- Watchdog/callback failure requires terminal provider evidence for new Motion receipts; frozen charged amount survives later role/price changes.
+- Mini App persists original request identity before sending, restores status across reload, and uses identity-CAS cleanup so late responses cannot clear a later launch.
+- Local checks: 27 isolated Python tests on synthetic SQLite/pure functions; 5 real PostgreSQL16 fixture transaction tests (BIGINT, concurrency, refund rollback, pending guard); 3 Jest pending-state tests; TypeScript and changed ESLint passed.
+- PostgreSQL fixture used a temporary network-disabled container and test-only asyncpg cursor shim, not application adapter/full application CI. Created container removed after tests. No provider calls, actual Telegram sends or production DB access.
+- Independent review and full exact-head CI required before merge/release.
+
+
+## 2026-10-12 — Protect author trend assets from generic upload cleanup
+
+- Baseline and deployed SHA: `87087c244bd11127c60f86e19c04e0fbc2b95659`; isolated branch `fix/tanya-protect-trend-assets-20261012`.
+- Incident evidence: the production generic cleanup logged deletion of 15 trend asset files on October 11. The managed author-template directory was absent from its excluded roots.
+- Narrow fix: add `trend-assets` to the existing generic upload-cleanup excluded roots. No TTL, billing, ownership, database, provider, restore, or deployment-script changes. Existing missing assets remain unavailable; this patch prevents further generic TTL deletion only.
+- TDD: the actual cleanup loop and removal function, extracted without application imports, run against temporary synthetic directories. Before the fix: one preservation regression failed, two ordinary-cleanup/protection regressions passed. After the fix: all three regressions passed; focused Ruff and whitespace checks passed.
+- Tests preserve aged image/video/audio assets and empty shards, existing refs/feed/WAN/public-result protection, remove expired ordinary uploads (including similarly named directories), and preserve recent ordinary uploads. Production cleanup is never invoked by the tests.
+- Fresh playbooks were read through GitHub connectors. Shared local playbook git refresh was denied and was not retried; no claim of a successful local refresh.
+- Release gates: independent exact-head review, required CI, user-facing pre-release report, guarded deployment and exact SHA/health verification. No recovery from unverified media backups; no PR294/helper changes included.
+
+## 2026-10-12: preserve legacy Seedance 2.5 repeat image slots
+
+- Baseline: tanyapi 1af61b3f1e275fdc2f0507ef03ba27ec7f5c5e2c; separate fix branch.
+- Confirmed synthetic defect: generic Photo+Text repeat with one viewer photo replaced the entire legacy multimodal image list. A retained Image2 prompt binding then failed validation.
+- Scope: non-owner, legacy selection=None, multimodal S2.5, generic imgtxt, source list with multiple images. Replace Image1 only; retain Image2..N on the server in canonical order and private provenance. Multiple replacement images and collisions with retained slots fail closed. Explicit grants, owner edits, identity/editing and frame scenarios keep their existing contracts.
+- No schema/config/rate/provider/payment changes. No restoration of missing assets. The author-specific live examples are not yet linked to this synthetic reproduction.
+- Existing authenticated restoration and before-charge permission recheck remain unchanged; no hidden references or author prompt are returned in response/errors.
+- TDD: isolated actual-function regression initially 3 failed / 3 passed. Added installed HTTP-entry tests for preservation, excessive replacements, unavailable retained input, owner editing and revocation; exact/known-host alias collisions covered in CI.
+- Local tools: pure AST tests only, no application/database imports. Full HTTP/backend/browser regression runs require CI.
+- Guidance: local diagnosing-bugs (Bambale0/skills), debugger (Bambale0/claw), webapp-testing (anthropics/skills). Previously denied shared playbook refresh was not retried.
+- Rollout: draft PR to tanyapi; independent exact-head review and full required CI; parent sends pre-release report before merge/CD. No paid production smoke.
+
+## 2026-10-12: visible legacy repeat follow-up
+
+- Base fcea07bdd203dd446acdd09c60fcd4ee04d084c7. Review P2 reproduced: visible legacy publications with null selection submit all displayed images; the new hidden-slot guard rejected them.
+- Minimal correction: apply the first-photo-only protection only when the source references are hidden. Server-owned visibility is used; browser fields cannot bypass it. Existing visible legacy all-or-nothing behavior is preserved.
+- RED: 2 new visible cases errored / 10 prior hidden cases passed. Full installed HTTP-entry regression covers unchanged visible lists and complete visible edits.
+- Review P1 task-detail exposure was not reproduced on the actual HTTP path: miniapp_task_detail calls the existing privacy sanitizer, which recognizes persisted source_feed_gen_id and removes hidden links/prompt. Added actual HTTP handler tests using real S2.5 request-data assembly, with both successful and failed privacy lookup. No production privacy change needed for this reported path.
+- No database, pricing, media restoration or provider-call changes. Local verification uses isolated functions; full app tests run in CI without local forbidden-adapter imports.
+- Release gates remain independent review, exact-head full CI, parent pre-release report and guarded CD/runtime verification.
+
+## 2026-10-13: legacy repeat required-slot descriptors
+
+- Base 730faded29c4bd047f27837c923587954a25880e. User-confirmed shape: four existing source images; visible legacy selection retains positions3 and4, while the viewer supplies only one image. Backend correctly requires two replacements. The old card omitted descriptors and the generic form misleadingly marked uploads optional.
+- Added display-only bridge for closed retained-tail S2.5 multimodal legacy selections. It reuses existing capability/alias/pricing validation and returns only index/role/binding. The temporary typed-shaped validation copy is never persisted and never authorizes launch. Original legacy grant, selection and before-charge checks remain unchanged.
+- Existing renderer now receives upload0/upload1/fixed2/fixed3 and cannot submit one upload. Optional trailing/no-retained layouts keep their existing UI rather than silently adding required uploads. Identity/editing/frame/audio scenarios are not promoted by this narrow bridge.
+- Additional independently reproduced hidden video-mode edge: one photo lost Image2 when v_type=video. Existing hidden first-photo protection now covers imgtxt and video, preserving frame/identity/editing exclusions.
+- Pure tests: video-mode regression RED2FAIL/12PASS before correction, GREEN14PASS after. New pure descriptor helper6PASS. Installed HTTP, real DB card/grant persistence, aliases and actual component upload-order regression added for CI.
+- UI test written separately; no local Jest dependency available in this sparse worktree. Full application tests are CI-only to avoid forbidden database-adapter imports.
+- Exact user source checked read-only: all four files present, no recovery needed for that source. No production data/rates/permissions/media changed; no paid requests.
+- Skills: evidence-first diagnosing-bugs, scoped debugger and actual-component testing. Unknown/cancelled reads were not bypassed; focused source access resumed only after explicit permission.
+- Rollout: separate draft PR, independent review, full CI, parent pre-release report, guarded release and exact runtime verification. Do not equate an unrelated synthetic fix with all user reports being resolved.
+
+
+## 2026-10-13 WAN mobile chunk transport
+
+Base b0c77f579fbf7824846c98f59e5bbe2d2e88b8f2. Scoped diagnosis, implementation, test and release plan: [WAN chunk transport](WAN_CHUNK_TRANSPORT_2026-10-13.md). Shared playbook refresh remains blocked by the earlier access denial; existing relevant guidance was read. Candidate patch transferred with verified SHA256 9cb74dfbb25fd7e599ed6def4c7f97cf6f6577ffcbd005be2151b4aa1cb91958. Local actual-route isolated suite: 12 passed. Added a narrow documented S102 waiver for trusted AST extraction; no app/database import. Full CI and exact runtime verification remain release gates. Real iPhone upload confirmation remains necessary after deployment.
+
+## 2026-10-13 WAN manual trend publication
+
+Baseline ca3df2da85856ee593777a30555ee7e474fc6946. Observed generic prompt submission creates a WAN catalog row without a private recipe; repeat-plan then returns 404. No historical rows are changed or reactivated.
+
+Implementation: strict complete recipe and explicit replacement keys for both WAN models; administrator check; media ownership/type/hash validation and atomic public-card/private-recipe insertion under the same storage lock as retention. Existing retention pins recipe_json, so saved references remain protected without global TTL changes. Public cards contain only presentation and slot metadata. No generation, payment or provider request is used by publication. External link slots and template user fields are rejected explicitly rather than silently discarded. Existing generated-task publisher remains available.
+
+Coverage: pure contract tests and existing chunk HTTP regression run locally without application/database imports. Full application tests cover both models, public privacy, compiled replacement order, foreign/nonadmin rejection, rollback, retention and no reactivation. These require official CI. Frontend implementation and independent final review pending. Relevant previously read diagnosing-bugs/debugger/webapp-testing playbooks used; shared checkout refresh remains unavailable after prior denial. Release requires exact CI/review and a user-facing report before merge. Real user publishing/repeat UI smoke remains distinct from paid generation.
+
+
+## 2026-10-14 PR305 release verification
+
+- Isolated worktree at /root/tanya-workspaces/video-billing-pr305; live tanyapi checkout and data/price.json untouched. PR source head 1d7e0916; tanyapi later incorporated PR308.
+- Resolved review findings: M4V/WebM local duration measurement; duplicate video normalization; stale quote refresh in Mini App; Telegram repeat missing-reference handling; explicit trend video quote-only and second-click approval to prevent unconfirmed debits.
+- Trend hash binds actor, trend, saved recipe, resolved hidden and uploaded references, quote seconds/rate revision. A missing/stale hash fails 409 before balance deduction and finalizes an idempotency claim.
+- Verified local Next.js static production build, TypeScript, targeted Jest and all 62 Jest suites / 476 tests, and Playwright repeat references flow at 320/390/430 px. Added backend hash, no-debit, format and dedup regression tests.
+- Host pytest blocked by missing aiogram: required Python CI must prove backend. No production price/config/migration/provider changes, no paid generation.
+- Remaining: exact-PR CI (including browser, PostgreSQL, bot, Docker), review, native squash auto-merge to tanyapi, exact-SHA deploy and postdeploy health/telemetry smoke. Do not claim deployed before checks.
+
+
+### 2026-10-14: final Python CI gate after 9561e8d
+
+- GitHub TG CI 1894 failed only in safe regression suite: 3721 passed, 110 skipped, 10 failed. Two were private Seedance trend contract tests that bypassed the new mandatory preview-and-approval request; eight were isolated pure pricing tests whose module stub did not implement the existing normalization dependency.
+- Regression repair (test-only; production code unchanged): update the isolated reference-policy stub to deduplicate and trim as the real public interface does; for valid private video trend tests obtain the server's quote first, assert preview does not launch or debit, then explicitly pass the hash. Invalid/oversize videos remain fail-closed. Do not bypass the actual approval gate.
+- Host Python unittest of isolated pricing tests: 8/8 passed; compileall passed. GitHub Python CI rerun is authoritative for full bot tests. Existing dirty production price.json and diagnostics remain untouched.
+
+
+### 2026-10-14 CI 1895 final browser regression
+
+- Safe backend regression passed: 3731 passed, 110 skipped; standalone Mini App browser E2E and other checks passed.
+- GitHub CI job 115898452976 failed only in e2e/creator-tariff.mjs:75: it still asserted the deleted presence multiplier (40 bananas) instead of a server-measured reference video quote.
+- Updated synthetic creator tariff browser test to quote 18 input seconds plus output with model/viewer rate, check read-only quote produces no launch, require hash on launch, refresh quote when prompt changes, and assert no client-controlled tariff. Local Chromium E2E passed all four combinations (standard/creator with Seedance 2/2.5).
+- Production remains on 177cf068 until protected branch checks pass, native squash merges PR305 and exact deploy is verified. No paid generation and no runtime price.json changes.
+
+### 2026-10-14 Trends links — iOS clipboard denial after async URL retrieval
+
+- Production SHA before fix: `8d8aef6839705a3598695b0f7d0c6569fa1a34b5`. User screenshot shows red error `Не удалось скопировать ссылку` on iPhone Telegram Mini App -> Trends -> Link. This exact string was produced by `handleCopyLink` after awaiting authenticated `/prompts/link` and then calling clipboard methods. The async POST consumes iOS WebView's transient tap activation; WKWebView can deny both `execCommand('copy')` and Clipboard API, while Trends had no manual or native share recovery. Feed already had a recovery UI.
+- Fix scoped to Trends: preserve authenticated backend-owned exact referral deep link; open accessible share dialog, show selectable readonly link and fresh direct-copy gesture on iOS, native OS share, Telegram forward or open link, honest clipboard failure rather than false copy success. Keep Android automatic success. Reject invalid/executable links; invalidate late API responses on dialog dismissal and offer API retry. Emit `trend-share-clipboard-denied` client telemetry without logging referral token or URL.
+- Regression proof: targeted test originally failed with the exact red banner and no usable share dialog; after fix, 8 targeted tests pass. Full Mini App Jest: 63 suites / 486 passed, local Next 16 production static build, TypeScript and changed-file lint passed. Chromium Android synthetic Playwright share flow passed. Standalone iOS WebKit requires libraries missing on production host, so protected GitHub CI now installs Chromium+WebKit and runs dedicated `e2e/trend-share-clipboard.mjs` in addition to `critical-flows.mjs`.
+- No database/payment/provider changes, no paid generations and no mutation of live runtime files. Release must be PR against `tanyapi`, native protected squash auto-merge, exact-SHA production deploy and health/revision/telemetry smoke. Real iPhone WKWebView acceptance may differ by Telegram/OS; users always retain manual and native share recovery even when programmatic clipboard is forbidden.
+
+
+### 2026-10-14 — Tanyapi private trend variable binding and Seedance launch
+- Production complaint: editing birthday digits on a photo/video trend left the original visible digits in the private base prompt and appended only user instructions; user then saw contradictory output. The original hidden scenario was retained by storage, so replace in place rather than overwrite prompt.
+- Read-only audit of production templates: 8 video + 3 image trends had configured viewer variables without token bindings; in-memory dry-run of new prompt renderer successfully substituted the unambiguous original visible digits for all 11 while preserving timecodes and reference aliases.
+- Admin can set private original_value for ambiguous or text fields. Public user_fields sanitizer strips original_value; viewers only see labels/inputs. Legacy {{token}} stays compatible, unbound nonnumeric fields retain original prompt with appended authoritative change instructions.
+- Found independent prod HTTP 500 after /trends/run pricing: Seedance 2.5 wrapper rejected billing_quote kwarg; now accepts and forwards verified quote, without duplicate price calculation. Seedance 2.5 quote uses own resolution and edit duration.
+- Synthetic tests for prompt renderer, wrapper/provider payload, pricing, privacy and existing trend integrations; full Mini App Jest, TypeScript, ESLint, and production export build. No paid calls, DB updates or production price modifications.
+
+
+---
+
+## 2026-10-15 — PR #312 trend showcase release hardening
+
+- **Baseline:** feature bc1aeb1cb1c2623754e5728718134545e40b78b6, tanyapi production b938e8b924837d0a2af22ddf3b11f0d7b5c7dffe.
+- **Goal:** finish editor-managed trend folders and live video tiles; merge safely and verify exact backend/Mini App release revision.
+- **Audit:** PR #312 all prior CI gates pass; latest code review found three unfixed issues: shared trend draft state crosses folders, extensionless videos rendered as images, no durable admin catalog audit. Existing user_prompts.category, Seedance/WAN pipelines, referral, prices and private recipes must not change.
+- **Reuse:** trend_catalog SQLite/PG migrations, bot/trend_catalog_api signed Mini App auth, existing append-only creator/partner audits, TrendShowcase, TrendCategoryManager.
+- **Risks:** concurrent admin changes; leaking hidden recipe in audit; PostgreSQL DDL triggers; category delete losing history; stale draft changing another folder. Existing prod data/price.json is mutable and must be preserved.
+- **Implementation:** 1. partition draft state by (category_id, trend_id); 2. resolve video media by safe public kind+legacy tags; 3. add independent append-only trend_catalog_audit with signed Telegram actor, action, before/after snapshot, stored in the same DB transaction for every mutation; 4. expose authenticated admin history; 5. regression/CI/code review; 6. merge to tanyapi; 7. verify exact SHA and production smoke.
+- **No hardcode:** editorial category names/order/badges are admin-controlled DB data; audit stores only IDs, public category metadata and membership positions, never executable prompts or private refs.
+- **Observability:** read-only history list with event ID and actor, signed request logs, deployment SHA/health and HTTP endpoints, check errors after release.
+- **Test plan:** SQLite unit/HTTP atomicity and append-only guard; PG migration via existing CI; Jest category switching and no-extension video; browser E2E; CI suite, Docker image, deployed SHA, endpoint guards.
+- **Status 2026-10-15:** implementation in progress; production deliberately unchanged until green checks and review.
+
+
+### 2026-10-15 hardening implementation checkpoints
+
+- Folder+trend scoped draft keys, including move targets and badge expiry, verified in React/Jest.
+- Video cards honor public preview_type, then public generation kind/category/trend-video and local extension including MKV/AVI.
+- New additive trend_catalog_audit schema with SQLite and PostgreSQL append-only guards; eight service mutations insert signed actor and before/after metadata on the mutation connection before commit.
+- Authenticated admin history API/UI; read-only and no prompt or private media in snapshots; timestamps include microseconds.
+- Tests: 20 focused backend passed; 12 frontend Jest passed; PostgreSQL acceptance appended to isolated creator test suite (requires disposable GitHub service).
+- Remaining: full regressions, Next build, browser tests, CI/second code review, merge and production SHA/health/log smoke.
+
+
+### 2026-10-15 pre-PR gate evidence
+
+- 160 backend regressions passed (including immutable SQLite audit, rollback, signed admin-history HTTP, variable binding, Seedance/WAN/Pinterest/privacy).
+- 57 Jest regressions passed, TypeScript and ESLint clean.
+- Production Next.js static export generated; Chrome mobile E2E passed extensionless video, category pagination, existing repeat dialog, admin editing and signed history.
+- Disposable PostgreSQL trigger/atomicity case added to creator PostgreSQL workflow tests, awaiting GitHub runner.
+- No live customer generations, price changes, DB edits or direct production deploy performed.
+
+- Follow-up Codex review on functional commit 59b5676: security review clean; reviewer identified reverse-order PostgreSQL row-lock deadlock for concurrent category reorder (P2).
+- Fix: PostgreSQL now locks category rows ORDER BY id FOR UPDATE prior to position updates; SQLite takes BEGIN IMMEDIATE before reading revisions. Added disposable PostgreSQL concurrent opposite-reorder test requiring exactly one revision-conflict and one success, rather than deadlock/500.
+- Final local focused regression: 20 tests passed, Ruff clean. Pending GitHub PostgreSQL concurrent CI, entire CI and code review final disposition.
+
+
+### 2026-10-15 — WAN 3 repeat price / iPhone JPEG upload release
+- **Baseline:** tanyapi production `a7a498044f7f40eaac07b38d7e56c7c49caec026`. User screenshots: WAN reference trend repeat reports red `IMG_0729.jpeg` validation failure; published WAN repeats omit banana price.
+- **Evidence:** Postgres read-only lookup found 5 attempted `IMG_0729.jpeg` reservations, 1,017,222 bytes each; four received all chunks, repeated `/wan3/upload/complete` HTTP 400 and session cancellation. Stored bytes already expired, so the precise Pillow/media rejection is not recoverable. WAN public repeat plans return 200 and 10 current approved WAN 3 trends have durable recipes; do not loosen author media/privacy permission.
+- **Pricing root:** `estimate_trend_repeat_cost` correctly returns null for WAN because the total depends on measured retained/uploaded video durations, but the UI hides all price information. Introduced a **catalog-only server retail floor** from current per-model resolution rates and output duration; Auto is an explicit 30-second maximum reserve. Source video duration stays unknown until server quote. Supports creator tariff snapshot; missing/stale rates fail closed. Public API carries only amount/type, no hidden reference URLs/prompts; final quote/hash/charging unchanged.
+- **Upload recovery:** after a 400 `validation_error` from owned image upload, the existing client-side session cleanup finishes before an optional one-time browser canvas JPEG export (bounded to 4096px and 20 MB) is uploaded as a fresh session. Original filenames shown in UI; Abort/cleanup and admin/private materials unchanged. If even the export is rejected, show actionable JPEG/PNG instructions and allow an explicit retry. Original failed image cannot be replayed because retention removed its chunks; real iPhone acceptance still required.
+- **Coverage:** focused Jest 4 suites / 42 passing, TypeScript noEmit, ESLint/lint, Next.js static production build; backend price contract + WAN regressions + trend API 74 passing; Ruff + diff check. No paid provider calls, no DB edits, no price.json/config changes.
+- **Release:** dedicated branch -> PR against `tanyapi` -> protected checks/auto-merge -> exact production SHA, backend health, Mini App revision and logged upload/quote observation; no `main`/`dev` edits. Physical iOS Photos/Telegram acceptance is a follow-up, not implied by mocked tests.
+
+
+### 2026-10-15 — restore successful trend repeat counts on categorized live tiles
+- **User report:** the previous successful-launches number disappeared when the editor-managed trends screen switched to live category tiles. The legacy trend success compatibility module still enriched legacy list+detail, but trend_catalog bypassed it and TrendShowcase rendered no counter.
+- **Production read-only evidence:** trend_generation_runs joins uniquely on task ID with generation_tasks.status = completed: 1,367 completed, 33 failed linked tasks initially, while user_prompts.uses_count includes accepted/failed launches. The count belongs to trend ID, never to an editorial folder. No live data mutation.
+- **Backend:** one existing get_trend_success_counts bulk query per catalog, category page or authenticated admin trend search; publishes successful_runs_count only on sanitized cards, zero for confirmed new trends, same count across multiple folders and pages. Legacy API unchanged.
+- **Frontend:** compact success badge on each live tile and full successful-repeat count in detail. Never silently treat missing metrics as zero. Admin-defined folder order, prompt privacy, previews, links and repeat action retained.
+- **Regression:** SQLite categories, pagination, admin search, zero, failed/pending/processing, duplicate task ID, signed HTTP privacy; React badge/modal tests and Chromium mobile category browser test. No charges, provider calls, or production DB writes.
+- **Prior release gate:** PR 318 CI failed inside a synthetic bot-start-gate test because a deferred Playwright response.json lost its DevTools response body at 390px. The synthetic fixture now verifies its own recorded HTTP body/status independent of Chromium response-body caching and request cancellations, without changing application behavior. Required CI must pass before protected merge.
+
+
+### 2026-10-15 — GitHub E2E cancellation robustness after PR #318 regression
+- GitHub CI twice failed specifically in bot-start-gate.mjs: response.json raised Network.getResponseBody No data found for resource, after all prior E2E flows succeeded. Pre-reading response.json only shifted the failure.
+- Synthetic bootstrap mocks now retain the exact HTTP body/status by Playwright Request WeakMap at route fulfilment; capability assertions correlate to requested capability check and fixture body. Null Playwright response after a subsequent intentional client abort is tolerated; actual app-gate visible/hidden, retry, delivery, and preserved draft checks still enforce the user-facing behavior. Other JSON responses in this fixture reuse the recorded response body; no production auth or delivery code is bypassed.
+- Local Chromium test passes 320,375,390,430; live trend category browser test passed, including completed repeat badges. Counter singular/plural forms covered with React regression.
+- Native protected GitHub CI required before auto-merge/deployment; no server state mutation.
+
+
+### 2026-10-15 — source-aware video repeat authorization and protected Wan reroute
+- Context: production PR #318 already shipped; users still saw a blanket author-permission error when repeating certain videos. All work on isolated tanyapi worktree, read-only production probes.
+- Repro RED: focused pytest published_curated Wan fixture failed in build_repeat_plan on action_type=trend; React tests showed all generic submit/quote errors incorrectly latched repeatError. Tests later GREEN after fix.
+- Live read-only evidence: 280 recent published completed videos, 33 ordinarily authorized Wan sources; one public Wan3 source generation (row id 315600) refused solely due to action_type=trend, but it records an integer original trend_id 2048. Curator trend 2048 is currently approved, public and has pinned complete Wan3 recipe. Derived owners must NOT sublicense inherited private input URLs or prompts.
+- Backend: a completed publicly accessible Wan generation with action_type=trend, no source_feed_gen_id, and positive integer trend_id delegates a new repeat to the **currently approved curator trend plan**. Same model required; existing quote and launch transaction verify original trend hash, permissions, hidden source media and submitted replacements. Revoked original, malformed provenance, nested repeat/remix, model mismatch remain denied. No permission bypass or database changes.
+- Frontend: if WAN repeat-plan returns trend_id for published feed source, editor transitions to canonical curated trend plan (clears inherited prompt/source_feed_gen_id), requires user uploads, quotes using original trend id/hash; explanatory copy is rendered. Generic video repeat only locks on explicit repeat_permission_changed; provider failure/network/price error no longer masquerades as author revoked permission, and preserves user draft. Unknown model gets distinct error. Missing/invalid private permissions remain fail-closed.
+- Tests: 196 backend authorization/curated/transaction tests, 40 focused React tests, 11 Wan deep-link tests (stale mock updated), TypeScript and production Next.js build all green; Ruff, lint and diff check clean. Mobile browser E2E pending. No billable provider launch, no production DB updates.
+- Release: PR against protected tanyapi; required GitHub CI, auto merge, production exact revision/health, read-only live published Wan derived source repeat check; verify admin price.json checksum unchanged. Real client acceptance after deployment still needed.
+
+
+### 2026-10-15 — CORRECTION: publication permits repeating the published result
+- **Owner clarification overrides prior issue #319 assumption:** if an author publishes a completed generation in the feed, that specific publication is repeatable. Being created from a trend, remix or prior repeat is *not* a blanket refusal. Earlier #319 auto-merged before the correction; hotfix directly follows it. All production probes read-only and implementation isolated in fresh worktree.
+- **Correct identity:** repeat the actual clicked publication, with its own prompt edits, output settings and numbered reference slots; never silently reroute to its ancestor trend. For Wan, source_feed_gen_id in the returned public plan is the clicked child ID; source URLs and saved prompt remain exclusively on the server.
+- **Reference policy:** publication enables repeat, while explicit per-input fixed/upload selections still control use of saved hidden media. A visitor uploads replacement files for upload slots. Revoked or unavailable selected media remain blocked before a provider request, with clear errors and refunds as applicable. No public media URL/prompt leakage.
+- **Backend:** remove ancestor-only denial for Wan and typed Seedance/generic videos and old compatibility restore; preserve pre-charge immutable-plan/consent check. Telegram callback targets the published child itself. For image remix/feed and generate-image, eliminate old derived-only 403; preserve source recipe and explicit fixed-slot merge. On launch verify private media against the immediate published parent, while source_feed_gen_id retains lineage root for accounting/history. Unpublish blocks repeat.
+- **Regression:** RED on published Wan trend/repeat/remix and revoked-ancestor reference cases under #319; green after changes. Added published child photo matrix, provider authorization checks for clicked child vs lineage root, Seedance/video callback + prompt/slot tests, Wan frontend source-plan tests. Browser/production build, combined suite and protected CI are release gates; no paid launch or production DB write.
+- **Acceptance:** read-only production repeat-plan for real published Wan task 315600 must return *source_feed_gen_id=315600*, preserve the child settings and avoid trend_id fallback. Inspect whether user-upload slots are requested appropriately; then manual Telegram repeat, upload, quote and finished output in normal client.
+
+- Auto-retry: persist the server-authorized immediate publication ID as private_repeat_permission_source_id in the child request snapshot and recheck it on failed-provider automatic retry. Retain source_feed_gen_id as the original lineage for history; old jobs without this field keep old behavior. The current child owner can revoke consent by unpublishing.
+
+## 2026-10-20: owner-requested full rollback to October 18
+
+- Request: roll back Tanya / NEUROMIX code from Git to October 18, 2026 after a Mini App startup incident; do not substitute another feature patch.
+- Selected first-parent baseline: `63d6e8b2164de223f80ca950460c697e123237c1`, October 18 at 21:38:29 Europe/Moscow. Selection cutoff: October 19 at 00:00 +03:00.
+- Pre-rollback production checkout: `5c733182d322758168f7c0f3290e7c7044eafeff`; running backend/frontend: `f1649adbaa2e2023023541556b883e7482a77f78`.
+- All tracked application, frontend, test, schema and workflow files are restored byte-for-byte to the baseline. This ledger entry is the sole difference from that snapshot. Existing DB tables are NOT downgraded or deleted.
+- Runtime tariffs (`data/price.json`), secrets, current DB/balances/payment receipts, user media and outputs must be preserved. No paid generation, mass message, financial correction or historical media maintenance is authorized by this rollback.
+- Before changes: Git bundle, working diff, private config/runtime metadata, static snapshot and exported running-container filesystem are saved locally. The current running image has no local image entry, so a Docker rootfs export replaces an impossible image retag. Database backup remains mandatory before cutover. No private backup content is committed.
+- Post-October-18 pending PRs #339 and #344 are paused as drafts to prevent reintroducing changes during rollback. #343 was already draft. No branch history is rewritten.
+- Full rollback intentionally removes the smart-repeat rollout, optional extra-photo UI and forced Telegram-to-Mini-App handoff added on October 19, as well as the October 19 reference-query correction. This is not a claim that every earlier bug is fixed or that carrier connectivity is solved.
+- Verification gates: exact snapshot comparison, protected CI, target build/frontend tests, DB compatibility/read-only in-flight-operation check, preserved runtime files, container/static/public revision agreement, backend health, full static asset delivery and browser startup smoke. Results pending at commit creation; exact evidence will be recorded in the release PR.
+
+
+### 2026-10-20 — cautious disk cleanup after the 12-hour audit
+
+- **Authorization:** Igor explicitly requested disk cleanup and inspection of all usage, preserving user/trend/repeat references. Delete only verified disposable caches or unused reviewed images; no databases, volumes, containers, uploads, outputs, references, source/worktree edits, recovery assets or backups are cleanup targets.
+- **Baseline:** source `origin/tanyapi` = `0c6c7062045dc2a2cf9cdd5f21152bdecfb8efbd`; running backend = `c9cf187497c1d9725424bf300b78a27a33e04e02`, healthy, zero restarts. Isolated `agent/safe-disk-cleanup-20261020` task worktree; existing production price changes preserved.
+- **Fresh audit:** before this task's deletion operations, free space already rose to 89,058,705,408 bytes (about 82.9 GiB), with 25 Docker images versus the previous audit's 100. The previously proposed three images are already absent, along with other images; that earlier freeing is not credited to this cleanup. Current runtime and named rollback image still exist. No image/container/volume prune is planned.
+- **Plan:** (1) inspect top-level and project disk usage; (2) snapshot runtime/config/known persisted reference-file existence; (3) prune old unused BuildKit cache through Docker with recent-cache reservation, and clean verified npm/pip download caches when no installer is active; (4) verify actual free-space gain, all containers/mounts/recovery images, protected files, backend/public health/static/browser; (5) record exact actions and leave data/backup retention for separate work.
+- **Verification/no-hardcode:** use fresh Docker references, official cleanup commands and filesystem measurements; no runtime business/config/schema/API/UI/FSM/provider/payment changes, migrations or paid tests. Guidance: Bambale0/skills diagnosing-bugs measurement-first, Bambale0/claw operational review checklist, anthropics/skills webapp-testing. Private evidence is stored only in mode-0700 `/tmp/neuromix-disk-cleanup-20261020`.
+- **Actions completed:** old unused BuildKit cache prune (`until=24h`, reservation 10GB), npm `_cacache` clear, pip-tools/pip download cache purge, removal of 10 unused VS Code Server versions older than 60 days after process/FD/maps/mount checks. One immutable-protected old installation was preserved without removing protection; current/recent servers, settings and source code remain. No image/container/volume/data/media/log/backup deletion.
+- **Space result:** available bytes increased from 89,058,705,408 (82.94 GiB) to 117,452,447,744 (109.39 GiB): **+28,393,742,336 bytes / 26.44 GiB**, df rounded 110G free/88% used. Earlier image removal performed before this task is explicitly excluded from this gain. Full disk-use allocation and retained areas recorded in [cleanup report](DISK_CLEANUP_2026-10-20.md).
+- **Protection evidence:** PostgreSQL read-only snapshot covered 47,225 saved refs, 26 trend assets and 1,492 audited task snapshots. All 44,048 existing referenced files remained present with identical size/inode/mtime; 3,821 already-missing paths are not attributed to cleanup. All 41 containers retained image/start/restart/mount state, protected current/recovery images exist, runtime `.env`/price hashes match. Backend/public health, same exact backend/Mini App SHA, runtime pip check and published mocked mobile browser smoke passed. Existing reference/recovery/financial audit findings remain follow-ups; no paid generation or business mutation. Documentation diff/privacy review and PR are the remaining delivery steps.
+
+### 2026-10-20 — restore administrator-only trend repetition statistics
+- **Baseline:** `cab455f1cfdb50c508c2550569213eb7ca6d906c`, matching running container and published Mini App revision. Dedicated worktree; production checkout and mutable price.json are not edited.
+- **Report:** ordinary Mini App users see green successful-repeat badges; statistics must remain administrator-only.
+- **Root cause:** PR #318 (`f3f38525`, October 15) added unconditional metric enrichment in list_catalog/category_page and unconditional badges/detail counts in TrendShowcase. The October 18 rollback contains that implementation. Not a user accidentally receiving administrator privileges.
+- **Related exposure:** legacy prompt list injects the same count into description; public serializer and Telegram caption currently retain it. Protect these read surfaces too without changing collection, calculation or generation paths.
+- **Plan:** (1) reproduce non-admin exposure in role-specific tests; (2) default-deny DTO and UI metric visibility using existing verified config.is_admin / bootstrap user.isAdmin; (3) preserve admin completed-only counts, category paging, prices/new badges/repeat links; (4) tests/build/browser E2E; (5) protected PR to tanyapi, exact-SHA autodeploy and production read-only/browser verification.
+- **Scope:** no schema/config migration; no counter reset, provider request, billing, balance, reference or repeat-flow change. Legacy authored descriptions remain intact except the known system-added counter prefix. No new admin flag or hardcoded production user IDs.
+- **Verification plan:** signed catalog/category HTTP for admin/viewer (including forged body admin flag), public legacy DTO and Telegram captions, React shelves/pagination/detail/role change/stale metrics, mobile Chromium, TS/build/lint. Implementation and final release evidence follow below.
+
+- **Red reproduced:** before implementation, five backend regressions failed (viewer catalog/DTO/legacy caption) and two React regressions failed (viewer and role-revocation displays). Admin positive controls passed. Exact logs on host: `/tmp/tanya-trend-counter-red-{python,react}-20261020.log`.
+- **Implemented:** administrator-only successful metric enrichment; copied public trend DTOs omit accepted/success counters and exact generated legacy description prefix; signed admin shared-detail retains stats while still hiding recipe; Telegram caption uses the same default-deny policy. Explicit bootstrap role passed to every shelf/page tile and preview. Non-trend prompt statistics unchanged.
+- **Initial local verification:** 106 backend tests passed across catalog, signed API, legacy/shared-link privacy, Telegram captions, metric invariants and reference/privacy regressions. 26 Jest tests passed (showcase + repeat-cost + share-link); tsc and production build passed. Mobile Chromium category E2E passed for viewer/admin, paging, preview, role change, prices/new badge, repeat and admin actions. Ruff and changed runtime TS lint passed (test file is excluded by the existing ESLint configuration). Extended critical browser suite was still running at this checkpoint; its completed result is recorded below.
+- **Review:** no statistics/balance/schema/provider writes, no mutable production data staged, only existing server config.is_admin and verified bootstrap role. Data is copied rather than mutated across roles; missing metric stays absent, admin confirmed zero remains visible. Rollback-era generation and upload architecture retained.
+- **Initial release checkpoint:** ready for a dedicated PR into tanyapi and protected CI; deployment was not yet claimed. GitHub connector could not read branch-protection admin metadata (403); no attempt to change protection or bypass required checks.
+
+- **Full CI follow-up:** first PR #346 run `39479777081` exposed an isolated AST test loader omitting the newly introduced real sanitizer helper, causing `NameError` in `tests/isolated/test_wan_public_trend_marker.py` (12 subtest failures; 3,869 other tests passed). Added the actual helper declaration to the isolated loader; no fake implementation or weakened expectation. Strengthened both WAN variants and signed shared-detail tests with administrator-only counter assertions. Runtime code unchanged by this test-harness follow-up. Native merge was held until complete green CI, then completed as recorded below.
+- **Production baseline reproduction:** read-only catalog service in the deployed container returned counts for all 87 viewer cards and all 3 sampled category-page cards. The same diagnostic checks PostgreSQL transaction_read_only and replaces only startup schema-creation hooks in its disposable process; no database mutation, no real user authentication/profile changes, no provider call.
+
+#### Final release verification — 2026-10-20
+
+- **Merged release:** [PR #346](https://github.com/Bambale0/banano_kling/pull/346), native squash auto-merge to `tanyapi`, exact merge SHA `c9cf187497c1d9725424bf300b78a27a33e04e02`. All four mandatory gates passed for that SHA in [CI run 39483820025](https://github.com/Bambale0/banano_kling/actions/runs/39483820025): Python/deploy validation, safe regression suite, Mini App browser E2E, production Docker image.
+- **Completed local checks:** final focused backend/privacy/reference run passed 110 tests and 13 subtests. The complete `critical-flows.mjs` run, including imported suites, exited 0 in 207 seconds; its earlier 180-second timeout was not counted as success. The 26 Jest tests, TypeScript, production static build and focused lint checks above passed.
+- **Autodeploy recovery:** the initial deploy stopped before replacing the container because free disk space was below the existing 10 GiB minimum. Reclaimed 5.211 GB of Docker build cache older than 24 hours with a 20 GB reservation, then reran only the failed GitHub deploy job. No minimum-space guard was lowered; no runtime data, images, volumes, media or backups were deleted.
+- **Production deployment:** [deploy run 39483820089](https://github.com/Bambale0/banano_kling/actions/runs/39483820089) succeeded on 20.10.2026 at 22:57 MSK (19:57 UTC). Production checkout, healthy backend container revision and public Mini App `revision.txt` all matched the exact merge SHA. Public backend `/health` returned HTTP 200/status ok; restart count 0, OOM false.
+- **Real database acceptance:** the deployed catalog service, with PostgreSQL-enforced read-only transactions, returned successful/accepted counters on 0/87 viewer cards and 0/3 sampled category-page items. Administrator successful counters were present on 87/87 cards and 3/3 sampled page items, including 22/22 sampled Seedance 2.5 catalog cards. Roles were passed explicitly to the service; this was not an authenticated real-user HTTP session. The same assertion failed against the previous container with `Viewer catalog leaks repeat counts`, then passed after deployment.
+- **Published frontend acceptance:** mobile Chromium against the real published static app passed viewer/admin tiles, paginated category, preview, role change, repeat and admin-history checks. Application API responses and media were synthetic; no real user data, paid generation or production mutation was used. The same browser check failed against the previous published app.
+- **Verification commands:** `cat /tmp/tanya-trend-counter-readonly-acceptance-20261020.py | docker exec -i banano-kling-bot python -`; from the task frontend worktree, `TREND_SMOKE_ORIGIN=https://tanyapp.xn--e1aikcel5c5a.online node .artifacts/trend-counter-deployed-smoke.mjs`. These host-local diagnostic artifacts are not versioned; permanent regression coverage lives in `tests/test_trend_catalog.py`, `tests/test_trend_catalog_api.py`, `frontend/miniapp-v0/__tests__/trend-showcase-categories.test.tsx` and `frontend/miniapp-v0/e2e/trend-category-showcase.mjs`.
+- **Runtime preservation/telemetry:** `.env` and runtime `data/price.json` hashes matched the pre-retry snapshot; predeploy PostgreSQL/application backups were retained. At the post-restart audit point: 688 log lines, 0 ERROR/CRITICAL, 0 tracebacks, 0 trend-link failures. No schema migration, new configuration, admin setting, provider/payment/balance change or manual runtime code patch.
+- **Guidance used:** `Bambale0/skills` diagnosing-bugs (red/green evidence), `Bambale0/claw` PR/FSM checklist, `anthropics/skills` webapp-testing (published-browser role verification).
+- **Follow-ups/limits:** about 13 GiB free at the release audit; capacity monitoring/retention remains separate work. Physical Telegram/iOS acceptance and historical Seedance 2.5 count completeness were not verified. Rollback remains a PR revert through `tanyapi` CI/CD.
+
+### 2026-10-20 — production audit: last 12 hours and Docker image removal candidates
+
+- **Request/scope:** audit production health/errors for 2026-10-20 08:14:50–20:14:50 UTC (11:14:50–23:14:50 MSK); identify old images that can be removed without affecting user, trend or repeat references. Inspection only: no image/container/volume/media deletion, no financial/provider mutation or live generation.
+- **Baseline at audit start:** `origin/tanyapi` and backend revision `c9cf187497c1d9725424bf300b78a27a33e04e02`; isolated `agent/project-audit-12h-20261020` worktree. Existing runtime price changes remain untouched. During the audit, documentation PR #347 merged as `0c6c7062045dc2a2cf9cdd5f21152bdecfb8efbd`; this report was rebased onto it while preserving both ledger entries. Runtime findings refer to the audited application SHA above.
+- **Preflight:** application file logs cover the whole requested window; Docker logs cover only the latest container restart. Production media/data/logs/backups/outputs are host bind mounts; inspect all container references, image labels, old image contents and rollback tags before classifying removal candidates. Shared host also runs other projects, which remain out of cleanup scope.
+- **Flow/guidance:** evidence-first diagnosing-bugs from Bambale0/skills; technical/QA checklist from Bambale0/claw; anthropics/skills webapp-testing for browser smoke. This bounded operational audit does not require a cross-session wayfinder map.
+- **Steps:** (1) timestamp-correct error grouping and impact correlation; (2) read-only task/payment/reference invariants; (3) health/static/auth/browser and infrastructure/CI checks; (4) image-to-container/layer/rollback inventory; (5) sanitized report with exact candidates, limitations and follow-ups.
+- **Acceptance:** full 12-hour coverage stated; production errors separated from tests/expected failures; no secrets or private log payloads committed; candidate images explicitly exclude active/stopped-container references, current release, rollback assets and other projects; protected data untouched. No schema/API/UI/FSM/config/admin/provider/payment change is planned.
+- **Completed audit:** [sanitized report](PROJECT_AUDIT_12H_2026-10-20.md). Full application-log coverage: 227,172 events, 52 ERROR (25 moderation, 5 other provider, 11 upload reset, 3 Redis timeout, 4 analysis, 2 Wan ratio, 2 Telegram blocked); no CRITICAL. Nginx refused clusters match two release cutovers. No code fixes, retries, refunds or cleanup performed.
+- **Database/reference evidence:** PostgreSQL enforced read-only; 1,492 window-created tasks (1,408 completed, 84 failed), no completed task without result, no negative balances/completed duplicate payment keys/orphan ownership. 78 explicit failed-task refund markers; three positive-cost fast failures lack durable refund evidence, not proven financial loss. One stale Wan task from October 14. All 1,278 unique local task-input files in the window exist. Separately, 3,817 saved-ref records created May–June and four unique files in five trend-asset rows are already missing; two affected templates are public. No restoration or deletion attempted.
+- **Docker evidence:** all 99 images and 41 containers inspected at snapshot; three unused NEUROMIX test/legacy images (`851d3714e61a`, `c96d121087eb`, `f39b708c6851`) have approximately 5.23 GB unique image data. All 7 layers per candidate inspected read-only: no uploads/output/backup files or nonempty DB files. Current image, both named recovery images, stopped-container dependencies, other projects, volumes and host media remain protected. The report's explicit non-force image-removal command is a proposal and was not executed.
+- **Verification:** local/public health and exact backend/frontend revision passed; Redis PING, nginx syntax, production pip check, both TLS certificates, 8/8 current static assets and unsigned API rejection passed. Published mobile Chromium role/category/repeat/history smoke passed with synthetic APIs/media. Existing exact-SHA four-gate CI success verified; no paid smoke/full test rerun. Documentation-only diff/path checks and PR are the final delivery steps. Raw evidence is local in mode-0700 `/tmp/neuromix-audit12h-20261020`; no secrets/user URLs/DB rows staged.
+- **Final capacity/candidate recheck:** free space fell from about 12 GiB at the initial snapshot to 8.2 GiB (df: 100%), below the unchanged 10 GiB deployment floor; the cause of that change was not established. All three candidate images still exist and have zero references across all containers. Backend remained healthy at `c9cf1874` with restart count 0 and the same protected bind-mount destinations. No deletion performed. Audit documentation PR #348 targets `tanyapi` with native squash auto-merge enabled; required CI remains enforced.
+
+
+## 2026-10-21 — Runtime incidents: recovery, uploads, assistant and payment audit
+
+- Baseline: `bf5e8a1c21d00178f657cee83a9ffd738e437ecf`, current `origin/tanyapi`; dedicated worktree/branch `fix/runtime-reliability-20261021`. Production price.json is modified administrative data and is excluded from work.
+- Result: temporary infrastructure/client failures recover without permanent FSM degradation; assistant audio uses a verified supported adapter configuration; missed Lava notifications are checked against provider state; deployed production SHA and smoke are verified.
+- Audit: 22 ERROR records, six HTTP 500 responses on 2026-10-21 00:00–06:40 UTC. apt-daily-upgrade restarted PostgreSQL/Redis at 05:53; both recovered. FSM fallback is permanent. Wan chunk disconnect becomes 500 while generic Mini App upload already maps it to 499 and supports JSON fallback. Telegram reference download has no retry; periodic dump ignores RetryAfter. Audio submits retired PHOTO_PROMPT_MODEL to /codex/v1/responses. Lava rejects 102 events (eight success) from undocumented source, existing provider-verification/idempotent completion and periodic reconcile can be reused. Public production health/static TLS currently pass. Two unrelated/shared certificate renewals failed; inspect ownership before changes, do not modify dev branches/services.
+- Existing/partial/missing/reuse: reuse HTTP boundaries, upload fallback, public storage API, atomic payment completion, Lava binding/reconcile, safe Telegram transport; add recovery and bounded retries rather than rewrite flows.
+- Risks: FSM recovery must preserve fallback writes and not resurrect cleared state; upload disconnect cannot be repaired server-side and needs bounded client retries; never trust unknown webhook source or grant balance from callback alone; no production test fixtures or private media exposed. Migration: none expected. Mutable provider choices stay typed env/config, not hardcoded replacements. No prices/referral economics change.
+- Public test seams: BaseStorage state/data across outage and recovery; aiohttp upload route/error contract; assistant service with synthetic audio/provider responses; Telegram media/send seam; Lava invoice verification and atomic replay tests; actual provider read-only invoice audit; public deployed health/revision.
+- Observability: record fallback entry/recovery and migrated-key counts, attempt/status/error class for retries; no bodies/secrets/audio. Financial audit prints only aggregate counts, private audit artifacts stay outside Git.
+- Steps: (1) reproduce each bug with focused regressions; (2) FSM recovery; (3) upload transport and Telegram retries; (4) audio contract/model verification and config; (5) Lava read-only reconciliation and authenticated delivery remediation; (6) applicable cert renewal diagnosis; (7) focused + safe regression/lint/deploy checks and independent standards/spec review; (8) PR to tanyapi with native squash auto-merge, four protected gates; (9) exact merge-SHA CI/autodeploy, health/static and focused smoke/telemetry.
+- Acceptance: focused regressions red then green; state/data survive fallback recovery and clear; interrupted uploads no longer 500 and valid retry works; real synthetic audio yields response; actual provider-paid invoices credited once, no unverified credits; production exact SHA verified, no new related server failures during observation.
+- Verification layers: unit/domain, Telegram FSM, Mini App API, retry/idempotency, provider contract, payment DB audit, deployment and telemetry apply. No schema migration; admin/security checks focus on payment verification and unchanged owner-scoped uploads. Browser upload seam applies if client code changes; no unrelated UI redesign.
+- Rollout: normal PR/CI/autodeploy only, reversible runtime config backed up outside repo; rollback via protected revert PR preserving runtime prices/data.
+- Skills: Bambale0/skills diagnosing-bugs, tdd (existing repository-authorized public seams), code-review; Bambale0/claw PR review checklist; anthropics/skills webapp-testing where browser verification applies.
+- Progress: public FSM regressions failed before the recovery implementation, including preservation of existing fields across fallback update; Wan HTTP transport failed 500→expected499 and three browser-library chunk regressions failed before implementation. These seams now pass; additional retry tests cover explicit Telegram flood rejections, bounded read retry and no ambiguous send replay. Audio public HTTP seam failed against the retired Responses route; final OpenRouter chat seam covers configured model, inline bytes, retries and non-leaking permanent errors.
+- Provider evidence: KIE's retired model returned404; supported Codex replacement explicitly rejects audio400. Gemini KIE chat/native probes did not reliably accept speech. Existing OpenRouter credential + `google/gemini-3.8-flash` accepted the synthetic spoken phrase and transcribed exactly “The secret word is purple pineapple.” No private user recording was used or published. Final implementation uses this verified OpenRouter contract, not the failed probes.
+- Payment evidence: authenticated read-only provider comparison found 36 local pending/provider in_progress and two fresh pending/provider failed; provider list of 100 final invoices matched all 33 completed and 67 failed locally. No provider-paid/local-uncredited item in the sample; no manual credit/SQL mutation. Sender 158.160.251.222 is observed in production callbacks but not the published IP documentation; retain strict sender configuration and independent verification.
+- TLS: production backend and current Mini App certificate renewals both passed `certbot renew --cert-name <production-name> --dry-run --no-random-sleep-on-renew`. Igor explicitly excluded DEV/other domains, so shared Certbot failure from those renewals is an out-of-scope host finding, not a NEUROMIX certificate failure.
+- Scope extension: Igor supplied a wrong-person Seedance 2.5 repeat and clarified: repeat = author's prompt + consumer's replacement references. Production DB snapshot and authenticated provider task lookup both confirmed an author-owned image path in a foreign repeat with no private-use grant. No private customer identifiers/URLs are committed. Original prompt/slot order must remain; no generation or debit for missing consumer files.
+- Privacy fix: the authenticated Mini App boundary converts absent/legacy foreign consent to replacement-only consumer slots without changing stored publication settings. It never invokes the legacy auto-restoration branch for that consumer. Public descriptors require the corresponding uploads. Owners retain their own editable recipes; explicit separate fixed-slot grants keep their validated behavior. Telegram foreign legacy repeats redirect to this same flow; missing-parent derivatives fail closed. Seven new public regression cases initially failed; expanded privacy/repeat/provider/identity tests verify own replacements, partial rejection, forged ownership, prompt composition and before-charge checks. Old tests that treated reference visibility as implicit reuse are revised to require explicit consent or consumer replacements.
+- Review findings addressed: actual Mini App bootstrap catches DB errors before outer middleware, so the shared safe 503 classifier is now inside its real error seam too. FSM calls and recovery batches now have finite deadlines/socket timeouts; migrated keys retire incrementally so a large queue drains across deadlines. Both issues reproduced with regression tests before the follow-up fixes. Missing-parent Telegram bypass reproduced and blocked. Independent Standards reviewer retracted its Lava legacy-discovery concern after confirming the installed authenticated discovery wrapper.
+- Local checks in progress: focused base set 29 passed; expanded repeat/identity/Telegram/media set reached 299 passed with one outdated synthetic request harness, which was corrected to exercise normalized JSON and the independent receipt seam. Frontend upload/cancel/API tests: 44 passed. Production static frontend build and TypeScript passed. Video browser contract passed 320/390/430 px; replacement-only legacy case added for final browser/CI verification.
+- Test environment: host Python venv lacked required pypdf. Installed pypdf 6.21.1 only into a private QA dependency directory and created an isolated QA venv referencing existing dependencies; production venv/container unchanged. Initial full-suite collection/dependency failures and a run concurrent with test updates are not counted as passes. Final exact-head full suite/CI remains required.
+
+- Final local verification: complete safe Python suite passed **3901 tests, 76 subtests**, with 113 skips (live smoke excluded); final focused runtime/reference/payment slice passed 116 tests. Final frontend upload/reference/identity Jest slice passed 60 tests. TypeScript, production static build, changed-line Ruff (0 relevant violations) and `git diff --check` passed. Complete critical browser suite exited 0, including its imported journeys. Video reference-slot browser suite, including replacement-only legacy repeat, passed at 320/390/430 px.
+- Independent code-review/spec-review completed against `7cd6f01a`: no remaining blocking findings in reviewed scope. Both bootstrap 503 and missing-parent Telegram findings are covered by regressions; finite FSM recovery also reviewed.
+- Release checkpoint: [PR #350](https://github.com/Bambale0/banano_kling/pull/350) targets only `tanyapi`; native **squash** auto-merge is armed. Branch protection was verified strict with all four required CI gates. This ledger checkpoint precedes exact-merge CI, autodeploy and production smoke; final release evidence will be attached to the PR and delivery report after verification.
+- Configuration status: no schema migration or runtime price changes. New retry/recovery/audio settings use documented environment overrides and safe defaults. Production Lava sender admission has not been broadened: the new observed sender is absent from published provider documentation, so Igor has been asked specifically about this trust-list change. Independent authenticated invoice checks remain mandatory either way. DEV/other-domain Certbot failures remain outside Igor's explicit production-only scope.
+
+### 2026-10-21 — publish and repeat completed original/trend/repeat results
+
+- Baseline: `f8189f0d16d994dcb907ef8344789e29b8d4064e` on current `tanyapi`; dedicated `fix/own-photo-publication-20261021` branch. Previous runtime PR #350 has merged; exact-release CI/autodeploy is still pending, so production updates are not yet claimed.
+- Igor's explicit behavior: every user can publish their completed original, trend and repeat results to Feed/Profile; every viewer can repeat published results using the selected result's server-side recipe and their own files. Privacy of executable recipes and inherited author references remains independent from publishing the output. Ownership/completion, real media availability, authentication and deterministic billing still apply; no role/model/source-origin ban on publishing a valid owned result.
+- Fresh evidence: reported original image has no source/parent/action provenance. A later approved trend by the same author has identical prompt text, so legacy text matching wrongly hides the author's own prompt and the UI removes publishing. Independent audit also found source-lineage rejection in `share_to_feed`, hidden-prompt UI gating, and private Genjutsu result publication rejection. Existing multi-hop image/video repeat services can reuse the selected published result's recipe, but all relevant lineage/reference/permission seams must be verified.
+- Reuse/risks: preserve existing publication API, media persistence, visibility scopes, root/immediate-parent lineage, private-reference grant validation and before-charge checks. Explicit private/trend markers continue to redact prompt/media. A descendant cannot grant inherited author files to others. No SQL correction of historical tasks, migration, price/provider/referral change or paid generation is planned.
+- Steps: (1) reproduce owned prompt false-positive plus original/trend/derivative publication/repeat failures; (2) separate output publication capability from private-recipe disclosure in backend and UI; (3) preserve selected result's hidden recipe and require consumer reference replacements for repeated publications; (4) verify Telegram and Mini App photo/video/recipe flows, public cards/deep links and revocation; (5) independent code-review, focused/full regression, browser/build/lint; (6) protected squash-auto-merge PR to tanyapi, exact-SHA CI/autodeploy and production read-only/browser/telemetry verification.
+- Acceptance: own completed original/trend/repeat output can publish to both scopes without admin privileges, public result repeats work for another user with own references, missing consumer inputs fail before billing, no private recipe/reference disclosure, explicit denials on private inputs cannot be overwritten by client flags. Nonowners cannot publish another user's task.
+- Verification layers: domain/DB, signed API/Telegram callbacks, browser UI, provider payload/lineage, billing/retry regressions and production smoke apply. No schema migration/config flags needed: this removes inconsistent source/role restrictions from existing capabilities. Playbooks remain current: diagnosing-bugs → TDD → two-axis code-review; Bambale0/claw checklist; anthropics webapp-testing.
+- Related operational authorization: Igor explicitly approved both Lava sender IPs with mandatory provider-API verification. Production `.env` now contains the documented and observed sender; a mode-0600 backup is retained outside Git and unrelated settings are unchanged. The running container will receive it through normal autodeploy. No financial mutation was performed.
+
+#### Runtime release #350 verified before the publication follow-up
+
+- Native squash merge `f8189f0d16d994dcb907ef8344789e29b8d4064e`; [exact-SHA CI 39569171069](https://github.com/Bambale0/banano_kling/actions/runs/39569171069) and [normal autodeploy 39569171056](https://github.com/Bambale0/banano_kling/actions/runs/39569171056) succeeded. Production checkout, healthy backend revision and public Mini App revision matched. Public health returned 200/ok; backend restart count 0/OOM false. Publication follow-up changes are not included in this release.
+- Deployed guard evaluated the reported incident's actual stored source under a PostgreSQL read-only connection: missing consumer files rejected, supplied synthetic consumer file exclusively retained, author prompt preserved; no provider generation, debit or customer data mutation.
+- Deployed assistant service transcribed synthetic Telegram-format OGG exactly: “The secret word is purple pineapple.” Verified live OpenRouter audio contract via the actual new service.
+- Deployed payment audit: authenticated GET of 100 recent invoices matched 34 provider/local completed and 66 provider/local failed; zero final-state mismatches. The container now admits both explicitly approved Lava sender IPs while retaining independent invoice checks and idempotency.
+
+- Requirement clarified further by Igor: “тренды, повторы выложить и повторить может каждый”. Removed source-origin publishing/list restrictions across Mini App, Telegram compatibility and ordinary DB services, while retaining ownership, completion, result availability and hidden-prompt export boundaries. Private Genjutsu result publication creates a server-only replacement contract for all source/photo slots; inherited fixed assets are not transferred.
+- Red evidence: the reported own-author prompt match failed its owner HTTP detail regression; private Genjutsu output publication returned 403; the private-run browser component had no publication control. New public photo-repeat cases also exposed empty-input billing eligibility at the Feed endpoint; it now requires consumer input when the source has reference slots, before debit/provider submission.
+- Review follow-ups: private video owners now receive replacement descriptors and use the same authenticated replacement contract as other consumers. Explicit selection of their own existing saved local photo is permitted; ownership comes from trusted local upload identity plus authenticated context, never a body flag or an external URL lookalike. Private profile photo repeats no longer silently restore inputs on an empty request.
+- Legacy privacy is classified in batches for Feed/Profile card reads, publication/grant validation and authenticated repeat source snapshots. Classification annotates copies with top-level `private_recipe`; it preserves dictionary/JSON request-data representation and does not rewrite historical source metadata. Author's ordinary originals are exempt from legacy text matching; explicit private/trend/lineage markers still win. The shared backend connection configuration is used in these reads; obsolete isolated-test path monkeypatches are removed.
+- Latest targeted checks: **439 Python tests passed** across publication, hidden recipes, photo/video repeats, private grants, Genjutsu and trend referral links. **19 frontend tests passed** across publication controls and image/video repeat surfaces; Next static build and TypeScript passed. Complete mobile reference/repeat browser suite, now including private-result Profile publication, passed at 320/390/430 px. Earlier full safe run passed 3918 tests/76 subtests; a later run exposed ten obsolete test-fixture path monkeypatches, which are corrected. Final exact-head full suite and protected CI remain release gates.
+- Config/migration/finance: no schema migration, new business flag, price/balance/referral mutation or paid customer generation. No publication permission is inferred from hidden prompt state. Final release evidence will be recorded on the task PR and delivery report after protected autodeploy and exact-SHA production verification.
+
+- Final Telegram review closed owner shortcuts in old quick-photo confirmation, stale photo launch, parentless private-trend video and published Wan child callbacks. Private owners choose their own inputs just like other consumers; local aliases cannot bypass inherited-media filtering. The clicked published child remains the repeat target. Ordinary original-owner editing is preserved. Added public callback regressions; updated eight obsolete derived-owner expectations that previously required inherited fixed inputs. Targeted Telegram/photo/reference/Wan slice passed 166 tests before the final context guard; full current-head regression is rerun below/CI.
+- Final targeted callback/reference/provider/permission regression: **224 passed**. New private-trend callback regression traverses central image launch, mocked provider, persisted successor and HTTP task detail: only the consumer photo is submitted and recipe privacy survives without a published source. Automatic retries retain original grant revalidation independently of new-repeat input replacement. Full final suite and protected CI remain pending.
+- Both final review axes confirmed no remaining high-severity issues in application head `5f5949aefbbe69d82399766a7a1ec3a465b2b9c9`. Complete regression exposed six further obsolete expectations/harness assumptions: private child editor now starts with empty inputs, explicit new consumer files no longer depend on ancestor fixed-grant revocation, quick confirmation reopens selection, and an ordinary Seedance owner test now mocks the authenticated source lookup instead of bypassing it. Updated those tests; the affected legacy runtime/Seedance/rendergrid/admin slice passed **60 tests**. Application code is unchanged by this test follow-up. Final full safe regression and protected CI are rerun on this commit.
+- Fresh runtime review found no HTTP 5xx or Redis memory fallback after runtime release #350. One real Grok provider content rejection was reconciled: read-only DB evidence confirmed failed status and atomic refund marker for its 9-credit cost. Invalid-signature Prodamus callbacks remain rejected. No manual financial mutation.
+
+### 2026-10-21 — mobile Wan photo upload fails before any chunk
+
+- Baseline: current tanyapi `8a19d75813d2b28d17c4075fc9158abf27a108e2`; isolated `fix/wan-photo-upload-20261021` branch. Production runtime prices remain administrative state.
+- Evidence first: screenshot's exact filename correlates with repeated owned upload sessions over several days: init succeeds, received_chunks=0, no complete/image-validation request, then cancel/expiry. Current Samsung Android WebView repeats this even with a 184 KB JPEG; image/model limits cannot explain a failure before bytes arrive. Some init responses are also lost after proxy timeouts; existing durable same-ID reconciliation/cancellation must remain intact. Other photos/users complete normally. Generic multipart boundary/reset failures are separate observed transport events.
+- Current seams: Wan image upload opens a server reservation before FileReader touches the original picked File, and the form clears the native input before starting async upload. Android content-provider File handles can become unreadable across asynchronous work; Chromium issue 40123366 documents this family of failure. The form currently exposes only a generic error, and Wan lacks client stage/correlation telemetry.
+- Preflight/risks: reuse owned init/chunk/complete/cancel, limits, auth, quotas, local JPEG validation fallback and existing MediaField. No provider/schema/payment/pricing change. Preserve explicit cancellation, cleanup fencing, stale source resets, and no launch/debit on missing media. Cache only provider-bounded image bytes before network waits; video/audio/document streaming stays bounded by existing chunk protocol. Native input must stay valid during reading/retry. No customer data export or paid generation.
+- Steps: (1) add a deterministic public upload regression with a native-like file whose original handle expires once network work begins; (2) snapshot valid image bytes before init, preserve input lifetime, and maintain cancellation/deadline semantics; (3) add privacy-safe client stage/upload-ID diagnostics; (4) focused upload/cancel/form/browser tests, full safe Python and frontend build/types/lint, two-axis review; (5) protected squash-auto-merge PR to tanyapi, exact-SHA CI/autodeploy and production upload smoke.
+- Acceptance: delayed native-file lifetime regression uploads the exact image bytes; no reservation is created for unreadable/aborted input; successful and cancelled/failed cleanups keep existing invariants; repeat Image1 is selectable/uploadable without losing user replacements; source privacy and before-charge guards remain intact. Production probes use synthetic files and no generation/balance mutation.
+- Playbooks: current Bambale0/skills diagnosing-bugs/TDD/code-review; Bambale0/claw checklist; anthropics/skills webapp-testing. Unit/domain, signed upload API/DB, frontend/real-browser transport, auth, cancel/idempotency, deployment and telemetry apply. Provider generation, schema migration and financial mutation are not required by this upload-only fix.
+
+- Reproduced red/green: a public upload test expires the original native-like handle when init begins; baseline fails `NotReadableError`, updated code uploads exact bytes from its owned memory File. Images are prepared together before network work and retained through JPEG fallback/manual retry. Input reset moved before opening the picker and after confirmed success. WeakSet tags prepared files without a strong global cache; existing 20 MiB/image and field-count limits bound memory. Videos/audio/documents keep chunk streaming.
+- Telemetry: safe client upload stage, validated 32-hex upload ID, error code, size, status and duration; no photo bytes, original filename, auth or provider detail added. Malformed stage/ID inputs are regression-tested. No schema/config/admin/economic migration.
+- Verification checkpoint: full safe Python `pytest tests/ --ignore=tests/live -m 'not live_smoke' -q --tb=short` passed **3954 tests + 76 subtests**, 113 skipped. Focused telemetry/cancel/quote/mobile upload passed **46 tests**; focused frontend upload/form/cancel passed **64 tests**. Next production export and TypeScript passed. Wan browser passed all ordinary/Prime modes plus native-handle expiry with two exact-byte photos and zero generation calls. Complete repeat/reference browser passed 320/390/430 px.
+- Broader frontend review corrected asynchronous fixture waits. A separate baseline checkout confirms two existing publisher-test failures: synthetic 400 entered unmocked JPEG recovery, and stale preview expected an error after mode reset invalidated its attempt. Retry test uses 503; stale-preview test checks no restored media/raw error and disabled publication. Dedicated JPEG fallback regressions remain. Native-picker browser coverage is now imported by the existing mandatory critical browser CI gate.
+- Both code-review axes found no remaining blocking issues; final narrow test/harness review also passed. Actual Samsung hardware confirmation remains outstanding: session evidence and deterministic browser reproduction establish the handled failure mechanism, not direct observation on that physical phone. Protected PR, exact-SHA CI/autodeploy, published-asset smoke and final release evidence remain mandatory; final evidence will be attached to the PR/delivery report.
+- Final local frontend: all **67 Jest suites / 531 tests passed**; changed runtime TS ESLint passed; build and final `tsc --noEmit` passed. No unresolved application/test failure remains.
+
+### 2026-10-21 — restore Studio access to older bot-published videos
+
+- Baseline current tanyapi `3a47eabd8b5b48be6e16e0dc11525d258653e97f`; isolated task branch `fix/studio-history-reference-settings-20261021`. Preserve live administrative `data/price.json`.
+- User outcome: works beyond the eight bootstrap cards remain reachable in Studio; an older video published through Telegram reopens the existing owner publication/reference editor. No regeneration, publication removal or financial mutation is needed. User-specific account/task identifier requested asynchronously; no identity guessed.
+- Evidence/preflight: production bootstrap logs show successful requests; `_fetch_recent_tasks(limit=8)` and TaskHistoryList have no older-history route/control. Existing signed task detail, owner reference controls, publication/grant saves, protected-task sanitizer and Telegram-created generation rows are reusable. Genjutsu has a separate run history and stays excluded. Review README, agent docs, user flows, QA ownership invariant, model/DB schemas, task and publication UI/API, tests and current production CI/deploy.
+- Ranked hypotheses: (1) bootstrap window hides older rows; (2) publishing changes eligibility; (3) records/results were removed. Public signed pagination/detail regressions distinguish these: 19 same-timestamp owned tasks plus foreign/dedicated history rows, an older bot-publication with own refs, foreign cursor/forged actor/invalid auth. Client regressions exercise load-more, refresh persistence, retry and auth-switch cancellation.
+- Plan: (1) red public HTTP/React reproductions; (2) owner-scoped keyset paging with existing serializer/privacy boundary and stable timestamp/id ordering; (3) load-more with bounded per-page transport, dedupe, refresh retention and stale-owner cancellation; (4) signed API/DB/privacy, editor and mobile browser tests, full safe suites/build/type/lint, two-axis review; (5) native protected squash auto-merge PR to tanyapi, exact merge-SHA CI and normal autodeploy, published-asset/read-only production acceptance.
+- No-hardcode/schema: eight items is the existing initial transport page, not a user-history/business cap. Paging has no maximum total history; no new mutable business setting or schema migration. No provider request, price/balance/refund/referral or consent mutation. No automatic changes to a customer's reference choices.
+- Observability: route logs authenticated owner, returned count, continuation presence/duration; no prompt/reference URL/auth contents. Existing request IDs/access logs and task IDs remain. Acceptance: all old owned rows reachable once in stable order despite tied timestamps/new inserts; foreign cursors cannot select foreign records; missing/deleted/foreign anchors identically restart the owned head; hidden recipes stay hidden; old bot-published detail retains existing authorized reference editing; refresh/account changes do not drop pages/leak data.
+- Playbooks refreshed: Bambale0/skills diagnosing-bugs/TDD/code-review; Bambale0/claw engineering checklist; anthropics/skills webapp-testing. Provider/financial write and migration tests are inapplicable because this is an authenticated read/accessibility fix; existing editor save/ownership/privacy regressions remain required.
+- Red/green evidence: baseline signed HTTP lacks the history route; rendered Studio has no Load more control after eight tasks. New signed HTTP regressions pass for 19 tied-timestamp owned tasks, new inserts, older Telegram-style publication/own references, invalid auth, forged actor fields, foreign/stale/deleted cursor recovery and hidden recipes. Frontend load/open, dedupe/refresh, retry, owner-switch cancellation and confirmed older pending→completed/publication state pass.
+- Review follow-ups closed: per-page 10s deadline (same technical read budget as existing pending-detail resolution), caller cancellation and retry even when transport ignores abort; merged confirmed selected-task details into cached older cards, without adding a poll per historical card. Deleted cursor safely restarts the authenticated owner's head; duplicate cards are merged.
+- Current checks: full safe Python **3958 passed + 76 subtests, 113 skipped**; all frontend Jest **69 suites / 542 passed**; focused owner-publication/reference UI **27 passed**; Next production export passed after correcting the synthetic Response fixture type. New authenticated query tested on real production PostgreSQL with PGOPTIONS-enforced read-only transactions: 8 initial / 9 older lookahead, no overlap, previous incident source still opens with own reference data. Disposable probe disables only schema-initialization helpers, never read-only enforcement; no provider calls or data writes.
+- Read-only production evidence confirms older tasks and their published-reference settings remain stored. Account-specific diagnostic details are retained only in the private host report; no customer reference choices changed.
+- Final local mobile browser PASS at **320/390/430 px**: user explicitly selects Studio, handles a failed page/retry, opens an older bot-style publication, sets original indexed photo/video reference choices, saves through existing publication API, and loads the remaining pages once. All external APIs/media are synthetic/intercepted; no customer publication, paid generation or payment call. New browser is imported by the mandatory critical-flows gate. Build/TypeScript/changed runtime TS lint passed. Both review axes are checking the final P2 follow-ups; protected PR/CI/exact-SHA deploy and published/read-only acceptance still pending.
+- Final contract review reproduced another red case: actual task detail omits prompt_preview; replacing the cached card erased its title. Merge now preserves existing fields and explicitly clears the preview when privacy becomes hidden. React and browser detail fixtures now match the real response. Final **69 Jest suites / 543 tests**, mobile browser320/390/430, production build, TypeScript and changed runtime TS lint passed. Both review axes confirm no remaining blockers. No backend behavior changed after the full3958-test run.
+
+### 2026-10-21 — Lava outages and remaining mobile upload failures
+
+- Baseline: `53eb297213cdaa5f9f429a0f3d0918d3ce5cd48d`, fresh origin/tanyapi; branch `fix/lava-upload-reliability-20261021`, isolated worktree. Production runtime prices remain untouched.
+- Result: Lava outages must not trigger cascading catalog discovery or masquerade as pending invoices; checkout must explain temporary unavailability without ambiguous POST retries. Remaining Seedance mobile file kinds must use the existing bounded-size JSON transport instead of broken multipart.
+- Audit: 214 final Lava HTTP500 logs in 17:41–18:24 UTC; current authenticated list/detail GETs return200. Actual container allowlist already contains both observed sender addresses; 347 rejected callbacks predate the current container/config. No new source trust or auth relaxation is required. Read-only PostgreSQL shows40 pending,4219 completed,3760 failed. Latest100 authenticated provider invoices match35 completed/65 failed locally, no paid/uncredited in sample. Expand audit before financial conclusions.
+- Existing/reuse: atomic payment completion, authenticated provider verification, configured sender/auth, invoice bindings, public reconciliation and JSON upload. Partial: get_invoice collapses provider outage into None; binding fallback then enumerates catalogs, empty status classified still_pending. Seedance file kinds pass through generic upload but are missing from its mobile JSON preference/type contract. Wan image400 may precede successful JPEG recovery and is not alone evidence of a lost upload.
+- Risks/invariants: never replay an ambiguous invoice POST, credit from callbacks alone, mark unavailable invoices failed or change source trust; retain pending state until authoritative provider status. JSON remains capped16MiB per generic request; larger videos retain existing chunking/multipart with fallback. No pricing/schema/provider selection/admin migration. Provider500 cannot be repaired locally; guard polling and give actionable alternatives.
+- Public seams/test plan: real HTTP fake Lava server + public invoice/reconcile/webhook/checkout and transaction APIs; uploadFile with mobile File/XHR/fetch; synthetic production owner-scoped upload (no generation); browser mobile upload journey. Backend safe suite, frontend Jest/build/types, protected CI/deploy and exact SHA telemetry.
+- Steps: (1) reproduce outage and Seedance upload gaps; (2) typed provider read failure, stop degraded batch and return503 webhook/checkout; (3) complete mobile JSON kind contract and enforce deadline; (4) authenticated read-only financial audit; (5) focused/full regression, build/type/lint, independent Standards/Spec review; (6) protected squash-auto-merge PR to tanyapi; exact-SHA CI/autodeploy, health/static, synthetic upload and new telemetry.
+- Acceptance: outage causes bounded reads and no catalog fanout; logged reconcile errors reflect lookup failures; pending invoices stay unchanged; recovered provider can complete exactly once; mobile subtype sends exact file bytes directly as JSON; timeout/auth/invalid input paths are bounded and safe; no sensitive log data. Unit/domain, DB, API, Telegram payment, provider/retry/idempotency, browser, smoke/deployment/telemetry apply. Schema migration is inapplicable; financial invariants reviewed via real read-only audit and isolated DB tests.
+- Playbooks updated: Bambale0/skills diagnosing-bugs/TDD/code-review; Bambale0/claw review checklist; anthropics/skills webapp-testing. Existing repository instructions authorize these public test seams; no additional seam approval needed. Live provider outage has already been observed; deterministic fake HTTP reproduces the failure before patching.
+- Red/green: initial real-HTTP outage regression failed with2 still_pending results and6 final errors including catalog enumeration; now the batch stops after one invoice/at most3 GET attempts with provider_unavailable. All three Seedance kind regressions failed (unwanted native multipart), now exact original bytes go directly via JSON. JSON stuck-transport test initially timed out at Jest5s, now simulated15-minute timeout aborts and settles even if transport ignores its signal.
+- Expanded read-only financial evidence:100 provider final invoices span2026-10-17 through2026-10-21;35 completed/65 failed match local states. All40 local pending invoices individually queried using authenticated GET are in_progress.41 provider reads returned200; no paid/uncredited or failed/credited discrepancy. No production financial mutation was needed.
+- Public signed checkout regression proved raw upstream errors were returned500; new503 safe code/message covers explicit card/SBP. Real webhook regression exercises outage503 with unchanged balance, recovery and duplicate delivery with exactly50 credits once, and forged sender403 before provider access. Missing404 remains an error rather than a falsely confirmed pending state. No schema/config/admin changes.
+- Verification checkpoint: focused backend101passed, frontend upload/cancel/Seedance49passed; all69frontend Jest suites/547tests passed. Production static build and TypeScript passed. Expanded invoice outage/recovery/duplicate/webhook/signed checkout/missing tests5passed. Full safe backend suite is still running. Independent Standards and Spec reviewers found0 blockers against baseline53eb297..bab17a85; no auth relaxation, ambiguous POST replay or unrelated changes.
+- Final local verification: `python -m pytest tests/ --ignore=tests/live -m 'not live_smoke' -q --tb=short` passed3963tests +76subtests,113skipped (279s). All69Jest suites/547tests passed; production `npm run build`, `npx tsc --noEmit`, changed TS ESLint, Python compile and changed-line Ruff passed (49 existing/outside-diff Mini App findings remain outside this task). Seedance identity/reference browser passed320/375/390/430px with iOS/Android UAs and exact-byte JSON assertions, plus repeat/quote/validation journeys. The mandatory CI browser gate already imports this strengthened journey.
+- Independent Standards and Spec reviews:0 findings on application changes; final follow-up only normalizes test imports/EOF and records evidence. [PR354](https://github.com/Bambale0/banano_kling/pull/354) targets tanyapi. Branch protection verified strict=true with all four required Python/deploy, safe regression, Mini App browser and production Docker gates. Native squash auto-merge will be armed on readiness; no manual production deploy. Exact merge-SHA CI, autodeploy and deployed smoke/telemetry remain the release checkpoint and will be attached to the PR/delivery report. No runtime config, migration, balances, prices or webhook trust changes.
+- Final scope extension requested by Igor (“устранить проблемы все, доведи до релиза”): browser reproduction invalidating native handles when the picker is cleared fails before the second Seedance photo is available (30s public UI timeout). Generic UploadArea and trend reference picker clear before async upload; Seedance public picker clears immediately after starting it. All three now clear only before the next native picker opens, preserving current selected handles throughout async/multi-file work. The shared browser fixture exercises this expiration on both the public Seedance composer and admin trend/general upload paths, with exact original bytes. No generation or production data mutation. Auto-merge is temporarily disarmed while this concrete additional fix is validated; it will be rearmed with the final head.
+- Both reviewers reproduced a remaining generic picker race during an active multi-file batch. Public React deferred-upload regression failed because picker remained enabled, then passed after a synchronous full-batch guard + disabled UI state, released in finally on success/failure. Overlapping picker/drop selection cannot clear active original handles. Extended real-UI browser holds the first generic upload response and attempts another picker click, then verifies both original byte payloads and re-enabled picker. Both Standards/Spec follow-up reviews report0 remaining findings. Final native-picker build passed; full frontend suite and both strengthened browser suites are running. Backend code unchanged after3963passed/76subtests; no new financial/config/schema effect.
+
+
+## 2026-10-22 — Mini App external payment browser recovery
+
+- Baseline: current origin/tanyapi `30e9f7ee19ddb8af6c54235bfb01e86183af277e`; isolated task worktree/branch `fix/miniapp-payment-browser-20261022`.
+- User outcome: Robokassa checkout from Mini App opens outside the Telegram Mini App WebView with a fresh user gesture, and reopening the prepared invoice never creates another transaction.
+- Evidence: owner reports multiple Mini App failures with the payment form error on iPhone, while bot URL-button checkout succeeds. Read-only runtime DB, logs and Robokassa OpStateExt show two unconfirmed attempts then a completed card payment for the reported case. This does not reproduce the provider error page or prove a provider-side root cause.
+- Audit: bot and Mini App use the same adapter, description, receipt name, signature, amount/credits calculation and ResultURL completion. Mini App keeps signed URL as a string. The frontend unconditionally navigates iOS via location.assign before considering Telegram.openLink. Other platforms call openLink after awaited API; Telegram web-events specifies a one-second interaction TTL. Existing browser fixtures only cover immediate Android/desktop bridge success and lack slow iOS checkout coverage.
+- Reuse: existing authenticated create-payment, signed adapter URL, package configuration, atomic callback completion, client-log diagnostics and mounted static browser harness. No prefactor required beyond narrow balance sheet state.
+- Risks: native Telegram iOS/browser integration cannot be fully certified with mocked Playwright WebKit; real-device acceptance remains required. Exact screenshot cause is not claimed. Preserve exact signed query including encoded Receipt and 64-bit invoice strings. Do not log URLs/signatures/credentials.
+- No-hardcode/config/migration: no prices, provider choices, retries or operational thresholds introduced. No schema, auth, admin, rate, receipt, Telegram FSM, payment completion/refund or provider contract mutation. Prepared URL stays in component memory.
+- Observability: checkout-ready/open/fallback client events with provider, order ID and opening path only; an open request is not proof that provider UI loaded.
+- Test plan: rendered BalanceSheet regression for iOS direct external open, silent Android bridge retry, exact URL and one transaction; API failure; slow-response mobile browser fixture using WebKit and Chromium, no live provider requests; existing frontend Jest, lint/types/build and critical E2E; focused backend Robokassa adapter/callback regressions.
+- Steps: (1) failing rendered checkout regression; (2) ready invoice and fresh-tap external opening; (3) mobile browser regression and docs; (4) local checks/review; (5) PR to tanyapi with native squash auto-merge and protected CI; (6) exact-SHA deployment, health/revision and telemetry smoke.
+- Acceptance: iOS stays in Mini App until explicit payment click; click invokes native openLink synchronously; exact URL survives; repeated ready-button click has one create-payment call; Android automatic open retains a visible retry; Stars remains native; no paid test or customer message.
+- Guidance: current Bambale0/skills diagnosing-bugs (evidence-first with deterministic bridge regression; actual provider page remains unreplicated), Bambale0/claw QA/review flow, anthropics/skills webapp-testing. All three local playbooks refreshed before edits.
+- Verification layers: frontend/browser and signed-provider contract applicable; DB/schema/admin/refund mutation layers N/A because business/payment processing code unchanged. Existing financial callback regressions still run.
+
+- RED: rendered checkout test failed 2/3 cases: iOS attempted location.assign, no prepared invoice action, Android had no retry. GREEN: 7/7 rendered tests pass, including native anchor fallback/throw, closing before a late response, and native Stars.
+- Validation: all frontend Jest 71 suites / 555 tests pass; tsc --noEmit and production static build pass. Full lint has no errors, one pre-existing task-detail-panel hook warning. Focused backend Robokassa primary/receipt/partner notices: 13 passed. Initial command naming an untracked payment-utils file collected no tests; corrected to tracked suites. Slow Android browser fixture passes exact URL, one invoice, stale automatic event and fresh-tap retry.
+- Local WebKit launch is blocked by missing system libraries; no production host packages changed. Mandatory GitHub browser gate installs WebKit dependencies and runs all three new payment scenarios (iOS native, Android native, iOS bridge fallback). Existing critical browser suite remains in progress.
+- Review: no signed URL reconstruction/logging, financial mutations, hidden paid retries or cross-surface price/signature drift. Foreign Lava ready state deliberately omits an unverified checkout currency/amount. Native Stars route and explicit customer-email handling preserved.
+
+- CI wiring review: payment-browser runs first in both the standalone browser workflow and the actual branch-required browser job in ci.yml. Rendered payment regressions are also included in miniapp-ci.yml. This makes iOS payment coverage a required merge condition, rather than relying on the standalone browser result.
+- Local aggregate critical-flows.mjs completed successfully, including all imported mobile publication/repeat/identity/upload/Wan/Studio suites. Source lint passed with one existing hook warning; a rerun initially scanned generated .e2e-server assets, then passed with that generated directory excluded. Generated test artifacts removed from the isolated worktree.
+- PR #355 opened; native SQUASH auto-merge verified armed for head b5749efa. Branch protection verified strict=true with all four required CI gates. Workflow coverage follow-up creates a new exact head; checks must pass for it before merge.
+
+- First iOS CI payment scenario reached its final privacy assertions but the fixture failed parsing a missing WebKit sendBeacon request body (null), not a checkout assertion. Harness corrected to capture the actual Blob payload before sendBeacon, assert ready/open events exist, and inspect those payloads for signed URL leakage. No production logic change was needed.
+
+- Full CI safe suite on 50db65f0: 3962 passed, 113 skipped, one obsolete source-text test failed because it explicitly demanded iOS same-window navigation. Removed that implementation assertion; it is superseded by seven rendered payment regressions and the mandatory mobile browser journey. No backend processing implementation changed. Full isolated local safe-suite rerun started to verify the remaining contracts.
+## 2026-10-22 — neuromixbot.com domain migration
+
+- Baseline: tanyapi `0c752e33857cf591328aef1e3b47235a6174584f`; isolated task worktree/branch `fix/neuromixbot-domain`. Production runtime price file remains untouched.
+- Result: Mini App, new media links and Telegram launch buttons use `https://neuromixbot.com/mini-app/`; valid automatically renewed TLS; historical origin remains available.
+- Audit: A record already resolves to 144.76.188.75; no AAAA. Nginx has no dedicated new-domain vhost; HTTPS fails hostname verification. Existing shared-origin vhost supports static export, uploads, signed Genjutsu and API. Backend and static revisions match baseline; backend health is OK. Existing deployment pins old domain in scripts/workflows; bot/env.py unconditionally overrides configured MINI_APP_URL. Reuse existing static root and proxy routes; no prefactor beyond respecting explicit URL configuration.
+- Risks/dependencies: ACME HTTP reachability, shared Nginx, stale links, CI exact-SHA checks, Telegram main-app settings managed outside Bot API. No DB/schema/FSM/payment/schema change; Telegram/payment webhook host remains tanyapi.chillcreative.ru. New signed Genjutsu callbacks follow GENJUTSU_PUBLIC_BASE_URL; both origins proxy these routes. Media origin configuration changes only after TLS is live. Preserve old vhost and content; rollback via prior env backup/release.
+- No-hardcode: existing MINI_APP_URL/PRODUCTION_MINI_APP_URL/MINIAPP_FRONTEND_DOMAIN settings remain configurable; update canonical defaults, honor explicit runtime MINI_APP_URL, keep known historical media origins.
+- Observability: nginx -t and reload status, TLS hostname/expiry, ACME dry-run, public revision and assets, auth boundary and media Range checks, backend health/config/image SHA, recent error counts without secrets/private payloads.
+- Applicable verification: environment/config and deployment regressions; media URL normalization; Mini App browser/static/API auth; deployment validation and four required protected CI gates; exact release CI/autodeploy and production smoke. DB/migrations, financial mutation, generation and Telegram FSM business changes are inapplicable because only public origin changes.
+- Steps: (1) prepare regression/config changes; (2) add HTTP challenge vhost and obtain certificate using existing ACME account; (3) activate HTTPS against existing static root; (4) update runtime origin config with root-only backup; (5) focused tests/review and protected squash-auto-merge PR; (6) exact-SHA autodeploy and production verification.
+- Acceptance: hostname-verified HTTPS serves NEUROMIX and all current assets; same-origin API rejects unauthenticated requests normally; uploads/ranges work; runtime launch and new media URLs use new origin; previous links still work; renewal dry-run succeeds.
+- Playbooks refreshed/read: Bambale0/skills diagnosing-bugs (HTTP red/green evidence), code-review; Bambale0/claw PR review checklist; anthropics/skills webapp-testing. Infrastructure migration uses direct HTTP/TLS evidence instead of unnecessary bug-hypothesis instrumentation.
+- Infrastructure evidence: dedicated HTTP/TLS vhost activated, hostname-verified HTTPS returns200, bootstrap without Telegram initData returns401; certificate CN neuromixbot.com/Let's Encrypt YE1 expires2027-01-20. Renewal dry-run with deploy hook succeeded; certbot.timer active. New static root symlinks to existing root. Runtime env origins updated atomically; root-only backup `/root/backups/neuromix/domain-20261022-183018`; application awaits protected CI release. Initial five domain/config regressions failed before implementation; focused config/deploy suite passed145tests +6subtests, updated config tests35passed; media tests7passed.
+- Review corrections: update README current production table; align direct Compose fallback with new domain; clarify new Genjutsu provider callbacks follow the shared media origin while payment/Telegram webhooks remain unchanged. Standards review found no high-severity blocker; Spec review confirmed vhost route coverage and requested signed callback smoke.
+- Historical launch-page redirects activated for /, /mini-app and /mini-app/*, preserving query strings and client-side fragments; /mini-app/api/, hashed assets, /uploads/ and signed /genjutsu/ continue on the old host. Both active vhosts are recorded in ops/nginx. Invalid new-domain Genjutsu callback/media signatures are checked before processing (smoke result below). All72frontend Jest suites/559tests passed; production build/type checks underway.
+- Final two-axis review at144455e7: Standards0blockers; Spec0blockers. Production mobile browser follows old launch URL onto neuromixbot.com preserving query and fragment, title NEUROMIX,0page errors/failed same-origin requests. Public video Range returns206 and exact original1024bytes on both domains. Invalid signed media/callback each403. Python compile, Bash syntax and changed-line Ruff passed (8existing findings outside changed lines). Production frontend build and TypeScript passed.
+- Release dependency blocker: browser CI npm audit reports critical Next.js advisory GHSA-673q-mjm6-r5xr (and related image/server-action advisories, patched>=16.4.1). Minimal release prerequisite: update Next.js range to^16.4.2, resolved16.4.2 and matching @next packages only; no audit suppression. Fresh isolated npm ci succeeds; audit now has0high/critical (20existing moderate remain outside high-severity gate). Repeating frontend suite/build/types and protected CI on patched lockfile.
+- Patched dependency verification completed: fresh npm ci; npm audit --audit-level=high passes (0high/critical); all72Jest suites/559tests pass; Next16.4.2 production static build, TypeScript and changed production TS ESLint pass. Dependency-only Standards re-review reports0blockers. Four strict required CI contexts and native SQUASH auto-merge verified on PR356; exact release CI/autodeploy and final runtime checks remain pending.
+- Full CI regression:3963passed/76subtests/113skipped; three existing expectations still encoded forced old URL behavior and old deploy origin. Update those contracts to the intentional configurable URL behavior and new production origin; no application failure observed. Owner reported BotFather /setdomain updated; rechecking live Login Widget.
+- BotFather domain confirmation: owner completed /setdomain for Neuromixx_bot; fresh production browser on neuromixbot.com now renders the live oauth.telegram.org “Log in with Telegram” button instead of “Bot domain invalid”. No login credentials were entered. Expanded focused backend contracts156passed +6subtests; Ruff on corrected tests passes.
+
+## 2026-10-22 — historical video retained-reference compatibility
+
+- Baseline: current tanyapi `727052816782b551a13407cb32e556b4ceb0a87c`; isolated branch/worktree `fix/preserve-video-reference-consent-20261022`. Live administrative pricing file remains untouched.
+- User outcome: older published Seedance videos keep the author's explicitly retained source slots. Reported four-image publication must request two replacement photos, preserving its two retained tail images in original positions.
+- Evidence/current audit: exact production image revision matches baseline. Read-only production inspection confirmed all four source files exist, a two-image explicit legacy `feed_reference_selection`, public references enabled, and historical empty image-only repeat grant. Current public descriptor returns four upload slots. Recent author publications already have typed grants, so the problem is not proven to affect every video. Regression appeared in #350: foreign_video_repeat_task replaces every historical selection with typed empty consent before the existing compatibility descriptor can run.
+- Ranked diagnosis: (1) lost legacy semantics predicts four uploads despite saved selection (confirmed); (2) historical-origin alias mismatch predicts unresolved stored slots (covered using known-host alias fixtures); (3) upload deletion predicts missing local originals (ruled out for all four incident inputs).
+- Reuse/prefactor: reuse the existing closed retained-tail Seedance 2.5 legacy planner, typed slot validation/merge, URL identity resolver, authenticated source boundary, before-charge snapshot guard and owner publication editor. Add a shared effective grant resolver; no broad provider refactor.
 - Security/no-hardcode: visibility alone, absent/empty selections and private/derived historical recipes never infer consent. Typed grants, including explicit empty revocation, always win. No task IDs, authors, media URLs, business values or provider rules hardcoded. No production SQL mutations, schema/config/admin setting, price, charge/refund, provider payload schema or retry changes.
 - Surface/API impact: same URL-free slot descriptor and same authenticated video launch API. Owner editor receives original saved retained indices, avoiding accidental clearing on the next save. Telegram uses the same Mini App repeat redirect. Publication removal records a typed empty tombstone for legacy videos too, preventing implicit restoration after republishing.
 - Observability: existing source-generation IDs, rejection codes, permission snapshot logging and before-charge media checks retained. Production acceptance will record only slot counts/file availability; no prompts, auth contents or private source URLs in committed evidence.
@@ -519,21 +2672,3 @@ Final local verification at60897e01: full safe `python -m pytest tests/ --ignore
   14 prompt-dispatch/FSM cases. The normal database-backed lifecycle assertions
   for stored `cost=0`, nominal quote cost, `charge_cost=0`, admin-free metadata,
   and watchdog exclusion are prepared but not run under the adapter prohibition.
-
-### Post-merge P1 follow-up
-
-- Five post-merge review findings were confirmed against the released diff:
-  slash commands were consumed by the targeted picker; a canceled upload could
-  retain its blocking marker; prompt coalescing crossed picker sessions; an
-  integer JSON tariff forced integer-only edits; and Mini App still displayed a
-  hard-coded zero instead of the nominal quote cost.
-- The follow-up binds coalescing and upload ownership to the media-picker
-  session, lets commands continue to the global command router, exposes Kling 4
-  admin rates as decimals, and shows `quote.cost` separately from the admin
-  zero-charge exemption in Mini App. No tariff value or provider call is added.
-- Regression coverage includes all five findings. Python lint/compile,
-  Publication Scope, Mini App tests/static build, Creator PostgreSQL, and Wan
-  Prime checks passed on the follow-up branch. The standalone browser workflow
-  is independently blocked by the newly published high-severity Zod advisory
-  `GHSA-mrhx-c7xc-m3w5`; upgrading from Zod 3 to the fixed Zod 4 line is a
-  separate compatibility decision and is not bypassed here.
