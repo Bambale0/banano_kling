@@ -31,6 +31,14 @@ def source_trend_id(raw):
         return None
 
 
+def has_trend_tag(raw):
+    try:
+        tags = json.loads(raw) if isinstance(raw, str) else raw
+        return isinstance(tags, list) and 'trend' in tags
+    except (ValueError, TypeError):
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--apply', action='store_true')
@@ -55,8 +63,7 @@ def main():
                 row = conn.execute('SELECT tags FROM user_prompts WHERE id=%s', (trend_id,)).fetchone()
                 if not row:
                     continue
-                tags = json.loads(row[0]) if isinstance(row[0], str) else row[0]
-                if not isinstance(tags, list) or 'trend' not in tags:
+                if not has_trend_tag(row[0]):
                     continue
                 eligible += 1
                 if args.apply:

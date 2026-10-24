@@ -1,3 +1,11 @@
+## 2026-10-24 — PR #375 review follow-up and authorized release
+
+- Igor authorized publication and release. PR #375 targets tanyapi with native squash auto-merge; the earlier publication block is resolved.
+- Review fixes: every editable model has a bounded prompt (same 30,000-character creation ceiling, Seedance 2.0 keeps 20,000); API advertises the limit to the editor. Text edits append a transactional content_edit event to existing append-only catalog history: actor, trend, before/after titles, revisions, prompt hashes and lengths; no private prompt or media URLs. Failed audit insertion rolls back the edit.
+- Legacy card strips only the exact system count prefix before displaying the dedicated counter. Saving reloads an expanded category, so its cards show the new title. Reconciliation skips malformed tags and continues.
+- Regression evidence: new Python tests reproduced missing limit, missing audit and malformed tags handling before fixes; follow-up tests verify audit rollback and append-only/privacy invariants. Frontend tests cover expanded category refresh and prefix normalization.
+- Release gates remain required GitHub CI, exact-SHA autodeploy, production health and authenticated privacy smoke.
+
 ## 2026-10-24 — Seedance 2.5 repeat metrics and admin trend text editor
 
 - Baseline: tanyapi 78270d4 (PR #374); production at inspection 15cbe76c; dedicated fix/trend-admin-editor-seedance-count.

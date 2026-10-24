@@ -167,8 +167,9 @@ function LiveTile({ trend, onPreview, isAdmin, className = '' }: {
   )
 }
 
-export function TrendShowcase({ categories, onRepeat, onShare, onEdit, onRemove, removingId, isAdmin = false }: {
+export function TrendShowcase({ categories, onRepeat, onShare, onEdit, onRemove, removingId, isAdmin = false, refreshVersion = 0 }: {
   categories: ShowcaseCategory[]
+  refreshVersion?: number
   isAdmin?: boolean
   onRepeat: (trend: ShowcaseTrend) => void
   onShare: (trend: ShowcaseTrend) => void
@@ -219,7 +220,7 @@ export function TrendShowcase({ categories, onRepeat, onShare, onEdit, onRemove,
     setPage(0)
     void loadPage(categoryId, 1)
     return () => { requestId.current += 1 }
-  }, [categoryId, loadPage])
+  }, [categoryId, loadPage, refreshVersion])
 
   const openCategory = (id: number | 'unassigned') => {
     setCategoryId(id)

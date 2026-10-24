@@ -319,3 +319,14 @@ test('revoking administrator role hides statistics in an already open preview', 
   expect(screen.queryAllByLabelText(/Успешных повторов/)).toHaveLength(0)
   expect(screen.getByRole('dialog')).not.toHaveTextContent('7')
 })
+
+test('content save reloads the currently expanded category with the renamed card', async () => {
+  const props = { categories: catalog, onRepeat: jest.fn(), onShare: jest.fn(), isAdmin: true }
+  const { rerender } = render(<TrendShowcase {...props} refreshVersion={0} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Все тренды категории Видео на День рождения' }))
+  await screen.findByRole('button', { name: 'Открыть тренд Свечи в торте' })
+  categoryFetch.mockResolvedValueOnce({ category: catalog[0], items: [{ ...image, title: 'Новое название' }], page: 1, total: 1, has_more: false })
+  rerender(<TrendShowcase {...props} refreshVersion={1} />)
+  expect(await screen.findByRole('button', { name: 'Открыть тренд Новое название' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Открыть тренд Свечи в торте' })).not.toBeInTheDocument()
+})

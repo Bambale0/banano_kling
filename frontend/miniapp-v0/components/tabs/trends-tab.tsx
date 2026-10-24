@@ -17,6 +17,7 @@ import { formatTrendRepeatPrice } from '@/lib/trend-price'
 import { isNavigableShareLink, telegramForwardLink, tryOpenTelegramShareLink } from '@/lib/share-link-navigation'
 import { genjutsuCall, openGenjutsu, type Recipe } from '@/lib/genjutsu-api'
 import { TrendRunnerDialog } from '@/components/trend-runner-dialog'
+import { trendCardDescription } from '@/lib/trend-card-description'
 import { TrendContentEditor } from '@/components/trend-content-editor'
 import { TrendShowcase } from '@/components/trend-showcase'
 import { TrendCategoryManager } from '@/components/trend-category-manager'
@@ -162,6 +163,7 @@ export function TrendsTab() {
   const shareInputRef = useRef<HTMLInputElement | null>(null)
   const shareRequestRef = useRef(0)
   useEffect(() => () => { shareRequestRef.current += 1 }, [])
+  const [contentRefreshVersion, setContentRefreshVersion] = useState(0)
   const [editingTrend, setEditingTrend] = useState<PromptItem | null>(null)
   const [editPreviewUrl, setEditPreviewUrl] = useState('')
   const [uploadingEditPreview, setUploadingEditPreview] = useState(false)
@@ -929,7 +931,7 @@ export function TrendsTab() {
                   )}
                 </div>
                 <div className="space-y-2.5 p-3">
-                  <div><h4 className="line-clamp-2 text-sm font-semibold text-foreground">{trend.title}</h4>{trend.description ? <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{trend.description}</p> : null}</div>
+                  <div><h4 className="line-clamp-2 text-sm font-semibold text-foreground">{trend.title}</h4>{trendCardDescription(trend) ? <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{trendCardDescription(trend)}</p> : null}</div>
                   {isAdmin && Number.isSafeInteger(trend.successful_runs_count) && (trend.successful_runs_count ?? -1) >= 0 ? <p className="text-xs" aria-label={'Успешных повторов: ' + trend.successful_runs_count}>✅ Успешных повторов: {trend.successful_runs_count}</p> : null}
                   <div className="truncate rounded-lg bg-secondary/55 px-2 py-1.5 text-[10px] text-muted-foreground">{modelLabel || trend.model}</div>
                   <Button type="button" size="sm" className="w-full bg-gold text-primary-foreground hover:bg-gold/90" onClick={() => applyTrend(trend)}><Repeat2 className="h-3.5 w-3.5" />{repeatPrice ? 'Повторить · ' + repeatPrice : 'Повторить'}</Button>
@@ -1347,6 +1349,7 @@ export function TrendsTab() {
       {catalog !== null ? (
         <TrendShowcase
           isAdmin={isAdmin}
+          refreshVersion={contentRefreshVersion}
           categories={catalog.filter((cat) => cat.is_visible)}
           onRepeat={applyTrend}
           onShare={openShareLink}
@@ -1496,6 +1499,7 @@ export function TrendsTab() {
                   onSaved={async (title) => {
                     setEditingTrend((current) => current?.id === editingTrend.id ? { ...current, title } : current)
                     setItems((previous) => previous.map((item) => item.id === editingTrend.id ? { ...item, title } : item))
+                    setContentRefreshVersion((value) => value + 1)
                     await refreshCatalog()
                   }} />
                 <p className="mt-1 text-xs text-muted-foreground">Загрузите новый preview. Тип фото/видео сохранится вместе с трендом.</p>

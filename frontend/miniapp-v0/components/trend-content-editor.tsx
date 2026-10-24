@@ -63,7 +63,7 @@ export function TrendContentEditor({ trendId, disabled, onSaved }: {
           className="mt-1 w-full rounded-lg border border-border bg-background p-2" />
       </label>
       {original.prompt_editable ? <label className="block text-sm">Промпт тренда — виден только администраторам
-        <Textarea aria-label="Промпт тренда" value={prompt} disabled={saving} rows={8}
+        <Textarea aria-label="Промпт тренда" value={prompt} disabled={saving} rows={8} maxLength={original.prompt_max_length ?? 30000}
           onChange={(event) => { setPrompt(event.target.value); setSaved(false) }} />
       </label> : <p className="text-xs text-muted-foreground">Промпт этого тренда хранится в отдельном рецепте. Откройте его в студии модели.</p>}
       <p className="text-xs text-muted-foreground">Изменения применяются к новым повторам. Сохраните ссылки на референсы и переменные шаблона.</p>

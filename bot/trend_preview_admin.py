@@ -15,6 +15,7 @@ from bot.database import get_prompt_by_id
 logger = logging.getLogger(__name__)
 
 _TREND_TAG = "trend"
+_MAX_PROMPT_LENGTH = 30_000
 _ALLOWED_VIDEO_EXTENSIONS = (".mp4", ".webm", ".mov", ".m4v")
 _ALLOWED_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".avif", ".heic", ".heif")
 
@@ -145,8 +146,21 @@ def _content_payload(prompt: dict[str, Any]) -> dict[str, Any]:
         "id": prompt["id"], "title": prompt["title"],
         "prompt_text": "" if separate_recipe else prompt["prompt_text"],
         "prompt_editable": not separate_recipe,
+        "prompt_max_length": _prompt_limit(prompt),
         "revision": _content_revision(prompt),
     }
+
+
+def _prompt_limit(prompt: dict[str, Any]) -> int:
+    from bot.seedance_trend_recipe import _PROMPT_LIMITS
+
+    return _PROMPT_LIMITS.get(str(prompt.get("model") or ""), _MAX_PROMPT_LENGTH)
+
+
+def _audit_content(prompt: dict[str, Any]) -> dict[str, Any]:
+    text = str(prompt.get("prompt_text") or "")
+    return {"title": prompt.get("title"), "revision": _content_revision(prompt),
+            "prompt_sha256": hashlib.sha256(text.encode()).hexdigest(), "prompt_length": len(text)}
 
 
 def _validate_content_prompt(prompt: dict[str, Any], text: str) -> None:
@@ -156,7 +170,7 @@ def _validate_content_prompt(prompt: dict[str, Any], text: str) -> None:
     model = str(prompt.get("model") or "")
     if not text:
         raise ValueError("Промпт не должен быть пустым")
-    limit = _PROMPT_LIMITS.get(model)
+    limit = _prompt_limit(prompt)
     if limit and len(text) > limit:
         raise ValueError(f"Промпт должен быть не длиннее {limit} символов")
     original = str(prompt.get("prompt_text") or "")
@@ -202,7 +216,10 @@ async def miniapp_admin_trend_content(request: web.Request) -> web.Response:
                 if not _content_payload(prompt)["prompt_editable"]:
                     raise ValueError("Промпт этого тренда редактируется в исходном рецепте")
                 _validate_content_prompt(prompt, text)
+            from bot import trend_catalog_audit as audit
+
             async with db_backend.connect() as db:
+                await audit.ensure_schema(db)
                 # CAS protects simultaneous editors; update only text columns so
                 # preview uploads, counters, references and category links survive.
                 cursor = await db.execute(
@@ -212,6 +229,9 @@ async def miniapp_admin_trend_content(request: web.Request) -> web.Response:
                 )
                 if cursor.rowcount != 1:
                     return web.json_response({"ok": False, "error": "Тренд уже изменён. Откройте редактор заново."}, status=409)
+                await audit.append(db, actor_id=telegram_id, action="content_edit", trend_id=prompt_id,
+                                   before=_audit_content(prompt),
+                                   after=_audit_content({**prompt, "title": title.strip(), "prompt_text": text}))
                 await db.commit()
             logger.info("Trend content updated: prompt_id=%s admin=%s prompt_changed=%s",
                         prompt_id, telegram_id, text != prompt["prompt_text"])

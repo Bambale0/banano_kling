@@ -50,6 +50,7 @@ export interface TrendContent {
   title: string
   prompt_text: string
   prompt_editable: boolean
+  prompt_max_length?: number
   revision: string
 }
 

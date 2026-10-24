@@ -118,3 +118,42 @@ async def test_public_serializer_still_hides_admin_prompt_and_counters(editor):
 def test_reconciliation_uses_only_matching_persisted_trend_ids(raw, expected):
     from scripts.reconcile_seedance_trend_runs import source_trend_id
     assert source_trend_id(raw) == expected
+
+
+def test_every_editable_model_has_a_bounded_prompt():
+    from bot.trend_preview_admin import _validate_content_prompt
+    with pytest.raises(ValueError):
+        _validate_content_prompt({'model': 'banana_pro', 'prompt_text': 'old'}, 'x' * 30001)
+
+
+async def test_content_audit_is_atomic_private_and_append_only(editor):
+    import json
+
+    from bot import trend_preview_admin as api
+    call, _ = editor
+    _, payload = await call()
+    status, _ = await call(op='update', revision=payload['content']['revision'], title='New title', prompt_text='Use @Image1 on a beach')
+    assert status == 200
+    async with api.db_backend.connect() as db:
+        row = await (await db.execute('SELECT action, before_state, after_state FROM trend_catalog_audit')).fetchone()
+        assert row[0] == 'content_edit'
+        assert json.loads(row[1])['title'] == 'Old title'
+        assert json.loads(row[2])['title'] == 'New title'
+        assert 'garden' not in row[1] and 'beach' not in row[2]
+        with pytest.raises(Exception, match='append-only'):
+            await db.execute('DELETE FROM trend_catalog_audit')
+
+
+@pytest.mark.parametrize('raw, expected', [('broken', False), ('{}', False), ('["trend"]', True)])
+def test_reconciliation_skips_bad_tags(raw, expected):
+    from scripts.reconcile_seedance_trend_runs import has_trend_tag
+    assert has_trend_tag(raw) is expected
+
+async def test_audit_failure_rolls_back_content_change(editor, monkeypatch):
+    from bot import trend_catalog_audit
+    call, read = editor
+    _, payload = await call()
+    monkeypatch.setattr(trend_catalog_audit, 'append', AsyncMock(side_effect=RuntimeError('audit unavailable')))
+    status, _ = await call(op='update', revision=payload['content']['revision'], title='Must rollback')
+    assert status == 500
+    assert (await read(42))['title'] == 'Old title'
