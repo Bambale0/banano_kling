@@ -11,6 +11,7 @@ import weakref
 from functools import wraps
 
 from aiogram import F, Router, types
+from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -886,6 +887,8 @@ async def media(message: types.Message, state: FSMContext):
     if await state.get_state() != Kling4States.media.state or not isinstance(path, str):
         return
     text_value = str(getattr(message, "text", "") or "").strip()
+    if text_value.startswith("/"):
+        raise SkipHandler
     if text_value and not re.fullmatch(r"https?://\S+", text_value, re.IGNORECASE):
         await automatic_composer.queue(message, state, current.get("k4_session"))
         return
@@ -935,7 +938,7 @@ async def media(message: types.Message, state: FSMContext):
             future = asyncio.get_running_loop().create_future()
             automatic_composer.pending.setdefault(key, {})[pending_id] = future
             errors = latest.get("k4_upload_errors", {})
-            errors[receipt] = True
+            errors[receipt] = pending_id
             await state.update_data(
                 k4_upload_errors=errors,
                 k4_media_version=latest.get("k4_media_version", 0) + 1,
@@ -1002,6 +1005,10 @@ async def media(message: types.Message, state: FSMContext):
                 or latest.get("k4_media_session") != current.get("k4_media_session")
                 or await state.get_state() != Kling4States.media.state
             ):
+                errors = latest.get("k4_upload_errors", {})
+                if errors.get(receipt) == pending_id:
+                    errors.pop(receipt, None)
+                    await state.update_data(k4_upload_errors=errors)
                 return
             recipe = latest.get("k4_recipe", recipe)
             value = get_path(recipe, path)
