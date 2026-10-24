@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import uuid
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -57,11 +58,22 @@ async def test_pg_kling4_idempotency_settings_failure_and_ambiguous_restart(
     await engine.init_schema()
     from bot.config import config
     from bot.services import kling4_lifecycle as module
+    from bot.services.preset_manager import preset_manager
     from bot.services.wan3_prime_media import MediaInfo
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(config, "STATIC_BASE_URL", "https://media.example.test")
     monkeypatch.setattr(config, "is_admin", lambda uid: uid == 999999999)
+    price_config = deepcopy(preset_manager.get_price_config())
+    price_config.setdefault("costs_reference", {}).setdefault("video_models", {})[
+        "kling_4"
+    ] = {
+        "billing_rates": {
+            category: {"720p": 1.0, "1080p": 2.0}
+            for category in ("reference", "keyframe", "video")
+        }
+    }
+    monkeypatch.setattr(preset_manager, "get_price_config", lambda: price_config)
 
     async def download(_url, *, destination, **_kwargs):
         destination.write_bytes(b"original-kling4-output")
