@@ -652,8 +652,10 @@ export function Kling4Form({ modelSelector }: { modelSelector: ReactNode }) {
           )}
           {quote && (
             <div className="rounded-xl bg-secondary p-3 text-sm" role="status">
-              Расход KIE: {quote.provider_credits} credits ·{" "}
-              {quote.billed_seconds} оплачиваемых секунд. Бананы: 0.
+              {"\u0420\u0430\u0441\u0445\u043e\u0434 KIE: "}{quote.provider_credits} credits ·{" "}
+              {quote.billed_seconds}{" "}
+              {"\u043e\u043f\u043b\u0430\u0447\u0438\u0432\u0430\u0435\u043c\u044b\u0445 \u0441\u0435\u043a\u0443\u043d\u0434. \u0426\u0435\u043d\u0430: "}{quote.cost}{" "}
+              {"\u0431\u0430\u043d\u0430\u043d\u043e\u0432. \u0414\u043b\u044f \u0430\u0434\u043c\u0438\u043d\u0438\u0441\u0442\u0440\u0430\u0442\u043e\u0440\u0430 \u0441\u043f\u0438\u0441\u0430\u043d\u0438\u0435 \u043e\u0442\u043a\u043b\u044e\u0447\u0435\u043d\u043e."}
             </div>
           )}
           {!locked && (

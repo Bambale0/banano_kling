@@ -164,6 +164,37 @@ async def test_kling4_admin_navigation_save_and_readback(admin_ui):
     assert admin_rate_rows(saved)[0][-1] == 1.25
 
 
+@pytest.mark.asyncio
+async def test_kling4_integer_rate_can_be_replaced_with_fraction(admin_ui):
+    manager, state, callback = admin_ui
+    manager.config = price_config()
+    manager.config["costs_reference"]["video_models"]["kling_4"]["billing_rates"][
+        "reference"
+    ]["720p"] = 1
+
+    callback.data = "admin_price_video_kling_4_rr720"
+    await admin.admin_price_video(callback, state)
+    assert (await state.get_data())["current_price_value"] == 1
+
+    incoming = SimpleNamespace(
+        from_user=callback.from_user,
+        text="1.25",
+        answer=AsyncMock(),
+    )
+    await admin.admin_process_price_value(incoming, state)
+
+    saved = manager.get_price_config()["costs_reference"]["video_models"]["kling_4"]
+    assert saved["billing_rates"]["reference"]["720p"] == 1.25
+
+
+def test_kling4_miniapp_quote_displays_nominal_cost_and_admin_exemption():
+    source = Path(
+        "frontend/miniapp-v0/components/forms/kling4-form.tsx"
+    ).read_text(encoding="utf-8")
+    assert "{quote.cost}" in source
+    assert "\\u0441\\u043f\\u0438\\u0441\\u0430\\u043d\\u0438\\u0435" in source
+
+
 def test_kling4_manager_can_fill_all_six_cells_sequentially():
     manager = Manager()
     for index, field in enumerate(ADMIN_RATE_FIELDS, 1):

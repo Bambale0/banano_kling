@@ -28,6 +28,11 @@ Reference mode is automatic by default. Explicit `@first_frame`, `@last_frame` o
 
 Clear media resets the prompt/references while retaining duration, quality and ratio; it invalidates pending captions/uploads. Leaving for the catalog releases the input FSM and ignores late uploads. Returning starts a new editor session. Exact message receipts deduplicate redelivery; prompt fragments and media are ordered by Telegram message IDs even when handling starts out of order. Stable message-based launch keys and durable intent handling prevent duplicate creates. Old prompt/quote/confirm buttons simply show the automatic editor; a prompt field persisted by an older deployment enters the same upload-readiness pipeline. Server-side admin checks remain required. Legacy material/history/recovery callbacks retain parent/catalog navigation without a Main Menu button.
 
+Telegram slash commands always escape the targeted-media prompt handler and
+never become generation prompts. A canceled upload clears only the marker owned
+by its picker session, and prompt coalescing is scoped to that session so a
+newly opened picker cannot lose its prompt to an older quiet window.
+
 Repeating a saved Telegram task also starts a fresh intake session. Pending uploads/captions from the replaced draft cannot attach to or launch the restored recipe. The restored task's parameters and references remain intact until a new prompt is sent.
 
 ## Reference binding and KIE Agent audit — 2026-10-23
