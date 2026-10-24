@@ -8,6 +8,7 @@ specification into Telegram objects.
 from __future__ import annotations
 
 import html
+import re
 from collections.abc import Iterable
 
 Button = tuple[str, str]
@@ -164,3 +165,24 @@ def keyboard_rows(recipe: dict, ratios: Iterable[str]) -> ButtonRows:
         ]
     )
     return rows
+
+
+def task_status_label(status: str) -> str:
+    return {
+        "pending": "Видео создаётся",
+        "queued": "Видео ожидает очереди",
+        "submitting": "Проверяем запуск видео. Не запускайте его повторно.",
+        "unknown": "Проверяем запуск видео. Не запускайте его повторно.",
+        "done": "Видео готово",
+        "failed": "Не удалось создать видео",
+    }.get(status, "Проверяем состояние видео")
+
+
+def public_error(exc: Exception) -> str:
+    text = str(exc)
+    if getattr(exc, "status", 500) >= 500 or re.search(
+        r"KIE|credits|API|task_id|kling4_|https?://|JSON|ffmpeg|ffprobe|traceback",
+        text, re.IGNORECASE,
+    ):
+        return "Не удалось выполнить действие. Попробуйте позже."
+    return text

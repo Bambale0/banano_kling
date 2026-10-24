@@ -19,7 +19,12 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.config import config
-from bot.kling4_editor_view import keyboard_rows, render_editor_card
+from bot.kling4_editor_view import (
+    keyboard_rows,
+    public_error,
+    render_editor_card,
+    task_status_label,
+)
 from bot.services.kling4_contract import RATIOS, Kling4Error, require_admin
 from bot.services.kling4_lifecycle import kling4_lifecycle
 from bot.services.wan3_prime_media import Wan3PrimeValidationError
@@ -167,12 +172,12 @@ async def materials_menu(message, recipe):
     b.button(text="+ Персонаж по видео", callback_data="k4:new:video")
     b.button(text="+ Голос", callback_data="k4:new:voice")
     for i, item in enumerate(data.get("elements") or []):
-        b.button(text=f"Element @{item['name']}", callback_data=f"k4:element:{i}")
+        b.button(text=f"Персонаж @{item['name']}", callback_data=f"k4:element:{i}")
     for i, item in enumerate(data.get("voices") or []):
         b.button(text=f"Голос @{item['name']}", callback_data=f"k4:voice:{i}")
     b.adjust(1)
     await message.answer(
-        "Elements и голоса\nФотоэлемент: 2–4 ракурса одного персонажа или объекта. "
+        "Персонажи и голоса\nФотоэлемент: 2–4 ракурса одного персонажа или объекта. "
         "Видеоэлемент: один непрерывный план 3–8с. Используйте @имя в промпте.",
         reply_markup=navigation(b),
     )
@@ -222,7 +227,7 @@ async def material_menu(message, recipe, kind, index):
     await message.answer(
         "Материал @" + html.escape(item["name"]) + guidance,
         reply_markup=navigation(
-            b, back="k4:materials", back_label="← Elements и голоса"
+            b, back="k4:materials", back_label="← Персонажи и голоса"
         ),
     )
 
@@ -327,8 +332,7 @@ async def launch_prompt(message, state, recipe):
     )
     await message.answer(
         heading + "\n"
-        f"{result['task_id']}\n"
-        f"Расход KIE: {quote['provider_credits']} credits.\n"
+        f"Задача: {result['task_id']}\n"
         + (
             "Проверьте промпт и референсы перед следующим запуском."
             if status == "failed"
@@ -621,7 +625,7 @@ async def callback(query: types.CallbackQuery, state: FSMContext):
             b = InlineKeyboardBuilder()
             for task in history[:10]:
                 b.button(
-                    text=task["status"] + " · " + task["task_id"][-12:],
+                    text=f"{task['task_id']} · {task_status_label(task['status'])}",
                     callback_data="k4:task:" + task["task_id"],
                 )
             b.adjust(1)
@@ -643,18 +647,13 @@ async def callback(query: types.CallbackQuery, state: FSMContext):
             )
             if task["result_url"]:
                 b.button(text="Скачать оригинал", url=task["result_url"])
-            if task["status"] == "unknown":
-                b.button(
-                    text="Привязать ID из KIE",
-                    callback_data="k4:adopt:" + task["task_id"],
-                )
             b.adjust(1)
             b.row(
                 types.InlineKeyboardButton(text="← История", callback_data="k4:history")
             )
             await state.set_state(Kling4States.editing)
             await query.message.answer(
-                f"{task['task_id']}\n{task['status']}\nРасход KIE: {task['actual_credits'] or 'уточняется'}",
+                f"Задача: {task['task_id']}\n{task_status_label(task['status'])}",
                 reply_markup=navigation(b),
             )
         elif action == "repeat":
@@ -666,13 +665,9 @@ async def callback(query: types.CallbackQuery, state: FSMContext):
             await show(query.message, state)
         elif action == "adopt":
             await kling4_lifecycle.status(await actor(query.from_user.id), parts[2])
-            await state.update_data(
-                k4_adopt=parts[2], k4_field="adopt", k4_text_session=uuid.uuid4().hex
-            )
-            await state.set_state(Kling4States.text)
             await query.message.answer(
-                "Отправьте ID уже созданной задачи из кабинета KIE. Новая генерация не создаётся.",
-                reply_markup=navigation(back_label="← Отмена"),
+                "Проверяем запуск видео. Не запускайте его повторно. Если ожидание затянулось, обратитесь в поддержку.",
+                reply_markup=navigation(),
             )
         else:
             raise Kling4Error("Неизвестное действие.")
@@ -684,7 +679,7 @@ async def callback(query: types.CallbackQuery, state: FSMContext):
         TypeError,
     ) as exc:
         await query.message.answer(
-            str(exc)
+            public_error(exc)
             if isinstance(exc, Wan3PrimeValidationError)
             else "Параметры изменились. Вернитесь в редактор и повторите действие.",
             reply_markup=navigation(),
@@ -768,7 +763,7 @@ async def text(message: types.Message, state: FSMContext):
         else:
             await show(message, state)
     except (Wan3PrimeValidationError, ValueError) as exc:
-        await message.answer(str(exc), reply_markup=navigation(back_label="← Отмена"))
+        await message.answer(public_error(exc), reply_markup=navigation(back_label="← Отмена"))
 
 
 @router.message(StateFilter(Kling4States.editing))
@@ -885,7 +880,7 @@ async def media(message: types.Message, state: FSMContext):
             )
             if message.voice or name.lower().endswith((".ogg", ".oga", ".m4a")):
                 await message.answer(
-                    "Голос будет преобразован в MP3 для KIE. Исходное сообщение останется в Telegram."
+                    "Подготавливаю голос. Исходное сообщение останется в Telegram."
                 )
             result = await store_telegram_wan3_prime_media(
                 telegram_id=message.from_user.id,
@@ -955,7 +950,7 @@ async def media(message: types.Message, state: FSMContext):
             errors[receipt] = True
             await state.update_data(k4_upload_errors=errors)
         await message.answer(
-            str(exc)
+            public_error(exc)
             if isinstance(exc, Wan3PrimeValidationError)
             else "Не удалось добавить материал. Вернитесь в редактор и повторите загрузку.",
             reply_markup=navigation(),

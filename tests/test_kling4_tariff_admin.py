@@ -223,7 +223,7 @@ def test_kling4_miniapp_quote_displays_nominal_cost_and_admin_exemption():
         "frontend/miniapp-v0/components/forms/kling4-form.tsx"
     ).read_text(encoding="utf-8")
     assert "{quote.cost}" in source
-    assert "\\u0441\\u043f\\u0438\\u0441\\u0430\\u043d\\u0438\\u0435" in source
+    assert "Для администратора списание отключено." in source
 
 
 def test_kling4_manager_can_fill_all_six_cells_sequentially():

@@ -2706,3 +2706,13 @@ Final local verification at60897e01: full safe `python -m pytest tests/ --ignore
 ## 2026-10-24 — Kling 4 duration card
 
 Baseline: fba034f1 (tanyapi). Duration callbacks called show(), which always sent a new message. Reproduced with 7 failing callback regression cases. Fix: opt-in editing for duration callbacks only; unchanged-message errors are benign, other Telegram errors propagate without duplicate send. Existing actor lock serializes changes. No migrations, pricing/config/provider/payment changes; Mini App unaffected. Tests cover increment, decrement, bounds, zero delta, unchanged and unrelated Telegram errors. Release via task PR and protected tanyapi CI/autodeploy. Production verification pending. Guidance: diagnosing-bugs (Bambale0/skills), callback checklist (Bambale0/claw); anthropics webapp-testing inspected, browser layer not applicable to Telegram-only change.
+
+
+## 2026-10-24 — Kling 4 clean user messages
+Baseline: 15cbe76c. Removed provider spend and raw statuses from Telegram launch/history/task/result notifications and Mini App generation/history screens. Provider recovery and JSON configuration controls are no longer shown in generation UI; backend support APIs and diagnostic logging remain available. Safe user validation stays visible; server/technical errors use neutral text. No billing, routing or schema changes. Seven callback regression cases failed before the fix; focused checks and release evidence recorded in PR. Release: protected tanyapi PR/autodeploy.
+
+Verification: 14 new regression cases pass (launch, history/legacy callback, delivery, safe errors). Full selected run: 172 passed, one source-encoding assertion failed after JSX switched from Unicode escapes to readable Russian; assertion updated to retain exact admin-exemption copy, tariff suite then 16 passed. Production frontend build, TypeScript, and Kling4 Playwright mobile flows passed, including no provider metadata in visible text. ESLint: no errors, one pre-existing effect dependency warning. Guidance reused: diagnosing-bugs and callback checklist; safe config/pricing APIs retained while raw settings form removed from generation UX.
+
+Уточнение Игоря: внутренние ID задач сохраняются в сообщениях запуска, истории, карточке задачи, результатах Telegram и Mini App. Расходы провайдера скрыты.
+
+Final verification after preserving internal IDs: 173 Kling4 tests pass; rebuilt frontend and Kling4 Playwright pass. ID retention is asserted for launch and all delivery modes.
