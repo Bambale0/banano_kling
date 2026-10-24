@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import html
 import logging
 import re
 import uuid
@@ -18,6 +17,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.config import config
+from bot.kling4_editor_view import keyboard_rows, render_editor_card
 from bot.services.kling4_contract import RATIOS, Kling4Error, require_admin
 from bot.services.kling4_lifecycle import kling4_lifecycle
 from bot.services.wan3_prime_media import Wan3PrimeValidationError
@@ -158,14 +158,6 @@ def field_parent(path):
     return "k4:done"
 
 
-def mode_label(recipe):
-    return "По референсам" if recipe["mode"] == "reference" else "По кадрам"
-
-
-def ratio_label(value):
-    return "Авто" if value == "auto" else value
-
-
 async def materials_menu(message, recipe):
     data = recipe["input"]
     b = InlineKeyboardBuilder()
@@ -235,113 +227,14 @@ async def material_menu(message, recipe, kind, index):
 
 def keyboard(recipe):
     b = InlineKeyboardBuilder()
-    data = recipe["input"]
-    b.row(
-        *[
-            types.InlineKeyboardButton(
-                text=("✅ " if recipe["mode"] == value else "") + label,
-                callback_data="k4:mode:" + value,
-            )
-            for value, label in (
-                ("reference", "🧩 По референсам"),
-                ("keyframe", "🎞 По кадрам"),
-            )
-        ]
-    )
-    b.row(
-        *[
-            types.InlineKeyboardButton(
-                text=("✅ " if data["resolution"] == value else "") + value,
-                callback_data="k4:resolution:" + value,
-            )
-            for value in ("720p", "1080p")
-        ]
-    )
-    ratio = data.get("aspect_ratio", "auto")
-    for values in (("auto", *RATIOS[1:3]), RATIOS[3:]):
+    for row in keyboard_rows(recipe, RATIOS):
         b.row(
             *[
-                types.InlineKeyboardButton(
-                    text=("✅ " if ratio == value else "")
-                    + ratio_label(value),
-                    callback_data="k4:ratio:" + value,
-                )
-                for value in values
+                types.InlineKeyboardButton(text=text, callback_data=callback)
+                for text, callback in row
             ]
         )
-    b.row(
-        types.InlineKeyboardButton(text="− 1с", callback_data="k4:duration:-1"),
-        types.InlineKeyboardButton(
-            text=f"⏱ {data['duration']}с", callback_data="k4:duration:0"
-        ),
-        types.InlineKeyboardButton(text="+ 1с", callback_data="k4:duration:1"),
-    )
-    if recipe["mode"] == "keyframe":
-        b.row(
-            *[
-                types.InlineKeyboardButton(text=label, callback_data="k4:media:" + path)
-                for label, path in (
-                    ("Первый кадр", "first_frame_url"),
-                    ("Средние", "keyframe_urls"),
-                    ("Последний", "last_frame_url"),
-                )
-            ]
-        )
-    else:
-        b.row(
-            types.InlineKeyboardButton(
-                text=(
-                    f"🧩 Материалы ({len(data.get('elements') or [])}) · "
-                    f"🎙 Голоса ({len(data.get('voices') or [])})"
-                ),
-                callback_data="k4:materials",
-            ),
-            types.InlineKeyboardButton(
-                text=(
-                    "🔊 Исходный звук: "
-                    + ("вкл" if data.get("keep_original_sound") else "выкл")
-                    if data.get("video_urls")
-                    else "🔊 Звук: авто"
-                ),
-                callback_data="k4:sound",
-            ),
-        )
-    b.row(types.InlineKeyboardButton(text="🧹 Очистить медиа", callback_data="k4:clear"))
-    b.row(
-        types.InlineKeyboardButton(
-            text="← Модели Kling", callback_data="video_models:kling:0"
-        )
-    )
     return b.as_markup()
-
-
-def reference_labels(recipe):
-    data = recipe["input"]
-    if recipe["mode"] == "reference":
-        groups = [
-            (
-                "Фото",
-                [f"image_{i}" for i in range(1, len(data.get("image_urls") or []) + 1)],
-            ),
-            (
-                "Видео",
-                [f"video_{i}" for i in range(1, len(data.get("video_urls") or []) + 1)],
-            ),
-            ("Материалы", [item["name"] for item in data.get("elements") or []]),
-            ("Голоса", [item["name"] for item in data.get("voices") or []]),
-        ]
-    else:
-        frames = ["first_frame"] if data.get("first_frame_url") else []
-        frames += [
-            f"keyframe_{i}" for i in range(1, len(data.get("keyframe_urls") or []) + 1)
-        ]
-        frames += ["last_frame"] if data.get("last_frame_url") else []
-        groups = [("Кадры", frames)]
-    return "".join(
-        label + ": " + html.escape(", ".join("@" + name for name in names)) + "\n"
-        for label, names in groups
-        if names
-    )
 
 
 async def show(message, state):
@@ -349,51 +242,10 @@ async def show(message, state):
 
     data = await state.get_data()
     recipe = data.get("k4_recipe", fresh())
-    inp = recipe["input"]
     await state.set_state(Kling4States.editing)
     await state.update_data(k4_field=None, k4_media_session=None, k4_text_session=None)
-    images = len(inp.get("image_urls") or [])
-    videos = len(inp.get("video_urls") or [])
-    elements = len(inp.get("elements") or [])
-    voices = len(inp.get("voices") or [])
-    if recipe["mode"] == "keyframe":
-        first = "✅" if inp.get("first_frame_url") else "—"
-        middle = len(inp.get("keyframe_urls") or [])
-        last = "✅" if inp.get("last_frame_url") else "—"
-        media_hint = (
-            "Загрузите первый, промежуточные или последний кадр прямо сюда. "
-            f"Сейчас: первый {first}, промежуточных <code>{middle}</code>, последний {last}.\n"
-            "Формат видео задаёт первый загруженный кадр."
-        )
-    else:
-        media_hint = (
-            "Можно присылать фото / видео / аудио прямо сюда. "
-            f"Сейчас: фото <code>{images}/10</code>, видео <code>{videos}/5</code>, "
-            f"материалы <code>{elements}/7</code>, голоса <code>{voices}/3</code>."
-        )
-    audio_label = (
-        "исходный звук включён"
-        if videos and inp.get("keep_original_sound")
-        else "исходный звук выключен"
-        if videos
-        else "создаёт модель"
-    )
-    labels = reference_labels(recipe).strip()
-    prompt = html.escape(inp["prompt"] or "").strip()
     await message.answer(
-        "🎬 <b>Kling 4</b>\n\n"
-        + f"Сценарий: <b>{mode_label(recipe)}</b>\n"
-        + f"Качество: <code>{inp['resolution']}</code> · "
-        + f"Формат кадра: <code>{ratio_label(inp.get('aspect_ratio', 'auto'))}</code> · "
-        + f"Длительность: <code>{inp['duration']}с</code>\n"
-        + f"Аудио: <code>{audio_label}</code>\n\n"
-        + media_hint
-        + ("\nМетки: " + labels.replace("\n", "; ") if labels else "")
-        + "\n\n"
-        + format_editor_admin_price(recipe)
-        + "\n\n"
-        + "После настройки отправьте промпт до 8000 символов — генерация запустится сразу."
-        + ("\n\nТекущий промпт: " + prompt if prompt else ""),
+        render_editor_card(recipe, format_editor_admin_price(recipe)),
         parse_mode="HTML",
         reply_markup=keyboard(recipe),
     )
