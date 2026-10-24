@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="1280" viewBox="0 0 820 1280">
+  <rect width="820" height="1280" fill="#17212b"/>
+  <style>
+    text { font-family: "Segoe UI", Arial, sans-serif; fill: #f5f5f5; }
+    .note { font-size: 18px; font-weight: 700; fill: #f0b35a; text-anchor: middle; }
+    .body { font-size: 20px; }
+    .muted { fill: #aebbc5; }
+    .button { fill: #2b5278; stroke: #3e6b91; stroke-width: 1; }
+    .buttonText { font-size: 17px; font-weight: 600; text-anchor: middle; }
+    .bubble { fill: #182f3f; }
+  </style>
+  <text class="note" x="410" y="38">МАКЕТ · НЕ TELEGRAM SCREENSHOT · ТЕСТОВЫЕ ДАННЫЕ</text>
+  <rect class="bubble" x="35" y="65" width="750" height="600" rx="22"/>
+  <text class="body" x="70" y="115" font-weight="700">🎬 Kling 4</text>
+  <text class="body" x="70" y="170">Сценарий: <tspan font-weight="700">По референсам</tspan></text>
+  <text class="body" x="70" y="212">Качество: 720p · Формат кадра: Авто · Длительность: 5с</text>
+  <text class="body" x="70" y="252">Аудио: создаёт модель</text>
+  <text class="body muted" x="70" y="312">Можно присылать фото / видео / аудио прямо сюда.</text>
+  <text class="body" x="70" y="354">Сейчас: фото 1/10, видео 0/5, материалы 0/7, голоса 0/3.</text>
+  <text class="body" x="70" y="396">Метки: Фото: @image_1</text>
+  <text class="body" x="70" y="462">💰 Цена: 12.5 🍌 бананов.</text>
+  <text class="body muted" x="70" y="494">Тестовый пример; реальный экран берёт сумму из админ-тарифа.</text>
+  <text class="body" x="70" y="536">Для администратора списание отключено.</text>
+  <text class="body muted" x="70" y="598">После настройки отправьте промпт до 8000 символов —</text>
+  <text class="body muted" x="70" y="630">генерация запустится сразу.</text>
+  <rect class="button" x="45" y="700" width="355" height="52" rx="11"/>
+  <rect class="button" x="420" y="700" width="355" height="52" rx="11"/>
+  <text class="buttonText" x="222" y="733">✅ 🧩 По референсам</text>
+  <text class="buttonText" x="597" y="733">🎞 По кадрам</text>
+  <rect class="button" x="45" y="765" width="355" height="52" rx="11"/>
+  <rect class="button" x="420" y="765" width="355" height="52" rx="11"/>
+  <text class="buttonText" x="222" y="798">✅ 720p</text>
+  <text class="buttonText" x="597" y="798">1080p</text>
+  <rect class="button" x="45" y="830" width="230" height="52" rx="11"/>
+  <rect class="button" x="295" y="830" width="230" height="52" rx="11"/>
+  <rect class="button" x="545" y="830" width="230" height="52" rx="11"/>
+  <text class="buttonText" x="160" y="863">✅ Авто</text>
+  <text class="buttonText" x="410" y="863">16:9</text>
+  <text class="buttonText" x="660" y="863">9:16</text>
+  <rect class="button" x="45" y="895" width="355" height="52" rx="11"/>
+  <rect class="button" x="420" y="895" width="355" height="52" rx="11"/>
+  <text class="buttonText" x="222" y="928">1:1</text>
+  <text class="buttonText" x="597" y="928">21:9</text>
+  <rect class="button" x="45" y="960" width="230" height="52" rx="11"/>
+  <rect class="button" x="295" y="960" width="230" height="52" rx="11"/>
+  <rect class="button" x="545" y="960" width="230" height="52" rx="11"/>
+  <text class="buttonText" x="160" y="993">− 1с</text>
+  <text class="buttonText" x="410" y="993">⏱ 5с</text>
+  <text class="buttonText" x="660" y="993">+ 1с</text>
+  <rect class="button" x="45" y="1025" width="480" height="52" rx="11"/>
+  <rect class="button" x="545" y="1025" width="230" height="52" rx="11"/>
+  <text class="buttonText" x="285" y="1058">🧩 Материалы (0) · 🎙 Голоса (0)</text>
+  <text class="buttonText" x="660" y="1058">🔊 Звук: авто</text>
+  <rect class="button" x="45" y="1090" width="730" height="52" rx="11"/>
+  <text class="buttonText" x="410" y="1123">🧹 Очистить медиа</text>
+  <rect class="button" x="45" y="1155" width="730" height="52" rx="11"/>
+  <text class="buttonText" x="410" y="1188">← Модели Kling</text>
+  <text class="note" x="410" y="1250">Полная раскладка режима «По референсам»</text>
+</svg>

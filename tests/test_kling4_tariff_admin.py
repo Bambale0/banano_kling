@@ -19,6 +19,7 @@ from bot.kling4_tariff import (
     Kling4TariffNotConfigured,
     admin_rate_rows,
     format_admin_price,
+    format_editor_admin_price,
     nominal_admin_quote,
     update_admin_rate,
     validate_kling4_model_config,
@@ -86,6 +87,36 @@ def test_kling4_nominal_price_message_keeps_admin_charge_zero():
     assert format_admin_price(quote) == (
         "Цена: 42 🍌 бананов.\nДля администратора списание отключено."
     )
+
+
+def test_kling4_editor_price_is_nominal_before_prompt_and_admin_is_free():
+    recipe = {
+        "mode": "reference",
+        "input": {"resolution": "720p", "duration": 5, "image_urls": ["owned"]},
+    }
+    assert format_editor_admin_price(recipe, price_config=price_config()) == (
+        "💰 Цена: <code>5</code> 🍌 бананов.\n"
+        "При тегах кадров применяется тариф «По кадрам».\n"
+        "Для администратора списание отключено."
+    )
+
+
+def test_kling4_editor_price_is_explicit_when_tariff_or_video_measurement_is_missing():
+    recipe = {
+        "mode": "reference",
+        "input": {"resolution": "720p", "duration": 5, "image_urls": ["owned"]},
+    }
+    missing = format_editor_admin_price(
+        recipe, price_config={"costs_reference": {}}
+    )
+    assert "Цена не настроена" in missing
+    assert "Для администратора списание отключено" in missing
+    assert "<code>0" not in missing
+
+    recipe["input"]["video_urls"] = ["owned-video"]
+    measured = format_editor_admin_price(recipe, price_config=price_config())
+    assert "после проверки длительности" in measured
+    assert "Для администратора списание отключено" in measured
 
 
 class Manager:
@@ -201,3 +232,32 @@ def test_kling4_manager_can_fill_all_six_cells_sequentially():
         assert update_admin_rate(manager, field, float(index)) is None
     saved = manager.get_price_config()["costs_reference"]["video_models"]["kling_4"]
     validate_kling4_model_config(saved)
+
+
+def test_kling4_editor_price_uses_keyframe_rate_for_automatic_frame_tags():
+    draft = {
+        "mode": "reference",
+        "input": {
+            "resolution": "720p",
+            "duration": 5,
+            "image_urls": ["owned"],
+            "prompt": "move from @first_frame to @last_frame",
+        },
+    }
+
+    rendered = format_editor_admin_price(draft, price_config=price_config())
+    assert "Цена: <code>10</code>" in rendered
+    assert "тариф «По кадрам»" not in rendered
+
+
+def test_kling4_editor_price_escapes_managed_credit_labels_for_html():
+    config = price_config()
+    config["credit_name_plural"] = "A & B"
+    draft = {
+        "mode": "keyframe",
+        "input": {"resolution": "720p", "duration": 5},
+    }
+
+    rendered = format_editor_admin_price(draft, price_config=config)
+    assert "A &amp; B" in rendered
+    assert "A & B" not in rendered

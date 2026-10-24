@@ -40,6 +40,60 @@ async def test_open_keeps_direct_controls_and_automatic_prompt_launch(telegram):
     assert (await state.get_data())["k4_recipe"]["input"]["aspect_ratio"] == "9:16"
 
 
+async def test_editor_matches_shared_model_layout_with_attached_photo(
+    telegram, monkeypatch
+):
+    from bot import kling4_tariff
+
+    state, message, _query = telegram
+    monkeypatch.setattr(
+        kling4_tariff.preset_manager,
+        "get_price_config",
+        lambda: {
+            "credit_name_plural": "бананов",
+            "credit_emoji": "🍌",
+            "costs_reference": {
+                "video_models": {
+                    "kling_4": {
+                        "billing_rates": {
+                            "reference": {"720p": 1.0, "1080p": 1.5},
+                            "keyframe": {"720p": 2.0, "1080p": 2.5},
+                            "video": {"720p": 3.0, "1080p": 3.5},
+                        }
+                    }
+                }
+            },
+        },
+    )
+    recipe = kling4.fresh()
+    recipe["input"]["image_urls"] = ["https://owned.test/photo.png"]
+    await state.update_data(k4_recipe=recipe)
+
+    await kling4.show(message, state)
+
+    text = message.answer.call_args.args[0]
+    assert text.startswith("🎬 <b>Kling 4</b>\n\nСценарий: <b>По референсам</b>")
+    assert (
+        "Качество: <code>720p</code> · Формат кадра: <code>Авто</code> · "
+        "Длительность: <code>5с</code>"
+    ) in text
+    assert "Сейчас: фото <code>1/10</code>" in text
+    assert "Метки: Фото: @image_1" in text
+    assert "💰 Цена: <code>5</code> 🍌 бананов." in text
+    assert "Для администратора списание отключено." in text
+    assert "Бананы не списываются" not in text
+    assert text.index("Сценарий:") < text.index("Сейчас:") < text.index("💰 Цена:")
+
+    markup = message.answer.call_args.kwargs["reply_markup"]
+    rows = [[button.text for button in row] for row in markup.inline_keyboard]
+    assert rows[0] == ["✅ 🧩 По референсам", "🎞 По кадрам"]
+    assert rows[1] == ["✅ 720p", "1080p"]
+    assert rows[2] == ["✅ Авто", "16:9", "9:16"]
+    assert rows[3] == ["1:1", "21:9"]
+    assert rows[-2] == ["🧹 Очистить медиа"]
+    assert rows[-1] == ["← Модели Kling"]
+
+
 class Incoming(SimpleNamespace):
     def model_copy(self, *, update):
         return Incoming(**{**vars(self), **update})

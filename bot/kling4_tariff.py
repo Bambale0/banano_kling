@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import math
+import re
 from copy import deepcopy
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -238,3 +240,93 @@ def format_admin_price(quote: dict[str, Any]) -> str:
         if value
     )
     return f"Цена: {amount} {unit}.\nДля администратора списание отключено."
+
+
+def format_editor_admin_price(
+    recipe: dict[str, Any], *, price_config: dict[str, Any] | None = None
+) -> str:
+    """Render the nominal retail price before an admin submits a prompt.
+
+    Ordinary video references need measured input duration, so their exact
+    price remains deferred until quote validation. Image/reference and
+    keyframe drafts have a deterministic duration and can be priced directly.
+    """
+    config = price_config if price_config is not None else _price_config()
+    model_config = (
+        config.get("costs_reference", {}).get("video_models", {}).get(MODEL_KEY)
+        if isinstance(config, dict)
+        else None
+    )
+    if model_config is None:
+        return (
+            "💰 Цена не настроена. Задайте тариф Kling 4 в админке.\n"
+            "Для администратора списание отключено."
+        )
+    try:
+        model_config = validate_kling4_model_config(model_config)
+    except (TypeError, ValueError):
+        return (
+            "💰 Цена настроена не полностью. Проверьте тариф Kling 4 в админке.\n"
+            "Для администратора списание отключено."
+        )
+
+    data = recipe.get("input", {}) if isinstance(recipe, dict) else {}
+    category = "video" if data.get("video_urls") else recipe.get("mode")
+    frame_tag = bool(
+        re.search(
+            r"@(first_frame|last_frame|keyframe_\d+)\b",
+            str(data.get("prompt") or ""),
+        )
+    )
+    if category == "reference" and frame_tag:
+        category = "keyframe"
+    quality = data.get("resolution")
+    if category not in CATEGORIES or quality not in QUALITIES:
+        return (
+            "💰 Не удалось рассчитать цену для выбранных настроек.\n"
+            "Для администратора списание отключено."
+        )
+    if category == "video":
+        return (
+            "💰 Цена появится после проверки длительности загруженного видео.\n"
+            "Для администратора списание отключено."
+        )
+
+    try:
+        seconds = Decimal(str(data["duration"]))
+        rate = Decimal(str(model_config["billing_rates"][category][quality]))
+        cost = float(preset_manager._format_cost(float(rate * seconds)))
+    except (KeyError, InvalidOperation, TypeError, ValueError):
+        return (
+            "💰 Не удалось рассчитать цену для выбранных настроек.\n"
+            "Для администратора списание отключено."
+        )
+    if not math.isfinite(cost) or cost <= 0:
+        return (
+            "💰 Цена настроена не полностью. Проверьте тариф Kling 4 в админке.\n"
+            "Для администратора списание отключено."
+        )
+    unit = " ".join(
+        value
+        for value in (
+            html.escape(str(config.get("credit_emoji") or "").strip()),
+            html.escape(
+                str(
+                    config.get("credit_name_plural")
+                    or config.get("credit_name")
+                    or ""
+                ).strip()
+            ),
+        )
+        if value
+    )
+    suffix = f" {unit}" if unit else ""
+    frame_note = (
+        "\nПри тегах кадров применяется тариф «По кадрам»."
+        if category == "reference" and data.get("image_urls")
+        else ""
+    )
+    return (
+        f"💰 Цена: <code>{cost:g}</code>{suffix}.{frame_note}\n"
+        "Для администратора списание отключено."
+    )
