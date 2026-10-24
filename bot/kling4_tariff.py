@@ -274,7 +274,7 @@ def format_editor_admin_price(
     category = "video" if data.get("video_urls") else recipe.get("mode")
     frame_tag = bool(
         re.search(
-            r"@(first_frame|last_frame|keyframe_\\d+)\\b",
+            r"@(first_frame|last_frame|keyframe_\d+)\b",
             str(data.get("prompt") or ""),
         )
     )
