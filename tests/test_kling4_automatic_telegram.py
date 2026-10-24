@@ -19,7 +19,7 @@ buttons = navigation_tests.buttons
 
 
 async def test_open_keeps_direct_controls_and_automatic_prompt_launch(telegram):
-    state, message, query = telegram
+    state, message, _query = telegram
     query.data = "k4:open"
     await kling4.callback(query, state)
     actions = buttons(message)

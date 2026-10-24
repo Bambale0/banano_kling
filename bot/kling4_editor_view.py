@@ -8,10 +8,10 @@ specification into Telegram objects.
 from __future__ import annotations
 
 import html
-from typing import Iterable, List, Tuple
+from collections.abc import Iterable
 
-Button = Tuple[str, str]
-ButtonRows = List[List[Button]]
+Button = tuple[str, str]
+ButtonRows = list[list[Button]]
 
 
 def mode_label(recipe: dict) -> str:
@@ -142,6 +142,8 @@ def keyboard_rows(recipe: dict, ratios: Iterable[str]) -> ButtonRows:
             ]
         )
     else:
+        materials = len(data.get("elements") or [])
+        voices = len(data.get("voices") or [])
         sound = (
             "🔊 Исходный звук: "
             + ("вкл" if data.get("keep_original_sound") else "выкл")
@@ -151,8 +153,7 @@ def keyboard_rows(recipe: dict, ratios: Iterable[str]) -> ButtonRows:
         rows.append(
             [
                 (
-                    f"🧩 Материалы ({len(data.get('elements') or [])}) · "
-                    f"🎙 Голоса ({len(data.get('voices') or [])})",
+                    f"🧩 Материалы ({materials}) · 🎙 Голоса ({voices})",
                     "k4:materials",
                 ),
                 (sound, "k4:sound"),
