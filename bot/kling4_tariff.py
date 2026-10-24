@@ -85,15 +85,25 @@ def admin_rate_rows(model_config: Any) -> list[tuple[str, str, str, str, Any]]:
     rates = (
         model_config.get("billing_rates", {}) if isinstance(model_config, dict) else {}
     )
+    def editable_value(category: str, quality: str) -> Any:
+        group = rates.get(category, {})
+        value = group.get(quality) if isinstance(group, dict) else None
+        # The shared admin editor chooses integer vs. decimal parsing from the
+        # current value's type. Kling rates are decimal per-second values even
+        # when JSON happened to store a whole number such as 1.
+        return (
+            float(value)
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+            else value
+        )
+
     return [
         (
             field,
             category,
             quality,
             label,
-            rates.get(category, {}).get(quality)
-            if isinstance(rates.get(category, {}), dict)
-            else None,
+            editable_value(category, quality),
         )
         for field, (category, quality, label) in ADMIN_RATE_FIELDS.items()
     ]
