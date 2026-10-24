@@ -44,3 +44,32 @@ export async function updateTrendPreview(
   }
   return payload.prompt
 }
+
+export interface TrendContent {
+  id: number
+  title: string
+  prompt_text: string
+  prompt_editable: boolean
+  prompt_max_length?: number
+  revision: string
+}
+
+export async function trendContent(
+  promptId: number,
+  update?: Pick<TrendContent, 'title' | 'revision'> & { prompt_text?: string },
+): Promise<TrendContent> {
+  const initData = getInitData()
+  if (!initData) throw new Error('Откройте Mini App из Telegram')
+  const response = await fetch(`${getApiBasePath()}/admin/trends/content`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin', cache: 'no-store',
+    body: JSON.stringify({ init_data: initData, start_param_fallback: getStartParamFallback(),
+      prompt_id: promptId, op: update ? 'update' : 'get', ...update }),
+  })
+  const payload = await response.json()
+  if (!response.ok || payload.ok !== true || !payload.content) {
+    throw new Error(payload.error || 'Не удалось загрузить или сохранить тренд')
+  }
+  return payload.content
+}

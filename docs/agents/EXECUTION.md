@@ -1,3 +1,23 @@
+## 2026-10-24 — PR #375 review follow-up and authorized release
+
+- Igor authorized publication and release. PR #375 targets tanyapi with native squash auto-merge; the earlier publication block is resolved.
+- Review fixes: every editable model has a bounded prompt (same 30,000-character creation ceiling, Seedance 2.0 keeps 20,000); API advertises the limit to the editor. Text edits append a transactional content_edit event to existing append-only catalog history: actor, trend, before/after titles, revisions, prompt hashes and lengths; no private prompt or media URLs. Failed audit insertion rolls back the edit.
+- Legacy card strips only the exact system count prefix before displaying the dedicated counter. Saving reloads an expanded category, so its cards show the new title. Reconciliation skips malformed tags and continues.
+- Regression evidence: new Python tests reproduced missing limit, missing audit and malformed tags handling before fixes; follow-up tests verify audit rollback and append-only/privacy invariants. Frontend tests cover expanded category refresh and prefix normalization.
+- Release gates remain required GitHub CI, exact-SHA autodeploy, production health and authenticated privacy smoke.
+
+## 2026-10-24 — Seedance 2.5 repeat metrics and admin trend text editor
+
+- Baseline: tanyapi 78270d4 (PR #374); production at inspection 15cbe76c; dedicated fix/trend-admin-editor-seedance-count.
+- Audit: Seedance dispatcher installed after generic success wrapper, bypassing metrics. Existing category API already attaches admin-only successful counts; legacy cards lacked a dedicated counter. Preview editor has no title/prompt inputs.
+- Reproduction: tests/test_trend_admin_content.py fails: metric registration awaited 0 times for Seedance dispatch; content route missing.
+- Plan: (1) link dedicated dispatch with idempotent existing registry; (2) protected get/update content API with stale-editor rejection; (3) editor fields plus explicit legacy card counter; (4) auth, validation, frontend and build tests; (5) PR to tanyapi, required CI and native auto-merge.
+- Preserve IDs, category assignments, references, pricing, providers, permissions and existing tasks. No schema/config changes. Only new repeats use changed prompt. Private recipes remain absent from public API. Wan/Genjutsu separate recipe editing is explicitly deferred; title editing supported.
+- Logs record actor/trend/change flag only, never private prompt. Tests use synthetic data, no paid generations.
+- Production reconciliation: 56 missing links restored (55 completed, 1 failed); second apply inserted 0. Older 13 records used source=trend without prompt_source_id, verified before admitting that legacy contract. Existing success query counts completed only.
+- Release blocked: auto-review denied git push twice, requiring explicit user approval for source publication to this public GitHub repo despite verified Bambale0 ownership. No workaround, PR or code deploy performed. Full working copy preserved at /root/tanya-workspaces/trend-admin-editor-20261024.
+- Validation: 49 focused Python tests; 48 Jest tests; Ruff, TypeScript and static production build passed. Mobile Chromium browser E2E passed in isolated server worktree: private prompt load, title/prompt save without preview, reopen persistence, viewer privacy, category navigation. Local Chromium download returned truncated archives. Production code unchanged; only idempotent statistics repair applied.
+
 ## 2026-10-23 — Kling 4 catalog placement and Telegram navigation
 
 - Baseline: `ae8053d3b7ea27f1c94a8a3210198836d20ac9b0`, current origin/tanyapi. Isolated branch `fix/kling4-catalog-navigation-20261023`; production checkout and dirty runtime price.json preserved.
