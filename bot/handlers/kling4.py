@@ -371,6 +371,13 @@ async def show(message, state):
             f"Сейчас: фото <code>{images}/10</code>, видео <code>{videos}/5</code>, "
             f"материалы <code>{elements}/7</code>, голоса <code>{voices}/3</code>."
         )
+    audio_label = (
+        "исходный звук включён"
+        if videos and inp.get("keep_original_sound")
+        else "исходный звук выключен"
+        if videos
+        else "создаёт модель"
+    )
     labels = reference_labels(recipe).strip()
     prompt = html.escape(inp["prompt"] or "").strip()
     await message.answer(
@@ -379,7 +386,7 @@ async def show(message, state):
         + f"Качество: <code>{inp['resolution']}</code> · "
         + f"Формат кадра: <code>{ratio_label(inp.get('aspect_ratio', 'auto'))}</code> · "
         + f"Длительность: <code>{inp['duration']}с</code>\n"
-        + "Аудио: <code>создаёт модель</code>\n\n"
+        + f"Аудио: <code>{audio_label}</code>\n\n"
         + media_hint
         + ("\nМетки: " + labels.replace("\n", "; ") if labels else "")
         + "\n\n"
