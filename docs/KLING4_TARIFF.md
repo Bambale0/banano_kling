@@ -54,3 +54,8 @@ therefore zero for Kling 4 administrators. The nominal cost lives in the frozen
 quote as `quote.cost`; `quote.charge_cost` remains zero. Kling 4 tasks are owned
 by their lifecycle and excluded from the generic watchdog refund path, so a
 nominal display price cannot create an administrator refund.
+
+Both Telegram and the Mini App render the frozen nominal `quote.cost`. They show
+the administrator exemption separately instead of replacing the configured
+price with zero. Integer rates remain editable as decimal rates in the existing
+admin price screen.
