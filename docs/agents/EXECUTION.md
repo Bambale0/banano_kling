@@ -2672,3 +2672,32 @@ Final local verification at60897e01: full safe `python -m pytest tests/ --ignore
   14 prompt-dispatch/FSM cases. The normal database-backed lifecycle assertions
   for stored `cost=0`, nominal quote cost, `charge_cost=0`, admin-free metadata,
   and watchdog exclusion are prepared but not run under the adapter prohibition.
+
+
+## 2026-10-24 — Kling 4 Telegram reference intake latency
+
+- Baseline: `587b62bf2c4d03c1467a44dd93d54849a3a05af3`, current `tanyapi`, production container revision verified independently.
+- Report: attaching a photo in the Telegram Kling 4 editor appears to load for much longer than ordinary photo intake in other models.
+- Runtime evidence: a 223,657-byte photo handler took 69.218 seconds. The upload reservation was created only after the input-retention transaction completed; reservation creation through successful persistence then took 0.120 seconds. Concurrent ordinary photo handlers completed in 259–444 ms. No raw user media, prompts, tokens, user IDs or production dumps are included in this change.
+- Root cause: the shared input-retention sweep holds the global storage/quota row lock over a batch of reference lookups. The production worker uses `limit=50`; each candidate can scan approximately 337,000 generation-task rows with an unindexed substring lookup. A live PostgreSQL activity/lock snapshot confirmed this lookup running in a long transaction while the storage relation was locked. Telegram download and KIE submission are not the waiting stage for the observed photo.
+- Current scope: remove batch-wide contention between retention and new uploads; retain ownership checks, quota accounting, reference protection and deletion failure behavior; add stage timings to the existing Telegram upload path. Do not change models, prices, reference limits, provider payloads, Telegram FSM, public access or database schemas.
+- Acceptance seams: the public media-upload/storage boundary must complete while protected-old-media discovery is deliberately paused; a candidate pinned after discovery must survive the final deletion check; existing expiry, quota, MOV/repeat and cancellation behavior must remain valid.
+- Implementation plan: (1) record a deterministic failing concurrency regression; (2) shorten retention critical sections and recheck deletion safety; (3) log reservation/download/persistence timing without URLs or file IDs; (4) run focused regression, independent review and required CI; (5) verify the exact released SHA and production storage-lock behavior.
+- Working copy: dedicated `fix/kling4-reference-latency-20261024` branch from the verified production baseline. The production checkout's mutable `data/price.json` is not edited.
+- Guidance consulted: `Bambale0/skills/skills/engineering/diagnosing-bugs/SKILL.md`, `tdd/SKILL.md`, `code-review/SKILL.md`; focused `Bambale0/claw/.agents/skills/release-hardening/SKILL.md` guidance. The Claw-specific instruction index/registry files are absent here; this repository's AGENTS.md controls release. `anthropics/skills/skills/webapp-testing/SKILL.md` was considered; this change has no UI code and uses the repository's existing required browser gate.
+- Verification plan: isolated unit/integration tests with a fake provider; no paid generation or outbound user message. See final implementation evidence below. Production acceptance compares the actual revision, health, current logs and bounded storage-lock admission during cleanup.
+- Rollback: a normal reviewed revert through the protected `tanyapi` release path; no migration or data rollback is required.
+
+
+### Implementation and verification
+
+- Implemented independent expiry transactions for sessions, a committed page/cursor claim, unlocked protected-media screening and a fresh per-candidate locked ownership/identity/age recheck before unlinking. The final check discovers optional schemas again. All previous reference sources and fail-closed lookup behavior remain.
+- Added Telegram reservation, probe admission, download, conversion, persistence and release timings, including failure/cancellation stage and exception type. Existing cleanup/exception semantics are preserved.
+- RED evidence on unchanged baseline implementation: the new upload/retention concurrency test failed on SQLite (4.18s) and PostgreSQL (4.21s) because the real `init_upload()` waited for the paused lookup.
+- GREEN, final candidate: `pytest -p pytest_asyncio.plugin -p pytest_mock -q tests/test_wan3_retention.py tests/test_wan3_prime_storage.py tests/test_kling4_mov.py tests/test_wan3_media_integrity.py tests/test_wan3_preprocess_admission.py tests/test_kling4_automatic_telegram.py --tb=short`: **71 passed in 21.63s**.
+- PostgreSQL: `pytest -p pytest_asyncio.plugin -p pytest_mock -q tests/test_wan3_prime_postgres.py --tb=short`: **15 passed in 5.94s**, including both new concurrency cases, quota/idempotency and existing storage/lifecycle contracts.
+- All tests used cleared application environments, project dotenv disabled, synthetic users/media and a fake provider. PostgreSQL ran in a dedicated disposable loopback-only container using the existing guarded test database. The old test interpreter lacked the runtime PDF parser; a separate QA interpreter with the unchanged runtime parser resolved collection/subprocess dependency errors without changing production packages or application guards.
+- Ruff on all four changed Python files: pass. Python compilation and `git diff --check`: pass.
+- Independent reviews: specification/concurrency review found no blocking issue; standards/security review found a missing release-failure timing, which was fixed and re-reviewed as closed. DB context-manager rollback/release semantics were verified in the unchanged adapter and pool.
+- Residual limits: individual true-orphan checks and one session's filesystem deletion still hold their own lock. No full audit or new atomicity claim is made for reference writers outside the established storage-lock contract. The fix does not optimize the underlying substring queries.
+- Documentation updated in `docs/kling4.md`. No schema, configuration, pricing or provider contract changes. Required CI and exact-SHA production acceptance remain pending release; no production deployment is claimed by these local results.

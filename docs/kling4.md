@@ -91,3 +91,43 @@ only after mandatory checks are green. A follow-up commit resumes normal CI
 without changing workflows or protections. Local adapter access remains
 prohibited. Keep the PR draft until the genuine required checks and review pass;
 then use the normal protected merge and exact-SHA deployment pipeline.
+
+
+## Telegram reference intake latency — 2026-10-24
+
+Telegram Kling 4 stores inspected inputs through the shared Wan media storage.
+A background input-retention pass previously held its global quota lock while
+checking a whole page of old files against generation history. A production
+photo handler spent 69.218 seconds in intake even though reservation creation,
+Telegram download and persistence completed within 0.120 seconds once the lock
+was available.
+
+Retention now commits its page/cursor claim before the expensive reference
+lookups. Files already protected by a task, saved reference, trend or Kling
+intent are screened without holding the upload quota lock. Each possible
+orphan is reread under a separate storage lock, including its age, identity,
+path containment, current optional schemas and all reference sources, before
+unlinking. Expired upload sessions likewise have independent transactions with
+fresh status and lease checks. Quotas are released only after the corresponding
+bytes are removed. Lookup failures remain errors, never evidence of an orphan.
+
+Telegram intake logs reservation, probe admission, download, conversion,
+persistence and temporary-file release durations. Correlation uses Telegram and
+upload IDs, media kind and byte count; URLs, Telegram file IDs and exception
+contents are excluded. Failed or cancelled reservation, transfer and release
+stages include their elapsed time and exception type.
+
+Regression coverage runs the actual storage reservation, including schema
+initialization, while a protected-media lookup is paused. It also adds a task
+reference after a negative preliminary lookup and verifies that the final
+check preserves the file. Both scenarios run on SQLite and the existing
+disposable PostgreSQL contract fixture. Existing MOV/repeat ownership, quota,
+media integrity and automatic Telegram intake tests remain part of the focused
+verification.
+
+This removes batch-wide contention for protected inputs. One actual orphan
+still requires a fresh reference lookup under its individual lock, and removing
+one expired session still holds its lock for that operation. The patch does not
+add an index for substring searches or change the locking contract of unrelated
+reference writers. A failed preliminary scan advances past that page until the
+next cursor cycle, delaying cleanup without authorizing deletion.

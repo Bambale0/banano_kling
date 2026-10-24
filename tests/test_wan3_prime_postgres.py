@@ -312,3 +312,19 @@ async def test_postgres_upload_utc_expiry_survives_session_timezone_and_dst(monk
     assert expired[0] == 'expired'
     renewed = await storage.init_upload(actor, kind='image', filename='quota-released.png', size=len(raw))
     assert renewed['upload_id'] != second['upload_id']
+
+
+@pytest.mark.asyncio
+async def test_postgres_reference_upload_is_not_blocked_by_retention_scan(tmp_path, monkeypatch):
+    from tests.test_wan3_retention import (
+        assert_upload_admitted_during_protected_media_scan,
+    )
+
+    await assert_upload_admitted_during_protected_media_scan(tmp_path, monkeypatch)
+
+
+@pytest.mark.asyncio
+async def test_postgres_new_reference_pin_survives_retention_prefilter(tmp_path, monkeypatch):
+    from tests.test_wan3_retention import assert_new_pin_survives_retention_prefilter
+
+    await assert_new_pin_survives_retention_prefilter(tmp_path, monkeypatch)
