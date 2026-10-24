@@ -6,7 +6,9 @@ os.environ["BANANO_SKIP_PROJECT_ENV"] = "1"
 # Importing bot.main configures logging during test collection. Force this even
 # when a production-like shell exported another value, before any bot imports.
 os.environ["BANANO_DISABLE_FILE_LOGGING"] = "1"
-_PARTNER_POSTGRES_TEST = str(os.getenv("PARTNER_POSTGRES_TEST", "")).strip().lower() in {
+_PARTNER_POSTGRES_TEST = str(
+    os.getenv("PARTNER_POSTGRES_TEST", "")
+).strip().lower() in {
     "1",
     "true",
     "yes",
@@ -19,29 +21,76 @@ _PARTNER_POSTGRES_TEST = str(os.getenv("PARTNER_POSTGRES_TEST", "")).strip().low
 # contract before bot modules are imported. The dedicated partner PostgreSQL
 # job is the only exception: it must preserve its explicit ephemeral CI DSN.
 for _name in (
-    "ALLOW_NSFW", "BANANO_LOG_RETENTION_DAYS", "CRYPTOBOT_API_TOKEN", "DATABASE_URL", "DEBUG",
-    "DOWNLOAD_EXTERNAL_IMAGES", "FREEKASSA_API_KEY", "FREEKASSA_CURRENCY",
-    "FREEKASSA_MERCHANT_ID", "FREEKASSA_SECRET_WORD", "FREEKASSA_SECRET_WORD_2",
-    "FREEKASSA_VERIFY_IP", "FREEKASSA_WEBHOOK_PATH", "INTERNAL_API_ALLOWED_NETWORKS",
-    "INTERNAL_API_MAX_CLOCK_SKEW_SECONDS", "INTERNAL_API_SECRET",
-    "INTERNAL_API_SERVICE_VERSION", "KIE_AI_API_KEY", "KIE_AI_WEBHOOK_SECRET",
-    "LAVA_API_BASE_URL", "LAVA_API_KEY", "LAVA_DEFAULT_EMAIL",
-    "LAVA_OFFER_ID_BUSINESS", "LAVA_OFFER_ID_MINI", "LAVA_OFFER_ID_OPTIMAL",
-    "LAVA_OFFER_ID_PRO", "LAVA_OFFER_ID_START", "LAVA_OFFER_ID_STUDIO",
-    "AI_ASSISTANT_AUDIO_MODEL", "AI_ASSISTANT_AUDIO_TIMEOUT_SECONDS", "AI_ASSISTANT_AUDIO_MAX_ATTEMPTS",
-    "TELEGRAM_TRANSIENT_MAX_ATTEMPTS", "TELEGRAM_RETRY_AFTER_MAX_SECONDS", "REDIS_RECOVERY_INTERVAL_SECONDS", "REDIS_OPERATION_TIMEOUT_SECONDS",
-    "LAVA_WEBHOOK_ALLOWED_IPS", "LAVA_WEBHOOK_BASIC_CREDENTIALS", "LAVA_WEBHOOK_BASIC_USERNAME", "LAVA_WEBHOOK_BASIC_PASSWORD",
-    "LAVA_WEBHOOK_PATH", "LAVA_WEBHOOK_SECRET", "MINI_APP_URL",
-    "NANOBANANA2_FALLBACK_API_KEY", "NANOBANANA2_FALLBACK_BASE_URL",
-    "NANO_BANANA_PRO_FALLBACK_API_KEY", "NANO_BANANA_PRO_FALLBACK_BASE_URL",
-    "PARTNER_MIN_WITHDRAWAL_RUB", "PARTNER_LEVEL1_PERCENT", "PARTNER_LEVEL2_PERCENT",
-    "PARTNER_LEVEL1_OVERRIDES_JSON", "PARTNER_REPEAT_REWARD_RUB", "PAYMENT_PROVIDER", "REDIS_PREFIX", "REDIS_URL",
-    "REFERRAL_ANTIFRAUD_BLOCK_CODES", "REFERRAL_ANTIFRAUD_BLOCK_REFERRER_IDS",
-    "REFERRAL_ANTIFRAUD_BURST_MAX", "REFERRAL_ANTIFRAUD_BURST_WINDOW_SECONDS",
-    "REFERRAL_ANTIFRAUD_MAX_PER_DAY", "REFERRAL_ANTIFRAUD_MAX_PER_HOUR",
-    "STATIC_BASE_URL", "TELEGRAM_STARS_FLAT_FEE", "TELEGRAM_STARS_PER_RUB",
-    "WEBHOOK_HOST", "WEBHOOK_PATH", "WEBHOOK_PORT", "YOOKASSA_RETURN_URL",
-    "YOOKASSA_SECRET_KEY", "YOOKASSA_SHOP_ID", "YOOKASSA_WEBHOOK_URL",
+    "ALLOW_NSFW",
+    "BANANO_LOG_RETENTION_DAYS",
+    "CRYPTOBOT_API_TOKEN",
+    "DATABASE_URL",
+    "DEBUG",
+    "DOWNLOAD_EXTERNAL_IMAGES",
+    "FREEKASSA_API_KEY",
+    "FREEKASSA_CURRENCY",
+    "FREEKASSA_MERCHANT_ID",
+    "FREEKASSA_SECRET_WORD",
+    "FREEKASSA_SECRET_WORD_2",
+    "FREEKASSA_VERIFY_IP",
+    "FREEKASSA_WEBHOOK_PATH",
+    "INTERNAL_API_ALLOWED_NETWORKS",
+    "INTERNAL_API_MAX_CLOCK_SKEW_SECONDS",
+    "INTERNAL_API_SECRET",
+    "INTERNAL_API_SERVICE_VERSION",
+    "KIE_AI_API_KEY",
+    "KIE_AI_WEBHOOK_SECRET",
+    "LAVA_API_BASE_URL",
+    "LAVA_API_KEY",
+    "LAVA_DEFAULT_EMAIL",
+    "LAVA_OFFER_ID_BUSINESS",
+    "LAVA_OFFER_ID_MINI",
+    "LAVA_OFFER_ID_OPTIMAL",
+    "LAVA_OFFER_ID_PRO",
+    "LAVA_OFFER_ID_START",
+    "LAVA_OFFER_ID_STUDIO",
+    "AI_ASSISTANT_AUDIO_MODEL",
+    "AI_ASSISTANT_AUDIO_TIMEOUT_SECONDS",
+    "AI_ASSISTANT_AUDIO_MAX_ATTEMPTS",
+    "TELEGRAM_TRANSIENT_MAX_ATTEMPTS",
+    "TELEGRAM_RETRY_AFTER_MAX_SECONDS",
+    "REDIS_RECOVERY_INTERVAL_SECONDS",
+    "REDIS_OPERATION_TIMEOUT_SECONDS",
+    "LAVA_WEBHOOK_ALLOWED_IPS",
+    "LAVA_WEBHOOK_BASIC_CREDENTIALS",
+    "LAVA_WEBHOOK_BASIC_USERNAME",
+    "LAVA_WEBHOOK_BASIC_PASSWORD",
+    "LAVA_WEBHOOK_PATH",
+    "LAVA_WEBHOOK_SECRET",
+    "MINI_APP_URL",
+    "NANOBANANA2_FALLBACK_API_KEY",
+    "NANOBANANA2_FALLBACK_BASE_URL",
+    "NANO_BANANA_PRO_FALLBACK_API_KEY",
+    "NANO_BANANA_PRO_FALLBACK_BASE_URL",
+    "PARTNER_MIN_WITHDRAWAL_RUB",
+    "PARTNER_LEVEL1_PERCENT",
+    "PARTNER_LEVEL2_PERCENT",
+    "PARTNER_LEVEL1_OVERRIDES_JSON",
+    "PARTNER_REPEAT_REWARD_RUB",
+    "PAYMENT_PROVIDER",
+    "REDIS_PREFIX",
+    "REDIS_URL",
+    "REFERRAL_ANTIFRAUD_BLOCK_CODES",
+    "REFERRAL_ANTIFRAUD_BLOCK_REFERRER_IDS",
+    "REFERRAL_ANTIFRAUD_BURST_MAX",
+    "REFERRAL_ANTIFRAUD_BURST_WINDOW_SECONDS",
+    "REFERRAL_ANTIFRAUD_MAX_PER_DAY",
+    "REFERRAL_ANTIFRAUD_MAX_PER_HOUR",
+    "STATIC_BASE_URL",
+    "TELEGRAM_STARS_FLAT_FEE",
+    "TELEGRAM_STARS_PER_RUB",
+    "WEBHOOK_HOST",
+    "WEBHOOK_PATH",
+    "WEBHOOK_PORT",
+    "YOOKASSA_RETURN_URL",
+    "YOOKASSA_SECRET_KEY",
+    "YOOKASSA_SHOP_ID",
+    "YOOKASSA_WEBHOOK_URL",
 ):
     if _PARTNER_POSTGRES_TEST and _name == "DATABASE_URL":
         continue
@@ -55,11 +104,34 @@ os.environ["ADMIN_IDS"] = "999999999"
 # from affecting the isolated unit-test process.
 collect_ignore_glob = (
     []
-    if str(os.getenv("BANANO_LIVE_SMOKE", "")).strip().lower() in {"1", "true", "yes", "on"}
+    if str(os.getenv("BANANO_LIVE_SMOKE", "")).strip().lower()
+    in {"1", "true", "yes", "on"}
     else ["live/test_*.py"]
 )
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def configured_kling4_tariff_for_kling_suites(request, monkeypatch):
+    """Give successful Kling 4 suites an explicit synthetic retail tariff."""
+    if not request.node.path.name.startswith("test_kling4"):
+        return
+
+    from copy import deepcopy
+
+    from bot.services.preset_manager import preset_manager
+
+    price_config = deepcopy(preset_manager.get_price_config())
+    price_config.setdefault("costs_reference", {}).setdefault("video_models", {})[
+        "kling_4"
+    ] = {
+        "billing_rates": {
+            category: {"720p": 1.0, "1080p": 2.0}
+            for category in ("reference", "keyframe", "video")
+        }
+    }
+    monkeypatch.setattr(preset_manager, "get_price_config", lambda: price_config)
 
 
 @pytest.fixture(autouse=True)
