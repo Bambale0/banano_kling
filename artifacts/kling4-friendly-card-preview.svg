@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="900" viewBox="0 0 1180 900">
+  <rect width="1180" height="900" fill="#17212b"/>
+  <style>
+    text { font-family: "Segoe UI", Arial, sans-serif; fill: #f5f5f5; }
+    .caption { font-size: 22px; font-weight: 700; fill: #8fa6b8; }
+    .body { font-size: 19px; }
+    .muted { fill: #aebbc5; }
+    .button { fill: #2b5278; stroke: #3e6b91; stroke-width: 1; }
+    .buttonText { font-size: 17px; font-weight: 600; text-anchor: middle; }
+    .bubble { fill: #182f3f; }
+    .divider { stroke: #344957; stroke-width: 2; }
+  </style>
+  <text class="caption" x="50" y="55">Сейчас</text>
+  <text class="caption" x="620" y="55">Предлагаемый общий стиль</text>
+
+  <rect class="bubble" x="35" y="80" width="525" height="680" rx="22"/>
+  <text class="body" x="65" y="125" font-weight="700">Kling 4 · администратор</text>
+  <text class="body" x="65" y="162">Референсы · 5с · 720p</text>
+  <text class="body muted" x="65" y="204">Отправьте фото, видео или аудио —</text>
+  <text class="body muted" x="65" y="232">бот сам добавит референсы.</text>
+  <text class="body" x="65" y="274">Фото: @image_1</text>
+  <text class="body muted" x="65" y="316">Отправка промпта сразу запускает генерацию.</text>
+  <text class="body" x="65" y="378">Бананы не списываются.</text>
+
+  <rect class="button" x="48" y="790" width="250" height="48" rx="10"/>
+  <rect class="button" x="306" y="790" width="240" height="48" rx="10"/>
+  <text class="buttonText" x="173" y="821">✅ 🧩 По референсам</text>
+  <text class="buttonText" x="426" y="821">🎞 По кадрам</text>
+  <text class="body muted" x="180" y="870">Цена до запуска не показана</text>
+
+  <line class="divider" x1="590" y1="25" x2="590" y2="875"/>
+
+  <rect class="bubble" x="610" y="80" width="535" height="680" rx="22"/>
+  <text class="body" x="640" y="125" font-weight="700">🎬 Kling 4</text>
+  <text class="body" x="640" y="180">Сценарий: <tspan font-weight="700">По референсам</tspan></text>
+  <text class="body" x="640" y="218">Качество: 720p · Формат кадра: Авто</text>
+  <text class="body" x="640" y="254">Длительность: 5с · Аудио: создаёт модель</text>
+  <text class="body muted" x="640" y="310">Можно присылать фото / видео / аудио</text>
+  <text class="body muted" x="640" y="340">прямо сюда.</text>
+  <text class="body" x="640" y="382">Сейчас: фото 1/10, видео 0/5,</text>
+  <text class="body" x="640" y="414">материалы 0/7, голоса 0/3.</text>
+  <text class="body" x="640" y="452">Метки: Фото: @image_1</text>
+  <text class="body" x="640" y="512">💰 Цена: 5 🍌 бананов.</text>
+  <text class="body" x="640" y="548">Для администратора списание отключено.</text>
+  <text class="body muted" x="640" y="610">После настройки отправьте промпт —</text>
+  <text class="body muted" x="640" y="640">генерация запустится сразу.</text>
+
+  <rect class="button" x="620" y="790" width="255" height="48" rx="10"/>
+  <rect class="button" x="883" y="790" width="250" height="48" rx="10"/>
+  <text class="buttonText" x="747" y="821">✅ 🧩 По референсам</text>
+  <text class="buttonText" x="1008" y="821">🎞 По кадрам</text>
+  <text class="body muted" x="740" y="870">Настройки → медиа → цена → действие</text>
+</svg>

@@ -159,7 +159,11 @@ def field_parent(path):
 
 
 def mode_label(recipe):
-    return "Референсы" if recipe["mode"] == "reference" else "По кадрам"
+    return "По референсам" if recipe["mode"] == "reference" else "По кадрам"
+
+
+def ratio_label(value):
+    return "Авто" if value == "auto" else value
 
 
 async def materials_menu(message, recipe):
@@ -254,12 +258,12 @@ def keyboard(recipe):
         ]
     )
     ratio = data.get("aspect_ratio", "auto")
-    for values in (("auto",), RATIOS[1:4], RATIOS[4:]):
+    for values in (("auto", *RATIOS[1:3]), RATIOS[3:]):
         b.row(
             *[
                 types.InlineKeyboardButton(
                     text=("✅ " if ratio == value else "")
-                    + ("Авто" if value == "auto" else value),
+                    + ratio_label(value),
                     callback_data="k4:ratio:" + value,
                 )
                 for value in values
@@ -286,7 +290,10 @@ def keyboard(recipe):
     else:
         b.row(
             types.InlineKeyboardButton(
-                text=f"🧩 Elements ({len(data.get('elements') or [])}) · Голоса ({len(data.get('voices') or [])})",
+                text=(
+                    f"🧩 Материалы ({len(data.get('elements') or [])}) · "
+                    f"🎙 Голоса ({len(data.get('voices') or [])})"
+                ),
                 callback_data="k4:materials",
             ),
             types.InlineKeyboardButton(
@@ -299,10 +306,10 @@ def keyboard(recipe):
                 callback_data="k4:sound",
             ),
         )
-    b.row(types.InlineKeyboardButton(text="Очистить медиа", callback_data="k4:clear"))
+    b.row(types.InlineKeyboardButton(text="🧹 Очистить медиа", callback_data="k4:clear"))
     b.row(
         types.InlineKeyboardButton(
-            text="К моделям", callback_data="video_models:kling:0"
+            text="← Модели Kling", callback_data="video_models:kling:0"
         )
     )
     return b.as_markup()
@@ -338,24 +345,48 @@ def reference_labels(recipe):
 
 
 async def show(message, state):
+    from bot.kling4_tariff import format_editor_admin_price
+
     data = await state.get_data()
     recipe = data.get("k4_recipe", fresh())
     inp = recipe["input"]
     await state.set_state(Kling4States.editing)
     await state.update_data(k4_field=None, k4_media_session=None, k4_text_session=None)
-    await message.answer(
-        "<b>Kling 4 · администратор</b>\n"
-        + f"{mode_label(recipe)} · {inp['duration']}с · {inp['resolution']}\n"
-        + "Отправьте фото, видео или аудио — бот сам добавит референсы.\n"
-        + reference_labels(recipe)
-        + (
-            "С кадрами формат видео задаёт первый загруженный кадр.\n"
-            if recipe["mode"] == "keyframe"
-            else ""
+    images = len(inp.get("image_urls") or [])
+    videos = len(inp.get("video_urls") or [])
+    elements = len(inp.get("elements") or [])
+    voices = len(inp.get("voices") or [])
+    if recipe["mode"] == "keyframe":
+        first = "✅" if inp.get("first_frame_url") else "—"
+        middle = len(inp.get("keyframe_urls") or [])
+        last = "✅" if inp.get("last_frame_url") else "—"
+        media_hint = (
+            "Загрузите первый, промежуточные или последний кадр прямо сюда. "
+            f"Сейчас: первый {first}, промежуточных <code>{middle}</code>, последний {last}.\n"
+            "Формат видео задаёт первый загруженный кадр."
         )
-        + "Отправка промпта (до 8000 символов) сразу запускает генерацию.\n"
-        + html.escape(inp["prompt"] or "")
-        + "\nБананы не списываются.",
+    else:
+        media_hint = (
+            "Можно присылать фото / видео / аудио прямо сюда. "
+            f"Сейчас: фото <code>{images}/10</code>, видео <code>{videos}/5</code>, "
+            f"материалы <code>{elements}/7</code>, голоса <code>{voices}/3</code>."
+        )
+    labels = reference_labels(recipe).strip()
+    prompt = html.escape(inp["prompt"] or "").strip()
+    await message.answer(
+        "🎬 <b>Kling 4</b>\n\n"
+        + f"Сценарий: <b>{mode_label(recipe)}</b>\n"
+        + f"Качество: <code>{inp['resolution']}</code> · "
+        + f"Формат кадра: <code>{ratio_label(inp.get('aspect_ratio', 'auto'))}</code> · "
+        + f"Длительность: <code>{inp['duration']}с</code>\n"
+        + "Аудио: <code>создаёт модель</code>\n\n"
+        + media_hint
+        + ("\nМетки: " + labels.replace("\n", "; ") if labels else "")
+        + "\n\n"
+        + format_editor_admin_price(recipe)
+        + "\n\n"
+        + "После настройки отправьте промпт до 8000 символов — генерация запустится сразу."
+        + ("\n\nТекущий промпт: " + prompt if prompt else ""),
         parse_mode="HTML",
         reply_markup=keyboard(recipe),
     )
