@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import math
+import re
 from copy import deepcopy
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -270,6 +272,14 @@ def format_editor_admin_price(
 
     data = recipe.get("input", {}) if isinstance(recipe, dict) else {}
     category = "video" if data.get("video_urls") else recipe.get("mode")
+    frame_tag = bool(
+        re.search(
+            r"@(first_frame|last_frame|keyframe_\\d+)\\b",
+            str(data.get("prompt") or ""),
+        )
+    )
+    if category == "reference" and frame_tag:
+        category = "keyframe"
     quality = data.get("resolution")
     if category not in CATEGORIES or quality not in QUALITIES:
         return (
@@ -299,13 +309,24 @@ def format_editor_admin_price(
     unit = " ".join(
         value
         for value in (
-            str(config.get("credit_emoji") or "").strip(),
-            str(config.get("credit_name_plural") or config.get("credit_name") or "").strip(),
+            html.escape(str(config.get("credit_emoji") or "").strip()),
+            html.escape(
+                str(
+                    config.get("credit_name_plural")
+                    or config.get("credit_name")
+                    or ""
+                ).strip()
+            ),
         )
         if value
     )
     suffix = f" {unit}" if unit else ""
+    frame_note = (
+        "\nПри тегах кадров применяется тариф «По кадрам»."
+        if category == "reference" and data.get("image_urls")
+        else ""
+    )
     return (
-        f"💰 Цена: <code>{cost:g}</code>{suffix}.\n"
+        f"💰 Цена: <code>{cost:g}</code>{suffix}.{frame_note}\n"
         "Для администратора списание отключено."
     )

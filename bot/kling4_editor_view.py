@@ -75,7 +75,6 @@ def render_editor_card(recipe: dict, price_text: str) -> str:
         else "создаёт модель"
     )
     labels = reference_labels(recipe)
-    prompt = html.escape(data.get("prompt") or "").strip()
     return (
         "🎬 <b>Kling 4</b>\n\n"
         f"Сценарий: <b>{mode_label(recipe)}</b>\n"
@@ -87,7 +86,6 @@ def render_editor_card(recipe: dict, price_text: str) -> str:
         + (f"\nМетки: {labels}" if labels else "")
         + f"\n\n{price_text}\n\n"
         "После настройки отправьте промпт до 8000 символов — генерация запустится сразу."
-        + (f"\n\nТекущий промпт: {prompt}" if prompt else "")
     )
 
 

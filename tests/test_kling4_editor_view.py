@@ -102,3 +102,15 @@ def test_video_and_keyframe_states_keep_contextual_controls():
         "Средние",
         "Последний",
     ]
+
+
+def test_long_persisted_prompt_never_exceeds_telegram_card_limit():
+    card = render_editor_card(
+        recipe(prompt="x" * 8000, image_urls=["owned-photo"]),
+        "💰 Цена: <code>12.5</code> 🍌 бананов.\n"
+        "Для администратора списание отключено.",
+    )
+
+    assert len(card) < 4096
+    assert "x" * 100 not in card
+    assert card.endswith("генерация запустится сразу.")
