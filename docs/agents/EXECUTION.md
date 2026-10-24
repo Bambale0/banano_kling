@@ -2701,3 +2701,8 @@ Final local verification at60897e01: full safe `python -m pytest tests/ --ignore
 - Independent reviews: specification/concurrency review found no blocking issue; standards/security review found a missing release-failure timing, which was fixed and re-reviewed as closed. DB context-manager rollback/release semantics were verified in the unchanged adapter and pool.
 - Residual limits: individual true-orphan checks and one session's filesystem deletion still hold their own lock. No full audit or new atomicity claim is made for reference writers outside the established storage-lock contract. The fix does not optimize the underlying substring queries.
 - Documentation updated in `docs/kling4.md`. No schema, configuration, pricing or provider contract changes. Required CI and exact-SHA production acceptance remain pending release; no production deployment is claimed by these local results.
+
+
+## 2026-10-24 — Kling 4 duration card
+
+Baseline: fba034f1 (tanyapi). Duration callbacks called show(), which always sent a new message. Reproduced with 7 failing callback regression cases. Fix: opt-in editing for duration callbacks only; unchanged-message errors are benign, other Telegram errors propagate without duplicate send. Existing actor lock serializes changes. No migrations, pricing/config/provider/payment changes; Mini App unaffected. Tests cover increment, decrement, bounds, zero delta, unchanged and unrelated Telegram errors. Release via task PR and protected tanyapi CI/autodeploy. Production verification pending. Guidance: diagnosing-bugs (Bambale0/skills), callback checklist (Bambale0/claw); anthropics webapp-testing inspected, browser layer not applicable to Telegram-only change.

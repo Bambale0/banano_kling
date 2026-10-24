@@ -12,6 +12,7 @@ from functools import wraps
 
 from aiogram import F, Router, types
 from aiogram.dispatcher.event.bases import SkipHandler
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -238,18 +239,25 @@ def keyboard(recipe):
     return b.as_markup()
 
 
-async def show(message, state):
+async def show(message, state, *, edit=False):
     from bot.kling4_tariff import format_editor_admin_price
 
     data = await state.get_data()
     recipe = data.get("k4_recipe", fresh())
     await state.set_state(Kling4States.editing)
     await state.update_data(k4_field=None, k4_media_session=None, k4_text_session=None)
-    await message.answer(
-        render_editor_card(recipe, format_editor_admin_price(recipe)),
-        parse_mode="HTML",
-        reply_markup=keyboard(recipe),
-    )
+    send = message.edit_text if edit else message.answer
+    try:
+        await send(
+            render_editor_card(recipe, format_editor_admin_price(recipe)),
+            parse_mode="HTML",
+            reply_markup=keyboard(recipe),
+        )
+    except TelegramBadRequest as exc:
+        # Boundary clicks and the current-duration button can leave the card
+        # unchanged. Telegram rejects that edit; it must not create a duplicate.
+        if not edit or "message is not modified" not in exc.message.lower():
+            raise
 
 
 async def save(state, recipe):
@@ -428,7 +436,7 @@ async def callback(query: types.CallbackQuery, state: FSMContext):
             inp["duration"] = max(3, min(30, inp["duration"] + delta))
             if delta:
                 await save(state, recipe)
-            await show(query.message, state)
+            await show(query.message, state, edit=True)
         elif action in {"resolution", "ratio", "sound"}:
             if action == "resolution":
                 selected = (
