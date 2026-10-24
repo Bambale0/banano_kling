@@ -2598,3 +2598,77 @@ Final local verification at60897e01: full safe `python -m pytest tests/ --ignore
 - The owner approved the narrow exception: the existing automated tests for PR #368 may read/import the PostgreSQL adapter, without changing it. Local read/import/restore remains prohibited. The prior CI hold above is historical and superseded only to this extent.
 - Release is authorized only after genuine mandatory checks pass. Keep draft until checks/review are resolved; do not bypass protection, fabricate statuses, change workflows or run paid tests.
 - Resume normal CI with this no-skip follow-up commit. The implementation and tested Python blobs are unchanged. Track current-head checks, then merge-SHA CI and the standard deployment pipelines; report deployed only with exact-SHA evidence. No ongoing runtime monitor is started.
+
+## 2026-10-23 - Kling 4 targeted-media prompt dispatch
+
+- Baseline: `100b2bb39cbc967fec6959427654ac7a2dcd0720`, `tanyapi`.
+- Evidence: text entered after selecting a targeted media field was interpreted
+  as a URL, and the automatic composer only accepted the main editor state.
+- Scope: Telegram Kling 4 prompt dispatch only. No provider request, pricing,
+  payment, public-access, schema, configuration, or deployment change.
+- Behavior: plain text and media captions in a targeted picker are queued as
+  prompts; dispatch waits for in-flight uploads, preserves the active field and
+  ordering, coalesces prompt fragments, and launches once through the existing
+  lifecycle. Explicit HTTP(S) text continues to import media.
+- Race safety: queue entries are bound to the draft session, exact FSM state,
+  and media-picker session. Navigation or a new picker invalidates stale input;
+  existing message receipts retain idempotency.
+- Verification: isolated Telegram/FSM lifecycle doubles passed 13 cases covering
+  ordinary targeted dispatch; in-flight waiting; captions; first/last frames;
+  Element images; Voice audio; validation and unexpected upload failures;
+  out-of-order albums and duplicate messages; back, clear, and replacement
+  media sessions; and an unknown launch outcome followed by duplicate delivery.
+  Python compilation, Ruff, and whitespace validation passed.
+  The isolated harness blocks the PostgreSQL adapter import and performs no
+  network or provider operation.
+- Remaining blockers: the two Library PNGs could not be installed locally
+  because the official materializer requires `os.setxattr`, unavailable on this
+  Windows executor; therefore visual UI parity is not claimed. No Kling 4 retail
+  banana tariff exists in the inspected catalog, so no price was invented.
+  Normal PR CI and deployment restore/import the prohibited PostgreSQL adapter;
+  publication, CI, merge, and deployment remain pending explicit authorization.
+
+### Admin-managed Kling 4 retail tariff
+
+- Decision: the user confirmed that an administrator will set the price through
+  the existing tariff administration surface. No numeric retail rate was added
+  to source, `data/price.json`, or a database.
+- Configuration: a complete `kling_4.billing_rates` block under the existing
+  versioned `costs_reference.video_models` map contains per-billed-second rates
+  for `reference`, `keyframe`, and ordinary-video reference categories at 720p
+  and 1080p. The categories, quality and measured billed seconds come directly
+  from the existing provider quote; no new aspect/Element/Voice/sound multiplier
+  was inferred.
+- Missing configuration: quote and launch stop with `Цена Kling 4 не настроена`;
+  provider credits, zero, or a screenshot price are never substituted.
+- Admin display: the nominal frozen `cost` is shown before launch, followed by
+  `Для администратора списание отключено`; `charge_cost` remains zero and KIE
+  credits remain a separate diagnostic value.
+- Validation: the existing tariff publisher rejects partial, non-numeric,
+  non-finite, zero, or negative Kling 4 rate blocks. Tariff changes alter the
+  retail revision and immutable quote hash.
+- Local verification: the initial 24 isolated cases passed across tariff calculation/admin
+  validation and targeted prompt dispatch. The harness hard-blocks the forbidden
+  PostgreSQL adapter and performs no provider, database, or production write.
+
+#### Telegram tariff editor completion
+
+- Audit found that the first tariff diff exposed only the whole-config publisher;
+  no reachable Telegram button existed for Kling 4. The standard price editor now
+  exposes `Admin → Prices → Video → Kling → Kling 4` even while unconfigured.
+- The detail screen contains six stable buttons for Reference, Keyframe, and
+  ordinary-video reference at 720p/1080p. Each button uses the existing numeric
+  input FSM, saves through the price manager, verifies readback, and logs actor,
+  category, quality, old value, and new value without prompts or secrets.
+- Partial entry is allowed so the admin can fill the six cells one by one, but
+  quote/launch remains blocked until the complete block validates. No numeric
+  seed or production config mutation was added.
+- Billing compatibility: `generation_tasks.cost` remains the actual debit `0`;
+  nominal price is `quote.cost`, actual debit is `quote.charge_cost=0`, and
+  `admin_free=true`. Kling 4 task IDs remain excluded from generic watchdog
+  failure/refund processing.
+- Local verification now covers 28 isolated cases: 12 tariff/config/history cases,
+  2 real Telegram-admin navigation/save/readback cases with a manager stub, and
+  14 prompt-dispatch/FSM cases. The normal database-backed lifecycle assertions
+  for stored `cost=0`, nominal quote cost, `charge_cost=0`, admin-free metadata,
+  and watchdog exclusion are prepared but not run under the adapter prohibition.

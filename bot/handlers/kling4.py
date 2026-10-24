@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+import re
 import uuid
 import weakref
 from functools import wraps
@@ -375,6 +376,8 @@ async def reset_intake(state):
 
 async def launch_prompt(message, state, recipe):
     """Resolve the measured quote internally, preserving durable idempotency."""
+    from bot.kling4_tariff import format_admin_price
+
     identity = await actor(message.from_user.id)
     current = await state.get_data()
     mid = getattr(message, "message_id", None)
@@ -393,6 +396,7 @@ async def launch_prompt(message, state, recipe):
     }:
         return
     await state.update_data(k4_quote=quote, k4_key=key)
+    await message.answer(format_admin_price(quote))
     result = await kling4_lifecycle.launch(identity, recipe, quote["quote_hash"], key)
     latest = await state.get_data()
     active = latest.get("k4_session") == current.get(
@@ -424,7 +428,7 @@ async def launch_prompt(message, state, recipe):
     await message.answer(
         heading + "\n"
         f"{result['task_id']}\n"
-        f"Расход KIE: {quote['provider_credits']} credits. Бананы: 0.\n"
+        f"Расход KIE: {quote['provider_credits']} credits.\n"
         + (
             "Проверьте промпт и референсы перед следующим запуском."
             if status == "failed"
@@ -881,8 +885,18 @@ async def media(message: types.Message, state: FSMContext):
     path = current.get("k4_field", "")
     if await state.get_state() != Kling4States.media.state or not isinstance(path, str):
         return
+    text_value = str(getattr(message, "text", "") or "").strip()
+    if text_value and not re.fullmatch(r"https?://\S+", text_value, re.IGNORECASE):
+        await automatic_composer.queue(message, state, current.get("k4_session"))
+        return
     mid = getattr(message, "message_id", None)
-    if isinstance(mid, int) and str(mid) in current.get("k4_media_receipts", {}):
+    session = current.get("k4_session")
+    key = automatic_composer.key(state, session)
+    pending_id = str(mid) if isinstance(mid, int) else uuid.uuid4().hex
+    if isinstance(mid, int) and (
+        str(mid) in current.get("k4_media_receipts", {})
+        or pending_id in automatic_composer.pending.get(key, {})
+    ):
         return
     kind = (
         "audio"
@@ -892,6 +906,49 @@ async def media(message: types.Message, state: FSMContext):
         else "image"
     )
     try:
+        file = (
+            message.document
+            or message.video
+            or message.audio
+            or message.voice
+            or (message.photo[-1] if message.photo else None)
+        )
+        receipt = str(
+            getattr(file, "file_unique_id", None)
+            or getattr(file, "file_id", None)
+            or text_value
+        )
+        async with actor_lock(message, state):
+            latest = await state.get_data()
+            if (
+                latest.get("k4_field") != path
+                or latest.get("k4_media_session") != current.get("k4_media_session")
+                or await state.get_state() != Kling4States.media.state
+            ):
+                return
+            receipts = latest.get("k4_media_receipts", {})
+            if isinstance(mid, int) and (
+                str(mid) in receipts
+                or pending_id in automatic_composer.pending.get(key, {})
+            ):
+                return
+            future = asyncio.get_running_loop().create_future()
+            automatic_composer.pending.setdefault(key, {})[pending_id] = future
+            errors = latest.get("k4_upload_errors", {})
+            errors[receipt] = True
+            await state.update_data(
+                k4_upload_errors=errors,
+                k4_media_version=latest.get("k4_media_version", 0) + 1,
+                k4_album_pending=bool(getattr(message, "media_group_id", None))
+                or latest.get("k4_album_pending", False),
+            )
+        caption = str(getattr(message, "caption", "") or "").strip()
+        if caption:
+            await automatic_composer.queue(
+                message.model_copy(update={"text": caption, "entities": []}),
+                state,
+                session,
+            )
         value = get_path(recipe, path)
         maximum = (
             10
@@ -906,20 +963,13 @@ async def media(message: types.Message, state: FSMContext):
         )
         if isinstance(value, list) and len(value) >= maximum:
             raise Kling4Error("Лимит поля достигнут. Удалите лишний материал.")
-        if message.text:
+        if text_value:
             from bot.services.wan3_prime_storage import wan3_prime_storage
 
             result = await wan3_prime_storage.import_url(
-                await actor(message.from_user.id), kind=kind, url=message.text.strip()
+                await actor(message.from_user.id), kind=kind, url=text_value
             )
         else:
-            file = (
-                message.document
-                or message.video
-                or message.audio
-                or message.voice
-                or (message.photo[-1] if message.photo else None)
-            )
             if not file:
                 raise Kling4Error("Отправьте файл или публичную ссылку.")
             from bot.wan3_prime_api import store_telegram_wan3_prime_media
@@ -983,14 +1033,38 @@ async def media(message: types.Message, state: FSMContext):
             )
             if isinstance(mid, int):
                 receipts[str(mid)] = True
-                await state.update_data(k4_media_receipts=receipts)
+            errors = latest.get("k4_upload_errors", {})
+            errors.pop(receipt, None)
+            await state.update_data(
+                k4_media_receipts=receipts,
+                k4_upload_errors=errors,
+            )
             await save(state, recipe)
             await media_menu(message, recipe, path)
 
-    except (Wan3PrimeValidationError, ValueError, KeyError, TypeError) as exc:
+    except Exception as exc:  # noqa: BLE001 - failed uploads must release queued prompts
+        if "receipt" in locals():
+            latest = await state.get_data()
+            errors = latest.get("k4_upload_errors", {})
+            errors[receipt] = True
+            await state.update_data(k4_upload_errors=errors)
         await message.answer(
             str(exc)
             if isinstance(exc, Wan3PrimeValidationError)
             else "Не удалось добавить материал. Вернитесь в редактор и повторите загрузку.",
             reply_markup=navigation(),
         )
+        logger.warning(
+            "Kling4 targeted media failed: telegram_id=%s session=%s field=%s error_type=%s",
+            message.from_user.id,
+            session,
+            path,
+            type(exc).__name__,
+        )
+    finally:
+        if "future" in locals() and not future.done():
+            future.set_result(None)
+        group = automatic_composer.pending.get(key, {})
+        group.pop(pending_id, None)
+        if not group:
+            automatic_composer.pending.pop(key, None)

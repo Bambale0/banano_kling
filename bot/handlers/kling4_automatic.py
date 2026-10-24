@@ -105,6 +105,17 @@ class AutomaticComposer:
             current = await state.get_data()
             if current.get("k4_session") != session:
                 return
+            state_name = await state.get_state()
+            if state_name not in {
+                editor.Kling4States.editing.state,
+                editor.Kling4States.media.state,
+            }:
+                return
+            media_session = (
+                current.get("k4_media_session")
+                if state_name == editor.Kling4States.media.state
+                else None
+            )
             mid = getattr(message, "message_id", None)
             if isinstance(mid, int):
                 receipts = current.get("k4_prompt_messages", {})
@@ -117,14 +128,28 @@ class AutomaticComposer:
         if middleware is None:
             middleware = PromptFragmentCoalescingMiddleware(order_by_message_id=True)
             self.coalescers[key] = middleware
-        PROMPT_TEXT_STATES.add(editor.Kling4States.editing.state)
+        PROMPT_TEXT_STATES.add(state_name)
 
         async def submit(event, _data):
-            await self.submit(event, state, session)
+            await self.submit(
+                event,
+                state,
+                session,
+                expected_state=state_name,
+                expected_media_session=media_session,
+            )
 
         await middleware(submit, message, {"state": state})
 
-    async def submit(self, message, state, session):
+    async def submit(
+        self,
+        message,
+        state,
+        session,
+        *,
+        expected_state,
+        expected_media_session=None,
+    ):
         from . import kling4 as editor
 
         key = self.key(state, session)
@@ -142,7 +167,11 @@ class AutomaticComposer:
                 current = await state.get_data()
                 if (
                     current.get("k4_session") != session
-                    or await state.get_state() != editor.Kling4States.editing.state
+                    or await state.get_state() != expected_state
+                    or (
+                        expected_state == editor.Kling4States.media.state
+                        and current.get("k4_media_session") != expected_media_session
+                    )
                 ):
                     return
                 if self.pending.get(key) or current.get("k4_media_version") != version:
@@ -156,6 +185,14 @@ class AutomaticComposer:
                 recipe["input"]["prompt"] = message.text.strip()
                 try:
                     recipe = frame_recipe(recipe)
+                    if expected_state == editor.Kling4States.media.state:
+                        await state.set_state(editor.Kling4States.editing)
+                        await state.update_data(
+                            k4_field=None,
+                            k4_media_session=None,
+                            k4_media_uploads=[],
+                            k4_media_receipts={},
+                        )
                     await editor.save(state, recipe)
                     await state.update_data(k4_album_pending=False)
                     await editor.launch_prompt(message, state, recipe)

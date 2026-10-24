@@ -70,6 +70,11 @@ def engine(monkeypatch):
                 "quote_hash": "frozen-quote",
                 "provider_credits": "142.5",
                 "billed_seconds": "5",
+                "cost": 12.5,
+                "charge_cost": 0.0,
+                "profile": "admin",
+                "credit_name": "бананов",
+                "credit_emoji": "🍌",
             }
         ),
         launch=AsyncMock(return_value={"task_id": "kling4_auto", "status": "pending"}),
@@ -527,3 +532,112 @@ async def test_old_controls_cannot_bypass_pending_or_failed_references(
     await kling4.automatic(incoming(query, 12, "Another prompt"), state)
     await settled()
     engine.launch.assert_awaited_once()
+
+
+async def test_prompt_in_targeted_media_screen_launches_with_uploaded_file(
+    telegram, engine, monkeypatch
+):
+    from bot import wan3_prime_api
+
+    state, _message, query = telegram
+    query.data = "k4:open"
+    await kling4.callback(query, state)
+    query.data = "k4:media:image_urls"
+    await kling4.callback(query, state)
+    monkeypatch.setattr(
+        wan3_prime_api,
+        "store_telegram_wan3_prime_media",
+        AsyncMock(return_value={"url": "https://owned.test/target.png"}),
+    )
+    await kling4.media(incoming(query, 20, document=file("target.png")), state)
+    await kling4.media(incoming(query, 21, "Animate this reference"), state)
+    await settled()
+
+    engine.launch.assert_awaited_once()
+    recipe = engine.launch.await_args.args[1]
+    assert recipe["input"]["image_urls"] == ["https://owned.test/target.png"]
+    assert recipe["input"]["prompt"] == "Animate this reference"
+    assert await state.get_state() == kling4.Kling4States.editing.state
+
+
+async def test_targeted_prompt_waits_for_inflight_upload_without_losing_target(
+    telegram, engine, monkeypatch
+):
+    from bot import wan3_prime_api
+
+    state, _message, query = telegram
+    query.data = "k4:open"
+    await kling4.callback(query, state)
+    query.data = "k4:media:image_urls"
+    await kling4.callback(query, state)
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def upload(**_kwargs):
+        started.set()
+        await release.wait()
+        return {"url": "https://owned.test/slow.png"}
+
+    monkeypatch.setattr(wan3_prime_api, "store_telegram_wan3_prime_media", upload)
+    pending = asyncio.create_task(
+        kling4.media(incoming(query, 30, document=file("slow.png")), state)
+    )
+    await started.wait()
+    await kling4.media(incoming(query, 31, "Use the slow upload"), state)
+    await settled()
+    engine.launch.assert_not_awaited()
+
+    release.set()
+    await pending
+    await settled()
+    engine.launch.assert_awaited_once()
+    assert engine.launch.await_args.args[1]["input"]["image_urls"] == [
+        "https://owned.test/slow.png"
+    ]
+
+
+async def test_targeted_media_caption_launches_after_its_upload(
+    telegram, engine, monkeypatch
+):
+    from bot import wan3_prime_api
+
+    state, _message, query = telegram
+    query.data = "k4:open"
+    await kling4.callback(query, state)
+    query.data = "k4:media:image_urls"
+    await kling4.callback(query, state)
+    monkeypatch.setattr(
+        wan3_prime_api,
+        "store_telegram_wan3_prime_media",
+        AsyncMock(return_value={"url": "https://owned.test/caption.png"}),
+    )
+    await kling4.media(
+        incoming(
+            query,
+            40,
+            document=file("caption.png"),
+            caption="Animate the captioned image",
+        ),
+        state,
+    )
+    await settled()
+
+    engine.launch.assert_awaited_once()
+    recipe = engine.launch.await_args.args[1]
+    assert recipe["input"]["image_urls"] == ["https://owned.test/caption.png"]
+    assert recipe["input"]["prompt"] == "Animate the captioned image"
+
+
+async def test_navigation_cancels_prompt_queued_from_targeted_media_screen(
+    telegram, engine
+):
+    state, _message, query = telegram
+    query.data = "k4:open"
+    await kling4.callback(query, state)
+    query.data = "k4:media:image_urls"
+    await kling4.callback(query, state)
+    await kling4.media(incoming(query, 50, "Do not launch after navigation"), state)
+    query.data = "k4:done"
+    await kling4.callback(query, state)
+    await settled()
+
+    engine.launch.assert_not_awaited()

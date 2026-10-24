@@ -6,6 +6,19 @@
 
 ---
 
+## Kling 4 targeted-media prompt dispatch
+
+While the administrator is inside a targeted Kling 4 media picker (ordinary
+references, an Element asset, or a Voice asset), ordinary text is the next
+generation prompt. The bot waits for every upload already accepted in that
+picker, preserves the selected target and Telegram message order, returns to
+the editor state, and launches exactly once. A caption follows the same path.
+An `http://` or `https://` message remains an explicit media URL. Navigating
+away or opening another media-picker session invalidates the queued prompt, so
+stale input cannot launch a different draft. A failed upload, including an
+unexpected storage failure, keeps the draft blocked and returns a retry message;
+the prompt is never launched after silently omitting that asset.
+
 ## 1. Обязательная FSM-структура
 
 Файл: `bot/states.py`

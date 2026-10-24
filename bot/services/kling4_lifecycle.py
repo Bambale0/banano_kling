@@ -142,6 +142,8 @@ class Kling4Lifecycle:
 
     async def quote(self, actor, request):
         require_admin(actor)
+        from bot.kling4_tariff import attach_nominal_admin_price
+
         probe = (
             self.probe.for_actor(actor)
             if hasattr(self.probe, "for_actor")
@@ -159,7 +161,7 @@ class Kling4Lifecycle:
                 actor, request, probe, timeout=settings["result_timeout_seconds"]
             )
         recipe = await validate_recipe(prepared, probe)
-        return recipe.quote(settings, revision)
+        return attach_nominal_admin_price(recipe.quote(settings, revision))
 
     async def _row(self, task_id):
         async with db.connect(database.DATABASE_PATH) as conn:
@@ -173,6 +175,7 @@ class Kling4Lifecycle:
 
     @staticmethod
     def public(row):
+        quote = json.loads(row["quote"])
         return {
             key: row.get(key)
             for key in (
@@ -185,7 +188,13 @@ class Kling4Lifecycle:
                 "delivery_status",
                 "error_code",
             )
-        } | {"model": "kling_4", "cost": 0, "quote": json.loads(row["quote"])}
+        } | {
+            "model": "kling_4",
+            "cost": quote.get("cost"),
+            "charge_cost": quote.get("charge_cost", 0),
+            "admin_free": True,
+            "quote": quote,
+        }
 
     async def status(self, actor, task_id):
         require_admin(actor)
@@ -246,7 +255,9 @@ class Kling4Lifecycle:
                 actor, request, probe, timeout=settings["result_timeout_seconds"]
             )
         recipe = await validate_recipe(prepared, probe)
-        quote = recipe.quote(settings, revision)
+        from bot.kling4_tariff import attach_nominal_admin_price
+
+        quote = attach_nominal_admin_price(recipe.quote(settings, revision))
         if not quote_hash or quote["quote_hash"] != quote_hash:
             raise Kling4Error("Расчёт устарел. Пересчитайте стоимость.", status=409)
         task_id = "kling4_" + uuid.uuid4().hex

@@ -58,6 +58,7 @@ from bot.keyboards import (
     get_back_keyboard,
     get_main_menu_button_keyboard,
 )
+from bot.kling4_tariff import ADMIN_RATE_FIELDS, admin_rate_rows, update_admin_rate
 from bot.services.admin_ai_service import (
     admin_ai_service,
     normalize_plan,
@@ -1058,6 +1059,7 @@ def _admin_image_prices_keyboard() -> types.InlineKeyboardMarkup:
 
 
 VIDEO_MODEL_LABELS = {
+    "kling_4": "Kling 4",
     "avatar_std": "Kling Avatar Standard",
     "avatar_pro": "Kling Avatar Pro",
     "v3_std": "Kling v3 Std",
@@ -1118,7 +1120,7 @@ SEEDANCE_ADMIN_PRICE_MODELS = {
 ADMIN_VIDEO_PRICE_GROUPS = (
     ("wan", "Wan", ("wan_3", "wan_3_prime")),
     ("seedance", "Seedance", ("seedance_2_5", "seedance_2", "seedance_2_mini", "seedance_2_fast")),
-    ("kling", "Kling", ("v3_std", "v3_pro", "v26_pro", "glow", "motion_control_v26", "motion_control_v30", "avatar_std", "avatar_pro")),
+    ("kling", "Kling", ("kling_4", "v3_std", "v3_pro", "v26_pro", "glow", "motion_control_v26", "motion_control_v30", "avatar_std", "avatar_pro")),
     ("grok", "Grok", ("grok_imagine", "grok_imagine_v15")),
     ("veo", "Veo", ("veo3", "veo3_fast", "veo3_lite")),
     ("gemini", "Gemini", ("gemini_omni_video", "gemini_omni_audio", "gemini_omni_character")),
@@ -1159,6 +1161,7 @@ AVATAR_ADMIN_PRICE_MODELS = {"avatar_std", "avatar_pro"}
 def _admin_video_price_models() -> dict:
     """Display effective Avatar fallback without seeding or changing live prices."""
     models = dict(preset_manager.get_price_config().get("costs_reference", {}).get("video_models", {}))
+    models.setdefault("kling_4", {})
     for key in AVATAR_ADMIN_PRICE_MODELS:
         # The catalog exposes only the existing 5-second billing slot. Audio
         # determines provider output length; this is not a new duration control.
@@ -1214,6 +1217,11 @@ def _admin_video_prices_keyboard(group: str = "wan", page: int = 0) -> types.Inl
             else f"{_model_per_sec(model_cfg)}🍌/с" if model_cfg
             else "цена не настроена"
         )
+        if model_key == "kling_4":
+            configured = sum(
+                value is not None for *_head, value in admin_rate_rows(model_cfg)
+            )
+            price_text = f"{configured}/6 ставок"
         label = VIDEO_MODEL_LABELS.get(model_key, model_key)
         buttons.append(
             types.InlineKeyboardButton(
@@ -1260,7 +1268,16 @@ def _admin_video_model_keyboard(model_key: str) -> types.InlineKeyboardMarkup:
     seedance_spec = SEEDANCE_ADMIN_PRICE_MODELS.get(model_key)
 
     buttons = []
-    if model_key in AVATAR_ADMIN_PRICE_MODELS:
+    if model_key == "kling_4":
+        for field, _category, _quality, label, value in admin_rate_rows(model_cfg):
+            shown = f"{value}🍌/с" if value is not None else "не настроено"
+            buttons.append(
+                types.InlineKeyboardButton(
+                    text=f"{label} → {shown}",
+                    callback_data=f"admin_price_video_kling_4_{field}",
+                )
+            )
+    elif model_key in AVATAR_ADMIN_PRICE_MODELS:
         buttons.append(types.InlineKeyboardButton(
             text=f"Тариф расчётного слота 5с → {duration_costs['5']}🍌",
             callback_data=f"admin_price_video_{model_key}_5",
@@ -1364,6 +1381,9 @@ def _parse_promo_create_payload(raw_value: str) -> tuple[str, str | None, int | 
 
 
 def _update_price_value(target: str, key: str, field: str, value):
+    if target == "video" and key == "kling_4":
+        return update_admin_rate(preset_manager, field, value)
+
     price_config = _read_price_config()
 
     if target == "package":
@@ -3290,7 +3310,7 @@ async def admin_video_model(callback: types.CallbackQuery):
     video_models = _admin_video_price_models()
     model_cfg = video_models.get(model_key)
     seedance_spec = SEEDANCE_ADMIN_PRICE_MODELS.get(model_key)
-    if not model_cfg and not seedance_spec:
+    if not model_cfg and not seedance_spec and model_key != "kling_4":
         await callback.answer("Модель не найдена", show_alert=True)
         return
 
@@ -3301,7 +3321,19 @@ async def admin_video_model(callback: types.CallbackQuery):
     duration_costs = model_cfg.get("duration_costs", {})
     quality_order = {"480p": 0, "720p": 1, "1080p": 2, "4k": 3}
 
-    if model_key in AVATAR_ADMIN_PRICE_MODELS:
+    if model_key == "kling_4":
+        lines = "\n".join(
+            f"• {label} → <code>{value}</code>🍌/с"
+            if value is not None
+            else f"• {label} → <i>не настроено</i>"
+            for _field, _category, _quality, label, value in admin_rate_rows(model_cfg)
+        )
+        detail = (
+            "Ставки за одну реально тарифицируемую секунду:\n"
+            f"{lines}\n\n"
+            "Запуск доступен после настройки всех шести ставок."
+        )
+    elif model_key in AVATAR_ADMIN_PRICE_MODELS:
         detail = (
             f"Расчётный слот 5с → <code>{duration_costs['5']}</code>🍌"
             "\nДлительность результата задаётся аудио. Это не тариф за секунду."
@@ -3464,7 +3496,7 @@ async def admin_price_video(callback: types.CallbackQuery, state: FSMContext):
     video_models = _admin_video_price_models()
     model = video_models.get(model_key)
     seedance_spec = SEEDANCE_ADMIN_PRICE_MODELS.get(model_key)
-    if not model and not seedance_spec:
+    if not model and not seedance_spec and model_key != "kling_4":
         await callback.answer("Модель не найдена", show_alert=True)
         return
     model = model or {}
@@ -3472,10 +3504,21 @@ async def admin_price_video(callback: types.CallbackQuery, state: FSMContext):
     model_label = VIDEO_MODEL_LABELS.get(model_key, model_key)
     return_to = f"admin_video_model_{model_key}"
 
-    if model_key in AVATAR_ADMIN_PRICE_MODELS and field != "5":
+    if model_key == "kling_4":
+        row = next((row for row in admin_rate_rows(model) if row[0] == field), None)
+        if row is None:
+            await callback.answer("Параметр тарифа не поддерживается", show_alert=True)
+            return
+        _field, category, quality, label, current_value = row
+        hint_text = (
+            f"Введите ставку для <b>{label}</b> за одну реально тарифицируемую секунду.\n"
+            f"Категория: <code>{category}</code>, качество: <code>{quality}</code>."
+        )
+        param_label = label
+    elif model_key in AVATAR_ADMIN_PRICE_MODELS and field != "5":
         await callback.answer("Этот тарифный слот не поддерживается", show_alert=True)
         return
-    if field == "persec":
+    elif field == "persec":
         current_value = float(_model_per_sec(model))
         hint_text = (
             "Введите новую цену за <b>1 секунду</b>.\n"
@@ -3500,7 +3543,9 @@ async def admin_price_video(callback: types.CallbackQuery, state: FSMContext):
         hint_text = f"Введите новую стоимость для длительности <b>{field} сек</b>."
         param_label = f"{field} сек"
 
-    if current_value is None and not (seedance_spec and field.startswith("q")):
+    if current_value is None and not (
+        model_key == "kling_4" or (seedance_spec and field.startswith("q"))
+    ):
         await callback.answer("Цена не найдена", show_alert=True)
         return
 
@@ -3544,6 +3589,16 @@ async def admin_process_price_value(message: types.Message, state: FSMContext):
     try:
         new_value = _parse_price_value(message.text or "", current_value)
         old_value = _update_price_value(target, key, field, new_value)
+        if target == "video" and key == "kling_4" and field in ADMIN_RATE_FIELDS:
+            category, quality, _label = ADMIN_RATE_FIELDS[field]
+            logger.info(
+                "Kling4 retail rate updated: actor=%s category=%s quality=%s old=%s new=%s",
+                message.from_user.id,
+                category,
+                quality,
+                old_value,
+                new_value,
+            )
     except ValueError:
         await message.answer(
             "❌ Неверное значение. Отправьте положительное число.",
