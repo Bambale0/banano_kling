@@ -19,7 +19,7 @@ buttons = navigation_tests.buttons
 
 
 async def test_open_keeps_direct_controls_and_automatic_prompt_launch(telegram):
-    state, message, _query = telegram
+    state, message, query = telegram
     query.data = "k4:open"
     await kling4.callback(query, state)
     actions = buttons(message)
@@ -45,7 +45,7 @@ async def test_editor_matches_shared_model_layout_with_attached_photo(
 ):
     from bot import kling4_tariff
 
-    state, message, query = telegram
+    state, message, _query = telegram
     monkeypatch.setattr(
         kling4_tariff.preset_manager,
         "get_price_config",
