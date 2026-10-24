@@ -197,7 +197,7 @@ class AutomaticComposer:
                     await state.update_data(k4_album_pending=False)
                     await editor.launch_prompt(message, state, recipe)
                 except Wan3PrimeValidationError as exc:
-                    await message.answer(str(exc), reply_markup=editor.keyboard(recipe))
+                    await message.answer(editor.public_error(exc), reply_markup=editor.keyboard(recipe))
                 return
 
     async def handle(self, message, state):
@@ -223,7 +223,7 @@ class AutomaticComposer:
                 )
                 errors[receipt] = True
                 await state.update_data(k4_upload_errors=errors)
-            await message.answer(str(exc))
+            await message.answer(editor.public_error(exc))
             return
         file = detected[1] if detected else None
         receipt = str(
@@ -378,7 +378,7 @@ class AutomaticComposer:
                     errors[receipt] = True
                     await state.update_data(k4_upload_errors=errors)
             await message.answer(
-                str(exc)
+                editor.public_error(exc)
                 if isinstance(exc, Wan3PrimeValidationError)
                 else "Не удалось загрузить референс. Отправьте файл ещё раз."
             )

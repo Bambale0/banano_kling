@@ -289,7 +289,7 @@ try {
     .click();
   await retry.page
     .getByRole("button", {
-      name: "Повторить отправку с тем же ключом",
+      name: "Проверить запуск",
       exact: true,
     })
     .waitFor();
@@ -299,7 +299,7 @@ try {
   );
   await retry.page
     .getByRole("button", {
-      name: "Повторить отправку с тем же ключом",
+      name: "Проверить запуск",
       exact: true,
     })
     .click();
@@ -309,6 +309,8 @@ try {
     retry.generations[1].idempotency_key,
   );
   assert.deepEqual(retry.generations[0].recipe, retry.generations[1].recipe);
+  const visibleText = await retry.page.getByTestId("kling4-form").innerText();
+  assert.doesNotMatch(visibleText, /KIE|credits|provider_task_id|Расход|pending|kling4_/);
   assert.deepEqual(retry.errors, []);
   await retry.context.close();
   const ordinary = await setup(false, 430);

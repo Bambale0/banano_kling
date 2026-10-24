@@ -21,6 +21,23 @@ import {
   type Kling4Voice,
 } from "@/lib/kling4-api";
 
+const taskStatus = (status: string) => ({
+  pending: "Видео создаётся",
+  queued: "Видео ожидает очереди",
+  submitting: "Проверяем запуск видео. Не запускайте его повторно.",
+  unknown: "Проверяем запуск видео. Если ожидание затянулось, обратитесь в поддержку.",
+  done: "Видео готово",
+  failed: "Не удалось создать видео",
+}[status] ?? "Проверяем состояние видео");
+
+const publicError = (error: unknown) => {
+  if (!(error instanceof Kling4ApiError) || error.status >= 500 ||
+      /KIE|credits|API|task_id|kling4_|https?:|JSON|ffmpeg|ffprobe|traceback/i.test(error.message)) {
+    return "Не удалось выполнить действие. Попробуйте позже.";
+  }
+  return error.message;
+};
+
 const UploadBusy = createContext<(delta: number) => void>(() => undefined);
 
 function Media({
@@ -68,7 +85,7 @@ function Media({
       setLink("");
     } catch (e) {
       if (!ctrl.signal.aborted)
-        setError(e instanceof Error ? e.message : "Ошибка загрузки.");
+        setError(publicError(e));
     } finally {
       notify(-1);
       if (controller.current === ctrl) {
@@ -203,8 +220,6 @@ export function Kling4Form({ modelSelector }: { modelSelector: ReactNode }) {
   const [history, setHistory] = useState<Kling4Task[]>([]),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
-  const [settings, setSettings] = useState(""),
-    [revision, setRevision] = useState(0);
   const [uploadCount, setUploadCount] = useState(0);
   const drafts = useRef<Partial<Record<Kling4Recipe["mode"], Kling4Recipe>>>(
     {},
@@ -260,7 +275,7 @@ export function Kling4Form({ modelSelector }: { modelSelector: ReactNode }) {
     try {
       await fn();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Ошибка Kling 4.");
+      setError(publicError(e));
     } finally {
       setBusy(false);
     }
@@ -652,10 +667,7 @@ export function Kling4Form({ modelSelector }: { modelSelector: ReactNode }) {
           )}
           {quote && (
             <div className="rounded-xl bg-secondary p-3 text-sm" role="status">
-              {"\u0420\u0430\u0441\u0445\u043e\u0434 KIE: "}{quote.provider_credits} credits ·{" "}
-              {quote.billed_seconds}{" "}
-              {"\u043e\u043f\u043b\u0430\u0447\u0438\u0432\u0430\u0435\u043c\u044b\u0445 \u0441\u0435\u043a\u0443\u043d\u0434. \u0426\u0435\u043d\u0430: "}{quote.cost}{" "}
-              {"\u0431\u0430\u043d\u0430\u043d\u043e\u0432. \u0414\u043b\u044f \u0430\u0434\u043c\u0438\u043d\u0438\u0441\u0442\u0440\u0430\u0442\u043e\u0440\u0430 \u0441\u043f\u0438\u0441\u0430\u043d\u0438\u0435 \u043e\u0442\u043a\u043b\u044e\u0447\u0435\u043d\u043e."}
+              Цена: {quote.cost} бананов. Для администратора списание отключено.
             </div>
           )}
           {!locked && (
@@ -685,29 +697,20 @@ export function Kling4Form({ modelSelector }: { modelSelector: ReactNode }) {
           {uncertain && !task && (
             <div role="status" className="space-y-2 text-sm">
               <p>
-                Подтверждение запуска не получено. Настройки сохранены; новый
-                ключ не создаётся.
+                Подтверждение запуска пока не получено. Настройки сохранены.
               </p>
               <Button
                 type="button"
                 disabled={busy}
                 onClick={() => void action(launch)}
               >
-                Повторить отправку с тем же ключом
+                Проверить запуск
               </Button>
             </div>
           )}
           {task && (
             <div className="space-y-2 text-sm" role="status">
-              <p>Задача: {task.task_id}</p>
-              <p>
-                {task.status === "unknown"
-                  ? "Ответ KIE не подтверждён. Повторная генерация заблокирована; проверьте кабинет KIE и привяжите ID задачи."
-                  : `Статус: ${task.status}`}
-              </p>
-              {task.actual_credits !== null && (
-                <p>Фактический расход: {task.actual_credits} KIE credits</p>
-              )}
+              <p>{taskStatus(task.status)}</p>
               {task.result_url && (
                 <>
                   <video
@@ -752,14 +755,13 @@ export function Kling4Form({ modelSelector }: { modelSelector: ReactNode }) {
           >
             Обновить историю
           </Button>
-          {history.map((item) => (
+          {history.map((item, index) => (
             <div
               key={item.task_id}
               className="space-y-2 border-b border-border py-3 text-xs"
             >
               <p className="break-all">
-                {item.task_id} · {item.status} · KIE{" "}
-                {item.actual_credits ?? "уточняется"}
+                Видео {index + 1} · {taskStatus(item.status)}
               </p>
               {item.result_url && (
                 <a
@@ -788,84 +790,10 @@ export function Kling4Form({ modelSelector }: { modelSelector: ReactNode }) {
               >
                 Повторить в редакторе
               </Button>
-              {item.status === "unknown" && (
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const id = String(
-                      new FormData(e.currentTarget).get("provider_task_id") ||
-                        "",
-                    );
-                    void action(async () => {
-                      await kling4Request("adopt", {
-                        task_id: item.task_id,
-                        provider_task_id: id,
-                      });
-                      await refresh();
-                    });
-                  }}
-                >
-                  <Input
-                    aria-label={`ID KIE для ${item.task_id}`}
-                    name="provider_task_id"
-                    placeholder="ID из кабинета KIE"
-                    required
-                  />
-                  <Button type="submit" size="sm">
-                    Привязать подтверждённую задачу
-                  </Button>
-                </form>
-              )}
             </div>
           ))}
         </details>
-        <details className="glass rounded-2xl p-4">
-          <summary>Настройки Kling 4 · администратор</summary>
-          <p className="my-2 text-xs">
-            Версионируемые тарифы и ограничения. Публичный доступ закрыт.
-          </p>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() =>
-              void action(async () => {
-                const data = await kling4Request<{
-                  settings: unknown;
-                  revision: number;
-                }>("settings");
-                setSettings(JSON.stringify(data.settings, null, 2));
-                setRevision(data.revision);
-              })
-            }
-          >
-            Загрузить настройки
-          </Button>
-          {settings && (
-            <>
-              <Textarea
-                aria-label="Настройки Kling 4"
-                className="my-2 min-h-64 font-mono text-xs"
-                value={settings}
-                onChange={(e) => setSettings(e.target.value)}
-              />
-              <Button
-                type="button"
-                disabled={busy}
-                onClick={() =>
-                  void action(async () => {
-                    const data = await kling4Request<{ revision: number }>(
-                      "settings",
-                      { settings: JSON.parse(settings), revision },
-                    );
-                    setRevision(data.revision);
-                  })
-                }
-              >
-                Сохранить ревизию {revision + 1}
-              </Button>
-            </>
-          )}
-        </details>
+
       </div>
     </UploadBusy.Provider>
   );
