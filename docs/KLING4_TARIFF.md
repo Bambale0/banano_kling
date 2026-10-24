@@ -59,3 +59,7 @@ Both Telegram and the Mini App render the frozen nominal `quote.cost`. They show
 the administrator exemption separately instead of replacing the configured
 price with zero. Integer rates remain editable as decimal rates in the existing
 admin price screen.
+
+### Telegram duration controls
+
+Кнопки длительности «−1с», «+1с» и текущего значения обновляют существующую карточку и стоимость через editMessageText. Новое сообщение не отправляется, в том числе при достижении границ длительности или неизменном значении.
