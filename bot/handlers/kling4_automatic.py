@@ -123,11 +123,11 @@ class AutomaticComposer:
                     return
                 receipts[str(mid)] = True
                 await state.update_data(k4_prompt_messages=receipts)
-        key = self.key(state, session)
-        middleware = self.coalescers.get(key)
+        coalescer_key = (*self.key(state, session), media_session)
+        middleware = self.coalescers.get(coalescer_key)
         if middleware is None:
             middleware = PromptFragmentCoalescingMiddleware(order_by_message_id=True)
-            self.coalescers[key] = middleware
+            self.coalescers[coalescer_key] = middleware
         PROMPT_TEXT_STATES.add(state_name)
 
         async def submit(event, _data):
