@@ -573,11 +573,13 @@ async def store_telegram_wan3_prime_media(*, telegram_id: int, bot, file_id: str
     import asyncio
     import io
     from pathlib import Path
+    from time import monotonic
 
     from bot.services.wan3_prime_files import convert_voice_to_mp3
     from bot.services.wan3_prime_media import canonical_child_path
     from bot.services.wan3_prime_storage import CHUNK_ROOT, _kind_limit, _safe_basename
 
+    started = monotonic()
     actor = await _telegram_actor(telegram_id)
     maximum = min(_kind_limit(kind), 20 * 1024 * 1024)
     if not maximum or declared_size is not None and (isinstance(declared_size, bool) or declared_size < 0 or declared_size > maximum):
@@ -586,9 +588,19 @@ async def store_telegram_wan3_prime_media(*, telegram_id: int, bot, file_id: str
     convert_audio = kind == 'audio' and Path(name).suffix.lower() in {'.ogg', '.oga', '.m4a'}
     output_name = 'voice.mp3' if convert_audio else name
     # Quota reservation precedes file download, including Telegram's temp bytes.
-    reservation = await wan3_prime_storage.init_upload(actor, kind=kind, filename=output_name,
-        size=maximum if convert_audio or not declared_size else declared_size, importing=True)
+    reserve_started = monotonic()
+    logger.info('Wan3 Telegram media reservation started: telegram_id=%s kind=%s declared_size=%s',
+        telegram_id, kind, declared_size)
+    try:
+        reservation = await wan3_prime_storage.init_upload(actor, kind=kind, filename=output_name,
+            size=maximum if convert_audio or not declared_size else declared_size, importing=True)
+    except (Exception, asyncio.CancelledError) as exc:
+        logger.warning('Wan3 Telegram media reservation failed: telegram_id=%s kind=%s reserve_ms=%.1f error_type=%s',
+            telegram_id, kind, (monotonic() - reserve_started) * 1000, type(exc).__name__)
+        raise
     upload_id = reservation['upload_id']
+    logger.info('Wan3 Telegram media reserved: telegram_id=%s upload_id=%s kind=%s reserve_ms=%.1f',
+        telegram_id, upload_id, kind, (monotonic() - reserve_started) * 1000)
     path = canonical_child_path(CHUNK_ROOT, f'{upload_id}/{name}')
 
     class BoundedFile(io.BufferedWriter):
@@ -596,13 +608,23 @@ async def store_telegram_wan3_prime_media(*, telegram_id: int, bot, file_id: str
             if self.tell() + len(data) > maximum:
                 raise Wan3PrimeValidationError('File exceeds the Telegram download limit; use Mini App.')
             return super().write(data)
+    stage = 'probe_wait'
     try:
         from bot.services.wan3_prime_probe_cache import probe_slot
 
+        probe_started = monotonic()
         async with probe_slot(actor.user_id):
+            logger.info('Wan3 Telegram media probe acquired: telegram_id=%s upload_id=%s kind=%s probe_wait_ms=%.1f',
+                telegram_id, upload_id, kind, (monotonic() - probe_started) * 1000)
+            stage = 'download'
+            download_started = monotonic()
             with BoundedFile(io.FileIO(path, 'w')) as output:
                 await bot.download(file_id, destination=output, timeout=90, seek=False)
+            logger.info('Wan3 Telegram media downloaded: telegram_id=%s upload_id=%s kind=%s size=%s download_ms=%.1f',
+                telegram_id, upload_id, kind, path.stat().st_size, (monotonic() - download_started) * 1000)
             if convert_audio:
+                stage = 'convert'
+                conversion_started = monotonic()
                 converted = path.with_name('voice-converted.mp3')
                 conversion = asyncio.create_task(asyncio.to_thread(convert_voice_to_mp3, path, converted))
                 try:
@@ -611,8 +633,28 @@ async def store_telegram_wan3_prime_media(*, telegram_id: int, bot, file_id: str
                     await asyncio.shield(conversion)
                     raise
                 path = converted
-        return await wan3_prime_storage.save_owned_file(actor, kind=kind, filename=output_name,
+                logger.info('Wan3 Telegram media converted: telegram_id=%s upload_id=%s kind=%s convert_ms=%.1f',
+                    telegram_id, upload_id, kind, (monotonic() - conversion_started) * 1000)
+        stage = 'persist'
+        persist_started = monotonic()
+        saved = await wan3_prime_storage.save_owned_file(actor, kind=kind, filename=output_name,
             path=path, source='telegram_wan3', upload_id=upload_id)
+        logger.info('Wan3 Telegram media persisted: telegram_id=%s upload_id=%s kind=%s size=%s persist_ms=%.1f',
+            telegram_id, upload_id, kind, saved.get('size'), (monotonic() - persist_started) * 1000)
+        return saved
+    except (Exception, asyncio.CancelledError) as exc:
+        logger.warning('Wan3 Telegram media failed: telegram_id=%s upload_id=%s kind=%s stage=%s elapsed_ms=%.1f error_type=%s',
+            telegram_id, upload_id, kind, stage, (monotonic() - started) * 1000, type(exc).__name__)
+        raise
     finally:
-        await wan3_prime_storage.discard_import(actor, upload_id)
+        release_started = monotonic()
+        try:
+            await wan3_prime_storage.discard_import(actor, upload_id)
+        except (Exception, asyncio.CancelledError) as exc:
+            logger.warning('Wan3 Telegram media failed: telegram_id=%s upload_id=%s kind=%s stage=release release_ms=%.1f elapsed_ms=%.1f error_type=%s',
+                telegram_id, upload_id, kind, (monotonic() - release_started) * 1000,
+                (monotonic() - started) * 1000, type(exc).__name__)
+            raise
+        logger.info('Wan3 Telegram media released: telegram_id=%s upload_id=%s kind=%s release_ms=%.1f elapsed_ms=%.1f',
+            telegram_id, upload_id, kind, (monotonic() - release_started) * 1000, (monotonic() - started) * 1000)
 
