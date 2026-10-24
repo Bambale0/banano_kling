@@ -643,6 +643,7 @@ async def test_navigation_cancels_prompt_queued_from_targeted_media_screen(
     engine.launch.assert_not_awaited()
 
 
+# Post-merge safety: targeted pickers must not consume global commands.
 async def test_command_escapes_targeted_media_prompt_handler(telegram, engine):
     state, _message, query = telegram
     query.data = "k4:open"
