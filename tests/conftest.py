@@ -63,6 +63,28 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def configured_kling4_tariff_for_kling_suites(request, monkeypatch):
+    """Give successful Kling 4 suites an explicit synthetic retail tariff."""
+    if not request.node.path.name.startswith("test_kling4"):
+        return
+
+    from copy import deepcopy
+
+    from bot.services.preset_manager import preset_manager
+
+    price_config = deepcopy(preset_manager.get_price_config())
+    price_config.setdefault("costs_reference", {}).setdefault("video_models", {})[
+        "kling_4"
+    ] = {
+        "billing_rates": {
+            category: {"720p": 1.0, "1080p": 2.0}
+            for category in ("reference", "keyframe", "video")
+        }
+    }
+    monkeypatch.setattr(preset_manager, "get_price_config", lambda: price_config)
+
+
+@pytest.fixture(autouse=True)
 def mock_external_feed_downloads(monkeypatch):
     """Keep feed database tests deterministic and free of network side effects."""
     from bot.services import feed_persist

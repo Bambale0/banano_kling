@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -25,6 +26,23 @@ class Probe:
             extension={"image": ".png", "video": ".mp4", "audio": ".wav"}[kind],
             duration_seconds=3.52 if "fraction" in url else 3,
         )
+
+
+@pytest.fixture(autouse=True)
+def configured_kling4_retail_tariff(monkeypatch):
+    """Synthetic complete tariff for lifecycle tests; never mutates price.json."""
+    from bot.services.preset_manager import preset_manager
+
+    current = deepcopy(preset_manager.get_price_config())
+    costs = current.setdefault("costs_reference", {})
+    models = costs.setdefault("video_models", {})
+    models["kling_4"] = {
+        "billing_rates": {
+            category: {"720p": 1.0, "1080p": 2.0}
+            for category in ("reference", "keyframe", "video")
+        }
+    }
+    monkeypatch.setattr(preset_manager, "get_price_config", lambda: current)
 
 
 @pytest.mark.asyncio
@@ -144,9 +162,13 @@ async def test_unknown_submission_is_durable_and_not_resubmitted(tmp_path, monke
     await engine.init_schema()
     request = {"mode": "reference", "input": {"prompt": "test", "duration": 3}}
     quote = await engine.quote(actor, request)
+    assert quote["cost"] == 3
+    assert quote["charge_cost"] == 0
+    assert quote["profile"] == "admin"
     first = await engine.launch(actor, request, quote["quote_hash"], "same-intent")
     second = await engine.launch(actor, request, quote["quote_hash"], "same-intent")
     assert first["status"] == second["status"] == "unknown"
+    assert first["cost"] == 3 and first["charge_cost"] == 0
     assert first["task_id"] == second["task_id"] and transport.calls == 1
     with pytest.raises(Kling4Error):
         await engine.launch(
@@ -462,10 +484,16 @@ async def test_watchdog_cannot_fail_owned_kling4_intent(engine_context, monkeypa
         )
         row = await (
             await conn.execute(
-                "SELECT id FROM generation_tasks WHERE task_id=?", (result["task_id"],)
+                "SELECT id,cost,request_data FROM generation_tasks WHERE task_id=?",
+                (result["task_id"],),
             )
         ).fetchone()
         await conn.commit()
+    metadata = json.loads(row[2])
+    assert row[1] == 0
+    assert metadata["quote"]["cost"] == 5
+    assert metadata["quote"]["charge_cost"] == 0
+    assert metadata["admin_free"] is True
     stuck = await get_stuck_tasks(minutes=30)
     assert all(t["task_id"] != result["task_id"] for t in stuck)
     # A stale watchdog process must also fail the atomic update guard.
@@ -567,7 +595,9 @@ async def test_telegram_legacy_modes_and_controls_use_automatic_prompt(
     assert transport.calls == 0
     message.text = "A quiet landscape"
     await handler.automatic(message, state)
-    assert (await state.get_data())["k4_quote"]["cost"] == 0
+    automatic_quote = (await state.get_data())["k4_quote"]
+    assert automatic_quote["cost"] == 5
+    assert automatic_quote["charge_cost"] == 0
     assert transport.calls == 1
     denied = SimpleNamespace(from_user=SimpleNamespace(id=123123), answer=AsyncMock())
     before = await state.get_data()

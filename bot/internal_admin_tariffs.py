@@ -174,6 +174,15 @@ def _validate_tariff_config(config: dict[str, Any]) -> None:
                     field=f"video_models.{model}.{map_name}.{option}",
                     positive=True,
                 )
+    if "kling_4" in video_models:
+        from bot.kling4_tariff import validate_kling4_model_config
+
+        try:
+            validate_kling4_model_config(
+                video_models["kling_4"], require_complete=False
+            )
+        except (TypeError, ValueError) as exc:
+            raise CommandValidationError(str(exc)) from exc
 
 
 def _merge_tariff_view(current: dict[str, Any], view: dict[str, Any]) -> dict[str, Any]:

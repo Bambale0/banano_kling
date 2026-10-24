@@ -125,6 +125,7 @@ class Kling4Recipe:
             "recipe_hash": digest(self.snapshot()),
             "settings_revision": revision,
             "tariff": category,
+            "resolution": self.input["resolution"],
             "rate": str(rate),
             "input_video_seconds": str(measured),
             "quota_video_seconds": str(self.video_seconds),
@@ -132,7 +133,6 @@ class Kling4Recipe:
             "billed_seconds": str(seconds),
             "provider_credits": str(rate * seconds),
             "admin_free": True,
-            "cost": 0,
         }
         return {**payload, "quote_hash": digest(payload)}
 

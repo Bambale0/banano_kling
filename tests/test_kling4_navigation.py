@@ -30,6 +30,11 @@ def lifecycle_boundary(monkeypatch):
                 "quote_hash": "checked",
                 "provider_credits": "1",
                 "billed_seconds": "5",
+                "cost": 5.0,
+                "charge_cost": 0.0,
+                "profile": "admin",
+                "credit_name": "бананов",
+                "credit_emoji": "🍌",
             }
         ),
         launch=AsyncMock(return_value={"task_id": "test", "status": "pending"}),
