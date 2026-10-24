@@ -31,6 +31,9 @@ const legacyVideo = {
   generation_settings:{kind:'video', ratio:'9:16', reference_count:1},
   badge:undefined
 }
+let privateContentRequests = 0
+let privatePrompt = "Use @Image1 in a garden"
+let contentRevision = "v1"
 let legacyPromptRequests = 0
 let adminMode = false
 const category = {
@@ -84,6 +87,18 @@ try {
         const p=route.request().postDataJSON()
         body={ok:true, category:{...category,items:undefined},page:p.page,total:4,has_more:p.page===1,
           items:p.page===1?[photo,video,legacyVideo]:[{...photo,id:1403,title:'Другой праздник'}]}
+      }else if(url.pathname.endsWith('/admin/trends/content')){
+        assert.equal(adminMode, true, 'Private content is requested only in admin mode')
+        privateContentRequests += 1
+        const p=route.request().postDataJSON()
+        const card=p.prompt_id===video.id?video:photo
+        if(p.op==='update'){
+          assert.equal(p.revision,contentRevision)
+          card.title=p.title
+          privatePrompt=p.prompt_text
+          contentRevision='v2'
+        }
+        body={ok:true,content:{id:card.id,title:card.title,prompt_text:privatePrompt,prompt_editable:true,revision:contentRevision}}
       }else if(url.pathname.endsWith('/admin/trends/categories')){
         const p=route.request().postDataJSON()
         if(p.op==='history') body={ok:true,result:[{
@@ -150,6 +165,21 @@ try {
   await page.getByRole('button',{name:'Открыть тренд Свечи с возрастом'}).click()
   await page.getByRole('dialog').getByRole('button',{name:'Убрать тренд'}).waitFor()
   await page.getByRole('dialog').getByRole('button',{name:'Close'}).click()
+  await page.getByRole('button',{name:'Открыть тренд Живое видео'}).first().click()
+  await page.getByRole('dialog').getByRole('button',{name:'Редактировать'}).click()
+  const editor=page.getByRole('dialog')
+  await editor.getByLabel('Промпт тренда',{exact:true}).waitFor()
+  assert.equal(await editor.getByLabel('Промпт тренда',{exact:true}).inputValue(),privatePrompt)
+  await editor.getByLabel('Название тренда',{exact:true}).fill('Переименованное видео')
+  await editor.getByLabel('Промпт тренда',{exact:true}).fill('Use @Image1 on a beach')
+  await editor.getByRole('button',{name:'Сохранить название и промпт'}).click()
+  await editor.getByText('Изменения сохранены',{exact:true}).waitFor()
+  await editor.getByRole('button',{name:'Close'}).click()
+  await page.getByRole('button',{name:'Открыть тренд Переименованное видео'}).first().click()
+  await page.getByRole('dialog').getByRole('button',{name:'Редактировать'}).click()
+  await page.getByRole('dialog').getByLabel('Промпт тренда',{exact:true}).waitFor()
+  assert.equal(await page.getByLabel('Промпт тренда',{exact:true}).inputValue(),'Use @Image1 on a beach')
+  await page.getByRole('dialog').getByRole('button',{name:'Close'}).click()
   await page.getByRole('button',{name:'Категории',exact:true}).click()
   const manager=page.getByRole('dialog')
   await manager.getByRole('button',{name:'Показать историю'}).click()
@@ -161,10 +191,12 @@ try {
   await page.getByRole('button',{name:'Все тренды категории День рождения'}).click()
   await page.getByRole('button',{name:'Показать ещё'}).click()
   assert.match(await page.getByRole('button',{name:'Открыть тренд Другой праздник'}).innerText(),/328 повторов/)
+  const contentReadsBeforeViewer = privateContentRequests
   adminMode = false
   await page.reload({waitUntil:'networkidle'})
   await page.getByRole('button',{name:'Все тренды категории День рождения'}).waitFor()
   assert.equal(await page.getByLabel(/Успешных повторов/).count(),0, 'Role change must hide cached statistics')
+  assert.equal(privateContentRequests,contentReadsBeforeViewer)
   assert.deepEqual(errors,[])
   console.log('PASS: mobile user/admin counter policy, pagination, preview, role change, categories, repeat and audited history')
 }finally{

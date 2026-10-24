@@ -17,6 +17,7 @@ import { formatTrendRepeatPrice } from '@/lib/trend-price'
 import { isNavigableShareLink, telegramForwardLink, tryOpenTelegramShareLink } from '@/lib/share-link-navigation'
 import { genjutsuCall, openGenjutsu, type Recipe } from '@/lib/genjutsu-api'
 import { TrendRunnerDialog } from '@/components/trend-runner-dialog'
+import { TrendContentEditor } from '@/components/trend-content-editor'
 import { TrendShowcase } from '@/components/trend-showcase'
 import { TrendCategoryManager } from '@/components/trend-category-manager'
 import { adminShowcaseAction, fetchTrendCatalog, resolveGenjutsuCatalogPrices, ShowcaseApiError, type ShowcaseCategory } from '@/lib/trend-catalog-api'
@@ -711,10 +712,6 @@ export function TrendsTab() {
 
   const handleSaveEdit = async () => {
     if (!isAdmin || !editingTrend || savingEdit) return
-    if (!editPreviewUrl) {
-      setError('Загрузите новый preview')
-      return
-    }
     setSavingEdit(true)
     try {
       setEditingTrend(null)
@@ -933,6 +930,7 @@ export function TrendsTab() {
                 </div>
                 <div className="space-y-2.5 p-3">
                   <div><h4 className="line-clamp-2 text-sm font-semibold text-foreground">{trend.title}</h4>{trend.description ? <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{trend.description}</p> : null}</div>
+                  {isAdmin && Number.isSafeInteger(trend.successful_runs_count) && (trend.successful_runs_count ?? -1) >= 0 ? <p className="text-xs" aria-label={'Успешных повторов: ' + trend.successful_runs_count}>✅ Успешных повторов: {trend.successful_runs_count}</p> : null}
                   <div className="truncate rounded-lg bg-secondary/55 px-2 py-1.5 text-[10px] text-muted-foreground">{modelLabel || trend.model}</div>
                   <Button type="button" size="sm" className="w-full bg-gold text-primary-foreground hover:bg-gold/90" onClick={() => applyTrend(trend)}><Repeat2 className="h-3.5 w-3.5" />{repeatPrice ? 'Повторить · ' + repeatPrice : 'Повторить'}</Button>
                   <div className={isAdmin ? 'grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2' : 'grid'}>
@@ -1488,12 +1486,18 @@ export function TrendsTab() {
           if (editFileInputRef.current) editFileInputRef.current.value = ''
         }
       }}>
-        <DialogContent className="max-w-lg space-y-4 border-border/60 bg-background p-4">
+        <DialogContent className="max-h-[90dvh] max-w-lg overflow-y-auto space-y-4 border-border/60 bg-background p-4">
           <DialogTitle className="pr-8 text-sm">Редактировать</DialogTitle>
           {editingTrend ? (
             <div className="space-y-4">
               <div>
-                <p className="line-clamp-2 text-sm font-semibold text-foreground">{editingTrend.title}</p>
+                <TrendContentEditor key={editingTrend.id} trendId={editingTrend.id}
+                  disabled={uploadingEditPreview || savingEdit}
+                  onSaved={async (title) => {
+                    setEditingTrend((current) => current?.id === editingTrend.id ? { ...current, title } : current)
+                    setItems((previous) => previous.map((item) => item.id === editingTrend.id ? { ...item, title } : item))
+                    await refreshCatalog()
+                  }} />
                 <p className="mt-1 text-xs text-muted-foreground">Загрузите новый preview. Тип фото/видео сохранится вместе с трендом.</p>
               </div>
 
@@ -1535,7 +1539,7 @@ export function TrendsTab() {
               <Button
                 type="button"
                 className="w-full bg-gold text-primary-foreground hover:bg-gold/90"
-                disabled={uploadingEditPreview || savingEdit || !editPreviewUrl}
+                disabled={uploadingEditPreview || savingEdit}
                 onClick={() => void handleSaveEdit()}
               >
                 {savingEdit ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}

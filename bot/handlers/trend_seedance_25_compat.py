@@ -336,12 +336,18 @@ def install_trend_seedance_25_compat() -> None:
                 trend=trend,
                 billing_quote=billing_quote,
             )
-        return await _run_seedance25_trend(
+        response = await _run_seedance25_trend(
             telegram_id=telegram_id,
             user=user,
             trend=trend,
             billing_quote=billing_quote,
         )
+
+        # This dispatcher is installed after the generic metrics wrapper.
+        from .trend_success_compat import _record_response_task
+
+        await _record_response_task(response, trend, user)
+        return response
 
     trend_api._run_video_trend = run_video_trend_with_seedance25
     trend_api._seedance25_trend_compat_installed = True
