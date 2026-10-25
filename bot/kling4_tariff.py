@@ -37,6 +37,10 @@ def validate_kling4_model_config(
     """Validate the Kling 4 block accepted by the existing tariff publisher."""
     if not isinstance(model_config, dict):
         raise TypeError("video_models.kling_4 must be an object")
+    public_enabled = model_config.get("public_enabled", False)
+    if type(public_enabled) is not bool:
+        raise TypeError("video_models.kling_4.public_enabled must be a boolean")
+    require_complete = require_complete or public_enabled
     rates = model_config.get("billing_rates")
     if (
         not isinstance(rates, dict)
@@ -73,6 +77,7 @@ def validate_kling4_model_config(
                 )
             normalized[category][quality] = number
     result = deepcopy(model_config)
+    result["public_enabled"] = public_enabled
     result["billing_rates"] = normalized
     return result
 
@@ -144,10 +149,27 @@ def update_admin_rate(manager: Any, field: str, value: Any) -> Any:
     return old_value
 
 
-def nominal_admin_quote(
-    provider_quote: dict[str, Any], *, price_config: dict[str, Any] | None = None
+def kling4_public_enabled(*, price_config: dict[str, Any] | None = None) -> bool:
+    """Return the managed rollout flag only when the retail tariff is complete."""
+    config = price_config if price_config is not None else _price_config()
+    model_config = (
+        config.get("costs_reference", {}).get("video_models", {}).get(MODEL_KEY)
+        if isinstance(config, dict)
+        else None
+    )
+    try:
+        return bool(validate_kling4_model_config(model_config)["public_enabled"])
+    except (TypeError, ValueError):
+        return False
+
+
+def retail_quote(
+    provider_quote: dict[str, Any],
+    *,
+    is_admin: bool,
+    price_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Price the exact measured provider category/quality/seconds for an admin."""
+    """Price exact measured billing units and freeze the actor's payable amount."""
     config = price_config if price_config is not None else _price_config()
     model_config = (
         config.get("costs_reference", {}).get("video_models", {}).get(MODEL_KEY)
@@ -196,8 +218,9 @@ def nominal_admin_quote(
     ).hexdigest()[:16]
     return {
         "cost": cost,
-        "charge_cost": 0.0,
-        "profile": "admin",
+        "charge_cost": 0.0 if is_admin else cost,
+        "profile": "admin" if is_admin else "retail",
+        "admin_free": bool(is_admin),
         "retail_rate": str(rate),
         "retail_revision": revision,
         "credit_name": str(
@@ -207,15 +230,24 @@ def nominal_admin_quote(
     }
 
 
-def attach_nominal_admin_price(
+def nominal_admin_quote(
     provider_quote: dict[str, Any], *, price_config: dict[str, Any] | None = None
 ) -> dict[str, Any]:
-    """Freeze nominal retail price into the launch quote and its hash."""
+    """Backward-compatible administrator quote helper."""
+    return retail_quote(provider_quote, is_admin=True, price_config=price_config)
+
+
+def attach_retail_price(
+    provider_quote: dict[str, Any],
+    *,
+    is_admin: bool,
+    price_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Freeze retail price, debit and actor profile into the launch quote."""
     payload = {
         key: value for key, value in provider_quote.items() if key != "quote_hash"
     }
-    payload.update(nominal_admin_quote(payload, price_config=price_config))
-    payload["admin_free"] = True
+    payload.update(retail_quote(payload, is_admin=is_admin, price_config=price_config))
     payload["quote_hash"] = hashlib.sha256(
         json.dumps(
             payload,
@@ -226,6 +258,13 @@ def attach_nominal_admin_price(
         ).encode()
     ).hexdigest()
     return payload
+
+
+def attach_nominal_admin_price(
+    provider_quote: dict[str, Any], *, price_config: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Backward-compatible administrator launch quote helper."""
+    return attach_retail_price(provider_quote, is_admin=True, price_config=price_config)
 
 
 def format_admin_price(quote: dict[str, Any]) -> str:
@@ -240,6 +279,22 @@ def format_admin_price(quote: dict[str, Any]) -> str:
         if value
     )
     return f"Цена: {amount} {unit}.\nДля администратора списание отключено."
+
+
+def format_price(quote: dict[str, Any]) -> str:
+    """Render the frozen price without exposing provider billing diagnostics."""
+    if quote.get("admin_free"):
+        return format_admin_price(quote)
+    amount = f"{float(quote['charge_cost']):g}"
+    unit = " ".join(
+        value
+        for value in (
+            str(quote.get("credit_emoji") or "").strip(),
+            str(quote.get("credit_name") or "").strip(),
+        )
+        if value
+    )
+    return f"К списанию: {amount} {unit}."
 
 
 def format_editor_admin_price(
@@ -329,4 +384,26 @@ def format_editor_admin_price(
     return (
         f"💰 Цена: <code>{cost:g}</code>{suffix}.{frame_note}\n"
         "Для администратора списание отключено."
+    )
+
+
+def format_editor_price(
+    recipe: dict[str, Any],
+    *,
+    is_admin: bool,
+    price_config: dict[str, Any] | None = None,
+) -> str:
+    """Render managed draft pricing for either a retail user or an admin."""
+    rendered = format_editor_admin_price(recipe, price_config=price_config)
+    if is_admin:
+        return rendered
+    return (
+        rendered.replace(
+            "Задайте тариф Kling 4 в админке.", "Попробуйте позже."
+        )
+        .replace("Проверьте тариф Kling 4 в админке.", "Попробуйте позже.")
+        .replace(
+            "Для администратора списание отключено.",
+            "Стоимость будет списана при запуске.",
+        )
     )

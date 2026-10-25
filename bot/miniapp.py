@@ -22,6 +22,7 @@ from bot import db as db_backend
 from bot.config import config
 from bot.creator_tariff import VideoQuote, quote_video_for_actor
 from bot.kling4_api import catalog_entry as kling4_catalog_entry
+from bot.kling4_tariff import kling4_public_enabled
 from bot.services.runtime_http import database_error_response
 from bot.trend_user_fields import (
     TrendUserFieldsError,
@@ -3323,7 +3324,11 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
                     ),
                 }, tariff=tariff)
                 for item in VIDEO_MODELS
-            ] + ([kling4_catalog_entry()] if config.is_admin(telegram_id) else []),
+            ] + (
+                [kling4_catalog_entry()]
+                if config.is_admin(telegram_id) or kling4_public_enabled()
+                else []
+            ),
             "recent_tasks": recent_tasks,
             "saved_references": [
                 _saved_reference_payload(item)

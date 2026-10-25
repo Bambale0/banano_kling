@@ -39,7 +39,13 @@ def lifecycle_boundary(monkeypatch):
         ),
         launch=AsyncMock(return_value={"task_id": "test", "status": "pending"}),
     )
-    monkeypatch.setattr(kling4, "actor", AsyncMock(return_value=object()))
+    monkeypatch.setattr(
+        kling4,
+        "actor",
+        AsyncMock(
+            return_value=SimpleNamespace(is_admin=True, telegram_id=999999999)
+        ),
+    )
     monkeypatch.setattr(kling4, "kling4_lifecycle", engine)
     return engine
 
@@ -148,7 +154,13 @@ async def test_task_quote_history_recovery_and_error_screens_have_navigation(
     telegram, monkeypatch, action
 ):
     state, message, query = telegram
-    monkeypatch.setattr(kling4, "actor", AsyncMock(return_value=object()))
+    monkeypatch.setattr(
+        kling4,
+        "actor",
+        AsyncMock(
+            return_value=SimpleNamespace(is_admin=True, telegram_id=999999999)
+        ),
+    )
     engine = SimpleNamespace(
         history=AsyncMock(return_value=[]),
         status=AsyncMock(

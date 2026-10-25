@@ -1,4 +1,4 @@
-"""Authenticated Kling4 facade; administrator gate precedes all work."""
+"""Authenticated Kling4 facade with owner access and admin-only controls."""
 
 from __future__ import annotations
 
@@ -14,11 +14,10 @@ from bot.services.wan3_prime_media import Wan3PrimeValidationError
 logger = logging.getLogger(__name__)
 
 
-async def _actor(request, body):
+async def _actor(request, body, *, launch=False, admin_only=False):
     # Reject nonadmins before channel probes or user creation. Cryptographic
     # Telegram verification must precede reading the claimed user ID.
     from bot import miniapp
-    from bot.config import config
     from bot.wan3_prime_api import _actor_from_request
 
     init_data = (
@@ -28,15 +27,21 @@ async def _actor(request, body):
         or ""
     )
     try:
+        from bot.config import config
+
         verified = miniapp._validate_init_data(str(init_data), config.BOT_TOKEN)
         telegram_id = int(verified["user"]["id"])
     except (ValueError, TypeError, KeyError) as exc:
         raise Kling4Error("Откройте Mini App заново из Telegram.", status=401) from exc
-    if not config.is_admin(telegram_id):
-        raise Kling4Error("Kling 4 доступен только администратору.", status=403)
-    actor = await _actor_from_request(request, body)
-    require_admin(actor)
-    return actor
+    is_admin = config.is_admin(telegram_id)
+    if admin_only and not is_admin:
+        raise Kling4Error("Доступно только администратору.", status=403)
+    if launch and not is_admin:
+        from bot.kling4_tariff import kling4_public_enabled
+
+        if not kling4_public_enabled():
+            raise Kling4Error("Kling 4 пока недоступен.", status=403)
+    return await _actor_from_request(request, body)
 
 
 async def route(request):
@@ -44,9 +49,14 @@ async def route(request):
         body = await request.json()
         if not isinstance(body, dict):
             raise Kling4Error("Нужен JSON объект.")
-        actor = await _actor(request, body)
-        engine = request.app.get("kling4_lifecycle", kling4_lifecycle)
         action = request.match_info["action"]
+        actor = await _actor(
+            request,
+            body,
+            launch=action in {"quote", "generate"},
+            admin_only=action in {"adopt", "reject", "settings"},
+        )
+        engine = request.app.get("kling4_lifecycle", kling4_lifecycle)
         if action == "quote":
             result = await engine.quote(actor, body.get("recipe"))
         elif action == "generate":
@@ -66,7 +76,12 @@ async def route(request):
             result = await engine.adopt(
                 actor, body.get("task_id"), body.get("provider_task_id")
             )
+        elif action == "reject":
+            result = await engine.reject_unknown(
+                actor, body.get("task_id"), body.get("resolution")
+            )
         elif action == "settings":
+            require_admin(actor)
             if "settings" in body:
                 if type(body.get("revision")) is not int:
                     raise Kling4Error("Нужна ревизия настроек.")
@@ -126,7 +141,7 @@ def setup_kling4_routes(app, miniapp_root):
     app.router.add_route(
         "POST",
         miniapp_root
-        + "/api/kling4/{action:quote|generate|status|history|recipe|adopt|settings}",
+        + "/api/kling4/{action:quote|generate|status|history|recipe|adopt|reject|settings}",
         route,
     )
     app.router.add_route(
@@ -137,10 +152,13 @@ def setup_kling4_routes(app, miniapp_root):
 
 
 def catalog_entry():
+    from bot.kling4_tariff import kling4_public_enabled
+
+    public_enabled = kling4_public_enabled()
     return {
         "id": "kling_4",
         "label": "Kling 4",
-        "description": "Админ · референсы, персонажи, голоса и ключевые кадры",
+        "description": "Референсы, персонажи, голоса и ключевые кадры",
         "durations": list(range(3, 31)),
         "ratios": ["auto", "16:9", "9:16", "1:1", "21:9"],
         "supports": ["text", "imgtxt"],
@@ -148,7 +166,7 @@ def catalog_entry():
         "max_video_references": 5,
         "costs": {},
         "quality_costs": {},
-        "admin_only": True,
+        "admin_only": not public_enabled,
     }
 
 
@@ -160,7 +178,7 @@ async def media_route(request):
         body = (
             await request.json() if request.content_type == "application/json" else {}
         )
-        await _actor(request, body)
+        await _actor(request, body, launch=True)
         handlers = {
             "init": media._upload_init_route,
             "chunk": media._upload_chunk_route,

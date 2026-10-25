@@ -196,14 +196,16 @@ class AutomaticComposer:
                     await editor.save(state, recipe)
                     await state.update_data(k4_album_pending=False)
                     await editor.launch_prompt(message, state, recipe)
-                except Wan3PrimeValidationError as exc:
-                    await message.answer(editor.public_error(exc), reply_markup=editor.keyboard(recipe))
+                except (Kling4Error, Wan3PrimeValidationError) as exc:
+                    await message.answer(
+                        editor.public_error(exc), reply_markup=editor.keyboard(recipe)
+                    )
                 return
 
     async def handle(self, message, state):
         from . import kling4 as editor
 
-        if not await editor.admin(message):
+        if not await editor.access_allowed(message):
             return
         if str(getattr(message, "text", "") or "").lstrip().startswith("/"):
             raise SkipHandler

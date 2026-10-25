@@ -133,7 +133,13 @@ def engine(monkeypatch):
         ),
         launch=AsyncMock(return_value={"task_id": "kling4_auto", "status": "pending"}),
     )
-    monkeypatch.setattr(kling4, "actor", AsyncMock(return_value=object()))
+    monkeypatch.setattr(
+        kling4,
+        "actor",
+        AsyncMock(
+            return_value=SimpleNamespace(is_admin=True, telegram_id=999999999)
+        ),
+    )
     monkeypatch.setattr(kling4, "kling4_lifecycle", engine)
     monkeypatch.setattr(kling4, "automatic_composer", auto.AutomaticComposer())
     monkeypatch.setattr(

@@ -1,4 +1,4 @@
-"""Telegram editor for the same typed admin-only Kling4 recipes as Mini App."""
+"""Telegram editor for the same typed Kling4 recipes as Mini App."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from bot.kling4_editor_view import (
     render_editor_card,
     task_status_label,
 )
-from bot.services.kling4_contract import RATIOS, Kling4Error, require_admin
+from bot.services.kling4_contract import RATIOS, Kling4Error
 from bot.services.kling4_lifecycle import kling4_lifecycle
 from bot.services.wan3_prime_media import Wan3PrimeValidationError
 
@@ -83,7 +83,7 @@ def serialized_text(handler):
                 return
             if field != "prompt":
                 return await handler(message, state)
-            if not await admin(message):
+            if not await access_allowed(message):
                 return
             # A prompt field opened before this release uses the same intake
             # readiness checks as new editing-state messages.
@@ -106,22 +106,22 @@ def fresh():
     }
 
 
-async def admin(event):
-    if config.is_admin(event.from_user.id):
+async def access_allowed(event):
+    from bot.kling4_tariff import kling4_public_enabled
+
+    if config.is_admin(event.from_user.id) or kling4_public_enabled():
         return True
     if isinstance(event, types.CallbackQuery):
-        await event.answer("Доступно только администратору.", show_alert=True)
+        await event.answer("Kling 4 пока недоступен.", show_alert=True)
     else:
-        await event.answer("Доступно только администратору.")
+        await event.answer("Kling 4 пока недоступен.")
     return False
 
 
 async def actor(telegram_id):
     from bot.wan3_prime_api import _telegram_actor
 
-    value = await _telegram_actor(telegram_id)
-    require_admin(value)
-    return value
+    return await _telegram_actor(telegram_id)
 
 
 def get_path(recipe, path):
@@ -245,7 +245,7 @@ def keyboard(recipe):
 
 
 async def show(message, state, *, edit=False):
-    from bot.kling4_tariff import format_editor_admin_price
+    from bot.kling4_tariff import format_editor_price
 
     data = await state.get_data()
     recipe = data.get("k4_recipe", fresh())
@@ -254,7 +254,12 @@ async def show(message, state, *, edit=False):
     send = message.edit_text if edit else message.answer
     try:
         await send(
-            render_editor_card(recipe, format_editor_admin_price(recipe)),
+            render_editor_card(
+                recipe,
+                format_editor_price(
+                    recipe, is_admin=config.is_admin(state.key.user_id)
+                ),
+            ),
             parse_mode="HTML",
             reply_markup=keyboard(recipe),
         )
@@ -279,9 +284,55 @@ async def reset_intake(state):
     )
 
 
+async def launch_confirmed(message, state, recipe, identity, quote, key, session):
+    """Launch one frozen quote after the actor's required confirmation."""
+    result = await kling4_lifecycle.launch(
+        identity, recipe, quote["quote_hash"], key
+    )
+    latest = await state.get_data()
+    active = latest.get("k4_session") == session and await state.get_state() in {
+        Kling4States.editing.state,
+        Kling4States.text.state,
+    }
+    if active:
+        await state.update_data(
+            k4_last_task=result["task_id"],
+            k4_key=None,
+            _prompt_fragment_submit_token=None,
+        )
+        await state.set_state(Kling4States.editing)
+    logger.info(
+        "Kling4 Telegram prompt submitted: telegram_id=%s task_id=%s request_id=%s status=%s",
+        identity.telegram_id,
+        result["task_id"],
+        key,
+        result["status"],
+    )
+    status = result["status"]
+    heading = (
+        "Kling 4: проверяю статус запуска. Повторно отправлять этот промпт не нужно."
+        if status in {"unknown", "submitting"}
+        else "Kling 4: сервис отклонил запуск."
+        if status == "failed"
+        else "Kling 4: задача принята."
+    )
+    await message.answer(
+        heading
+        + "\n"
+        + f"Задача: {result['task_id']}\n"
+        + (
+            "Проверьте промпт и референсы перед следующим запуском."
+            if status == "failed"
+            else "Результат придёт в Telegram. Можно отправить следующий промпт."
+        ),
+        reply_markup=keyboard(recipe) if active else None,
+    )
+    return result
+
+
 async def launch_prompt(message, state, recipe):
-    """Resolve the measured quote internally, preserving durable idempotency."""
-    from bot.kling4_tariff import format_admin_price
+    """Resolve the measured quote, then require confirmation for paid actors."""
+    from bot.kling4_tariff import format_price
 
     identity = await actor(message.from_user.id)
     current = await state.get_data()
@@ -299,53 +350,36 @@ async def launch_prompt(message, state, recipe):
         Kling4States.editing.state,
         Kling4States.text.state,
     }:
-        return
+        return None
     await state.update_data(k4_quote=quote, k4_key=key)
-    await message.answer(format_admin_price(quote))
-    result = await kling4_lifecycle.launch(identity, recipe, quote["quote_hash"], key)
-    latest = await state.get_data()
-    active = latest.get("k4_session") == current.get(
-        "k4_session"
-    ) and await state.get_state() in {
-        Kling4States.editing.state,
-        Kling4States.text.state,
-    }
-    if active:
-        await state.update_data(
-            k4_last_task=result["task_id"], _prompt_fragment_submit_token=None
+    if not identity.is_admin:
+        confirm = InlineKeyboardBuilder()
+        confirm.row(
+            types.InlineKeyboardButton(
+                text="Подтвердить и создать", callback_data="k4:confirm"
+            )
         )
-        await state.set_state(Kling4States.editing)
-    logger.info(
-        "Kling4 Telegram prompt submitted: telegram_id=%s task_id=%s request_id=%s status=%s",
-        message.from_user.id,
-        result["task_id"],
+        await message.answer(
+            format_price(quote) + "\n\nПодтвердите платный запуск.",
+            reply_markup=navigation(confirm, back="k4:done", back_label="Отмена"),
+        )
+        return None
+    await message.answer(format_price(quote))
+    return await launch_confirmed(
+        message,
+        state,
+        recipe,
+        identity,
+        quote,
         key,
-        result["status"],
-    )
-    status = result["status"]
-    heading = (
-        "Kling 4: проверяю статус запуска. Повторно отправлять этот промпт не нужно."
-        if status in {"unknown", "submitting"}
-        else "Kling 4: сервис отклонил запуск."
-        if status == "failed"
-        else "Kling 4: задача принята."
-    )
-    await message.answer(
-        heading + "\n"
-        f"Задача: {result['task_id']}\n"
-        + (
-            "Проверьте промпт и референсы перед следующим запуском."
-            if status == "failed"
-            else "Результат придёт в Telegram. Можно отправить следующий промпт."
-        ),
-        reply_markup=keyboard(recipe) if active else None,
+        current.get("k4_session"),
     )
 
 
 @router.message(Command("kling4"))
 @serialized
 async def command(message: types.Message, state: FSMContext):
-    if not await admin(message):
+    if not await access_allowed(message):
         return
     await state.clear()
     await state.update_data(
@@ -362,7 +396,7 @@ async def command(message: types.Message, state: FSMContext):
 @router.callback_query(F.data.startswith("k4:"))
 @serialized
 async def callback(query: types.CallbackQuery, state: FSMContext):
-    if not await admin(query):
+    if not await access_allowed(query):
         return
     if not query.message:
         return
@@ -617,6 +651,22 @@ async def callback(query: types.CallbackQuery, state: FSMContext):
             await state.update_data(k4_media_uploads=[])
             await save(state, recipe)
             await media_menu(query.message, recipe, path)
+        elif action == "confirm":
+            quote = current.get("k4_quote")
+            key = current.get("k4_key")
+            if not isinstance(quote, dict) or not isinstance(key, str):
+                raise Kling4Error(
+                    "Расчёт устарел. Отправьте промпт заново.", status=409
+                )
+            await launch_confirmed(
+                query.message,
+                state,
+                recipe,
+                await actor(query.from_user.id),
+                quote,
+                key,
+                current.get("k4_session"),
+            )
         elif action in {"quote", "launch"}:
             # Old message keyboards cannot bypass automatic reference readiness.
             await show(query.message, state)
@@ -724,7 +774,7 @@ async def media_menu(message, recipe, path):
 @router.message(StateFilter(Kling4States.text))
 @serialized_text
 async def text(message: types.Message, state: FSMContext):
-    if not await admin(message):
+    if not await access_allowed(message):
         return
     if not message.text:
         return
@@ -773,7 +823,7 @@ async def automatic(message: types.Message, state: FSMContext):
 
 @router.message(StateFilter(Kling4States.media))
 async def media(message: types.Message, state: FSMContext):
-    if not await admin(message):
+    if not await access_allowed(message):
         return
     current = await state.get_data()
     recipe = current.get("k4_recipe", fresh())
