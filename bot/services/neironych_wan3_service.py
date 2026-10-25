@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import uuid
@@ -219,7 +218,7 @@ class NeironychWan3Service:
             status, data = await self._request_json(
                 "POST", "/v1/videos/generations", headers=headers, body=payload
             )
-        except (aiohttp.ClientError, asyncio.TimeoutError):
+        except (aiohttp.ClientError, TimeoutError):
             recovered = await self._recover(client_uuid)
             if recovered:
                 return {
