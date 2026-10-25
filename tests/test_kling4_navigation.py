@@ -71,8 +71,8 @@ async def test_kling4_is_inside_kling_catalog_and_hidden_in_other_families(teleg
     query.from_user.id = 123123
     await catalog.show_video_models_page(query, state)
     markup = message.edit_text.call_args.kwargs["reply_markup"]
-    assert all(
-        b.callback_data != "k4:open" for row in markup.inline_keyboard for b in row
+    assert any(
+        b.callback_data == "k4:open" for row in markup.inline_keyboard for b in row
     )
 
 
@@ -274,15 +274,16 @@ async def test_leaving_catalog_cancels_pending_upload(telegram, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_forged_kling4_callback_from_nonadmin_does_not_change_state(telegram):
+async def test_public_kling4_callback_opens_editor(telegram):
     state, _message, query = telegram
     await state.update_data(sentinel="preserved")
     query.from_user.id = 123123
-    for action in ("open", "materials", "new:voice", "history", "launch"):
-        query.data = f"k4:{action}"
-        await kling4.callback(query, state)
-    assert await state.get_data() == {"sentinel": "preserved"}
-    assert await state.get_state() is None
+    query.data = "k4:open"
+    await kling4.callback(query, state)
+    data = await state.get_data()
+    assert data["v_model"] == "kling_4"
+    assert "sentinel" not in data
+    assert await state.get_state() == kling4.Kling4States.editing.state
 
 
 @pytest.mark.asyncio

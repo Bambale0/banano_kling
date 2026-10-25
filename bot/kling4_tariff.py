@@ -1,4 +1,4 @@
-"""Admin-managed nominal Kling 4 pricing over measured provider billing units."""
+"""Admin-managed Kling 4 retail pricing over measured provider billing units."""
 
 from __future__ import annotations
 
@@ -144,10 +144,13 @@ def update_admin_rate(manager: Any, field: str, value: Any) -> Any:
     return old_value
 
 
-def nominal_admin_quote(
-    provider_quote: dict[str, Any], *, price_config: dict[str, Any] | None = None
+def retail_quote(
+    provider_quote: dict[str, Any],
+    *,
+    is_admin: bool,
+    price_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Price the exact measured provider category/quality/seconds for an admin."""
+    """Price the exact measured provider category/quality/seconds for an actor."""
     config = price_config if price_config is not None else _price_config()
     model_config = (
         config.get("costs_reference", {}).get("video_models", {}).get(MODEL_KEY)
@@ -196,8 +199,8 @@ def nominal_admin_quote(
     ).hexdigest()[:16]
     return {
         "cost": cost,
-        "charge_cost": 0.0,
-        "profile": "admin",
+        "charge_cost": 0.0 if is_admin else cost,
+        "profile": "admin" if is_admin else "retail",
         "retail_rate": str(rate),
         "retail_revision": revision,
         "credit_name": str(
@@ -207,15 +210,30 @@ def nominal_admin_quote(
     }
 
 
-def attach_nominal_admin_price(
+def nominal_admin_quote(
     provider_quote: dict[str, Any], *, price_config: dict[str, Any] | None = None
 ) -> dict[str, Any]:
-    """Freeze nominal retail price into the launch quote and its hash."""
+    """Backward-compatible admin preview used by the tariff editor tests."""
+    return {
+        **retail_quote(provider_quote, is_admin=True, price_config=price_config),
+        "admin_free": True,
+    }
+
+
+def attach_retail_price(
+    provider_quote: dict[str, Any],
+    *,
+    is_admin: bool,
+    price_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Freeze the actor-specific retail charge into the launch quote and hash."""
     payload = {
         key: value for key, value in provider_quote.items() if key != "quote_hash"
     }
-    payload.update(nominal_admin_quote(payload, price_config=price_config))
-    payload["admin_free"] = True
+    payload.update(
+        retail_quote(payload, is_admin=is_admin, price_config=price_config)
+    )
+    payload["admin_free"] = bool(is_admin)
     payload["quote_hash"] = hashlib.sha256(
         json.dumps(
             payload,
@@ -228,7 +246,16 @@ def attach_nominal_admin_price(
     return payload
 
 
-def format_admin_price(quote: dict[str, Any]) -> str:
+def attach_nominal_admin_price(
+    provider_quote: dict[str, Any], *, price_config: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Backward-compatible admin quote helper."""
+    return attach_retail_price(
+        provider_quote, is_admin=True, price_config=price_config
+    )
+
+
+def format_price(quote: dict[str, Any]) -> str:
     cost = float(quote["cost"])
     amount = f"{cost:g}"
     unit = " ".join(
@@ -239,36 +266,46 @@ def format_admin_price(quote: dict[str, Any]) -> str:
         )
         if value
     )
-    return f"Цена: {amount} {unit}.\nДля администратора списание отключено."
+    suffix = (
+        "Для администратора списание отключено."
+        if quote.get("admin_free")
+        else f"Будет списано: {float(quote['charge_cost']):g} {unit}."
+    )
+    return f"Цена: {amount} {unit}.\n{suffix}"
 
 
-def format_editor_admin_price(
-    recipe: dict[str, Any], *, price_config: dict[str, Any] | None = None
+def format_admin_price(quote: dict[str, Any]) -> str:
+    """Backward-compatible formatter for existing admin surfaces."""
+    return format_price(quote)
+
+
+def format_editor_price(
+    recipe: dict[str, Any],
+    *,
+    is_admin: bool,
+    price_config: dict[str, Any] | None = None,
 ) -> str:
-    """Render the nominal retail price before an admin submits a prompt.
+    """Render the retail price before an actor submits a prompt.
 
     Ordinary video references need measured input duration, so their exact
     price remains deferred until quote validation. Image/reference and
     keyframe drafts have a deterministic duration and can be priced directly.
     """
     config = price_config if price_config is not None else _price_config()
+    billing_note = (
+        "\nДля администратора списание отключено." if is_admin else ""
+    )
     model_config = (
         config.get("costs_reference", {}).get("video_models", {}).get(MODEL_KEY)
         if isinstance(config, dict)
         else None
     )
     if model_config is None:
-        return (
-            "💰 Цена не настроена. Задайте тариф Kling 4 в админке.\n"
-            "Для администратора списание отключено."
-        )
+        return "💰 Цена не настроена для Kling 4." + billing_note
     try:
         model_config = validate_kling4_model_config(model_config)
     except (TypeError, ValueError):
-        return (
-            "💰 Цена настроена не полностью. Проверьте тариф Kling 4 в админке.\n"
-            "Для администратора списание отключено."
-        )
+        return "💰 Цена Kling 4 настроена не полностью." + billing_note
 
     data = recipe.get("input", {}) if isinstance(recipe, dict) else {}
     category = "video" if data.get("video_urls") else recipe.get("mode")
@@ -282,14 +319,11 @@ def format_editor_admin_price(
         category = "keyframe"
     quality = data.get("resolution")
     if category not in CATEGORIES or quality not in QUALITIES:
-        return (
-            "💰 Не удалось рассчитать цену для выбранных настроек.\n"
-            "Для администратора списание отключено."
-        )
+        return "💰 Не удалось рассчитать цену для выбранных настроек." + billing_note
     if category == "video":
         return (
-            "💰 Цена появится после проверки длительности загруженного видео.\n"
-            "Для администратора списание отключено."
+            "💰 Цена появится после проверки длительности загруженного видео."
+            + billing_note
         )
 
     try:
@@ -297,15 +331,9 @@ def format_editor_admin_price(
         rate = Decimal(str(model_config["billing_rates"][category][quality]))
         cost = float(preset_manager._format_cost(float(rate * seconds)))
     except (KeyError, InvalidOperation, TypeError, ValueError):
-        return (
-            "💰 Не удалось рассчитать цену для выбранных настроек.\n"
-            "Для администратора списание отключено."
-        )
+        return "💰 Не удалось рассчитать цену для выбранных настроек." + billing_note
     if not math.isfinite(cost) or cost <= 0:
-        return (
-            "💰 Цена настроена не полностью. Проверьте тариф Kling 4 в админке.\n"
-            "Для администратора списание отключено."
-        )
+        return "💰 Цена Kling 4 настроена не полностью." + billing_note
     unit = " ".join(
         value
         for value in (
@@ -326,7 +354,11 @@ def format_editor_admin_price(
         if category == "reference" and data.get("image_urls")
         else ""
     )
-    return (
-        f"💰 Цена: <code>{cost:g}</code>{suffix}.{frame_note}\n"
-        "Для администратора списание отключено."
-    )
+    return f"💰 Цена: <code>{cost:g}</code>{suffix}.{frame_note}{billing_note}"
+
+
+def format_editor_admin_price(
+    recipe: dict[str, Any], *, price_config: dict[str, Any] | None = None
+) -> str:
+    """Backward-compatible admin editor formatter."""
+    return format_editor_price(recipe, is_admin=True, price_config=price_config)

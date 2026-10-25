@@ -1,4 +1,4 @@
-"""Telegram editor for the same typed admin-only Kling4 recipes as Mini App."""
+"""Telegram editor for the same typed public Kling4 recipes as Mini App."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from bot.kling4_editor_view import (
     render_editor_card,
     task_status_label,
 )
-from bot.services.kling4_contract import RATIOS, Kling4Error, require_admin
+from bot.services.kling4_contract import RATIOS, Kling4Error
 from bot.services.kling4_lifecycle import kling4_lifecycle
 from bot.services.wan3_prime_media import Wan3PrimeValidationError
 
@@ -83,7 +83,7 @@ def serialized_text(handler):
                 return
             if field != "prompt":
                 return await handler(message, state)
-            if not await admin(message):
+            if not await available(message):
                 return
             # A prompt field opened before this release uses the same intake
             # readiness checks as new editing-state messages.
@@ -106,22 +106,14 @@ def fresh():
     }
 
 
-async def admin(event):
-    if config.is_admin(event.from_user.id):
-        return True
-    if isinstance(event, types.CallbackQuery):
-        await event.answer("Доступно только администратору.", show_alert=True)
-    else:
-        await event.answer("Доступно только администратору.")
-    return False
+async def available(event):
+    return bool(getattr(event, "from_user", None))
 
 
 async def actor(telegram_id):
     from bot.wan3_prime_api import _telegram_actor
 
-    value = await _telegram_actor(telegram_id)
-    require_admin(value)
-    return value
+    return await _telegram_actor(telegram_id)
 
 
 def get_path(recipe, path):
@@ -245,7 +237,7 @@ def keyboard(recipe):
 
 
 async def show(message, state, *, edit=False):
-    from bot.kling4_tariff import format_editor_admin_price
+    from bot.kling4_tariff import format_editor_price
 
     data = await state.get_data()
     recipe = data.get("k4_recipe", fresh())
@@ -254,7 +246,12 @@ async def show(message, state, *, edit=False):
     send = message.edit_text if edit else message.answer
     try:
         await send(
-            render_editor_card(recipe, format_editor_admin_price(recipe)),
+            render_editor_card(
+                recipe,
+                format_editor_price(
+                    recipe, is_admin=config.is_admin(state.key.user_id)
+                ),
+            ),
             parse_mode="HTML",
             reply_markup=keyboard(recipe),
         )
@@ -281,7 +278,7 @@ async def reset_intake(state):
 
 async def launch_prompt(message, state, recipe):
     """Resolve the measured quote internally, preserving durable idempotency."""
-    from bot.kling4_tariff import format_admin_price
+    from bot.kling4_tariff import format_price
 
     identity = await actor(message.from_user.id)
     current = await state.get_data()
@@ -301,7 +298,7 @@ async def launch_prompt(message, state, recipe):
     }:
         return
     await state.update_data(k4_quote=quote, k4_key=key)
-    await message.answer(format_admin_price(quote))
+    await message.answer(format_price(quote))
     result = await kling4_lifecycle.launch(identity, recipe, quote["quote_hash"], key)
     latest = await state.get_data()
     active = latest.get("k4_session") == current.get(
@@ -345,7 +342,7 @@ async def launch_prompt(message, state, recipe):
 @router.message(Command("kling4"))
 @serialized
 async def command(message: types.Message, state: FSMContext):
-    if not await admin(message):
+    if not await available(message):
         return
     await state.clear()
     await state.update_data(
@@ -362,7 +359,7 @@ async def command(message: types.Message, state: FSMContext):
 @router.callback_query(F.data.startswith("k4:"))
 @serialized
 async def callback(query: types.CallbackQuery, state: FSMContext):
-    if not await admin(query):
+    if not await available(query):
         return
     if not query.message:
         return
@@ -724,7 +721,7 @@ async def media_menu(message, recipe, path):
 @router.message(StateFilter(Kling4States.text))
 @serialized_text
 async def text(message: types.Message, state: FSMContext):
-    if not await admin(message):
+    if not await available(message):
         return
     if not message.text:
         return
@@ -773,7 +770,7 @@ async def automatic(message: types.Message, state: FSMContext):
 
 @router.message(StateFilter(Kling4States.media))
 async def media(message: types.Message, state: FSMContext):
-    if not await admin(message):
+    if not await available(message):
         return
     current = await state.get_data()
     recipe = current.get("k4_recipe", fresh())

@@ -17,6 +17,10 @@ from urllib.parse import urlparse
 from bot import database
 from bot import db as db_backend
 from bot.services import preset_manager as preset_module
+from bot.services.neironych_wan3_service import (
+    NeironychWan3Error,
+    NeironychWan3Unsupported,
+)
 from bot.services.wan3_billing import settlement_amounts
 from bot.services.wan3_models import wan3_model_spec, wan3_service_for_model
 from bot.services.wan3_prime_media import (
@@ -43,7 +47,8 @@ class Wan3PrimeLifecycleError(RuntimeError):
 
 
 class ProviderTransport(Protocol):
-    async def create_task(self, recipe: Wan3PrimeRecipe, *, callback_url: str | None) -> dict[str, Any]:
+    async def create_task(self, recipe: Wan3PrimeRecipe, *, callback_url: str | None,
+                          idempotency_key: str) -> dict[str, Any]:
         ...
 
     async def get_task_status(self, provider_task_id: str) -> dict[str, Any] | None:
@@ -108,6 +113,14 @@ class LazyWan3PrimeTransport:
     def __init__(self) -> None:
         self._service = None
         self._standard_service = None
+        self._neironych = None
+
+    def _get_neironych(self):
+        if self._neironych is None:
+            from bot.services.neironych_wan3_service import neironych_wan3_service
+
+            self._neironych = neironych_wan3_service
+        return self._neironych
 
     def _get_service(self):
         if self._service is None:
@@ -116,7 +129,7 @@ class LazyWan3PrimeTransport:
             self._service = wan3_prime_service
         return self._service
 
-    async def create_task(self, recipe: Wan3PrimeRecipe, *, callback_url: str | None) -> dict[str, Any]:
+    async def _create_kie(self, recipe: Wan3PrimeRecipe, *, callback_url: str | None) -> dict[str, Any]:
         if recipe.model == WAN3_MODEL_KEY:
             service = self._get_service()
         else:
@@ -127,7 +140,29 @@ class LazyWan3PrimeTransport:
             raise Wan3PrimeValidationError("Provider input was not validated before reservation")
         return await service.submit_prepared(recipe.prepared_input, callback_url=callback_url)
 
+    async def create_task(self, recipe: Wan3PrimeRecipe, *, callback_url: str | None,
+                          idempotency_key: str) -> dict[str, Any]:
+        primary = os.getenv("WAN3_PRIMARY_PROVIDER", "neironych").strip().lower()
+        neironych = self._get_neironych()
+        if primary != "neironych" or not neironych.enabled:
+            return await self._create_kie(recipe, callback_url=callback_url)
+        try:
+            return await neironych.create_task(recipe, idempotency_key=idempotency_key)
+        except NeironychWan3Unsupported as exc:
+            logger.info("Wan3 Neironych compatibility fallback: model=%s scenario=%s reason=%s",
+                        recipe.model, recipe.scenario, type(exc).__name__)
+            return await self._create_kie(recipe, callback_url=callback_url)
+        except NeironychWan3Error as exc:
+            if exc.status not in {400, 401, 402, 403, 404, 409, 422, 429}:
+                raise
+            logger.warning("Wan3 Neironych definitive rejection; using KIE fallback: model=%s status=%s",
+                           recipe.model, exc.status)
+            return await self._create_kie(recipe, callback_url=callback_url)
+
     async def get_task_status(self, provider_task_id: str) -> dict[str, Any] | None:
+        neironych = self._get_neironych()
+        if neironych.owns(provider_task_id):
+            return await neironych.get_task_status(provider_task_id)
         from bot.services.kie_market_service import kie_market_service
 
         return await kie_market_service.get_task_status(provider_task_id)
@@ -184,6 +219,10 @@ def _extract_provider_task_id(result: dict[str, Any]) -> str | None:
     if isinstance(data, dict):
         return _extract_provider_task_id(data)
     return None
+
+
+def _provider_name(provider_task_id: str | None) -> str:
+    return "neironych" if str(provider_task_id or "").startswith("neironych:") else "kie"
 
 
 def _extract_result_urls(task_data: dict[str, Any]) -> list[str]:
@@ -657,7 +696,9 @@ class Wan3PrimeLifecycle:
         callback_url = self._callback_url(internal_task_id, nonce)
         logger.info('Wan3 submit: task_id=%s model=%s scenario=%s reserve=%s', internal_task_id, recipe.model, recipe.scenario, server_quote.reserve_credits)
         try:
-            result = await self.transport.create_task(recipe, callback_url=callback_url)
+            result = await self.transport.create_task(
+                recipe, callback_url=callback_url, idempotency_key=internal_task_id
+            )
         except asyncio.CancelledError:
             await asyncio.shield(self._mark_unknown(internal_task_id, 'submission_interrupted', 'Submission interrupted'))
             raise
@@ -737,6 +778,7 @@ class Wan3PrimeLifecycle:
 
             request_data = generation_partner_snapshot(request_data, accepted=True, previous=request_data)
             request_data["provider_task_id"] = provider_task_id
+            request_data["provider"] = _provider_name(provider_task_id)
             request_data["delivery_status"] = "pending"
             updated = await db.execute(
                 "UPDATE wan3_prime_intents SET provider_task_id = ?, status = 'submitted', provider_state = 'waiting', lease_until = NULL, updated_at = CURRENT_TIMESTAMP WHERE internal_task_id = ? AND provider_task_id IS NULL AND settled = 0 AND status IN ('submitting', 'unknown', 'submitted')",
@@ -1155,7 +1197,7 @@ class Wan3PrimeLifecycle:
                 return False
             request_data = json.loads(task['request_data'] or '{}')
             request_data.update({
-                "provider": "kie",
+                "provider": _provider_name(row["provider_task_id"]),
                 "provider_model": row["provider_model"],
                 "provider_task_id": row["provider_task_id"],
                 "model": wan3_model_spec(row["provider_model"]).key,

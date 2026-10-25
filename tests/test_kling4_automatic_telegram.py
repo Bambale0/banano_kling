@@ -513,7 +513,7 @@ async def test_frame_tags_select_frames_automatically_and_keep_order_on_more_upl
     ]
 
 
-async def test_nonadmin_message_cannot_upload_or_launch(telegram, engine, monkeypatch):
+async def test_public_message_can_upload_and_launch(telegram, engine, monkeypatch):
     from bot import wan3_prime_api
 
     state, _message, query = telegram
@@ -526,8 +526,8 @@ async def test_nonadmin_message_cannot_upload_or_launch(telegram, engine, monkey
         incoming(query, 10, document=file("face.png"), caption="Animate"), state
     )
     await settled()
-    engine.launch.assert_not_awaited()
-    upload.assert_not_awaited()
+    engine.launch.assert_awaited_once()
+    upload.assert_awaited_once()
 
 
 async def test_out_of_order_first_delivery_keeps_every_prompt_fragment(

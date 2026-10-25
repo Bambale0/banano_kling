@@ -323,7 +323,7 @@ export function Kling4Form({ modelSelector }: { modelSelector: ReactNode }) {
         <div className="glass space-y-4 rounded-2xl border border-cyan/20 p-4">
           {modelSelector}
           <p className="text-xs text-muted-foreground">
-            Kling 4 · доступ администратора · бананы не списываются
+            Kling 4 · референсы, персонажи, голоса и ключевые кадры
           </p>
           <fieldset disabled={busy || locked} className="space-y-4">
             <label className="block text-sm">
@@ -667,7 +667,9 @@ export function Kling4Form({ modelSelector }: { modelSelector: ReactNode }) {
           )}
           {quote && (
             <div className="rounded-xl bg-secondary p-3 text-sm" role="status">
-              Цена: {quote.cost} бананов. Для администратора списание отключено.
+              Цена: {quote.cost} бананов. {quote.admin_free
+                ? "Для администратора списание отключено."
+                : `Будет списано: ${quote.charge_cost} бананов.`}
             </div>
           )}
           {!locked && (

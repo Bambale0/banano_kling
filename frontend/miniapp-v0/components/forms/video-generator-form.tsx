@@ -665,7 +665,7 @@ export function VideoGeneratorForm({
     setWanLastFrame([])
   }
 
-  if (selectedModel === 'kling_4' && isAdmin) return <Kling4Form modelSelector={<ModelSelect models={visibleModels.map(item => ({ id: item.id, label: item.label, description: item.description }))} value={selectedModel} onChange={handleModelChange}/>} />
+  if (selectedModel === 'kling_4') return <Kling4Form modelSelector={<ModelSelect models={visibleModels.map(item => ({ id: item.id, label: item.label, description: item.description }))} value={selectedModel} onChange={handleModelChange}/>} />
 
   if (isWanPrime) return <Wan3PrimeForm
     key={selectedModel + ':' + (wanOwnerTaskId || (wanPublicationSource ? `publication-${wanPublicationSource}` : 'wan-composer'))}

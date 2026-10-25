@@ -46,9 +46,10 @@ class Provider:
         self.create_result = {"success": True, "task_id": "provider_1"}
         self.statuses = {}
 
-    async def create_task(self, recipe, *, callback_url):
+    async def create_task(self, recipe, *, callback_url, idempotency_key):
         self.creates += 1
         self.callback_url = callback_url
+        self.idempotency_key = idempotency_key
         self.recipe = recipe
         return self.create_result
 
@@ -179,7 +180,7 @@ async def test_same_idempotency_key_with_different_body_conflicts():
 @pytest.mark.asyncio
 async def test_provider_timeout_unknown_keeps_reserve_and_does_not_retry_on_duplicate():
     class TimeoutProvider(Provider):
-        async def create_task(self, recipe, *, callback_url):
+        async def create_task(self, recipe, *, callback_url, idempotency_key):
             self.creates += 1
             raise TimeoutError()
 

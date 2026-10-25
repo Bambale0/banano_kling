@@ -1,17 +1,23 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright";
 // Browser side effects mocked; real paid contract evidence in docs/kling4-live-smoke.json.
 const port = Number(process.env.KLING4_E2E_PORT || 4206),
   origin = `http://127.0.0.1:${port}`,
-  base = origin + "/mini-app/";
+  base = origin + "/mini-app/",
+  python = process.env.PYTHON || (process.platform === "win32" ? "python" : "python3");
 const root = mkdtempSync(join(tmpdir(), "kling4-browser-"));
-symlinkSync(resolve("out"), join(root, "mini-app"), "dir");
+try {
+  symlinkSync(resolve("out"), join(root, "mini-app"), "dir");
+} catch (error) {
+  if (error?.code !== "EPERM") throw error;
+  cpSync(resolve("out"), join(root, "mini-app"), { recursive: true });
+}
 const server = spawn(
-  "python3",
+  python,
   [
     "-m",
     "http.server",
@@ -30,7 +36,7 @@ const image = Buffer.from(
 const model = {
   id: "kling_4",
   label: "Kling 4",
-  description: "Админ",
+  description: "Референсы, персонажи, голоса и ключевые кадры",
   durations: [3, 5, 30],
   ratios: ["auto", "16:9"],
   supports: ["text", "imgtxt"],
@@ -121,9 +127,10 @@ async function setup(admin, width = 375, behavior = {}) {
             max_references: 8,
           },
         ],
-        video_models: admin
-          ? [model]
-          : [{ ...model, id: "v3_pro", label: "Kling 3.0", costs: { 5: 5 } }],
+        video_models: [
+          model,
+          { ...model, id: "v3_pro", label: "Kling 3.0", costs: { 5: 5 } },
+        ],
       };
     else if (url.pathname.endsWith("/kling4/media/init")) {
       uploads.set(body.upload_id, body);
@@ -150,7 +157,9 @@ async function setup(admin, width = 375, behavior = {}) {
         rate: "28.5",
         billed_seconds: "3",
         input_video_seconds: "0",
-        cost: 0,
+        cost: 12,
+        charge_cost: admin ? 0 : 12,
+        admin_free: admin,
       };
     } else if (url.pathname.endsWith("/kling4/generate")) {
       generations.push(body);
@@ -314,19 +323,21 @@ try {
   assert.deepEqual(retry.errors, []);
   await retry.context.close();
   const ordinary = await setup(false, 430);
-  assert.equal(await ordinary.page.getByTestId("kling4-form").count(), 0);
-  await ordinary.page.locator("button[aria-expanded]").first().click();
-  assert.equal(
-    await ordinary.page
-      .getByRole("button", { name: "Kling 4", exact: true })
-      .count(),
-    0,
-  );
+  await ordinary.page.getByTestId("kling4-form").waitFor();
+  await ordinary.page.getByLabel("Промпт Kling 4").fill("Public user scene");
+  await ordinary.page
+    .getByRole("button", { name: "Рассчитать Kling 4", exact: true })
+    .click();
+  await ordinary.page
+    .getByRole("status")
+    .filter({ hasText: "Будет списано: 12 бананов." })
+    .waitFor();
+  assert.equal(ordinary.quotes.length, 1);
   assert.equal(ordinary.generations.length, 0);
   assert.deepEqual(ordinary.errors, []);
   await ordinary.context.close();
   console.log(
-    "PASS Kling4 Playwright: admin-only catalog, native original uploads, elements, preserved drafts, frame order, stale quote, one launch, pending lock,375/430px",
+    "PASS Kling4 Playwright: public catalog, native original uploads, elements, preserved drafts, frame order, stale quote, one launch, pending lock,375/430px",
   );
 } finally {
   if (browser) await browser.close();

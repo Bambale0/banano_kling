@@ -3323,7 +3323,7 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
                     ),
                 }, tariff=tariff)
                 for item in VIDEO_MODELS
-            ] + ([kling4_catalog_entry()] if config.is_admin(telegram_id) else []),
+            ] + [kling4_catalog_entry()],
             "recent_tasks": recent_tasks,
             "saved_references": [
                 _saved_reference_payload(item)

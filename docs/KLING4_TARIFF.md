@@ -44,21 +44,20 @@ and rejects unknown categories/qualities or invalid numbers. It may preserve a
 safe partial draft while the admin fills the six cells; quote/launch requires
 the complete block. A missing or partial block is shown as
 `Цена Kling 4 не настроена` and prevents submission.
-The frozen launch quote stores the nominal `cost`, its tariff revision and the
-provider credits separately. Kling 4 remains admin-only: `charge_cost` is zero,
-and the administrator sees the nominal price plus the explicit notice that no
-balance is deducted.
+The frozen launch quote stores `cost`, `charge_cost`, its tariff revision and
+provider credits separately. Public users are charged `charge_cost`; for
+administrators it remains zero and the interface shows the exemption.
 
 The generic `generation_tasks.cost` remains the amount actually charged and is
-therefore zero for Kling 4 administrators. The nominal cost lives in the frozen
-quote as `quote.cost`; `quote.charge_cost` remains zero. Kling 4 tasks are owned
-by their lifecycle and excluded from the generic watchdog refund path, so a
-nominal display price cannot create an administrator refund.
+therefore zero for Kling 4 administrators. The retail cost lives in the frozen
+quote as `quote.cost`; `quote.charge_cost` is equal to it for public users.
+Kling 4 tasks are owned by their lifecycle and excluded from the generic
+watchdog refund path. Launch intent and debit commit atomically; a definitive
+provider failure refunds the frozen charge exactly once.
 
-Both Telegram and the Mini App render the frozen nominal `quote.cost`. They show
-the administrator exemption separately instead of replacing the configured
-price with zero. Integer rates remain editable as decimal rates in the existing
-admin price screen.
+Both Telegram and the Mini App render the frozen `quote.cost`. They show either
+the public charge or the administrator exemption separately. Integer rates
+remain editable as decimal rates in the existing admin price screen.
 
 ### Telegram duration controls
 

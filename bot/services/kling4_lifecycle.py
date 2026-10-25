@@ -1,4 +1,4 @@
-"""Durable, admin-only Kling4 intents. A lost POST acknowledgement is never retried."""
+"""Durable public Kling4 intents. A lost POST acknowledgement is never retried."""
 
 from __future__ import annotations
 
@@ -102,9 +102,42 @@ class Kling4Lifecycle:
                 quote TEXT NOT NULL, snapshot TEXT NOT NULL, provider_model TEXT NOT NULL,
                 provider_task_id TEXT UNIQUE, status TEXT NOT NULL, provider_state TEXT,
                 actual_credits TEXT, error_code TEXT, result_url TEXT, result_path TEXT,
+                charged_credits REAL NOT NULL DEFAULT 0,
+                refunded_credits REAL NOT NULL DEFAULT 0,
+                settled INTEGER NOT NULL DEFAULT 0,
                 delivery_status TEXT DEFAULT 'pending', delivery_attempts INTEGER DEFAULT 0,
                 lease_until REAL NOT NULL DEFAULT 0, created_epoch REAL NOT NULL,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(user_id,idempotency_key))""",
+            )
+            billing_columns = {
+                "charged_credits": "REAL NOT NULL DEFAULT 0",
+                "refunded_credits": "REAL NOT NULL DEFAULT 0",
+                "settled": "INTEGER NOT NULL DEFAULT 0",
+            }
+            if db.is_postgres():
+                for name, definition in billing_columns.items():
+                    await execute_wan_ddl(
+                        conn,
+                        f"ALTER TABLE kling4_intents ADD COLUMN IF NOT EXISTS {name} {definition}",
+                    )
+            else:
+                columns = {
+                    row[1]
+                    for row in await (
+                        await conn.execute("PRAGMA table_info(kling4_intents)")
+                    ).fetchall()
+                }
+                for name, definition in billing_columns.items():
+                    if name not in columns:
+                        await conn.execute(
+                            f"ALTER TABLE kling4_intents ADD COLUMN {name} {definition}"
+                        )
+            await execute_wan_ddl(
+                conn,
+                """CREATE TABLE IF NOT EXISTS kling4_operator_audit (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL,
+                actor_telegram_id BIGINT NOT NULL, action TEXT NOT NULL,
+                reason TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""",
             )
             await conn.execute(
                 "INSERT INTO kling4_settings (id,revision,payload,actor) VALUES (1,1,?,0) ON CONFLICT (id) DO NOTHING",
@@ -141,8 +174,7 @@ class Kling4Lifecycle:
         return {"revision": expected_revision + 1, "settings": value}
 
     async def quote(self, actor, request):
-        require_admin(actor)
-        from bot.kling4_tariff import attach_nominal_admin_price
+        from bot.kling4_tariff import attach_retail_price
 
         probe = (
             self.probe.for_actor(actor)
@@ -161,7 +193,9 @@ class Kling4Lifecycle:
                 actor, request, probe, timeout=settings["result_timeout_seconds"]
             )
         recipe = await validate_recipe(prepared, probe)
-        return attach_nominal_admin_price(recipe.quote(settings, revision))
+        return attach_retail_price(
+            recipe.quote(settings, revision), is_admin=actor.is_admin
+        )
 
     async def _row(self, task_id):
         async with db.connect(database.DATABASE_PATH) as conn:
@@ -192,19 +226,19 @@ class Kling4Lifecycle:
             "model": "kling_4",
             "cost": quote.get("cost"),
             "charge_cost": quote.get("charge_cost", 0),
-            "admin_free": True,
+            "admin_free": bool(quote.get("admin_free")),
+            "charged_credits": row.get("charged_credits", 0),
+            "refunded_credits": row.get("refunded_credits", 0),
             "quote": quote,
         }
 
     async def status(self, actor, task_id):
-        require_admin(actor)
         row = await self._row(task_id)
         if not row or row["user_id"] != actor.user_id:
             raise Kling4Error("Задача не найдена.", status=404)
         return self.public(row)
 
     async def history(self, actor):
-        require_admin(actor)
         async with db.connect(database.DATABASE_PATH) as conn:
             conn.row_factory = db.Row
             rows = await (
@@ -220,7 +254,6 @@ class Kling4Lifecycle:
         return json.loads((await self._row(task_id))["recipe"])
 
     async def launch(self, actor, request, quote_hash, idempotency_key):
-        require_admin(actor)
         if not isinstance(idempotency_key, str) or not 8 <= len(idempotency_key) <= 200:
             raise Kling4Error("Нужен стабильный ключ запуска.")
         request_hash = digest(request)
@@ -255,9 +288,11 @@ class Kling4Lifecycle:
                 actor, request, probe, timeout=settings["result_timeout_seconds"]
             )
         recipe = await validate_recipe(prepared, probe)
-        from bot.kling4_tariff import attach_nominal_admin_price
+        from bot.kling4_tariff import attach_retail_price
 
-        quote = attach_nominal_admin_price(recipe.quote(settings, revision))
+        quote = attach_retail_price(
+            recipe.quote(settings, revision), is_admin=actor.is_admin
+        )
         if not quote_hash or quote["quote_hash"] != quote_hash:
             raise Kling4Error("Расчёт устарел. Пересчитайте стоимость.", status=409)
         task_id = "kling4_" + uuid.uuid4().hex
@@ -315,7 +350,7 @@ class Kling4Lifecycle:
                     )
             inserted = await conn.execute(
                 """INSERT INTO kling4_intents (task_id,user_id,telegram_id,idempotency_key,request_hash,
-                recipe,quote,snapshot,provider_model,status,created_epoch,lease_until) VALUES (?,?,?,?,?,?,?,?,?,'submitting',?,?)
+                recipe,quote,snapshot,provider_model,status,charged_credits,created_epoch,lease_until) VALUES (?,?,?,?,?,?,?,?,?,'submitting',?,?,?)
                 ON CONFLICT (user_id,idempotency_key) DO NOTHING""",
                 (
                     task_id,
@@ -327,6 +362,7 @@ class Kling4Lifecycle:
                     canonical(quote),
                     canonical(recipe.snapshot()),
                     recipe.model,
+                    float(quote["charge_cost"]),
                     time.time(),
                     time.time() + 120,
                 ),
@@ -334,6 +370,15 @@ class Kling4Lifecycle:
             if inserted.rowcount != 1:
                 await conn.rollback()
                 return await self.launch(actor, request, quote_hash, idempotency_key)
+            charge = float(quote["charge_cost"])
+            if charge > 0:
+                debited = await conn.execute(
+                    "UPDATE users SET credits=credits-?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND telegram_id=? AND credits>=?",
+                    (charge, actor.user_id, actor.telegram_id, charge),
+                )
+                if debited.rowcount != 1:
+                    await conn.rollback()
+                    raise Kling4Error("Недостаточно бананов.", status=402)
             # Existing history API owns presentation; no generic KIE poller may submit/settle this task.
             metadata = {
                 "provider": "kling4_kie",
@@ -341,14 +386,16 @@ class Kling4Lifecycle:
                 "kling4": True,
                 "quote": quote,
                 "recipe": recipe.snapshot(),
-                "admin_free": True,
+                "admin_free": bool(actor.is_admin),
+                "charged": charge > 0,
+                "refund_on_failure": charge > 0,
                 "partner_eligible": False,
                 "private_recipe": True,
                 "prompt_actions_allowed": False,
             }
             await conn.execute(
                 """INSERT INTO generation_tasks (user_id,telegram_id,task_id,type,preset_id,model,duration,
-                aspect_ratio,prompt,cost,request_data,status) VALUES (?,?,?,'video','kling_4','kling_4',?,?,?,0,?,'processing')""",
+                aspect_ratio,prompt,cost,request_data,status) VALUES (?,?,?,'video','kling_4','kling_4',?,?,?,?,?,'processing')""",
                 (
                     actor.user_id,
                     actor.telegram_id,
@@ -356,6 +403,7 @@ class Kling4Lifecycle:
                     recipe.input["duration"],
                     recipe.input.get("aspect_ratio", "auto"),
                     recipe.input["prompt"],
+                    charge,
                     canonical(metadata),
                 ),
             )
@@ -384,17 +432,15 @@ class Kling4Lifecycle:
                 task_id,
                 type(exc).__name__,
             )
-        async with db.connect(database.DATABASE_PATH) as conn:
-            await conn.execute(
-                "UPDATE kling4_intents SET status=?,provider_task_id=?,error_code=?,lease_until=0,updated_at=CURRENT_TIMESTAMP WHERE task_id=?",
-                (status, provider_id, error, task_id),
-            )
-            if status == "failed":
+        if status == "failed":
+            await self._terminal_failure(task_id, error or "provider_rejected")
+        else:
+            async with db.connect(database.DATABASE_PATH) as conn:
                 await conn.execute(
-                    "UPDATE generation_tasks SET status='failed',updated_at=CURRENT_TIMESTAMP WHERE task_id=?",
-                    (task_id,),
+                    "UPDATE kling4_intents SET status=?,provider_task_id=?,error_code=?,lease_until=0,updated_at=CURRENT_TIMESTAMP WHERE task_id=?",
+                    (status, provider_id, error, task_id),
                 )
-            await conn.commit()
+                await conn.commit()
         logger.info(
             "Kling4 submitted task=%s provider_task=%s status=%s model=%s",
             task_id,
@@ -446,6 +492,88 @@ class Kling4Lifecycle:
                 raise Kling4Error(
                     "Запрос KIE не совпадает с сохранённым запуском.", status=409
                 )
+
+    async def _terminal_failure(
+        self,
+        task_id: str,
+        error_code: str,
+        *,
+        provider_state: str = "fail",
+        actual_credits: str | None = None,
+        operator: tuple[int, str] | None = None,
+    ) -> bool:
+        """Settle one terminal failure and refund its frozen charge exactly once."""
+        async with db.connect(database.DATABASE_PATH) as conn:
+            conn.row_factory = db.Row
+            await conn.execute("BEGIN" if db.is_postgres() else "BEGIN IMMEDIATE")
+            row = await (
+                await conn.execute(
+                    "SELECT user_id,charged_credits,settled,status,provider_task_id FROM kling4_intents WHERE task_id=?",
+                    (task_id,),
+                )
+            ).fetchone()
+            if not row or row["settled"]:
+                await conn.rollback()
+                return False
+            if operator and not (
+                row["status"] == "unknown" and row["provider_task_id"] is None
+            ):
+                await conn.rollback()
+                return False
+            charge = float(row["charged_credits"] or 0)
+            eligible_statuses = (
+                "'submitting','pending','unknown'"
+                if operator
+                else "'submitting','pending'"
+            )
+            claimed = await conn.execute(
+                f"""UPDATE kling4_intents
+                SET status='failed',provider_state=?,actual_credits=?,error_code=?,
+                    refunded_credits=?,settled=1,lease_until=0,updated_at=CURRENT_TIMESTAMP
+                WHERE task_id=? AND settled=0 AND status IN ({eligible_statuses})""",
+                (provider_state, actual_credits, error_code, charge, task_id),
+            )
+            if claimed.rowcount != 1:
+                await conn.rollback()
+                return False
+            if charge > 0:
+                credited = await conn.execute(
+                    "UPDATE users SET credits=credits+?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (charge, row["user_id"]),
+                )
+                if credited.rowcount != 1:
+                    await conn.rollback()
+                    raise RuntimeError("Kling 4 refund owner disappeared")
+            await conn.execute(
+                "UPDATE generation_tasks SET status='failed',cost=0,updated_at=CURRENT_TIMESTAMP WHERE task_id=?",
+                (task_id,),
+            )
+            if operator:
+                await conn.execute(
+                    "INSERT INTO kling4_operator_audit (task_id,actor_telegram_id,action,reason) VALUES (?,?,?,?)",
+                    (task_id, operator[0], "refund_unknown", operator[1]),
+                )
+            await conn.commit()
+            return True
+
+    async def resolve_unknown_refund(self, actor, task_id: str, reason: str):
+        require_admin(actor)
+        cleaned = str(reason or "").strip()
+        if not 8 <= len(cleaned) <= 1000:
+            raise Kling4Error(
+                "Укажите причину решения (8–1000 символов).", status=400
+            )
+        changed = await self._terminal_failure(
+            task_id,
+            "operator_resolved_unknown",
+            provider_state="unknown",
+            operator=(actor.telegram_id, cleaned),
+        )
+        if not changed:
+            raise Kling4Error(
+                "Задача уже изменена или не требует ручного возврата.", status=409
+            )
+        return self.public(await self._row(task_id))
 
     async def reconcile(self, task_id):
         lease = time.time() + 1200
@@ -522,10 +650,19 @@ class Kling4Lifecycle:
 
                 result_path, result_url = str(path), _public_url_for_path(path)
                 status = "done"
+            if status == "failed":
+                await self._terminal_failure(
+                    task_id,
+                    "provider_failed",
+                    provider_state=state,
+                    actual_credits=actual,
+                )
+                return
             async with db.connect(database.DATABASE_PATH) as conn:
-                await conn.execute(
+                changed = await conn.execute(
                     """UPDATE kling4_intents SET status=?,provider_state=?,actual_credits=?,result_url=?,result_path=?,
-                    error_code=?,updated_at=CURRENT_TIMESTAMP WHERE task_id=? AND lease_until=? AND status='pending' """,
+                    error_code=?,settled=?,updated_at=CURRENT_TIMESTAMP
+                    WHERE task_id=? AND lease_until=? AND status='pending' AND settled=0""",
                     (
                         status,
                         state,
@@ -533,11 +670,12 @@ class Kling4Lifecycle:
                         result_url,
                         result_path,
                         "provider_failed" if state == "fail" else None,
+                        1 if status == "done" else 0,
                         task_id,
                         lease,
                     ),
                 )
-                if status in {"done", "failed"}:
+                if changed.rowcount == 1 and status == "done":
                     await conn.execute(
                         """UPDATE generation_tasks SET status=?,result_url=?,completed_at=CURRENT_TIMESTAMP,
                         updated_at=CURRENT_TIMESTAMP WHERE task_id=?""",
@@ -566,10 +704,8 @@ class Kling4Lifecycle:
     async def deliver(self, task_id):
         if not self.telegram_bot:
             return
-        from bot.config import config
-
         row = await self._row(task_id)
-        if not row or not config.is_admin(row["telegram_id"]):
+        if not row:
             return
         async with db.connect(database.DATABASE_PATH) as conn:
             claimed = await conn.execute(
@@ -582,9 +718,14 @@ class Kling4Lifecycle:
         delivered = False
         try:
             if row["status"] == "failed":
+                balance_note = (
+                    "Списанные бананы возвращены."
+                    if float(row.get("refunded_credits") or 0) > 0
+                    else "Баланс не списан."
+                )
                 await self.telegram_bot.send_message(
                     row["telegram_id"],
-                    f"Kling 4: не удалось создать видео. Баланс не списан.\nЗадача: {task_id}",
+                    f"Kling 4: не удалось создать видео. {balance_note}\nЗадача: {task_id}",
                 )
             elif (
                 row["result_path"]

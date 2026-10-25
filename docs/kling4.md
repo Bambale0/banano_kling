@@ -1,6 +1,6 @@
-# Kling 4 — administrator release
+# Kling 4 — public release
 
-Kling 4 is available only to current administrators in Telegram and the Mini App. Use `/kling4` in Telegram or open **Создание видео → Kling → Kling 4** (also listed once in **Все**). It is not pinned above unrelated model families. Public rollout requires Igor's separate instruction; this release has no public billing path.
+Kling 4 is available to authenticated users in Telegram and the Mini App. Use `/kling4` in Telegram or open **Создание видео → Kling → Kling 4** (also listed once in **Все**). It is not pinned above unrelated model families. Retail quotes are frozen before launch, debited atomically with the durable intent, and refunded exactly once after a definitive provider failure. Administrators remain free.
 
 Provider contracts: [Reference](https://docs.kie.ai/market/kling/v4-reference-to-video), [Keyframe](https://docs.kie.ai/market/kling/v4-keyframe-to-video), [pricing](https://kie.ai/pricing), [task details](https://docs.kie.ai/market/common/get-task-detail), [webhook verification](https://docs.kie.ai/common-api/webhook-verification).
 
@@ -12,7 +12,13 @@ Uploads reuse owned, bounded, inspected storage; external links must first be im
 
 Launch requires a current quote and stable idempotency key. Telegram resolves the measured quote internally when a prompt arrives; Mini App retains explicit quote confirmation. Ambiguous POST stays `unknown`, never silently retries or releases a supposed charge. Reconcile a known provider task ID through the authenticated admin recovery surface after verifying ownership/model remotely. Polling survives process restarts. HMAC does not authenticate callback body: provider GET is authoritative. This release uses polling and does not require an additional callback configuration.
 
-Settings are versioned in the DB and edited through authenticated `/api/kling4/settings`; updates are audited. Defaults remain admin-only. Existing KIE environment credentials are reused. No real user balance is charged. A future public rollout must explicitly introduce/review retail billing and publication permissions before relaxing the server gate.
+If provider search confirms that an unacknowledged task was not accepted, an
+administrator can call `resolve` with the internal task ID and a mandatory reason.
+The original frozen debit is returned exactly once and the decision is persisted in
+`kling4_operator_audit`. Accepted, adopted, pending, completed, failed, or already
+settled tasks cannot use this path.
+
+Settings are versioned in the DB and edited through admin-only `/api/kling4/settings`; updates are audited. Existing KIE environment credentials are reused. Public tasks use the admin-managed retail tariff and remain private recipes: publication may retain the rendered result, while prompt-copy and automatic repeat actions stay disabled for reference privacy.
 
 ## Verified paid smoke — 2026-10-22
 

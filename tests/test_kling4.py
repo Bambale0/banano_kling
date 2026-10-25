@@ -177,8 +177,232 @@ async def test_unknown_submission_is_durable_and_not_resubmitted(tmp_path, monke
             quote["quote_hash"],
             "same-intent",
         )
-    with pytest.raises(Kling4Error):
+    assert (
         await engine.status(replace_actor(actor, is_admin=False), first["task_id"])
+    )["task_id"] == first["task_id"]
+
+
+@pytest.mark.asyncio
+async def test_public_unknown_launch_debits_once_and_keeps_reserve(
+    tmp_path, monkeypatch
+):
+    from bot import database, db
+    from bot.services.kling4_lifecycle import Kling4Lifecycle
+
+    monkeypatch.setattr(database, "DATABASE_PATH", str(tmp_path / "public-unknown.db"))
+    await database.init_db()
+    user = await database.get_or_create_user(123123)
+    async with db.connect(database.DATABASE_PATH) as conn:
+        await conn.execute("UPDATE users SET credits=20 WHERE id=?", (user.id,))
+        await conn.commit()
+    actor = SimpleNamespace(
+        user_id=user.id, telegram_id=user.telegram_id, is_admin=False
+    )
+
+    class Transport:
+        calls = 0
+
+        async def create(self, _model, _data):
+            self.calls += 1
+            raise TimeoutError("ambiguous transport")
+
+    transport = Transport()
+    engine = Kling4Lifecycle(transport=transport, probe=Probe())
+    await engine.init_schema()
+    request = {"mode": "reference", "input": {"prompt": "public", "duration": 3}}
+    quote = await engine.quote(actor, request)
+    assert quote["cost"] == quote["charge_cost"] == 3
+    assert quote["admin_free"] is False
+    first = await engine.launch(actor, request, quote["quote_hash"], "public-unknown")
+    second = await engine.launch(actor, request, quote["quote_hash"], "public-unknown")
+    async with db.connect(database.DATABASE_PATH) as conn:
+        balance = (
+            await (
+                await conn.execute("SELECT credits FROM users WHERE id=?", (user.id,))
+            ).fetchone()
+        )[0]
+    assert first["task_id"] == second["task_id"]
+    assert first["status"] == second["status"] == "unknown"
+    assert first["charged_credits"] == 3 and first["refunded_credits"] == 0
+    assert balance == 17 and transport.calls == 1
+    with pytest.raises(Kling4Error) as denied:
+        await engine.resolve_unknown_refund(actor, first["task_id"], "provider missing")
+    assert denied.value.status == 403
+    operator = SimpleNamespace(user_id=999, telegram_id=777, is_admin=True)
+    resolved = await engine.resolve_unknown_refund(
+        operator, first["task_id"], "Provider search confirmed no accepted task"
+    )
+    assert resolved["status"] == "failed"
+    assert resolved["refunded_credits"] == 3
+    with pytest.raises(Kling4Error) as duplicate:
+        await engine.resolve_unknown_refund(
+            operator, first["task_id"], "Duplicate operator request"
+        )
+    assert duplicate.value.status == 409
+    async with db.connect(database.DATABASE_PATH) as conn:
+        balance = (
+            await (
+                await conn.execute("SELECT credits FROM users WHERE id=?", (user.id,))
+            ).fetchone()
+        )[0]
+        audit = await (
+            await conn.execute(
+                "SELECT actor_telegram_id,reason FROM kling4_operator_audit WHERE task_id=?",
+                (first["task_id"],),
+            )
+        ).fetchone()
+    assert balance == 20
+    assert tuple(audit) == (
+        777,
+        "Provider search confirmed no accepted task",
+    )
+
+
+@pytest.mark.asyncio
+async def test_public_definitive_rejection_refunds_exactly_once(tmp_path, monkeypatch):
+    from bot import database, db
+    from bot.services.kling4_lifecycle import Kling4Lifecycle
+
+    monkeypatch.setattr(database, "DATABASE_PATH", str(tmp_path / "public-reject.db"))
+    await database.init_db()
+    user = await database.get_or_create_user(123123)
+    async with db.connect(database.DATABASE_PATH) as conn:
+        await conn.execute("UPDATE users SET credits=20 WHERE id=?", (user.id,))
+        await conn.commit()
+    actor = SimpleNamespace(
+        user_id=user.id, telegram_id=user.telegram_id, is_admin=False
+    )
+
+    class Transport:
+        calls = 0
+
+        async def create(self, _model, _data):
+            self.calls += 1
+            return 400, {"code": 400, "message": "rejected"}
+
+    transport = Transport()
+    engine = Kling4Lifecycle(transport=transport, probe=Probe())
+    await engine.init_schema()
+    request = {"mode": "reference", "input": {"prompt": "public", "duration": 3}}
+    quote = await engine.quote(actor, request)
+    first = await engine.launch(actor, request, quote["quote_hash"], "public-rejected")
+    second = await engine.launch(actor, request, quote["quote_hash"], "public-rejected")
+    await engine.tick()
+    async with db.connect(database.DATABASE_PATH) as conn:
+        balance = (
+            await (
+                await conn.execute("SELECT credits FROM users WHERE id=?", (user.id,))
+            ).fetchone()
+        )[0]
+        task_cost = (
+            await (
+                await conn.execute(
+                    "SELECT cost FROM generation_tasks WHERE task_id=?",
+                    (first["task_id"],),
+                )
+            ).fetchone()
+        )[0]
+    assert first["task_id"] == second["task_id"]
+    assert first["status"] == second["status"] == "failed"
+    assert first["charged_credits"] == first["refunded_credits"] == 3
+    assert balance == 20 and task_cost == 0 and transport.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_public_pending_provider_failure_refunds_once(tmp_path, monkeypatch):
+    from bot import database, db
+    from bot.services.kling4_lifecycle import Kling4Lifecycle
+
+    monkeypatch.setattr(
+        database, "DATABASE_PATH", str(tmp_path / "public-pending-fail.db")
+    )
+    await database.init_db()
+    user = await database.get_or_create_user(123123)
+    async with db.connect(database.DATABASE_PATH) as conn:
+        await conn.execute("UPDATE users SET credits=20 WHERE id=?", (user.id,))
+        await conn.commit()
+    actor = SimpleNamespace(
+        user_id=user.id, telegram_id=user.telegram_id, is_admin=False
+    )
+
+    class Transport:
+        async def create(self, model, _data):
+            return 200, {"code": 200, "data": {"taskId": "provider-failed"}}
+
+        async def detail(self, task_id):
+            return {
+                "taskId": task_id,
+                "model": "kling-4.0/reference-to-video",
+                "state": "fail",
+                "creditsConsumed": "3",
+            }
+
+    engine = Kling4Lifecycle(transport=Transport(), probe=Probe())
+    await engine.init_schema()
+    request = {"mode": "reference", "input": {"prompt": "public", "duration": 3}}
+    quote = await engine.quote(actor, request)
+    launched = await engine.launch(
+        actor, request, quote["quote_hash"], "public-pending-fail"
+    )
+    await engine.tick()
+    await engine.tick()
+    failed = await engine.status(actor, launched["task_id"])
+    async with db.connect(database.DATABASE_PATH) as conn:
+        balance = (
+            await (
+                await conn.execute("SELECT credits FROM users WHERE id=?", (user.id,))
+            ).fetchone()
+        )[0]
+    assert failed["status"] == "failed"
+    assert failed["charged_credits"] == failed["refunded_credits"] == 3
+    assert balance == 20
+
+
+@pytest.mark.asyncio
+async def test_public_launch_with_insufficient_balance_never_submits(
+    tmp_path, monkeypatch
+):
+    from bot import database, db
+    from bot.services.kling4_lifecycle import Kling4Lifecycle
+
+    monkeypatch.setattr(
+        database, "DATABASE_PATH", str(tmp_path / "public-insufficient.db")
+    )
+    await database.init_db()
+    user = await database.get_or_create_user(123123)
+    async with db.connect(database.DATABASE_PATH) as conn:
+        await conn.execute("UPDATE users SET credits=2 WHERE id=?", (user.id,))
+        await conn.commit()
+    actor = SimpleNamespace(
+        user_id=user.id, telegram_id=user.telegram_id, is_admin=False
+    )
+
+    class Transport:
+        calls = 0
+
+        async def create(self, _model, _data):
+            self.calls += 1
+            return 200, {"code": 200, "data": {"taskId": "must-not-submit"}}
+
+    transport = Transport()
+    engine = Kling4Lifecycle(transport=transport, probe=Probe())
+    await engine.init_schema()
+    request = {"mode": "reference", "input": {"prompt": "public", "duration": 3}}
+    quote = await engine.quote(actor, request)
+    with pytest.raises(Kling4Error) as exc:
+        await engine.launch(actor, request, quote["quote_hash"], "public-insufficient")
+    assert exc.value.status == 402
+    assert transport.calls == 0
+    async with db.connect(database.DATABASE_PATH) as conn:
+        balance = (
+            await (
+                await conn.execute("SELECT credits FROM users WHERE id=?", (user.id,))
+            ).fetchone()
+        )[0]
+        intents = (
+            await (await conn.execute("SELECT COUNT(*) FROM kling4_intents")).fetchone()
+        )[0]
+    assert balance == 2 and intents == 0
 
 
 def replace_actor(actor, **changes):
@@ -399,7 +623,7 @@ async def test_real_http_auth_and_current_admin_permissions(engine_context):
     app = web.Application()
     app["kling4_lifecycle"] = engine
     app.router.add_post(
-        "/kling4/{action:quote|generate|status|history|recipe|adopt|settings}",
+        "/kling4/{action:quote|generate|status|history|recipe|adopt|resolve|settings}",
         kling4_api.route,
     )
     async with TestClient(TestServer(app)) as client:
@@ -411,24 +635,27 @@ async def test_real_http_auth_and_current_admin_permissions(engine_context):
             json={"recipe": request, "init_data": "user=forged", "is_admin": True},
         )
         assert invalid.status == 401
-        for action in (
-            "quote",
-            "generate",
-            "status",
-            "history",
-            "recipe",
-            "adopt",
-            "settings",
-        ):
-            denied = await client.post(
-                "/kling4/" + action,
-                json={
-                    "recipe": request,
-                    "init_data": signed_user(123123),
-                    "is_admin": True,
-                },
-            )
-            assert denied.status == 403, await denied.text()
+        public_quote = await client.post(
+            "/kling4/quote",
+            json={"recipe": request, "init_data": signed_user(123123)},
+        )
+        assert public_quote.status == 200, await public_quote.text()
+        public_payload = await public_quote.json()
+        assert public_payload["charge_cost"] == 5
+        assert public_payload["admin_free"] is False
+        denied_settings = await client.post(
+            "/kling4/settings", json={"init_data": signed_user(123123)}
+        )
+        assert denied_settings.status == 403, await denied_settings.text()
+        denied_resolve = await client.post(
+            "/kling4/resolve",
+            json={
+                "init_data": signed_user(123123),
+                "task_id": "kling4_missing",
+                "reason": "not allowed",
+            },
+        )
+        assert denied_resolve.status == 403, await denied_resolve.text()
         quote_response = await client.post(
             "/kling4/quote",
             json={"recipe": request, "init_data": signed_user(actor.telegram_id)},
@@ -599,10 +826,10 @@ async def test_telegram_legacy_modes_and_controls_use_automatic_prompt(
     assert automatic_quote["cost"] == 5
     assert automatic_quote["charge_cost"] == 0
     assert transport.calls == 1
-    denied = SimpleNamespace(from_user=SimpleNamespace(id=123123), answer=AsyncMock())
-    before = await state.get_data()
-    await handler.command(denied, state)
-    assert await state.get_data() == before and transport.calls == 1
+    public = SimpleNamespace(from_user=SimpleNamespace(id=123123), answer=AsyncMock())
+    await handler.command(public, state)
+    assert (await state.get_data())["v_model"] == "kling_4"
+    assert transport.calls == 1
 
 
 @pytest.mark.asyncio
@@ -779,7 +1006,7 @@ async def test_retention_serializes_with_publication_and_skips_full_protected_pa
 
 
 @pytest.mark.asyncio
-async def test_nonadmin_denied_before_user_creation_or_channel_probe(monkeypatch):
+async def test_public_actor_uses_verified_user_context(monkeypatch):
     from unittest.mock import AsyncMock
 
     from aiohttp import web
@@ -788,18 +1015,19 @@ async def test_nonadmin_denied_before_user_creation_or_channel_probe(monkeypatch
     from bot import kling4_api, miniapp
     from tests.test_wan3_http_flow import signed_user
 
-    context = AsyncMock(
-        side_effect=AssertionError("Nonadmin must be denied before user context")
-    )
+    context = AsyncMock(return_value=(123123, {"user": SimpleNamespace(id=777)}))
     monkeypatch.setattr(miniapp, "_get_user_context", context)
     app = web.Application()
+    app["kling4_lifecycle"] = SimpleNamespace(
+        quote=AsyncMock(return_value={"quote_hash": "public", "charge_cost": 5})
+    )
     app.router.add_post("/kling4/{action:quote}", kling4_api.route)
     async with TestClient(TestServer(app)) as client:
         response = await client.post(
             "/kling4/quote", json={"init_data": signed_user(123123), "is_admin": True}
         )
-        assert response.status == 403
-    context.assert_not_awaited()
+        assert response.status == 200, await response.text()
+    context.assert_awaited_once()
 
 
 @pytest.mark.asyncio

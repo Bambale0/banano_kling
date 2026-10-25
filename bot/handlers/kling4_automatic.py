@@ -203,7 +203,7 @@ class AutomaticComposer:
     async def handle(self, message, state):
         from . import kling4 as editor
 
-        if not await editor.admin(message):
+        if not await editor.available(message):
             return
         if str(getattr(message, "text", "") or "").lstrip().startswith("/"):
             raise SkipHandler

@@ -1,8 +1,15 @@
 # Wan 3.0 Video Prime integration contract
 
-Provider reference: local snapshot `docs/providers/wan3-prime-kie.md`; public docs https://docs.kie.ai/market/wan/3-0-video-prime.
+Provider references: local KIE snapshot `docs/providers/wan3-prime-kie.md`, public KIE docs https://docs.kie.ai/market/wan/3-0-video-prime, and the Neironych partner contract https://api.нейроныч.online/guide?lang=ru.
 
-## Provider adapter
+## Provider routing
+
+- `WAN3_PRIMARY_PROVIDER=neironych` is the default for both `wan_3` and `wan_3_prime`. The shared lifecycle is used by Telegram, Mini App, trends, repeats, and operator replays, so provider selection is not duplicated in UI handlers.
+- Neironych uses the existing server-only `NEIRONYCH_API_KEY` and optional `NEIRONYCH_API_BASE_URL`. Every POST carries a stable provider idempotency key and `X-Client-Request-Id` derived from the durable internal task ID. Lost acknowledgements are recovered by client request ID; an ambiguous response never falls through to a second provider.
+- A documented, definitive Neironych rejection can fall back to KIE. KIE is also used when a frozen recipe relies on a contract feature that Neironych does not support (file/link references, or Wan 3 Prime frames/edit/seed/adaptive/muted output). Set `WAN3_PRIMARY_PROVIDER=kie` for a configuration-only rollback.
+- Neironych task IDs are stored with the `neironych:` namespace so the reconciler always polls the provider that accepted the paid request. Existing unprefixed KIE IDs remain compatible. The public history continues to use the stable internal `wan3_*` task ID.
+
+## KIE provider adapter
 
 - Internal model key: `wan_3_prime`; provider model: `wan/3-0-video-prime`.
 - Create: `POST /api/v1/jobs/createTask` with `{ model, input, callBackUrl? }`.

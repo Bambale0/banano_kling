@@ -1,4 +1,4 @@
-"""Authenticated Kling4 facade; administrator gate precedes all work."""
+"""Authenticated Kling4 facade for public generation and admin settings."""
 
 from __future__ import annotations
 
@@ -15,28 +15,9 @@ logger = logging.getLogger(__name__)
 
 
 async def _actor(request, body):
-    # Reject nonadmins before channel probes or user creation. Cryptographic
-    # Telegram verification must precede reading the claimed user ID.
-    from bot import miniapp
-    from bot.config import config
     from bot.wan3_prime_api import _actor_from_request
 
-    init_data = (
-        request.headers.get("X-Telegram-Init-Data")
-        or body.get("init_data")
-        or body.get("initData")
-        or ""
-    )
-    try:
-        verified = miniapp._validate_init_data(str(init_data), config.BOT_TOKEN)
-        telegram_id = int(verified["user"]["id"])
-    except (ValueError, TypeError, KeyError) as exc:
-        raise Kling4Error("Откройте Mini App заново из Telegram.", status=401) from exc
-    if not config.is_admin(telegram_id):
-        raise Kling4Error("Kling 4 доступен только администратору.", status=403)
-    actor = await _actor_from_request(request, body)
-    require_admin(actor)
-    return actor
+    return await _actor_from_request(request, body)
 
 
 async def route(request):
@@ -66,7 +47,13 @@ async def route(request):
             result = await engine.adopt(
                 actor, body.get("task_id"), body.get("provider_task_id")
             )
+        elif action == "resolve":
+            require_admin(actor)
+            result = await engine.resolve_unknown_refund(
+                actor, body.get("task_id"), body.get("reason")
+            )
         elif action == "settings":
+            require_admin(actor)
             if "settings" in body:
                 if type(body.get("revision")) is not int:
                     raise Kling4Error("Нужна ревизия настроек.")
@@ -126,7 +113,7 @@ def setup_kling4_routes(app, miniapp_root):
     app.router.add_route(
         "POST",
         miniapp_root
-        + "/api/kling4/{action:quote|generate|status|history|recipe|adopt|settings}",
+        + "/api/kling4/{action:quote|generate|status|history|recipe|adopt|resolve|settings}",
         route,
     )
     app.router.add_route(
@@ -140,7 +127,7 @@ def catalog_entry():
     return {
         "id": "kling_4",
         "label": "Kling 4",
-        "description": "Админ · референсы, персонажи, голоса и ключевые кадры",
+        "description": "Референсы, персонажи, голоса и ключевые кадры",
         "durations": list(range(3, 31)),
         "ratios": ["auto", "16:9", "9:16", "1:1", "21:9"],
         "supports": ["text", "imgtxt"],
@@ -148,7 +135,7 @@ def catalog_entry():
         "max_video_references": 5,
         "costs": {},
         "quality_costs": {},
-        "admin_only": True,
+        "admin_only": False,
     }
 
 
