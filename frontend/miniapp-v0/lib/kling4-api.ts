@@ -37,6 +37,9 @@ export interface Kling4Quote {
   billed_seconds: string;
   input_video_seconds: string;
   cost: number;
+  charge_cost: number;
+  admin_free: boolean;
+  profile: "admin" | "retail";
 }
 export interface Kling4Task {
   task_id: string;
@@ -46,6 +49,8 @@ export interface Kling4Task {
   actual_credits: string | null;
   error_code: string | null;
   delivery_status: string | null;
+  charged_credits: number;
+  refunded_credits: number;
   quote: Kling4Quote;
 }
 

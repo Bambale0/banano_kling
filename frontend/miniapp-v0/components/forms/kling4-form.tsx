@@ -213,7 +213,11 @@ const fresh = (): Kling4Recipe => ({
   mode: "reference",
   input: { prompt: "", duration: 5, resolution: "720p", aspect_ratio: "auto" },
 });
-export function Kling4Form({ modelSelector }: { modelSelector: ReactNode }) {
+export function Kling4Form({ modelSelector, credits, isAdmin }: {
+  modelSelector: ReactNode;
+  credits: number;
+  isAdmin: boolean;
+}) {
   const [recipe, setRecipe] = useState<Kling4Recipe>(fresh),
     [quote, setQuote] = useState<Kling4Quote | null>(null),
     [task, setTask] = useState<Kling4Task | null>(null);
@@ -323,7 +327,9 @@ export function Kling4Form({ modelSelector }: { modelSelector: ReactNode }) {
         <div className="glass space-y-4 rounded-2xl border border-cyan/20 p-4">
           {modelSelector}
           <p className="text-xs text-muted-foreground">
-            Kling 4 · доступ администратора · бананы не списываются
+            {isAdmin
+              ? "Kling 4 · для администратора бананы не списываются"
+              : "Kling 4 · стоимость рассчитывается перед запуском"}
           </p>
           <fieldset disabled={busy || locked} className="space-y-4">
             <label className="block text-sm">
@@ -667,7 +673,12 @@ export function Kling4Form({ modelSelector }: { modelSelector: ReactNode }) {
           )}
           {quote && (
             <div className="rounded-xl bg-secondary p-3 text-sm" role="status">
-              Цена: {quote.cost} бананов. Для администратора списание отключено.
+              {quote.admin_free
+                ? `Цена: ${quote.cost} бананов. Для администратора списание отключено.`
+                : `К списанию: ${quote.charge_cost} бананов. Баланс: ${credits}🍌.`}
+              {!quote.admin_free && quote.charge_cost > credits ? (
+                <p className="mt-1 text-destructive">Недостаточно бананов для запуска.</p>
+              ) : null}
             </div>
           )}
           {!locked && (
@@ -688,7 +699,7 @@ export function Kling4Form({ modelSelector }: { modelSelector: ReactNode }) {
           {quote && !task && !uncertain && (
             <Button
               type="button"
-              disabled={busy || uploadCount > 0}
+              disabled={busy || uploadCount > 0 || (!quote.admin_free && quote.charge_cost > credits)}
               onClick={() => void action(launch)}
             >
               Подтвердить и создать

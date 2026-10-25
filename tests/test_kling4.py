@@ -177,8 +177,9 @@ async def test_unknown_submission_is_durable_and_not_resubmitted(tmp_path, monke
             quote["quote_hash"],
             "same-intent",
         )
-    with pytest.raises(Kling4Error):
+    assert (
         await engine.status(replace_actor(actor, is_admin=False), first["task_id"])
+    )["task_id"] == first["task_id"]
 
 
 def replace_actor(actor, **changes):
@@ -399,7 +400,7 @@ async def test_real_http_auth_and_current_admin_permissions(engine_context):
     app = web.Application()
     app["kling4_lifecycle"] = engine
     app.router.add_post(
-        "/kling4/{action:quote|generate|status|history|recipe|adopt|settings}",
+        "/kling4/{action:quote|generate|status|history|recipe|adopt|reject|settings}",
         kling4_api.route,
     )
     async with TestClient(TestServer(app)) as client:
@@ -411,16 +412,18 @@ async def test_real_http_auth_and_current_admin_permissions(engine_context):
             json={"recipe": request, "init_data": "user=forged", "is_admin": True},
         )
         assert invalid.status == 401
-        for action in (
-            "quote",
-            "generate",
-            "status",
-            "history",
-            "recipe",
-            "adopt",
-            "settings",
-        ):
-            denied = await client.post(
+        expected = {
+            "quote": 403,
+            "generate": 403,
+            "status": 404,
+            "history": 200,
+            "recipe": 404,
+            "adopt": 403,
+            "reject": 403,
+            "settings": 403,
+        }
+        for action, status in expected.items():
+            response = await client.post(
                 "/kling4/" + action,
                 json={
                     "recipe": request,
@@ -428,7 +431,7 @@ async def test_real_http_auth_and_current_admin_permissions(engine_context):
                     "is_admin": True,
                 },
             )
-            assert denied.status == 403, await denied.text()
+            assert response.status == status, await response.text()
         quote_response = await client.post(
             "/kling4/quote",
             json={"recipe": request, "init_data": signed_user(actor.telegram_id)},

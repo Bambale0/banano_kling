@@ -1,8 +1,9 @@
 # Kling 4 retail tariff
 
-Kling 4 uses the existing Telegram administration price section and remains
-compatible with the versioned internal-admin tariff publisher. No retail
-default is embedded in source code or in `data/price.json`.
+Kling 4 uses the existing Telegram administration price section and the
+versioned tariff publisher. No retail default is embedded in source code. The
+mutable `data/price.json` block is the source of truth for both the six rates
+and the public rollout switch.
 
 Telegram navigation:
 
@@ -23,6 +24,7 @@ billing_rates:
   reference: {720p: <positive number>, 1080p: <positive number>}
   keyframe:  {720p: <positive number>, 1080p: <positive number>}
   video:     {720p: <positive number>, 1080p: <positive number>}
+public_enabled: <boolean>
 ```
 
 These dimensions mirror the existing Kling 4 provider quote:
@@ -43,22 +45,33 @@ The versioned tariff publishing endpoint validates every supplied Kling 4 cell
 and rejects unknown categories/qualities or invalid numbers. It may preserve a
 safe partial draft while the admin fills the six cells; quote/launch requires
 the complete block. A missing or partial block is shown as
-`Цена Kling 4 не настроена` and prevents submission.
-The frozen launch quote stores the nominal `cost`, its tariff revision and the
-provider credits separately. Kling 4 remains admin-only: `charge_cost` is zero,
-and the administrator sees the nominal price plus the explicit notice that no
-balance is deducted.
+`Цена Kling 4 не настроена` and prevents submission. `public_enabled: true` is
+accepted only with a complete valid tariff. Removing the flag or setting it to
+`false` immediately restores administrator-only launch access.
 
-The generic `generation_tasks.cost` remains the amount actually charged and is
-therefore zero for Kling 4 administrators. The nominal cost lives in the frozen
-quote as `quote.cost`; `quote.charge_cost` remains zero. Kling 4 tasks are owned
-by their lifecycle and excluded from the generic watchdog refund path, so a
-nominal display price cannot create an administrator refund.
+The frozen launch quote stores the nominal `cost`, payable `charge_cost`, its
+tariff revision and provider credits separately. For ordinary users,
+`charge_cost == cost`; administrators keep `charge_cost == 0` and see the
+nominal price with an explicit exemption.
 
-Both Telegram and the Mini App render the frozen nominal `quote.cost`. They show
-the administrator exemption separately instead of replacing the configured
-price with zero. Integer rates remain editable as decimal rates in the existing
-admin price screen.
+The generic `generation_tasks.cost` remains the amount actually charged. The
+Kling lifecycle atomically creates the intent and task and debits an ordinary
+user before the provider request. A proven provider rejection or asynchronous
+failure refunds the frozen charge exactly once. An ambiguous submission remains
+charged and `unknown` because the provider may have accepted it; an administrator
+must reconcile it without submitting again. Unknown tasks do not occupy the
+ordinary active-generation queue. After independently proving that the provider
+did not create a task, an administrator may use the authenticated reject action;
+it records the operator and reason, marks the task failed and refunds exactly
+once. Kling 4 stays outside the generic watchdog refund path so the two
+settlement mechanisms cannot race.
+
+Telegram and the Mini App show the payable price to ordinary users and the
+administrator exemption separately. An ordinary Telegram prompt first freezes
+and displays the quote, then requires an explicit **Подтвердить и создать**
+action before any debit or provider request. Tasks and recipes remain
+owner-private; publication/prompt actions are disabled. Integer rates remain
+editable as decimal rates in the existing admin price screen.
 
 ### Telegram duration controls
 

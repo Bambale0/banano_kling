@@ -23,6 +23,7 @@ from bot.handlers.generation import (
     run_no_preset_video_from_callback,
 )
 from bot.keyboards import get_video_model_label
+from bot.kling4_tariff import kling4_public_enabled
 from bot.model_capabilities import (
     VIDEO_MODEL_CAPABILITIES,
     get_video_capability,
@@ -70,7 +71,7 @@ def _video_model_page(family: str = "all", page: int = 0, *, is_admin: bool = Fa
     if family not in groups:
         family = "all"
     models = tuple(key for key in groups[family] if key in VIDEO_MODEL_CAPABILITIES)
-    if is_admin and family in {"all", "kling"}:
+    if (is_admin or kling4_public_enabled()) and family in {"all", "kling"}:
         models = ("kling_4", *models)
     pages = max(1, (len(models) + VIDEO_MODEL_PAGE_SIZE - 1) // VIDEO_MODEL_PAGE_SIZE)
     try:
@@ -97,7 +98,7 @@ def _advanced_video_models_keyboard(
         if model_key == "kling_4":
             prefix = "✅ " if selected == model_key else ""
             builder.row(types.InlineKeyboardButton(
-                text=f"{prefix}🎬 Kling 4 · админ", callback_data="k4:open",
+                text=f"{prefix}🎬 Kling 4", callback_data="k4:open",
             ))
             continue
         capability = VIDEO_MODEL_CAPABILITIES[model_key]
