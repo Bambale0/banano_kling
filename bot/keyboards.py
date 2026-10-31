@@ -8,7 +8,8 @@ from aiogram.types import CopyTextButton, InlineKeyboardButton, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.config import config
-from bot.creator_tariff import resolve_image_unit_cost, resolve_video_quote
+from bot.creator_tariff import resolve_video_quote
+from bot.quality_pricing import SEEDREAM_5_PRO_QUALITY_COSTS
 from bot.services.preset_manager import preset_manager
 from bot.services.subscription_service import (
     REQUIRED_CHANNEL_URL,
@@ -734,17 +735,32 @@ def get_image_model_selection_keyboard(
     tariff: str = "standard",
 ):
     builder = InlineKeyboardBuilder()
-    seedream_basic = resolve_image_unit_cost(
-        "seedream_5_pro", "basic", tariff=tariff
-    )
-    seedream_high = resolve_image_unit_cost(
-        "seedream_5_pro", "high", tariff=tariff
-    )
+    if tariff == "creator":
+        from bot.creator_tariff import resolve_image_unit_cost
+
+        seedream_basic = resolve_image_unit_cost(
+            "seedream_5_pro", "basic", tariff=tariff
+        )
+        seedream_high = resolve_image_unit_cost(
+            "seedream_5_pro", "high", tariff=tariff
+        )
+        banana_pro_cost = resolve_image_unit_cost(
+            "banana_pro", "2K", tariff=tariff
+        )
+        banana_2_cost = resolve_image_unit_cost(
+            "banana_2", "2K", tariff=tariff
+        )
+    else:
+        seedream_basic = SEEDREAM_5_PRO_QUALITY_COSTS["basic"]
+        seedream_high = SEEDREAM_5_PRO_QUALITY_COSTS["high"]
+        banana_pro_cost = preset_manager.get_generation_cost("nano-banana-pro")
+        banana_2_cost = preset_manager.get_generation_cost("banana_2")
+
     model_rows = [
         ("nano-banana-2-lite", "model_nano_banana_2_lite", "🍌 Nano Banana 2 Lite 🔥 НОВИНКА", preset_manager.get_generation_cost("nano-banana-2-lite")),
         ("seedream_5_pro", "model_seedream_5_pro", "🌟 Seedream 5 Pro 🔥 НОВИНКА", seedream_basic),
-        ("banana_pro", "model_banana_pro", "💎 Nano Banana Pro", resolve_image_unit_cost("banana_pro", "2K", tariff=tariff)),
-        ("banana_2", "model_banana_2", "🍌 Nano Banana 2", resolve_image_unit_cost("banana_2", "2K", tariff=tariff)),
+        ("banana_pro", "model_banana_pro", "💎 Nano Banana Pro", banana_pro_cost),
+        ("banana_2", "model_banana_2", "🍌 Nano Banana 2", banana_2_cost),
         ("seedream_edit", "model_seedream_edit", "🖌 Seedream 4.5", preset_manager.get_generation_cost("seedream_edit")),
         ("grok_imagine_i2i", "model_grok_i2i", "🧠 Grok Imagine", preset_manager.get_generation_cost("grok_imagine_i2i")),
         ("wan_27", "model_wan_27", "🧪 Wan 2.7 Pro", preset_manager.get_generation_cost("wan_27")),
