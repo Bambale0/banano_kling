@@ -202,8 +202,10 @@ def normalize_message(value: Any, *, allow_empty: bool = False) -> dict[str, Any
             raise PromoMessageValidationError(
                 "media items require only type and file_id"
             )
-        if item["type"] not in ("photo", "video"):
-            raise PromoMessageValidationError("media type must be photo or video")
+        if item["type"] not in ("photo", "video", "pdf"):
+            raise PromoMessageValidationError(
+                "media type must be photo, video or PDF"
+            )
         file_id = item["file_id"]
         if not isinstance(file_id, str) or not re.fullmatch(
             r"[A-Za-z0-9_-]{1,1024}", file_id
@@ -212,6 +214,10 @@ def normalize_message(value: Any, *, allow_empty: bool = False) -> dict[str, Any
                 "media.file_id must be a Telegram file ID"
             )
         media.append({"type": item["type"], "file_id": file_id})
+    if any(item["type"] == "pdf" for item in media) and len(media) != 1:
+        raise PromoMessageValidationError(
+            "PDF attachment must be the only media item"
+        )
     raw_buttons = value.get("buttons", [])
     if not isinstance(raw_buttons, list) or len(raw_buttons) > 2:
         raise PromoMessageValidationError("message.buttons supports at most 2 buttons")
@@ -332,11 +338,13 @@ def build_message_snapshot(
         )
     if len(media) == 1:
         item = media[0]
+        method = "send_document" if item["type"] == "pdf" else f"send_{item['type']}"
+        media_argument = "document" if item["type"] == "pdf" else item["type"]
         parts.append(
             {
-                "method": f"send_{item['type']}",
+                "method": method,
                 "kwargs": {
-                    item["type"]: item["file_id"],
+                    media_argument: item["file_id"],
                     "caption": text or None,
                     "parse_mode": parse_mode if text else None,
                     "reply_markup": keyboard,
@@ -377,7 +385,13 @@ async def send_snapshot_part(
 ) -> list[int]:
     """Use exactly the frozen payload, adding only the recipient."""
     method = part["method"]
-    if method not in {"send_message", "send_photo", "send_video", "send_media_group"}:
+    if method not in {
+        "send_message",
+        "send_photo",
+        "send_video",
+        "send_document",
+        "send_media_group",
+    }:
         raise PromoMessageValidationError("unsupported snapshot method")
     started = time.monotonic()
     result = await asyncio.wait_for(

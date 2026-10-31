@@ -1,3 +1,14 @@
+## 2026-10-31 — PDF attachment in admin promo broadcasts
+
+- Baseline: protected `tanyapi` at `0a84a897c20ebc591ef6c9e2229bf15086950017`. Scope is the existing persistent Telegram promo editor/test/delivery pipeline only; legacy broadcast code, pricing, providers, payments and user generation flows are out of scope.
+- Goal: let an administrator attach a PDF to a promo, preview/manage it in the saved draft, deliver the identical payload through «Тест на админах», and only then allow the existing mass-launch confirmation.
+- Architecture: keep Telegram as the file store and persist only its bot-scoped `file_id`, matching existing photo/video handling. Internal media type `pdf` maps to `send_document` in the immutable snapshot. No filesystem/object-store copy and no database migration are required.
+- Safety contract: one PDF is a standalone attachment and cannot be mixed with photo/video media. Non-PDF documents are rejected in the admin editor. Existing photo/video albums and historical schema-v2 snapshots keep their current shape and hashes.
+- Delivery contract: admin tests and audience sends reuse the same snapshot, receipt persistence, lease fencing, retry classification and uncertain-send protection. PDF edits invalidate prior test authority exactly like text/media/button edits.
+- TDD evidence: new PDF editor/snapshot tests produced RED on the baseline (5 expected behavior failures; 81 existing focused tests passed). Minimal implementation then produced 86/86 promo editor/message passes and 104/104 passes including notification/promo delivery workers. Final focused/lint checks are recorded before publication.
+- Config/schema/secrets: no new env vars, mutable limits, database columns, credentials or external API keys. Telegram's accepted PDF is reused by `file_id`; application code does not invent a separate upload size limit.
+- Rollout: publish as a dedicated branch/PR into `tanyapi`. No production deploy or mass broadcast is authorized by this task. Required repository CI remains the release gate.
+
 ## 2026-10-24 — PR #375 review follow-up and authorized release
 
 - Igor authorized publication and release. PR #375 targets tanyapi with native squash auto-merge; the earlier publication block is resolved.
