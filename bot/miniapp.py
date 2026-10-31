@@ -558,6 +558,23 @@ def _resolve_image_unit_cost(
         )
     return preset_manager.get_generation_cost(img_service)
 
+
+async def _resolve_actor_image_unit_cost(
+    telegram_id: int,
+    img_service: str,
+    img_quality: str,
+) -> float:
+    tariff = await creator_tariff_display.get_actor_tariff(telegram_id)
+    if tariff == "creator":
+        from bot.creator_tariff import resolve_image_unit_cost
+
+        return resolve_image_unit_cost(
+            img_service,
+            img_quality,
+            tariff=tariff,
+        )
+    return _resolve_image_unit_cost(img_service, img_quality)
+
 VIDEO_MODELS = (
     {
         "id": "v3_pro",
@@ -4767,11 +4784,10 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
         if user_references:
             await touch_saved_references(telegram_id, user_references, kind="image")
 
-        tariff = await creator_tariff_display.get_actor_tariff(telegram_id)
-        unit_cost = _resolve_image_unit_cost(
+        unit_cost = await _resolve_actor_image_unit_cost(
+            telegram_id,
             img_service,
             img_quality,
-            tariff=tariff,
         )
         is_admin = config.is_admin(telegram_id)
         if not is_admin and not await check_can_afford(telegram_id, unit_cost):
@@ -5015,11 +5031,10 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
         if client_references:
             await touch_saved_references(telegram_id, client_references, kind="image")
 
-        tariff = await creator_tariff_display.get_actor_tariff(telegram_id)
-        unit_cost = _resolve_image_unit_cost(
+        unit_cost = await _resolve_actor_image_unit_cost(
+            telegram_id,
             img_service,
             img_quality,
-            tariff=tariff,
         )
         is_admin = config.is_admin(telegram_id)
         if not is_admin and not await check_can_afford(telegram_id, unit_cost):
