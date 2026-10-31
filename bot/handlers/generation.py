@@ -1275,7 +1275,7 @@ async def _resolve_repeat_image_unit_cost(
     actor_id: int,
     img_service: str,
     img_quality: str,
-    historical_cost: float | int | None,
+    historical_cost: float | None,
 ) -> float:
     """Requote Creator-supported image repeats; preserve legacy price otherwise."""
     historical = historical_cost or 0
