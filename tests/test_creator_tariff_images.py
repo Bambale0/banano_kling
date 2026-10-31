@@ -210,3 +210,18 @@ async def test_miniapp_image_launch_debits_authenticated_creator_price(
     debit.assert_awaited_once_with(101, 1.25)
     assert launch.await_args.kwargs["unit_cost"] == 1.25
 
+
+
+def test_legacy_nanobanana_alias_uses_nano_banana_pro_creator_rate(
+    creator_image_prices,
+):
+    creator_image_prices["creator_tariff"]["image_models"]["nano-banana-pro"][
+        "quality_costs"
+    ]["2K"] = 1.25
+    creator_image_prices["creator_tariff"]["image_models"]["banana_2"][
+        "quality_costs"
+    ]["2K"] = 9.0
+
+    assert creator_tariff.resolve_image_unit_cost(
+        "nanobanana", "2K", tariff="creator"
+    ) == 1.25
