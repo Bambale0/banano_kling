@@ -9,7 +9,6 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.config import config
 from bot.creator_tariff import resolve_image_unit_cost, resolve_video_quote
-from bot.quality_pricing import SEEDREAM_5_PRO_QUALITY_COSTS
 from bot.services.preset_manager import preset_manager
 from bot.services.subscription_service import (
     REQUIRED_CHANNEL_URL,
