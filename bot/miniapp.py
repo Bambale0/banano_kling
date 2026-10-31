@@ -20,7 +20,11 @@ from aiohttp import web
 from bot import creator_tariff_display
 from bot import db as db_backend
 from bot.config import config
-from bot.creator_tariff import VideoQuote, quote_video_for_actor
+from bot.creator_tariff import (
+    VideoQuote,
+    quote_video_for_actor,
+    resolve_image_unit_cost as resolve_creator_image_unit_cost,
+)
 from bot.kling4_api import catalog_entry as kling4_catalog_entry
 from bot.kling4_tariff import kling4_public_enabled
 from bot.services.runtime_http import database_error_response
@@ -525,22 +529,18 @@ IMAGE_MODELS = (
 )
 
 
-def _resolve_image_unit_cost(img_service: str, img_quality: str) -> float:
-    quality_value = str(img_quality or "").strip()
-    if img_service in ("banana_pro", "banana_2"):
-        return QUALITY_COSTS.get(
-            quality_value,
-            QUALITY_COSTS.get(quality_value.upper(), preset_manager.get_generation_cost(img_service)),
-        )
-    if img_service == "seedream_5_pro":
-        return SEEDREAM_5_PRO_QUALITY_COSTS.get(
-            quality_value,
-            SEEDREAM_5_PRO_QUALITY_COSTS.get(
-                quality_value.upper(),
-                preset_manager.get_generation_cost(img_service),
-            ),
-        )
-    return preset_manager.get_generation_cost(img_service)
+def _resolve_image_unit_cost(
+    img_service: str,
+    img_quality: str,
+    *,
+    tariff: str = "standard",
+) -> float:
+    return resolve_creator_image_unit_cost(
+        img_service,
+        img_quality,
+        tariff=tariff,
+    )
+
 
 VIDEO_MODELS = (
     {
@@ -3288,14 +3288,10 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
                 for package in preset_manager.get_packages()
             ],
             "image_models": [
-                {
-                    **item,
-                    "cost": (
-                        _resolve_image_unit_cost(item["id"], "basic")
-                        if item.get("id") == "seedream_5_pro"
-                        else _resolve_image_unit_cost(item["id"], "")
-                    ),
-                }
+                creator_tariff_display.price_image_model_metadata(
+                    item,
+                    tariff=tariff,
+                )
                 for item in IMAGE_MODELS
             ],
             "video_models": [
@@ -4755,7 +4751,12 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
         if user_references:
             await touch_saved_references(telegram_id, user_references, kind="image")
 
-        unit_cost = _resolve_image_unit_cost(img_service, img_quality)
+        tariff = await creator_tariff_display.get_actor_tariff(telegram_id)
+        unit_cost = _resolve_image_unit_cost(
+            img_service,
+            img_quality,
+            tariff=tariff,
+        )
         is_admin = config.is_admin(telegram_id)
         if not is_admin and not await check_can_afford(telegram_id, unit_cost):
             return web.json_response(
@@ -4998,7 +4999,12 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
         if client_references:
             await touch_saved_references(telegram_id, client_references, kind="image")
 
-        unit_cost = _resolve_image_unit_cost(img_service, img_quality)
+        tariff = await creator_tariff_display.get_actor_tariff(telegram_id)
+        unit_cost = _resolve_image_unit_cost(
+            img_service,
+            img_quality,
+            tariff=tariff,
+        )
         is_admin = config.is_admin(telegram_id)
         if not is_admin and not await check_can_afford(telegram_id, unit_cost):
             return web.json_response(
