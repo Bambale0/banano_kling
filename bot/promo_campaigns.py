@@ -34,8 +34,10 @@ def _validation_error(exc: ValueError) -> PromoError:
         text = "Некорректное HTML-форматирование. Проверьте теги или выберите обычный текст"
     elif "limit" in detail or "text exceeds" in detail:
         text = "Текст слишком длинный: максимум 1024 символа с одним файлом и 4096 для текста или альбома"
+    elif "PDF attachment" in detail:
+        text = "PDF должен быть единственным вложением в промо"
     elif "media" in detail:
-        text = "Прикрепите не более 10 фото или видео через Telegram"
+        text = "Прикрепите не более 10 фото/видео или один PDF через Telegram"
     elif "text is required" in detail or "visible text" in detail:
         text = "Добавьте текст промо. Для альбома он будет отправлен отдельным сообщением с кнопками"
     else:
