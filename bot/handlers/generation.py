@@ -4279,10 +4279,14 @@ def _build_image_creation_text(
     img_nsfw_checker = data.get("img_nsfw_checker", False)
     ratio_label = current_ratio.replace(":", "∶")
     # nano_quality_cost_display_v1
-    unit_cost = _resolve_image_unit_cost(
-        current_service,
-        img_quality,
-        tariff=tariff,
+    unit_cost = (
+        _resolve_image_unit_cost(
+            current_service,
+            img_quality,
+            tariff=tariff,
+        )
+        if tariff == "creator"
+        else _resolve_image_unit_cost(current_service, img_quality)
     )
 
     info_lines = [
@@ -4347,9 +4351,10 @@ async def _show_image_model_selection_screen(
         "Сначала выберите модель.\n"
         "После этого бот покажет следующий шаг: референсы или настройки."
     )
-    keyboard = get_image_model_selection_keyboard(
-        current_service,
-        tariff=tariff,
+    keyboard = (
+        get_image_model_selection_keyboard(current_service, tariff=tariff)
+        if tariff == "creator"
+        else get_image_model_selection_keyboard(current_service)
     )
 
     try:
@@ -4455,7 +4460,11 @@ async def _show_image_creation_screen(
         else None
     )
     tariff = await get_actor_tariff(user_id) if user_id else "standard"
-    text = f"{intro_text}{_build_image_creation_text(data, tariff=tariff)}"
+    text = (
+        f"{intro_text}{_build_image_creation_text(data, tariff=tariff)}"
+        if tariff == "creator"
+        else f"{intro_text}{_build_image_creation_text(data)}"
+    )
     reply_markup = get_create_image_keyboard(
         current_service=data.get("img_service", "banana_pro"),
         current_ratio=data.get("img_ratio", "1:1"),
@@ -8878,10 +8887,10 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
 
     user = await get_or_create_user(message.from_user.id)
     tariff = await get_actor_tariff(message.from_user.id)
-    unit_cost = _resolve_image_unit_cost(
-        img_service,
-        img_quality,
-        tariff=tariff,
+    unit_cost = (
+        _resolve_image_unit_cost(img_service, img_quality, tariff=tariff)
+        if tariff == "creator"
+        else _resolve_image_unit_cost(img_service, img_quality)
     )
     total_cost = unit_cost
 
