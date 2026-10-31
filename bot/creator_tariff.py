@@ -25,6 +25,21 @@ from bot.video_reference_policy import (
 
 LEGACY_CREATOR_MODELS = ('seedance_2', 'seedance_2_5')
 CREATOR_MODELS = (*LEGACY_CREATOR_MODELS, 'wan_3', 'wan_3_prime')
+CREATOR_IMAGE_QUALITIES = {
+    "nano-banana-pro": ("1K", "2K", "4K"),
+    "banana_2": ("1K", "2K", "4K"),
+    "seedream_5_pro": ("basic", "high"),
+}
+CREATOR_IMAGE_ALIASES = {
+    "banana_pro": "nano-banana-pro",
+    "nano_banana_pro": "nano-banana-pro",
+    "nano-banana-pro": "nano-banana-pro",
+    "banana_2": "banana_2",
+    "nano_banana_2": "banana_2",
+    "nano-banana-2": "banana_2",
+    "nanobanana": "banana_2",
+    "seedream_5_pro": "seedream_5_pro",
+}
 GENJUTSU_QUALITIES = {key: tuple(value['resolutions']) for key, value in json.loads(
     Path(__file__).with_name('genjutsu').joinpath('catalog.json').read_text()
 ).items()}
@@ -106,6 +121,52 @@ def _parse_config(raw: Any) -> tuple[dict[str, Any], list[str], list[str]]:
         for quality in qualities:
             if model in LEGACY_CREATOR_MODELS and quality not in normalized_rates:
                 missing.append(f'{model}/{quality}: цена не задана')
+
+    if "image_models" in raw:
+        image_models = raw["image_models"]
+        clean_image_models: dict[str, dict[str, dict[str, float]]] = {}
+        if not isinstance(image_models, dict):
+            invalid.append("image_models должен быть объектом")
+        else:
+            unknown_models = sorted(set(image_models) - set(CREATOR_IMAGE_QUALITIES))
+            if unknown_models:
+                invalid.append("Неизвестная модель изображения креаторского тарифа")
+            for model, allowed_qualities in CREATOR_IMAGE_QUALITIES.items():
+                if model not in image_models:
+                    continue
+                entry = image_models[model]
+                if not isinstance(entry, dict):
+                    invalid.append(f"{model}: настройки должны быть объектом")
+                    continue
+                rates = entry.get("quality_costs", {})
+                if not isinstance(rates, dict):
+                    invalid.append(f"{model}: quality_costs должен быть объектом")
+                    continue
+                if set(rates) - set(allowed_qualities):
+                    invalid.append(f"{model}: неизвестное качество изображения")
+                normalized_rates: dict[str, float] = {}
+                for quality in allowed_qualities:
+                    if quality not in rates:
+                        continue
+                    rate = rates[quality]
+                    try:
+                        numeric_rate = float(rate)
+                    except (TypeError, ValueError, OverflowError):
+                        numeric_rate = float("nan")
+                    if (
+                        isinstance(rate, bool)
+                        or not isinstance(rate, (int, float))
+                        or not math.isfinite(numeric_rate)
+                        or numeric_rate <= 0
+                    ):
+                        invalid.append(
+                            f"{model}/{quality}: нужна конечная положительная цена"
+                        )
+                        continue
+                    normalized_rates[quality] = numeric_rate
+                clean_image_models[model] = {"quality_costs": normalized_rates}
+        normalized["image_models"] = clean_image_models
+
     if 'genjutsu' in raw:
         block = raw['genjutsu']
         prices = block.get('prices', {}) if isinstance(block, dict) else None
@@ -141,6 +202,10 @@ def creator_tariff_status() -> dict[str, Any]:
         **normalized,
         'configured': not missing and not invalid,
         'required_qualities': _required_qualities(raw if isinstance(raw, dict) else {}),
+        'image_qualities': {
+            model: list(qualities)
+            for model, qualities in CREATOR_IMAGE_QUALITIES.items()
+        },
         'errors': invalid + missing,
     }
 
@@ -162,6 +227,67 @@ async def get_actor_tariff(telegram_id: int | None, *, db: Any = None) -> str:
         return 'creator' if row and row[0] == 1 else 'standard'
     from bot.creator_tariff_membership import get_creator_tariff_membership
     return 'creator' if await get_creator_tariff_membership(int(telegram_id)) else 'standard'
+
+
+def _normalize_creator_image_model(model: str) -> str:
+    key = str(model or "").strip().lower()
+    return CREATOR_IMAGE_ALIASES.get(key, key)
+
+
+def _ordinary_image_quality_rates(model: str) -> dict[str, float]:
+    from bot.quality_pricing import QUALITY_COSTS, SEEDREAM_5_PRO_QUALITY_COSTS
+
+    normalized = _normalize_creator_image_model(model)
+    if normalized in {"nano-banana-pro", "banana_2"}:
+        return {
+            quality: float(QUALITY_COSTS[quality])
+            for quality in CREATOR_IMAGE_QUALITIES[normalized]
+        }
+    if normalized == "seedream_5_pro":
+        return {
+            quality: float(SEEDREAM_5_PRO_QUALITY_COSTS[quality])
+            for quality in CREATOR_IMAGE_QUALITIES[normalized]
+        }
+    return {}
+
+
+def image_quality_rates(model: str, *, tariff: str = "standard") -> dict[str, float]:
+    normalized = _normalize_creator_image_model(model)
+    ordinary = _ordinary_image_quality_rates(normalized)
+    if not ordinary or tariff != "creator":
+        return ordinary
+    status = creator_tariff_status()
+    if not status["enabled"] or not status["configured"]:
+        return ordinary
+    configured = (
+        status.get("image_models", {})
+        .get(normalized, {})
+        .get("quality_costs", {})
+    )
+    return {
+        quality: float(configured.get(quality, ordinary[quality]))
+        for quality in ordinary
+    }
+
+
+def resolve_image_unit_cost(
+    model: str,
+    quality: str | None = None,
+    *,
+    tariff: str = "standard",
+) -> float:
+    normalized = _normalize_creator_image_model(model)
+    rates = image_quality_rates(normalized, tariff=tariff)
+    if rates:
+        requested = str(quality or "").strip()
+        if normalized in {"nano-banana-pro", "banana_2"}:
+            requested = requested.upper()
+            default_quality = "2K"
+        else:
+            requested = requested.lower()
+            default_quality = "basic"
+        return float(rates.get(requested, rates[default_quality]))
+    return float(preset_manager.get_generation_cost(model))
 
 
 def video_quality_rates(model: str, *, tariff: str = 'standard') -> dict[str, float]:
