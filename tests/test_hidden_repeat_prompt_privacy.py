@@ -493,3 +493,130 @@ async def test_unpublished_private_trend_repeat_with_own_photo_persists_hidden_r
     assert response.status == 200
     assert SECRET not in response.text
     assert json.loads(response.text)["task"]["prompt_hidden"] is True
+
+
+
+def _creator_repeat_task():
+    return SimpleNamespace(
+        id=901,
+        task_id="creator-image-repeat",
+        type="image",
+        user_id=77,
+        model="banana_pro",
+        aspect_ratio="1:1",
+        cost=9.0,
+        source_feed_gen_id=None,
+        action_type=None,
+        request_data=json.dumps(
+            {
+                "img_service": "banana_pro",
+                "img_quality": "2K",
+                "img_ratio": "1:1",
+                "prompt": "creator repeat pricing",
+                "reference_images": [],
+            }
+        ),
+    )
+
+
+def _creator_repeat_callback(prefix: str, telegram_id: int, progress):
+    return SimpleNamespace(
+        data=prefix + "creator-image-repeat",
+        from_user=SimpleNamespace(id=telegram_id),
+        answer=AsyncMock(),
+        message=SimpleNamespace(answer=AsyncMock(return_value=progress)),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("handler_name", "prefix"),
+    [
+        ("run_repeat_image_generation", "repeat_run_"),
+        ("quick_repeat_image_confirm", "repeat_run_confirm_"),
+    ],
+)
+async def test_creator_image_repeat_launch_uses_current_creator_price(
+    monkeypatch, handler_name, prefix
+):
+    telegram_id = 840031
+    task = _creator_repeat_task()
+    user = SimpleNamespace(id=task.user_id, telegram_id=telegram_id, credits=100)
+    progress = SimpleNamespace(delete=AsyncMock(), edit_text=AsyncMock())
+    callback = _creator_repeat_callback(prefix, telegram_id, progress)
+    state = FSMContext(
+        storage=MemoryStorage(),
+        key=StorageKey(bot_id=1, chat_id=telegram_id, user_id=telegram_id),
+    )
+
+    monkeypatch.setattr(
+        generation,
+        "_resolve_repeat_image_task",
+        AsyncMock(return_value=(task.task_id, task)),
+    )
+    monkeypatch.setattr(generation, "get_or_create_user", AsyncMock(return_value=user))
+    monkeypatch.setattr(generation, "get_actor_tariff", AsyncMock(return_value="creator"))
+    price = MagicMock(return_value=1.25)
+    monkeypatch.setattr(generation, "_resolve_image_unit_cost", price)
+    monkeypatch.setattr(generation.config, "is_admin", lambda _user_id: False)
+    monkeypatch.setattr(
+        generation,
+        "_image_repeat_private_context",
+        AsyncMock(return_value=([], None)),
+    )
+    monkeypatch.setattr(
+        generation,
+        "validate_private_repeat_reference_access",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(generation, "check_can_afford", AsyncMock(return_value=True))
+    debit = AsyncMock(return_value=True)
+    monkeypatch.setattr(generation, "deduct_credits", debit)
+    launch = AsyncMock(
+        return_value={
+            "status": "queued",
+            "task_id": "creator-repeat-new",
+            "local_task_id": "creator-repeat-local",
+        }
+    )
+    monkeypatch.setattr(generation, "_start_image_generation_task", launch)
+
+    await getattr(generation, handler_name)(callback, state)
+
+    price.assert_called_with("banana_pro", "2K", tariff="creator")
+    debit.assert_awaited_once_with(telegram_id, 1.25)
+    assert launch.await_args.kwargs["unit_cost"] == 1.25
+
+
+@pytest.mark.asyncio
+async def test_creator_quick_repeat_confirmation_shows_current_creator_price(
+    monkeypatch,
+):
+    telegram_id = 840032
+    task = _creator_repeat_task()
+    user = SimpleNamespace(id=task.user_id, telegram_id=telegram_id, credits=100)
+    progress = SimpleNamespace(delete=AsyncMock(), edit_text=AsyncMock())
+    callback = _creator_repeat_callback("repeat_result_", telegram_id, progress)
+    state = FSMContext(
+        storage=MemoryStorage(),
+        key=StorageKey(bot_id=1, chat_id=telegram_id, user_id=telegram_id),
+    )
+
+    monkeypatch.setattr(
+        generation,
+        "_resolve_repeat_image_task",
+        AsyncMock(return_value=(task.task_id, task)),
+    )
+    monkeypatch.setattr(generation, "get_or_create_user", AsyncMock(return_value=user))
+    monkeypatch.setattr(generation, "get_actor_tariff", AsyncMock(return_value="creator"))
+    price = MagicMock(return_value=1.25)
+    monkeypatch.setattr(generation, "_resolve_image_unit_cost", price)
+    monkeypatch.setattr(generation.config, "is_admin", lambda _user_id: False)
+    afford = AsyncMock(return_value=True)
+    monkeypatch.setattr(generation, "check_can_afford", afford)
+
+    await generation.quick_repeat_image_result(callback, state)
+
+    price.assert_called_with("banana_pro", "2K", tariff="creator")
+    afford.assert_awaited_once_with(telegram_id, 1.25)
+    assert "1.25🍌" in callback.message.answer.await_args.args[0]

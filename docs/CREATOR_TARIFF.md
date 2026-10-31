@@ -25,6 +25,8 @@ Seedance 2.5 Auto and ordinary video-editing keep the existing five-second estim
 
 - Rates use the existing runtime price configuration under `creator_tariff.enabled`, `creator_tariff.video_models.<model>.quality_costs.<quality>` and optional `creator_tariff.image_models.<model>.quality_costs.<quality>`.
 - Creator image model keys are `nano-banana-pro`, `banana_2` and `seedream_5_pro`. Banana qualities are `1K`/`2K`/`4K`; Seedream 5 Pro qualities are `basic`/`high`. Missing image cells use the ordinary admin-managed image price and do not invalidate an otherwise configured Creator tariff.
+- Legacy Telegram service key `nanobanana` is normalized to `nano-banana-pro` for Creator pricing, matching the provider route; it must never inherit the `banana_2` Creator rate.
+- Telegram image-repeat confirmation and launch re-resolve the authenticated actor's current Creator image price. A Creator repeat does not reuse the source task's historical `cost`; the accepted repeated task stores the new debit. Non-Creator legacy repeat pricing remains unchanged.
 - No creator section is seeded into `data/price.json`, no economic rate is hardcoded, and no user is enrolled by deployment.
 - `creator_tariff_memberships` stores Telegram ID, enabled state, updating admin and timestamp independently of administrative roles.
 - `creator_tariff_audit` stores immutable membership/configuration event records with actor, target, before/after data and timestamp. Membership and its audit record share one DB transaction. Configuration uses audited intent/result events because the JSON file and DB cannot form one transaction.

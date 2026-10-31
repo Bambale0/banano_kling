@@ -1271,6 +1271,25 @@ def _resolve_image_unit_cost(
     return preset_manager.get_generation_cost(img_service)
 
 
+async def _resolve_repeat_image_unit_cost(
+    actor_id: int,
+    img_service: str,
+    img_quality: str,
+    historical_cost: float | None,
+) -> float:
+    """Requote Creator-supported image repeats; preserve legacy price otherwise."""
+    historical = historical_cost or 0
+    tariff = await get_actor_tariff(actor_id)
+    if tariff != "creator":
+        return historical
+
+    from bot.creator_tariff import image_quality_rates
+
+    if not image_quality_rates(img_service, tariff=tariff):
+        return historical
+    return _resolve_image_unit_cost(img_service, img_quality, tariff=tariff)
+
+
 async def _start_image_generation_task(
     *,
     user,
@@ -2482,6 +2501,17 @@ async def _show_repeat_image_screen(
 ) -> None:
     data = await state.get_data()
     task_id = str(data.get("repeat_source_task_id") or "")
+    actor_id = getattr(getattr(message_or_callback, "from_user", None), "id", None)
+    if actor_id is not None and task_id:
+        unit_cost = await _resolve_repeat_image_unit_cost(
+            int(actor_id),
+            str(data.get("img_service") or "banana_pro"),
+            str(data.get("img_quality") or "2K"),
+            data.get("repeat_unit_cost"),
+        )
+        if unit_cost != data.get("repeat_unit_cost"):
+            await state.update_data(repeat_unit_cost=unit_cost)
+            data = {**data, "repeat_unit_cost": unit_cost}
     reference_count = len(data.get("reference_images") or [])
     inherited_ref_count = int(data.get("repeat_inherited_reference_count") or 0)
     text = _repeat_image_text(data, task_id)
@@ -2744,6 +2774,12 @@ async def run_repeat_image_generation(callback: types.CallbackQuery, state: FSMC
     img_quality = request_data.get("img_quality", "2K")
     img_nsfw_checker = bool(request_data.get("img_nsfw_checker", False))
     nsfw_enabled = bool(request_data.get("nsfw_enabled", False))
+    unit_cost = await _resolve_repeat_image_unit_cost(
+        callback.from_user.id,
+        img_service,
+        img_quality,
+        task.cost or 0,
+    )
 
     if missing_reference_images:
         await state.update_data(
@@ -2760,7 +2796,7 @@ async def run_repeat_image_generation(callback: types.CallbackQuery, state: FSMC
             repeat_source_task_id=task_id,
             repeat_prompt=prompt,
             repeat_prompt_hidden=bool(data.get("repeat_prompt_hidden")),
-            repeat_unit_cost=task.cost or 0,
+            repeat_unit_cost=unit_cost,
             repeat_original_ref_count=len(raw_reference_images),
             repeat_missing_ref_count=len(missing_reference_images),
         )
@@ -2786,7 +2822,6 @@ async def run_repeat_image_generation(callback: types.CallbackQuery, state: FSMC
     if len(reference_images) > _get_max_image_references(img_service):
         await callback.answer("Слишком много референсов для выбранной модели.", show_alert=True)
         return
-    unit_cost = task.cost or 0
     is_admin = config.is_admin(callback.from_user.id)
     if unit_cost > 0 and not is_admin:
         can_afford = await check_can_afford(callback.from_user.id, unit_cost)
@@ -2958,8 +2993,14 @@ async def quick_repeat_image_result(callback: types.CallbackQuery, state: FSMCon
 
     img_service = request_data.get("img_service", task.model or "banana_pro")
     img_ratio = request_data.get("img_ratio", task.aspect_ratio or "1:1")
+    img_quality = request_data.get("img_quality", "2K")
     is_admin = config.is_admin(callback.from_user.id)
-    unit_cost = task.cost or 0
+    unit_cost = await _resolve_repeat_image_unit_cost(
+        callback.from_user.id,
+        img_service,
+        img_quality,
+        task.cost or 0,
+    )
 
     if task.user_id == user.id:
         reference_images = _source_reference_images_from_request(request_data)
@@ -3040,6 +3081,12 @@ async def quick_repeat_image_confirm(callback: types.CallbackQuery, state: FSMCo
     img_quality = request_data.get("img_quality", "2K")
     img_nsfw_checker = bool(request_data.get("img_nsfw_checker", False))
     nsfw_enabled = bool(request_data.get("nsfw_enabled", False))
+    unit_cost = await _resolve_repeat_image_unit_cost(
+        callback.from_user.id,
+        img_service,
+        img_quality,
+        task.cost or 0,
+    )
 
     if task.user_id == user.id:
         reference_images = _source_reference_images_from_request(request_data)
@@ -3069,7 +3116,6 @@ async def quick_repeat_image_confirm(callback: types.CallbackQuery, state: FSMCo
     if len(reference_images) > _get_max_image_references(img_service):
         await callback.answer("Слишком много референсов для выбранной модели.", show_alert=True)
         return
-    unit_cost = task.cost or 0
     is_admin = config.is_admin(callback.from_user.id)
     if unit_cost > 0 and not is_admin:
         can_afford = await check_can_afford(callback.from_user.id, unit_cost)

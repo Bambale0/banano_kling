@@ -37,7 +37,7 @@ CREATOR_IMAGE_ALIASES = {
     "banana_2": "banana_2",
     "nano_banana_2": "banana_2",
     "nano-banana-2": "banana_2",
-    "nanobanana": "banana_2",
+    "nanobanana": "nano-banana-pro",
     "seedream_5_pro": "seedream_5_pro",
 }
 GENJUTSU_QUALITIES = {key: tuple(value['resolutions']) for key, value in json.loads(
