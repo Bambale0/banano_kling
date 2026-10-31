@@ -499,13 +499,17 @@ def estimate_trend_repeat_cost(
     try:
         if kind == "image":
             quality = str(settings.get("quality") or "basic")
-            return float(
-                miniapp_module._resolve_image_unit_cost(
-                    model,
-                    quality,
-                    tariff=tariff,
+            if tariff == "creator":
+                from bot.creator_tariff import resolve_image_unit_cost
+
+                return float(
+                    resolve_image_unit_cost(
+                        model,
+                        quality,
+                        tariff=tariff,
+                    )
                 )
-            )
+            return float(miniapp_module._resolve_image_unit_cost(model, quality))
 
         duration = _int_setting(settings, "duration", 5)
         pricing_duration = (
