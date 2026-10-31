@@ -16,6 +16,7 @@ import type {
   Task,
   TaskDetail,
   TrendGenerationSettings,
+  TrendUserField,
   UploadedFile,
 } from './types'
 
@@ -915,6 +916,7 @@ export async function generateImage(payload: {
   nsfwEnabled?: boolean
   promptId?: number | null
   sourceFeedGenId?: number | null
+  repeatUserValues?: Record<string, string>
   prompt: string
   references: string[]
 }): Promise<{
@@ -948,6 +950,7 @@ export async function generateImage(payload: {
     prompt: payload.prompt,
     prompt_id: payload.promptId || null,
     source_feed_gen_id: payload.sourceFeedGenId || null,
+    ...(payload.repeatUserValues ? { repeat_user_values: payload.repeatUserValues } : {}),
     reference_images: restoreProviderUploadUrls(payload.references),
   })
 
@@ -1276,6 +1279,7 @@ export async function publishGeneration(
     blurred?: boolean
     publicationScope?: 'profile' | 'feed'
     adultContent?: boolean
+    repeatUserFields?: TrendUserField[]
   } = {}
 ): Promise<FeedItem> {
   const initData = getInitData()
@@ -1294,6 +1298,7 @@ export async function publishGeneration(
     feed_blurred: Boolean(options.blurred),
     publication_scope: options.publicationScope || 'feed',
     adult_content: Boolean(options.adultContent),
+    ...(options.repeatUserFields !== undefined ? { repeat_user_fields: options.repeatUserFields } : {}),
   })
   return response.feed_item
 }
@@ -1355,6 +1360,7 @@ export async function remixFeedItem(payload: {
   ratio: string
   quality: string
   prompt?: string
+  repeatUserValues?: Record<string, string>
   references?: string[]
 }): Promise<{
   task: Task
@@ -1383,6 +1389,7 @@ export async function remixFeedItem(payload: {
     img_ratio: payload.ratio,
     img_quality: payload.quality,
     prompt: payload.prompt || '',
+    ...(payload.repeatUserValues ? { repeat_user_values: payload.repeatUserValues } : {}),
     reference_images: restoreProviderUploadUrls(payload.references || []),
   })
 
@@ -1445,6 +1452,7 @@ export async function generateVideo(payload: {
   ratio: string
   duration: number
   sourceFeedGenId?: number | null
+  repeatUserValues?: Record<string, string>
   pricingQuoteOnly?: boolean
   pricingQuoteHash?: string
   grokMode?: string
@@ -1522,6 +1530,7 @@ export async function generateVideo(payload: {
     v_ratio: payload.ratio,
     v_duration: payload.duration,
     source_feed_gen_id: payload.sourceFeedGenId || null,
+    ...(payload.repeatUserValues ? { repeat_user_values: payload.repeatUserValues } : {}),
     pricing_quote_only: payload.pricingQuoteOnly === true,
     pricing_quote_hash: payload.pricingQuoteHash,
     grok_mode: payload.grokMode,

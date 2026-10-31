@@ -135,6 +135,28 @@ describe('VideoGeneratorForm repeat photo references', () => {
 
 
 describe('private video repeat prompt boundary', () => {
+  it('requires and submits the configured structured values without exposing bindings', async () => {
+    const onSubmit = jest.fn().mockResolvedValue(undefined)
+    render(<VideoGeneratorForm models={models} onSubmit={onSubmit} isSubmitting={false} credits={100} promptPreset={{
+      ...preset,
+      prompt: 'SYNTHETIC_PRIVATE_RECIPE',
+      promptHidden: true,
+      repeatUserFields: [{
+        key: 'clothes', label: 'Одежда', type: 'text', required: true,
+        choices: ['красное платье', 'чёрный костюм'],
+      }],
+    }} />)
+    const launch = screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость|Подтвердить цену и запустить/i })
+    expect(launch).toBeDisabled()
+    expect(screen.queryByDisplayValue('SYNTHETIC_PRIVATE_RECIPE')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'красное платье' }))
+    fireEvent.click(launch)
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      sourceFeedGenId: 42,
+      repeatUserValues: { clothes: 'красное платье' },
+    })))
+  })
+
   it('clears contradictory hidden source text, preserves user edits on rerender, and clears on another repeat', async () => {
     const onSubmit = jest.fn().mockResolvedValue(undefined)
     const hidden = { ...preset, prompt: 'SYNTHETIC_PRIVATE_RECIPE', promptHidden: true }

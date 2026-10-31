@@ -22,6 +22,7 @@ export function PhotoTab() {
     nsfwEnabled: boolean
     promptId?: number | null
     sourceFeedGenId?: number | null
+    repeatUserValues?: Record<string, string>
     prompt: string
     references: string[]
   }): Promise<boolean> => {
@@ -43,6 +44,7 @@ export function PhotoTab() {
               ratio: data.ratio,
               quality: data.quality,
               prompt: data.prompt,
+              repeatUserValues: data.repeatUserValues,
               references: data.references,
             })
           : await generateImage({
@@ -54,6 +56,7 @@ export function PhotoTab() {
               promptId: data.promptId,
               sourceFeedGenId: data.sourceFeedGenId,
               prompt: data.prompt,
+              repeatUserValues: data.repeatUserValues,
               references: data.references,
             })
         acceptedCount += 1

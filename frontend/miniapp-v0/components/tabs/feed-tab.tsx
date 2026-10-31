@@ -469,6 +469,7 @@ export function FeedTab() {
       model: modelExists ? item.model : state.imageModels[0]?.id || 'banana_pro',
       ratio: item.aspect_ratio || '1:1',
       sourceFeedGenId: item.id,
+      repeatUserFields: item.repeat_user_fields,
       promptHidden: false,
     })
     setActiveTab(1)
@@ -508,6 +509,7 @@ export function FeedTab() {
       ratio: item.aspect_ratio || '16:9',
       duration: item.duration || 5,
       sourceFeedGenId: item.id,
+      repeatUserFields: item.repeat_user_fields,
       promptHidden: item.prompt_hidden,
       initialStartImage: scenario === 'imgtxt' ? imageReferences.slice(0, 1) : [],
       initialPhotoReferences: scenario === 'imgtxt' ? imageReferences.slice(1) : imageReferences,

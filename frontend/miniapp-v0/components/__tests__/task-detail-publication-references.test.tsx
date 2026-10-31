@@ -130,6 +130,34 @@ describe('TaskDetailPanel publication references', () => {
     expect(screen.getByRole('link', { name: 'Открыть видео-референс 1' })).toHaveAttribute('href', expectedVideo)
     expect(screen.getByLabelText('Видео-референс 1')).toHaveAttribute('src', expect.stringContaining(expectedVideo))
   })
+
+  it('shows the server-authorized editor and publishes exact repeat field bindings', async () => {
+    const context = mockedUseApp.getMockImplementation()!()
+    mockedUseApp.mockReturnValue({ ...context, taskDetail: {
+      ...context.taskDetail!,
+      repeat_personalization_editor_enabled: true,
+      repeat_user_fields: [{
+        key: 'clothes', label: 'Одежда', original_value: 'blue coat',
+        type: 'text', required: true, max_length: 160, choices: ['red dress', 'black suit'],
+      }],
+    } } as ReturnType<typeof useApp>)
+
+    render(<TaskDetailPanel />)
+    fireEvent.click(screen.getByRole('button', { name: /^Опубликовать$/i }))
+    expect(screen.getByText('Параметры персонализации повтора')).toBeInTheDocument()
+    expect(screen.getByLabelText('Название параметра 1')).toHaveValue('Одежда')
+    expect(screen.getByLabelText('Исходный фрагмент 1')).toHaveValue('blue coat')
+    expect(screen.getByLabelText('Варианты параметра 1')).toHaveValue('red dress, black suit')
+    fireEvent.click(screen.getAllByRole('button', { name: /^Опубликовать$/i })[0])
+
+    await waitFor(() => expect(mockedPublish).toHaveBeenCalledWith('seedance-task', expect.objectContaining({
+      repeatUserFields: [expect.objectContaining({
+        key: 'clothes', label: 'Одежда', original_value: 'blue coat',
+        choices: ['red dress', 'black suit'],
+      })],
+    })))
+  })
+
   it.each(['image', 'video'])('lets a non-admin publish a private %s result without exporting its recipe', async (type) => {
     const context = mockedUseApp.getMockImplementation()!()
     mockedUseApp.mockReturnValue({ ...context, taskDetail: {

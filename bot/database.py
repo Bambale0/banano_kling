@@ -1066,6 +1066,22 @@ async def init_db():
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS generation_repeat_personalization (
+                generation_id BIGINT PRIMARY KEY,
+                fields_json TEXT NOT NULL,
+                write_token TEXT NOT NULL,
+                updated_by_telegram_id BIGINT NOT NULL,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        try:
+            await db.execute(
+                "ALTER TABLE generation_repeat_personalization "
+                "ADD COLUMN write_token TEXT NOT NULL DEFAULT ''"
+            )
+        except db_backend.OperationalError:
+            pass
 
         # Migration: add columns if not exists
         try:

@@ -21,6 +21,7 @@ export interface PromptPreset {
   sourceFeedGenId?: number | null
   promptHidden?: boolean
   initialReferences?: UploadedFile[]
+  repeatUserFields?: TrendUserField[]
 }
 
 export interface VideoRepeatReferenceSlots {
@@ -53,6 +54,7 @@ export interface VideoPromptPreset {
   initialStartImage?: UploadedFile[]
   initialPhotoReferences?: UploadedFile[]
   initialVideoReferences?: UploadedFile[]
+  repeatUserFields?: TrendUserField[]
 }
 
 export interface ImageModel {
@@ -193,6 +195,8 @@ export interface TaskDetail extends Task {
   publication_reference_videos?: string[]
   publication_reference_image_indices?: number[]
   publication_reference_video_indices?: number[]
+  repeat_personalization_editor_enabled?: boolean
+  repeat_user_fields?: TrendUserField[]
   request_data?: {
     source_reference_images?: string[]
     reference_images?: string[]
@@ -241,6 +245,8 @@ export interface TrendUserField {
   max?: number
   max_length?: number
   suffix?: string
+  /** Optional author-curated values shown as one-tap choices in admin preview. */
+  choices?: string[]
 }
 
 export interface TrendGenerationSettings {
@@ -323,6 +329,8 @@ export interface PromptItem {
 export interface FeedItem {
   /** URL-free replacement contract for explicitly authorized foreign video repeats. */
   repeat_reference_slots?: VideoRepeatReferenceSlots
+  /** Admin-preview labels only; source prompt bindings never appear on feed cards. */
+  repeat_user_fields?: TrendUserField[]
 
   genjutsu_recipe_id?: string | null
   id: number

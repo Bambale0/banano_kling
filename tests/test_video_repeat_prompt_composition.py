@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from bot import database, miniapp
+from bot import database, miniapp, repeat_personalization
 from bot.creator_tariff import VideoQuote
 from bot.handlers import miniapp_video_continuity_compat as continuity
 from bot.handlers import seedance_25_public_release as public
@@ -105,6 +105,104 @@ async def test_private_base_and_edit_reach_actual_provider_payload(
     assert detail.status == 200, detail.text
     assert BASE not in detail.text
     assert json.loads(detail.text)["task"]["prompt_hidden"] is True
+
+
+@pytest.mark.parametrize("model", ["seedance_2", "seedance_2_5"])
+async def test_admin_personalization_reaches_video_provider_without_losing_base_or_edit(
+    repeat_endpoint, model, monkeypatch,
+):
+    entry = repeat_endpoint
+    entry.source["model"] = entry.card["model"] = model
+    fixed_reference = "https://example.test/fixed-outfit.png"
+    fixed_video_reference = "https://example.test/fixed-motion.mp4"
+    entry.source["feed_repeat_reference_selection"] = {
+        "version": 1, "images": [fixed_reference], "videos": [fixed_video_reference],
+    }
+    entry.source["request_data"] = {
+        "v_type": "imgtxt",
+        "seedance25_scenario": "multimodal",
+        "seedance25_resolution": "720p",
+        "reference_images": [fixed_reference],
+        "v_reference_videos": [fixed_video_reference],
+    }
+    monkeypatch.setenv(repeat_personalization.FEATURE_FLAG, "1")
+    monkeypatch.setattr(miniapp.config, "is_admin", lambda _actor: True)
+    fields = repeat_personalization.normalize_repeat_fields(
+        [{"key": "clothes", "label": "Одежда", "original_value": "blue coat"}],
+        prompt=BASE,
+    )
+    await repeat_personalization.save_repeat_fields(
+        42, fields, actor_telegram_id=entry.user.telegram_id,
+    )
+
+    request_body = {
+        "source_feed_gen_id": 42,
+        "v_model": model,
+        "prompt": "Keep the smile",
+        "repeat_user_values": {"clothes": "red dress"},
+    }
+    quote_response = await entry.call(Request({
+        **request_body, "pricing_quote_only": True, "seedance25_quote_only": True,
+    }))
+    assert quote_response.status == 200, quote_response.text
+    quote_hash = json.loads(quote_response.text)["quote_hash"]
+    entry.transport.reset_mock()
+    entry.debit.reset_mock()
+    quote_key = "seedance25_reference_quote_hash" if model == "seedance_2_5" else "pricing_quote_hash"
+    response = await entry.call(Request({**request_body, quote_key: quote_hash}))
+
+    assert response.status == 200, response.text
+    provider_prompt = entry.transport.await_args.args[1]["input"]["prompt"]
+    assert "SYNTHETIC PRIVATE BASE" in provider_prompt
+    assert "cinematic forest" in provider_prompt
+    assert "red dress" in provider_prompt
+    assert "blue coat" not in provider_prompt
+    assert "Keep the smile" in provider_prompt
+    assert fixed_reference in json.dumps(entry.transport.await_args.args[1], ensure_ascii=False)
+    assert fixed_video_reference in json.dumps(entry.transport.await_args.args[1], ensure_ascii=False)
+
+
+@pytest.mark.parametrize("flag,admin", [("0", True), ("1", False)])
+async def test_video_structured_values_fail_closed_outside_admin_preview(
+    repeat_endpoint, monkeypatch, flag, admin,
+):
+    entry = repeat_endpoint
+    monkeypatch.setenv(repeat_personalization.FEATURE_FLAG, flag)
+    monkeypatch.setattr(miniapp.config, "is_admin", lambda _actor: admin)
+
+    response = await entry.call(Request({
+        "source_feed_gen_id": 42,
+        "v_model": "seedance_2",
+        "prompt": "Keep the smile",
+        "repeat_user_values": {"clothes": "red dress"},
+    }))
+
+    assert response.status == 403, response.text
+    entry.transport.assert_not_awaited()
+    entry.debit.assert_not_awaited()
+
+
+async def test_video_invalid_structured_values_return_400_before_billing(
+    repeat_endpoint, monkeypatch,
+):
+    entry = repeat_endpoint
+    monkeypatch.setenv(repeat_personalization.FEATURE_FLAG, "1")
+    monkeypatch.setattr(miniapp.config, "is_admin", lambda _actor: True)
+    fields = repeat_personalization.normalize_repeat_fields(
+        [{"key": "clothes", "label": "Одежда", "original_value": "blue coat"}],
+        prompt=BASE,
+    )
+    await repeat_personalization.save_repeat_fields(42, fields, actor_telegram_id=entry.user.telegram_id)
+
+    response = await entry.call(Request({
+        "source_feed_gen_id": 42,
+        "v_model": "seedance_2",
+        "repeat_user_values": {},
+    }))
+
+    assert response.status == 400, response.text
+    entry.transport.assert_not_awaited()
+    entry.debit.assert_not_awaited()
 
 
 @pytest.mark.parametrize("model,limit,duration", [

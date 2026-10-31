@@ -840,6 +840,27 @@ def install_common_publication_scope_compat(common_module) -> None:
 
 
 async def _miniapp_generation_share_scoped(module, request):
+    repeat_rollback = None
+
+    async def rollback_repeat_change():
+        nonlocal repeat_rollback
+        if repeat_rollback is None:
+            return
+        rollback_module, generation_id, expected_token, previous_fields, actor_id = repeat_rollback
+        repeat_rollback = None
+        try:
+            await rollback_module.restore_repeat_fields_if_current(
+                generation_id,
+                expected_token=expected_token,
+                previous_fields=previous_fields,
+                actor_telegram_id=actor_id,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to restore repeat personalization after publication failure: generation_id=%s",
+                generation_id,
+            )
+
     try:
         body = await module._miniapp_payload(request)
         init_data = body.get("init_data", "")
@@ -874,12 +895,62 @@ async def _miniapp_generation_share_scoped(module, request):
                 False,
             )
 
-        _telegram_id, ctx = await module._get_user_context(
+        telegram_id, ctx = await module._get_user_context(
             request.app,
             init_data,
             body.get("start_param_fallback"),
         )
         user_id = ctx["user"].id
+        owner_detail = await module._fetch_task_detail(telegram_id, str(gen_id or ""))
+        pending_repeat_fields = None
+        if "repeat_user_fields" in body:
+            if scope in {"private", "none", "hidden"}:
+                return module.web.json_response(
+                    {"ok": False, "error": "Параметры повтора нельзя менять при снятии публикации"},
+                    status=400,
+                )
+            if not module._repeat_personalization_allowed(telegram_id):
+                return module.web.json_response(
+                    {"ok": False, "error": "Настройка параметров повтора пока доступна только администраторам"},
+                    status=403,
+                )
+            if not owner_detail:
+                return module.web.json_response(
+                    {"ok": False, "error": "Задача не найдена"}, status=404,
+                )
+            source_task = await module.get_generation_task_payload(owner_detail["feed_id"])
+            source_prompt = str((source_task or {}).get("prompt") or "").strip()
+            if not source_prompt:
+                return module.web.json_response(
+                    {"ok": False, "error": "У исходной генерации нет prompt"}, status=400,
+                )
+            pending_repeat_fields = module.normalize_repeat_fields(
+                body.get("repeat_user_fields"), prompt=source_prompt,
+            )
+            generation_id = int(owner_detail["feed_id"])
+            if pending_repeat_fields:
+                write_token, previous_fields = await module.save_repeat_fields(
+                    generation_id,
+                    pending_repeat_fields,
+                    actor_telegram_id=telegram_id,
+                )
+            else:
+                write_token, previous_fields = await module.clear_repeat_fields(
+                    generation_id,
+                    actor_telegram_id=telegram_id,
+                )
+            repeat_rollback = (
+                module, generation_id, write_token, previous_fields, telegram_id,
+            )
+
+        async def finish_repeat_change(card):
+            nonlocal repeat_rollback
+            repeat_rollback = None
+            if pending_repeat_fields:
+                card["repeat_user_fields"] = module.public_repeat_fields(pending_repeat_fields)
+            elif pending_repeat_fields == []:
+                card.pop("repeat_user_fields", None)
+            return card
 
         async def with_publication_link(card):
             me = await request.app["bot"].get_me()
@@ -904,10 +975,12 @@ async def _miniapp_generation_share_scoped(module, request):
                 blurred=blurred,
             )
             if not card:
+                await rollback_repeat_change()
                 return module.web.json_response(
                     {"ok": False, "error": "Нельзя добавить эту генерацию в профиль"},
                     status=403,
                 )
+            card = await finish_repeat_change(card)
             card = await with_publication_link(card)
             _invalidate_publication_caches()
             return module.web.json_response(
@@ -915,7 +988,20 @@ async def _miniapp_generation_share_scoped(module, request):
             )
 
         if scope in {"private", "none", "hidden"}:
+            if owner_detail:
+                generation_id = int(owner_detail["feed_id"])
+                write_token, previous_fields = await module.clear_repeat_fields(
+                    generation_id,
+                    actor_telegram_id=telegram_id,
+                )
+                repeat_rollback = (
+                    module, generation_id, write_token, previous_fields, telegram_id,
+                )
             removed = await remove_publication(gen_id, user_id)
+            if removed:
+                repeat_rollback = None
+            else:
+                await rollback_repeat_change()
             _invalidate_publication_caches()
             return module.web.json_response(
                 {"ok": True, "removed": removed, "publication_scope": "private"}
@@ -933,18 +1019,22 @@ async def _miniapp_generation_share_scoped(module, request):
             blurred=blurred,
         )
         if not card:
+            await rollback_repeat_change()
             return module.web.json_response(
                 {"ok": False, "error": "Нельзя опубликовать эту генерацию в ленту"},
                 status=403,
             )
+        card = await finish_repeat_change(card)
         card = await with_publication_link(card)
         _invalidate_publication_caches()
         return module.web.json_response(
             {"ok": True, "feed_item": card, "publication_scope": "feed"}
         )
     except ValueError as error:
+        await rollback_repeat_change()
         return module.web.json_response({"ok": False, "error": str(error)}, status=400)
     except Exception as error:  # noqa: BLE001 - API boundary converts unexpected failures to JSON
+        await rollback_repeat_change()
         return module._miniapp_error_response(
             error,
             log_message="Mini App scoped generation publication failed",
