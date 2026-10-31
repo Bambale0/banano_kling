@@ -219,7 +219,7 @@ async def _prices(event, state, notice=""):
     token = await _screen(state, creator_config_fingerprint=_fingerprint(raw))
     lines = [
         "💰 <b>Цены креатора</b>",
-        "Видео — 🍌/сек; фото — 🍌/изображение. Незаданные optional-ставки используют обычную цену.",
+        "Видео — 🍌/сек; фото — 🍌/изображение. Незаданные дополнительные ставки используют обычную цену.",
         "",
     ]
     rows = []
