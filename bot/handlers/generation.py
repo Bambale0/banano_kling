@@ -23,7 +23,12 @@ from PIL import Image, ImageOps
 
 from bot import db as db_backend
 from bot.config import config
-from bot.creator_tariff import VideoQuote, get_actor_tariff, quote_video_for_actor
+from bot.creator_tariff import (
+    VideoQuote,
+    get_actor_tariff,
+    quote_video_for_actor,
+    resolve_image_unit_cost as resolve_creator_image_unit_cost,
+)
 from bot.database import (
     _merge_task_id_aliases,
     add_credits,
@@ -75,7 +80,6 @@ from bot.keyboards import (
 )
 from bot.miniapp_links import feed_bot_link, feed_link
 from bot.partner_policy import generation_partner_snapshot, mark_generation_accepted
-from bot.quality_pricing import QUALITY_COSTS, SEEDREAM_5_PRO_QUALITY_COSTS
 from bot.services.gemini_omni_service import gemini_omni_service
 from bot.services.gemini_service import gemini_service
 from bot.services.gpt_image_service import gpt_image_service
@@ -1239,23 +1243,17 @@ def _prepare_banana_reference_images(
     return direct_refs[:max_refs]
 
 
-def _resolve_image_unit_cost(img_service: str, img_quality: str) -> float:
-    quality_value = str(img_quality or "").strip()
-    quality_upper = quality_value.upper()
-    if img_service in {
-        "banana_pro",
-        "nano_banana_pro",
-        "nano-banana-pro",
-        "banana_2",
-        "nanobanana",
-    }:
-        return QUALITY_COSTS.get(quality_upper, 2)
-    if img_service == "seedream_5_pro":
-        return SEEDREAM_5_PRO_QUALITY_COSTS.get(
-            quality_value,
-            SEEDREAM_5_PRO_QUALITY_COSTS.get(quality_upper, 2),
-        )
-    return preset_manager.get_generation_cost(img_service)
+def _resolve_image_unit_cost(
+    img_service: str,
+    img_quality: str,
+    *,
+    tariff: str = "standard",
+) -> float:
+    return resolve_creator_image_unit_cost(
+        img_service,
+        img_quality,
+        tariff=tariff,
+    )
 
 
 async def _start_image_generation_task(
@@ -4250,7 +4248,11 @@ def _build_video_run_summary(
     return " | ".join(parts)
 
 
-def _build_image_creation_text(data: dict) -> str:
+def _build_image_creation_text(
+    data: dict,
+    *,
+    tariff: str = "standard",
+) -> str:
     current_service = data.get("img_service", "banana_pro")
     current_ratio = data.get(
         "img_ratio",
@@ -4262,7 +4264,11 @@ def _build_image_creation_text(data: dict) -> str:
     img_nsfw_checker = data.get("img_nsfw_checker", False)
     ratio_label = current_ratio.replace(":", "∶")
     # nano_quality_cost_display_v1
-    unit_cost = _resolve_image_unit_cost(current_service, img_quality)
+    unit_cost = _resolve_image_unit_cost(
+        current_service,
+        img_quality,
+        tariff=tariff,
+    )
 
     info_lines = [
         f"• Модель: <code>{get_image_model_label(current_service)}</code>",
@@ -4317,6 +4323,7 @@ async def _show_image_model_selection_screen(
         else None
     )
     user_credits = await get_user_credits(user_id) if user_id else 0
+    tariff = await get_actor_tariff(user_id) if user_id else "standard"
     max_refs = _get_max_image_references(current_service)
     text = (
         "🖼 <b>Создание фото</b>\n"
@@ -4325,7 +4332,10 @@ async def _show_image_model_selection_screen(
         "Сначала выберите модель.\n"
         "После этого бот покажет следующий шаг: референсы или настройки."
     )
-    keyboard = get_image_model_selection_keyboard(current_service)
+    keyboard = get_image_model_selection_keyboard(
+        current_service,
+        tariff=tariff,
+    )
 
     try:
         if isinstance(message_or_callback, types.CallbackQuery):
@@ -4424,7 +4434,13 @@ async def _show_image_creation_screen(
     intro_text: str = "",
 ):
     data = await state.get_data()
-    text = f"{intro_text}{_build_image_creation_text(data)}"
+    user_id = (
+        message_or_callback.from_user.id
+        if hasattr(message_or_callback, "from_user")
+        else None
+    )
+    tariff = await get_actor_tariff(user_id) if user_id else "standard"
+    text = f"{intro_text}{_build_image_creation_text(data, tariff=tariff)}"
     reply_markup = get_create_image_keyboard(
         current_service=data.get("img_service", "banana_pro"),
         current_ratio=data.get("img_ratio", "1:1"),
@@ -8846,7 +8862,12 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
         return
 
     user = await get_or_create_user(message.from_user.id)
-    unit_cost = _resolve_image_unit_cost(img_service, img_quality)
+    tariff = await get_actor_tariff(message.from_user.id)
+    unit_cost = _resolve_image_unit_cost(
+        img_service,
+        img_quality,
+        tariff=tariff,
+    )
     total_cost = unit_cost
 
     if user.credits < total_cost:
