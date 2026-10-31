@@ -347,3 +347,32 @@ async def test_genjutsu_creator_editor_rejects_fractional_step_rate(editor):
     await click(state, cb, 'rate', 'genjutsu/restyle', '720p')
     await admin.creator_tariff_message(message('1.5'), state)
     assert not writes
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "model,quality,value",
+    [
+        ("nano-banana-pro", "4K", "1.5"),
+        ("banana_2", "2K", "1.25"),
+        ("seedream_5_pro", "high", "2.25"),
+    ],
+)
+async def test_creator_editor_supports_image_model_prices(
+    editor, model, quality, value
+):
+    state, cb, writes, before = editor
+    await admin.open_creator_tariff(cb, state)
+    await click(state, cb, "prices")
+    text = cb.message.edit_text.await_args.args[0]
+    assert "Nano Banana Pro" in text
+    assert "Nano Banana 2" in text
+    assert "Seedream 5 Pro" in text
+    await click(state, cb, "rate", model, quality)
+    await admin.creator_tariff_message(message(value), state)
+    assert len(writes) == 1
+    assert {
+        key: val for key, val in writes[0].items() if key != "creator_tariff"
+    } == before
+    tariff = writes[0]["creator_tariff"]
+    assert tariff["image_models"][model]["quality_costs"][quality] == float(value)
+
