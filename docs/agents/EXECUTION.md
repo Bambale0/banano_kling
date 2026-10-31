@@ -1,3 +1,15 @@
+## Creator image tariff: Nano Banana Pro / Nano Banana 2 / Seedream 5 Pro (2026-10-31)
+
+- Baseline: `tanyapi@0ffac9c71e4a153be3867967ea67c60b38554224`; branch `feat/creator-image-models-20261031`; PR #379.
+- Scope: add optional admin-managed Creator image price cells for Nano Banana Pro (`nano-banana-pro`), Nano Banana 2 (`banana_2`) and Seedream 5 Pro (`seedream_5_pro`) without changing ordinary prices, provider routing, memberships, balances or historical generation costs.
+- Pricing policy: no automatic percentage discount and no hardcoded economic rates. Missing Creator image cells fall back to the current ordinary runtime image price and do not disable an already configured Creator tariff.
+- Billing path: authenticated actor profile is resolved server-side immediately before Telegram/Mini App image debit and image-trend debit; client tariff fields remain ignored. Accepted image tasks retain the charged `unit_cost` in the existing task snapshot.
+- UI/admin: Creator editor exposes Banana 1K/2K/4K and Seedream basic/high image cells; Telegram model picker and authenticated Mini App catalog use per-viewer prices without mutating shared model metadata.
+- TDD RED on tests-only SHA `5b699e35257bb2371165c491d6f3ae3049376e5f`: lint passed; safe regression finished with 10 expected failures in `tests/test_creator_tariff_images.py` and 4206 passed / 117 skipped. Failures proved missing image resolver/config/display support and trend pricing ignoring the Creator profile.
+- Regression hardening: an intermediate exact-head run exposed legacy isolated pricing contracts and monkeypatched two-argument standard resolvers. The fix keeps the standard call signature unchanged and applies the Creator overlay only after server-side actor resolution; tests were not weakened or rewritten to hide the breakage.
+- Safety: no `data/price.json` write, no DB migration, no paid generation, no membership change. Production runtime price file must remain preserved by normal deployment.
+- Release gates: required PR CI, review-thread audit, native squash merge to `tanyapi`, exact-SHA production deploy, container/backend/Mini App revision health, then read-only/in-memory runtime smoke for Creator image resolution.
+
 ## 2026-10-31 — PDF attachment in admin promo broadcasts
 
 - Baseline: protected `tanyapi` at `0a84a897c20ebc591ef6c9e2229bf15086950017`. Scope is the existing persistent Telegram promo editor/test/delivery pipeline only; legacy broadcast code, pricing, providers, payments and user generation flows are out of scope.

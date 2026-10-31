@@ -729,13 +729,38 @@ def get_saved_reference_picker_keyboard(reference_id: int, current_index: int, t
     return builder.as_markup()
 
 
-def get_image_model_selection_keyboard(current_service: str = "banana_pro"):
+def get_image_model_selection_keyboard(
+    current_service: str = "banana_pro",
+    *,
+    tariff: str = "standard",
+):
     builder = InlineKeyboardBuilder()
+    if tariff == "creator":
+        from bot.creator_tariff import resolve_image_unit_cost
+
+        seedream_basic = resolve_image_unit_cost(
+            "seedream_5_pro", "basic", tariff=tariff
+        )
+        seedream_high = resolve_image_unit_cost(
+            "seedream_5_pro", "high", tariff=tariff
+        )
+        banana_pro_cost = resolve_image_unit_cost(
+            "banana_pro", "2K", tariff=tariff
+        )
+        banana_2_cost = resolve_image_unit_cost(
+            "banana_2", "2K", tariff=tariff
+        )
+    else:
+        seedream_basic = SEEDREAM_5_PRO_QUALITY_COSTS["basic"]
+        seedream_high = SEEDREAM_5_PRO_QUALITY_COSTS["high"]
+        banana_pro_cost = preset_manager.get_generation_cost("nano-banana-pro")
+        banana_2_cost = preset_manager.get_generation_cost("banana_2")
+
     model_rows = [
         ("nano-banana-2-lite", "model_nano_banana_2_lite", "🍌 Nano Banana 2 Lite 🔥 НОВИНКА", preset_manager.get_generation_cost("nano-banana-2-lite")),
-        ("seedream_5_pro", "model_seedream_5_pro", "🌟 Seedream 5 Pro 🔥 НОВИНКА", SEEDREAM_5_PRO_QUALITY_COSTS["basic"]),
-        ("banana_pro", "model_banana_pro", "💎 Nano Banana Pro", preset_manager.get_generation_cost("nano-banana-pro")),
-        ("banana_2", "model_banana_2", "🍌 Nano Banana 2", preset_manager.get_generation_cost("banana_2")),
+        ("seedream_5_pro", "model_seedream_5_pro", "🌟 Seedream 5 Pro 🔥 НОВИНКА", seedream_basic),
+        ("banana_pro", "model_banana_pro", "💎 Nano Banana Pro", banana_pro_cost),
+        ("banana_2", "model_banana_2", "🍌 Nano Banana 2", banana_2_cost),
         ("seedream_edit", "model_seedream_edit", "🖌 Seedream 4.5", preset_manager.get_generation_cost("seedream_edit")),
         ("grok_imagine_i2i", "model_grok_i2i", "🧠 Grok Imagine", preset_manager.get_generation_cost("grok_imagine_i2i")),
         ("wan_27", "model_wan_27", "🧪 Wan 2.7 Pro", preset_manager.get_generation_cost("wan_27")),
@@ -745,8 +770,8 @@ def get_image_model_selection_keyboard(current_service: str = "banana_pro"):
         model_key, callback_data, label, cost = model_row[:4]
         check = "✅ " if current_service == model_key else ""
         price_text = (
-            f"Basic {SEEDREAM_5_PRO_QUALITY_COSTS['basic']:g}🍌 / High {SEEDREAM_5_PRO_QUALITY_COSTS['high']:g}🍌"
-            if model_key == "seedream_5_pro" else f"{cost}🍌"
+            f"Basic {seedream_basic:g}🍌 / High {seedream_high:g}🍌"
+            if model_key == "seedream_5_pro" else f"{cost:g}🍌"
         )
         builder.row(InlineKeyboardButton(text=f"{check}{label} • {price_text}", callback_data=callback_data))
     builder.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_main"))

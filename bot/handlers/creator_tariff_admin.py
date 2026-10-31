@@ -18,6 +18,7 @@ from aiogram.fsm.state import State, StatesGroup
 from bot import db as db_backend
 from bot.config import config
 from bot.creator_tariff import (
+    CREATOR_IMAGE_QUALITIES,
     GENJUTSU_QUALITIES,
     creator_tariff_status,
     validate_creator_tariff_config,
@@ -37,6 +38,9 @@ _CONFIG_LOCK = asyncio.Lock()
 MODEL_LABELS = {
     "seedance_2": "Seedance 2.0", "seedance_2_5": "Seedance 2.5",
     "wan_3": "Wan 3.0", "wan_3_prime": "Wan 3.0 Prime",
+    "nano-banana-pro": "Nano Banana Pro",
+    "banana_2": "Nano Banana 2",
+    "seedream_5_pro": "Seedream 5 Pro",
     "genjutsu/motion_transfer": "Genjutsu · Motion Transfer",
     "genjutsu/object_swap": "Genjutsu · Object Swap",
     "genjutsu/restyle": "Genjutsu · Restyle",
@@ -44,14 +48,25 @@ MODEL_LABELS = {
 
 
 def _editable_qualities(status):
-    return {**status['required_qualities'], **{
-        f'genjutsu/{operation}': qualities for operation, qualities in GENJUTSU_QUALITIES.items()
-    }}
+    return {
+        **status['required_qualities'],
+        **status.get('image_qualities', {}),
+        **{
+            f'genjutsu/{operation}': qualities
+            for operation, qualities in GENJUTSU_QUALITIES.items()
+        },
+    }
+
+
+def _is_image_model(model: str) -> bool:
+    return model in CREATOR_IMAGE_QUALITIES
 
 
 def _rate_help(model):
     if model.startswith('genjutsu/'):
         return 'Целое число от 1 до 10000. Ставка шага умножается на его длительность и число вариантов.'
+    if _is_image_model(model):
+        return 'Положительная цена в 🍌 за одно изображение. Незаданные качества используют обычную цену.'
     if model in {'wan_3', 'wan_3_prime'}:
         return 'Ставка за сумму входных видеосекунд и выбранного результата; Auto резервирует 30 секунд.'
     return 'Положительная ставка 🍌/сек; длительность каждого входящего видео добавляется к секундам результата, без ×2.'
@@ -144,7 +159,7 @@ async def _home(event, state, notice=""):
         "🎬 <b>Тариф креатора</b>\n\n"
         f"Статус: <b>{'включён' if active else 'выключен'}</b>\n"
         "Доступ назначается отдельно по Telegram ID. Права администратора и баланс не меняются.\n"
-        "Цены задаются отдельно для каждой модели и качества. Для незаданных WAN и Genjutsu действует обычная цена.\n"
+        "Цены задаются отдельно для каждой модели и качества. Для незаданных фото, WAN и Genjutsu действует обычная цена.\n"
     )
     if not active:
         text += "\nСейчас применяется обычная цена, даже для назначенных креаторов.\n"
@@ -202,17 +217,24 @@ async def _prices(event, state, notice=""):
     status = creator_tariff_status()
     raw = _raw_tariff()
     token = await _screen(state, creator_config_fingerprint=_fingerprint(raw))
-    lines = ["💰 <b>Цены креатора</b>", "Ставки в 🍌/сек. Видеореференсы + результат по секундам, без ×2. Genjutsu: сумма шагов и вариантов.", ""]
+    lines = [
+        "💰 <b>Цены креатора</b>",
+        "Видео — 🍌/сек, входящие видеосекунды + результат, без ×2; фото — 🍌/изображение. Незаданные дополнительные ставки используют обычную цену.",
+        "",
+    ]
     rows = []
     for model, qualities in _editable_qualities(status).items():
         if model.startswith('genjutsu/'):
             rates = status.get('genjutsu', {}).get('prices', {}).get(model.split('/', 1)[1], {})
+        elif _is_image_model(model):
+            rates = status.get('image_models', {}).get(model, {}).get('quality_costs', {})
         else:
             rates = status['video_models'].get(model, {}).get('quality_costs', {})
         for quality in qualities:
             rate = rates.get(quality)
             label = f"{MODEL_LABELS.get(model, model)} · {quality}"
-            value = f"{rate:g} 🍌/сек" if isinstance(rate, (int, float)) and not isinstance(rate, bool) and math.isfinite(rate) and rate > 0 else "не задано"
+            unit = "🍌/изобр." if _is_image_model(model) else "🍌/сек"
+            value = f"{rate:g} {unit}" if isinstance(rate, (int, float)) and not isinstance(rate, bool) and math.isfinite(rate) and rate > 0 else "не задано"
             lines.append(f"{html.escape(label)}: <b>{value}</b>")
             rows.append([_button(f"✏️ {label}", _cb("rate", token, model, quality))])
     if not (status["enabled"] and status["configured"]):
@@ -319,7 +341,8 @@ async def _handle_callback(callback, state, data, parts):
             raise CreatorTariffConfigConflict("Цены уже изменились. Откройте раздел заново.")
         token = await _screen(state, creator_model=model, creator_quality=quality, creator_config_fingerprint=expected)
         await state.set_state(CreatorTariffAdminStates.price)
-        prompt = await _present(callback, f"Введите цену {html.escape(MODEL_LABELS.get(model, model))} · {html.escape(quality)} в 🍌/сек.\n{html.escape(_rate_help(model))}", [_back(token)], fresh=True)
+        unit = "🍌/изображение" if _is_image_model(model) else "🍌/сек"
+        prompt = await _present(callback, f"Введите цену {html.escape(MODEL_LABELS.get(model, model))} · {html.escape(quality)} в {unit}.\n{html.escape(_rate_help(model))}", [_back(token)], fresh=True)
         return await state.update_data(creator_prompt_id=getattr(prompt, "message_id", 0))
     if action == "confirm" and not args:
         pending = data.get("creator_pending", {})
@@ -389,6 +412,8 @@ async def creator_tariff_message(message: types.Message, state: FSMContext):
                 if not price.is_integer() or price > 10000:
                     raise ValueError('Для Genjutsu нужна целая цена от 1 до 10000.')
                 candidate.setdefault('genjutsu', {}).setdefault('prices', {}).setdefault(model.split('/', 1)[1], {})[quality] = int(price)
+            elif _is_image_model(model):
+                candidate.setdefault("image_models", {}).setdefault(model, {}).setdefault("quality_costs", {})[quality] = price
             else:
                 candidate.setdefault("video_models", {}).setdefault(model, {}).setdefault("quality_costs", {})[quality] = price
             await save_creator_tariff_config(message.from_user.id, candidate, expected_fingerprint=data["creator_config_fingerprint"])

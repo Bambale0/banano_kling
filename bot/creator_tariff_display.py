@@ -11,12 +11,28 @@ from aiohttp import web
 
 from bot.creator_tariff import (
     get_actor_tariff,
+    image_quality_rates,
     resolve_video_quote,
     video_quality_rates,
 )
 from bot.model_capabilities import get_video_capability
 
 _SEEDANCE_MODELS = {"seedance_2", "seedance_2_5"}
+
+
+def price_image_model_metadata(
+    metadata: dict[str, Any], *, tariff: str = "standard",
+) -> dict[str, Any]:
+    model = str(metadata.get("id") or "")
+    rates = image_quality_rates(model, tariff=tariff)
+    if not rates:
+        return dict(metadata)
+    default_quality = "basic" if model == "seedream_5_pro" else "2K"
+    return {
+        **metadata,
+        "cost": rates.get(default_quality, metadata.get("cost")),
+        "quality_costs": rates,
+    }
 
 
 def price_video_model_metadata(
