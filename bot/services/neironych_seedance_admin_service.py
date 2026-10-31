@@ -426,7 +426,7 @@ class NeironychSeedanceAdminService:
                     ) from exc
                 await asyncio.sleep(max(0.1, effective_poll))
                 continue
-            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            except (aiohttp.ClientError, TimeoutError) as exc:
                 transient_failures += 1
                 logger.warning(
                     "Seedance admin status poll transient failure: "
@@ -502,7 +502,7 @@ class NeironychSeedanceAdminService:
                             async for chunk in response.content.iter_chunked(1024 * 1024):
                                 await asyncio.to_thread(os.write, fd, chunk)
                             break
-                    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                    except (aiohttp.ClientError, TimeoutError) as exc:
                         if attempt >= self.CONTENT_DOWNLOAD_ATTEMPTS:
                             raise
                         logger.warning(
