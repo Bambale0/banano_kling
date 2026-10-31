@@ -46,8 +46,37 @@ def callback(data="admin_broadcast"):
     return SimpleNamespace(data=data, from_user=SimpleNamespace(id=999999999), message=card, bot=SimpleNamespace(), answer=AsyncMock())
 
 
-def incoming(mid=1001, text=None, photo=None, group=None):
-    return SimpleNamespace(from_user=SimpleNamespace(id=999999999), chat=SimpleNamespace(id=999999999), message_id=mid, text=text, caption=None, entities=None, caption_entities=None, photo=[SimpleNamespace(file_id=photo)] if photo else None, video=None, media_group_id=group, answer=AsyncMock(return_value=SimpleNamespace(message_id=1000)))
+def incoming(
+    mid=1001,
+    text=None,
+    photo=None,
+    group=None,
+    document=None,
+    document_name="attachment.pdf",
+    document_mime="application/pdf",
+):
+    return SimpleNamespace(
+        from_user=SimpleNamespace(id=999999999),
+        chat=SimpleNamespace(id=999999999),
+        message_id=mid,
+        text=text,
+        caption=None,
+        entities=None,
+        caption_entities=None,
+        photo=[SimpleNamespace(file_id=photo)] if photo else None,
+        video=None,
+        document=(
+            SimpleNamespace(
+                file_id=document,
+                file_name=document_name,
+                mime_type=document_mime,
+            )
+            if document
+            else None
+        ),
+        media_group_id=group,
+        answer=AsyncMock(return_value=SimpleNamespace(message_id=1000)),
+    )
 
 
 class FakeService:
@@ -124,6 +153,57 @@ async def test_album_is_persisted_in_order_without_automatic_finalize(editor):
     cb.data = action(state, "done")
     await promo_admin.promo_callback(cb, state)
     assert state.state is None
+
+
+@pytest.mark.asyncio
+async def test_pdf_is_saved_as_standalone_promo_attachment(editor):
+    service, state, cb = await show(editor)
+    cb.data = action(state, "media")
+    await promo_admin.promo_callback(cb, state)
+
+    message = incoming(document="pdf-file-id")
+    await promo_admin.promo_message(message, state)
+
+    assert service.record["message"]["media"] == [
+        {"type": "pdf", "file_id": "pdf-file-id"}
+    ]
+    service.save_promo.assert_awaited_once()
+    assert state.state == promo_admin.PromoAdminStates.media.state
+
+
+@pytest.mark.asyncio
+async def test_non_pdf_document_is_rejected_without_saving(editor):
+    service, state, cb = await show(editor)
+    cb.data = action(state, "media")
+    await promo_admin.promo_callback(cb, state)
+
+    message = incoming(
+        document="doc-file-id",
+        document_name="notes.docx",
+        document_mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+    await promo_admin.promo_message(message, state)
+
+    service.save_promo.assert_not_awaited()
+    assert "PDF" in message.answer.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_pdf_cannot_be_mixed_with_photo_or_video(editor):
+    service, state, cb = await show(editor)
+    cb.data = action(state, "media")
+    await promo_admin.promo_callback(cb, state)
+
+    pdf = incoming(1001, document="pdf-file-id")
+    await promo_admin.promo_message(pdf, state)
+    photo = incoming(1002, photo="photo-file-id")
+    await promo_admin.promo_message(photo, state)
+
+    assert service.record["message"]["media"] == [
+        {"type": "pdf", "file_id": "pdf-file-id"}
+    ]
+    assert service.save_promo.await_count == 1
+    assert "PDF" in photo.answer.await_args.args[0]
 
 
 def displayed_callbacks(cb):
