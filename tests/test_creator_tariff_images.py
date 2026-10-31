@@ -5,9 +5,7 @@ from copy import deepcopy
 
 import pytest
 
-from bot import creator_tariff
-from bot import creator_tariff_display as display
-from bot import miniapp, trend_api
+from bot import creator_tariff, creator_tariff_display, miniapp, trend_api
 from bot.quality_pricing import refresh_quality_pricing
 from bot.services.preset_manager import preset_manager
 
