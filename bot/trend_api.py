@@ -11,7 +11,7 @@ from typing import Any
 from aiohttp import web
 
 from bot.config import config
-from bot.creator_tariff import quote_video_for_actor, resolve_video_quote
+from bot.creator_tariff import get_actor_tariff, quote_video_for_actor, resolve_video_quote
 from bot.database import (
     add_credits,
     check_can_afford,
@@ -495,7 +495,13 @@ def estimate_trend_repeat_cost(
     try:
         if kind == "image":
             quality = str(settings.get("quality") or "basic")
-            return float(miniapp_module._resolve_image_unit_cost(model, quality))
+            return float(
+                miniapp_module._resolve_image_unit_cost(
+                    model,
+                    quality,
+                    tariff=tariff,
+                )
+            )
 
         duration = _int_setting(settings, "duration", 5)
         pricing_duration = (
@@ -763,7 +769,8 @@ async def _run_image_trend(
     _validate_uploaded_references(references, miniapp_module)
     await touch_saved_references(telegram_id, references, kind="image")
 
-    cost = estimate_trend_repeat_cost(trend)
+    tariff = await get_actor_tariff(telegram_id)
+    cost = estimate_trend_repeat_cost(trend, tariff=tariff)
     if cost is None:
         raise TrendRunValidationError("Не удалось определить стоимость фото-тренда")
     debited, debit_error = await _debit_for_generation(telegram_id, user, cost)
