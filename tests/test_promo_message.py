@@ -127,6 +127,74 @@ async def test_single_part_text_and_video_promos_keep_keyboard(
 
 
 @pytest.mark.asyncio
+async def test_single_pdf_promo_uses_document_delivery_and_keeps_keyboard():
+    source = promo(button_count=1, text="<b>PDF</b>")
+    source["parse_mode"] = "HTML"
+    source["media"] = [{"type": "pdf", "file_id": "pdf_one"}]
+    snapshot = build_message_snapshot(source, "example_bot")
+    assert snapshot["parts"] == [
+        {
+            "method": "send_document",
+            "kwargs": {
+                "document": "pdf_one",
+                "caption": "<b>PDF</b>",
+                "parse_mode": "HTML",
+                "reply_markup": {
+                    "inline_keyboard": [
+                        [
+                            {
+                                "text": "Trend 1",
+                                "url": "https://t.me/example_bot?startapp=prompt_11",
+                            }
+                        ]
+                    ]
+                },
+            },
+        }
+    ]
+
+    bot = SimpleNamespace(
+        send_document=AsyncMock(return_value=SimpleNamespace(message_id=77))
+    )
+    result = await deliver_message_snapshot(
+        bot, 123, snapshot, delivery_parts=[], save_progress=AsyncMock()
+    )
+    assert result.message_ids == [77]
+    bot.send_document.assert_awaited_once()
+
+
+def test_pdf_must_be_the_only_media_item():
+    source = promo(media_count=1)
+    source["media"].append({"type": "pdf", "file_id": "pdf_one"})
+    with pytest.raises(PromoMessageValidationError, match="PDF"):
+        normalize_message(source)
+
+    source["media"] = [
+        {"type": "pdf", "file_id": "pdf_one"},
+        {"type": "pdf", "file_id": "pdf_two"},
+    ]
+    with pytest.raises(PromoMessageValidationError, match="PDF"):
+        normalize_message(source)
+
+
+@pytest.mark.asyncio
+async def test_pdf_snapshot_is_accepted_by_actual_aiogram_method_model():
+    bot = Bot(token="123456789:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+    bot.session = AsyncMock(return_value=SimpleNamespace(message_id=1))
+    source = promo(text="PDF")
+    source["media"] = [{"type": "pdf", "file_id": "pdf_one"}]
+    snapshot = build_message_snapshot(source, "example_bot")
+
+    await deliver_message_snapshot(
+        bot, 123, snapshot, delivery_parts=[], save_progress=AsyncMock()
+    )
+
+    method = bot.session.await_args.args[1]
+    assert method.document == "pdf_one"
+    assert method.caption == "PDF"
+
+
+@pytest.mark.asyncio
 async def test_snapshot_is_accepted_by_actual_aiogram_method_models():
     bot = Bot(token="123456789:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
     bot.session = AsyncMock(
