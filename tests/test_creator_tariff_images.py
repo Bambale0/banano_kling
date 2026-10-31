@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -144,3 +146,67 @@ def test_image_trend_repeat_cost_uses_authenticated_creator_profile(
     }
     assert trend_api.estimate_trend_repeat_cost(trend, tariff="creator") == 1.5
     assert trend_api.estimate_trend_repeat_cost(trend, tariff="standard") == 5.0
+
+@pytest.mark.asyncio
+async def test_miniapp_image_launch_debits_authenticated_creator_price(
+    creator_image_prices, monkeypatch
+):
+    class Request:
+        def __init__(self):
+            self.app = {}
+            self.body = {
+                "init_data": "signed",
+                "prompt": "creator image",
+                "img_service": "banana_2",
+                "img_quality": "2K",
+                "img_ratio": "1:1",
+            }
+
+        async def json(self):
+            return self.body
+
+    user = SimpleNamespace(id=7, credits=100.0)
+    monkeypatch.setattr(
+        miniapp,
+        "_get_user_context",
+        AsyncMock(return_value=(101, {"user": user})),
+    )
+    tariff = AsyncMock(return_value="creator")
+    monkeypatch.setattr(creator_tariff_display, "get_actor_tariff", tariff)
+    monkeypatch.setattr(miniapp.config, "is_admin", lambda _telegram_id: False)
+    can_afford = AsyncMock(return_value=True)
+    debit = AsyncMock(return_value=True)
+    launch = AsyncMock(
+        return_value={
+            "status": "pending",
+            "task_id": "creator-image-test",
+            "task_type": "image",
+        }
+    )
+    monkeypatch.setattr(miniapp, "check_can_afford", can_afford)
+    monkeypatch.setattr(miniapp, "deduct_credits", debit)
+    monkeypatch.setattr(miniapp, "_start_image_generation_task_lazy", launch)
+    monkeypatch.setattr(
+        miniapp,
+        "_notify_miniapp_image_task_queued",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        miniapp,
+        "_deliver_miniapp_direct_image_result",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        miniapp,
+        "get_or_create_user",
+        AsyncMock(return_value=SimpleNamespace(credits=98.75)),
+    )
+
+    response = await miniapp.miniapp_generate_image(Request())
+
+    assert response.status == 200
+    tariff.assert_awaited_once_with(101)
+    can_afford.assert_awaited_once_with(101, 1.25)
+    debit.assert_awaited_once_with(101, 1.25)
+    assert launch.await_args.kwargs["unit_cost"] == 1.25
+
