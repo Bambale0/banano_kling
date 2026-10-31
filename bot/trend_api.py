@@ -11,7 +11,11 @@ from typing import Any
 from aiohttp import web
 
 from bot.config import config
-from bot.creator_tariff import get_actor_tariff, quote_video_for_actor, resolve_video_quote
+from bot.creator_tariff import (
+    get_actor_tariff,
+    quote_video_for_actor,
+    resolve_video_quote,
+)
 from bot.database import (
     add_credits,
     check_can_afford,
