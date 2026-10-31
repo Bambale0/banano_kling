@@ -1,3 +1,12 @@
+## 2026-10-31 — Creator image repeat pricing follow-up (#380)
+
+- Baseline: `tanyapi@e2b91bfd8cbc607088c97f0db55819f59872f964`, immediately after Creator image pricing PR #379.
+- Trigger: post-merge review found two P1 correctness gaps: legacy `nanobanana` selected the `banana_2` Creator rate although runtime generation routes it through Nano Banana Pro; Telegram image repeats reused historical `task.cost` instead of the authenticated actor's current Creator rate.
+- RED: isolated tests-only branch produced 4 expected failures: legacy alias returned 9.0 instead of Nano Banana Pro 1.25 in the synthetic config; both repeat launch handlers never called the Creator price resolver; quick-repeat confirmation also displayed the historical price.
+- Fix: `nanobanana` now normalizes to `nano-banana-pro`. Creator-supported Telegram image repeats resolve the actor tariff at confirmation/render and again at launch, use the current Creator quality rate, and preserve the historical source cost for non-Creator/unsupported legacy paths.
+- Safety: no runtime `data/price.json` write, no price value invented, no membership/provider/database change, no paid generation. Production deployment must preserve the existing dirty runtime price file.
+- Verification: exact-head CI and post-deploy read-only runtime verification are required before closing the follow-up.
+
 ## Creator image tariff: Nano Banana Pro / Nano Banana 2 / Seedream 5 Pro (2026-10-31)
 
 - Baseline: `tanyapi@0ffac9c71e4a153be3867967ea67c60b38554224`; branch `feat/creator-image-models-20261031`; PR #379.
