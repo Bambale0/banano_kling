@@ -20,11 +20,7 @@ from aiohttp import web
 from bot import creator_tariff_display
 from bot import db as db_backend
 from bot.config import config
-from bot.creator_tariff import (
-    VideoQuote,
-    quote_video_for_actor,
-    resolve_image_unit_cost as resolve_creator_image_unit_cost,
-)
+from bot.creator_tariff import VideoQuote, quote_video_for_actor
 from bot.kling4_api import catalog_entry as kling4_catalog_entry
 from bot.kling4_tariff import kling4_public_enabled
 from bot.services.runtime_http import database_error_response
@@ -535,12 +531,32 @@ def _resolve_image_unit_cost(
     *,
     tariff: str = "standard",
 ) -> float:
-    return resolve_creator_image_unit_cost(
-        img_service,
-        img_quality,
-        tariff=tariff,
-    )
+    if tariff == "creator":
+        from bot.creator_tariff import resolve_image_unit_cost
 
+        return resolve_image_unit_cost(
+            img_service,
+            img_quality,
+            tariff=tariff,
+        )
+    quality_value = str(img_quality or "").strip()
+    if img_service in ("banana_pro", "banana_2"):
+        return QUALITY_COSTS.get(
+            quality_value,
+            QUALITY_COSTS.get(
+                quality_value.upper(),
+                preset_manager.get_generation_cost(img_service),
+            ),
+        )
+    if img_service == "seedream_5_pro":
+        return SEEDREAM_5_PRO_QUALITY_COSTS.get(
+            quality_value,
+            SEEDREAM_5_PRO_QUALITY_COSTS.get(
+                quality_value.upper(),
+                preset_manager.get_generation_cost(img_service),
+            ),
+        )
+    return preset_manager.get_generation_cost(img_service)
 
 VIDEO_MODELS = (
     {
