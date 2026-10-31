@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import tempfile
@@ -11,6 +12,8 @@ from typing import Any, ClassVar
 from urllib.parse import urlparse
 
 import aiohttp
+
+logger = logging.getLogger(__name__)
 
 
 class NeironychAPIError(RuntimeError):
@@ -32,6 +35,7 @@ class SeedanceModelSpec:
 
 class NeironychSeedanceAdminService:
     API_BASE = "https://api.xn--e1aikcel5c5a.online"
+    CONTENT_DOWNLOAD_ATTEMPTS = 3
     FIXED_RATIOS = ("1:1", "16:9", "9:16", "4:3", "3:4", "21:9")
     MAX_PROMPT_BYTES = 40_000
     REFERENCE_RE = re.compile(r"@(Image|Video|Audio)\s*(\d+)", flags=re.IGNORECASE)
@@ -400,10 +404,52 @@ class NeironychSeedanceAdminService:
             self.poll_timeout_seconds if timeout_seconds is None else timeout_seconds
         )
         deadline = asyncio.get_running_loop().time() + effective_timeout
+        transient_failures = 0
         while True:
-            record = await self.get_status(request_id)
+            try:
+                record = await self.get_status(request_id)
+            except NeironychAPIError as exc:
+                if exc.status is None or not 500 <= exc.status < 600:
+                    raise
+                transient_failures += 1
+                logger.warning(
+                    "Seedance admin status poll transient failure: "
+                    "request_id=%s attempt=%s status=%s error_type=%s",
+                    request_id,
+                    transient_failures,
+                    exc.status,
+                    type(exc).__name__,
+                )
+                if asyncio.get_running_loop().time() >= deadline:
+                    raise TimeoutError(
+                        "Seedance status polling timed out after transient provider errors"
+                    ) from exc
+                await asyncio.sleep(max(0.1, effective_poll))
+                continue
+            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                transient_failures += 1
+                logger.warning(
+                    "Seedance admin status poll transient failure: "
+                    "request_id=%s attempt=%s status=network error_type=%s",
+                    request_id,
+                    transient_failures,
+                    type(exc).__name__,
+                )
+                if asyncio.get_running_loop().time() >= deadline:
+                    raise TimeoutError(
+                        "Seedance status polling timed out after transient network errors"
+                    ) from exc
+                await asyncio.sleep(max(0.1, effective_poll))
+                continue
             state = str(record.get("status") or "").lower()
             if state in {"done", "failed", "expired"}:
+                logger.info(
+                    "Seedance admin status terminal: request_id=%s status=%s "
+                    "transient_failures=%s",
+                    request_id,
+                    state,
+                    transient_failures,
+                )
                 return record
             if asyncio.get_running_loop().time() >= deadline:
                 raise TimeoutError(
@@ -423,21 +469,50 @@ class NeironychSeedanceAdminService:
             suffix=".mp4",
         )
         try:
-            async with (
-                aiohttp.ClientSession(timeout=timeout) as session,
-                session.get(
-                    f"{self.base_url}/v1/videos/{request_id}/content",
-                    headers={"Authorization": f"Bearer {self.api_key}"},
-                ) as response,
-            ):
-                if response.status >= 400:
-                    text = await response.text()
-                    raise NeironychAPIError(
-                        f"Neironych content HTTP {response.status}: {text[:500]}",
-                        status=response.status,
-                    )
-                async for chunk in response.content.iter_chunked(1024 * 1024):
-                    await asyncio.to_thread(os.write, fd, chunk)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                for attempt in range(1, self.CONTENT_DOWNLOAD_ATTEMPTS + 1):
+                    await asyncio.to_thread(os.lseek, fd, 0, os.SEEK_SET)
+                    await asyncio.to_thread(os.ftruncate, fd, 0)
+                    try:
+                        async with session.get(
+                            f"{self.base_url}/v1/videos/{request_id}/content",
+                            headers={"Authorization": f"Bearer {self.api_key}"},
+                        ) as response:
+                            if response.status >= 400:
+                                text = await response.text()
+                                error = NeironychAPIError(
+                                    f"Neironych content HTTP {response.status}: "
+                                    f"{text[:500]}",
+                                    status=response.status,
+                                )
+                                if (
+                                    500 <= response.status < 600
+                                    and attempt < self.CONTENT_DOWNLOAD_ATTEMPTS
+                                ):
+                                    logger.warning(
+                                        "Seedance admin content download transient failure: "
+                                        "request_id=%s attempt=%s status=%s",
+                                        request_id,
+                                        attempt,
+                                        response.status,
+                                    )
+                                    await asyncio.sleep(float(attempt))
+                                    continue
+                                raise error
+                            async for chunk in response.content.iter_chunked(1024 * 1024):
+                                await asyncio.to_thread(os.write, fd, chunk)
+                            break
+                    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                        if attempt >= self.CONTENT_DOWNLOAD_ATTEMPTS:
+                            raise
+                        logger.warning(
+                            "Seedance admin content download transient failure: "
+                            "request_id=%s attempt=%s status=network error_type=%s",
+                            request_id,
+                            attempt,
+                            type(exc).__name__,
+                        )
+                        await asyncio.sleep(float(attempt))
             await asyncio.to_thread(os.fsync, fd)
             os.close(fd)
             fd = -1
