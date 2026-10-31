@@ -54,8 +54,10 @@ POST /internal/admin/notifications/campaigns/{id}/cancel
 ## Telegram promo editor (schema v2)
 
 The existing Telegram admin → Рассылка entry opens saved promo drafts and history.
-Create a draft, enter text, add up to ten photos/videos, then add zero to two buttons.
-Each button has a 1–64 character label and a server-searched existing published trend.
+Create a draft, enter text, add up to ten photos/videos or one PDF document, then
+add zero to two buttons. PDF is intentionally standalone and cannot be mixed with
+photo/video media in the same promo. Each button has a 1–64 character label and a
+server-searched existing published trend.
 The selector uses the existing approved/public user_prompts model and trend tag.
 It does not create duplicate availability flags or accept arbitrary URLs.
 
@@ -63,9 +65,11 @@ Buttons open the existing prompt deep link in the Mini App; the recipient sees t
 selected trend and chooses the normal repeat action. No referral is attributed to an
 administrator or another recipient by the broadcast link.
 
-One photo/video carries its text and keyboard. Two or more files are sent as one
-album, followed by a separate text message with vertical buttons. An album requires
-promo text. Existing single-media messages without captions remain supported.
+One photo/video or one PDF carries its text and keyboard. Two or more photo/video
+files are sent as one album, followed by a separate text message with vertical buttons.
+An album requires promo text. Existing single-media messages without captions remain
+supported. PDF delivery reuses Telegram's document file_id through sendDocument, so
+the admin test and mass delivery use the same immutable snapshot/receipt path.
 Telegram albums do not accept inline keyboards.
 
 ### Test and launch
