@@ -104,12 +104,12 @@ def test_creator_image_display_is_personalized_without_mutating_shared_metadata(
         "quality_costs": {"1K": 3.0, "2K": 4.0, "4K": 5.0},
     }
     before = deepcopy(banana)
-    priced = display.price_image_model_metadata(banana, tariff="creator")
+    priced = creator_tariff_display.price_image_model_metadata(banana, tariff="creator")
     assert priced["cost"] == 1.25
     assert priced["quality_costs"] == {"1K": 1.0, "2K": 1.25, "4K": 1.5}
     assert banana == before
 
-    seedream = display.price_image_model_metadata(
+    seedream = creator_tariff_display.price_image_model_metadata(
         {
             "id": "seedream_5_pro",
             "cost": 6.0,
