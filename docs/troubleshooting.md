@@ -488,3 +488,41 @@ redis-cli -u "$REDIS_URL" ping
 ```
 
 Перед передачей файла проверить, что в нём нет secrets или персональных данных.
+
+## Seedance admin test: provider finished, but Telegram result is missing
+
+The direct `Admin → Tests → Seedance API` flow is intentionally separate from
+ordinary charged generations. It does not debit ROX and it does not create a
+normal `generation_tasks`/delivery-outbox row. The request ID is stored in the
+administrator's FSM data and an in-process poller checks
+`GET /v1/videos/{request_id}` before downloading
+`GET /v1/videos/{request_id}/content` and sending it to Telegram.
+
+Diagnose in this order:
+
+1. Find `Seedance admin test submitted` by administrator/time and retain its
+   `request_id`, model, payload hash, prompt lengths and reference counts.
+   Logs never contain the prompt or reference URLs.
+2. Follow status polling for that exact request ID. A transient provider 5xx or
+   network timeout is retryable until the configured poll deadline; it must not
+   be treated as a terminal provider result.
+3. Confirm whether the provider fetched each stored reference from the media
+   origin. A fetched URL proves transport, not that the prompt bound it. In
+   multimodal prompts, keep the corresponding `@Image N`, `@Video N` and
+   `@Audio N` instructions.
+4. The content download retries bounded transient 5xx/network failures before
+   Telegram send. Confirm `Seedance admin test delivered` or a Telegram
+   exception. Absence of both means execution stopped before the Telegram
+   boundary.
+5. Recover only with the existing request ID and the `Проверить` button. Never
+   press `Новый запуск` merely to recover delivery: that creates another paid
+   provider operation, even though application ROX are not charged.
+
+Long prompts may be sent as several Telegram messages. Each message is appended
+with a newline, the bot reports the accumulated character/UTF-8 byte count, and
+the combined prompt remains subject to the 40,000-byte provider limit. Use
+`Очистить` before sending a replacement prompt.
+
+The request ID is Redis-FSM durable, but the automatic poller is in-process and
+is not a durable delivery outbox. After a container restart, use `Проверить`
+with the preserved request ID; do not create a replacement provider operation.

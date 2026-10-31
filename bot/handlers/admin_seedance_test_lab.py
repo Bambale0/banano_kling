@@ -494,6 +494,7 @@ async def _send_result(
                 f"Модель: <code>{html.escape(model)}</code>\n"
                 f"Request ID: <code>{html.escape(request_id)}</code>"
             )
+            delivery_method = "video"
             try:
                 await bot.send_video(
                     chat_id=chat_id,
@@ -502,6 +503,7 @@ async def _send_result(
                     parse_mode="HTML",
                 )
             except TelegramAPIError:
+                delivery_method = "document"
                 await bot.send_document(
                     chat_id=chat_id,
                     document=FSInputFile(path),
@@ -509,6 +511,14 @@ async def _send_result(
                     parse_mode="HTML",
                 )
             _DELIVERED_REQUEST_IDS.add(request_id)
+            logger.info(
+                "Seedance admin test delivered: chat_id=%s request_id=%s "
+                "model=%s method=%s",
+                chat_id,
+                request_id,
+                model,
+                delivery_method,
+            )
         finally:
             Path(path).unlink(missing_ok=True)
 
@@ -517,6 +527,43 @@ def _error_text(record: dict[str, Any]) -> str:
     if isinstance(error, dict):
         error = error.get("message") or error.get("type") or json.dumps(error, ensure_ascii=False)
     return _short(error or "provider error", 600)
+
+
+async def _report_delivery_failure(
+    bot: Any,
+    chat_id: int,
+    *,
+    request_id: str,
+    model: str,
+    error: Exception,
+) -> None:
+    logger.error(
+        "Seedance admin result delivery stopped: chat_id=%s request_id=%s "
+        "model=%s error_type=%s",
+        chat_id,
+        request_id,
+        model,
+        type(error).__name__,
+    )
+    try:
+        await bot.send_message(
+            chat_id,
+            "⚠️ Результат Seedance готов, но отправка в Telegram прервалась. "
+            "Задача не перезапущена — нажмите «Проверить» с тем же Request ID.\n"
+            f"Request ID: <code>{html.escape(request_id)}</code>",
+            parse_mode="HTML",
+        )
+    # Recovery notification is the last asynchronous boundary: even an
+    # unexpected Telegram client failure must not escape as an unobserved task.
+    except Exception as notify_error:  # noqa: BLE001
+        logger.error(
+            "Seedance admin delivery recovery notice failed: chat_id=%s "
+            "request_id=%s model=%s error_type=%s",
+            chat_id,
+            request_id,
+            model,
+            type(notify_error).__name__,
+        )
 
 
 async def _poll_and_deliver(bot: Any, chat_id: int, request_id: str, model: str) -> None:
@@ -530,9 +577,37 @@ async def _poll_and_deliver(bot: Any, chat_id: int, request_id: str, model: str)
             parse_mode="HTML",
         )
         return
+    except Exception as exc:
+        logger.exception(
+            "Seedance admin status polling stopped: chat_id=%s request_id=%s "
+            "model=%s error_type=%s",
+            chat_id,
+            request_id,
+            model,
+            type(exc).__name__,
+        )
+        await bot.send_message(
+            chat_id,
+            "⚠️ Автоматическая проверка Seedance прервалась. Задача не "
+            "перезапущена — нажмите «Проверить» с тем же Request ID.\n"
+            f"Request ID: <code>{html.escape(request_id)}</code>",
+            parse_mode="HTML",
+        )
+        return
     status = str(record.get("status") or "").lower()
     if status == "done":
-        await _send_result(bot, chat_id, request_id=request_id, model=model)
+        try:
+            await _send_result(bot, chat_id, request_id=request_id, model=model)
+        # Keep an unexpected media/Telegram failure observable and retryable by
+        # the same request id instead of losing it in the background task.
+        except Exception as exc:  # noqa: BLE001
+            await _report_delivery_failure(
+                bot,
+                chat_id,
+                request_id=request_id,
+                model=model,
+                error=exc,
+            )
         return
     await bot.send_message(
         chat_id,
@@ -633,7 +708,9 @@ async def start_prompt(callback: types.CallbackQuery, state: FSMContext) -> None
     if callback.message is not None:
         await callback.message.edit_text(
             "✍️ <b>Seedance · промпт</b>\n\n"
-            "Отправьте текст промпта. Для multimodal можно использовать "
+            "Отправьте промпт одним или несколькими сообщениями — новые части "
+            "добавляются с новой строки. Чтобы заменить сохранённый текст, "
+            "сначала нажмите «Очистить». Для multimodal можно использовать "
             "@Image 1, @Video 1, @Audio 1.",
             reply_markup=_prompt_keyboard(bool(prompt)),
             parse_mode="HTML",
@@ -646,16 +723,30 @@ async def receive_prompt(message: types.Message, state: FSMContext) -> None:
     if message.from_user is None or not _is_admin(message.from_user.id):
         await state.clear()
         return
-    prompt = str(message.text or message.caption or "").strip()
-    if not prompt:
-        await message.answer("Нужен текстовый промпт.")
-        return
-    await state.update_data(seedance_admin_prompt=prompt)
-    await message.answer(
-        f"✅ Промпт сохранён: <b>{len(prompt)}</b> символов.",
-        reply_markup=_prompt_keyboard(True),
-        parse_mode="HTML",
-    )
+    async with _submit_lock(message.from_user.id):
+        prompt_part = str(message.text or message.caption or "").strip()
+        if not prompt_part:
+            await message.answer("Нужен текстовый промпт.")
+            return
+        data = await _data(state)
+        existing_prompt = str(data.get("seedance_admin_prompt") or "").strip()
+        prompt = f"{existing_prompt}\n{prompt_part}" if existing_prompt else prompt_part
+        prompt_bytes = len(prompt.encode("utf-8"))
+        if prompt_bytes > NeironychSeedanceAdminService.MAX_PROMPT_BYTES:
+            await message.answer(
+                "Часть не добавлена: общий промпт превышает "
+                f"{NeironychSeedanceAdminService.MAX_PROMPT_BYTES:,} UTF-8 байт. "
+                "Нажмите «Очистить», если хотите заменить промпт.",
+                reply_markup=_prompt_keyboard(bool(existing_prompt)),
+            )
+            return
+        await state.update_data(seedance_admin_prompt=prompt)
+        await message.answer(
+            f"✅ Часть добавлена. Промпт: <b>{len(prompt)}</b> символов "
+            f"({prompt_bytes} UTF-8 байт).",
+            reply_markup=_prompt_keyboard(True),
+            parse_mode="HTML",
+        )
 
 
 @router.callback_query(F.data == "admin_seedance_prompt_done")
@@ -672,14 +763,15 @@ async def finish_prompt(callback: types.CallbackQuery, state: FSMContext) -> Non
 async def clear_prompt(callback: types.CallbackQuery, state: FSMContext) -> None:
     if not await _require_admin(callback):
         return
-    await state.update_data(seedance_admin_prompt="")
-    await state.set_state(SeedanceAdminTestStates.prompt)
-    if callback.message is not None:
-        await callback.message.edit_text(
-            "✍️ <b>Seedance · промпт</b>\n\nПромпт очищен.",
-            reply_markup=_prompt_keyboard(False),
-            parse_mode="HTML",
-        )
+    async with _submit_lock(callback.from_user.id):
+        await state.update_data(seedance_admin_prompt="")
+        await state.set_state(SeedanceAdminTestStates.prompt)
+        if callback.message is not None:
+            await callback.message.edit_text(
+                "✍️ <b>Seedance · промпт</b>\n\nПромпт очищен.",
+                reply_markup=_prompt_keyboard(False),
+                parse_mode="HTML",
+            )
     await callback.answer("Очищено")
 
 
@@ -724,53 +816,54 @@ async def receive_reference(message: types.Message, state: FSMContext) -> None:
     if message.from_user is None or not _is_admin(message.from_user.id):
         await state.clear()
         return
-    data = await _normalize_state(state)
-    model = str(data["seedance_admin_model"])
-    mode = str(data["seedance_admin_mode"])
-    refs = list(data.get("seedance_admin_references") or [])
-    extracted = _extract_media(message)
-    if extracted is None:
-        await message.answer(
-            "Отправьте JPEG/PNG, MP4/MOV или WAV/MP3.",
-            reply_markup=_refs_keyboard(len(refs)),
-        )
-        return
-    kind = extracted[0]
-    has_edit_source = any(item.get("kind") == "video" for item in refs)
-    if mode == "edit" and not has_edit_source and kind != "video":
-        await message.answer(
-            "Сначала отправьте исходный MP4/MOV — он будет @Video 1 и edit-source.",
-            reply_markup=_refs_keyboard(len(refs)),
-        )
-        return
+    async with _submit_lock(message.from_user.id):
+        data = await _normalize_state(state)
+        model = str(data["seedance_admin_model"])
+        mode = str(data["seedance_admin_mode"])
+        refs = list(data.get("seedance_admin_references") or [])
+        extracted = _extract_media(message)
+        if extracted is None:
+            await message.answer(
+                "Отправьте JPEG/PNG, MP4/MOV или WAV/MP3.",
+                reply_markup=_refs_keyboard(len(refs)),
+            )
+            return
+        kind = extracted[0]
+        has_edit_source = any(item.get("kind") == "video" for item in refs)
+        if mode == "edit" and not has_edit_source and kind != "video":
+            await message.answer(
+                "Сначала отправьте исходный MP4/MOV — он будет @Video 1 и edit-source.",
+                reply_markup=_refs_keyboard(len(refs)),
+            )
+            return
 
-    slot_error = _validate_reference_slot(model=model, refs=refs, new_kind=kind)
-    if slot_error:
-        await message.answer(slot_error, reply_markup=_refs_keyboard(len(refs)))
-        return
+        slot_error = _validate_reference_slot(model=model, refs=refs, new_kind=kind)
+        if slot_error:
+            await message.answer(slot_error, reply_markup=_refs_keyboard(len(refs)))
+            return
 
-    item, error = await _save_media_reference(
-        message,
-        model=model,
-    )
-    if error or item is None:
-        await message.answer(
-            error or "Не удалось сохранить референс.",
-            reply_markup=_refs_keyboard(len(refs)),
+        item, error = await _save_media_reference(
+            message,
+            model=model,
         )
-        return
-    if not any(str(existing.get("url")) == item["url"] for existing in refs):
-        refs.append(item)
-    await state.update_data(seedance_admin_references=refs)
-    counts = _reference_counts(refs)
-    await message.answer(
-        (
-            f"✅ Добавлено. Всего <b>{len(refs)}</b>: "
-            f"🖼 {counts['image']} · 🎞 {counts['video']} · 🎵 {counts['audio']}"
-        ),
-        reply_markup=_refs_keyboard(len(refs)),
-        parse_mode="HTML",
-    )
+        if error or item is None:
+            await message.answer(
+                error or "Не удалось сохранить референс.",
+                reply_markup=_refs_keyboard(len(refs)),
+            )
+            return
+        if not any(str(existing.get("url")) == item["url"] for existing in refs):
+            refs.append(item)
+        await state.update_data(seedance_admin_references=refs)
+        counts = _reference_counts(refs)
+        await message.answer(
+            (
+                f"✅ Добавлено. Всего <b>{len(refs)}</b>: "
+                f"🖼 {counts['image']} · 🎞 {counts['video']} · 🎵 {counts['audio']}"
+            ),
+            reply_markup=_refs_keyboard(len(refs)),
+            parse_mode="HTML",
+        )
 
 
 @router.callback_query(F.data == "admin_seedance_refs_done")
@@ -787,14 +880,15 @@ async def finish_refs(callback: types.CallbackQuery, state: FSMContext) -> None:
 async def clear_refs(callback: types.CallbackQuery, state: FSMContext) -> None:
     if not await _require_admin(callback):
         return
-    await state.update_data(seedance_admin_references=[])
-    await state.set_state(SeedanceAdminTestStates.references)
-    if callback.message is not None:
-        await callback.message.edit_text(
-            "📎 <b>Seedance · референсы</b>\n\nОчищено.",
-            reply_markup=_refs_keyboard(0),
-            parse_mode="HTML",
-        )
+    async with _submit_lock(callback.from_user.id):
+        await state.update_data(seedance_admin_references=[])
+        await state.set_state(SeedanceAdminTestStates.references)
+        if callback.message is not None:
+            await callback.message.edit_text(
+                "📎 <b>Seedance · референсы</b>\n\nОчищено.",
+                reply_markup=_refs_keyboard(0),
+                parse_mode="HTML",
+            )
     await callback.answer("Очищено")
 
 
@@ -1124,6 +1218,22 @@ async def generate_seedance(callback: types.CallbackQuery, state: FSMContext) ->
             seedance_admin_pending_key="",
             seedance_admin_pending_payload_hash="",
         )
+        counts = _reference_counts(list(data.get("seedance_admin_references") or []))
+        prompt = str(data.get("seedance_admin_prompt") or "")
+        logger.info(
+            "Seedance admin test submitted: admin_id=%s request_id=%s model=%s "
+            "payload_hash=%s prompt_chars=%s prompt_bytes=%s image_refs=%s "
+            "video_refs=%s audio_refs=%s",
+            callback.from_user.id,
+            request_id,
+            model,
+            payload_hash,
+            len(prompt),
+            len(prompt.encode("utf-8")),
+            counts["image"],
+            counts["video"],
+            counts["audio"],
+        )
         await callback.message.edit_text(
             "⏳ <b>Seedance admin test запущен</b>\n\n"
             f"Модель: <code>{html.escape(model)}</code>\n"
@@ -1188,7 +1298,23 @@ async def check_seedance(callback: types.CallbackQuery, state: FSMContext) -> No
                 reply_markup=_task_keyboard(),
                 parse_mode="HTML",
             )
-        await _send_result(callback.bot, callback.from_user.id, request_id=request_id, model=model)
+        try:
+            await _send_result(
+                callback.bot,
+                callback.from_user.id,
+                request_id=request_id,
+                model=model,
+            )
+        # Manual recovery has the same delivery boundary as the background
+        # poller and must preserve the already-paid provider request.
+        except Exception as exc:  # noqa: BLE001
+            await _report_delivery_failure(
+                callback.bot,
+                callback.from_user.id,
+                request_id=request_id,
+                model=model,
+                error=exc,
+            )
         return
 
     if status in {"failed", "expired"}:
