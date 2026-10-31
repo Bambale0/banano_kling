@@ -23,12 +23,7 @@ from PIL import Image, ImageOps
 
 from bot import db as db_backend
 from bot.config import config
-from bot.creator_tariff import (
-    VideoQuote,
-    get_actor_tariff,
-    quote_video_for_actor,
-    resolve_image_unit_cost as resolve_creator_image_unit_cost,
-)
+from bot.creator_tariff import VideoQuote, get_actor_tariff, quote_video_for_actor
 from bot.database import (
     _merge_task_id_aliases,
     add_credits,
@@ -80,6 +75,7 @@ from bot.keyboards import (
 )
 from bot.miniapp_links import feed_bot_link, feed_link
 from bot.partner_policy import generation_partner_snapshot, mark_generation_accepted
+from bot.quality_pricing import QUALITY_COSTS, SEEDREAM_5_PRO_QUALITY_COSTS
 from bot.services.gemini_omni_service import gemini_omni_service
 from bot.services.gemini_service import gemini_service
 from bot.services.gpt_image_service import gpt_image_service
@@ -1249,11 +1245,30 @@ def _resolve_image_unit_cost(
     *,
     tariff: str = "standard",
 ) -> float:
-    return resolve_creator_image_unit_cost(
-        img_service,
-        img_quality,
-        tariff=tariff,
-    )
+    if tariff == "creator":
+        from bot.creator_tariff import resolve_image_unit_cost
+
+        return resolve_image_unit_cost(
+            img_service,
+            img_quality,
+            tariff=tariff,
+        )
+    quality_value = str(img_quality or "").strip()
+    quality_upper = quality_value.upper()
+    if img_service in {
+        "banana_pro",
+        "nano_banana_pro",
+        "nano-banana-pro",
+        "banana_2",
+        "nanobanana",
+    }:
+        return QUALITY_COSTS.get(quality_upper, 2)
+    if img_service == "seedream_5_pro":
+        return SEEDREAM_5_PRO_QUALITY_COSTS.get(
+            quality_value,
+            SEEDREAM_5_PRO_QUALITY_COSTS.get(quality_upper, 2),
+        )
+    return preset_manager.get_generation_cost(img_service)
 
 
 async def _start_image_generation_task(
