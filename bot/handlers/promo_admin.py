@@ -100,6 +100,20 @@ def _ready(promo):
     )
 
 
+def _media_label(item):
+    return {"photo": "Фото", "video": "Видео", "pdf": "PDF"}.get(
+        item.get("type"), "Файл"
+    )
+
+
+def _is_pdf_document(document):
+    if document is None:
+        return False
+    mime_type = str(getattr(document, "mime_type", "") or "").lower()
+    file_name = str(getattr(document, "file_name", "") or "").lower()
+    return mime_type == "application/pdf" or file_name.endswith(".pdf")
+
+
 async def _authorized(event):
     if event.from_user and config.is_admin(event.from_user.id):
         return True
@@ -142,10 +156,15 @@ def _summary(promo):
         f"📢 <b>Промо #{promo['id']}</b> · версия {promo['revision']}",
         f"Статус: <b>{_status(promo['status'])}</b>",
         f"Формат: {'HTML' if message.get('parse_mode') else 'обычный текст'}",
-        f"Медиа: {len(media)}/10 · фото {sum(m['type'] == 'photo' for m in media)}, видео {sum(m['type'] == 'video' for m in media)}",
+        (
+            f"Медиа: {len(media)}/10 · фото "
+            f"{sum(m['type'] == 'photo' for m in media)}, "
+            f"видео {sum(m['type'] == 'video' for m in media)}, "
+            f"PDF {sum(m['type'] == 'pdf' for m in media)}"
+        ),
     ]
     for index, item in enumerate(media):
-        rows.append(f"  {index + 1}. {'Фото' if item['type'] == 'photo' else 'Видео'}")
+        rows.append(f"  {index + 1}. {_media_label(item)}")
     rows.append(f"Кнопки: {len(message.get('buttons') or [])}/2 (вертикально)")
     for button in message.get("buttons") or []:
         trend_id = button["trend_id"]
@@ -244,7 +263,12 @@ async def _input(event, state, promo, kind, prompt, **values):
 def _media_rows(promo, token):
     rows = []
     for index, item in enumerate(promo["message"].get("media") or []):
-        row = [_button(f"Удалить {index + 1} ({'фото' if item['type'] == 'photo' else 'видео'})", _cb("remove", promo, token, index))]
+        row = [
+            _button(
+                f"Удалить {index + 1} ({_media_label(item).lower()})",
+                _cb("remove", promo, token, index),
+            )
+        ]
         if index:
             row.append(_button("↑", _cb("up", promo, token, index)))
         rows.append(row)
@@ -255,7 +279,15 @@ def _media_rows(promo, token):
 async def _media_view(event, state, promo):
     token = secrets.token_hex(4)
     await state.update_data(promo_revision=promo["revision"], promo_token=token)
-    await _present(event, f"🖼 Медиа сохранены: {len(promo['message'].get('media') or [])}/10\n\nОтправьте фото, видео или альбом. Порядок альбома сохраняется. Когда все файлы появятся здесь, нажмите «Готово» в последнем сообщении. Тест и рассылка сами не запускаются.", _keyboard(_media_rows(promo, token)))
+    await _present(
+        event,
+        f"🖼 Медиа сохранены: {len(promo['message'].get('media') or [])}/10\n\n"
+        "Отправьте фото, видео, альбом или один PDF. PDF должен быть единственным "
+        "вложением. Порядок фото/видео в альбоме сохраняется. Когда все файлы "
+        "появятся здесь, нажмите «Готово» в последнем сообщении. Тест и рассылка "
+        "сами не запускаются.",
+        _keyboard(_media_rows(promo, token)),
+    )
 
 
 async def _buttons_view(event, state, promo):
@@ -364,7 +396,20 @@ async def _dispatch(callback, state):
             message["parse_mode"] = None if message.get("parse_mode") else "HTML"
         await _view(callback, state, await _save(promo, admin_id, message))
     elif action == "media":
-        await _input(callback, state, promo, "media", "🖼 Отправьте до 10 фото/видео, в том числе альбомом. Каждый файл сохраняется в черновик. Подпись первого файла добавится, если текст пустой.\n\nДождитесь всех файлов и нажмите «Готово» в последнем сообщении. Не нужно отправлять альбом повторно.", promo_media_base=message.get("media") or [], promo_media_entries=[], promo_media_groups=[])
+        await _input(
+            callback,
+            state,
+            promo,
+            "media",
+            "🖼 Отправьте до 10 фото/видео, в том числе альбомом, или один PDF. "
+            "PDF должен быть единственным вложением. Каждый файл сохраняется в "
+            "черновик. Подпись первого файла добавится, если текст пустой.\n\n"
+            "Дождитесь всех файлов и нажмите «Готово» в последнем сообщении. "
+            "Не нужно отправлять альбом повторно.",
+            promo_media_base=message.get("media") or [],
+            promo_media_entries=[],
+            promo_media_groups=[],
+        )
     elif action in {"remove", "up"}:
         index = int(parts[5])
         if index < 0 or index >= len(message["media"]) or (action == "up" and index == 0):
@@ -489,15 +534,40 @@ async def _receive(message, state):
         group = str(message.media_group_id or "")
         if group and group in data.get("promo_closed_groups", []):
             raise ValueError("closed album")
+        document = getattr(message, "document", None)
         if message.photo:
             item = {"type": "photo", "file_id": message.photo[-1].file_id}
         elif message.video:
             item = {"type": "video", "file_id": message.video.file_id}
+        elif document:
+            if not _is_pdf_document(document):
+                await message.answer(
+                    "Здесь принимаются фото, видео и PDF. Другие документы "
+                    "для рассылки не поддерживаются."
+                )
+                return
+            item = {"type": "pdf", "file_id": document.file_id}
         else:
-            await message.answer("Здесь принимаются только фото и видео. Для текста нажмите «Готово», затем «Текст».")
+            await message.answer(
+                "Здесь принимаются фото, видео и PDF. Для текста нажмите "
+                "«Готово», затем «Текст»."
+            )
             return
-        if len(content.get("media") or []) >= 10:
-            await message.answer("Уже сохранено 10 файлов. Удалите лишний перед добавлением нового.")
+
+        existing_media = content.get("media") or []
+        has_pdf = any(media_item.get("type") == "pdf" for media_item in existing_media)
+        if (item["type"] == "pdf" and existing_media) or (
+            item["type"] != "pdf" and has_pdf
+        ):
+            await message.answer(
+                "PDF должен быть единственным вложением. Удалите сохранённые "
+                "медиа и добавьте PDF отдельно."
+            )
+            return
+        if len(existing_media) >= 10:
+            await message.answer(
+                "Уже сохранено 10 файлов. Удалите лишний перед добавлением нового."
+            )
             return
         entries = list(data.get("promo_media_entries", []))
         entries.append({"message_id": message.message_id, "item": item, "caption": _message_text(message, content.get("parse_mode"), caption=True)})
