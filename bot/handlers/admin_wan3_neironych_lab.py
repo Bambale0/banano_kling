@@ -182,7 +182,7 @@ def _track(coro: Any) -> None:
             completed.result()
         except asyncio.CancelledError:
             pass
-        except Exception:  # noqa: BLE001 - callback recovery boundary
+        except Exception:
             logger.exception("WAN3 admin background check failed")
     task.add_done_callback(done)
 
