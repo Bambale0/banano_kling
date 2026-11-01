@@ -166,3 +166,14 @@ async def test_unknown_submission_blocks_changed_payload_and_key_reset(monkeypat
     await lab.new_request(cb, state)
     assert state.data["wan_lab_pending_key"] == retained
     provider.get_status.assert_not_awaited()
+
+@pytest.mark.parametrize("kind", ["video", "audio"])
+def test_wan_lab_rejects_aggregate_reference_length_above_provider_cap(kind):
+    refs = [
+        {"kind": kind, "url": f"https://media.example.org/{i}.mp4", "duration": 9}
+        for i in range(2)
+    ]
+    data = {**lab._defaults(), "wan_lab_mode": "reference",
+            "wan_lab_prompt": "A calm sunrise", "wan_lab_references": refs}
+    with pytest.raises(ValueError, match="15"):
+        lab._payload(data)
