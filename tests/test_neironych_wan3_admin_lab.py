@@ -145,3 +145,24 @@ async def test_admin_ratio_buttons_round_trip_full_value(monkeypatch, ratio):
     await lab.set_option(cb, state)
     assert state.data["wan_lab_ratio"] == ratio
     cb.answer.assert_awaited_once_with()
+
+async def test_unknown_submission_blocks_changed_payload_and_key_reset(monkeypatch):
+    cb = callback()
+    state = DummyState({"wan_lab_prompt": "Original prompt"})
+    provider = SimpleNamespace(
+        enabled=True, list_enabled_wan_models=AsyncMock(return_value={"wan-3"}),
+        submit=AsyncMock(side_effect=TimeoutError("uncertain acceptance")),
+        get_status=AsyncMock(),
+    )
+    monkeypatch.setattr(lab.config, "is_admin", lambda _tid: True)
+    monkeypatch.setattr(lab, "neironych_wan3_admin_service", provider)
+    await lab.generate(cb, state)
+    retained = state.data["wan_lab_pending_key"]
+    assert retained
+    await state.update_data(wan_lab_prompt="A different new request")
+    await lab.generate(cb, state)
+    assert provider.submit.await_count == 1
+    assert state.data["wan_lab_pending_key"] == retained
+    await lab.new_request(cb, state)
+    assert state.data["wan_lab_pending_key"] == retained
+    provider.get_status.assert_not_awaited()
