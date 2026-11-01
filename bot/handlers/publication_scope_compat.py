@@ -901,7 +901,7 @@ async def _miniapp_generation_share_scoped(module, request):
             body.get("start_param_fallback"),
         )
         user_id = ctx["user"].id
-        owner_detail = await module._fetch_task_detail(telegram_id, str(gen_id or ""))
+        owner_task = None
         pending_repeat_fields = None
         if "repeat_user_fields" in body:
             if scope in {"private", "none", "hidden"}:
@@ -914,12 +914,12 @@ async def _miniapp_generation_share_scoped(module, request):
                     {"ok": False, "error": "Настройка параметров повтора пока доступна только администраторам"},
                     status=403,
                 )
-            if not owner_detail:
+            owner_task = await database.get_generation_task_payload(gen_id, user_id=user_id)
+            if not owner_task:
                 return module.web.json_response(
                     {"ok": False, "error": "Задача не найдена"}, status=404,
                 )
-            source_task = await module.get_generation_task_payload(owner_detail["feed_id"])
-            source_prompt = str((source_task or {}).get("prompt") or "").strip()
+            source_prompt = str(owner_task.get("prompt") or "").strip()
             if not source_prompt:
                 return module.web.json_response(
                     {"ok": False, "error": "У исходной генерации нет prompt"}, status=400,
@@ -927,7 +927,7 @@ async def _miniapp_generation_share_scoped(module, request):
             pending_repeat_fields = module.normalize_repeat_fields(
                 body.get("repeat_user_fields"), prompt=source_prompt,
             )
-            generation_id = int(owner_detail["feed_id"])
+            generation_id = int(owner_task["id"])
             if pending_repeat_fields:
                 write_token, previous_fields = await module.save_repeat_fields(
                     generation_id,
@@ -988,8 +988,12 @@ async def _miniapp_generation_share_scoped(module, request):
             )
 
         if scope in {"private", "none", "hidden"}:
-            if owner_detail:
-                generation_id = int(owner_detail["feed_id"])
+            owner_task = owner_task or await database.get_generation_task_payload(
+                gen_id,
+                user_id=user_id,
+            )
+            if owner_task:
+                generation_id = int(owner_task["id"])
                 write_token, previous_fields = await module.clear_repeat_fields(
                     generation_id,
                     actor_telegram_id=telegram_id,

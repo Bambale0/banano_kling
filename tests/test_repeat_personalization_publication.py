@@ -27,9 +27,7 @@ async def test_failed_publication_restores_previous_personalization(monkeypatch)
         _payload_bool=lambda value, default=False: bool(value) if value is not None else default,
         _optional_reference_indices=lambda *_args: None,
         _get_user_context=AsyncMock(return_value=(123456, {"user": SimpleNamespace(id=7)})),
-        _fetch_task_detail=AsyncMock(return_value={"feed_id": 42}),
         _repeat_personalization_allowed=lambda _actor: True,
-        get_generation_task_payload=AsyncMock(return_value={"prompt": "blue coat and chocolate cake"}),
         normalize_repeat_fields=lambda *_args, **_kwargs: pending,
         get_repeat_fields=AsyncMock(return_value=previous),
         save_repeat_fields=save,
@@ -40,6 +38,11 @@ async def test_failed_publication_restores_previous_personalization(monkeypatch)
         web=web,
     )
     monkeypatch.setattr(subject, "share_to_feed_scoped", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        subject.database,
+        "get_generation_task_payload",
+        AsyncMock(return_value={"id": 42, "prompt": "blue coat and chocolate cake"}),
+    )
     monkeypatch.setattr(subject, "_invalidate_publication_caches", lambda: None)
     request = SimpleNamespace(app={})
 
@@ -65,7 +68,6 @@ async def test_unpublish_clears_personalization_even_when_preview_flag_is_off(mo
         _payload_bool=lambda value, default=False: bool(value) if value is not None else default,
         _optional_reference_indices=lambda *_args: None,
         _get_user_context=AsyncMock(return_value=(123456, {"user": SimpleNamespace(id=7)})),
-        _fetch_task_detail=AsyncMock(return_value={"feed_id": 42}),
         repeat_personalization_preview_enabled=lambda: False,
         get_repeat_fields=AsyncMock(return_value=previous),
         clear_repeat_fields=clear,
@@ -73,6 +75,11 @@ async def test_unpublish_clears_personalization_even_when_preview_flag_is_off(mo
         web=web,
     )
     monkeypatch.setattr(subject, "remove_publication", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        subject.database,
+        "get_generation_task_payload",
+        AsyncMock(return_value={"id": 42}),
+    )
     monkeypatch.setattr(subject, "_invalidate_publication_caches", lambda: None)
 
     response = await subject._miniapp_generation_share_scoped(module, SimpleNamespace(app={}))
