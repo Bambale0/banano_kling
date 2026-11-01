@@ -99,7 +99,7 @@ async def run(evidence_path: Path) -> None:
                     record["provider_request_id"] = route["request_id"]
                     if state == "success":
                         url = json.loads(data["resultJson"])["resultUrls"][0]
-                        target = Path("static/uploads") / url.rsplit("/", 1)[-1]
+                        target = Path("static/uploads") / url.split("/uploads/", 1)[1]
                         assert target.stat().st_size > 1000
                         record["bytes"] = target.stat().st_size
                         record["sha256"] = hashlib.sha256(

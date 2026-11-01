@@ -2856,3 +2856,5 @@ Baseline 024525ea831010ef9e7b88c7f8fc9dd158fea7c4. Production exact image revisi
 - Safety: the public repeat flow remains unchanged, the preview still requires both the feature flag and server-side administrator identity, and the follow-up performs no paid generation or data backfill.
 
 - Exact-head CI exposed legacy refund fixture schemas without model. Removed the unnecessary model-column dependency from the locked watchdog RETURNING; guards now match the route by task_id. The original runtime PostgreSQL matrix is rerun unchanged. Added the new 20-test native PostgreSQL fallback suite to runtime-postgres CI and its path triggers.
+
+- Automated review corrections: durable result directory excluded from real 24h cleanup (tested with aged private output); provider status/download exceptions isolated as unresolved so later KIE rows continue; terminal primary payloads retired; primary GET memoized per status lookup. New review regressions reproduced RED, then routing suite 26 passed on SQLite and PostgreSQL.

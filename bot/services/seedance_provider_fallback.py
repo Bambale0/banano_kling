@@ -14,6 +14,8 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+import aiohttp
+
 from bot import db as db_backend
 from bot.config import config
 from bot.services.neironych_seedance_admin_service import (
@@ -82,6 +84,15 @@ async def _update(task_id: str, **fields: Any) -> None:
             + ", ".join(f"{key} = ?" for key in fields)
             + " WHERE task_id = ?",
             (*fields.values(), task_id),
+        )
+        await db.commit()
+
+
+async def _retire_primary(task_id: str) -> None:
+    async with db_backend.connect() as db:
+        await db.execute(
+            "DELETE FROM seedance_provider_routes WHERE task_id = ? AND phase = 'primary'",
+            (task_id,),
         )
         await db.commit()
 
@@ -311,17 +322,25 @@ async def resolve_seedance_status(
         if not isinstance(data, dict) or data.get("taskId") != task_id:
             return None
         state = str(data.get("state") or data.get("status") or "").lower()
-        if state not in FAILURES or not enabled():
+        if state in {"success", "completed", "done", "succeeded", "finished"}:
+            await _retire_primary(task_id)
+            return data
+        if state not in FAILURES:
+            return data
+        if not enabled():
+            await _retire_primary(task_id)
             return data
         # A terminal authenticated provider record proves no active primary
         # generation remains. The exact stored media/controls are reused.
         try:
             _payload(json.loads(route["payload"]))
         except ValueError:
+            await _retire_primary(task_id)
             return data
         await _submit_fallback(task_id)
         route = await _load(task_id)
         if route["phase"] == "primary":
+            await _retire_primary(task_id)
             return data
     if route["phase"] in {"ready", "submitting"}:
         await _submit_fallback(task_id)
@@ -332,41 +351,63 @@ async def resolve_seedance_status(
         return _record(route, "success", url=route["result_url"])
     if not route.get("request_id"):
         return _record(route, "generating")
-    record = await neironych_seedance_admin_service.get_status(route["request_id"])
-    state = str(record.get("status") or "").lower()
-    if state in {"failed", "expired"}:
-        await _update(task_id, phase="failed", failure_code="neironych_" + state)
-        return _record(route, "fail", code="neironych_" + state)
-    if state != "done":
+    try:
+        record = await neironych_seedance_admin_service.get_status(route["request_id"])
+        state = str(record.get("status") or "").lower()
+        if state in {"failed", "expired"}:
+            await _update(task_id, phase="failed", failure_code="neironych_" + state)
+            return _record(route, "fail", code="neironych_" + state)
+        if state != "done":
+            return _record(route, "generating")
+        source = await neironych_seedance_admin_service.download_to_temp(
+            route["request_id"]
+        )
+        safe_id = hashlib.sha256(route["request_id"].encode()).hexdigest()
+        filename = "seedance-fallback-" + safe_id + ".mp4"
+        target = Path("static/uploads/seedance_fallback") / filename
+
+        def persist() -> None:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            temp = target.with_name(target.name + "." + uuid.uuid4().hex + ".part")
+            try:
+                shutil.copyfile(source, temp)
+                if temp.stat().st_size == 0:
+                    raise ValueError("Neironych returned empty video content")
+                os.replace(temp, target)
+            finally:
+                temp.unlink(missing_ok=True)
+                Path(source).unlink(missing_ok=True)
+
+        await asyncio.to_thread(persist)
+        url = config.static_base_url + "/uploads/seedance_fallback/" + filename
+        await _update(
+            task_id,
+            result_url=url,
+            phase="completed",
+            fallback_payload=None,
+            payload=json.dumps({"model": json.loads(route["payload"])["model"]}),
+        )
+        logger.info(
+            "Seedance fallback result stored: task_id=%s request_id=%s",
+            task_id,
+            route["request_id"],
+        )
+        return _record(route, "success", url=url)
+    except (
+        NeironychAPIError,
+        aiohttp.ClientError,
+        OSError,
+        TimeoutError,
+        ValueError,
+    ) as exc:
+        logger.warning(
+            "Seedance fallback result unresolved: task_id=%s request_id=%s error_type=%s status=%s",
+            task_id,
+            route["request_id"],
+            type(exc).__name__,
+            getattr(exc, "status", None),
+        )
         return _record(route, "generating")
-    source = await neironych_seedance_admin_service.download_to_temp(
-        route["request_id"]
-    )
-    safe_id = hashlib.sha256(route["request_id"].encode()).hexdigest()
-    filename = "seedance-fallback-" + safe_id + ".mp4"
-    target = Path("static/uploads") / filename
-
-    def persist() -> None:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        temp = target.with_name(target.name + "." + uuid.uuid4().hex + ".part")
-        try:
-            shutil.copyfile(source, temp)
-            if temp.stat().st_size == 0:
-                raise ValueError("Neironych returned empty video content")
-            os.replace(temp, target)
-        finally:
-            temp.unlink(missing_ok=True)
-            Path(source).unlink(missing_ok=True)
-
-    await asyncio.to_thread(persist)
-    url = config.static_base_url + "/uploads/" + filename
-    await _update(task_id, result_url=url)
-    logger.info(
-        "Seedance fallback result stored: task_id=%s request_id=%s",
-        task_id,
-        route["request_id"],
-    )
-    return _record(route, "success", url=url)
 
 
 async def has_unresolved_fallback(task_id: str) -> bool:

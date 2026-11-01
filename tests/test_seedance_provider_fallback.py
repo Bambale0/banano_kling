@@ -240,9 +240,11 @@ async def test_completed_fallback_becomes_persistent_public_result(
     assert record["state"] == "success"
     name = "seedance-fallback-" + hashlib.sha256(b"nr-result").hexdigest() + ".mp4"
     assert json.loads(record["resultJson"])["resultUrls"][0].endswith(
-        "/uploads/" + name
+        "/uploads/seedance_fallback/" + name
     )
-    assert (tmp_path / "static/uploads" / name).read_bytes() == b"synthetic-video"
+    assert (
+        tmp_path / "static/uploads/seedance_fallback" / name
+    ).read_bytes() == b"synthetic-video"
     client.reset_mock()
     assert await resolve_seedance_status(result["task_id"], AsyncMock()) == record
     client.get_status.assert_not_awaited()
@@ -506,3 +508,174 @@ async def test_watchdog_recognizes_terminal_fallback_failure_immediately(monkeyp
         == "failed"
     )
     assert await task_watchdog.force_fail_task(1, 42, 0) is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [401, 404, 502])
+async def test_fallback_poll_outage_is_unresolved_and_does_not_abort_other_rows(
+    monkeypatch, status
+):
+    from bot.services import seedance_provider_fallback as fallback
+    from bot.services.kie_market_service import KieMarketService
+
+    client = AsyncMock()
+    client.enabled = True
+    client.timeout_seconds = 120
+    client.submit.return_value = {"request_id": "poll-outage"}
+    client.get_status.side_effect = fallback.NeironychAPIError(
+        "synthetic status error", status=status
+    )
+    monkeypatch.setattr(fallback, "neironych_seedance_admin_service", client)
+    payload = {
+        "model": "bytedance/seedance-2-5",
+        "input": {
+            "prompt": "boat",
+            "duration": 4,
+            "resolution": "480p",
+            "aspect_ratio": "16:9",
+        },
+    }
+    result = await _submit_and_attach(
+        payload, AsyncMock(return_value={"error": "api_error", "status_code": 402})
+    )
+    market = KieMarketService(api_key="synthetic")
+    monkeypatch.setattr(
+        market,
+        "_get_json",
+        AsyncMock(
+            return_value={
+                "code": 200,
+                "data": {"taskId": "later-kie", "state": "success"},
+            }
+        ),
+    )
+    assert (await market.get_task_status(result["task_id"]))["state"] == "generating"
+    assert (await market.get_task_status("later-kie"))["state"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_failed_primary_poll_does_not_repeat_http_get(monkeypatch):
+    from bot.services import seedance_provider_fallback as fallback
+    from bot.services.kie_market_service import KieMarketService
+
+    client = AsyncMock()
+    client.enabled = True
+    monkeypatch.setattr(fallback, "neironych_seedance_admin_service", client)
+    payload = {
+        "model": "bytedance/seedance-2",
+        "input": {
+            "prompt": "boat",
+            "duration": 4,
+            "resolution": "480p",
+            "aspect_ratio": "16:9",
+        },
+    }
+    await _submit_and_attach(
+        payload, AsyncMock(return_value={"task_id": "rate-limited-kie"})
+    )
+    market = KieMarketService(api_key="synthetic")
+    request = AsyncMock(return_value={"code": 429, "msg": "rate limited"})
+    monkeypatch.setattr(market, "_get_json", request)
+    assert await market.get_task_status("rate-limited-kie") is None
+    assert request.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_successful_primary_retires_private_fallback_payload(monkeypatch):
+    from bot.services import seedance_provider_fallback as fallback
+
+    client = AsyncMock()
+    client.enabled = True
+    monkeypatch.setattr(fallback, "neironych_seedance_admin_service", client)
+    payload = {
+        "model": "bytedance/seedance-2",
+        "input": {
+            "prompt": "private boat",
+            "duration": 4,
+            "resolution": "480p",
+            "aspect_ratio": "16:9",
+        },
+    }
+    await _submit_and_attach(payload, AsyncMock(return_value={"task_id": "done-kie"}))
+    record = {
+        "taskId": "done-kie",
+        "state": "success",
+        "resultJson": '{"resultUrls":["https://example.org/video.mp4"]}',
+    }
+    assert (
+        await resolve_seedance_status(
+            "done-kie", AsyncMock(return_value={"code": 200, "data": record})
+        )
+        == record
+    )
+    async with db.connect() as conn:
+        row = await (
+            await conn.execute(
+                "SELECT COUNT(*) FROM seedance_provider_routes WHERE task_id = 'done-kie'"
+            )
+        ).fetchone()
+    assert row[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_private_fallback_video_survives_real_upload_cleanup(
+    monkeypatch, tmp_path
+):
+    import ast
+    import logging
+    import time
+
+    from bot.services import seedance_provider_fallback as fallback
+
+    client = AsyncMock()
+    client.enabled = True
+    client.timeout_seconds = 120
+    client.submit.return_value = {"request_id": "durable-private-video"}
+    client.get_status.return_value = {"status": "done"}
+    source = tmp_path / "provider.mp4"
+    source.write_bytes(b"synthetic-private-video")
+    client.download_to_temp.return_value = str(source)
+    monkeypatch.setattr(fallback, "neironych_seedance_admin_service", client)
+    monkeypatch.chdir(tmp_path)
+    payload = {
+        "model": "bytedance/seedance-2",
+        "input": {
+            "prompt": "boat",
+            "duration": 4,
+            "resolution": "480p",
+            "aspect_ratio": "16:9",
+        },
+    }
+    result = await _submit_and_attach(
+        payload, AsyncMock(return_value={"error": "api_error", "status_code": 402})
+    )
+    record = await resolve_seedance_status(result["task_id"], AsyncMock())
+    url = json.loads(record["resultJson"])["resultUrls"][0]
+    local = Path("static/uploads") / url.split("/uploads/", 1)[1]
+    os.utime(local, (0, 0))
+    tree = ast.parse((Path(__file__).resolve().parents[1] / "bot/main.py").read_text())
+    cleanup = next(
+        n for n in tree.body if getattr(n, "name", "") == "_remove_old_files"
+    )
+    loop = next(n for n in tree.body if getattr(n, "name", "") == "_cleanup_loop")
+    call = next(
+        n
+        for n in ast.walk(loop)
+        if isinstance(n, ast.Call)
+        and getattr(n.func, "id", "") == "_remove_old_files"
+        and n.args
+        and isinstance(n.args[0], ast.Constant)
+        and n.args[0].value == "static/uploads"
+    )
+    excluded = ast.literal_eval(
+        next(k.value for k in call.keywords if k.arg == "skip_dirnames")
+    )
+    namespace = {"os": os, "time": time, "logger": logging.getLogger("test-cleanup")}
+    exec(  # noqa: S102 - execute the checked-in cleanup body in isolation
+        compile(
+            ast.Module(body=[cleanup], type_ignores=[]), "<real-upload-cleanup>", "exec"
+        ),
+        namespace,
+    )
+    await namespace["_remove_old_files"]("static/uploads", 1, skip_dirnames=excluded)
+    assert local.read_bytes() == b"synthetic-private-video"

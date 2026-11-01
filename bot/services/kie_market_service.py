@@ -189,10 +189,15 @@ class KieMarketService:
         """Return the full task record from KIE Market recordInfo endpoint."""
         from bot.services.seedance_provider_fallback import resolve_seedance_status
 
+        primary_response = None
+
         async def primary_record():
-            return await self._get_json(
-                f"{KIE_MARKET_API_BASE}/api/v1/jobs/recordInfo", params={"taskId": task_id},
-            )
+            nonlocal primary_response
+            if primary_response is None:
+                primary_response = await self._get_json(
+                    f"{KIE_MARKET_API_BASE}/api/v1/jobs/recordInfo", params={"taskId": task_id},
+                )
+            return primary_response
 
         routed = await resolve_seedance_status(task_id, primary_record)
         if routed is not None:
