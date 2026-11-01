@@ -160,6 +160,37 @@ describe('TaskDetailPanel publication references', () => {
     })))
   })
 
+  it('persists the committed Cyrillic IME value when iOS sends compositionend without a final change event', async () => {
+    const context = mockedUseApp.getMockImplementation()!()
+    mockedUseApp.mockReturnValue({ ...context, taskDetail: {
+      ...context.taskDetail!,
+      repeat_personalization_editor_enabled: true,
+      repeat_user_fields: [{
+        key: 'clothes', label: 'Одежда', original_value: 'blue coat',
+        type: 'text', required: true, max_length: 160, choices: [],
+      }],
+    } } as ReturnType<typeof useApp>)
+
+    render(<TaskDetailPanel />)
+    fireEvent.click(screen.getByRole('button', { name: /^Опубликовать$/i }))
+    const input = screen.getByLabelText('Варианты параметра 1') as HTMLInputElement
+    input.focus()
+
+    // Telegram's iOS WebView may update the native preedit text and fire
+    // compositionend without a trailing React onChange/input event.
+    fireEvent.compositionStart(input)
+    fireEvent.change(input, { target: { value: 'пла' } })
+    expect(document.activeElement).toBe(input)
+    input.value = 'платье, костюм'
+    fireEvent.compositionEnd(input, { data: 'платье, костюм' })
+    fireEvent.blur(input)
+    fireEvent.click(screen.getAllByRole('button', { name: /^Опубликовать$/i })[0])
+
+    await waitFor(() => expect(mockedPublish).toHaveBeenCalledWith('seedance-task', expect.objectContaining({
+      repeatUserFields: [expect.objectContaining({ choices: ['платье', 'костюм'] })],
+    })))
+  })
+
   it.each(['image', 'video'])('lets a non-admin publish a private %s result without exporting its recipe', async (type) => {
     const context = mockedUseApp.getMockImplementation()!()
     mockedUseApp.mockReturnValue({ ...context, taskDetail: {
