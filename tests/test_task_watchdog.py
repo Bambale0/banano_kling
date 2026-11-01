@@ -70,6 +70,16 @@ class TestGetStuckTasks:
 class TestForceFailTask:
     """Tests for force_fail_task — updating task to failed + refunding credits."""
 
+    @pytest.fixture(autouse=True)
+    def no_provider_fallback_routes(self):
+        # This unit fixture models ordinary tasks without a routing receipt.
+        # Real route/refund integration is covered by test_seedance_provider_fallback.
+        with patch(
+            "bot.services.seedance_provider_fallback.unresolved_in_transaction",
+            new=AsyncMock(return_value=False),
+        ):
+            yield
+
     @pytest.mark.asyncio
     async def test_force_fails_and_refunds(self):
         mock_db = AsyncMock()
