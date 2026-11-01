@@ -36,20 +36,36 @@ function RepeatChoicesEditor({
   index: number
   onChange: (choices: string[]) => void
 }) {
-  const [draft, setDraft] = useState((field.choices || []).join(', '))
+  // Keep iOS WebView/IME preedit text owned by the native input. A controlled
+  // value can overwrite the candidate while its parent rerenders on input.
+  const initialValue = useRef((field.choices || []).join(', '))
+  const composing = useRef(false)
+  const commit = (value: string) => {
+    onChange(value
+      .split(/[\n,]/)
+      .map((choice) => choice.trim())
+      .filter(Boolean)
+      .slice(0, 12))
+  }
+
   return (
     <input
+      type="text"
       aria-label={`Варианты параметра ${index + 1}`}
-      value={draft}
+      defaultValue={initialValue.current}
       placeholder="Варианты: платье, костюм, куртка"
+      onCompositionStart={() => { composing.current = true }}
+      onCompositionEnd={(event) => {
+        composing.current = false
+        commit(event.currentTarget.value)
+      }}
       onChange={(event) => {
-        const value = event.target.value
-        setDraft(value)
-        onChange(value
-          .split(/[\n,]/)
-          .map((choice) => choice.trim())
-          .filter(Boolean)
-          .slice(0, 12))
+        if (!composing.current) commit(event.currentTarget.value)
+      }}
+      onBlur={(event) => {
+        composing.current = false
+        // iOS Telegram may not dispatch a final input event after composition.
+        commit(event.currentTarget.value)
       }}
       className="min-h-10 rounded-md border border-border/60 bg-background px-3 text-sm text-foreground"
     />
