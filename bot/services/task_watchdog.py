@@ -213,7 +213,7 @@ async def force_fail_task(
               AND task_id NOT LIKE 'wan3_%'
               AND substr(task_id, 1, 5) <> 'wan3_'
               AND substr(task_id, 1, 7) <> 'kling4_'
-            """ + provider_guard + " RETURNING request_data, task_id, model",
+            """ + provider_guard + " RETURNING request_data, task_id",
             parameters,
         )
         existing = await cursor.fetchone()
@@ -221,7 +221,7 @@ async def force_fail_task(
             return False
 
         returned = dict(existing) if isinstance(existing, (Mapping, db_backend.Row)) else {}
-        if not provider_confirmed_failed and returned.get("model") in {"seedance_2", "seedance_2_5"}:
+        if not provider_confirmed_failed and returned.get("task_id"):
             # The generation row stays locked until we decide whether a refund is safe.
             from bot.services.seedance_provider_fallback import (
                 unresolved_in_transaction,
