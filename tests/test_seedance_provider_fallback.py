@@ -805,3 +805,93 @@ async def test_default_seedance25_request_is_eligible_for_fallback(monkeypatch):
     result = await service.generate_video(prompt="boat")
     assert result["provider"] == "neironych"
     assert service._kie_post.call_args.args[1]["input"]["aspect_ratio"] == "16:9"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ratio", ["16:9", "adaptive"])
+@pytest.mark.parametrize("accepted", [False, True])
+async def test_ordinary_auto_reference_never_turns_into_edit(
+    monkeypatch, ratio, accepted
+):
+    from bot.services import seedance_provider_fallback as fallback
+    from bot.services.seedance_25_service import Seedance25Service
+
+    client = AsyncMock()
+    client.enabled = True
+    monkeypatch.setattr(fallback, "neironych_seedance_admin_service", client)
+    service = Seedance25Service(kie_key="synthetic")
+    primary_result = (
+        {"task_id": "ordinary-auto-primary"}
+        if accepted
+        else {"error": "api_error", "status_code": 402}
+    )
+    monkeypatch.setattr(service, "_kie_post", AsyncMock(return_value=primary_result))
+    result = await service.generate_video(
+        prompt="Create a new scene inspired by @Video1",
+        duration=-1,
+        aspect_ratio=ratio,
+        reference_video_urls=["https://example.org/reference.mp4"],
+        video_editing=False,
+    )
+    if accepted:
+        await _attach(result["task_id"], "seedance_2_5")
+        terminal = {"taskId": result["task_id"], "state": "fail", "failCode": "500"}
+        assert (
+            await resolve_seedance_status(
+                result["task_id"],
+                AsyncMock(return_value={"code": 200, "data": terminal}),
+            )
+            == terminal
+        )
+    else:
+        assert result.get("error") == "api_error"
+        assert result.get("provider") != "neironych"
+    client.submit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("accepted", [False, True])
+async def test_explicit_video_edit_intent_reaches_fallback_without_changing_kie_wire(
+    monkeypatch, accepted
+):
+    from bot.services import seedance_provider_fallback as fallback
+    from bot.services.seedance_25_service import Seedance25Service
+
+    client = AsyncMock()
+    client.enabled = True
+    client.timeout_seconds = 120
+    client.submit.return_value = {"request_id": "explicit-edit"}
+    client.get_status.return_value = {"status": "pending"}
+    monkeypatch.setattr(fallback, "neironych_seedance_admin_service", client)
+    service = Seedance25Service(kie_key="synthetic")
+    primary_result = (
+        {"task_id": "explicit-edit-primary"}
+        if accepted
+        else {"error": "api_error", "status_code": 402}
+    )
+    primary = AsyncMock(return_value=primary_result)
+    monkeypatch.setattr(service, "_kie_post", primary)
+    result = await service.generate_video(
+        prompt="Edit @Video1",
+        duration=4,
+        aspect_ratio="16:9",
+        reference_video_urls=["https://example.org/source.mp4"],
+        video_editing=True,
+    )
+    if not accepted:
+        assert result["provider"] == "neironych"
+    assert "_seedance_edit_intent" not in primary.call_args.args[1]
+    await _attach(result["task_id"], "seedance_2_5")
+    get_primary = AsyncMock(
+        return_value={
+            "code": 200,
+            "data": {"taskId": result["task_id"], "state": "fail"},
+        }
+    )
+    assert (await resolve_seedance_status(result["task_id"], get_primary))[
+        "state"
+    ] == "generating"
+    body = client.submit.call_args.args[0]
+    assert body["duration"] == -1
+    assert body["aspect_ratio"] == "adaptive"
+    assert body["omni_reference_task_type"] == "edit"
