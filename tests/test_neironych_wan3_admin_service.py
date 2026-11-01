@@ -10,9 +10,9 @@ from bot.services.neironych_wan3_admin_service import NeironychWan3AdminService
 
 
 def build(**overrides):
-    args = dict(mode="text", prompt="A quiet red tram at sunrise",
-                duration=5, resolution="720p", aspect_ratio="16:9",
-                generate_audio=True, seed=None)
+    args = {"mode": "text", "prompt": "A quiet red tram at sunrise",
+            "duration": 5, "resolution": "720p", "aspect_ratio": "16:9",
+            "generate_audio": True, "seed": None}
     args.update(overrides)
     return NeironychWan3AdminService.build_payload(**args)
 
