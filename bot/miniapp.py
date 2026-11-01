@@ -147,6 +147,19 @@ from bot.payment_utils import (
     total_package_credits,
 )
 from bot.quality_pricing import QUALITY_COSTS, SEEDREAM_5_PRO_QUALITY_COSTS
+from bot.repeat_personalization import (
+    admin_preview_enabled as repeat_personalization_preview_enabled,
+)
+from bot.repeat_personalization import (
+    clear_repeat_fields,  # noqa: F401 - re-exported to publication compatibility patch
+    get_repeat_fields,
+    get_repeat_fields_many,
+    normalize_repeat_fields,  # noqa: F401 - re-exported to publication compatibility patch
+    public_repeat_fields,
+    render_repeat_base,
+    restore_repeat_fields_if_current,  # noqa: F401 - re-exported to publication compatibility patch
+    save_repeat_fields,  # noqa: F401 - re-exported to publication compatibility patch
+)
 from bot.services.ai_assistant_service import ai_assistant_service
 from bot.services.lava_service import lava_service
 from bot.services.media_input_utils import (
@@ -187,6 +200,47 @@ MINIAPP_UPLOAD_TIMEOUT_SECONDS = 900
 MINIAPP_UPLOAD_DEFAULT_MAX_BYTES = 50 * 1024 * 1024
 MINIAPP_TREND_VIDEO_MAX_BYTES = 200 * 1024 * 1024
 _miniapp_media_locks: dict[str, asyncio.Lock] = {}
+
+
+class RepeatPersonalizationAccessError(PermissionError):
+    """Structured repeat values were submitted outside the admin preview."""
+
+
+def _repeat_personalization_allowed(telegram_id: int) -> bool:
+    return repeat_personalization_preview_enabled() and config.is_admin(telegram_id)
+
+
+async def _attach_repeat_personalization(
+    cards: list[dict[str, Any]],
+    *,
+    telegram_id: int,
+) -> None:
+    if not cards or not _repeat_personalization_allowed(telegram_id):
+        return
+    by_generation = await get_repeat_fields_many(
+        [int(card.get("id") or 0) for card in cards]
+    )
+    for card in cards:
+        fields = by_generation.get(int(card.get("id") or 0), [])
+        if fields:
+            card["repeat_user_fields"] = public_repeat_fields(fields)
+
+
+async def _repeat_personalized_source_prompt(
+    source_id: int,
+    source_prompt: str,
+    body: dict[str, Any],
+    *,
+    telegram_id: int,
+) -> str:
+    if "repeat_user_values" not in body:
+        return source_prompt
+    if not _repeat_personalization_allowed(telegram_id):
+        raise RepeatPersonalizationAccessError("Персонализация повтора пока доступна только администраторам")
+    fields = await get_repeat_fields(int(source_id))
+    if not fields:
+        raise TrendUserFieldsError("Для этой публикации параметры повтора не настроены")
+    return render_repeat_base(source_prompt, fields, body.get("repeat_user_values"))
 
 logger = logging.getLogger(__name__)
 
@@ -4185,6 +4239,7 @@ async def miniapp_feed(request: web.Request) -> web.Response:
                 item["can_remove"] = True
             if is_admin or is_mine:
                 item["can_blur"] = True
+        await _attach_repeat_personalization(feed, telegram_id=telegram_id)
         return await creator_tariff_display.priced_feed_response({"ok": True, "feed": feed}, telegram_id)
     except Exception as e:
         return _miniapp_error_response(e, log_message="Mini App feed list failed")
@@ -4216,6 +4271,7 @@ async def miniapp_feed_item(request: web.Request) -> web.Response:
             card["can_remove"] = True
         if is_admin or is_mine:
             card["can_blur"] = True
+        await _attach_repeat_personalization([card], telegram_id=telegram_id)
         return await creator_tariff_display.priced_feed_response({"ok": True, "feed_item": card}, telegram_id)
     except Exception as e:
         return _miniapp_error_response(e, log_message="Mini App feed item failed")
@@ -4240,6 +4296,7 @@ async def miniapp_my_feed(request: web.Request) -> web.Response:
             item["can_blur"] = True
             if is_admin:
                 item["can_remove"] = True
+        await _attach_repeat_personalization(feed, telegram_id=telegram_id)
         return await creator_tariff_display.priced_feed_response({"ok": True, "feed": feed}, telegram_id)
     except Exception as e:
         return _miniapp_error_response(e, log_message="Mini App my feed failed")
@@ -4320,6 +4377,7 @@ async def miniapp_profile_feed(request: web.Request) -> web.Response:
                 item["can_remove"] = True
             if is_admin or is_mine:
                 item["can_blur"] = True
+        await _attach_repeat_personalization(feed, telegram_id=telegram_id)
 
         me = await request.app["bot"].get_me()
         profile = _miniapp_profile_payload(
@@ -4711,6 +4769,14 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
         source_prompt = str(source_task.get("prompt") or "").strip()
         if not source_prompt:
             return web.json_response({"ok": False, "error": "У исходной генерации нет prompt"}, status=400)
+        try:
+            source_prompt = await _repeat_personalized_source_prompt(
+                int(source["id"]), source_prompt, body, telegram_id=telegram_id,
+            )
+        except RepeatPersonalizationAccessError as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=403)
+        except (TrendUserFieldsError, ValueError) as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
         prompt = compose_feed_remix_prompt(source_prompt, body.get("prompt", ""))
 
         img_service = str(body.get("img_service") or body.get("model") or source.get("model") or "banana_pro")
@@ -4930,6 +4996,14 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
                     {"ok": False, "error": "У исходной генерации нет prompt"},
                     status=400,
                 )
+            try:
+                source_prompt = await _repeat_personalized_source_prompt(
+                    int(source_feed_gen_id), source_prompt, body, telegram_id=telegram_id,
+                )
+            except RepeatPersonalizationAccessError as exc:
+                return web.json_response({"ok": False, "error": str(exc)}, status=403)
+            except (TrendUserFieldsError, ValueError) as exc:
+                return web.json_response({"ok": False, "error": str(exc)}, status=400)
             prompt = compose_feed_remix_prompt(source_prompt, prompt)
             # Use the same owner/foreign recipe assembly as the feed remix API.
             # Client-empty is valid when every required slot is explicitly fixed.
@@ -6034,6 +6108,11 @@ async def miniapp_task_detail(request: web.Request) -> web.Response:
         if not detail:
             return web.json_response(
                 {"ok": False, "error": "Задача не найдена"}, status=404
+            )
+        if _repeat_personalization_allowed(telegram_id):
+            detail["repeat_personalization_editor_enabled"] = True
+            detail["repeat_user_fields"] = await get_repeat_fields(
+                int(detail.get("feed_id") or 0)
             )
 
         # Enforce the same recipe boundary for direct Telegram-authenticated

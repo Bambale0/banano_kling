@@ -3,7 +3,66 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from bot import database, miniapp
+from bot import database, miniapp, repeat_personalization
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", ["remix", "generate"])
+@pytest.mark.parametrize("invalid_values", [False, True])
+async def test_admin_image_personalization_keeps_base_and_authorized_reference(
+    monkeypatch, endpoint, invalid_values,
+):
+    fixed = "https://example.test/fixed-cake.png"
+    source_prompt = "Cinematic scene, blue coat, stable camera and lighting"
+    card = {
+        "id": 42, "gen_type": "image", "is_mine": False, "model": "banana_pro",
+        "publication_scope": "feed", "references_hidden": True,
+    }
+    source = {
+        "type": "image", "status": "completed", "is_public_feed": True,
+        "prompt": source_prompt,
+        "feed_repeat_reference_selection": {"images": [fixed]},
+        "request_data": {"source_reference_images": [fixed]},
+    }
+    body = {
+        "init_data": "signed", "gen_id": 42, "source_feed_gen_id": 42,
+        "img_service": "banana_pro", "reference_images": [],
+        "prompt": "Keep the smile",
+        "repeat_user_values": {} if invalid_values else {"clothes": "red dress"},
+    }
+    monkeypatch.setenv(repeat_personalization.FEATURE_FLAG, "1")
+    monkeypatch.setattr(miniapp, "_miniapp_payload", AsyncMock(return_value=body))
+    monkeypatch.setattr(miniapp, "_get_user_context", AsyncMock(return_value=(123, {"user": SimpleNamespace(id=7, credits=100)})))
+    monkeypatch.setattr(miniapp, "_get_feed_remix_source_card", AsyncMock(return_value=card))
+    monkeypatch.setattr(miniapp, "_get_repeat_source_card", AsyncMock(return_value=card))
+    monkeypatch.setattr(miniapp, "get_generation_task_payload", AsyncMock(return_value=source))
+    monkeypatch.setattr(miniapp.config, "is_admin", lambda _id: True)
+    monkeypatch.setattr(miniapp, "missing_local_upload_sources", lambda _refs: [])
+    monkeypatch.setattr(miniapp, "touch_saved_references", AsyncMock())
+    monkeypatch.setattr(miniapp, "_resolve_image_unit_cost", lambda *_args: 1)
+    launch = AsyncMock(return_value={"status": "failed"})
+    monkeypatch.setattr(miniapp, "_start_image_generation_task_lazy", launch)
+    fields = repeat_personalization.normalize_repeat_fields(
+        [{"key": "clothes", "label": "Одежда", "original_value": "blue coat"}],
+        prompt=source_prompt,
+    )
+    await repeat_personalization.save_repeat_fields(42, fields, actor_telegram_id=123)
+
+    request = SimpleNamespace(app={}, json=AsyncMock(return_value=body))
+    response = await (miniapp.miniapp_feed_remix if endpoint == "remix" else miniapp.miniapp_generate_image)(request)
+
+    if invalid_values:
+        assert response.status == 400, response.text
+        launch.assert_not_awaited()
+        return
+    assert response.status == 500
+    provider_prompt = launch.await_args.kwargs["prompt"]
+    assert "Cinematic scene" in provider_prompt
+    assert "stable camera and lighting" in provider_prompt
+    assert "red dress" in provider_prompt
+    assert "blue coat" not in provider_prompt
+    assert "Keep the smile" in provider_prompt
+    assert launch.await_args.kwargs["reference_images"] == [fixed]
 
 
 @pytest.mark.asyncio

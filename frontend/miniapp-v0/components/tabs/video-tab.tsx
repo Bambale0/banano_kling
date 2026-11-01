@@ -72,6 +72,7 @@ export function VideoTab() {
     ratio: string
     duration: number
     sourceFeedGenId?: number | null
+    repeatUserValues?: Record<string, string>
     pricingQuoteHash?: string
     grokMode: string
     grokResolution: string

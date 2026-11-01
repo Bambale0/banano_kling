@@ -67,6 +67,29 @@ describe('ImageGeneratorForm feed remix', () => {
       prompt: 'Сделай волосы блонд',
     }))
   })
+
+  it('requires admin-preview personalization values and submits only their keyed values', async () => {
+    const onSubmit = jest.fn().mockResolvedValue(true)
+    render(<ImageGeneratorForm models={models} onSubmit={onSubmit} promptPreset={{
+      ...remixPreset,
+      repeatUserFields: [
+        { key: 'clothes', label: 'Одежда', type: 'text', required: true, choices: ['красное платье', 'чёрный костюм'] },
+        { key: 'object', label: 'Предмет', type: 'text', required: true, choices: ['клубничный торт', 'букет'] },
+      ],
+    }} isSubmitting={false} credits={100} />)
+
+    const launch = screen.getByRole('button', { name: /Повторить образ/i })
+    expect(launch).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: 'красное платье' }))
+    fireEvent.click(screen.getByRole('button', { name: 'клубничный торт' }))
+    expect(screen.queryByText(/AUTHOR SOURCE PROMPT/)).not.toBeInTheDocument()
+    fireEvent.click(launch)
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      sourceFeedGenId: 42,
+      repeatUserValues: { clothes: 'красное платье', object: 'клубничный торт' },
+    })))
+  })
 })
 
 

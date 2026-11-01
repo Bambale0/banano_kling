@@ -624,6 +624,17 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
     # This authenticated boundary wraps both legacy video handlers and the
     # separate Seedance 2.5 endpoint. Compose once from the original client
     # changes, keeping the author's base server-side just like photo remixes.
+    try:
+        source_prompt = await miniapp_module._repeat_personalized_source_prompt(
+            source_id,
+            source_prompt,
+            body,
+            telegram_id=_telegram_id,
+        )
+    except miniapp_module.RepeatPersonalizationAccessError as exc:
+        raise web.HTTPForbidden(reason=str(exc)) from exc
+    except (miniapp_module.TrendUserFieldsError, ValueError) as exc:
+        raise web.HTTPBadRequest(reason=str(exc)) from exc
     enriched["prompt"] = compose_feed_remix_prompt(source_prompt, body.get("prompt"))
     active_media = _active_video_reference_urls(enriched)
     if missing_local_upload_sources(active_media):

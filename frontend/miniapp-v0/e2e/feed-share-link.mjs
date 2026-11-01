@@ -78,6 +78,7 @@ try {
           else if (url.pathname.endsWith('/feed/share')) { shareCalls++; data = { ok: true, feed_item: card, link: exactLink, repeat_link: exactLink } }
           else if (url.pathname.endsWith('/feed')) data = { ok: true, feed: [card], models: [{ id: 'banana_pro', label: 'Nano Banana Pro' }] }
           else if (url.pathname.endsWith('/prompts')) data = { ok: true, prompts: [] }
+          else if (url.pathname.endsWith('/trends/catalog')) data = { ok: true, categories: [] }
           else if (url.pathname.endsWith('/genjutsu') && route.request().postDataJSON()?.action === 'availability') data = { ok: true, visible: false }
           else {
             unexpectedApis.push(url.pathname)

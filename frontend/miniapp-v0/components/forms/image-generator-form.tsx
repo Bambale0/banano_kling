@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo, useEffect, useCallback } from 'react'
-import type { ImageModel, PromptPreset, UploadedFile } from '@/lib/types'
+import type { ImageModel, PromptPreset, TrendUserField, UploadedFile } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -10,6 +10,7 @@ import { RatioSelect } from './ratio-select'
 import { QualitySelect } from './quality-select'
 import { UploadArea } from './upload-area'
 import { Banana, Sparkles, Loader2, AlertCircle, Palette, Shirt, Mountain, Sparkle, ScanFace } from 'lucide-react'
+import { RepeatPersonalizationFields, repeatValuesComplete } from './repeat-personalization-fields'
 
 interface ImageGeneratorFormProps {
   models: ImageModel[]
@@ -23,6 +24,7 @@ interface ImageGeneratorFormProps {
     nsfwEnabled: boolean
     promptId?: number | null
     sourceFeedGenId?: number | null
+    repeatUserValues?: Record<string, string>
     prompt: string
     references: string[]
   }) => Promise<boolean>
@@ -56,6 +58,8 @@ export function ImageGeneratorForm({
   const [remixTitle, setRemixTitle] = useState('')
   const [references, setReferences] = useState<UploadedFile[]>([])
   const [activeChanges, setActiveChanges] = useState<Set<string>>(new Set())
+  const [repeatUserFields, setRepeatUserFields] = useState<TrendUserField[]>([])
+  const [repeatUserValues, setRepeatUserValues] = useState<Record<string, string>>({})
 
   const model = useMemo(() => models.find(m => m.id === selectedModel), [models, selectedModel])
 
@@ -71,6 +75,7 @@ export function ImageGeneratorForm({
   const referencesUploading = references.some((reference) => reference.uploading)
   const hasPrompt = prompt.trim().length > 0 || isFeedRemix
   const isValid = hasPrompt && canAfford && !needsReference && !referencesUploading
+    && repeatValuesComplete(repeatUserFields, repeatUserValues)
 
   const CHANGE_CHIPS = [
     {
@@ -118,6 +123,8 @@ export function ImageGeneratorForm({
     setSourceFeedGenId(promptPreset.sourceFeedGenId || null)
     setRemixTitle(promptPreset.sourceFeedGenId ? promptPreset.title : '')
     setActiveChanges(new Set())
+    setRepeatUserFields(promptPreset.repeatUserFields || [])
+    setRepeatUserValues({})
     if (promptPreset.model && models.some((item) => item.id === promptPreset.model)) {
       setSelectedModel(promptPreset.model)
     }
@@ -180,6 +187,7 @@ export function ImageGeneratorForm({
       nsfwEnabled,
       promptId: selectedPromptId,
       sourceFeedGenId,
+      ...(repeatUserFields.length ? { repeatUserValues } : {}),
       prompt,
       references: references.map(r => r.url),
     })
@@ -190,6 +198,8 @@ export function ImageGeneratorForm({
     setRemixTitle('')
     setReferences([])
     setActiveChanges(new Set())
+    setRepeatUserFields([])
+    setRepeatUserValues({})
   }, [
     isValid,
     onSubmit,
@@ -201,6 +211,8 @@ export function ImageGeneratorForm({
     nsfwEnabled,
     selectedPromptId,
     sourceFeedGenId,
+    repeatUserFields,
+    repeatUserValues,
     prompt,
     references,
   ])
@@ -370,6 +382,11 @@ export function ImageGeneratorForm({
         </div>
 
         <div className="space-y-2">
+          <RepeatPersonalizationFields
+            fields={repeatUserFields}
+            values={repeatUserValues}
+            onChange={setRepeatUserValues}
+          />
           {isFeedRemix && (
             <div className="rounded-2xl border border-gold/25 bg-gold/10 p-4 space-y-3">
               <div>

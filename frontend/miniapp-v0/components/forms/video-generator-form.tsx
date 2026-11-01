@@ -5,7 +5,7 @@ import { normalizeVideoRepeatSlots } from '@/lib/video-repeat-references'
 import { getPendingVideoRepeat, isVideoStatusPending, VIDEO_REPEAT_PENDING_CHANGED, type PendingVideoRepeat } from '@/lib/video-repeat-pending'
 
 import { useState, useMemo, useEffect, useRef } from 'react'
-import type { VideoModel, UploadedFile, ScenarioType, VideoPromptPreset, VideoRepeatReferenceSlots } from '@/lib/types'
+import type { VideoModel, UploadedFile, ScenarioType, TrendUserField, VideoPromptPreset, VideoRepeatReferenceSlots } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -18,6 +18,7 @@ import { RatioSelect } from './ratio-select'
 import { UploadArea } from './upload-area'
 import { ScenarioSelect } from './scenario-select'
 import { DurationSelect } from './duration-select'
+import { RepeatPersonalizationFields, repeatValuesComplete } from './repeat-personalization-fields'
 import { getStorageItem, removeStorageItem } from '@/hooks/browser-storage'
 import { MiniAppApiError, type VideoGenerationQuote } from '@/lib/api'
 import {
@@ -66,6 +67,7 @@ interface VideoGeneratorFormProps {
     ratio: string
     duration: number
     sourceFeedGenId?: number | null
+    repeatUserValues?: Record<string, string>
     pricingQuoteHash?: string
     grokMode: string
     grokResolution: string
@@ -175,6 +177,8 @@ export function VideoGeneratorForm({
   const [sourceFeedGenId, setSourceFeedGenId] = useState<number | null>(null)
   const appliedPromptPresetRef = useRef<VideoPromptPreset | null>(null)
   const [repeatTitle, setRepeatTitle] = useState('')
+  const [repeatUserFields, setRepeatUserFields] = useState<TrendUserField[]>([])
+  const [repeatUserValues, setRepeatUserValues] = useState<Record<string, string>>({})
   const [repeatSlots, setRepeatSlots] = useState<VideoRepeatReferenceSlots | undefined>()
   const [repeatUploads, setRepeatUploads] = useState<Record<string, UploadedFile[]>>({})
   const [repeatError, setRepeatError] = useState(false)
@@ -271,7 +275,7 @@ export function VideoGeneratorForm({
   const priceKey = JSON.stringify([
     selectedModel, selectedScenario, selectedDuration, selectedQuality, sourceFeedGenId,
     videoReferences.map(item => item.url), repeatSlots?.videos, repeatUploads,
-    prompt, photoReferences.map(item => item.url),
+    prompt, repeatUserValues, photoReferences.map(item => item.url),
   ])
   const confirmedVideoQuote = approvedVideoQuote?.key === priceKey ? approvedVideoQuote.quote : null
   const cost = confirmedVideoQuote?.cost ?? (isOmniAudio
@@ -341,7 +345,8 @@ export function VideoGeneratorForm({
     !omniTooManyAudioIds &&
     !omniTooManyCharacterIds &&
     !omniTooManyCharacterAudioIds &&
-    !omniOverQuota
+    !omniOverQuota &&
+    repeatValuesComplete(repeatUserFields, repeatUserValues)
 
   const omniGuideSteps = [
     {
@@ -384,6 +389,8 @@ export function VideoGeneratorForm({
     setPrompt(normalizeRepeatPrompt(promptPreset).prompt)
     setSourceFeedGenId(promptPreset.sourceFeedGenId || null)
     setRepeatTitle(promptPreset.sourceFeedGenId ? promptPreset.title : '')
+    setRepeatUserFields(promptPreset.repeatUserFields || [])
+    setRepeatUserValues({})
     const slots = promptPreset.sourceFeedGenId && promptPreset.repeatReferenceSlots
       ? normalizeVideoRepeatSlots(promptPreset.repeatReferenceSlots) : undefined
     repeatSession.current += 1
@@ -576,6 +583,7 @@ export function VideoGeneratorForm({
       ratio: selectedRatio,
       duration: submitDuration,
       sourceFeedGenId,
+      ...(repeatUserFields.length ? { repeatUserValues } : {}),
       grokMode,
       grokResolution,
       veoGenerationType,
@@ -654,6 +662,8 @@ export function VideoGeneratorForm({
     setPrompt('')
     setSourceFeedGenId(null)
     setRepeatTitle('')
+    setRepeatUserFields([])
+    setRepeatUserValues({})
     setStartImage([])
     setPhotoReferences([])
     setVideoReferences([])
@@ -1338,6 +1348,14 @@ export function VideoGeneratorForm({
         ) : null}
 
         <div className="space-y-2">
+          <RepeatPersonalizationFields
+            fields={repeatUserFields}
+            values={repeatUserValues}
+            onChange={(values) => {
+              setRepeatUserValues(values)
+              setApprovedVideoQuote(null)
+            }}
+          />
           {sourceFeedGenId ? (
             <div className="rounded-2xl border border-cyan/25 bg-cyan/10 p-4">
               <p className="text-sm font-medium text-foreground">

@@ -22,8 +22,38 @@ import { copyTextToClipboard } from '@/lib/clipboard'
 import { normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
 import { SeedanceTrendPublisher } from '@/components/seedance-trend-publisher'
 import { Wan3TrendPublisher } from '@/components/wan3-trend-publisher'
+import type { TrendUserField } from '@/lib/types'
 
 const EMPTY_REFERENCE_URLS: string[] = []
+
+function RepeatChoicesEditor({
+  field,
+  index,
+  onChange,
+}: {
+  field: TrendUserField
+  index: number
+  onChange: (choices: string[]) => void
+}) {
+  const [draft, setDraft] = useState((field.choices || []).join(', '))
+  return (
+    <input
+      aria-label={`Варианты параметра ${index + 1}`}
+      value={draft}
+      placeholder="Варианты: платье, костюм, куртка"
+      onChange={(event) => {
+        const value = event.target.value
+        setDraft(value)
+        onChange(value
+          .split(/[\n,]/)
+          .map((choice) => choice.trim())
+          .filter(Boolean)
+          .slice(0, 12))
+      }}
+      className="min-h-10 rounded-md border border-border/60 bg-background px-3 text-sm text-foreground"
+    />
+  )
+}
 
 export function TaskDetailPanel() {
   const { state, taskDetail, isTaskDetailOpen, closeTaskDetail, updateTask, setVideoPromptPreset, setActiveTab } = useApp()
@@ -40,6 +70,7 @@ export function TaskDetailPanel() {
   const [selectedReferenceVideos, setSelectedReferenceVideos] = useState<Set<number>>(new Set())
   const [selectedRepeatReferenceImages, setSelectedRepeatReferenceImages] = useState<Set<number>>(new Set())
   const [selectedRepeatReferenceVideos, setSelectedRepeatReferenceVideos] = useState<Set<number>>(new Set())
+  const [repeatUserFields, setRepeatUserFields] = useState<TrendUserField[]>([])
   const publicationSourceRef = useRef<{
     taskId?: string
     repeatImages: number[]
@@ -106,6 +137,7 @@ export function TaskDetailPanel() {
     setFeedBlurred(Boolean(taskDetail?.feed_blurred))
     setPublicationScope(taskDetail?.publication_scope === 'profile' ? 'profile' : 'feed')
     setAdultContent(Boolean(taskDetail?.is_adult_content))
+    setRepeatUserFields(taskDetail?.repeat_user_fields || [])
     const savedSelection = taskDetail?.feed_reference_selection
     setSelectedReferenceImages(new Set(savedSelection?.images ?? publicationReferenceImageIndices))
     setSelectedReferenceVideos(new Set(savedSelection?.videos ?? publicationReferenceVideoIndices))
@@ -123,6 +155,7 @@ export function TaskDetailPanel() {
   }, [
     taskDetail?.task_id,
     taskDetail?.type,
+    taskDetail?.prompt_hidden,
     taskDetail?.feed_prompt_visible,
     taskDetail?.feed_references_visible,
     taskDetail?.feed_blurred,
@@ -130,6 +163,7 @@ export function TaskDetailPanel() {
     taskDetail?.is_adult_content,
     taskDetail?.feed_reference_selection,
     taskDetail?.feed_repeat_reference_selection,
+    taskDetail?.repeat_user_fields,
     publicationReferenceImageIndices,
     publicationReferenceVideoIndices,
     publicationEditorOpen,
@@ -145,6 +179,29 @@ export function TaskDetailPanel() {
       if (next.has(index)) next.delete(index)
       else next.add(index)
       return next
+    })
+  }
+
+  const updateRepeatUserField = (index: number, patch: Partial<TrendUserField>) => {
+    setRepeatUserFields((current) => current.map((field, fieldIndex) =>
+      fieldIndex === index ? { ...field, ...patch } : field
+    ))
+  }
+
+  const addRepeatUserField = () => {
+    setRepeatUserFields((current) => {
+      if (current.length >= 6) return current
+      const used = new Set(current.map((field) => field.key))
+      let nextIndex = 1
+      while (used.has(`repeat_field_${nextIndex}`)) nextIndex += 1
+      return [...current, {
+        key: `repeat_field_${nextIndex}`,
+        label: '',
+        original_value: '',
+        type: 'text',
+        required: true,
+        max_length: 160,
+      }]
     })
   }
 
@@ -197,6 +254,7 @@ export function TaskDetailPanel() {
           blurred: feedBlurred,
           publicationScope,
           adultContent,
+          ...(taskDetail.repeat_personalization_editor_enabled ? { repeatUserFields } : {}),
         })
         updateTask(taskDetail.task_id, {
           is_public_feed: published.publication_scope === 'feed',
@@ -247,6 +305,7 @@ export function TaskDetailPanel() {
       })
       setSelectedRepeatReferenceImages(new Set())
       setSelectedRepeatReferenceVideos(new Set())
+      setRepeatUserFields([])
       setPublicationLink(null)
       setPublicationEditorOpen(false)
       notifyFeedChanged()
@@ -825,6 +884,54 @@ export function TaskDetailPanel() {
                       <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
                         Чтобы отозвать разрешение для будущих повторов, снимите выбор и сохраните публикацию.
                       </p>
+                    </div>
+                  ) : null}
+                  {taskDetail.repeat_personalization_editor_enabled ? (
+                    <div className="mt-3 space-y-3 rounded-lg border border-gold/30 bg-gold/10 p-3">
+                      <div>
+                        <h3 className="text-xs font-semibold text-foreground">Параметры персонализации повтора</h3>
+                        <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                          Админ-превью. Укажите название выбора и точный фрагмент скрытого промпта, который можно заменить. Полный промпт пользователю не показывается.
+                        </p>
+                      </div>
+                      {repeatUserFields.map((field, index) => (
+                        <div key={field.key} className="grid gap-2 rounded-lg border border-border/50 bg-background/40 p-2 sm:grid-cols-[1fr_1fr_1.2fr_auto]">
+                          <input
+                            aria-label={`Название параметра ${index + 1}`}
+                            value={field.label}
+                            maxLength={64}
+                            placeholder="Например: Одежда"
+                            onChange={(event) => updateRepeatUserField(index, { label: event.target.value })}
+                            className="min-h-10 rounded-md border border-border/60 bg-background px-3 text-sm text-foreground"
+                          />
+                          <RepeatChoicesEditor
+                            key={`${taskDetail.task_id}:${field.key}`}
+                            field={field}
+                            index={index}
+                            onChange={(choices) => updateRepeatUserField(index, { choices })}
+                          />
+                          <input
+                            aria-label={`Исходный фрагмент ${index + 1}`}
+                            value={field.original_value || ''}
+                            maxLength={160}
+                            placeholder="Точный текст: blue coat"
+                            onChange={(event) => updateRepeatUserField(index, { original_value: event.target.value })}
+                            className="min-h-10 rounded-md border border-border/60 bg-background px-3 text-sm text-foreground"
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            aria-label={`Удалить параметр ${index + 1}`}
+                            onClick={() => setRepeatUserFields((current) => current.filter((_, fieldIndex) => fieldIndex !== index))}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ))}
+                      <Button type="button" variant="outline" size="sm" disabled={repeatUserFields.length >= 6} onClick={addRepeatUserField}>
+                        Добавить параметр
+                      </Button>
                     </div>
                   ) : null}
                   <div className="mt-3 grid gap-2">
