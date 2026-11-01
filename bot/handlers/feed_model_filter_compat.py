@@ -411,6 +411,7 @@ def install_feed_model_filter_compat(common_module: Any) -> None:
                     item["can_remove"] = True
                 if is_admin or is_mine:
                     item["can_blur"] = True
+            await miniapp_module._attach_repeat_personalization(feed, telegram_id=telegram_id)
             response = await miniapp_module.creator_tariff_display.priced_feed_response(
                 {
                     "ok": True,

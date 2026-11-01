@@ -35,7 +35,7 @@ interface AppContextType {
   refreshTelegramChatAccess: (signal: AbortSignal) => Promise<boolean>
   setCredits: (amount: number) => void
   addTask: (task: Task) => void
-  updateTask: (taskId: string, patch: Partial<Task>) => void
+  updateTask: (taskId: string, patch: Partial<TaskDetail>) => void
   setTaskDetail: (detail: TaskDetail | null) => void
   addSavedReference: (file: UploadedFile) => void
   setPromptPreset: (preset: PromptPreset | null) => void
@@ -596,7 +596,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }))
   }, [])
 
-  const updateTask = useCallback((taskId: string, patch: Partial<Task>) => {
+  const updateTask = useCallback((taskId: string, patch: Partial<TaskDetail>) => {
     setState(prev => ({
       ...prev,
       recentTasks: prev.recentTasks.map(task =>

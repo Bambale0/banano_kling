@@ -92,6 +92,7 @@ def install_own_profile_feed_compat() -> None:
                 viewer_user_id=viewer.id,
                 feed_summary=feed_summary,
             )
+            await miniapp_module._attach_repeat_personalization(feed, telegram_id=telegram_id)
             response = await miniapp_module.creator_tariff_display.priced_feed_response(
                 {"ok": True, "profile": profile, "feed": feed}, telegram_id,
             )

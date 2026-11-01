@@ -85,5 +85,8 @@ async def test_unpublish_clears_personalization_even_when_preview_flag_is_off(mo
     response = await subject._miniapp_generation_share_scoped(module, SimpleNamespace(app={}))
 
     assert response.status == 200
-    clear.assert_awaited_once_with(42, actor_telegram_id=123456)
+    # Atomic cleanup belongs to the shared removal operation, exercised by
+    # the DB regressions for HTTP/Telegram/admin full-removal paths.
+    subject.remove_publication.assert_awaited_once_with("task-42", 7)
+    clear.assert_not_awaited()
     module.restore_repeat_fields_if_current.assert_not_awaited()

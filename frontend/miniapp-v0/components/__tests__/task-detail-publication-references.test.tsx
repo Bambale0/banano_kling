@@ -1,4 +1,6 @@
 import '@testing-library/jest-dom'
+import { useState } from 'react'
+import type { TaskDetail } from '@/lib/types'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { TaskDetailPanel } from '@/components/task-detail-panel'
@@ -171,6 +173,38 @@ describe('TaskDetailPanel publication references', () => {
     fireEvent.click(screen.getAllByRole('button', { name: /^Опубликовать$/i })[0])
     await waitFor(() => expect(mockedPublish).toHaveBeenCalledTimes(1))
     expect(mockedPublish).toHaveBeenCalledWith('seedance-task', expect.objectContaining({ promptVisible: false }))
+  })
+
+  it('keeps saved personalization after closing and reopening the editor', async () => {
+    const context = mockedUseApp.getMockImplementation()!()
+    function Harness() {
+      const [detail, setDetail] = useState<TaskDetail>({ ...context.taskDetail!,
+        repeat_personalization_editor_enabled: true,
+        repeat_user_fields: [{ key: 'clothes', label: 'Одежда', original_value: 'blue coat',
+          type: 'text' as const, required: true, max_length: 160, choices: ['red dress'] }],
+      })
+      mockedUseApp.mockReturnValue({ ...context, taskDetail: detail,
+        updateTask: (_id, patch) => setDetail(old => ({ ...old, ...patch })),
+      } as ReturnType<typeof useApp>)
+      return <TaskDetailPanel />
+    }
+    render(<Harness />)
+    fireEvent.click(screen.getByRole('button', { name: /^Опубликовать$/i }))
+    fireEvent.change(screen.getByLabelText('Варианты параметра 1'), { target: { value: 'black suit' } })
+    fireEvent.click(screen.getAllByRole('button', { name: /^Опубликовать$/i })[0])
+    await waitFor(() => expect(screen.queryByLabelText('Варианты параметра 1')).not.toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Настроить публикацию' }))
+    expect(screen.getByLabelText('Варианты параметра 1')).toHaveValue('black suit')
+    fireEvent.click(screen.getByRole('button', { name: 'Сохранить публикацию' }))
+    await waitFor(() => expect(mockedPublish).toHaveBeenCalledTimes(2))
+    expect(mockedPublish.mock.calls[1][1]?.repeatUserFields?.[0].choices).toEqual(['black suit'])
+    await waitFor(() => expect(screen.queryByLabelText('Варианты параметра 1')).not.toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Настроить публикацию' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Убрать публикацию' }))
+    await waitFor(() => expect(screen.queryByLabelText('Варианты параметра 1')).not.toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /^Опубликовать$/i }))
+    expect(screen.queryByLabelText('Варианты параметра 1')).not.toBeInTheDocument()
+
   })
 
 })

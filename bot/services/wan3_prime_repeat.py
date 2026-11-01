@@ -24,7 +24,7 @@ ARRAY_FIELDS = {
 }
 FRAME_FIELDS = ("first_frame_url", "last_frame_url")
 RECIPE_FIELDS = ("model", "scenario", "prompt", *OUTPUT_FIELDS, *FRAME_FIELDS, *ARRAY_FIELDS)
-PUBLIC_REQUEST_FIELDS = (*RECIPE_FIELDS, "source_feed_gen_id", "trend_id", "repeat_plan_hash", "repeat_replacements")
+PUBLIC_REQUEST_FIELDS = (*RECIPE_FIELDS, "source_feed_gen_id", "trend_id", "repeat_plan_hash", "repeat_replacements", "repeat_user_values")
 
 
 def client_recipe(body: dict[str, Any]) -> dict[str, Any]:
@@ -112,8 +112,11 @@ def build_repeat_plan(source: dict[str, Any]) -> dict[str, Any]:
 
 
 def public_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    from bot.repeat_personalization import public_repeat_fields
+
     recipe = plan["recipe"]
-    return {"ok": True, **({"trend_id": plan["trend_id"]} if plan.get("trend_id") else {"source_feed_gen_id": plan["source_id"]}), "repeat_plan_hash": plan["hash"],
+    fields = plan.get("personalization_fields") or []
+    return {"ok": True, **({"repeat_user_fields": public_repeat_fields(fields)} if fields else {}), **({"trend_id": plan["trend_id"]} if plan.get("trend_id") else {"source_feed_gen_id": plan["source_id"]}), "repeat_plan_hash": plan["hash"],
             "recipe": {"model": recipe["model"], "scenario": recipe["scenario"], "prompt": "",
                        **{key: recipe[key] for key in OUTPUT_FIELDS if key in recipe}},
             "slots": [{key: slot[key] for key in ("key", "kind", "role", "index", "binding")} for slot in plan["slots"]]}
@@ -132,7 +135,14 @@ async def get_repeat_plan(actor, source_id: int) -> dict[str, Any]:
         raise Wan3PrimeValidationError("Публикация больше недоступна", status=404)
     # Do NOT reroute to the ancestor trend: the source is the video the viewer
     # actually chose, with its own edited prompt, media slots and settings.
-    return build_repeat_plan(source)
+    plan = build_repeat_plan(source)
+    from bot.config import config
+    from bot.repeat_personalization import admin_preview_enabled, get_repeat_fields
+    if admin_preview_enabled() and config.is_admin(getattr(actor, "telegram_id", 0)):
+        fields = await get_repeat_fields(source_id)
+        if fields:
+            plan["personalization_fields"] = fields
+    return plan
 
 
 class ConsentedMediaProbe:
@@ -195,8 +205,21 @@ async def compile_repeat(actor, body: dict[str, Any], probe):
     if not isinstance(edits, str):
         raise Wan3PrimeValidationError("Изменения должны быть текстом")
     original = str(compiled.get("prompt") or "")
+    fields = plan.get("personalization_fields") or []
+    if "repeat_user_values" in public_input:
+        from bot.repeat_personalization import render_repeat_base
+        if not fields:
+            raise Wan3PrimeValidationError("Для этой публикации параметры повтора не настроены")
+        try:
+            original = render_repeat_base(original, fields, public_input["repeat_user_values"])
+        except ValueError as exc:
+            raise Wan3PrimeValidationError(str(exc)) from exc
     compiled["prompt"] = original if not edits.strip() else (original + "\n\nUser requested changes:\n" + edits.strip()).strip()
     context = {"source_id": plan["source_id"], "owner_id": plan["owner_id"], "source_hash": plan["hash"]}
+    if "repeat_user_values" in public_input:
+        context["personalization_hash"] = hashlib.sha256(
+            json.dumps(fields, sort_keys=True, ensure_ascii=False).encode(),
+        ).hexdigest()
     if plan.get("trend_id"):
         context["trend_id"] = plan["trend_id"]
     return compiled, ConsentedMediaProbe(probe, actor, plan), context, public_input
@@ -218,6 +241,17 @@ async def verify_repeat_in_transaction(db, context: dict[str, Any]) -> None:
     if (not row or row["status"] != "completed" or not (row["is_public_feed"] or row["is_profile_visible"])
             or build_repeat_plan(dict(row))["hash"] != context["source_hash"]):
         raise Wan3PrimeValidationError("Разрешение на повтор отозвано или изменилось", status=409)
+    if context.get("personalization_hash"):
+        from bot.repeat_personalization import _decode_fields
+        fields_row = await (await db.execute(
+            "SELECT fields_json FROM generation_repeat_personalization WHERE generation_id = ?"
+            + (" FOR SHARE" if db_backend.is_postgres() else ""),
+            (context["source_id"],),
+        )).fetchone()
+        fields = _decode_fields(fields_row["fields_json"]) if fields_row else []
+        digest = hashlib.sha256(json.dumps(fields, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        if digest != context["personalization_hash"]:
+            raise Wan3PrimeValidationError("Параметры повтора изменились. Откройте повтор заново", status=409)
 
 
 def legacy_video_plan(source: dict[str, Any]) -> dict[str, Any]:

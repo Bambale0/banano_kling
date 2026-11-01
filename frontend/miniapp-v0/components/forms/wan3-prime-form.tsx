@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Wan3DurationSelect } from './wan3-duration-select'
+import { RepeatPersonalizationFields, repeatValuesComplete } from './repeat-personalization-fields'
 import { normalizeWan3ImageForRetry, Wan3ImagePreparationError } from '@/lib/wan3-image-normalize'
 import {
   fetchWan3PrimeOwnerRecipe, fetchWan3PrimeRepeatPlan, fetchWan3PrimeTrendPlan, generateWan3Prime, importWan3PrimeReference,
@@ -265,7 +266,10 @@ function Wan3PrimeFormSession({ draftOnly = false, onDraftChange, expectedModel,
     repeatPlan.slots.some(slot => slot.binding === 'upload' && !recipe.repeat_replacements?.[slot.key])))
   const draftIssue = draftOnly && (recipe.scenario === 'link' || recipe.reference_link_urls?.length || recipe.source_feed_gen_id || recipe.trend_id) ? 'В ручном тренде доступны собственные файлы без ссылок и чужих рецептов.' : null
   const uploadIssue = draftOnly && Object.values(uploadIssues).some(Boolean) ? 'Повторите загрузку или удалите незагруженные файлы.' : null
-  const issue = draftIssue || uploadIssue || (missingRepeatInput ? 'Загрузите материалы для каждого заменяемого места.' : recipeIssue(recipe))
+  const repeatFields = repeatPlan?.repeat_user_fields || []
+  const personalizationIssue = !repeatValuesComplete(repeatFields, recipe.repeat_user_values || {})
+    ? 'Выберите значения параметров повтора.' : null
+  const issue = draftIssue || uploadIssue || personalizationIssue || (missingRepeatInput ? 'Загрузите материалы для каждого заменяемого места.' : recipeIssue(recipe))
   const working = pending > 0 || recipeLoading || planLoading || quoting || sending
   const locked = working || attempted || Boolean(disabledReason)
   const isFrames = !sourceId && (recipe.scenario === 'first_frame' || recipe.scenario === 'first_last')
@@ -320,7 +324,11 @@ function Wan3PrimeFormSession({ draftOnly = false, onDraftChange, expectedModel,
         return { ...emptyRecipe(plan.recipe.scenario, plan.recipe.model), ...plan.recipe, ...settings,
           prompt: sameSource ? old.prompt : '',
           ...(trendId ? { trend_id: trendId } : { source_feed_gen_id: sourceId }), repeat_plan_hash: plan.repeat_plan_hash,
-          repeat_replacements: sameSource ? old.repeat_replacements || {} : {} }
+          repeat_replacements: sameSource ? old.repeat_replacements || {} : {},
+          ...(plan.repeat_user_fields?.length ? {
+            repeat_user_values: sameSource ? old.repeat_user_values || {} : {},
+          } : {}),
+        }
       })
       setQuoteState(null)
     }).catch(error => { if (!abort.signal.aborted) setPlanError(wan3SafeError(error, error instanceof Wan3PrimeApiError && error.status === 404 ? (trendId ? 'Тренд недоступен для повтора. Попросите автора опубликовать его заново.' : 'Публикация больше недоступна. Откройте другую опубликованную работу.') : 'Не удалось загрузить рецепт повтора. Попробуйте ещё раз.')) })
@@ -427,6 +435,10 @@ function Wan3PrimeFormSession({ draftOnly = false, onDraftChange, expectedModel,
             values={recipe.repeat_replacements?.[slot.key] ? [recipe.repeat_replacements[slot.key]] : []}
             onChange={urls => setRecipe(old => { const replacements = { ...old.repeat_replacements }; if (urls[0]) replacements[slot.key] = urls[0]; else delete replacements[slot.key]; return { ...old, repeat_replacements: replacements } })} />)}
     </section> : null}
+    {repeatFields.length ? <fieldset disabled={locked}>
+      <RepeatPersonalizationFields fields={repeatFields} values={recipe.repeat_user_values || {}}
+        onChange={values => patch({ repeat_user_values: values })} />
+    </fieldset> : null}
     {isFrames ? <div className="grid min-w-0 gap-3 sm:grid-cols-2">
       <MediaField {...mediaProps} title="Первый кадр" label="Загрузить первый кадр" prefix="Кадр " kind="image" limit={1} values={recipe.first_frame_url ? [recipe.first_frame_url] : []} onChange={urls => patch({ first_frame_url: urls[0] || null })} hint="JPEG, PNG без прозрачности, BMP или WEBP. До 20 MB." />
       {recipe.scenario === 'first_last' ? <MediaField {...mediaProps} title="Последний кадр" label="Загрузить последний кадр" prefix="Кадр " offset={2} kind="image" limit={1} values={recipe.last_frame_url ? [recipe.last_frame_url] : []} onChange={urls => patch({ last_frame_url: urls[0] || null })} /> : null}

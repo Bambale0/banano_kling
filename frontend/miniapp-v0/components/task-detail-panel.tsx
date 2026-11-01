@@ -274,6 +274,9 @@ export function TaskDetailPanel() {
               videos: [...selectedRepeatReferenceVideos].sort((left, right) => left - right),
             } : {}),
           },
+          ...(taskDetail.repeat_personalization_editor_enabled ? {
+            repeat_user_fields: repeatUserFields,
+          } : {}),
           feed_blurred: Boolean(published.feed_blurred),
         })
         notifyFeedChanged(published)
@@ -300,6 +303,7 @@ export function TaskDetailPanel() {
         is_public_feed: false,
         is_profile_visible: false,
         publication_scope: 'private',
+        repeat_user_fields: [],
         is_adult_content: false,
         feed_repeat_reference_selection: { images: [], ...(taskDetail.type === 'video' ? { videos: [] } : {}) },
       })

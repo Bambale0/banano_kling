@@ -5,6 +5,7 @@ import importlib.machinery
 import json
 import logging
 import sys
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
@@ -418,6 +419,23 @@ async def share_to_profile(
     return await _profile_card(internal_id, viewer_user_id=user_id)
 
 
+async def _clear_repeat_fields_in_transaction(db, generation_id: int, actor_user_id: int) -> None:
+    # Update existing configuration only; rotate the revision to defeat stale
+    # publication compensation, even while the preview is disabled.
+    if db_backend.is_postgres():
+        await db.execute("SELECT id FROM generation_tasks WHERE id = ? FOR UPDATE", (generation_id,))
+    await db.execute(
+        """
+        UPDATE generation_repeat_personalization
+        SET fields_json = '[]', write_token = ?,
+            updated_by_telegram_id = (SELECT telegram_id FROM users WHERE id = ?),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE generation_id = ?
+        """,
+        (uuid.uuid4().hex, actor_user_id, generation_id),
+    )
+
+
 async def remove_from_feed_scoped(
     gen_id: int | str,
     user_id: int,
@@ -437,6 +455,7 @@ async def remove_from_feed_scoped(
             return False
 
         if allow_any_user:
+            await _clear_repeat_fields_in_transaction(db, row["id"], user_id)
             await db.execute(
                 """
                 UPDATE generation_tasks
@@ -473,6 +492,7 @@ async def remove_publication(gen_id: int | str, user_id: int) -> bool:
         row = await database._fetch_generation_row(db, gen_id, user_id=user_id)
         if not row:
             return False
+        await _clear_repeat_fields_in_transaction(db, row["id"], user_id)
         revoked_grant = None
         if row["type"] == "video":
             # A typed tombstone also revokes historical publication selections;
@@ -988,24 +1008,7 @@ async def _miniapp_generation_share_scoped(module, request):
             )
 
         if scope in {"private", "none", "hidden"}:
-            owner_task = owner_task or await database.get_generation_task_payload(
-                gen_id,
-                user_id=user_id,
-            )
-            if owner_task:
-                generation_id = int(owner_task["id"])
-                write_token, previous_fields = await module.clear_repeat_fields(
-                    generation_id,
-                    actor_telegram_id=telegram_id,
-                )
-                repeat_rollback = (
-                    module, generation_id, write_token, previous_fields, telegram_id,
-                )
             removed = await remove_publication(gen_id, user_id)
-            if removed:
-                repeat_rollback = None
-            else:
-                await rollback_repeat_change()
             _invalidate_publication_caches()
             return module.web.json_response(
                 {"ok": True, "removed": removed, "publication_scope": "private"}

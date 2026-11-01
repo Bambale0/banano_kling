@@ -55,6 +55,12 @@ def normalize_repeat_fields(raw_fields: Any, *, prompt: str) -> list[dict[str, A
         if len({value.casefold() for value in choices}) != len(choices):
             raise ValueError(f"Варианты поля «{field['label']}» не должны повторяться")
         if choices:
+            # The author must not publish a button that the repeat validator
+            # will reject (e.g. a number field containing "18 лет").
+            for choice in choices:
+                render_trend_prompt(
+                    str(prompt or ""), {"user_fields": [field]}, {field["key"]: choice},
+                )
             field["choices"] = choices
     if any(not str(field.get("original_value") or "").strip() for field in fields):
         raise ValueError("Для каждого параметра укажите точный исходный фрагмент промпта")
@@ -96,11 +102,38 @@ def render_repeat_base(
         value = str(values.get(str(field.get("key") or ""), "") or "").strip()
         if choices and value not in choices:
             raise ValueError(f"Выберите один из вариантов поля «{field.get('label') or field.get('key')}»")
-    return render_trend_prompt(
-        str(source_prompt or ""),
-        {"user_fields": [dict(field) for field in fields]},
-        values,
-    )
+    unknown = set(values) - {str(field["key"]) for field in fields}
+    if unknown:
+        raise ValueError("Переданы лишние поля повтора")
+    # Hide all source spans behind fresh private bindings before rendering.
+    # Neither another original fragment nor a {{field}} in an inserted value
+    # can be interpreted again by a later field's substitution.
+    replacements = []
+    private_fields = []
+    private_values = {}
+    source = str(source_prompt or "")
+    for field in fields:
+        binding = str(field.get("original_value") or "").strip()
+        pattern = (
+            re.compile(r"(?<![\w:.])" + re.escape(binding) + r"(?![\w:]|\.\d)", re.IGNORECASE)
+            if binding.isdigit()
+            else re.compile(r"(?<!\w)" + re.escape(binding) + r"(?!\w)", re.IGNORECASE)
+        )
+        matches = list(pattern.finditer(source)) if binding else []
+        if not matches:
+            raise ValueError(f"Исходное значение поля «{field['label']}» не найдено в шаблоне")
+        token = "rp" + uuid.uuid4().hex
+        private_fields.append({**dict(field), "key": token, "original_value": token})
+        private_values[token] = values.get(str(field["key"]), "")
+        replacements.extend((match.start(), match.end(), token) for match in matches)
+    masked = source
+    previous_start = len(source) + 1
+    for start, end, token in sorted(replacements, reverse=True):
+        if end > previous_start:
+            raise ValueError("Исходные фрагменты параметров не должны пересекаться")
+        masked = masked[:start] + token + masked[end:]
+        previous_start = start
+    return render_trend_prompt(masked, {"user_fields": private_fields}, private_values)
 
 
 async def save_repeat_fields(
