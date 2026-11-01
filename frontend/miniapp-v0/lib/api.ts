@@ -718,7 +718,7 @@ function fileToBase64(file: File, signal?: AbortSignal): Promise<string> {
 
 const TELEGRAM_JSON_UPLOAD_MAX_BYTES = 16 * 1024 * 1024
 
-export type MediaUploadKind = 'image_reference' | 'video_reference' | 'audio_reference'
+export type MediaUploadKind = 'image_reference' | 'video_reference' | 'audio_reference' | 'repeat_choice_image'
   | 'assistant_audio' | 'trend_video_preview' | 'seedance25_image_reference'
   | 'seedance25_video_reference' | 'seedance25_video_chunk'
 

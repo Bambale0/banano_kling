@@ -207,11 +207,21 @@ async def compile_repeat(actor, body: dict[str, Any], probe):
     original = str(compiled.get("prompt") or "")
     fields = plan.get("personalization_fields") or []
     if "repeat_user_values" in public_input:
-        from bot.repeat_personalization import render_repeat_base
+        from bot.repeat_personalization import (
+            append_repeat_images,
+            render_repeat_base,
+            repeat_image_references,
+        )
         if not fields:
             raise Wan3PrimeValidationError("Для этой публикации параметры повтора не настроены")
         try:
-            original = render_repeat_base(original, fields, public_input["repeat_user_values"])
+            images = repeat_image_references(fields, public_input["repeat_user_values"], telegram_id=actor.telegram_id)
+            if images and compiled["scenario"] not in {"reference", "edit"}:
+                raise ValueError("Выбор изображений доступен в режиме референсов или редактирования")
+            existing = list(compiled.get("reference_image_urls") or [])
+            indices = append_repeat_images(existing, images)
+            original = render_repeat_base(original, fields, public_input["repeat_user_values"], image_indices=indices)
+            compiled["reference_image_urls"] = existing
         except ValueError as exc:
             raise Wan3PrimeValidationError(str(exc)) from exc
     compiled["prompt"] = original if not edits.strip() else (original + "\n\nUser requested changes:\n" + edits.strip()).strip()

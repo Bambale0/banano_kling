@@ -196,6 +196,7 @@ export interface TaskDetail extends Task {
   publication_reference_image_indices?: number[]
   publication_reference_video_indices?: number[]
   repeat_personalization_editor_enabled?: boolean
+  repeat_image_choices_supported?: boolean
   repeat_user_fields?: TrendUserField[]
   request_data?: {
     source_reference_images?: string[]
@@ -247,6 +248,8 @@ export interface TrendUserField {
   suffix?: string
   /** Optional author-curated values shown as one-tap choices in admin preview. */
   choices?: string[]
+  image_choices?: { id: string; label: string; image_url: string }[]
+  allow_custom_image?: boolean
 }
 
 export interface TrendGenerationSettings {

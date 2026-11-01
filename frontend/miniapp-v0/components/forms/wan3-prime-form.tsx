@@ -436,7 +436,7 @@ function Wan3PrimeFormSession({ draftOnly = false, onDraftChange, expectedModel,
             onChange={urls => setRecipe(old => { const replacements = { ...old.repeat_replacements }; if (urls[0]) replacements[slot.key] = urls[0]; else delete replacements[slot.key]; return { ...old, repeat_replacements: replacements } })} />)}
     </section> : null}
     {repeatFields.length ? <fieldset disabled={locked}>
-      <RepeatPersonalizationFields fields={repeatFields} values={recipe.repeat_user_values || {}}
+      <RepeatPersonalizationFields key={repeatKey} fields={repeatFields} values={recipe.repeat_user_values || {}}
         onChange={values => patch({ repeat_user_values: values })} />
     </fieldset> : null}
     {isFrames ? <div className="grid min-w-0 gap-3 sm:grid-cols-2">

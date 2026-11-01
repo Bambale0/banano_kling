@@ -12,6 +12,7 @@ import re
 import uuid
 from collections.abc import Mapping, Sequence
 from typing import Any
+from urllib.parse import urlparse
 
 from bot import db as db_backend
 from bot.trend_user_fields import (
@@ -23,6 +24,108 @@ from bot.trend_user_fields import (
 FEATURE_FLAG = "REPEAT_PERSONALIZATION_ADMIN_PREVIEW_ENABLED"
 MAX_CHOICES = 12
 MAX_CHOICE_LENGTH = 80
+
+
+def repeat_image_mode_supported(source: Mapping[str, Any]) -> bool:
+    if source.get("type", source.get("gen_type")) == "image":
+        return True
+    model = str(source.get("model") or "")
+    request = source.get("request_data") or {}
+    if isinstance(request, str):
+        try:
+            request = json.loads(request)
+        except ValueError:
+            return False
+    if not isinstance(request, Mapping):
+        return False
+    if model in {"seedance_2", "gemini_omni_video"}:
+        return True
+    if model == "seedance_2_5":
+        return request.get("seedance25_scenario") == "multimodal"
+    if model in {"wan_3", "wan_3_prime"}:
+        return request.get("scenario") in {"reference", "edit"}
+    return False
+
+
+def save_repeat_choice_image(raw: bytes) -> str:
+    """Re-encode catalog assets outside personal reference retention."""
+    import io
+    from pathlib import Path
+
+    from PIL import Image, ImageOps
+
+    from bot.config import config
+
+    directory = Path("static/uploads/repeat-choices")
+    with Image.open(io.BytesIO(raw)) as image:
+        if image.width * image.height > 40_000_000:
+            raise ValueError("Изображение слишком большое")
+        image = ImageOps.exif_transpose(image).convert("RGB")
+        image.thumbnail((2048, 2048))
+        directory.mkdir(parents=True, exist_ok=True)
+        name = uuid.uuid4().hex + ".jpg"
+        temporary = directory / (name + ".tmp")
+        try:
+            image.save(temporary, format="JPEG", quality=92)
+            temporary.replace(directory / name)
+        finally:
+            temporary.unlink(missing_ok=True)
+    return f"{config.static_base_url.rstrip('/')}/uploads/repeat-choices/{name}"
+
+
+def _image_choices(raw: Mapping[str, Any]) -> list[dict[str, str]]:
+    choices = raw.get("image_choices", [])
+    if not isinstance(choices, list) or len(choices) > MAX_CHOICES:
+        raise ValueError("Для параметра доступно до 12 изображений")
+    from bot.services.media_input_utils import reference_source_identity
+
+    result = []
+    for item in choices:
+        if not isinstance(item, Mapping):
+            raise ValueError("Неверный вариант изображения")  # noqa: TRY004 - user-safe validation
+        key = str(item.get("id") or "").strip()
+        label = str(item.get("label") or "").strip()
+        url = str(item.get("image_url") or "").strip()
+        kind, path = reference_source_identity(url)
+        if (not re.fullmatch(r"[a-zA-Z0-9_-]{1,48}", key) or not label
+                or len(label) > MAX_CHOICE_LENGTH or kind != "local"
+                or not re.fullmatch(r"static/uploads/repeat-choices/[a-f0-9]{32}\.jpg", path)
+                or urlparse(url).scheme != "https"):
+            raise ValueError("Загрузите изображение варианта через редактор публикации")
+        result.append({"id": key, "label": label, "image_url": url})
+    if len({item["id"] for item in result}) != len(result):
+        raise ValueError("Варианты изображения не должны повторяться")
+    if choices and raw.get("choices"):
+        raise ValueError("Используйте изображения или текстовые варианты в одном параметре")
+    return result
+
+
+def repeat_image_references(fields, raw_values, *, telegram_id: int) -> list[str]:
+    from bot.services.media_input_utils import (
+        reference_source_identity,
+        reference_upload_owner_telegram_id,
+    )
+
+    values = raw_values if isinstance(raw_values, Mapping) else {}
+    result = []
+    for field in fields:
+        if not field.get("image_choices"):
+            continue
+        value = str(values.get(field["key"]) or "").strip()
+        selected = next((item for item in field["image_choices"] if item["id"] == value), None)
+        if selected:
+            result.append(selected["image_url"])
+        elif field.get("allow_custom_image") and value.startswith("upload:"):
+            url = value[7:]
+            kind, path = reference_source_identity(url)
+            if (kind != "local" or not path.startswith("static/uploads/refs/image/")
+                    or reference_upload_owner_telegram_id(url) != telegram_id
+                    or urlparse(url).scheme != "https"):
+                raise ValueError(f"Загрузите своё изображение для «{field['label']}»")
+            result.append(url)
+        else:
+            raise ValueError(f"Выберите изображение для «{field['label']}»")
+    return result
 
 def admin_preview_enabled() -> bool:
     return str(os.getenv(FEATURE_FLAG, "")).strip().lower() in {
@@ -44,6 +147,13 @@ def normalize_repeat_fields(raw_fields: Any, *, prompt: str) -> list[dict[str, A
         if isinstance(field, Mapping)
     }
     for field in fields:
+        raw = raw_by_key.get(str(field["key"]), {})
+        images = _image_choices(raw)
+        if images:
+            if field["type"] != "text":
+                raise ValueError("Изображения доступны только для текстовых параметров")
+            field["image_choices"] = images
+            field["allow_custom_image"] = raw.get("allow_custom_image") is True
         raw_choices = raw_by_key.get(str(field["key"]), {}).get("choices", [])
         if raw_choices in (None, ""):
             raw_choices = []
@@ -95,9 +205,25 @@ def render_repeat_base(
     source_prompt: str,
     fields: Sequence[Mapping[str, Any]],
     raw_values: Any,
+    *,
+    image_start_index: int = 1,
+    image_indices: Sequence[int] | None = None,
 ) -> str:
-    values = raw_values if isinstance(raw_values, Mapping) else {}
+    values = dict(raw_values) if isinstance(raw_values, Mapping) else {}
+    image_index = image_start_index
+    image_ordinal = 0
     for field in fields:
+        if field.get("image_choices"):
+            value = str(values.get(field["key"]) or "")
+            if not any(item["id"] == value for item in field["image_choices"]) and not (
+                field.get("allow_custom_image") and value.startswith("upload:")
+            ):
+                raise ValueError(f"Выберите изображение для «{field['label']}»")
+            selected_index = image_indices[image_ordinal] if image_indices is not None else image_index
+            values[field["key"]] = f"{field['label']} from @Image{selected_index}"
+            image_ordinal += 1
+            image_index += 1
+            continue
         choices = list(field.get("choices") or [])
         value = str(values.get(str(field.get("key") or ""), "") or "").strip()
         if choices and value not in choices:
@@ -134,6 +260,21 @@ def render_repeat_base(
         masked = masked[:start] + token + masked[end:]
         previous_start = start
     return render_trend_prompt(masked, {"user_fields": private_fields}, private_values)
+
+
+def append_repeat_images(existing: list[str], images: Sequence[str]) -> list[int]:
+    """Keep provider deduplication from shifting later @ImageN bindings."""
+    from bot.services.media_input_utils import reference_source_identity
+
+    indices = []
+    identities = [reference_source_identity(url) for url in existing]
+    for url in images:
+        identity = reference_source_identity(url)
+        if identity not in identities:
+            identities.append(identity)
+            existing.append(url)
+        indices.append(identities.index(identity) + 1)
+    return indices
 
 
 async def save_repeat_fields(
@@ -263,6 +404,11 @@ def _decode_fields(raw: Any) -> list[dict[str, Any]]:
             choices = choices_by_key.get(str(field["key"]), [])
             if choices:
                 field["choices"] = choices
+            raw = next((item for item in value if isinstance(item, Mapping) and item.get("key") == field["key"]), {})
+            images = _image_choices(raw)
+            if images:
+                field["image_choices"] = images
+                field["allow_custom_image"] = raw.get("allow_custom_image") is True
         return fields
     except ValueError:
         return []

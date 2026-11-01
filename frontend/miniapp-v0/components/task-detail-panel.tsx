@@ -23,6 +23,7 @@ import { normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
 import { SeedanceTrendPublisher } from '@/components/seedance-trend-publisher'
 import { Wan3TrendPublisher } from '@/components/wan3-trend-publisher'
 import type { TrendUserField } from '@/lib/types'
+import { RepeatImageOptionsEditor } from '@/components/repeat-image-options-editor'
 
 const EMPTY_REFERENCE_URLS: string[] = []
 
@@ -58,6 +59,8 @@ function RepeatChoicesEditor({
 export function TaskDetailPanel() {
   const { state, taskDetail, isTaskDetailOpen, closeTaskDetail, updateTask, setVideoPromptPreset, setActiveTab } = useApp()
   const [publishBusy, setPublishBusy] = useState(false)
+  const [imageOptionUploads, setImageOptionUploads] = useState<Record<string, boolean>>({})
+  const imageOptionsBusy = Object.values(imageOptionUploads).some(Boolean)
   const [libraryBusy, setLibraryBusy] = useState(false)
   const [feedPromptVisible, setFeedPromptVisible] = useState(false)
   const [feedReferencesVisible, setFeedReferencesVisible] = useState(false)
@@ -138,6 +141,7 @@ export function TaskDetailPanel() {
     setPublicationScope(taskDetail?.publication_scope === 'profile' ? 'profile' : 'feed')
     setAdultContent(Boolean(taskDetail?.is_adult_content))
     setRepeatUserFields(taskDetail?.repeat_user_fields || [])
+    setImageOptionUploads({})
     const savedSelection = taskDetail?.feed_reference_selection
     setSelectedReferenceImages(new Set(savedSelection?.images ?? publicationReferenceImageIndices))
     setSelectedReferenceVideos(new Set(savedSelection?.videos ?? publicationReferenceVideoIndices))
@@ -908,12 +912,12 @@ export function TaskDetailPanel() {
                             onChange={(event) => updateRepeatUserField(index, { label: event.target.value })}
                             className="min-h-10 rounded-md border border-border/60 bg-background px-3 text-sm text-foreground"
                           />
-                          <RepeatChoicesEditor
+                          {!field.image_choices?.length ? <RepeatChoicesEditor
                             key={`${taskDetail.task_id}:${field.key}`}
                             field={field}
                             index={index}
                             onChange={(choices) => updateRepeatUserField(index, { choices })}
-                          />
+                          /> : null}
                           <input
                             aria-label={`Исходный фрагмент ${index + 1}`}
                             value={field.original_value || ''}
@@ -927,10 +931,14 @@ export function TaskDetailPanel() {
                             variant="ghost"
                             size="sm"
                             aria-label={`Удалить параметр ${index + 1}`}
+                            disabled={imageOptionsBusy}
                             onClick={() => setRepeatUserFields((current) => current.filter((_, fieldIndex) => fieldIndex !== index))}
                           >
                             <X className="h-4 w-4" />
                           </Button>
+                          {taskDetail.repeat_image_choices_supported ? <RepeatImageOptionsEditor key={`${taskDetail.task_id}:${field.key}`} field={field}
+                            onChange={patch => updateRepeatUserField(index, patch)}
+                            onBusyChange={busy => setImageOptionUploads(current => ({ ...current, [field.key]: busy }))} /> : null}
                         </div>
                       ))}
                       <Button type="button" variant="outline" size="sm" disabled={repeatUserFields.length >= 6} onClick={addRepeatUserField}>
@@ -939,7 +947,7 @@ export function TaskDetailPanel() {
                     </div>
                   ) : null}
                   <div className="mt-3 grid gap-2">
-                    <Button type="button" disabled={publishBusy} onClick={handlePublish}>
+                    <Button type="button" disabled={publishBusy || imageOptionsBusy} onClick={handlePublish}>
                       {publishBusy ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Images className="h-4 w-4" />}
                       {isPublished ? 'Сохранить публикацию' : 'Опубликовать'}
                     </Button>

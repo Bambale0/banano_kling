@@ -108,8 +108,9 @@ async def test_private_base_and_edit_reach_actual_provider_payload(
 
 
 @pytest.mark.parametrize("model", ["seedance_2", "seedance_2_5"])
+@pytest.mark.parametrize("image_options", [False, True])
 async def test_admin_personalization_reaches_video_provider_without_losing_base_or_edit(
-    repeat_endpoint, model, monkeypatch,
+    repeat_endpoint, model, monkeypatch, image_options, tmp_path,
 ):
     entry = repeat_endpoint
     entry.source["model"] = entry.card["model"] = model
@@ -127,8 +128,20 @@ async def test_admin_personalization_reaches_video_provider_without_losing_base_
     }
     monkeypatch.setenv(repeat_personalization.FEATURE_FLAG, "1")
     monkeypatch.setattr(miniapp.config, "is_admin", lambda _actor: True)
+    raw = {"key": "clothes", "label": "Одежда", "original_value": "blue coat"}
+    if image_options:
+        import io
+
+        from PIL import Image
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(miniapp.config, "STATIC_BASE_URL", "https://neuromixbot.com")
+        image_bytes = io.BytesIO()
+        Image.new("RGB", (512, 512), "red").save(image_bytes, format="PNG")
+        choice_url = repeat_personalization.save_repeat_choice_image(image_bytes.getvalue())
+        raw["image_choices"] = [{"id": "dress", "label": "Платье", "image_url": choice_url}]
     fields = repeat_personalization.normalize_repeat_fields(
-        [{"key": "clothes", "label": "Одежда", "original_value": "blue coat"}],
+        [raw],
         prompt=BASE,
     )
     await repeat_personalization.save_repeat_fields(
@@ -139,7 +152,7 @@ async def test_admin_personalization_reaches_video_provider_without_losing_base_
         "source_feed_gen_id": 42,
         "v_model": model,
         "prompt": "Keep the smile",
-        "repeat_user_values": {"clothes": "red dress"},
+        "repeat_user_values": {"clothes": "dress" if image_options else "red dress"},
     }
     quote_response = await entry.call(Request({
         **request_body, "pricing_quote_only": True, "seedance25_quote_only": True,
@@ -155,7 +168,14 @@ async def test_admin_personalization_reaches_video_provider_without_losing_base_
     provider_prompt = entry.transport.await_args.args[1]["input"]["prompt"]
     assert "SYNTHETIC PRIVATE BASE" in provider_prompt
     assert "cinematic forest" in provider_prompt
-    assert "red dress" in provider_prompt
+    if image_options:
+        assert "@Image2" in provider_prompt
+        # Seedance 2 normalizes local inputs to PNG before transport; 2.5
+        # retains the durable JPEG. Both must carry the selected catalog asset.
+        expected_url = choice_url if model == "seedance_2_5" else choice_url.removesuffix(".jpg") + ".png"
+        assert expected_url in json.dumps(entry.transport.await_args.args[1], ensure_ascii=False)
+    else:
+        assert "red dress" in provider_prompt
     assert "blue coat" not in provider_prompt
     assert "Keep the smile" in provider_prompt
     assert fixed_reference in json.dumps(entry.transport.await_args.args[1], ensure_ascii=False)

@@ -232,6 +232,8 @@ async def _repeat_personalized_source_prompt(
     body: dict[str, Any],
     *,
     telegram_id: int,
+    image_references: list[str] | None = None,
+    image_choices_supported: bool = True,
 ) -> str:
     if "repeat_user_values" not in body:
         return source_prompt
@@ -240,7 +242,22 @@ async def _repeat_personalized_source_prompt(
     fields = await get_repeat_fields(int(source_id))
     if not fields:
         raise TrendUserFieldsError("Для этой публикации параметры повтора не настроены")
-    return render_repeat_base(source_prompt, fields, body.get("repeat_user_values"))
+    from bot.repeat_personalization import append_repeat_images, repeat_image_references
+
+    images = repeat_image_references(fields, body.get("repeat_user_values"), telegram_id=telegram_id)
+    if images and not image_choices_supported:
+        raise ValueError("В этом режиме недоступен выбор изображений. Используйте режим референсов.")
+    if images and image_references is None:
+        raise ValueError("В этом режиме недоступен выбор изображений")
+    compiled_images = list(image_references or [])
+    indices = append_repeat_images(compiled_images, images)
+    rendered = render_repeat_base(
+        source_prompt, fields, body.get("repeat_user_values"),
+        image_indices=indices,
+    )
+    if image_references is not None:
+        image_references[:] = compiled_images
+    return rendered
 
 logger = logging.getLogger(__name__)
 
@@ -946,6 +963,7 @@ def _validate_gemini_omni_video_inputs(
 
 
 FILE_KIND_MAP.update({
+    "repeat_choice_image": {"prefix": "image/", "fallback_ext": "jpg", "group": "image"},
     "image_reference": {"prefix": "image/", "fallback_ext": "png", "group": "image"},
     "video_reference": {"prefix": "video/", "fallback_ext": "mp4", "group": "video"},
     "audio_reference": {"prefix": "audio/", "fallback_ext": "mp3", "group": "audio"},
@@ -3540,6 +3558,9 @@ async def miniapp_upload(request: web.Request) -> web.Response:
         telegram_id, _ctx = await _get_user_context(request.app, init_data)
         _ = telegram_id
 
+        if file_kind == "repeat_choice_image" and not _repeat_personalization_allowed(telegram_id):
+            return web.json_response({"ok": False, "error": "Доступно только администраторам"}, status=403)
+
         if file_kind not in FILE_KIND_MAP:
             return web.json_response(
                 {"ok": False, "error": f"Unsupported file_kind: {file_kind}"},
@@ -3592,6 +3613,14 @@ async def miniapp_upload(request: web.Request) -> web.Response:
         )
         public_url = None
         saved_reference = None
+        if file_kind == "repeat_choice_image":
+            from bot.repeat_personalization import save_repeat_choice_image
+            try:
+                public_url = await asyncio.to_thread(save_repeat_choice_image, bytes(raw))
+                content_type = "image/jpeg"
+                filename = Path(public_url).name
+            except (ValueError, OSError):
+                return web.json_response({"ok": False, "error": "Загрузите корректное изображение"}, status=400)
         if file_kind.endswith("_reference") or config_entry.get("durable_reference"):
             public_url, saved_reference = await save_reference_file(
                 telegram_id,
@@ -4769,15 +4798,6 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
         source_prompt = str(source_task.get("prompt") or "").strip()
         if not source_prompt:
             return web.json_response({"ok": False, "error": "У исходной генерации нет prompt"}, status=400)
-        try:
-            source_prompt = await _repeat_personalized_source_prompt(
-                int(source["id"]), source_prompt, body, telegram_id=telegram_id,
-            )
-        except RepeatPersonalizationAccessError as exc:
-            return web.json_response({"ok": False, "error": str(exc)}, status=403)
-        except (TrendUserFieldsError, ValueError) as exc:
-            return web.json_response({"ok": False, "error": str(exc)}, status=400)
-        prompt = compose_feed_remix_prompt(source_prompt, body.get("prompt", ""))
 
         img_service = str(body.get("img_service") or body.get("model") or source.get("model") or "banana_pro")
         img_ratio = str(body.get("img_ratio") or source.get("aspect_ratio") or "1:1")
@@ -4803,6 +4823,16 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
             references = _merge_private_repeat_references(source_task, references)
         except ValueError as exc:
             return web.json_response({"ok": False, "error": str(exc)}, status=400)
+        try:
+            source_prompt = await _repeat_personalized_source_prompt(
+                int(source["id"]), source_prompt, body, telegram_id=telegram_id, image_references=references,
+            )
+        except RepeatPersonalizationAccessError as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=403)
+        except (TrendUserFieldsError, ValueError) as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+        prompt = compose_feed_remix_prompt(source_prompt, body.get("prompt", ""))
+
         logger.info(
             "Mini App image remix references: source_id=%s user_id=%s submitted=%s retained=%s total=%s",
             source.get("id"),
@@ -4996,15 +5026,6 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
                     {"ok": False, "error": "У исходной генерации нет prompt"},
                     status=400,
                 )
-            try:
-                source_prompt = await _repeat_personalized_source_prompt(
-                    int(source_feed_gen_id), source_prompt, body, telegram_id=telegram_id,
-                )
-            except RepeatPersonalizationAccessError as exc:
-                return web.json_response({"ok": False, "error": str(exc)}, status=403)
-            except (TrendUserFieldsError, ValueError) as exc:
-                return web.json_response({"ok": False, "error": str(exc)}, status=400)
-            prompt = compose_feed_remix_prompt(source_prompt, prompt)
             # Use the same owner/foreign recipe assembly as the feed remix API.
             # Client-empty is valid when every required slot is explicitly fixed.
             try:
@@ -5024,6 +5045,15 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
                 references = _merge_private_repeat_references(source_feed_payload, references)
             except ValueError as exc:
                 return web.json_response({"ok": False, "error": str(exc)}, status=400)
+            try:
+                source_prompt = await _repeat_personalized_source_prompt(
+                    int(source_feed_gen_id), source_prompt, body, telegram_id=telegram_id, image_references=references,
+                )
+            except RepeatPersonalizationAccessError as exc:
+                return web.json_response({"ok": False, "error": str(exc)}, status=403)
+            except (TrendUserFieldsError, ValueError) as exc:
+                return web.json_response({"ok": False, "error": str(exc)}, status=400)
+            prompt = compose_feed_remix_prompt(source_prompt, prompt)
             if not references:
                 return web.json_response(
                     {"ok": False, "error": "Добавьте своё фото или референс для remix"},
@@ -6110,7 +6140,10 @@ async def miniapp_task_detail(request: web.Request) -> web.Response:
                 {"ok": False, "error": "Задача не найдена"}, status=404
             )
         if _repeat_personalization_allowed(telegram_id):
+            from bot.repeat_personalization import repeat_image_mode_supported
+
             detail["repeat_personalization_editor_enabled"] = True
+            detail["repeat_image_choices_supported"] = repeat_image_mode_supported(detail)
             detail["repeat_user_fields"] = await get_repeat_fields(
                 int(detail.get("feed_id") or 0)
             )
