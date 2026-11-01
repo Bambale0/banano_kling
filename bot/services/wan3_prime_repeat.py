@@ -176,7 +176,7 @@ class ConsentedMediaProbe:
                 with open(path, "rb") as stream:
                     return hashlib.file_digest(stream, "sha256").hexdigest()
 
-            return replace(info, url=url, sha256=await asyncio.to_thread(digest))
+            return replace(info, url=url, sha256=await asyncio.to_thread(digest), local_repeat_image=True)
         probe = self.owner if (kind, url) in self.allowed else self.viewer
         return await probe.probe_url(url, kind=kind)
 

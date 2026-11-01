@@ -121,6 +121,69 @@ async def test_wan_real_probe_accepts_only_the_selected_local_catalog_asset(tmp_
         await probe.probe_url('https://example.test/unselected.jpg', kind='image')
 
 
+@pytest.mark.parametrize('tamper', [False, True])
+async def test_wan_real_image_probe_quote_to_launch_keeps_choice_and_is_idempotent(tmp_path, monkeypatch, tamper):
+    import io
+
+    from PIL import Image
+
+    from bot import miniapp
+    from bot.services.wan3_prime_lifecycle import (
+        Wan3PrimeLifecycle,
+        Wan3PrimeLifecycleError,
+    )
+    from bot.services.wan3_prime_repeat import get_repeat_plan, public_plan
+    from bot.services.wan3_prime_storage import ActualWan3PrimeProbe
+    from tests.test_wan3_feed_repeat import FIXED, SECRET, USER_FACE, published_source
+    from tests.test_wan3_prime_lifecycle import (
+        Prices,
+        Probe,
+        Provider,
+        balance,
+        user_actor,
+    )
+
+    owner, source_id = await published_source()
+    actor = await user_actor(100, telegram_id=991202)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(subject.FEATURE_FLAG, '1')
+    monkeypatch.setattr(miniapp.config, 'is_admin', lambda _id: True)
+    raw = io.BytesIO()
+    Image.new('RGB', (512, 512), 'white').save(raw, format='PNG')
+    choice = subject.save_repeat_choice_image(raw.getvalue())
+    fields = subject.normalize_repeat_fields([{
+        'key': 'outfit', 'label': 'Наряд', 'original_value': 'clothing',
+        'image_choices': [{'id': 'dress', 'label': 'Платье', 'image_url': choice}],
+    }], prompt=SECRET)
+    await subject.save_repeat_fields(source_id, fields, actor_telegram_id=owner.telegram_id)
+
+    class RealFilesProbe(Probe):
+        async def probe_file(self, path, *, kind):
+            return await ActualWan3PrimeProbe().probe_file(path, kind=kind)
+
+    plan = public_plan(await get_repeat_plan(actor, source_id))
+    request = {**plan['recipe'], 'source_feed_gen_id': source_id, 'repeat_plan_hash': plan['repeat_plan_hash'],
+               'repeat_replacements': {'image:0': USER_FACE}, 'repeat_user_values': {'outfit': 'dress'}}
+    provider = Provider()
+    lifecycle = Wan3PrimeLifecycle(probe=RealFilesProbe(), preset_manager=Prices(), transport=provider)
+    quote = await lifecycle.quote(actor, request)
+    if tamper:
+        from pathlib import Path
+
+        path = Path('static/uploads') / choice.split('/uploads/', 1)[1]
+        Image.new('RGB', (512, 512), 'red').save(path, format='JPEG')
+        with pytest.raises(Wan3PrimeLifecycleError, match='stale'):
+            await lifecycle.launch(actor, request, quote, 'selected-image-once')
+        assert provider.creates == 0
+        assert await balance(actor.user_id) == 100
+        return
+    result = await lifecycle.launch(actor, request, quote, 'selected-image-once')
+    assert provider.recipe.reference_image_urls == [USER_FACE, FIXED, choice]
+    assert '@Image3' in provider.recipe.prompt
+    assert (await lifecycle.launch(actor, request, quote, 'selected-image-once'))['task_id'] == result['task_id']
+    assert provider.creates == 1
+
+
 @pytest.mark.parametrize('model,scenario,expected', [
     ('seedance_2', 'text', True), ('seedance_2_5', 'multimodal', True),
     ('seedance_2_5', 'first_frame', False), ('wan_3', 'edit', True),

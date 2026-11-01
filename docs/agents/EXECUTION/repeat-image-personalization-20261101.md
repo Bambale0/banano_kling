@@ -66,3 +66,11 @@ explicit consent when publishing derived results. Seedream effective adapter cap
 before prompt binding; existing source-host aliases are deduplicated before @ImageN assignment.
 Regression covers real WAN probe (without wan3_prime_media rows), disallowed URL, Seedream
 cap, and source aliases. PR temporarily draft while these checks run.
+
+Real WAN quote→launch regression reproduced a second rejection: generic catalog images
+have no managed-media row. MediaInfo now carries a server-only local-repeat-image capability;
+reservation verifies its exact local path and SHA-256 again instead of requiring a managed
+WAN upload row. Existing managed media retains its row/expiry lock checks. The same-key
+launch is idempotent, and file mutation after quote rejects before debit/provider.
+RED reproduced missing row; GREEN quote→launch and tamper: 2 passed. Adjacent lifecycle,
+publication and repeat backend selection: 68 passed.
