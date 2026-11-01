@@ -135,3 +135,13 @@ async def test_unprivileged_generate_never_contacts_provider(monkeypatch):
     provider.list_enabled_wan_models.assert_not_awaited()
     provider.submit.assert_not_awaited()
     cb.answer.assert_awaited_once_with("⛔ Нет доступа", show_alert=True)
+
+@pytest.mark.parametrize("ratio", ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "adaptive"])
+async def test_admin_ratio_buttons_round_trip_full_value(monkeypatch, ratio):
+    cb = callback()
+    cb.data = f"admin_wan3:set_ratio:{ratio}"
+    state = DummyState()
+    monkeypatch.setattr(lab.config, "is_admin", lambda _tid: True)
+    await lab.set_option(cb, state)
+    assert state.data["wan_lab_ratio"] == ratio
+    cb.answer.assert_awaited_once_with()
