@@ -1,3 +1,10 @@
+## 2026-11-01 — Explicit Seedance fallback edit intent follow-up
+- Baseline ea704c3e2e07059d9b8aa2e775292157d28110eb, isolated task branch from current tanyapi.
+- Confirmed edge: admin/trusted ordinary Auto reference is accepted by app with video_editing=false. Duration=-1 did not prove edit intent, but fallback inferred edit and changed the requested mode/ratio.
+- RED: ordinary Auto video reference for fixed/adaptive ratios created a fallback receipt unexpectedly. Fix persists explicit application edit intent separately after the unchanged KIE request, and uses that flag or explicit wire edit type only.
+- Acceptance: both immediate KIE rejection and accepted-primary terminal failure preserve ordinary Auto without fallback; explicit edit still maps duration=-1/adaptive/omni edit. Tests cover persistence through status reconciliation.
+- Rollout: staged SEEDANCE_FALLBACK_PROVIDER=off in production env before first deployment, while current runtime remains baseline a2e3020c. Enable only after corrected code is verified and the earlier deployment is complete.
+
 ## 2026-11-01 — Seedance 2.0/2.5 Neironych fallback
 - Baseline: a2e3020c5ebc403c2dc7b4ad5835a07dfb427d61 on tanyapi.
 - Audit: public adapters use KIE only; Neironych exists only in admin lab. Reuse canonical authenticated callbacks, KIE Market polling, Seedance25 reconciler, watchdog, existing debit/refund/delivery.

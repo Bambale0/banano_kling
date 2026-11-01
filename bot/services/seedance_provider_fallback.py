@@ -205,7 +205,7 @@ def _payload(payload: dict) -> dict:
     first, last = data.get("first_frame_url") or "", data.get("last_frame_url") or ""
     edit = model == "seedance-2.5" and (
         data.get("omni_reference_task_type") == "edit"
-        or (data.get("duration") == -1 and videos)
+        or payload.get("_seedance_edit_intent") is True
     )
     mode = (
         "edit"
@@ -255,11 +255,17 @@ def _rejected(result: dict) -> bool:
 
 
 async def submit_seedance(
-    payload: dict, primary: Callable[[dict], Awaitable[dict]]
+    payload: dict,
+    primary: Callable[[dict], Awaitable[dict]],
+    *,
+    video_editing: bool = False,
 ) -> dict:
     result = await primary(payload)
     if payload.get("model") not in MODELS or not enabled():
         return result
+    if video_editing:
+        # Application intent is persisted locally, never added to KIE wire data.
+        payload = {**payload, "_seedance_edit_intent": True}
     task_id = result.get("task_id")
     if task_id:
         try:

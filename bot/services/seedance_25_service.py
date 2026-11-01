@@ -382,7 +382,8 @@ class Seedance25Service(KlingService):
         )
         from bot.services.seedance_provider_fallback import submit_seedance
         result = await submit_seedance(
-            payload, lambda body: self._kie_post(self.CREATE_TASK_ENDPOINT, body)
+            payload, lambda body: self._kie_post(self.CREATE_TASK_ENDPOINT, body),
+            video_editing=video_editing or identity_transfer,
         )
         if isinstance(result, dict):
             if not result.get("task_id"):
