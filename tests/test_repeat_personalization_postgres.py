@@ -35,20 +35,32 @@ def _fields(choice: str):
 @pytest.mark.asyncio
 async def test_parallel_writes_observe_the_immediately_preceding_revision():
     async with runtime_postgres_schema():
+        # The adapter deliberately skips SQLite-shaped application DDL. Its
+        # native PostgreSQL bootstrap must therefore create this table before
+        # the first ordinary read; the test must not pre-create it itself.
+        assert await subject.get_repeat_fields(1) == []
         dsn = os.environ["DATABASE_URL"]
         async with await psycopg.AsyncConnection.connect(dsn) as connection:
-            await connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS generation_repeat_personalization (
-                    generation_id BIGINT PRIMARY KEY,
-                    fields_json TEXT NOT NULL,
-                    write_token TEXT NOT NULL,
-                    updated_by_telegram_id BIGINT NOT NULL,
-                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            columns = await (
+                await connection.execute(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = current_schema()
+                      AND table_name = 'generation_repeat_personalization'
+                    """
                 )
-                """
+            ).fetchall()
+            assert {row[0] for row in columns} >= {
+                "generation_id",
+                "fields_json",
+                "write_token",
+                "updated_by_telegram_id",
+                "updated_at",
+            }
+            await connection.execute(
+                "TRUNCATE generation_repeat_personalization"
             )
-            await connection.execute("TRUNCATE generation_repeat_personalization")
             row = await (
                 await connection.execute(
                     "INSERT INTO generation_tasks(status) VALUES ('done') RETURNING id"
