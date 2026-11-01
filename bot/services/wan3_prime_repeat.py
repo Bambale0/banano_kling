@@ -147,13 +147,36 @@ async def get_repeat_plan(actor, source_id: int) -> dict[str, Any]:
 
 class ConsentedMediaProbe:
     """A capability for exact consented URLs, never blanket cross-user access."""
-    def __init__(self, probe, actor, plan):
+    def __init__(self, probe, actor, plan, selected_images=()):
         self.viewer = probe.for_actor(actor) if hasattr(probe, "for_actor") else probe
         owner = SimpleNamespace(user_id=plan["owner_id"], telegram_id=plan["owner_telegram_id"])
         self.owner = probe.for_actor(owner) if hasattr(probe, "for_actor") else probe
         self.allowed = {(slot["kind"], slot["url"]) for slot in plan["slots"] if slot["binding"] == "fixed"}
+        self.selected_images = frozenset(selected_images)
 
     async def probe_url(self, url: str, *, kind: str):
+        from bot.services.media_input_utils import reference_source_identity
+
+        source_kind, source_path = reference_source_identity(url)
+        consented_local_image = (kind, url) in self.allowed and source_kind == "local" and (
+            source_path.startswith(("static/uploads/repeat-choices/", "static/uploads/refs/image/"))
+        )
+        if kind == "image" and (url in self.selected_images or consented_local_image):
+            import asyncio
+            from dataclasses import replace
+
+            from bot.services.media_input_utils import resolve_local_upload_path
+
+            path = resolve_local_upload_path(url)
+            if not path:
+                raise Wan3PrimeValidationError("Изображение варианта больше недоступно")
+            info = await self.viewer.probe_file(path, kind="image")
+
+            def digest():
+                with open(path, "rb") as stream:
+                    return hashlib.file_digest(stream, "sha256").hexdigest()
+
+            return replace(info, url=url, sha256=await asyncio.to_thread(digest), local_repeat_image=True)
         probe = self.owner if (kind, url) in self.allowed else self.viewer
         return await probe.probe_url(url, kind=kind)
 
@@ -206,12 +229,24 @@ async def compile_repeat(actor, body: dict[str, Any], probe):
         raise Wan3PrimeValidationError("Изменения должны быть текстом")
     original = str(compiled.get("prompt") or "")
     fields = plan.get("personalization_fields") or []
+    selected_images = []
     if "repeat_user_values" in public_input:
-        from bot.repeat_personalization import render_repeat_base
+        from bot.repeat_personalization import (
+            append_repeat_images,
+            render_repeat_base,
+            repeat_image_references,
+        )
         if not fields:
             raise Wan3PrimeValidationError("Для этой публикации параметры повтора не настроены")
         try:
-            original = render_repeat_base(original, fields, public_input["repeat_user_values"])
+            images = repeat_image_references(fields, public_input["repeat_user_values"], telegram_id=actor.telegram_id)
+            selected_images = images
+            if images and compiled["scenario"] not in {"reference", "edit"}:
+                raise ValueError("Выбор изображений доступен в режиме референсов или редактирования")
+            existing = list(compiled.get("reference_image_urls") or [])
+            indices = append_repeat_images(existing, images)
+            original = render_repeat_base(original, fields, public_input["repeat_user_values"], image_indices=indices)
+            compiled["reference_image_urls"] = existing
         except ValueError as exc:
             raise Wan3PrimeValidationError(str(exc)) from exc
     compiled["prompt"] = original if not edits.strip() else (original + "\n\nUser requested changes:\n" + edits.strip()).strip()
@@ -222,7 +257,7 @@ async def compile_repeat(actor, body: dict[str, Any], probe):
         ).hexdigest()
     if plan.get("trend_id"):
         context["trend_id"] = plan["trend_id"]
-    return compiled, ConsentedMediaProbe(probe, actor, plan), context, public_input
+    return compiled, ConsentedMediaProbe(probe, actor, plan, selected_images), context, public_input
 
 
 async def verify_repeat_in_transaction(db, context: dict[str, Any]) -> None:

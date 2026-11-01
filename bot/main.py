@@ -2785,7 +2785,7 @@ async def _cleanup_loop():
                 max_age_seconds=UPLOAD_RETENTION_SECONDS,
                 skip_filenames=set(),
                 # Author template assets are durable inputs, not temporary uploads.
-                skip_dirnames={"refs", "feed", "wan3_prime", "kling4", "trend-assets", "seedance_fallback"},
+                skip_dirnames={"refs", "feed", "wan3_prime", "kling4", "trend-assets", "seedance_fallback", "repeat-choices"},
                 protected_paths=public_feed_paths,
             )
             await _remove_old_files(

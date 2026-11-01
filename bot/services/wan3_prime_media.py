@@ -76,6 +76,8 @@ class MediaInfo:
     has_alpha: bool = False
     pages: int | None = None
     upstream_page_validation_required: bool = False
+    # Set only by the authenticated repeat compiler, never from client JSON.
+    local_repeat_image: bool = False
 
 
 @dataclass(frozen=True)

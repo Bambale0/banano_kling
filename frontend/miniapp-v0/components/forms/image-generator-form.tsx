@@ -382,7 +382,7 @@ export function ImageGeneratorForm({
         </div>
 
         <div className="space-y-2">
-          <RepeatPersonalizationFields
+          <RepeatPersonalizationFields key={sourceFeedGenId}
             fields={repeatUserFields}
             values={repeatUserValues}
             onChange={setRepeatUserValues}

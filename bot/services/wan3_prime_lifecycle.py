@@ -542,6 +542,18 @@ class Wan3PrimeLifecycle:
             # between the validated quote and the committed generation recipe.
             for inputs in recipe.media.values():
                 for info in inputs:
+                    if info.local_repeat_image:
+                        from bot.services.media_input_utils import (
+                            resolve_local_upload_path,
+                        )
+                        from bot.services.wan3_prime_storage import _sha256_file
+
+                        local = resolve_local_upload_path(info.url or "")
+                        if (info.kind != "image" or not local or not info.path
+                                or Path(local).resolve() != Path(info.path).resolve()
+                                or await asyncio.to_thread(_sha256_file, Path(local)) != info.sha256):
+                            raise Wan3PrimeValidationError("Изображение варианта изменилось или удалено. Откройте повтор заново", status=409)
+                        continue
                     if info.sha256:
                         present = await (await db.execute(
                             "SELECT local_path FROM wan3_prime_media WHERE public_url = ? AND sha256 = ?",

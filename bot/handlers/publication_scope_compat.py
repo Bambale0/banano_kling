@@ -947,6 +947,10 @@ async def _miniapp_generation_share_scoped(module, request):
             pending_repeat_fields = module.normalize_repeat_fields(
                 body.get("repeat_user_fields"), prompt=source_prompt,
             )
+            from bot.repeat_personalization import repeat_image_mode_supported
+
+            if any(field.get("image_choices") for field in pending_repeat_fields) and not repeat_image_mode_supported(owner_task):
+                return module.web.json_response({"ok": False, "error": "Изображения вариантов недоступны в режиме этой работы. Используйте режим референсов."}, status=400)
             generation_id = int(owner_task["id"])
             if pending_repeat_fields:
                 write_token, previous_fields = await module.save_repeat_fields(

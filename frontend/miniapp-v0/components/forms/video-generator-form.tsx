@@ -1348,7 +1348,7 @@ export function VideoGeneratorForm({
         ) : null}
 
         <div className="space-y-2">
-          <RepeatPersonalizationFields
+          <RepeatPersonalizationFields key={sourceFeedGenId}
             fields={repeatUserFields}
             values={repeatUserValues}
             onChange={(values) => {

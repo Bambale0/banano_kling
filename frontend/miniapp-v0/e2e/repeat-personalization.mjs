@@ -13,8 +13,10 @@ const base = origin + '/mini-app/'
 const root = mkdtempSync(join(tmpdir(), 'repeat-personalization-'))
 symlinkSync(resolve('out'), join(root, 'mini-app'), 'dir')
 const server = spawn('python3', ['-m', 'http.server', String(port), '--bind', '127.0.0.1', '--directory', root], { stdio: 'ignore' })
-const fields = [{ key: 'clothes', label: 'Одежда', type: 'text', required: true, max_length: 160, choices: ['red dress', 'black suit'] }]
-const models = ['v3_pro', 'wan_3', 'wan_3_prime'].map(id => ({ id, label: id, description: 'Synthetic',
+const fields = [{ key: 'clothes', label: 'Наряд девушки', type: 'text', required: true, max_length: 160,
+  image_choices: [{ id: 'red_dress', label: 'red dress', image_url: 'https://example.test/dress.svg' },
+    { id: 'black_suit', label: 'black suit', image_url: 'https://example.test/suit.svg' }], allow_custom_image: true }]
+const models = ['seedance_2', 'wan_3', 'wan_3_prime'].map(id => ({ id, label: id, description: 'Synthetic',
   durations: [5], ratios: ['16:9'], supports: ['text'], costs: { '5': 5 },
   quality_costs: { '720p': 2, '1080p': 3 }, wan_resolutions: ['720P', '1080P'] }))
 let browser
@@ -27,7 +29,7 @@ try {
   }
   browser = await chromium.launch({ headless: true })
   for (const admin of [true, false]) {
-    for (const model of ['banana_pro', 'v3_pro', 'wan_3', 'wan_3_prime']) {
+    for (const model of ['banana_pro', 'seedance_2', 'wan_3', 'wan_3_prime']) {
       const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
       const page = await context.newPage()
       const errors = [], quotes = [], mutations = []
@@ -45,7 +47,8 @@ try {
       await page.route('**/*', async route => {
         const url = new URL(route.request().url())
         if (url.pathname.endsWith('/telegram-web-app.js')) return route.fulfill({ contentType: 'application/javascript', body: '// fixture' })
-        if (url.hostname === 'example.test') return route.abort()
+        if (url.hostname === 'example.test') return route.fulfill({ contentType: 'image/svg+xml',
+          body: '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="300"><rect width="240" height="300" fill="#ccd2db"/><path d="M90 35h60l45 210H45z" fill="#18334a"/></svg>' })
         if (url.pathname.includes('/mini-app/api/')) {
           let data = { ok: true }
           if (url.pathname.endsWith('/bootstrap')) data = { ok: true, telegram_id: 424242, first_name: 'Synthetic',
@@ -74,12 +77,16 @@ try {
       await page.goto(base + '?startapp=remix_777', { waitUntil: 'networkidle' })
       await page.locator('textarea').first().waitFor()
       if (admin) {
+        await page.getByAltText('red dress', { exact: true }).waitFor()
         await page.getByRole('button', { name: 'red dress', exact: true }).click()
+        assert.equal(await page.getByRole('button', { name: 'Загрузить свой вариант: Наряд девушки' }).count(), 1)
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
+        if (model === 'seedance_2') await page.screenshot({ path: '/tmp/repeat-image-personalization-mobile.png', fullPage: true })
         assert.equal(await page.getByRole('button', { name: 'red dress', exact: true }).getAttribute('aria-pressed'), 'true')
         if (model.startsWith('wan_')) {
           await page.waitForFunction(() => document.querySelector('[aria-pressed="true"]') != null)
           await new Promise(resolve => setTimeout(resolve, 600))
-          assert.ok(quotes.some(body => body.recipe.repeat_user_values?.clothes === 'red dress'), 'WAN wire carries selected choice')
+          assert.ok(quotes.some(body => body.recipe.repeat_user_values?.clothes === 'red_dress'), 'WAN wire carries selected choice')
         }
       } else {
         assert.equal(await page.getByRole('button', { name: 'red dress', exact: true }).count(), 0)
