@@ -495,6 +495,9 @@ async def generate(callback: types.CallbackQuery, state: FSMContext) -> None:
         if data["wan_lab_last_id"] and data["wan_lab_last_hash"] == payload_hash:
             await callback.answer("Этот вариант уже запущен. Выберите «Новый запуск».", show_alert=True)
             return
+        if data["wan_lab_pending_key"] and data["wan_lab_pending_hash"] != payload_hash:
+            await callback.answer("Предыдущая отправка не подтверждена. Верните прежние параметры, чтобы повторить с тем же ключом.", show_alert=True)
+            return
         try:
             enabled = await neironych_wan3_admin_service.list_enabled_wan_models()
             if "wan-3" not in enabled:
@@ -577,6 +580,9 @@ async def new_request(callback: types.CallbackQuery, state: FSMContext) -> None:
     if not await _require_admin(callback):
         return
     data = await _data(state)
+    if data["wan_lab_pending_key"]:
+        await callback.answer("Исход предыдущей отправки неизвестен. Повторите прежний запрос с сохранённым ключом.", show_alert=True)
+        return
     if data["wan_lab_last_id"]:
         try:
             record = await neironych_wan3_admin_service.get_status(data["wan_lab_last_id"])
