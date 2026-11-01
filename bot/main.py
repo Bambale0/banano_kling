@@ -2793,6 +2793,9 @@ async def _cleanup_loop():
                 max_age_seconds=LOG_RETENTION_SECONDS,
                 skip_filenames=ACTIVE_LOG_FILENAMES,
             )
+            from bot.services.seedance_provider_fallback import cleanup_seedance_routes
+
+            await cleanup_seedance_routes()
             pruned_refs = await cleanup_saved_references()
             orphaned_refs = await cleanup_orphaned_reference_files(
                 max_age_seconds=UPLOAD_RETENTION_SECONDS

@@ -50,6 +50,7 @@ from bot.services.seedance25_identity import (
 )
 from bot.video_reference_policy import apply_video_reference_cost
 from bot.services.seedance_25_service import (
+    Seedance25Service,
     get_seedance25_callback_url,
     seedance_25_service,
 )
@@ -365,7 +366,7 @@ def _scenario_payload(data: dict[str, Any], prompt: str) -> dict[str, Any]:
         "scenario": scenario,
         "prompt": str(prompt or "").strip(),
         "duration": -1 if editing else int(data.get("v_duration", 5)),
-        "ratio": "adaptive" if editing else str(data.get("v_ratio") or "adaptive"),
+        "ratio": "adaptive" if editing else str(data.get("v_ratio") or Seedance25Service.DEFAULT_ASPECT_RATIO),
         "seedance25_video_editing": editing,
         "seedance25_identity_transfer": identity,
         "resolution": str(data.get("seedance25_resolution") or "720p"),
@@ -712,7 +713,7 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
         "seedance25_video_editing": body.get("seedance25_video_editing", False),
         "seedance25_identity_transfer": body.get("seedance25_identity_transfer", body.get("identityTransfer", False)),
         "v_duration": int(body.get("v_duration", 5)),
-        "v_ratio": str(body.get("v_ratio") or "adaptive").strip().lower(),
+        "v_ratio": str(body.get("v_ratio") or Seedance25Service.DEFAULT_ASPECT_RATIO).strip().lower(),
         "seedance25_resolution": str(body.get("seedance25_resolution") or "720p").strip().lower(),
         "seedance25_first_frame_url": str(body.get("seedance25_first_frame_url") or "").strip() or None,
         "seedance25_last_frame_url": str(body.get("seedance25_last_frame_url") or "").strip() or None,

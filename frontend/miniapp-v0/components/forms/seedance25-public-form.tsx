@@ -267,7 +267,7 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
   const identityTransfer = scenario === 'identity_transfer'
   const referenceScenario = scenario === 'multimodal' || identityTransfer
   const [resolution, setResolution] = useState<Seedance25Resolution>('720p')
-  const [ratio, setRatio] = useState<(typeof RATIOS)[number]>('adaptive')
+  const [ratio, setRatio] = useState<(typeof RATIOS)[number]>(() => RATIOS.find((value) => value === model?.ratios?.[0] && value !== 'adaptive') || RATIOS.find((value) => value !== 'adaptive')!)
   const frameMode = scenario === 'first_frame' || scenario === 'first_last'
   const [duration, setDuration] = useState(5)
   const [videoEditing, setVideoEditing] = useState(false)

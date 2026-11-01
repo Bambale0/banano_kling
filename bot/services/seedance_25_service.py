@@ -65,6 +65,7 @@ def get_seedance25_callback_url() -> str:
 
 class Seedance25Service(KlingService):
     MODEL_NAME = "bytedance/seedance-2-5"
+    DEFAULT_ASPECT_RATIO = "16:9"
 
     ALLOWED_RATIOS = {
         "1:1",
@@ -209,7 +210,7 @@ class Seedance25Service(KlingService):
         prompt: str,
         *,
         duration: int = 5,
-        aspect_ratio: str = "adaptive",
+        aspect_ratio: str = DEFAULT_ASPECT_RATIO,
         resolution: str = "720p",
         first_frame_url: str | None = None,
         last_frame_url: str | None = None,

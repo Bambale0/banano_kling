@@ -679,3 +679,129 @@ async def test_private_fallback_video_survives_real_upload_cleanup(
     )
     await namespace["_remove_old_files"]("static/uploads", 1, skip_dirnames=excluded)
     assert local.read_bytes() == b"synthetic-private-video"
+
+
+@pytest.mark.asyncio
+async def test_missing_credentials_does_not_starve_later_status_rows(monkeypatch):
+    from bot.services import seedance_provider_fallback as fallback
+
+    client = AsyncMock()
+    client.enabled = True
+    client.timeout_seconds = 120
+    client.submit.return_value = {"request_id": "existing-request"}
+    client.get_status.return_value = {"status": "pending"}
+    monkeypatch.setattr(fallback, "neironych_seedance_admin_service", client)
+    payload = {
+        "model": "bytedance/seedance-2",
+        "input": {
+            "prompt": "private",
+            "duration": 4,
+            "resolution": "480p",
+            "aspect_ratio": "16:9",
+        },
+    }
+    result = await _submit_and_attach(
+        payload, AsyncMock(return_value={"error": "api_error", "status_code": 402})
+    )
+    await resolve_seedance_status(result["task_id"], AsyncMock())
+    client.get_status.side_effect = RuntimeError("NEIRONYCH_API_KEY is not configured")
+    assert (await resolve_seedance_status(result["task_id"], AsyncMock()))[
+        "state"
+    ] == "generating"
+
+
+@pytest.mark.asyncio
+async def test_permanently_unavailable_content_is_bounded_and_refundable(monkeypatch):
+    from bot.services import seedance_provider_fallback as fallback
+
+    client = AsyncMock()
+    client.enabled = True
+    client.timeout_seconds = 120
+    client.CONTENT_DOWNLOAD_ATTEMPTS = 3
+    client.submit.return_value = {"request_id": "lost-content"}
+    client.get_status.return_value = {"status": "done"}
+    client.download_to_temp.side_effect = fallback.NeironychAPIError("gone", status=404)
+    monkeypatch.setattr(fallback, "neironych_seedance_admin_service", client)
+    monkeypatch.setenv("SEEDANCE_FALLBACK_CONTENT_ATTEMPTS", "2")
+    payload = {
+        "model": "bytedance/seedance-2",
+        "input": {
+            "prompt": "private boat",
+            "duration": 4,
+            "resolution": "480p",
+            "aspect_ratio": "16:9",
+        },
+    }
+    result = await _submit_and_attach(
+        payload, AsyncMock(return_value={"error": "api_error", "status_code": 402})
+    )
+    assert (await resolve_seedance_status(result["task_id"], AsyncMock()))[
+        "state"
+    ] == "generating"
+    assert (await resolve_seedance_status(result["task_id"], AsyncMock()))[
+        "state"
+    ] == "fail"
+    assert not await fallback.has_unresolved_fallback(result["task_id"])
+    async with db.connect() as conn:
+        row = await (
+            await conn.execute(
+                "SELECT payload,fallback_payload FROM seedance_provider_routes WHERE task_id=?",
+                (result["task_id"],),
+            )
+        ).fetchone()
+    assert json.loads(row[0]) == {"model": "bytedance/seedance-2"}
+    assert row[1] is None
+
+
+@pytest.mark.asyncio
+async def test_stale_unattached_route_is_pruned_but_active_route_is_kept(monkeypatch):
+    from bot.services import seedance_provider_fallback as fallback
+
+    client = AsyncMock()
+    client.enabled = True
+    monkeypatch.setattr(fallback, "neironych_seedance_admin_service", client)
+    payload = {
+        "model": "bytedance/seedance-2",
+        "input": {
+            "prompt": "private boat",
+            "duration": 4,
+            "resolution": "480p",
+            "aspect_ratio": "16:9",
+        },
+    }
+    result = await _submit_and_attach(
+        payload, AsyncMock(return_value={"error": "api_error", "status_code": 402})
+    )
+    async with db.connect() as conn:
+        await conn.execute(
+            "UPDATE seedance_provider_routes SET created_at='2000-01-01' WHERE task_id=?",
+            (result["task_id"],),
+        )
+        await conn.commit()
+    assert await fallback.cleanup_seedance_routes() == 0
+    async with db.connect() as conn:
+        await conn.execute(
+            "DELETE FROM generation_tasks WHERE task_id=?", (result["task_id"],)
+        )
+        await conn.commit()
+    assert await fallback.cleanup_seedance_routes() == 1
+    client.submit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_default_seedance25_request_is_eligible_for_fallback(monkeypatch):
+    from bot.services import seedance_provider_fallback as fallback
+    from bot.services.seedance_25_service import Seedance25Service
+
+    client = AsyncMock()
+    client.enabled = True
+    monkeypatch.setattr(fallback, "neironych_seedance_admin_service", client)
+    service = Seedance25Service(kie_key="synthetic")
+    monkeypatch.setattr(
+        service,
+        "_kie_post",
+        AsyncMock(return_value={"error": "api_error", "status_code": 402}),
+    )
+    result = await service.generate_video(prompt="boat")
+    assert result["provider"] == "neironych"
+    assert service._kie_post.call_args.args[1]["input"]["aspect_ratio"] == "16:9"

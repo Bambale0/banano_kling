@@ -33,7 +33,9 @@ FAILURES = {"fail", "failed", "error"}
 SCHEMA = """CREATE TABLE IF NOT EXISTS seedance_provider_routes (
     task_id TEXT PRIMARY KEY, payload TEXT NOT NULL, phase TEXT NOT NULL,
     request_id TEXT, result_url TEXT, failure_code TEXT, fallback_payload TEXT,
-    lease_until DOUBLE PRECISION NOT NULL DEFAULT 0
+    lease_until DOUBLE PRECISION NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    download_attempts INTEGER NOT NULL DEFAULT 0
 )"""
 
 
@@ -74,6 +76,7 @@ async def _register(task_id: str, payload: dict, phase: str) -> None:
             (task_id, json.dumps(payload), phase),
         )
         await db.commit()
+    await cleanup_seedance_routes()
 
 
 async def _update(task_id: str, **fields: Any) -> None:
@@ -86,6 +89,94 @@ async def _update(task_id: str, **fields: Any) -> None:
             (*fields.values(), task_id),
         )
         await db.commit()
+
+
+def _positive_setting(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+async def _fail_route(task_id: str, model: str, code: str) -> None:
+    await _update(
+        task_id,
+        phase="failed",
+        failure_code=code,
+        lease_until=0,
+        payload=json.dumps({"model": model}),
+        fallback_payload=None,
+    )
+
+
+async def cleanup_seedance_routes() -> int:
+    async with db_backend.connect() as db:
+        if not await _table_exists(db) or not await _table_exists(
+            db, "generation_tasks"
+        ):
+            return 0
+        cutoff = (
+            "CURRENT_TIMESTAMP - (? * INTERVAL '1 second')"
+            if db_backend.is_postgres()
+            else "datetime('now', '-' || ? || ' seconds')"
+        )
+        cursor = await db.execute(
+            "DELETE FROM seedance_provider_routes WHERE phase IN ('ready', 'primary') "
+            "AND request_id IS NULL AND created_at < "
+            + cutoff
+            + " AND NOT EXISTS (SELECT 1 FROM generation_tasks g "
+            "WHERE g.task_id = seedance_provider_routes.task_id)",
+            (_positive_setting("SEEDANCE_FALLBACK_ORPHAN_TTL_SECONDS", 86400),),
+        )
+        await db.commit()
+        return max(0, cursor.rowcount)
+
+
+async def _claim_content(task_id: str) -> bool:
+    now = time.time()
+    lease = (
+        max(300, neironych_seedance_admin_service.timeout_seconds)
+        * NeironychSeedanceAdminService.CONTENT_DOWNLOAD_ATTEMPTS
+        + 30
+    )
+    async with db_backend.connect() as db:
+        cursor = await db.execute(
+            "UPDATE seedance_provider_routes SET lease_until = ? "
+            "WHERE task_id = ? AND phase = 'submitted' AND lease_until < ? RETURNING task_id",
+            (now + lease, task_id, now),
+        )
+        claimed = await cursor.fetchone()
+        await db.commit()
+        return bool(claimed)
+
+
+async def _content_failed(route: dict, error: Exception) -> dict:
+    async with db_backend.connect() as db:
+        row = await (
+            await db.execute(
+                "UPDATE seedance_provider_routes SET download_attempts = download_attempts + 1, lease_until = 0 "
+                "WHERE task_id = ? AND phase = 'submitted' RETURNING download_attempts",
+                (route["task_id"],),
+            )
+        ).fetchone()
+        await db.commit()
+    attempts = int(row[0]) if row else 0
+    logger.warning(
+        "Seedance fallback content unavailable: task_id=%s request_id=%s attempt=%s error_type=%s status=%s",
+        route["task_id"],
+        route["request_id"],
+        attempts,
+        type(error).__name__,
+        getattr(error, "status", None),
+    )
+    if attempts >= _positive_setting("SEEDANCE_FALLBACK_CONTENT_ATTEMPTS", 3):
+        await _fail_route(
+            route["task_id"],
+            json.loads(route["payload"])["model"],
+            "content_unavailable",
+        )
+        return _record(route, "fail", code="content_unavailable")
+    return _record(route, "generating")
 
 
 async def _retire_primary(task_id: str) -> None:
@@ -241,12 +332,7 @@ async def _submit_fallback(task_id: str) -> None:
         if not row["fallback_payload"]:
             await _update(task_id, fallback_payload=json.dumps(body))
     except ValueError:
-        await _update(
-            task_id,
-            phase="failed",
-            failure_code="unsupported_fallback_parameters",
-            lease_until=0,
-        )
+        await _fail_route(task_id, payload["model"], "unsupported_fallback_parameters")
         return
     logger.info(
         "Seedance fallback submit: task_id=%s model=%s provider=neironych",
@@ -263,9 +349,7 @@ async def _submit_fallback(task_id: str) -> None:
         # 409, 5xx and transport failures can mean accepted. Reconcile with
         # precisely the same key, never create another provider attempt.
         if exc.status in {400, 401, 402, 403, 404, 422}:
-            await _update(
-                task_id, phase="failed", failure_code=str(exc.status), lease_until=0
-            )
+            await _fail_route(task_id, payload["model"], str(exc.status))
         logger.warning(
             "Seedance fallback submission response: task_id=%s status=%s",
             task_id,
@@ -351,14 +435,20 @@ async def resolve_seedance_status(
         return _record(route, "success", url=route["result_url"])
     if not route.get("request_id"):
         return _record(route, "generating")
+    downloading = False
     try:
         record = await neironych_seedance_admin_service.get_status(route["request_id"])
         state = str(record.get("status") or "").lower()
         if state in {"failed", "expired"}:
-            await _update(task_id, phase="failed", failure_code="neironych_" + state)
+            await _fail_route(
+                task_id, json.loads(route["payload"])["model"], "neironych_" + state
+            )
             return _record(route, "fail", code="neironych_" + state)
         if state != "done":
             return _record(route, "generating")
+        if not await _claim_content(task_id):
+            return _record(route, "generating")
+        downloading = True
         source = await neironych_seedance_admin_service.download_to_temp(
             route["request_id"]
         )
@@ -384,6 +474,7 @@ async def resolve_seedance_status(
             task_id,
             result_url=url,
             phase="completed",
+            lease_until=0,
             fallback_payload=None,
             payload=json.dumps({"model": json.loads(route["payload"])["model"]}),
         )
@@ -399,7 +490,10 @@ async def resolve_seedance_status(
         OSError,
         TimeoutError,
         ValueError,
+        RuntimeError,
     ) as exc:
+        if downloading:
+            return await _content_failed(route, exc)
         logger.warning(
             "Seedance fallback result unresolved: task_id=%s request_id=%s error_type=%s status=%s",
             task_id,
@@ -419,15 +513,17 @@ async def has_unresolved_fallback(task_id: str) -> bool:
     )
 
 
-async def _table_exists(db: Any) -> bool:
+async def _table_exists(db: Any, table_name: str = "seedance_provider_routes") -> bool:
     if db_backend.is_postgres():
         cursor = await db.execute(
             "SELECT tablename FROM pg_tables WHERE schemaname = current_schema() "
-            "AND tablename = 'seedance_provider_routes'"
+            "AND tablename = ?",
+            (table_name,),
         )
     else:
         cursor = await db.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'seedance_provider_routes'"
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table_name,),
         )
     return bool(await cursor.fetchone())
 
