@@ -29,7 +29,7 @@ class NeironychWan3AdminService(NeironychSeedanceAdminService):
         )
         items = data.get("data")
         if not isinstance(items, list):
-            raise ValueError("Neironych model catalog has no data array")
+            raise TypeError("Neironych model catalog has no data array")
         return {self.MODEL for row in items if isinstance(row, dict) and row.get("id") == self.MODEL}
 
     @staticmethod
