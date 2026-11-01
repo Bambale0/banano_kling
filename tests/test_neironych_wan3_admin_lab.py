@@ -1,9 +1,13 @@
 """Admin-only WAN 3.0 Neironych entry/launch regressions (no paid requests)."""
+
+import sys
+from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
+from bot.handlers import admin_seedance_test_lab as seedance_lab
 from bot.handlers import admin_wan3_neironych_lab as lab
 from bot.handlers.admin_test_lab import get_admin_test_lab_keyboard
 from bot.services.neironych_wan3_admin_service import NeironychWan3AdminService
@@ -38,6 +42,53 @@ def test_admin_test_menu_exposes_native_wan_without_replacing_kie_routes():
     assert any(button.callback_data == "admin_seedance_lab" for button in buttons)
     assert any(button.callback_data == "admin_wan3:open" and "Нейроныч" in button.text
                for button in buttons)
+
+
+@pytest.mark.parametrize("state", [
+    lab.Wan3LabStates.dashboard,
+    lab.Wan3LabStates.prompt,
+    lab.Wan3LabStates.references,
+    lab.Wan3LabStates.frames,
+    lab.Wan3LabStates.seed,
+])
+async def test_subscription_guard_allows_admin_wan_message_states(state):
+    if sys.platform == "win32" and "resource" not in sys.modules:
+        sys.modules["resource"] = SimpleNamespace(
+            RUSAGE_SELF=0,
+            getrusage=lambda *_args: SimpleNamespace(ru_maxrss=0),
+        )
+    from bot.main import AccessGuardMiddleware
+
+    assert await AccessGuardMiddleware._is_admin_test_state({"raw_state": state.state})
+
+
+async def test_wan_document_media_without_duration_fails_closed(monkeypatch):
+    persist = AsyncMock(return_value="https://media.example.org/source.mp4")
+    monkeypatch.setattr(seedance_lab, "_persist_reusable_media_reference", persist)
+    monkeypatch.setattr(lab.config, "is_admin", lambda _tid: True)
+    message = SimpleNamespace(
+        from_user=SimpleNamespace(id=10001),
+        photo=None,
+        video=None,
+        audio=None,
+        document=SimpleNamespace(
+            mime_type="video/mp4",
+            file_size=1024,
+            file_id="synthetic-document",
+            file_name="source.mp4",
+        ),
+        bot=SimpleNamespace(
+            get_file=AsyncMock(return_value=SimpleNamespace(file_path="fixture/source.mp4")),
+            download_file=AsyncMock(return_value=BytesIO(b"synthetic-media")),
+        ),
+        answer=AsyncMock(),
+    )
+    state = DummyState({"wan_lab_mode": "reference"})
+
+    await lab.receive_media(message, state)
+
+    persist.assert_not_awaited()
+    assert "длительност" in message.answer.await_args.args[0].lower()
 
 
 @pytest.mark.parametrize("action", [lab.open_lab, lab.back, lab.refresh_model, lab.toggle_audio])

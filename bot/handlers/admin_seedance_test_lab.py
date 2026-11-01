@@ -420,6 +420,11 @@ async def _save_media_reference(
         return None, f"Файл слишком большой для {model}: {file_size // (1024 * 1024)} МБ."
 
     duration = int(getattr(media, "duration", 0) or 0)
+    if model == "wan-3" and kind in {"video", "audio"} and not duration:
+        return None, (
+            "Не удалось определить длительность файла для WAN 3.0. "
+            "Отправьте его в Telegram как видео или аудио, а не как документ."
+        )
     if kind in {"video", "audio"} and duration:
         max_duration = 30 if model == "seedance-2.5" else 15
         if duration < 2 or duration > max_duration:

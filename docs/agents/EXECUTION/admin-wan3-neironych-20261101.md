@@ -50,3 +50,25 @@
   and inspect end-to-end delivery, not merely provider acceptance.
 - Known caveat: in-memory delivered-id suppression is process-local; manual
   delivery after a restart can resend a ready file, but cannot resubmit the job.
+
+## PR review continuation
+- Reproduced two outstanding review findings with focused failing tests: every
+  `Wan3LabStates` message state was absent from the subscription middleware's
+  administrator-test allowlist, and document media with no Telegram duration
+  was persisted with duration zero.
+- The middleware now recognizes all five WAN lab states. WAN video/audio with
+  unknown duration fails closed before persistence or provider submission and
+  asks the administrator to resend it as Telegram media.
+- Existing callback ratio, uncertain-acceptance idempotency and aggregate
+  reference-duration fixes remain covered by the focused WAN regression suite.
+- The PR branch was updated without rewriting history by merging current
+  `origin/tanyapi@41e72b7a`; the merge was conflict-free.
+- Local post-merge focused verification: 144 tests passed across the native WAN
+  lab/service, adjacent Neironych Seedance lab, public WAN service/lifecycle and
+  release-menu seams. Changed Python files pass Ruff, Python compilation and
+  `git diff --check`.
+- The wider Linux workflow selection was also attempted on Windows/Python 3.14:
+  382 passed and 15 skipped, while 80 failed on known non-production seams such
+  as POSIX directory fsync, the Unix `resource` module, Windows default source
+  encoding and environment-sensitive legacy fixtures. The protected Ubuntu
+  full regression, PostgreSQL, browser and Docker jobs remain the release gate.

@@ -579,6 +579,11 @@ class AccessGuardMiddleware(BaseMiddleware):
             "SeedanceAdminTestStates:prompt",
             "SeedanceAdminTestStates:references",
             "SeedanceAdminTestStates:frames",
+            "Wan3LabStates:dashboard",
+            "Wan3LabStates:prompt",
+            "Wan3LabStates:references",
+            "Wan3LabStates:frames",
+            "Wan3LabStates:seed",
             "GeminiImageLabStates:prompt",
             "GeminiImageLabStates:references",
         }
