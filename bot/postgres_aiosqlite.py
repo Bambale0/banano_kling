@@ -524,6 +524,23 @@ async def _ensure_postgres_helpers(conn: psycopg.AsyncConnection) -> None:
                 'ALTER TABLE "generation_tasks" ADD COLUMN IF NOT EXISTS "is_adult_content" BOOLEAN DEFAULT FALSE'
             )
             await cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS generation_repeat_personalization (
+                    generation_id BIGINT PRIMARY KEY,
+                    fields_json TEXT NOT NULL,
+                    write_token TEXT NOT NULL,
+                    updated_by_telegram_id BIGINT NOT NULL,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            await cur.execute(
+                """
+                ALTER TABLE generation_repeat_personalization
+                ADD COLUMN IF NOT EXISTS write_token TEXT NOT NULL DEFAULT ''
+                """
+            )
+            await cur.execute(
                 'ALTER TABLE "user_prompts" ADD COLUMN IF NOT EXISTS "source_generation_id" BIGINT'
             )
             await cur.execute(
