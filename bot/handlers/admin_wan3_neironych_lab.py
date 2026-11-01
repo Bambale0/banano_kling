@@ -19,6 +19,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.config import config
 from bot.handlers.admin_seedance_test_lab import _extract_media, _save_media_reference
+from bot.services.neironych_seedance_admin_service import NeironychAPIError
 from bot.services.neironych_wan3_admin_service import (
     NeironychWan3AdminService,
     neironych_wan3_admin_service,
@@ -518,6 +519,23 @@ async def generate(callback: types.CallbackQuery, state: FSMContext) -> None:
         await callback.answer("Отправляю запрос…")
         try:
             result = await neironych_wan3_admin_service.submit(payload, idempotency_key=key)
+        except NeironychAPIError as exc:
+            if exc.status not in {400, 401, 402, 403, 404, 422}:
+                logger.warning("WAN3 admin submission uncertain admin_id=%s http_status=%s",
+                               callback.from_user.id, exc.status)
+                await callback.message.edit_text(
+                    "⚠️ Неизвестен исход отправки WAN 3.0. Повторите тот же запрос с сохранённым ключом.",
+                    reply_markup=_keyboard(data),
+                )
+                return
+            await state.update_data(wan_lab_pending_key="", wan_lab_pending_hash="")
+            logger.warning("WAN3 admin request rejected admin_id=%s http_status=%s",
+                           callback.from_user.id, exc.status)
+            await callback.message.edit_text(
+                f"❌ Нейроныч отклонил запрос (HTTP {exc.status}). Исправьте параметры перед запуском.",
+                reply_markup=_keyboard(data),
+            )
+            return
         except Exception as exc:  # noqa: BLE001 - unknown acceptance must retain the same idempotency key
             logger.warning("WAN3 admin submission uncertain admin_id=%s error_type=%s",
                            callback.from_user.id, type(exc).__name__)
