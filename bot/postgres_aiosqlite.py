@@ -534,6 +534,20 @@ async def _ensure_postgres_helpers(conn: psycopg.AsyncConnection) -> None:
                 )
                 """
             )
+            # Native bootstrap is required: the adapter intentionally skips
+            # SQLite CREATE TABLE statements from database.init_db().
+            await cur.execute("""CREATE TABLE IF NOT EXISTS saved_references (
+                id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                kind TEXT NOT NULL, file_url TEXT NOT NULL, file_hash TEXT,
+                original_filename TEXT, content_type TEXT, source TEXT DEFAULT 'telegram',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP,
+                last_used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )""")
+            await cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_saved_references_user_kind_hash ON saved_references(user_id, kind, file_hash)")
+            from bot.reference_library_schema import REFERENCE_LIBRARY_SCHEMA
+
+            for statement in REFERENCE_LIBRARY_SCHEMA:
+                await cur.execute(statement)
             await cur.execute(
                 """
                 ALTER TABLE generation_repeat_personalization

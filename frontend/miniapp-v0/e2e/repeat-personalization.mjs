@@ -55,6 +55,13 @@ try {
             is_admin: admin, credits: 100, telegram_chat_available: true, image_models: [{ id: 'banana_pro', label: 'Nano Banana Pro',
               ratios: ['1:1', '16:9'], qualities: ['2K'], max_references: 8, cost: 1 }], video_models: models,
             recent_tasks: [], saved_references: [], actions: [], payment_packages: [], mini_app_url: base }
+          else if (url.pathname.endsWith('/reference-library')) {
+            const body = route.request().postDataJSON()
+            data = body.action === 'categories'
+              ? { ok: true, categories: [{ id: 'a'.repeat(32), name: 'Одежда', count: 2 }], recent: [] }
+              : { ok: true, items: [{ id: '99', kind: 'image', title: 'Сохранённый наряд', filename: 'outfit.png',
+                  url: 'https://example.test/outfit.png', available: true }], next_offset: null }
+          }
           else if (url.pathname.endsWith('/feed/item')) data = { ok: true, feed_item: card }
           else if (url.pathname.endsWith('/feed')) data = { ok: true, feed: [card] }
           else if (url.pathname.endsWith('/prompts')) data = { ok: true, prompts: [] }
@@ -91,6 +98,15 @@ try {
       } else {
         assert.equal(await page.getByRole('button', { name: 'red dress', exact: true }).count(), 0)
         assert.equal(await page.getByText('Что заменить в работе', { exact: true }).count(), 0)
+      }
+      if (model === 'seedance_2') {
+        await page.getByRole('button', { name: 'Мои референсы', exact: true }).last().click()
+        await page.getByRole('button', { name: 'Одежда (2)', exact: true }).click()
+        await page.getByRole('button', { name: 'Выбрать Сохранённый наряд', exact: true }).waitFor()
+        if (admin) await page.screenshot({ path: '/tmp/personal-reference-library-mobile.png', fullPage: true })
+        await page.getByRole('button', { name: 'Выбрать Сохранённый наряд', exact: true }).click()
+        if (admin) assert.equal(await page.getByRole('button', { name: 'Загрузить свой вариант: Наряд девушки' }).getAttribute('aria-pressed'), 'true')
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
       }
       assert.deepEqual(errors, [])
       assert.deepEqual(mutations, [])

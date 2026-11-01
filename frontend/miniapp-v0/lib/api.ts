@@ -748,6 +748,7 @@ async function uploadFileAsJson(
   initData: string,
   logPayload: Record<string, unknown>,
   startedAt: number,
+  categoryId?: string,
 ) {
   sendMiniAppClientLog('upload-json-fallback-start', logPayload)
   const controller = new AbortController()
@@ -773,6 +774,7 @@ async function uploadFileAsJson(
         filename: file.name,
         content_type: file.type,
         data_base64: encoded,
+        ...(categoryId ? { reference_category_id: categoryId } : {}),
       }),
       cache: 'no-store',
       credentials: 'same-origin',
@@ -794,7 +796,8 @@ async function uploadFileAsJson(
 
 export async function uploadFile(
   fileKind: MediaUploadKind,
-  file: File
+  file: File,
+  categoryId?: string,
 ): Promise<UploadedFile> {
   const initData = getInitData()
   if (!initData) {
@@ -819,6 +822,7 @@ export async function uploadFile(
       initData,
       uploadLogPayload,
       startedAt,
+      categoryId,
     )
     return {
       id: 'file_' + Date.now() + '_' + Math.random().toString(36).slice(2),
@@ -836,13 +840,14 @@ export async function uploadFile(
   formData.append('init_data', initData)
   formData.append('file_kind', fileKind)
   formData.append('file', normalizedFile)
+  if (categoryId) formData.append('reference_category_id', categoryId)
 
   if (typeof XMLHttpRequest !== 'undefined') {
     let data: Awaited<ReturnType<typeof uploadFileWithXhr>>
     try {
       data = await uploadFileWithXhr(formData, uploadLogPayload, startedAt)
     } catch (_error) {
-      data = await uploadFileAsJson(fileKind, normalizedFile, initData, uploadLogPayload, startedAt)
+      data = await uploadFileAsJson(fileKind, normalizedFile, initData, uploadLogPayload, startedAt, categoryId)
     }
     return {
       id: `file_${Date.now()}_${Math.random().toString(36).slice(2)}`,
@@ -1955,4 +1960,18 @@ export async function saveProfileChannel(channelUrl: string): Promise<string> {
     channel_url: channelUrl,
   })
   return response.channel_url || ''
+}
+
+export interface ReferenceCategory { id: string; name: string; count?: number }
+export interface LibraryReference extends SavedReference { title: string; available: boolean }
+export interface ReferenceLibraryResponse {
+  ok: true
+  categories?: ReferenceCategory[]
+  category?: ReferenceCategory
+  recent?: LibraryReference[]
+  items?: LibraryReference[]
+  next_offset?: number | null
+}
+export async function referenceLibraryAction(action: string, data: Record<string, unknown> = {}, signal?: AbortSignal): Promise<ReferenceLibraryResponse> {
+  return postJson('reference-library', { ...data, action, init_data: getInitData() }, signal)
 }
