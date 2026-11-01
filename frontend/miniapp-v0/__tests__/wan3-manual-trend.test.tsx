@@ -206,3 +206,15 @@ test('unchanged explicit trend source ignores fallback recipe ID changes during 
   await waitFor(() => expect(mocked.generateWan3Prime).toHaveBeenCalledTimes(2))
   expect(mocked.generateWan3Prime.mock.calls[1][0]).toBe(frozen)
 })
+
+test.each(['wan_3', 'wan_3_prime'] as const)('admin %s publication renders choices and quotes selected values', async model => {
+  mocked.fetchWan3PrimeRepeatPlan.mockResolvedValue({
+    ok: true, source_feed_gen_id: 42, repeat_plan_hash: 'h', recipe: recipe(model), slots: [],
+    repeat_user_fields: [{ key: 'clothes', label: 'Одежда', type: 'text', required: true, max_length: 160, choices: ['red dress', 'black suit'] }],
+  } as wanApi.Wan3PrimeRepeatPlan)
+  render(<Wan3PrimeForm credits={100} model={model} isAdmin publicationSourceId={42} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'red dress' }))
+  await waitFor(() => expect(mocked.quoteWan3Prime).toHaveBeenCalledWith(
+    expect.objectContaining({ recipe: expect.objectContaining({ model, source_feed_gen_id: 42,
+      repeat_user_values: { clothes: 'red dress' } }) }), expect.anything()))
+})

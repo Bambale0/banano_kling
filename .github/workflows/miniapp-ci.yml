@@ -60,6 +60,8 @@ jobs:
       - name: Run Mini App regression tests
         run: >-
           npm test -- --runInBand
+          components/__tests__/task-detail-publication-references.test.tsx
+          __tests__/wan3-manual-trend.test.tsx
           components/__tests__/balance-sheet-payment.test.tsx
           lib/__tests__/trend-api.test.ts
           components/tabs/__tests__/video-tab-repeat.test.tsx

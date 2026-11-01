@@ -1,7 +1,7 @@
 'use client'
 
 import { getApiBasePath, getInitData, getStartParamFallback, sendMiniAppClientLog } from './api'
-import type { UploadedFile } from './types'
+import type { UploadedFile, TrendUserField } from './types'
 
 export type Wan3PrimeScenario = 'text' | 'first_frame' | 'first_last' | 'reference' | 'edit' | 'file' | 'link'
 export type Wan3PrimeResolution = '480P' | '720P' | '1080P'
@@ -47,6 +47,7 @@ export interface Wan3PrimeRecipe {
   trend_id?: number | null
   repeat_plan_hash?: string
   repeat_replacements?: Record<string, string>
+  repeat_user_values?: Record<string, string>
   scenario: Wan3PrimeScenario
   prompt: string
   resolution: Wan3PrimeResolution
@@ -544,6 +545,7 @@ export interface Wan3PrimeRepeatPlan {
   repeat_plan_hash: string
   recipe: Wan3PrimeRecipe
   slots: Wan3PrimeRepeatSlot[]
+  repeat_user_fields?: TrendUserField[]
 }
 export async function fetchWan3PrimeRepeatPlan(sourceId: number, signal?: AbortSignal): Promise<Wan3PrimeRepeatPlan> {
   return wan3PostJson('repeat-plan', { source_feed_gen_id: sourceId }, signal)
