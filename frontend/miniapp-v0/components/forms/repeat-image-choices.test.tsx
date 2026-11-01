@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useState } from 'react'
 import { RepeatPersonalizationFields } from './repeat-personalization-fields'
 import { uploadFile } from '@/lib/api'
@@ -62,4 +62,25 @@ test('author can add a catalog image when randomUUID is unavailable', async () =
   } finally {
     Object.defineProperty(crypto, 'randomUUID', { configurable: true, value: original })
   }
+})
+
+test('simultaneous uploads in different groups preserve both selections', async () => {
+  const pending: Array<(value: { url: string }) => void> = []
+  ;(uploadFile as jest.Mock).mockImplementation(() => new Promise(resolve => pending.push(resolve)))
+  function TwoGroups() {
+    const [values, setValues] = useState<Record<string, string>>({})
+    return <><RepeatPersonalizationFields fields={[...fields, { ...fields[0], key: 'car', label: 'Машина' }]}
+      values={values} onChange={setValues} /><output>{JSON.stringify(values)}</output></>
+  }
+  render(<TwoGroups />)
+  for (const label of ['Наряд девушки', 'Машина']) fireEvent.change(screen.getByLabelText(`Свой вариант: ${label}`), {
+    target: { files: [new File(['photo'], 'own.jpg', { type: 'image/jpeg' })] },
+  })
+  await act(async () => {
+    pending[0]({ url: 'https://example.test/outfit.jpg' })
+    pending[1]({ url: 'https://example.test/car.jpg' })
+  })
+  expect(JSON.parse(screen.getByRole('status').textContent || '{}')).toEqual({
+    outfit: 'upload:https://example.test/outfit.jpg', car: 'upload:https://example.test/car.jpg',
+  })
 })

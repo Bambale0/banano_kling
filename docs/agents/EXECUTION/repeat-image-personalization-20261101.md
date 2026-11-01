@@ -57,3 +57,5 @@ Verification so far:
 
 Remaining: final build/browser/review confirmation, protected PR checks/autodeploy and live admin smoke.
 No paid provider calls or business price changes.
+
+Final concurrency check: simultaneous custom uploads in separate groups reproduced a lost selection (RED). Shared selector now merges from the latest synchronous value snapshot; regression GREEN.

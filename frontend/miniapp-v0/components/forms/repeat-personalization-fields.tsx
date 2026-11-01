@@ -70,6 +70,13 @@ export function RepeatPersonalizationFields({
   values: Record<string, string>
   onChange: (values: Record<string, string>) => void
 }) {
+  const currentValues = useRef(values)
+  currentValues.current = values
+  const changeValue = (key: string, value: string) => {
+    const next = { ...currentValues.current, [key]: value }
+    currentValues.current = next
+    onChange(next)
+  }
   if (!fields.length) return null
   return (
     <fieldset className="space-y-5">
@@ -78,14 +85,14 @@ export function RepeatPersonalizationFields({
         <div key={field.key} className="block space-y-1.5 text-sm text-foreground">
           <span>{field.label}{field.required !== false ? ' *' : ''}</span>
           {field.image_choices?.length ? <ImageChoices key={JSON.stringify(field)} field={field}
-            value={values[field.key] || ''} onChange={value => onChange({ ...values, [field.key]: value })} /> : field.choices?.length ? (
+            value={values[field.key] || ''} onChange={value => changeValue(field.key, value)} /> : field.choices?.length ? (
             <span className="flex flex-wrap gap-2" role="group" aria-label={field.label}>
               {field.choices.map((choice) => (
                 <button
                   key={choice}
                   type="button"
                   aria-pressed={values[field.key] === choice}
-                  onClick={() => onChange({ ...values, [field.key]: choice })}
+                  onClick={() => changeValue(field.key, choice)}
                   className={`rounded-full border px-3 py-2 text-xs transition-colors ${
                     values[field.key] === choice
                       ? 'border-gold bg-gold/20 text-gold'
@@ -104,7 +111,7 @@ export function RepeatPersonalizationFields({
               maxLength={field.max_length}
               placeholder={field.placeholder || `Введите: ${field.label.toLowerCase()}`}
               required={field.required !== false}
-              onChange={(event) => onChange({ ...values, [field.key]: event.target.value })}
+              onChange={(event) => changeValue(field.key, event.target.value)}
             />
           )}
         </div>
