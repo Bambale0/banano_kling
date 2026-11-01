@@ -2878,3 +2878,8 @@ Baseline 024525ea831010ef9e7b88c7f8fc9dd158fea7c4. Production exact image revisi
 - Full safe CI ran 4295 passing tests and exposed an AST-isolated motion test dependency on a newly imported Mapping name. Removed that unnecessary global dependency from the watchdog Row protocol check; re-ran the actual motion financial lifecycle plus watchdog/routing suites unchanged.
 
 - Follow-up review: ordinary Seedance25 default aligned to first fixed ratio, preserving explicit Auto and frame/edit adaptive; status RuntimeError isolated; content retries persist a finite budget and lease, terminal failure scrubs payload and enables refund; timestamped unowned ready/primary TTL cleanup runs on register and daily housekeeping. New regressions RED -> 30 passed on native PostgreSQL; public form/identity/edit Jest 22 passed. Both additional real image-reference fallback smokes completed; exact IDs retained in operational evidence.
+
+
+## 2026-11-02 — Neironych primary / KIE fallback
+
+Active execution ledger: [Seedance routing](EXECUTION/seedance-neironych-primary-20261102.md). Baseline da48cd12; implementation and verification in task branch; production routing is not yet switched.

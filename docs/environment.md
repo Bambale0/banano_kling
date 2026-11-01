@@ -461,3 +461,14 @@ Lava invoice reads distinguish HTTP404 (identifier discovery may apply) from pro
 Mobile WebViews use the existing JSON upload transport for Seedance2.5 image references, direct video references and video chunks up to16MiB, as well as generic image/video references and trend previews. Larger files retain the existing upload path. The15-minute total upload deadline includes JSON preparation, network transfer and response reading; timing out aborts file reading/transport and settles the UI even if cancellation is ignored. HTTP400 from Wan completion can also be the first attempt before a successful local JPEG recovery; correlate the follow-up result before counting it as a lost upload.
 
 `REDIS_OPERATION_TIMEOUT_SECONDS` (default `3`) bounds primary FSM calls and each recovery batch. The FSM Redis client additionally has finite connection/read timeouts; successful keys retire incrementally so a large recovery backlog cannot restart forever at its first key. Temporary changes remain readable while later batches drain.
+
+# Seedance provider routing
+
+`SEEDANCE_PRIMARY_PROVIDER=neironych` and `SEEDANCE_FALLBACK_PROVIDER=kie` select
+Neironych first for Seedance 2.0 and 2.5 in both Telegram and Mini App. Managed
+environment settings are applied when the backend container is recreated. Missing
+primary preserves the historical KIE-first behavior; set both values explicitly
+for rollout/rollback. `NEIRONYCH_API_KEY` and the existing KIE key remain secret.
+See [routing and reconciliation](SEEDANCE_NEIRONYCH_FALLBACK.md) for compatibility
+fallbacks, unknown acceptance and in-flight task behavior. No prices or user
+balances are changed by provider selection.

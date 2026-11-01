@@ -17,8 +17,310 @@ from bot.services.seedance_provider_fallback import (
 )
 
 
+@pytest.fixture
+def neironych_primary(monkeypatch):
+    from bot.services import seedance_provider_fallback as routing
+    from bot.services.kie_market_service import KieMarketService
+
+    monkeypatch.setenv("SEEDANCE_PRIMARY_PROVIDER", "neironych")
+    monkeypatch.setenv("SEEDANCE_FALLBACK_PROVIDER", "kie")
+    client = AsyncMock()
+    client.enabled = True
+    client.timeout_seconds = 120
+    client.submit.return_value = {"request_id": "nr-primary"}
+    client.get_status.return_value = {"status": "pending"}
+    monkeypatch.setattr(routing, "neironych_seedance_admin_service", client)
+    monkeypatch.setattr(
+        KieMarketService,
+        "_get_json",
+        AsyncMock(
+            return_value={
+                "code": 200,
+                "data": {"taskId": "kie-secondary", "state": "generating"},
+            }
+        ),
+    )
+    return client
+
+
+def primary_payload():
+    return {
+        "model": "bytedance/seedance-2-5",
+        "input": {
+            "prompt": "Person @Image1 wears clothing @Image2 following @Video1 with @Audio1",
+            "duration": 5,
+            "resolution": "720p",
+            "aspect_ratio": "9:16",
+            "reference_image_urls": [
+                "https://example.org/person.png",
+                "https://example.org/dress.png",
+            ],
+            "reference_video_urls": ["https://example.org/motion.mp4"],
+            "reference_audio_urls": ["https://example.org/audio.mp3"],
+        },
+        "callBackUrl": "https://example.org/private-callback",
+    }
+
+
+@pytest.mark.asyncio
+async def test_neironych_primary_has_no_kie_create_and_waits_for_owner(
+    neironych_primary,
+):
+    primary = AsyncMock(side_effect=AssertionError("KIE must not run first"))
+    result = await submit_seedance(primary_payload(), primary)
+    primary.assert_not_awaited()
+    neironych_primary.submit.assert_not_awaited()
+    await resolve_seedance_status(result["task_id"], AsyncMock())
+    neironych_primary.submit.assert_not_awaited()
+    await _attach(result["task_id"])
+    record = await resolve_seedance_status(result["task_id"], AsyncMock())
+    assert record["state"] == "generating"
+    body = neironych_primary.submit.call_args.args[0]
+    assert body["prompt"] == primary_payload()["input"]["prompt"]
+    for kind in ["image", "video", "audio"]:
+        assert [r["url"] for r in body["reference_" + kind + "s"]] == primary_payload()[
+            "input"
+        ]["reference_" + kind + "_urls"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [402, 422, "terminal"])
+async def test_neironych_failure_falls_back_to_kie_once_with_stable_receipt(
+    monkeypatch,
+    neironych_primary,
+    failure,
+):
+    import asyncio
+
+    from bot.services import seedance_provider_fallback as routing
+    from bot.services.kling_service import KlingService
+
+    if failure == "terminal":
+        neironych_primary.get_status.return_value = {"status": "failed"}
+    else:
+        neironych_primary.submit.side_effect = routing.NeironychAPIError(
+            "rejected", status=failure
+        )
+    create = AsyncMock(return_value={"task_id": "kie-secondary"})
+    monkeypatch.setattr(KlingService, "_kie_post", create)
+    result = await _submit_and_attach(
+        primary_payload(), AsyncMock(side_effect=AssertionError("early KIE"))
+    )
+    records = await asyncio.gather(
+        *(resolve_seedance_status(result["task_id"], AsyncMock()) for _ in range(5))
+    )
+    assert all(r["state"] == "generating" for r in records)
+    assert create.await_count == 1
+    body = create.call_args.args[-1]
+    assert body == {k: v for k, v in primary_payload().items() if k != "callBackUrl"}
+    route = await routing._load(result["task_id"])
+    assert route["request_id"] == "kie-secondary"
+    assert route["phase"] == "kie_submitted"
+
+
+@pytest.mark.asyncio
+async def test_neironych_primary_uncertain_acceptance_never_launches_kie(
+    monkeypatch, neironych_primary
+):
+    from bot.services import seedance_provider_fallback as routing
+    from bot.services.kling_service import KlingService
+
+    create = AsyncMock()
+    monkeypatch.setattr(KlingService, "_kie_post", create)
+    neironych_primary.submit.side_effect = TimeoutError()
+    result = await _submit_and_attach(primary_payload(), AsyncMock())
+    await resolve_seedance_status(result["task_id"], AsyncMock())
+    monkeypatch.setattr(routing.time, "time", lambda: 9999999999)
+    await resolve_seedance_status(result["task_id"], AsyncMock())
+    assert neironych_primary.submit.await_count == 2
+    assert (
+        neironych_primary.submit.call_args_list[0]
+        == neironych_primary.submit.call_args_list[1]
+    )
+    create.assert_not_awaited()
+    assert await routing.has_unresolved_fallback(result["task_id"])
+
+
+@pytest.mark.asyncio
+async def test_kie_secondary_result_uses_local_task_id_and_never_polls_local_id_at_kie(
+    monkeypatch, neironych_primary
+):
+    from bot.services.kie_market_service import KieMarketService
+    from bot.services.kling_service import KlingService
+
+    neironych_primary.get_status.return_value = {"status": "failed"}
+    monkeypatch.setattr(
+        KlingService, "_kie_post", AsyncMock(return_value={"task_id": "kie-secondary"})
+    )
+    result = await _submit_and_attach(primary_payload(), AsyncMock())
+    await resolve_seedance_status(result["task_id"], AsyncMock())
+    get = AsyncMock(
+        return_value={
+            "code": 200,
+            "data": {
+                "taskId": "kie-secondary",
+                "state": "success",
+                "resultJson": json.dumps(
+                    {"resultUrls": ["https://example.org/result.mp4"]}
+                ),
+            },
+        }
+    )
+    monkeypatch.setattr(KieMarketService, "_get_json", get)
+    market = KieMarketService(api_key="synthetic")
+    record = await market.get_task_status(result["task_id"])
+    assert record["taskId"] == result["task_id"]
+    assert record["state"] == "success"
+    assert get.call_args.kwargs["params"] == {"taskId": "kie-secondary"}
+    get.reset_mock()
+    assert await market.get_task_status(result["task_id"]) == record
+    get.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_kie_uncertain_create_is_not_repeated_or_refunded(
+    monkeypatch, neironych_primary
+):
+    from bot.services import seedance_provider_fallback as routing
+    from bot.services.kling_service import KlingService
+
+    neironych_primary.get_status.return_value = {"status": "failed"}
+    create = AsyncMock(return_value={"error": "network_error"})
+    monkeypatch.setattr(KlingService, "_kie_post", create)
+    result = await _submit_and_attach(primary_payload(), AsyncMock())
+    await resolve_seedance_status(result["task_id"], AsyncMock())
+    monkeypatch.setattr(routing.time, "time", lambda: 9999999999)
+    await resolve_seedance_status(result["task_id"], AsyncMock())
+    assert create.await_count == 1
+    assert await routing.has_unresolved_fallback(result["task_id"])
+
+
+@pytest.mark.asyncio
+async def test_secondary_never_launches_for_refunded_task(
+    monkeypatch, neironych_primary
+):
+    from bot.services.kling_service import KlingService
+
+    create = AsyncMock()
+    monkeypatch.setattr(KlingService, "_kie_post", create)
+    result = await _submit_and_attach(primary_payload(), AsyncMock())
+    await resolve_seedance_status(result["task_id"], AsyncMock())
+    async with db.connect() as conn:
+        await conn.execute(
+            "UPDATE generation_tasks SET status='failed' WHERE task_id=?",
+            (result["task_id"],),
+        )
+        await conn.commit()
+    neironych_primary.get_status.return_value = {"status": "failed"}
+    await resolve_seedance_status(result["task_id"], AsyncMock())
+    create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_primary_keeps_unsupported_controls_by_using_kie_before_submission(
+    neironych_primary,
+):
+    payload = primary_payload()
+    payload["input"]["generate_audio"] = False
+    kie = AsyncMock(return_value={"task_id": "kie-compatible", "status": "pending"})
+    assert (await submit_seedance(payload, kie))["task_id"] == "kie-compatible"
+    kie.assert_awaited_once_with(payload)
+    neironych_primary.submit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_seedance25_primary_does_not_require_kie_key(
+    monkeypatch, neironych_primary
+):
+    from bot.services.seedance_25_service import Seedance25Service
+
+    service = Seedance25Service(kie_key="synthetic")
+    service.kie_key = ""
+    service._kie_post = AsyncMock(side_effect=AssertionError("KIE must not run first"))
+    result = await service.generate_video(
+        prompt="a blue paper boat", duration=4, resolution="480p", aspect_ratio="16:9"
+    )
+    assert result.get("provider") == "neironych"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [409, 500, 503])
+async def test_neironych_primary_server_errors_keep_same_idempotency_key(
+    monkeypatch, neironych_primary, status
+):
+    from bot.services import seedance_provider_fallback as routing
+    from bot.services.kling_service import KlingService
+
+    create = AsyncMock()
+    monkeypatch.setattr(KlingService, "_kie_post", create)
+    neironych_primary.submit.side_effect = routing.NeironychAPIError(
+        "uncertain", status=status
+    )
+    result = await _submit_and_attach(primary_payload(), AsyncMock())
+    await resolve_seedance_status(result["task_id"], AsyncMock())
+    assert await routing.has_unresolved_fallback(result["task_id"])
+    create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_inflight_primary_route_ignores_later_provider_config_change(
+    monkeypatch, neironych_primary
+):
+    from bot.services import seedance_provider_fallback as routing
+    from bot.services.kling_service import KlingService
+
+    create = AsyncMock(return_value={"task_id": "kie-secondary"})
+    monkeypatch.setattr(KlingService, "_kie_post", create)
+    result = await _submit_and_attach(primary_payload(), AsyncMock())
+    monkeypatch.setenv("SEEDANCE_PRIMARY_PROVIDER", "kie")
+    monkeypatch.setenv("SEEDANCE_FALLBACK_PROVIDER", "off")
+    neironych_primary.get_status.return_value = {"status": "failed"}
+    await resolve_seedance_status(result["task_id"], AsyncMock())
+    assert create.await_count == 1
+    assert (await routing._load(result["task_id"]))["phase"] == "kie_submitted"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["fail", "outage"])
+async def test_kie_secondary_terminal_failure_or_outage_never_relaunches(
+    monkeypatch, neironych_primary, state
+):
+    from bot.services import seedance_provider_fallback as routing
+    from bot.services.kie_market_service import KieMarketService
+    from bot.services.kling_service import KlingService
+
+    create = AsyncMock(return_value={"task_id": "kie-secondary"})
+    monkeypatch.setattr(KlingService, "_kie_post", create)
+    neironych_primary.get_status.return_value = {"status": "failed"}
+    result = await _submit_and_attach(primary_payload(), AsyncMock())
+    await resolve_seedance_status(result["task_id"], AsyncMock())
+    if state == "outage":
+        monkeypatch.setattr(
+            KieMarketService, "_get_json", AsyncMock(side_effect=TimeoutError())
+        )
+    else:
+        monkeypatch.setattr(
+            KieMarketService,
+            "_get_json",
+            AsyncMock(
+                return_value={
+                    "code": 200,
+                    "data": {"taskId": "kie-secondary", "state": "fail"},
+                }
+            ),
+        )
+    record = await resolve_seedance_status(result["task_id"], AsyncMock())
+    assert record["state"] == ("fail" if state == "fail" else "generating")
+    assert await routing.has_unresolved_fallback(result["task_id"]) == (
+        state == "outage"
+    )
+    assert create.await_count == 1
+    assert neironych_primary.submit.await_count == 1
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def isolated_db(tmp_path, monkeypatch):
+    monkeypatch.setenv("SEEDANCE_PRIMARY_PROVIDER", "kie")
     monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "routes.db"))
     postgres_url = os.getenv("TEST_SEEDANCE_POSTGRES_URL", "")
     schema = "seedance_test_" + uuid.uuid4().hex

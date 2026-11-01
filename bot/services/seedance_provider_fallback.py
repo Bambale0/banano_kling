@@ -1,4 +1,4 @@
-"""Durable Seedance KIE -> Neironych fallback, shared by all product surfaces."""
+"""Durable configurable Seedance routing, shared by Telegram and Mini App."""
 
 from __future__ import annotations
 
@@ -30,6 +30,15 @@ MODELS = {
     "bytedance/seedance-2-5": "seedance-2.5",
 }
 FAILURES = {"fail", "failed", "error"}
+UNRESOLVED_PHASES = {
+    "ready",
+    "submitting",
+    "submitted",
+    "kie_ready",
+    "kie_submitting",
+    "kie_uncertain",
+    "kie_submitted",
+}
 SCHEMA = """CREATE TABLE IF NOT EXISTS seedance_provider_routes (
     task_id TEXT PRIMARY KEY, payload TEXT NOT NULL, phase TEXT NOT NULL,
     request_id TEXT, result_url TEXT, failure_code TEXT, fallback_payload TEXT,
@@ -44,6 +53,21 @@ def enabled() -> bool:
         os.getenv("SEEDANCE_FALLBACK_PROVIDER", "neironych").strip().lower()
         == "neironych"
         and neironych_seedance_admin_service.enabled
+    )
+
+
+def neironych_primary() -> bool:
+    return os.getenv("SEEDANCE_PRIMARY_PROVIDER", "kie").strip().lower() == "neironych"
+
+
+def _kie_fallback_enabled() -> bool:
+    return os.getenv("SEEDANCE_FALLBACK_PROVIDER", "kie").strip().lower() == "kie"
+
+
+def _uses_kie_fallback(payload: dict) -> bool:
+    return (
+        payload.get("_seedance_primary_provider") == "neironych"
+        and payload.get("_seedance_fallback_provider") == "kie"
     )
 
 
@@ -260,12 +284,44 @@ async def submit_seedance(
     *,
     video_editing: bool = False,
 ) -> dict:
-    result = await primary(payload)
-    if payload.get("model") not in MODELS or not enabled():
-        return result
+    wire_payload = payload
     if video_editing:
         # Application intent is persisted locally, never added to KIE wire data.
         payload = {**payload, "_seedance_edit_intent": True}
+    if payload.get("model") in MODELS and neironych_primary():
+        try:
+            _payload(payload)
+            compatible = neironych_seedance_admin_service.enabled
+        except ValueError:
+            compatible = False
+        if compatible:
+            task_id = "seedance_nr_" + uuid.uuid4().hex
+            await _register(
+                task_id,
+                {
+                    **payload,
+                    "_seedance_primary_provider": "neironych",
+                    "_seedance_fallback_provider": "kie"
+                    if _kie_fallback_enabled()
+                    else "none",
+                },
+                "ready",
+            )
+            logger.info(
+                "Seedance route selected: task_id=%s primary=neironych", task_id
+            )
+            return {"task_id": task_id, "status": "pending", "provider": "neironych"}
+        # Preserve unsupported controls exactly; do not silently drop them.
+        if not _kie_fallback_enabled():
+            return {"error": "unsupported_primary_parameters", "status": "failed"}
+        logger.info(
+            "Seedance compatibility route selected: model=%s provider=kie",
+            payload["model"],
+        )
+        return await primary(wire_payload)
+    result = await primary(wire_payload)
+    if payload.get("model") not in MODELS or not enabled():
+        return result
     task_id = result.get("task_id")
     if task_id:
         try:
@@ -306,6 +362,9 @@ async def _submit_fallback(task_id: str) -> None:
             )
         ).fetchone()
         if current:
+            if not await _table_exists(db, "generation_tasks"):
+                await db.rollback()
+                return
             # Lock in the same order as the refund path. A task already failed,
             # refunded, completed or superseded must never launch paid fallback.
             active = await (
@@ -354,8 +413,8 @@ async def _submit_fallback(task_id: str) -> None:
     except NeironychAPIError as exc:
         # 409, 5xx and transport failures can mean accepted. Reconcile with
         # precisely the same key, never create another provider attempt.
-        if exc.status in {400, 401, 402, 403, 404, 422}:
-            await _fail_route(task_id, payload["model"], str(exc.status))
+        if exc.status in {400, 401, 402, 403, 404, 422, 429}:
+            await _neironych_failed(task_id, payload, str(exc.status))
         logger.warning(
             "Seedance fallback submission response: task_id=%s status=%s",
             task_id,
@@ -386,6 +445,150 @@ async def _submit_fallback(task_id: str) -> None:
     )
 
 
+async def _neironych_failed(task_id: str, payload: dict, code: str) -> None:
+    if not _uses_kie_fallback(payload):
+        await _fail_route(task_id, payload["model"], code)
+        return
+    async with db_backend.connect() as db:
+        await db.execute(
+            "UPDATE seedance_provider_routes SET phase='kie_ready', request_id=NULL, "
+            "failure_code=?, lease_until=0, fallback_payload=NULL "
+            "WHERE task_id=? AND phase IN ('submitting', 'submitted')",
+            (code, task_id),
+        )
+        await db.commit()
+    logger.warning(
+        "Seedance provider switch: task_id=%s from=neironych to=kie reason=%s",
+        task_id,
+        code,
+    )
+
+
+async def _submit_kie_fallback(task_id: str) -> None:
+    """KIE has no verified idempotent create: never repeat uncertain submission."""
+    from bot.services.kling_service import KlingService
+
+    async with db_backend.connect() as db:
+        db.row_factory = db_backend.Row
+        active = await (
+            await db.execute(
+                "UPDATE generation_tasks SET updated_at=updated_at WHERE task_id=? "
+                "AND status IN ('pending','processing') RETURNING task_id",
+                (task_id,),
+            )
+        ).fetchone()
+        if not active:
+            await db.rollback()
+            return
+        row = await (
+            await db.execute(
+                "UPDATE seedance_provider_routes SET phase='kie_submitting', lease_until=? "
+                "WHERE task_id=? AND phase='kie_ready' RETURNING payload",
+                (time.time() + KlingService.CREATE_TASK_TIMEOUT_SECONDS + 30, task_id),
+            )
+        ).fetchone()
+        await db.commit()
+    if not row:
+        return
+    payload = json.loads(row["payload"])
+    # Local receipt is stable. Remote-ID callbacks must not bypass this route.
+    wire = {"model": payload["model"], "input": payload["input"]}
+    try:
+        result = await KlingService(kie_key=config.KIE_AI_API_KEY)._kie_post(
+            KlingService.CREATE_TASK_ENDPOINT,
+            wire,
+        )
+    except Exception as exc:  # noqa: BLE001 - acceptance is uncertain
+        logger.error(
+            "Seedance KIE fallback uncertain: task_id=%s error_type=%s",
+            task_id,
+            type(exc).__name__,
+        )
+        result = {"error": "network_error"}
+    if result.get("task_id"):
+        await _update(
+            task_id, phase="kie_submitted", request_id=result["task_id"], lease_until=0
+        )
+        logger.info(
+            "Seedance KIE fallback accepted: task_id=%s request_id=%s",
+            task_id,
+            result["task_id"],
+        )
+        return
+    raw = result.get("raw") or {}
+    inner = raw.get("data") if isinstance(raw, dict) else None
+    accepted_id = (
+        inner.get("taskId") or inner.get("task_id") if isinstance(inner, dict) else None
+    )
+    if accepted_id:
+        await _update(
+            task_id, phase="kie_submitted", request_id=accepted_id, lease_until=0
+        )
+    elif result.get("error") == "missing_api_key" or (
+        result.get("error") == "api_error"
+        and result.get("status_code") in {400, 401, 402, 403, 404, 422, 429, 455}
+    ):
+        await _fail_route(task_id, payload["model"], "kie_create_rejected")
+    else:
+        await _update(task_id, phase="kie_uncertain", lease_until=0)
+        logger.error(
+            "Seedance KIE fallback needs reconciliation: task_id=%s acceptance=unknown",
+            task_id,
+        )
+
+
+async def _resolve_kie_fallback(route: dict) -> dict:
+    from bot.services.kie_market_service import KIE_MARKET_API_BASE, KieMarketService
+
+    task_id = route["task_id"]
+    if route["phase"] == "kie_ready":
+        await _submit_kie_fallback(task_id)
+        route = await _load(task_id)
+    if route["phase"] == "failed":
+        return _record(route, "fail", code=route["failure_code"])
+    if route.get("result_url"):
+        return _record(route, "success", url=route["result_url"])
+    if route["phase"] != "kie_submitted":
+        return _record(route, "generating")
+    market = KieMarketService()
+    try:
+        response = await market._get_json(
+            f"{KIE_MARKET_API_BASE}/api/v1/jobs/recordInfo",
+            params={"taskId": route["request_id"]},
+        )
+        data = response.get("data") if response.get("code") == 200 else None
+        if not isinstance(data, dict) or data.get("taskId") != route["request_id"]:
+            return _record(route, "generating")
+        state = str(data.get("state") or "").lower()
+        if state in FAILURES:
+            await _fail_route(
+                task_id, json.loads(route["payload"])["model"], "kie_generation_failed"
+            )
+            return _record(route, "fail", code="kie_generation_failed")
+        if state not in {"success", "completed", "done", "succeeded", "finished"}:
+            return _record(route, "generating")
+        urls = market.parse_result_urls(data)
+        if not urls:
+            return _record(route, "generating")
+        await _update(
+            task_id,
+            phase="kie_completed",
+            result_url=urls[0],
+            lease_until=0,
+            payload=json.dumps({"model": json.loads(route["payload"])["model"]}),
+        )
+        return _record(route, "success", url=urls[0])
+    except Exception as exc:  # noqa: BLE001 - outage must not become a refund
+        logger.warning(
+            "Seedance KIE fallback poll unresolved: task_id=%s error_type=%s",
+            task_id,
+            type(exc).__name__,
+        )
+        return _record(route, "generating")
+    finally:
+        await market.close()
+
+
 def _record(
     route: dict, state: str, *, url: str | None = None, code: str | None = None
 ) -> dict:
@@ -406,6 +609,8 @@ async def resolve_seedance_status(
     route = await _load(task_id)
     if not route:
         return None
+    if route["phase"].startswith("kie_"):
+        return await _resolve_kie_fallback(route)
     if route["phase"] == "primary":
         canonical = await get_primary()
         data = canonical.get("data") if canonical.get("code") == 200 else None
@@ -417,7 +622,7 @@ async def resolve_seedance_status(
             return data
         if state not in FAILURES:
             return data
-        if not enabled():
+        if not neironych_seedance_admin_service.enabled:
             await _retire_primary(task_id)
             return data
         # A terminal authenticated provider record proves no active primary
@@ -435,6 +640,8 @@ async def resolve_seedance_status(
     if route["phase"] in {"ready", "submitting"}:
         await _submit_fallback(task_id)
         route = await _load(task_id)
+    if route["phase"].startswith("kie_"):
+        return await _resolve_kie_fallback(route)
     if route["phase"] == "failed":
         return _record(route, "fail", code=route["failure_code"] or "provider_failed")
     if route.get("result_url"):
@@ -446,9 +653,12 @@ async def resolve_seedance_status(
         record = await neironych_seedance_admin_service.get_status(route["request_id"])
         state = str(record.get("status") or "").lower()
         if state in {"failed", "expired"}:
-            await _fail_route(
-                task_id, json.loads(route["payload"])["model"], "neironych_" + state
+            await _neironych_failed(
+                task_id, json.loads(route["payload"]), "neironych_" + state
             )
+            current = await _load(task_id)
+            if current["phase"].startswith("kie_"):
+                return await _resolve_kie_fallback(current)
             return _record(route, "fail", code="neironych_" + state)
         if state != "done":
             return _record(route, "generating")
@@ -513,9 +723,7 @@ async def resolve_seedance_status(
 async def has_unresolved_fallback(task_id: str) -> bool:
     route = await _load(task_id)
     return bool(
-        route
-        and route["phase"] in {"ready", "submitting", "submitted"}
-        and not route.get("result_url")
+        route and route["phase"] in UNRESOLVED_PHASES and not route.get("result_url")
     )
 
 
@@ -545,8 +753,4 @@ async def unresolved_in_transaction(db: Any, task_id: str) -> bool:
             (task_id,),
         )
     ).fetchone()
-    return bool(
-        row
-        and row["phase"] in {"ready", "submitting", "submitted"}
-        and not row["result_url"]
-    )
+    return bool(row and row["phase"] in UNRESOLVED_PHASES and not row["result_url"])
