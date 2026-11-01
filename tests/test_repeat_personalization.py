@@ -2,7 +2,6 @@ import pytest
 
 from bot import repeat_personalization as subject
 
-
 BASE = (
     "Cinematic birthday scene. The hero wears a blue coat and carries a chocolate cake. "
     "Keep the camera move, lighting and reference identity unchanged."
