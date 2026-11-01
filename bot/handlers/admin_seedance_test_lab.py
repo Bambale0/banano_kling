@@ -400,7 +400,7 @@ def _max_file_bytes(model: str, kind: str) -> int:
         return _IMAGE_MAX_BYTES
     if kind == "audio":
         return _AUDIO_MAX_BYTES
-    if model == "seedance-2.5":
+    if model in {"seedance-2.5", "wan-3"}:
         return 100 * 1024 * 1024
     return 50 * 1000 * 1000
 
