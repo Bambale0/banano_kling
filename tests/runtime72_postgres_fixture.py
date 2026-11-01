@@ -51,7 +51,11 @@ async def runtime_postgres_schema():
             await connection.execute(
                 f'ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS {name} {definition}'
             )
-        await connection.execute('TRUNCATE saved_references, generation_tasks')
+        from bot.reference_library_schema import REFERENCE_LIBRARY_SCHEMA
+
+        for statement in REFERENCE_LIBRARY_SCHEMA:
+            await connection.execute(statement)
+        await connection.execute('TRUNCATE reference_category_items, reference_categories, saved_references, generation_tasks')
         await connection.commit()
     try:
         yield

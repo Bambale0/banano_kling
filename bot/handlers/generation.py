@@ -4964,6 +4964,9 @@ async def _send_saved_reference_preview(
         safe_index,
         len(refs),
         already_selected=already_selected,
+        show_categories=True,
+        page_offset=int(data.get('saved_ref_page_offset') or 0),
+        has_next_page=bool(data.get('saved_ref_has_next_page')),
     )
 
     try:
@@ -5021,9 +5024,20 @@ async def close_saved_reference_preview(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "ref_saved_library")
 async def open_saved_reference_library(callback: types.CallbackQuery, state: FSMContext):
+    from bot.reference_library import list_categories
+
+    folders = await list_categories(callback.from_user.id)
+    await state.update_data(
+        saved_ref_category_id=None, saved_ref_has_categories=bool(folders), saved_ref_page_offset=0, saved_ref_has_next_page=False,
+        saved_ref_return_chat_id=callback.message.chat.id,
+        saved_ref_return_message_id=callback.message.message_id,
+    )
+    if folders:
+        await _show_reference_categories(callback, folders)
+        return
     saved_refs = await list_saved_references(callback.from_user.id, kind="image", limit=50)
     if not saved_refs:
-        await callback.answer("Сохранённых рефов пока нет", show_alert=True)
+        await _show_reference_categories(callback, [])
         return
 
     await state.update_data(
@@ -5031,6 +5045,86 @@ async def open_saved_reference_library(callback: types.CallbackQuery, state: FSM
         saved_ref_return_message_id=callback.message.message_id,
     )
     await _send_saved_reference_preview(callback.message, state, refs=saved_refs, index=0)
+    await callback.answer()
+
+
+async def _show_reference_categories(callback, folders, offset=0):
+    rows = [[types.InlineKeyboardButton(text=f"📁 {folder['name'][:40]}", callback_data=f"savedref_category:{folder['id']}")]
+            for folder in folders[offset:offset + 10]]
+    navigation = []
+    if offset:
+        navigation.append(types.InlineKeyboardButton(text='⬅️', callback_data=f'savedref_cats:{max(0, offset - 10)}'))
+    if offset + 10 < len(folders):
+        navigation.append(types.InlineKeyboardButton(text='➡️', callback_data=f'savedref_cats:{offset + 10}'))
+    if navigation:
+        rows.append(navigation)
+    rows.extend([
+        [types.InlineKeyboardButton(text='Последние загрузки', callback_data='savedref_recent')],
+        [types.InlineKeyboardButton(text='Открыть мини-приложение', web_app=types.WebAppInfo(url=config.mini_app_url))],
+    ])
+    await callback.message.answer('Мои референсы: выберите категорию. Управление папками — в профиле мини-приложения.',
+                                  reply_markup=types.InlineKeyboardMarkup(inline_keyboard=rows))
+    await callback.answer()
+
+
+@router.callback_query((F.data == 'savedref_categories') | F.data.startswith('savedref_cats:'))
+async def show_reference_categories(callback: types.CallbackQuery):
+    from bot.reference_library import list_categories
+
+    raw_offset = callback.data.split(':', 1)[1] if ':' in callback.data else '0'
+    offset = int(raw_offset) if raw_offset.isdigit() else 0
+    await _show_reference_categories(callback, await list_categories(callback.from_user.id), offset=offset)
+
+
+@router.callback_query(F.data.startswith('savedref_category:') | (F.data == 'savedref_recent'))
+async def choose_reference_category(callback: types.CallbackQuery, state: FSMContext):
+    category_id = callback.data.split(':', 1)[1] if ':' in callback.data else None
+    from bot.reference_library import list_category_references
+
+    try:
+        refs = await list_category_references(callback.from_user.id, category_id, limit=21) if category_id else await list_saved_references(callback.from_user.id, kind='image', limit=50)
+    except (PermissionError, ValueError):
+        await callback.answer('Категория недоступна', show_alert=True)
+        return
+    if not refs:
+        await callback.answer('В этой категории пока нет доступных фото', show_alert=True)
+        return
+    await state.update_data(saved_ref_category_id=category_id, saved_ref_page_offset=0,
+                            saved_ref_has_next_page=bool(category_id and len(refs) > 20))
+    await _send_saved_reference_preview(callback.message, state, refs=refs[:20] if category_id else refs, index=0)
+    await callback.answer()
+
+
+async def _saved_refs_for_state(telegram_id, state):
+    from bot.reference_library import list_category_references
+
+    data = await state.get_data()
+    category_id = data.get('saved_ref_category_id')
+    if category_id:
+        try:
+            refs = await list_category_references(telegram_id, category_id, limit=21, offset=int(data.get('saved_ref_page_offset') or 0))
+            await state.update_data(saved_ref_has_next_page=len(refs) > 20)
+            return refs[:20]
+        except (PermissionError, ValueError):
+            return []
+    return await list_saved_references(telegram_id, kind='image', limit=50)
+
+
+@router.callback_query(F.data.startswith('savedref_page:'))
+async def page_saved_reference_category(callback: types.CallbackQuery, state: FSMContext):
+    raw_offset = callback.data.split(':', 1)[1]
+    previous = await state.get_data()
+    if not raw_offset.isdigit() or not previous.get('saved_ref_category_id'):
+        await callback.answer('Откройте категорию заново', show_alert=True)
+        return
+    await state.update_data(saved_ref_page_offset=int(raw_offset))
+    refs = await _saved_refs_for_state(callback.from_user.id, state)
+    if not refs:
+        await state.update_data(saved_ref_page_offset=previous.get('saved_ref_page_offset', 0),
+                                saved_ref_has_next_page=previous.get('saved_ref_has_next_page', False))
+        await callback.answer('Больше фото нет', show_alert=True)
+        return
+    await _send_saved_reference_preview(callback.message, state, refs=refs, index=0)
     await callback.answer()
 
 
@@ -5042,7 +5136,7 @@ async def navigate_saved_reference_library(callback: types.CallbackQuery, state:
         await callback.answer("Не удалось открыть реф", show_alert=True)
         return
 
-    saved_refs = await list_saved_references(callback.from_user.id, kind="image", limit=50)
+    saved_refs = await _saved_refs_for_state(callback.from_user.id, state)
     if not saved_refs:
         await callback.answer("Сохранённых рефов больше нет", show_alert=True)
         try:
@@ -5067,7 +5161,7 @@ async def use_saved_reference_from_library(callback: types.CallbackQuery, state:
         await callback.answer("Не удалось добавить реф", show_alert=True)
         return
 
-    saved_refs = await list_saved_references(callback.from_user.id, kind="image", limit=50)
+    saved_refs = await _saved_refs_for_state(callback.from_user.id, state)
     candidate = next((ref for ref in saved_refs if ref.id == reference_id), None)
     if not candidate:
         await callback.answer("Реф не найден", show_alert=True)
@@ -5119,6 +5213,10 @@ async def delete_saved_reference_from_library(callback: types.CallbackQuery, sta
         await callback.answer("Не удалось удалить реф", show_alert=True)
         return
 
+    from bot.database import get_saved_reference_by_id
+    from bot.services.media_input_utils import reference_source_identity
+
+    removed_reference = await get_saved_reference_by_id(callback.from_user.id, reference_id)
     deleted = await delete_saved_reference(callback.from_user.id, reference_id)
     if not deleted:
         await callback.answer("Реф уже удалён", show_alert=True)
@@ -5126,9 +5224,12 @@ async def delete_saved_reference_from_library(callback: types.CallbackQuery, sta
 
     data = await state.get_data()
     reference_images = list(data.get("reference_images") or [])
-    saved_refs_after = await list_saved_references(callback.from_user.id, kind="image", limit=50)
-    valid_urls = {ref.file_url for ref in saved_refs_after}
-    updated_reference_images = [url for url in reference_images if url in valid_urls]
+    saved_refs_after = await _saved_refs_for_state(callback.from_user.id, state)
+    if not saved_refs_after and data.get('saved_ref_category_id') and data.get('saved_ref_page_offset'):
+        await state.update_data(saved_ref_page_offset=max(0, int(data['saved_ref_page_offset']) - 20))
+        saved_refs_after = await _saved_refs_for_state(callback.from_user.id, state)
+    removed_identity = reference_source_identity(removed_reference.file_url) if removed_reference else None
+    updated_reference_images = [url for url in reference_images if reference_source_identity(url) != removed_identity]
     if len(updated_reference_images) != len(reference_images):
         await state.update_data(reference_images=updated_reference_images)
         return_chat_id = data.get("saved_ref_return_chat_id")

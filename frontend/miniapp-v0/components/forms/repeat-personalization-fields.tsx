@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input'
 import { useEffect, useRef, useState } from 'react'
 import { uploadFile } from '@/lib/api'
 import { normalizeMiniAppMediaUrl } from '@/lib/media-url'
+import { PersonalReferenceLibrary } from '@/components/personal-reference-library'
 
 function ImageChoices({ field, value, onChange }: {
   field: TrendUserField
@@ -57,6 +58,8 @@ function ImageChoices({ field, value, onChange }: {
           if (alive.current) setBusy(false)
         }
       }} /> : null}
+    {field.allow_custom_image ? <PersonalReferenceLibrary kind="image" disabled={busy}
+      onSelect={file => changeRef.current(`upload:${file.url}`)} /> : null}
     {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
   </>
 }

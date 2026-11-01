@@ -1,4 +1,5 @@
 'use client'
+import { PersonalReferenceLibrary } from '@/components/personal-reference-library'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useApp } from '@/lib/app-context'
@@ -707,6 +708,7 @@ export function ProfileTab() {
           ) : null}
         </div>
 
+        {isOwnProfile ? <PersonalReferenceLibrary /> : null}
         {isOwnProfile ? (
           <div className="grid grid-cols-2 gap-2">
             <div className="rounded-lg border border-border/50 bg-card/45 p-3">
