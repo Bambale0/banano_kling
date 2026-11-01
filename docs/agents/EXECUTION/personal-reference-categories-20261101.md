@@ -43,3 +43,10 @@ Verification:
 
 Remaining: final re-review, exact-head CI (including real PostgreSQL), autodeploy and authenticated production smoke.
 No paid generation, business price changes, or production data mutations.
+
+Final pagination hardening: unavailable files are skipped while counting Telegram page
+offsets over available files. Regressions cover one or21missingfiles before lateroutfits.
+Actual categorized image files survive count/age rotation and physical orphan cleanup.
+Latest category-domain/file tests: 7 passed. PR #388 created against tanyapi5cf06b0;
+real PostgreSQL runtime CI passed initial feature head, including native schema bootstrap
+and controlled remove/cleanup/re-pin locking; final-head checks remain required.

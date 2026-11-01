@@ -63,3 +63,52 @@ async def test_age_cleanup_never_deletes_categorized_references():
         await db.commit()
     await database.cleanup_saved_references(keep_latest=1, max_age_days=1)
     assert len(await library.list_items(101, folder['id'])) == 2
+
+
+@pytest.mark.parametrize('missing', [1, 21])
+async def test_telegram_page_boundaries_scan_past_missing_files(tmp_path, monkeypatch, missing):
+    from pathlib import Path
+
+    monkeypatch.chdir(tmp_path)
+    folder = await library.create_category(101, 'Одежда')
+    directory = Path('static/uploads/refs/image/101')
+    directory.mkdir(parents=True)
+    for index in range(23 + missing):
+        url = f'https://neuromixbot.com/uploads/refs/image/101/{index}.png'
+        await database.save_user_reference(101, kind='image', file_url=url, file_hash=str(index), category_id=folder['id'])
+        if index < 23:
+            (directory / f'{index}.png').write_bytes(b'image')
+    first_with_sentinel = await library.list_category_references(101, folder['id'], limit=21)
+    assert len(first_with_sentinel) == 21
+    second = await library.list_category_references(101, folder['id'], limit=21, offset=20)
+    assert len(second) == 3
+    assert len({item.id for item in [*first_with_sentinel[:20], *second]}) == 23
+
+
+async def test_saved_outfit_file_survives_age_rotation_and_physical_orphan_cleanup(tmp_path, monkeypatch):
+    import io
+    import os
+
+    from PIL import Image
+
+    from bot.services.media_input_utils import resolve_local_upload_path
+    from bot.services.reference_storage_service import save_reference_file
+
+    monkeypatch.chdir(tmp_path)
+    folder = await library.create_category(101, 'Одежда')
+    files = []
+    for color in ['blue', 'red']:
+        data = io.BytesIO()
+        Image.new('RGB', (300, 400), color).save(data, format='PNG')
+        url, item = await save_reference_file(101, data.getvalue(), file_ext='png', category_id=folder['id'])
+        assert item is not None
+        path = resolve_local_upload_path(url)
+        os.utime(path, (0, 0))
+        files.append(path)
+    async with database.db_backend.connect(database.DATABASE_PATH) as db:
+        await db.execute("UPDATE saved_references SET created_at = '2000-01-01', last_used_at = '2000-01-01'")
+        await db.commit()
+    await database.cleanup_saved_references(keep_latest=1, max_age_days=1)
+    await database.cleanup_orphaned_reference_files(max_age_seconds=1)
+    assert all(os.path.isfile(path) for path in files)
+    assert all(item['available'] for item in await library.list_items(101, folder['id']))

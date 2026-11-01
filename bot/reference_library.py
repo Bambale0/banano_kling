@@ -151,6 +151,25 @@ async def list_items(telegram_id, category_id, **options):
 
 
 async def list_category_references(telegram_id, category_id, *, kind='image', limit=100, offset=0):
-    rows = await _category_rows(telegram_id, category_id, kind=kind, limit=limit, offset=offset)
-    references = [database._saved_reference_from_row(row) for row in rows]
-    return [reference for reference in references if database._saved_reference_is_available(reference)]
+    # Telegram pages count available files. Filtering after a SQL LIMIT hides
+    # later outfits when even one file in the first page is unavailable.
+    skip = max(0, int(offset))
+    limit = max(1, min(int(limit), 100))
+    row_offset = 0
+    result = []
+    while len(result) < limit:
+        rows = await _category_rows(telegram_id, category_id, kind=kind, limit=100, offset=row_offset)
+        for row in rows:
+            reference = database._saved_reference_from_row(row)
+            if not database._saved_reference_is_available(reference):
+                continue
+            if skip:
+                skip -= 1
+            else:
+                result.append(reference)
+                if len(result) == limit:
+                    return result
+        if len(rows) < 100:
+            break
+        row_offset += len(rows)
+    return result
