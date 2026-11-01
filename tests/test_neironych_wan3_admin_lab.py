@@ -229,6 +229,23 @@ def test_wan_lab_rejects_aggregate_reference_length_above_provider_cap(kind):
     with pytest.raises(ValueError, match="15"):
         lab._payload(data)
 
+
+def test_wan_lab_rejects_reference_video_plus_output_above_provider_cap():
+    data = {
+        **lab._defaults(),
+        "wan_lab_mode": "reference",
+        "wan_lab_prompt": "Extend the camera movement",
+        "wan_lab_duration": 20,
+        "wan_lab_references": [{
+            "kind": "video",
+            "url": "https://media.example.org/source.mp4",
+            "duration": 11,
+        }],
+    }
+
+    with pytest.raises(ValueError, match="30"):
+        lab._payload(data)
+
 async def test_known_provider_rejection_allows_safe_parameter_correction(monkeypatch):
     from bot.services.neironych_seedance_admin_service import NeironychAPIError
 

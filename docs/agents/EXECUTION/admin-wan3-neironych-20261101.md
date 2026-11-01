@@ -61,9 +61,12 @@
   asks the administrator to resend it as Telegram media.
 - Existing callback ratio, uncertain-acceptance idempotency and aggregate
   reference-duration fixes remain covered by the focused WAN regression suite.
+- A follow-up red regression showed that the earlier aggregate fix did not yet
+  enforce the native 30-second ceiling for reference-video seconds plus output
+  duration. The request compiler now rejects that combination before POST.
 - The PR branch was updated without rewriting history by merging current
   `origin/tanyapi@41e72b7a`; the merge was conflict-free.
-- Local post-merge focused verification: 144 tests passed across the native WAN
+- Local post-merge focused verification: 145 tests passed across the native WAN
   lab/service, adjacent Neironych Seedance lab, public WAN service/lifecycle and
   release-menu seams. Changed Python files pass Ruff, Python compilation and
   `git diff --check`.
@@ -72,3 +75,9 @@
   as POSIX directory fsync, the Unix `resource` module, Windows default source
   encoding and environment-sensitive legacy fixtures. The protected Ubuntu
   full regression, PostgreSQL, browser and Docker jobs remain the release gate.
+- Two-axis review found no scope leak into public WAN/KIE and no blocking spec
+  issue. One P2 documentation mismatch was corrected: an uncertain submission
+  keeps its immutable hash/key while the draft may change, but any new POST and
+  ID reset remain blocked until the original payload is restored or rejection
+  is proven. Residual risk: an in-memory FSM fallback can lose that recovery key
+  on restart, so an operator must reconcile with Neironych before a new launch.
