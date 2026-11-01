@@ -400,8 +400,8 @@ async def choose_option(callback: types.CallbackQuery, state: FSMContext) -> Non
 async def set_option(callback: types.CallbackQuery, state: FSMContext) -> None:
     if not await _require_admin(callback):
         return
-    prefix, value = (callback.data or "").rsplit(":", 1)
-    field = prefix.rsplit("_", 1)[-1]
+    suffix = (callback.data or "").removeprefix("admin_wan3:set_")
+    field, _separator, value = suffix.partition(":")
     if field == "duration" and value.isdigit() and 2 <= int(value) <= 30:
         changed = {"wan_lab_duration": int(value)}
     elif field == "ratio" and value in NeironychWan3AdminService.RATIOS:
