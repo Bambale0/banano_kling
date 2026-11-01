@@ -147,6 +147,19 @@ from bot.payment_utils import (
     total_package_credits,
 )
 from bot.quality_pricing import QUALITY_COSTS, SEEDREAM_5_PRO_QUALITY_COSTS
+from bot.repeat_personalization import (
+    admin_preview_enabled as repeat_personalization_preview_enabled,
+)
+from bot.repeat_personalization import (
+    clear_repeat_fields,  # noqa: F401 - re-exported to publication compatibility patch
+    get_repeat_fields,
+    get_repeat_fields_many,
+    normalize_repeat_fields,  # noqa: F401 - re-exported to publication compatibility patch
+    public_repeat_fields,
+    render_repeat_base,
+    restore_repeat_fields_if_current,  # noqa: F401 - re-exported to publication compatibility patch
+    save_repeat_fields,  # noqa: F401 - re-exported to publication compatibility patch
+)
 from bot.services.ai_assistant_service import ai_assistant_service
 from bot.services.lava_service import lava_service
 from bot.services.media_input_utils import (
@@ -165,17 +178,6 @@ from bot.services.photo_prompt_billing import (
 from bot.services.preset_manager import preset_manager
 from bot.services.reference_storage_service import save_reference_file
 from bot.services.remix_prompt import compose_feed_remix_prompt
-from bot.repeat_personalization import (
-    admin_preview_enabled as repeat_personalization_preview_enabled,
-    clear_repeat_fields,
-    get_repeat_fields,
-    get_repeat_fields_many,
-    normalize_repeat_fields,
-    public_repeat_fields,
-    render_repeat_base,
-    restore_repeat_fields_if_current,
-    save_repeat_fields,
-)
 from bot.services.subscription_service import (
     REQUIRED_CHANNEL_USERNAME,
     check_required_channel_subscription,
