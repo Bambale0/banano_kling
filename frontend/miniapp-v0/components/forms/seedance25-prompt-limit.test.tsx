@@ -21,3 +21,11 @@ describe.each(['public', 'admin'])('Seedance 2.5 %s prompt limit', (surface) => 
     }
   })
 })
+
+describe('Seedance 2.5 public default format', () => {
+  it('starts text generation with the first supported fixed ratio', () => {
+    render(<Seedance25PublicForm credits={100000} isAdmin={false} />)
+    expect(screen.getByRole('button', { name: '16:9' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: 'Авто' })).toHaveAttribute('aria-pressed', 'false')
+  })
+})

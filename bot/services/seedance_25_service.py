@@ -65,6 +65,7 @@ def get_seedance25_callback_url() -> str:
 
 class Seedance25Service(KlingService):
     MODEL_NAME = "bytedance/seedance-2-5"
+    DEFAULT_ASPECT_RATIO = "16:9"
 
     ALLOWED_RATIOS = {
         "1:1",
@@ -209,7 +210,7 @@ class Seedance25Service(KlingService):
         prompt: str,
         *,
         duration: int = 5,
-        aspect_ratio: str = "adaptive",
+        aspect_ratio: str = DEFAULT_ASPECT_RATIO,
         resolution: str = "720p",
         first_frame_url: str | None = None,
         last_frame_url: str | None = None,
@@ -379,7 +380,10 @@ class Seedance25Service(KlingService):
             bool(return_last_frame),
             callback_url or "polling-only",
         )
-        result = await self._kie_post("/api/v1/jobs/createTask", payload)
+        from bot.services.seedance_provider_fallback import submit_seedance
+        result = await submit_seedance(
+            payload, lambda body: self._kie_post(self.CREATE_TASK_ENDPOINT, body)
+        )
         if isinstance(result, dict):
             if not result.get("task_id"):
                 # Avoid logging provider text: it can echo the private prompt or

@@ -49,6 +49,7 @@ from bot.services.delivery_state import (
 from bot.services.media_input_utils import resolve_local_upload_path
 from bot.services.preset_manager import preset_manager
 from bot.services.seedance_25_service import (
+    Seedance25Service,
     get_seedance25_callback_url,
     seedance_25_service,
 )
@@ -320,7 +321,7 @@ def _seedance25_model_meta(*, tariff: str = "standard") -> dict[str, Any]:
         "label": "🧪 Seedance 2.5 (admin)",
         "description": "Полный admin-preview Bytedance: first/last frame, мультимодальные фото/видео/аудио референсы, audio generation и web search",
         "durations": durations,
-        "ratios": ["adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
+        "ratios": ["16:9", "adaptive", "9:16", "1:1", "4:3", "3:4", "21:9"],
         "supports": ["text", "imgtxt", "video"],
         "costs": {
             str(duration): preset_manager.get_video_cost_with_quality(
@@ -392,7 +393,7 @@ async def _miniapp_seedance25_generate(request: web.Request, body: dict[str, Any
     except (TypeError, ValueError):
         return web.json_response({"ok": False, "error": "Некорректная длительность"}, status=400)
 
-    ratio = str(body.get("v_ratio") or "adaptive").strip().lower()
+    ratio = str(body.get("v_ratio") or Seedance25Service.DEFAULT_ASPECT_RATIO).strip().lower()
     resolution = str(body.get("seedance25_resolution") or "720p").strip().lower()
     output_format = str(body.get("seedance25_output_format") or "mp4").strip().lower()
     generate_audio = bool(body.get("seedance25_generate_audio", True))

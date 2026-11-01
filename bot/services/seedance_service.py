@@ -287,7 +287,10 @@ class SeedanceService(KlingService):
             len(limited_reference_video_urls),
             len(limited_reference_audio_urls),
         )
-        return await self._kie_post(self.CREATE_TASK_ENDPOINT, payload)
+        from bot.services.seedance_provider_fallback import submit_seedance
+        return await submit_seedance(
+            payload, lambda body: self._kie_post(self.CREATE_TASK_ENDPOINT, body)
+        )
 
 
 seedance_service = SeedanceService(kie_key=config.KIE_AI_API_KEY)

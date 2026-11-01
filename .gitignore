@@ -116,3 +116,5 @@ data/*_checkpoint.json
 
 # Optional bot-start lifecycle regression coverage
 !tests/test_bot_start_eligibility.py
+
+!tests/test_seedance_provider_fallback.py
