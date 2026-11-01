@@ -7,7 +7,7 @@ the existing bounded HTTP, idempotency, polling and content transport.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, ClassVar
 from urllib.parse import urlsplit
 
 from bot.services.neironych_seedance_admin_service import NeironychSeedanceAdminService
@@ -18,7 +18,7 @@ class NeironychWan3AdminService(NeironychSeedanceAdminService):
     MODES = frozenset({"text", "reference", "frames", "edit"})
     RESOLUTIONS = ("480p", "720p", "1080p")
     RATIOS = ("adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9")
-    MAX_REFERENCE_COUNTS = {"image": 10, "video": 5, "audio": 5}
+    MAX_REFERENCE_COUNTS: ClassVar[dict[str, int]] = {"image": 10, "video": 5, "audio": 5}
     MAX_REFERENCES = 20
     MAX_PROMPT_CHARS = 20_000
     MAX_SEED = 4_294_967_295
@@ -36,7 +36,9 @@ class NeironychWan3AdminService(NeironychSeedanceAdminService):
     def _urls(values: list[str] | None, *, field: str, maximum: int) -> list[str]:
         if values is None:
             return []
-        if not isinstance(values, list) or len(values) > maximum:
+        if not isinstance(values, list):
+            raise TypeError(f"{field} must be a list")
+        if len(values) > maximum:
             raise ValueError(f"{field}: maximum {maximum} references")
         result = []
         for value in values:
@@ -78,7 +80,7 @@ class NeironychWan3AdminService(NeironychSeedanceAdminService):
         if isinstance(duration, bool) or not isinstance(duration, int) or not 2 <= duration <= 30:
             raise ValueError("WAN 3.0 duration must be 2-30 seconds")
         if not isinstance(generate_audio, bool):
-            raise ValueError("generate_audio must be a boolean")
+            raise TypeError("generate_audio must be a boolean")
         if seed is not None and (
             isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= cls.MAX_SEED
         ):
