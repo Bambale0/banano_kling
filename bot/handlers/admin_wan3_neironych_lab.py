@@ -10,7 +10,6 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-import aiohttp
 from aiogram import F, Router, types
 from aiogram.exceptions import TelegramAPIError
 from aiogram.fsm.context import FSMContext
