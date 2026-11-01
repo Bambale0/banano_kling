@@ -78,6 +78,7 @@ def get_admin_test_lab_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="🖼 GPT Image 2.5", callback_data="admin_test_gpt25")
     builder.button(text="🍌 Gemini 3 Pro Image · OpenRouter", callback_data="admin_gmi:open")
     builder.button(text="🎬 Seedance API", callback_data="admin_seedance_lab")
+    builder.button(text="🎬 WAN 3.0 · Нейроныч", callback_data="admin_wan3:open")
     builder.button(text="🎬 Kling 4", callback_data="k4:open")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
     builder.adjust(1)
@@ -90,7 +91,7 @@ def _test_lab_text() -> str:
         "Закрытый контур для проверки новых моделей. "
         "Он доступен только Telegram-админам и не списывает бананы.\n\n"
         "Сейчас подключено: <b>GPT Image 2.5</b>, <b>Gemini 3 Pro Image · OpenRouter</b> "
-        "и <b>Seedance API</b>."
+        "<b>Seedance API</b> и <b>WAN 3.0 · Нейроныч</b>."
     )
 
 
