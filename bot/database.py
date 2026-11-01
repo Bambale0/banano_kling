@@ -805,6 +805,10 @@ async def _ensure_saved_references_schema(db: db_backend.Connection) -> None:
     await db.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_saved_references_user_kind_hash ON saved_references(user_id, kind, file_hash)"
     )
+    from bot.reference_library_schema import REFERENCE_LIBRARY_SCHEMA
+
+    for statement in REFERENCE_LIBRARY_SCHEMA:
+        await db.execute(statement)
 
 
 @dataclass
@@ -4270,12 +4274,17 @@ async def _prune_saved_references_for_user_id(
     keep_reference_id: int | None = None,
 ) -> tuple[int, list[str]]:
     safe_keep_latest = max(1, int(keep_latest or SAVED_REFERENCES_MAX_PER_KIND))
+    if db_backend.is_postgres():
+        # Category assignments and uploads use this same parent lock. A stale
+        # DELETE snapshot must never cascade a concurrently saved membership.
+        await db.execute("SELECT id FROM users WHERE id = ? FOR UPDATE", (user_id,))
     db.row_factory = db_backend.Row
     cursor = await db.execute(
         """
         SELECT id, file_url
         FROM saved_references
         WHERE user_id = ? AND kind = ?
+          AND NOT EXISTS (SELECT 1 FROM reference_category_items ci WHERE ci.reference_id = saved_references.id)
         ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END,
                  COALESCE(last_used_at, created_at) DESC, id DESC
         LIMIT -1 OFFSET ?
@@ -4316,7 +4325,7 @@ async def _prune_saved_references_for_user_id(
         ]
 
     await db.execute(
-        f"DELETE FROM saved_references WHERE id IN ({id_placeholders})",
+        f"DELETE FROM saved_references WHERE id IN ({id_placeholders}) AND NOT EXISTS (SELECT 1 FROM reference_category_items ci WHERE ci.reference_id = saved_references.id)",
         delete_ids,
     )
     return len(delete_ids), removable_urls
@@ -4366,13 +4375,21 @@ async def cleanup_saved_references(
 
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
+        if db_backend.is_postgres():
+            await db.execute("""SELECT u.id FROM users u WHERE EXISTS (
+                SELECT 1 FROM saved_references sr WHERE sr.user_id = u.id
+            ) ORDER BY u.id FOR UPDATE""")
+        else:
+            await db.execute("BEGIN IMMEDIATE")
         cursor = await db.execute(
             """
             SELECT sr.user_id, u.telegram_id, sr.kind, COUNT(*) AS refs_count
             FROM saved_references sr
             JOIN users u ON u.id = sr.user_id
+            WHERE NOT EXISTS (SELECT 1 FROM reference_category_items ci WHERE ci.reference_id = sr.id)
             GROUP BY sr.user_id, u.telegram_id, sr.kind
             HAVING COUNT(*) > ?
+            ORDER BY sr.user_id, sr.kind
             """,
             (safe_keep_latest,),
         )
@@ -4403,6 +4420,7 @@ async def cleanup_saved_references(
                     FROM saved_references sr
                     JOIN users u ON u.id = sr.user_id
                     WHERE datetime(COALESCE(sr.last_used_at, sr.created_at)) < datetime('now', ?)
+                      AND NOT EXISTS (SELECT 1 FROM reference_category_items ci WHERE ci.reference_id = sr.id)
                 )
                 SELECT id, file_url, telegram_id
                 FROM ranked
@@ -4413,7 +4431,7 @@ async def cleanup_saved_references(
             old_rows = await old_rows_cursor.fetchall()
             if old_rows:
                 await db.executemany(
-                    "DELETE FROM saved_references WHERE id = ?",
+                    "DELETE FROM saved_references WHERE id = ? AND NOT EXISTS (SELECT 1 FROM reference_category_items ci WHERE ci.reference_id = saved_references.id)",
                     [(int(row["id"]),) for row in old_rows],
                 )
                 removed_count += len(old_rows)
@@ -4683,6 +4701,7 @@ async def save_user_reference(
     original_filename: Optional[str] = None,
     content_type: Optional[str] = None,
     source: str = "telegram",
+    category_id: str | None = None,
 ) -> SavedReference:
     user = await get_or_create_user(telegram_id)
     async with db_backend.connect(DATABASE_PATH) as db:
@@ -4718,6 +4737,10 @@ async def save_user_reference(
         )
         row = await cursor.fetchone()
         reference = _saved_reference_from_row(row)
+        if category_id:
+            from bot.reference_library import save_item_in_transaction
+
+            await save_item_in_transaction(db, user.id, category_id, reference.id)
         await _prune_saved_references_for_user_id(
             db,
             user_id=user.id,

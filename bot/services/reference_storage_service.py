@@ -50,6 +50,7 @@ async def save_reference_file(
     original_filename: str | None = None,
     content_type: str | None = None,
     source: str = "telegram",
+    category_id: str | None = None,
 ) -> tuple[str | None, SavedReference | None]:
     """Persist reusable reference media outside the ephemeral uploads cleanup path."""
     try:
@@ -66,6 +67,12 @@ async def save_reference_file(
                 await touch_saved_references(
                     telegram_id, [existing.file_url], kind=normalized_kind
                 )
+                if category_id:
+                    existing = await save_user_reference(
+                        telegram_id, kind=normalized_kind, file_url=public_url, file_hash=file_hash,
+                        original_filename=original_filename, content_type=existing.content_type, source=source,
+                        category_id=category_id,
+                    )
                 return public_url, existing
 
         safe_ext = (file_ext or "bin").lower().strip(".")
@@ -96,6 +103,7 @@ async def save_reference_file(
             original_filename=original_filename,
             content_type=persisted_content_type,
             source=source,
+            **({"category_id": category_id} if category_id else {}),
         )
         return public_url, saved_reference
     except Exception:

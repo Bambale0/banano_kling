@@ -3543,11 +3543,13 @@ async def miniapp_upload(request: web.Request) -> web.Response:
         raw: bytes | None = None
         filename = ""
         declared_content_type = ""
+        category_id = None
         request_content_type = str(getattr(request, "content_type", "") or "").lower()
         if request_content_type == "application/json":
             body = await request.json()
             init_data = str(body.get("init_data", ""))
             file_kind = str(body.get("file_kind", "image_reference"))
+            category_id = body.get("reference_category_id") or None
             filename = str(body.get("filename", "") or "")
             declared_content_type = str(body.get("content_type", "") or "")
             encoded_data = str(body.get("data_base64", "") or "")
@@ -3559,6 +3561,7 @@ async def miniapp_upload(request: web.Request) -> web.Response:
             data = await asyncio.wait_for(request.post(), timeout=MINIAPP_UPLOAD_TIMEOUT_SECONDS)
             init_data = str(data.get("init_data", ""))
             file_kind = str(data.get("file_kind", "image_reference"))
+            category_id = data.get("reference_category_id") or None
             upload = data.get("file")
             filename = getattr(upload, "filename", "") or ""
             declared_content_type = getattr(upload, "content_type", "") or ""
@@ -3580,6 +3583,20 @@ async def miniapp_upload(request: web.Request) -> web.Response:
             )
 
         config_entry = FILE_KIND_MAP[file_kind]
+        if category_id:
+            from bot import database as reference_database
+            from bot.reference_library import require_category
+
+            if file_kind not in {"image_reference", "video_reference", "audio_reference"}:
+                return web.json_response({"ok": False, "error": "Выберите личный референс"}, status=400)
+            try:
+                async with db_backend.connect(reference_database.DATABASE_PATH) as category_db:
+                    category_db.row_factory = db_backend.Row
+                    await require_category(category_db, _ctx["user"].id, category_id)
+            except PermissionError as exc:
+                return web.json_response({"ok": False, "error": str(exc)}, status=403)
+            except ValueError as exc:
+                return web.json_response({"ok": False, "error": str(exc)}, status=400)
         if raw is None:
             raw = upload.file.read()
         if not isinstance(raw, (bytes, bytearray)) or not raw:
@@ -3638,7 +3655,10 @@ async def miniapp_upload(request: web.Request) -> web.Response:
                 original_filename=filename or None,
                 content_type=content_type or None,
                 source=str(config_entry.get("source") or "miniapp"),
+                **({"category_id": category_id} if category_id else {}),
             )
+            if category_id and not saved_reference:
+                return web.json_response({"ok": False, "error": "Не удалось сохранить в категорию. Повторите загрузку."}, status=409)
         if not public_url:
             public_url = _save_uploaded_file_lazy(bytes(raw), extension)
         if not public_url:
@@ -6396,6 +6416,9 @@ def setup_miniapp_routes(app: web.Application):
     app.router.add_post(miniapp_root + "/api/client-log", miniapp_client_log)
     app.router.add_post(miniapp_root + "/api/action", miniapp_action)
     app.router.add_post(miniapp_root + "/api/upload", miniapp_upload)
+    from bot.reference_library_api import reference_library_action
+
+    app.router.add_post(miniapp_root + "/api/reference-library", reference_library_action)
     app.router.add_post(miniapp_root + "/api/photo-to-prompt", miniapp_photo_to_prompt)
     app.router.add_post(miniapp_root + "/api/prompts", miniapp_prompts)
     app.router.add_post(miniapp_root + "/api/prompts/detail", miniapp_prompt_detail)

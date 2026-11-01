@@ -714,7 +714,7 @@ def get_reference_images_upload_keyboard(current_count: int = 0, max_count: int 
     return builder.as_markup()
 
 
-def get_saved_reference_picker_keyboard(reference_id: int, current_index: int, total_count: int, *, already_selected: bool = False):
+def get_saved_reference_picker_keyboard(reference_id: int, current_index: int, total_count: int, *, already_selected: bool = False, show_categories: bool = False, page_offset: int = 0, has_next_page: bool = False):
     builder = InlineKeyboardBuilder()
     if total_count > 1:
         if current_index > 0:
@@ -724,6 +724,12 @@ def get_saved_reference_picker_keyboard(reference_id: int, current_index: int, t
             builder.button(text="➡️", callback_data=f"savedref_nav_{current_index + 1}")
     builder.button(text="✅ Уже добавлен" if already_selected else "✅ Использовать", callback_data=f"savedref_use_{reference_id}")
     builder.button(text="🗑 Удалить", callback_data=f"savedref_delete_{reference_id}_{current_index}")
+    if show_categories:
+        builder.button(text="📁 Категории", callback_data="savedref_categories")
+    if page_offset:
+        builder.button(text="⬅️ Предыдущие фото", callback_data=f"savedref_page:{max(0, page_offset - 20)}")
+    if has_next_page:
+        builder.button(text="Следующие фото ➡️", callback_data=f"savedref_page:{page_offset + 20}")
     builder.button(text="❌ Закрыть", callback_data="savedref_close")
     builder.adjust(3, 2, 1) if total_count > 1 else builder.adjust(2, 1)
     return builder.as_markup()

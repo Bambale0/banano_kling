@@ -5,6 +5,7 @@ import type { UploadedFile } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Upload, X, Loader2, Video, Music, Plus } from 'lucide-react'
 import { sendMiniAppClientLog } from '@/lib/api'
+import { PersonalReferenceLibrary } from '@/components/personal-reference-library'
 
 interface UploadAreaProps {
   files: UploadedFile[]
@@ -253,6 +254,8 @@ export function UploadArea({
         </div>
       )}
 
+      <PersonalReferenceLibrary kind={accept.startsWith('video/') ? 'video' : accept.startsWith('audio/') ? 'audio' : 'image'}
+        disabled={files.length >= maxFiles || batchActive} onSelect={handleAddFromLibrary} />
       {availableLibraryFiles.length > 0 && (
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">
