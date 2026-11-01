@@ -5,6 +5,7 @@ import hashlib
 import html
 import json
 import logging
+import subprocess
 import uuid
 from collections.abc import Coroutine
 from pathlib import Path
@@ -482,6 +483,55 @@ def _validate_reference_slot(
     return None
 
 
+def _video_preview_dimensions(path: str) -> tuple[int, int] | None:
+    """Use the downloaded file's display geometry for Telegram's video preview.
+
+    Neironych MP4 files may have valid 9:16 geometry that Telegram does not
+    reliably infer on upload. A missing/broken ffprobe must not block delivery.
+    """
+    try:
+        probe = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-select_streams", "v:0",
+                "-show_entries",
+                "stream=width,height,sample_aspect_ratio:stream_tags=rotate:stream_side_data=rotation",
+                "-of", "json", path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if probe.returncode != 0:
+            return None
+        streams = json.loads(probe.stdout).get("streams") or []
+        if not streams or not isinstance(streams[0], dict):
+            return None
+        stream = streams[0]
+        width, height = int(stream["width"]), int(stream["height"])
+        if not (0 < width <= 16384 and 0 < height <= 16384):
+            return None
+
+        sar = str(stream.get("sample_aspect_ratio") or "1:1")
+        if ":" in sar and sar != "N/A":
+            numerator, denominator = (int(part) for part in sar.split(":", 1))
+            if numerator > 0 and denominator > 0:
+                width = round(width * numerator / denominator)
+        rotation = (stream.get("tags") or {}).get("rotate")
+        if rotation is None:
+            for side_data in stream.get("side_data_list") or []:
+                if isinstance(side_data, dict) and "rotation" in side_data:
+                    rotation = side_data["rotation"]
+                    break
+        if rotation is not None and int(float(rotation)) % 180 == 90:
+            width, height = height, width
+        if not (0 < width <= 16384 and 0 < height <= 16384):
+            return None
+        return width, height
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, subprocess.TimeoutExpired):
+        return None
+
+
 async def _send_result(
     bot: Any,
     chat_id: int,
@@ -500,13 +550,30 @@ async def _send_result(
                 f"Request ID: <code>{html.escape(request_id)}</code>"
             )
             delivery_method = "video"
+            dimensions = await asyncio.to_thread(_video_preview_dimensions, path)
+            if dimensions is None:
+                logger.warning(
+                    "Seedance admin video preview dimensions unavailable: request_id=%s",
+                    request_id,
+                )
+            video_kwargs = (
+                {"width": dimensions[0], "height": dimensions[1]}
+                if dimensions is not None else {}
+            )
+            telegram_dimensions = None
             try:
-                await bot.send_video(
+                sent_message = await bot.send_video(
                     chat_id=chat_id,
                     video=FSInputFile(path),
                     caption=caption,
                     parse_mode="HTML",
+                    **video_kwargs,
                 )
+                if isinstance(getattr(sent_message, "video", None), types.Video):
+                    telegram_dimensions = (
+                        sent_message.video.width,
+                        sent_message.video.height,
+                    )
             except TelegramAPIError:
                 delivery_method = "document"
                 await bot.send_document(
@@ -518,11 +585,13 @@ async def _send_result(
             _DELIVERED_REQUEST_IDS.add(request_id)
             logger.info(
                 "Seedance admin test delivered: chat_id=%s request_id=%s "
-                "model=%s method=%s",
+                "model=%s method=%s preview_dimensions=%s telegram_dimensions=%s",
                 chat_id,
                 request_id,
                 model,
                 delivery_method,
+                dimensions,
+                telegram_dimensions,
             )
         finally:
             Path(path).unlink(missing_ok=True)

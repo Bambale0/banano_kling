@@ -502,3 +502,95 @@ async def test_manual_check_reports_delivery_failure_without_new_submit(monkeypa
 
     send_result.assert_awaited_once()
     assert "req-manual-delivery" in bot.send_message.await_args.args[1]
+
+@pytest.mark.asyncio
+async def test_seedance_admin_video_preview_uses_source_portrait_dimensions(
+    monkeypatch, tmp_path
+):
+    """Telegram must show the original 9:16 result, not a square preview."""
+    import subprocess
+
+    request_id = "req-portrait-video-preview"
+    video = tmp_path / "original.mp4"
+    video.write_bytes(b"synthetic-video")
+    service = SimpleNamespace(download_to_temp=AsyncMock(return_value=str(video)))
+    monkeypatch.setattr(
+        admin_seedance_test_lab, "neironych_seedance_admin_service", service
+    )
+
+    def probe(command, **_kwargs):
+        assert command[0] == "ffprobe"
+        return SimpleNamespace(
+            returncode=0,
+            stdout='{"streams":[{"width":720,"height":1280,'
+            '"sample_aspect_ratio":"1:1"}]}',
+        )
+
+    monkeypatch.setattr(subprocess, "run", probe)
+    bot = SimpleNamespace(send_video=AsyncMock(), send_document=AsyncMock())
+    admin_seedance_test_lab._DELIVERED_REQUEST_IDS.discard(request_id)
+    try:
+        await admin_seedance_test_lab._send_result(
+            bot, 880017, request_id=request_id, model="seedance-2.5"
+        )
+        assert bot.send_video.await_count == 1
+        send_kwargs = bot.send_video.await_args.kwargs
+        assert (send_kwargs.get("width"), send_kwargs.get("height")) == (720, 1280)
+        bot.send_document.assert_not_awaited()
+        assert not video.exists()
+    finally:
+        admin_seedance_test_lab._DELIVERED_REQUEST_IDS.discard(request_id)
+
+@pytest.mark.parametrize(
+    ("stream", "dimensions"),
+    [
+        ({"width": 1920, "height": 1080, "side_data_list": [{"rotation": -90}]}, (1080, 1920)),
+        ({"width": 720, "height": 576, "sample_aspect_ratio": "16:11"}, (1047, 576)),
+        ({"width": 0, "height": 1080}, None),
+        ({"width": 720, "height": 1280, "sample_aspect_ratio": "1:1"}, (720, 1280)),
+    ],
+)
+def test_seedance_admin_video_preview_uses_display_geometry(monkeypatch, stream, dimensions):
+    import json
+    import subprocess
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0, stdout=json.dumps({"streams": [stream]})
+        ),
+    )
+    assert admin_seedance_test_lab._video_preview_dimensions("source.mp4") == dimensions
+
+
+@pytest.mark.asyncio
+async def test_seedance_admin_video_still_delivers_without_ffprobe(monkeypatch, tmp_path):
+    import subprocess
+
+    request_id = "req-preview-probe-unavailable"
+    video = tmp_path / "original.mp4"
+    video.write_bytes(b"video")
+    monkeypatch.setattr(
+        admin_seedance_test_lab,
+        "neironych_seedance_admin_service",
+        SimpleNamespace(download_to_temp=AsyncMock(return_value=str(video))),
+    )
+
+    def unavailable(*_args, **_kwargs):
+        raise FileNotFoundError("ffprobe unavailable")
+
+    monkeypatch.setattr(subprocess, "run", unavailable)
+    bot = SimpleNamespace(send_video=AsyncMock(), send_document=AsyncMock())
+    admin_seedance_test_lab._DELIVERED_REQUEST_IDS.discard(request_id)
+    try:
+        await admin_seedance_test_lab._send_result(
+            bot, 880017, request_id=request_id, model="seedance-2.5"
+        )
+        assert bot.send_video.await_count == 1
+        assert "width" not in bot.send_video.await_args.kwargs
+        assert "height" not in bot.send_video.await_args.kwargs
+        bot.send_document.assert_not_awaited()
+        assert not video.exists()
+    finally:
+        admin_seedance_test_lab._DELIVERED_REQUEST_IDS.discard(request_id)

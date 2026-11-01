@@ -526,3 +526,23 @@ the combined prompt remains subject to the 40,000-byte provider limit. Use
 The request ID is Redis-FSM durable, but the automatic poller is in-process and
 is not a durable delivery outbox. After a container restart, use `Проверить`
 with the preserved request ID; do not create a replacement provider operation.
+
+## Seedance admin test: video looks squeezed in Telegram preview
+
+If the generated video is correctly proportioned when saved, do not re-run or
+transcode it. Verify the existing Neironych request with read-only status/content
+GET, and inspect the MP4 using `ffprobe` (`width`, `height`,
+`sample_aspect_ratio`, `display_aspect_ratio`, rotation). The reproduced 2.5
+result was 720×1280 with square pixels and a 9:16 display ratio.
+
+The admin lab passes validated display dimensions from the existing MP4 to
+Telegram's `sendVideo(width=..., height=...)` so inline previews have the correct
+aspect ratio. Probe errors or missing `ffprobe` preserve legacy delivery without
+blocking a completed result. The production Docker image already includes
+`ffmpeg`/`ffprobe`. The source file is never modified or re-encoded.
+
+After updating the bot, test an already-generated admin result or the next
+routine test in Telegram on a phone: its inline preview and its saved copy
+should both be portrait. Telegram client behavior cannot be proven by unit
+tests alone. Keep the request ID for correlation; do not create a new paid
+Neironych generation only to debug an old preview.

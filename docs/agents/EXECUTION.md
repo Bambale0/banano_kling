@@ -1,3 +1,12 @@
+## 2026-11-01 — Seedance admin-test preview aspect ratio
+- Baseline `tanyapi@b213dee0fb561a6d4054abfd169f340ea994e8ea`, task branch `fix/seedance-admin-preview-aspect-20261101`. Main checkout's unrelated runtime price changes are untouched.
+- Incident: Telegram inline video preview appears close to square, while the saved/downloaded Seedance 2.5 video is portrait. Read-only Neironych result check for existing request `efbae843-2b47-407a-8ff1-8422319b2222` returned `done`; read-only content fetch + `ffprobe` confirmed H264 720×1280, sample aspect ratio 1:1, display aspect ratio 9:16, duration 12.064 s. No new provider generation or billing.
+- Root cause in app boundary: `admin_seedance_test_lab._send_result` uploaded `FSInputFile` without supplying `width`/`height` to Telegram's `sendVideo`, leaving the Telegram client/server to infer layout. Actual iOS rendering after the fix remains to be visually verified.
+- Change: read-only bounded `ffprobe` on downloaded temporary MP4; pass validated pixel-display dimensions and rotation to Telegram; on missing/bad probe results, retain previous send behavior rather than fail delivery. No video transcoding, media overwrite, model/config changes, DB migrations or user billing. Source download remains deleted after send.
+- TDD: isolated reproduction `1 failed` on baseline, `1 passed` after fix (sendVideo got `None` for `width`/`height` before fix). Orientation/SAR and missing-ffprobe regression tests added. Local focused matrix: `76 passed, 12 subtests passed`; Ruff, compileall, diff whitespace and real `ffprobe` on a generated portrait MP4 (`360×640`) passed. Exact-head PR CI, production SHA and Telegram-iOS visual check pending.
+- Skills: `Bambale0/skills` diagnosing-bugs, tdd; `Bambale0/claw` backend-integration. `anthropics/skills` inspected; no applicable backend/Telegram media skill available (webapp-testing covers browser UI, out of scope).
+- Rollback: revert the task PR through protected `tanyapi`; no data migration or cleanup needed.
+
 ## 2026-11-01 — Explicit Seedance fallback edit intent follow-up
 - Baseline ea704c3e2e07059d9b8aa2e775292157d28110eb, isolated task branch from current tanyapi.
 - Confirmed edge: admin/trusted ordinary Auto reference is accepted by app with video_editing=false. Duration=-1 did not prove edit intent, but fallback inferred edit and changed the requested mode/ratio.
