@@ -177,3 +177,20 @@ def test_wan_lab_rejects_aggregate_reference_length_above_provider_cap(kind):
             "wan_lab_prompt": "A calm sunrise", "wan_lab_references": refs}
     with pytest.raises(ValueError, match="15"):
         lab._payload(data)
+
+async def test_known_provider_rejection_allows_safe_parameter_correction(monkeypatch):
+    from bot.services.neironych_seedance_admin_service import NeironychAPIError
+
+    cb = callback()
+    state = DummyState({"wan_lab_prompt": "Video of a moving car"})
+    provider = SimpleNamespace(
+        enabled=True, list_enabled_wan_models=AsyncMock(return_value={"wan-3"}),
+        submit=AsyncMock(side_effect=NeironychAPIError("rejected", status=422)),
+    )
+    monkeypatch.setattr(lab.config, "is_admin", lambda _tid: True)
+    monkeypatch.setattr(lab, "neironych_wan3_admin_service", provider)
+    await lab.generate(cb, state)
+    provider.submit.assert_awaited_once()
+    assert state.data["wan_lab_last_id"] == ""
+    assert state.data["wan_lab_pending_key"] == ""
+    assert state.data["wan_lab_pending_hash"] == ""
