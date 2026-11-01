@@ -177,7 +177,7 @@ def _track(coro: Any) -> None:
             completed.result()
         except asyncio.CancelledError:
             pass
-        except Exception:
+        except Exception:  # noqa: BLE001 - callback recovery boundary
             logger.exception("WAN3 admin background check failed")
     task.add_done_callback(done)
 
@@ -209,7 +209,7 @@ async def _poll(bot: Any, chat_id: int, request_id: str) -> None:
         await bot.send_message(chat_id, "❌ WAN 3.0 завершился: "
                                + html.escape(status) + "\nRequest ID: <code>"
                                + html.escape(request_id) + "</code>", parse_mode="HTML")
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - async provider/Telegram boundary
         logger.warning("WAN3 admin task needs manual recovery request_id=%s error_type=%s",
                        request_id, type(exc).__name__)
         await bot.send_message(chat_id, "⚠️ Автопроверка WAN 3.0 прервалась. "
@@ -464,7 +464,7 @@ async def refresh_model(callback: types.CallbackQuery) -> None:
         return
     try:
         enabled = await neironych_wan3_admin_service.list_enabled_wan_models()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - async provider/Telegram boundary
         logger.warning("WAN3 admin catalog unavailable error_type=%s", type(exc).__name__)
         await callback.answer("Не удалось проверить API", show_alert=True)
         return
@@ -500,7 +500,7 @@ async def generate(callback: types.CallbackQuery, state: FSMContext) -> None:
             if "wan-3" not in enabled:
                 await callback.answer("WAN 3.0 сейчас нет в каталоге Нейроныча", show_alert=True)
                 return
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - async provider/Telegram boundary
             logger.warning("WAN3 admin submit blocked by catalog error_type=%s", type(exc).__name__)
             await callback.answer("Каталог Нейроныча недоступен — запуск отменён", show_alert=True)
             return
@@ -511,7 +511,7 @@ async def generate(callback: types.CallbackQuery, state: FSMContext) -> None:
         await callback.answer("Отправляю запрос…")
         try:
             result = await neironych_wan3_admin_service.submit(payload, idempotency_key=key)
-        except (Exception) as exc:  # noqa: BLE001 - unknown acceptance; do NOT generate a fresh key
+        except Exception as exc:  # noqa: BLE001 - unknown acceptance must retain the same idempotency key
             logger.warning("WAN3 admin submission uncertain admin_id=%s error_type=%s",
                            callback.from_user.id, type(exc).__name__)
             await callback.message.edit_text(
@@ -547,7 +547,7 @@ async def check(callback: types.CallbackQuery, state: FSMContext) -> None:
     await callback.answer("Проверяю…")
     try:
         record = await neironych_wan3_admin_service.get_status(request_id)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - async provider/Telegram boundary
         logger.warning("WAN3 admin status lookup error request_id=%s type=%s",
                        request_id, type(exc).__name__)
         if callback.message:
@@ -566,7 +566,7 @@ async def check(callback: types.CallbackQuery, state: FSMContext) -> None:
     if status == "done":
         try:
             await _deliver(callback.bot, callback.from_user.id, request_id)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - async provider/Telegram boundary
             logger.warning("WAN3 admin delivery failed request_id=%s type=%s", request_id, type(exc).__name__)
             if callback.message:
                 await callback.message.answer("⚠️ Видео готово, но отправка не удалась. Нажмите «Проверить» ещё раз.")
@@ -583,7 +583,7 @@ async def new_request(callback: types.CallbackQuery, state: FSMContext) -> None:
             if str(record.get("status") or "").lower() not in {"done", "failed", "expired"}:
                 await callback.answer("Задача ещё выполняется. Сначала дождитесь результата.", show_alert=True)
                 return
-        except Exception:
+        except Exception:  # noqa: BLE001 - callback recovery boundary
             await callback.answer("Статус недоступен. Сохраняем ID для восстановления.", show_alert=True)
             return
     await state.update_data(wan_lab_last_id="", wan_lab_last_hash="", wan_lab_last_status="",
