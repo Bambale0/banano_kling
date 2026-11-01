@@ -266,8 +266,17 @@ def append_repeat_images(existing: list[str], images: Sequence[str]) -> list[int
     """Keep provider deduplication from shifting later @ImageN bindings."""
     from bot.services.media_input_utils import reference_source_identity
 
+    if not images:
+        return []
     indices = []
-    identities = [reference_source_identity(url) for url in existing]
+    identities = []
+    unique = []
+    for url in existing:
+        identity = reference_source_identity(url)
+        if identity not in identities:
+            identities.append(identity)
+            unique.append(url)
+    existing[:] = unique
     for url in images:
         identity = reference_source_identity(url)
         if identity not in identities:

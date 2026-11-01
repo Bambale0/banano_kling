@@ -59,3 +59,10 @@ Remaining: final build/browser/review confirmation, protected PR checks/autodepl
 No paid provider calls or business price changes.
 
 Final concurrency check: simultaneous custom uploads in separate groups reproduced a lost selection (RED). Shared selector now merges from the latest synchronous value snapshot; regression GREEN.
+
+GitHub review hardening: selected WAN catalog/custom inputs are now inspected via an exact
+server-authorized local-file capability (real ActualWan3PrimeProbe plus digest), including
+explicit consent when publishing derived results. Seedream effective adapter cap is checked
+before prompt binding; existing source-host aliases are deduplicated before @ImageN assignment.
+Regression covers real WAN probe (without wan3_prime_media rows), disallowed URL, Seedream
+cap, and source aliases. PR temporarily draft while these checks run.

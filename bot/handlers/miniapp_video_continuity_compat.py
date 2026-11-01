@@ -631,7 +631,7 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
         first_image = enriched.get("v_image_url")
         if first_image:
             repeat_images = [first_image, *[url for url in repeat_images if url != first_image]]
-        initial_image_count = len(repeat_images)
+        initial_images = list(repeat_images)
         from bot.repeat_personalization import repeat_image_mode_supported
 
         choice_mode_supported = repeat_image_mode_supported({
@@ -645,7 +645,7 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
             image_references=repeat_images,
             image_choices_supported=choice_mode_supported,
         )
-        if len(repeat_images) > initial_image_count:
+        if repeat_images != initial_images:
             enriched["reference_images"] = repeat_images
     except miniapp_module.RepeatPersonalizationAccessError as exc:
         raise web.HTTPForbidden(reason=str(exc)) from exc

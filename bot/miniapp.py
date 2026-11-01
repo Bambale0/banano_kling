@@ -234,6 +234,7 @@ async def _repeat_personalized_source_prompt(
     telegram_id: int,
     image_references: list[str] | None = None,
     image_choices_supported: bool = True,
+    image_model: str | None = None,
 ) -> str:
     if "repeat_user_values" not in body:
         return source_prompt
@@ -251,6 +252,13 @@ async def _repeat_personalized_source_prompt(
         raise ValueError("В этом режиме недоступен выбор изображений")
     compiled_images = list(image_references or [])
     indices = append_repeat_images(compiled_images, images)
+    if images and image_model:
+        from bot.handlers.generation import _prepare_banana_reference_images
+        from bot.services.media_input_utils import reference_source_identity
+
+        effective_images = _prepare_banana_reference_images(image_model, compiled_images)
+        if [reference_source_identity(url) for url in effective_images] != [reference_source_identity(url) for url in compiled_images]:
+            raise ValueError("Слишком много референсов для выбранной модели с учётом персонализации")
     rendered = render_repeat_base(
         source_prompt, fields, body.get("repeat_user_values"),
         image_indices=indices,
@@ -4825,7 +4833,7 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
             return web.json_response({"ok": False, "error": str(exc)}, status=400)
         try:
             source_prompt = await _repeat_personalized_source_prompt(
-                int(source["id"]), source_prompt, body, telegram_id=telegram_id, image_references=references,
+                int(source["id"]), source_prompt, body, telegram_id=telegram_id, image_references=references, image_model=img_service,
             )
         except RepeatPersonalizationAccessError as exc:
             return web.json_response({"ok": False, "error": str(exc)}, status=403)
@@ -5048,6 +5056,7 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
             try:
                 source_prompt = await _repeat_personalized_source_prompt(
                     int(source_feed_gen_id), source_prompt, body, telegram_id=telegram_id, image_references=references,
+                    image_model=str(body.get("img_service") or source_feed_task.get("model") or "banana_pro"),
                 )
             except RepeatPersonalizationAccessError as exc:
                 return web.json_response({"ok": False, "error": str(exc)}, status=403)

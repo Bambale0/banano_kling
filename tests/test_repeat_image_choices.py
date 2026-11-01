@@ -69,6 +69,58 @@ def test_repeated_image_reuses_its_actual_provider_ordinal():
     assert len(existing) == 2
 
 
+def test_existing_host_aliases_do_not_shift_selected_image_ordinals():
+    existing = ['https://neuromixbot.com/uploads/refs/image/42/person.jpg',
+                'https://cdn.chillcreative.ru/uploads/refs/image/42/person.jpg']
+    choice = raw_fields()[0]['image_choices'][0]['image_url']
+    assert subject.append_repeat_images(existing, [choice]) == [2]
+    assert existing == ['https://neuromixbot.com/uploads/refs/image/42/person.jpg', choice]
+
+
+async def test_seedream_effective_provider_cap_rejects_selected_image_before_mutation(monkeypatch):
+    from bot import miniapp
+
+    monkeypatch.setenv(subject.FEATURE_FLAG, '1')
+    monkeypatch.setattr(miniapp.config, 'is_admin', lambda _id: True)
+    fields = subject.normalize_repeat_fields(raw_fields(), prompt=PROMPT)
+    await subject.save_repeat_fields(42, fields, actor_telegram_id=42)
+    images = [f'https://example.test/ref{index}.jpg' for index in range(5)]
+    with pytest.raises(ValueError, match='Слишком много референсов'):
+        await miniapp._repeat_personalized_source_prompt(42, PROMPT, {'repeat_user_values': {'outfit': 'dress'}},
+            telegram_id=42, image_references=images, image_model='seedream_edit')
+    assert len(images) == 5
+
+
+async def test_wan_real_probe_accepts_only_the_selected_local_catalog_asset(tmp_path, monkeypatch):
+    import io
+    from types import SimpleNamespace
+
+    from PIL import Image
+
+    from bot.services.wan3_prime_media import Wan3PrimeValidationError
+    from bot.services.wan3_prime_repeat import ConsentedMediaProbe
+    from bot.services.wan3_prime_storage import ActualWan3PrimeProbe
+
+    monkeypatch.chdir(tmp_path)
+    raw = io.BytesIO()
+    Image.new('RGB', (512, 512), 'white').save(raw, format='PNG')
+    selected = subject.save_repeat_choice_image(raw.getvalue())
+    actor = SimpleNamespace(user_id=7, telegram_id=42)
+    plan = {'owner_id': 8, 'owner_telegram_id': 43, 'slots': []}
+    probe = ConsentedMediaProbe(ActualWan3PrimeProbe(), actor, plan, [selected])
+    info = await probe.probe_url(selected, kind='image')
+    assert info.width == info.height == 512
+    assert info.url == selected
+    assert len(info.sha256) == 64
+    # A completed personalized result can itself be published with explicit
+    # consent for the same catalog asset, without a wan3_prime_media row.
+    plan['slots'] = [{'kind': 'image', 'url': selected, 'binding': 'fixed'}]
+    next_repeat_probe = ConsentedMediaProbe(ActualWan3PrimeProbe(), actor, plan)
+    assert (await next_repeat_probe.probe_url(selected, kind='image')).sha256 == info.sha256
+    with pytest.raises(Wan3PrimeValidationError, match='imported or uploaded'):
+        await probe.probe_url('https://example.test/unselected.jpg', kind='image')
+
+
 @pytest.mark.parametrize('model,scenario,expected', [
     ('seedance_2', 'text', True), ('seedance_2_5', 'multimodal', True),
     ('seedance_2_5', 'first_frame', False), ('wan_3', 'edit', True),
