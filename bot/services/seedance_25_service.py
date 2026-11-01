@@ -227,7 +227,9 @@ class Seedance25Service(KlingService):
         callBackUrl: str | None = None,
     ) -> dict[str, Any]:
         """Create a Seedance 2.5 task through Kie's unified jobs endpoint."""
-        if not self.kie_key:
+        from bot.services.seedance_provider_fallback import neironych_primary
+
+        if not self.kie_key and not neironych_primary():
             return {"success": False, "error": "KIE_AI_API_KEY is not configured"}
 
         if not isinstance(video_editing, bool):
