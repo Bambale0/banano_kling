@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import math
+from collections.abc import Mapping
 from typing import Any, Dict, Optional
 
 from bot import db as db_backend
@@ -101,7 +102,7 @@ async def check_task_with_provider(
                 status = result.get("state") or result.get("status")
                 if status and str(status).lower() in ("success", "completed", "done"):
                     return "completed"
-                if status and str(status).lower() in ("failed", "error", "rejected"):
+                if status and str(status).lower() in ("failed", "fail", "error", "rejected"):
                     return "failed"
         elif "seedream" in normalized_service:
             from bot.services.seedream_service import seedream_service
@@ -212,12 +213,24 @@ async def force_fail_task(
               AND task_id NOT LIKE 'wan3_%'
               AND substr(task_id, 1, 5) <> 'wan3_'
               AND substr(task_id, 1, 7) <> 'kling4_'
-            """ + provider_guard + " RETURNING request_data",
+            """ + provider_guard + " RETURNING request_data, task_id, model",
             parameters,
         )
         existing = await cursor.fetchone()
         if not existing:
             return False
+
+        returned = dict(existing) if isinstance(existing, (Mapping, db_backend.Row)) else {}
+        if not provider_confirmed_failed and returned.get("model") in {"seedance_2", "seedance_2_5"}:
+            # The generation row stays locked until we decide whether a refund is safe.
+            from bot.services.seedance_provider_fallback import (
+                unresolved_in_transaction,
+            )
+
+            if await unresolved_in_transaction(db, returned["task_id"]):
+                await db.rollback()
+                logger.info("Watchdog preserves unresolved Seedance fallback: task_id=%s", returned["task_id"])
+                return False
 
         # UPDATE acquires the row lock before RETURNING the current marker.
         # A webhook refund committed while we waited is visible here.

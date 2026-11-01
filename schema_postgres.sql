@@ -725,3 +725,10 @@ CREATE TABLE IF NOT EXISTS referral_notification_outbox (
 );
 CREATE INDEX IF NOT EXISTS idx_referral_notification_pending
     ON referral_notification_outbox(status, next_attempt_at);
+
+-- Durable Seedance provider fallback routes
+CREATE TABLE IF NOT EXISTS seedance_provider_routes (
+    task_id TEXT PRIMARY KEY, payload TEXT NOT NULL, phase TEXT NOT NULL,
+    request_id TEXT, result_url TEXT, failure_code TEXT, fallback_payload TEXT,
+    lease_until DOUBLE PRECISION NOT NULL DEFAULT 0
+);

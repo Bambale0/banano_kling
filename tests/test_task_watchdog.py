@@ -75,6 +75,7 @@ class TestForceFailTask:
         mock_db = AsyncMock()
         cursor = AsyncMock()
         cursor.rowcount = 1
+        cursor.fetchone.return_value = {"request_data": "{}", "task_id": "synthetic-task", "model": "test", "telegram_id": 0}
         mock_db.execute.return_value = cursor
         mock_connect = AsyncMock()
         mock_connect.__aenter__.return_value = mock_db
@@ -175,6 +176,7 @@ class TestForceFailTask:
         mock_db = AsyncMock()
         cursor = AsyncMock()
         cursor.rowcount = 1
+        cursor.fetchone.return_value = {"request_data": "{}", "task_id": "synthetic-task", "model": "test", "telegram_id": 0}
         mock_db.execute.return_value = cursor
         mock_connect = AsyncMock()
         mock_connect.__aenter__.return_value = mock_db

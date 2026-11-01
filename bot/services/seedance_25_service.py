@@ -379,7 +379,10 @@ class Seedance25Service(KlingService):
             bool(return_last_frame),
             callback_url or "polling-only",
         )
-        result = await self._kie_post("/api/v1/jobs/createTask", payload)
+        from bot.services.seedance_provider_fallback import submit_seedance
+        result = await submit_seedance(
+            payload, lambda body: self._kie_post(self.CREATE_TASK_ENDPOINT, body)
+        )
         if isinstance(result, dict):
             if not result.get("task_id"):
                 # Avoid logging provider text: it can echo the private prompt or

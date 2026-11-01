@@ -1,3 +1,18 @@
+## 2026-11-01 — Seedance 2.0/2.5 Neironych fallback
+- Baseline: a2e3020c5ebc403c2dc7b4ad5835a07dfb427d61 on tanyapi.
+- Audit: public adapters use KIE only; Neironych exists only in admin lab. Reuse canonical authenticated callbacks, KIE Market polling, Seedance25 reconciler, watchdog, existing debit/refund/delivery.
+- Contract evidence: Neironych live accepts seedance-2.0/2.5, POST /v1/videos/generations with Idempotency-Key, GET status and authenticated content. Provider source contract rejects generate_audio=false. Unsupported controls must retain primary failure rather than silently change the request.
+- Seams: public adapters -> outbound HTTP boundary; durable routing -> Market status; watchdog refund guard. TDD RED public fallback tests then GREEN. No UI/API payload changes, no user billing changes.
+- Plan: (1) persist routes/payload/lease; (2) explicit create rejection and confirmed terminal failure fallback; (3) shared polling and durable local content; (4) duplicate/uncertain/refund regression tests; (5) two paid API smokes, CI, auto-merge, exact-SHA production verification.
+- Progress: 39 focused tests passed; direct 2.0 live smoke done, direct 2.5 pending. Full fallback live smoke starting in isolated container/DB using production credentials, with simulated KIE 402 and real Neironych calls. No user-account debit.
+- Configuration: SEEDANCE_FALLBACK_PROVIDER=neironych by default when existing NEIRONYCH_API_KEY is configured. off disables new failover; existing routes continue polling. SEEDANCE_FALLBACK_CREATE_CODES controls explicit application rejection codes. Existing Neironych URL/timeouts retained.
+- Schema: additive seedance_provider_routes table created idempotently using SQLite/PostgreSQL-compatible SQL. Stores exact private provider payload in existing private application DB; no prompt/URL/credentials in logs.
+- Skills: Bambale0/skills tdd; Bambale0/claw backend-integration; inspected anthropics/skills webapp-testing (no frontend changes, browser suite delegated to existing CI). Skill-specific optional docs absent in this project.
+- Verification: affected backend matrix 596 passed / 12 subtests; dedicated routing suite 20 passed on isolated PostgreSQL 17 (full native schema, per-test random schema, explicit runtime routing-table creation). New-file Ruff and diff whitespace passed.
+- Independent review findings fixed: watchdog now recognizes terminal fail immediately; initial paid fallback is deferred until the receipt has durable active generation ownership; generation lock and route lease share refund lock ordering.
+- Paid live evidence: direct API 2.0 b3ae3fd8-bcf3-41a9-a59b-8b69ff4e8ab0 and 2.5 d8ce7e14-35a1-4001-8f6a-0ddd85a3dca9 both done. Initial candidate sent KIE default controls and failed provider validation; corrected candidate forwards only canonical supported fields. Final route smokes: 2.0 abe0430f-a4a9-4e00-8d03-cc7fa76cb6f1 and 2.5 767fc82f-33db-40a7-9af3-03199646b96c both success, 814566 / 1693044 bytes, H264/AAC, 4.064s, public HTTP206 video/mp4. Fresh-process restart recovered both persisted routes and cached files without another paid submission.
+- Pending: GitHub exact-head CI, auto-merge, exact-SHA production verification. Host gh token is invalid (401); use connected GitHub plugin for PR/CI operations. Git SSH origin remains available.
+
 ## 2026-11-01 — Seedance admin-test prompt and delivery recovery
 
 - Baseline: `tanyapi@da1aed2f4e5dd9069db9da60a52f595aa856b6c0`; isolated branch `fix/seedance-admin-delivery-20261101` because the primary checkout contains unrelated in-progress work.
