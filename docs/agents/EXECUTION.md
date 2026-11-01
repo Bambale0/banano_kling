@@ -2858,3 +2858,5 @@ Baseline 024525ea831010ef9e7b88c7f8fc9dd158fea7c4. Production exact image revisi
 - Exact-head CI exposed legacy refund fixture schemas without model. Removed the unnecessary model-column dependency from the locked watchdog RETURNING; guards now match the route by task_id. The original runtime PostgreSQL matrix is rerun unchanged. Added the new 20-test native PostgreSQL fallback suite to runtime-postgres CI and its path triggers.
 
 - Automated review corrections: durable result directory excluded from real 24h cleanup (tested with aged private output); provider status/download exceptions isolated as unresolved so later KIE rows continue; terminal primary payloads retired; primary GET memoized per status lookup. New review regressions reproduced RED, then routing suite 26 passed on SQLite and PostgreSQL.
+
+- Full safe CI ran 4295 passing tests and exposed an AST-isolated motion test dependency on a newly imported Mapping name. Removed that unnecessary global dependency from the watchdog Row protocol check; re-ran the actual motion financial lifecycle plus watchdog/routing suites unchanged.

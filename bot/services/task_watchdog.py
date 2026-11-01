@@ -11,7 +11,6 @@ import asyncio
 import json
 import logging
 import math
-from collections.abc import Mapping
 from typing import Any, Dict, Optional
 
 from bot import db as db_backend
@@ -220,7 +219,7 @@ async def force_fail_task(
         if not existing:
             return False
 
-        returned = dict(existing) if isinstance(existing, (Mapping, db_backend.Row)) else {}
+        returned = dict(existing) if hasattr(existing, "keys") else {}
         if not provider_confirmed_failed and returned.get("task_id"):
             # The generation row stays locked until we decide whether a refund is safe.
             from bot.services.seedance_provider_fallback import (
