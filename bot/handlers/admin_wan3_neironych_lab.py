@@ -83,6 +83,10 @@ def _counts(refs: list[dict[str, Any]]) -> dict[str, int]:
 def _payload(data: dict[str, Any]) -> dict[str, Any]:
     mode = data["wan_lab_mode"]
     refs = data.get("wan_lab_references") or []
+    for kind in ("video", "audio"):
+        total_seconds = sum(int(item.get("duration") or 0) for item in refs if item.get("kind") == kind)
+        if total_seconds > 15:
+            raise ValueError(f"WAN 3.0: суммарная длительность {kind} превышает 15 секунд")
     return NeironychWan3AdminService.build_payload(
         mode=mode, prompt=str(data.get("wan_lab_prompt") or ""),
         duration=int(data["wan_lab_duration"]),
