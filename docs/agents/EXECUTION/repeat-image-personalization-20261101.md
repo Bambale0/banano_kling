@@ -45,9 +45,15 @@ Verification so far:
 - Latest focused backend after mode-capability changes: 145 passed.
 - Full Mini App Jest: 75 suites, 576 passed; final editor fallback test: focused 9 passed.
 - Production Next export/TypeScript passed; Ruff/compile/diff checks passed.
-- Local Playwright default Chromium download failed (truncated upstream browser archive);
-  repository browser E2E remains required in CI. Alternative local browser setup in progress.
-- Existing production container observed healthy via SentinelX; no production config/data writes made.
+- Local Playwright default browser download was unavailable. The same browser E2E ran
+  successfully with packaged Chromium and process-per-case adaptation: 8/8 admin/ordinary
+  cases across photo, Seedance 2, WAN 3 and WAN Prime. Mobile screenshot inspected:
+  image grid, selected border, custom upload tile and no horizontal overflow.
+  Unmodified Playwright browser E2E remains an exact-head CI gate.
+- Production baseline ea704c3 observed healthy via SentinelX; existing admin preview flag true.
+  No production config/data writes or paid generations made.
+- PR #387 created with native auto-merge; synchronized current tanyapi 2d0c491 without conflicts.
+  Independent re-review found no remaining blockers; new catalog backend cases: 20 passed.
 
 Remaining: final build/browser/review confirmation, protected PR checks/autodeploy and live admin smoke.
 No paid provider calls or business price changes.
