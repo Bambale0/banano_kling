@@ -174,6 +174,23 @@ def active_video_recipe(task: dict[str, Any]) -> dict[str, Any]:
 
 
 
+def catalog_slot_fill_supported(plan: dict[str, Any] | None) -> bool:
+    """Allow ready-made image variants to fill typed replacements, not source media.
+
+    Keep video/audio inputs, frame-only modes and legacy/unsupported providers on
+    their existing explicit-upload path. The public flag describes capability,
+    never discloses original URLs or the author's private prompt.
+    """
+    return bool(
+        plan
+        and plan.get("model") == "seedance_2_5"
+        and plan.get("scenario") == "multimodal"
+        and not plan.get("videos")
+        and not plan.get("audio")
+        and any(slot.get("binding") == "upload" for slot in plan.get("images", []))
+    )
+
+
 def _validate_provider_list_slots(values: list[str]) -> None:
     canonical = [canonicalize_local_upload_url(value) for value in values]
     if len(set(canonical)) != len(canonical):
@@ -323,6 +340,7 @@ def video_repeat_descriptors(
         return {"version": 1, "available": False, "images": [], "videos": []}
     return {
         "version": 1, "available": True, "cost_multiplier": cost_multiplier, **price_metadata,
+        "catalog_slot_fill_supported": catalog_slot_fill_supported(plan),
         **{kind: [{key: slot[key] for key in ("index", "role", "binding")} for slot in plan[kind]]
            for kind in ("images", "videos")},
     }
