@@ -395,6 +395,7 @@ def merge_typed_video_inputs(
         # Public forms send their default advanced mode even for hidden recipes.
         # It cannot override the author's provider input contract.
         result["veo_generation_type"] = plan["veo_generation_type"]
+    extra_personal_photo: str | None = None
     for kind, field in (("images", "reference_images"), ("videos", "v_reference_videos")):
         values = body.get(field, [])
         if not isinstance(values, list) or any(not isinstance(value, str) or not value.strip() for value in values):
@@ -425,9 +426,10 @@ def merge_typed_video_inputs(
             consumer = task.get("_repeat_consumer_telegram_id")
             if not isinstance(consumer, int) or reference_upload_owner_telegram_id(personal_url) != consumer:
                 raise VideoRepeatContractError("Загрузите своё фото для повтора.")
-            # The personal photo precedes all catalog image references, so
-            # rendered @ImageN indices are computed from the real provider order.
-            result["reference_images"].append(personal_url)
+            # Keep all original source positions stable. Attach the additional
+            # personal photo only *after* processing all source slots, then
+            # calculate its actual @ImageN position for a separate instruction.
+            extra_personal_photo = personal_url
         candidates = [slot["url"] for slot in slots]
         for value in uploads:
             try:
@@ -436,6 +438,9 @@ def merge_typed_video_inputs(
                 raise VideoRepeatContractError("Загрузите свои файлы для заменяемых референсов.") from exc
             consumer = task.get("_repeat_consumer_telegram_id")
             owned_upload = consumer is not None and reference_upload_owner_telegram_id(value) == consumer
+            if kind == "images" and image_fields and not owned_upload:
+                # An arbitrary public URL is not an authenticated visitor photo.
+                raise VideoRepeatContractError("Загрузите своё фото для повтора.")
             if inherited is not None and not owned_upload:
                 raise VideoRepeatContractError("Загрузите свои файлы для заменяемых референсов.")
         iterator = iter(uploads)
@@ -461,6 +466,9 @@ def merge_typed_video_inputs(
             result[f"_private_repeat_reference_{kind}"] = private
         else:
             result.pop(f"_private_repeat_reference_{kind}", None)
+    if extra_personal_photo:
+        result["reference_images"].append(extra_personal_photo)
+        result["_repeat_personal_photo_url"] = extra_personal_photo
     _validate_provider_list_slots(result["reference_images"])
     _validate_provider_list_slots(result["v_reference_videos"])
     if selected_by_key:
