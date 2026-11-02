@@ -2,12 +2,15 @@ import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { Seedance25PublicForm } from './seedance25-public-form'
 import { generateSeedance25, quoteSeedance25Identity, quoteSeedance25Reference } from '@/lib/seedance25-api'
+import { useOptionalApp } from '@/lib/app-context'
 import type { VideoPromptPreset } from '@/lib/types'
 
 jest.mock('@/lib/seedance25-api', () => ({
   SEEDANCE25_MAX_PROMPT_LENGTH: 30000, SEEDANCE25_IDENTITY_MAX_PROMPT_LENGTH: 20480, generateSeedance25: jest.fn(), quoteSeedance25Identity: jest.fn(), quoteSeedance25Reference: jest.fn(), uploadSeedance25Video: jest.fn(),
 }))
 jest.mock('@/lib/api', () => ({ uploadFile: jest.fn() }))
+jest.mock('@/lib/app-context', () => ({ useOptionalApp: jest.fn() }))
+const openBalance = jest.fn()
 const quote = { ok: true, quote_only: true, cost: 88, billing_duration: 11, source_video_duration_seconds: 10.04,
   seedance25_identity_quote: { cost: 88, billing_duration: 11, source_video_url: 'https://example.test/source.mp4', resolution: '720p', source_feed_gen_id: 42, parent_generation_id: 42 } }
 const preset: VideoPromptPreset = {
@@ -18,12 +21,25 @@ const preset: VideoPromptPreset = {
 }
 beforeEach(() => {
   jest.resetAllMocks()
+  ;(useOptionalApp as jest.Mock).mockReturnValue({
+    state: { mode: 'live', user: { credits: 10, isAdmin: false }, paymentPackages: [
+      { id: 'repeat', name: 'Для повтора', credits: 100, price_rub: 900, robokassa_enabled: true },
+    ] },
+    openBalance,
+  })
   ;(quoteSeedance25Identity as jest.Mock).mockResolvedValue(quote)
   ;(quoteSeedance25Reference as jest.Mock).mockResolvedValue({
     ok: true, quote_only: true, quote_hash: 'normal-reference-quote', cost: 60,
     source_video_duration_seconds: 10, output_seconds: 15, billable_seconds: 25, admin_free: false,
   })
   ;(generateSeedance25 as jest.Mock).mockResolvedValue({ ok: true, task_id: 'mock', cost: 88, admin_free: false })
+})
+it('opens the configured package after the exact identity-repeat quote when balance is short', async () => {
+  render(<Seedance25PublicForm credits={10} isAdmin={false} promptPreset={preset} />)
+  await waitFor(() => expect(openBalance).toHaveBeenCalledWith({
+    packageId: 'repeat', requiredCredits: 88, reason: 'video-repeat',
+  }))
+  expect(generateSeedance25).not.toHaveBeenCalled()
 })
 it('restores identity repeat with ordered roles and fresh quote before an explicit launch', async () => {
   render(<Seedance25PublicForm credits={1000} isAdmin={false} promptPreset={preset} />)

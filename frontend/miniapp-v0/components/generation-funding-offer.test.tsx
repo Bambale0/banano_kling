@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { GenerationFundingOffer } from './generation-funding-offer'
 import { useOptionalApp } from '@/lib/app-context'
 
@@ -7,10 +7,10 @@ jest.mock('@/lib/app-context', () => ({ useOptionalApp: jest.fn() }))
 
 const openBalance = jest.fn()
 const packages = [
-  { id: 'mini', name: 'Мини', credits: 15, price_rub: 150 },
-  { id: 'start', name: 'Старт', credits: 25, price_rub: 250 },
-  { id: 'optimal', name: 'Оптимальный', credits: 50, price_rub: 500 },
-  { id: 'pro', name: 'Про', credits: 100, price_rub: 1000 },
+  { id: 'mini', name: 'Мини', credits: 15, price_rub: 150, robokassa_enabled: true },
+  { id: 'start', name: 'Старт', credits: 25, price_rub: 250, robokassa_enabled: true },
+  { id: 'optimal', name: 'Оптимальный', credits: 50, price_rub: 500, robokassa_enabled: true },
+  { id: 'pro', name: 'Про', credits: 100, price_rub: 1000, robokassa_enabled: true },
 ]
 
 beforeEach(() => {
@@ -65,4 +65,37 @@ it('keeps isolated component previews safe without a global Mini App provider', 
   ;(useOptionalApp as jest.Mock).mockReturnValue(null)
   expect(() => render(<GenerationFundingOffer cost={50} credits={0} />)).not.toThrow()
   expect(screen.queryByRole('region', { name: 'Пополнение для генерации' })).not.toBeInTheDocument()
+})
+
+it('opens the recommended package once for a confirmed video repeat', async () => {
+  const view = render(<GenerationFundingOffer cost={50} credits={20} autoOpenKey="repeat:42" />)
+  await waitFor(() => expect(openBalance).toHaveBeenCalledWith({
+    packageId: 'optimal', requiredCredits: 50, reason: 'video-repeat',
+  }))
+  view.rerender(<GenerationFundingOffer cost={50} credits={20} autoOpenKey="repeat:42" />)
+  expect(openBalance).toHaveBeenCalledTimes(1)
+})
+
+it('labels a Stars-only package in Stars', () => {
+  ;(useOptionalApp as jest.Mock).mockReturnValue({
+    state: { mode: 'live', user: { isAdmin: false, credits: 0 }, paymentPackages: [
+      { id: 'stars', name: 'Stars', credits: 50, price_rub: 500, price_stars: 650 },
+    ] },
+    openBalance,
+  })
+  render(<GenerationFundingOffer cost={50} credits={0} />)
+  expect(screen.getByRole('button', { name: /Купить 50🍌 за 650 ⭐/ })).toBeEnabled()
+})
+
+it('still opens all packages when no single package covers a repeat shortage', async () => {
+  ;(useOptionalApp as jest.Mock).mockReturnValue({
+    state: { mode: 'live', user: { isAdmin: false, credits: 0 }, paymentPackages: [
+      { id: 'mini', name: 'Мини', credits: 15, price_rub: 150, robokassa_enabled: true },
+    ] },
+    openBalance,
+  })
+  render(<GenerationFundingOffer cost={50} credits={0} autoOpenKey="repeat:expensive" />)
+  await waitFor(() => expect(openBalance).toHaveBeenCalledWith({
+    packageId: undefined, requiredCredits: 50, reason: 'video-repeat',
+  }))
 })

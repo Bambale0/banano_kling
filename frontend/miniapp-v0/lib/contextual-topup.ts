@@ -1,4 +1,4 @@
-import type { PaymentPackage } from './types'
+import type { PaymentPackage, PaymentProvider } from './types'
 
 export interface TopupPackageOption {
   package: PaymentPackage
@@ -9,6 +9,23 @@ export interface ContextualTopup {
   shortage: number
   recommended: TopupPackageOption | null
   alternative: TopupPackageOption | null
+}
+
+export function totalPackageCredits(pkg: PaymentPackage) {
+  return Number(pkg.credits) + Math.max(0, Number(pkg.bonus_credits ?? 0))
+}
+
+export function preferredProviderForPackage(pkg: PaymentPackage): PaymentProvider {
+  if (pkg.robokassa_enabled) return 'robokassa'
+  if (pkg.freekassa_enabled) return 'freekassa_card'
+  if (pkg.lava_offer_id) return 'lava_card'
+  return 'telegram_stars'
+}
+
+export function paymentPriceLabel(pkg: PaymentPackage, provider: PaymentProvider) {
+  return provider === 'telegram_stars'
+    ? `${pkg.price_stars ?? pkg.price_rub} ⭐`
+    : `${pkg.price_rub} ₽`
 }
 
 /**
@@ -37,8 +54,8 @@ export function selectTopupPackages(
     const credited = credits + bonus
     return credited >= shortage ? [{ package: pkg, credited }] : []
   }).sort((left, right) =>
-    left.package.price_rub - right.package.price_rub ||
     left.credited - right.credited ||
+    left.package.price_rub - right.package.price_rub ||
     left.package.id.localeCompare(right.package.id),
   )
 
