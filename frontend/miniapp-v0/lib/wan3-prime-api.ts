@@ -536,7 +536,7 @@ export interface Wan3PrimeRepeatSlot {
   kind: Wan3PrimeUploadKind | 'link'
   role: 'first_frame' | 'last_frame' | 'source_video' | 'reference'
   index: number
-  binding: 'fixed' | 'upload'
+  binding: 'fixed' | 'upload' | 'choice'
 }
 export interface Wan3PrimeRepeatPlan {
   ok: true
