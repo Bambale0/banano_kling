@@ -71,7 +71,7 @@ function isIOSPaymentWebView() {
 }
 
 export function BalanceSheet() {
-  const { state, isBalanceOpen, balanceRequest, closeBalance, refreshTasks } = useApp()
+  const { state, isBalanceOpen, balanceRequest, closeBalance, refreshBalance } = useApp()
   const { paymentPackages, user, recentTasks, mode } = state
   const selectedPackageId = balanceRequest?.packageId
   const selectedPackage = paymentPackages.find((pkg) => pkg.id === selectedPackageId)
@@ -86,13 +86,21 @@ export function BalanceSheet() {
   const paymentRequestInFlight = useRef(false)
   const [loadingPayment, setLoadingPayment] = useState<string | null>(null)
   const [customerEmail, setCustomerEmail] = useState('')
+  const [manualPaymentUrl, setManualPaymentUrl] = useState<string | null>(null)
   const [readyPayment, setReadyPayment] = useState<{
     url: string; orderId: string; provider: PaymentProvider; credits: number; amountRub: number | null
   } | null>(null)
   const paymentReadyRef = useRef<HTMLElement>(null)
   const balanceOpenRef = useRef(isBalanceOpen)
 
-  useEffect(() => { balanceOpenRef.current = isBalanceOpen }, [isBalanceOpen])
+  useEffect(() => {
+    balanceOpenRef.current = isBalanceOpen
+    if (!isBalanceOpen) {
+      // A closed sheet must not expose an earlier, possibly expired invoice.
+      setReadyPayment(null)
+      setManualPaymentUrl(null)
+    }
+  }, [isBalanceOpen])
 
   useEffect(() => {
     if (!isBalanceOpen || !selectedPackageId || balanceRequest?.reason === 'video-repeat') return
@@ -154,6 +162,10 @@ export function BalanceSheet() {
   }
 
   const openExternalPayment = (url: string) => {
+    // A native bridge can ignore an async navigation even without throwing.
+    // Always keep the original verified URL available for an explicit tap.
+    // This is also needed for Tribute and Stars, which have no readyPayment.
+    setManualPaymentUrl(url)
     const webApp = getTelegramPaymentBridge()
     if (webApp?.openLink) {
       try {
@@ -166,9 +178,10 @@ export function BalanceSheet() {
 
     const opened = window.open(url, '_blank', 'noopener,noreferrer')
     if (!opened) {
-      // Do not navigate this Mini App away from an unsaved repeat draft.
-      // The signed checkout link remains in the visible readyPayment panel.
-      toast.message('Счёт готов', { description: 'Нажмите «Перейти к оплате», чтобы открыть платёжную страницу.' })
+      // Avoid navigating the current WebView and losing the video draft.
+      toast.message('Ссылка для оплаты готова', {
+        description: 'Нажмите «Перейти к оплате» в этом окне.',
+      })
     }
   }
 
@@ -198,6 +211,7 @@ export function BalanceSheet() {
 
     const loadingKey = `${packageId}:${provider}`
     setReadyPayment(null)
+    setManualPaymentUrl(null)
     setLoadingPayment(loadingKey)
     try {
       if (provider === ('tribute' as PaymentProvider)) {
@@ -225,7 +239,15 @@ export function BalanceSheet() {
           toast.success('Оплата Stars прошла', {
             description: `Начисляем ${payment.credits}🍌. Баланс обновится автоматически.`,
           })
-          await refreshTasks()
+          try {
+            await refreshBalance()
+          } catch {
+            // Telegram confirmed payment; only the wallet refresh failed.
+            // Never describe an accepted charge as a checkout error.
+            toast.message('Платёж подтверждён, баланс пока не обновился', {
+              description: 'Обновите баланс позднее. Повторно платить не нужно.',
+            })
+          }
         } else if (status === 'cancelled') {
           toast.message('Оплата отменена')
         } else if (status === 'failed') {
@@ -239,6 +261,7 @@ export function BalanceSheet() {
       }
 
       if (payment.payment_url) {
+        if (!balanceOpenRef.current) return
         // Keep the exact signed string. A fresh click can open externally even
         // when the API response consumed Telegram's user-interaction TTL.
         setReadyPayment({
@@ -390,6 +413,29 @@ export function BalanceSheet() {
                       </p>
                     </>
                   )}
+                </section>
+              ) : null}
+              {manualPaymentUrl && !readyPayment ? (
+                <section role="region" aria-label="Ссылка на оплату"
+                  className="rounded-2xl border border-gold/40 bg-gold/10 p-4">
+                  <p className="text-sm text-muted-foreground">
+                    Ссылка на оплату подготовлена. Откройте её отдельным нажатием,
+                    чтобы сохранить настройки видео в Mini App.
+                  </p>
+                  <Button asChild className="mt-3 w-full bg-gold text-primary-foreground hover:bg-gold/90">
+                    <a href={manualPaymentUrl} target="_blank" rel="noopener noreferrer"
+                      onClick={(event) => {
+                        const bridge = getTelegramPaymentBridge()
+                        if (bridge?.openLink) {
+                          try {
+                            bridge.openLink(manualPaymentUrl)
+                            event.preventDefault()
+                          } catch {
+                            // Native anchor remains the fallback.
+                          }
+                        }
+                      }}>Перейти к оплате</a>
+                  </Button>
                 </section>
               ) : null}
               {readyPayment ? (
