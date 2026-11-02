@@ -304,3 +304,28 @@ it('scrolls the manual payment fallback into view even when checkout was selecte
     else Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView')
   }
 })
+
+
+it.each([
+  ['Stars', 'telegram_stars', { ok: true, provider: 'telegram_stars', invoice_url: 'https://t.me/$previous-session', credits: 50 }],
+  ['СБП / карта', 'robokassa', { ok: true, provider: 'robokassa', order_id: 'old-order', payment_url: exactUrl, credits: 50 }],
+] as const)('rejects a previous sheet session %s invoice after closing and reopening', async (name, _provider, reply) => {
+  let resolvePayment!: (value: unknown) => void
+  ;(createPayment as jest.Mock).mockImplementation(() => new Promise(resolve => { resolvePayment = resolve }))
+  const openInvoice = jest.fn((_url: string, callback: (status: string) => void) => callback('cancelled'))
+  Object.assign(window.Telegram!.WebApp!, { openInvoice, platform: 'ios' })
+  const { rerender } = render(<BalanceSheet />)
+
+  fireEvent.click(screen.getByRole('button', { name: name === 'Stars' ? /Stars/ : 'СБП / карта' }))
+  ;(useApp as jest.Mock).mockReturnValue({ ...fixture, isBalanceOpen: false })
+  rerender(<BalanceSheet />)
+  ;(useApp as jest.Mock).mockReturnValue(fixture)
+  rerender(<BalanceSheet />)
+  await act(async () => { resolvePayment(reply) })
+
+  expect(openInvoice).not.toHaveBeenCalled()
+  expect(openLink).not.toHaveBeenCalled()
+  expect(screen.queryByRole('link', { name: 'Перейти к оплате' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('region', { name: 'Ссылка на оплату' })).not.toBeInTheDocument()
+  expect(sendMiniAppClientLog).not.toHaveBeenCalledWith('payment-checkout-ready', expect.anything())
+})
