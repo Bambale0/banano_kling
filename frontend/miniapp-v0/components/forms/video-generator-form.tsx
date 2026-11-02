@@ -5,7 +5,9 @@ import { normalizeVideoRepeatSlots } from '@/lib/video-repeat-references'
 import { getPendingVideoRepeat, isVideoStatusPending, VIDEO_REPEAT_PENDING_CHANGED, type PendingVideoRepeat } from '@/lib/video-repeat-pending'
 
 import { useState, useMemo, useEffect, useRef } from 'react'
-import type { VideoModel, UploadedFile, ScenarioType, TrendUserField, VideoPromptPreset, VideoRepeatReferenceSlots } from '@/lib/types'
+import type { VideoModel, UploadedFile, ScenarioType, TrendUserField, VideoPromptPreset, VideoRepeatReferenceSlots, PaymentPackage } from '@/lib/types'
+import type { FundingIntent } from '@/lib/generation-funding'
+import { GenerationFundingOffer } from '@/components/generation-funding-offer'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -114,6 +116,8 @@ interface VideoGeneratorFormProps {
   onPromptPresetConsumed?: () => void
   isSubmitting: boolean
   credits: number
+  paymentPackages?: PaymentPackage[]
+  onOpenBalance?: (intent: FundingIntent) => void
   isAdmin?: boolean
   onWanQueued?: (result: Wan3PrimeGenerateResponse) => void | Promise<void>
   onModelSelected?: (modelId: string) => void
@@ -134,6 +138,8 @@ export function VideoGeneratorForm({
   onPromptPresetConsumed,
   isSubmitting,
   credits,
+  paymentPackages,
+  onOpenBalance,
   isAdmin = false,
   onWanQueued,
   onModelSelected,
@@ -680,7 +686,7 @@ export function VideoGeneratorForm({
   if (isWanPrime) return <Wan3PrimeForm
     key={selectedModel + ':' + (wanOwnerTaskId || (wanPublicationSource ? `publication-${wanPublicationSource}` : 'wan-composer'))}
     model={selectedModel === 'wan_3' ? 'wan_3' : 'wan_3_prime'}
-    credits={credits} isAdmin={isAdmin} ownerTaskId={wanOwnerTaskId}
+    credits={credits} isAdmin={isAdmin} paymentPackages={paymentPackages} onOpenBalance={onOpenBalance} ownerTaskId={wanOwnerTaskId}
     initialRecipe={wanRecipe} onQueued={onWanQueued}
     publicationSourceId={wanPublicationSource}
     modelSelector={<ModelSelect models={visibleModels.map(item => ({
@@ -1489,12 +1495,8 @@ export function VideoGeneratorForm({
         ) : null}
         {videoQuoteError ? <p role="alert" className="text-xs text-destructive">{videoQuoteError}</p> : null}
         {priceAvailable && !canAfford && (
-          <div className="flex items-center gap-2 p-3 rounded-xl bg-destructive/10 border border-destructive/30">
-            <AlertCircle className="w-4 h-4 text-destructive flex-shrink-0" />
-            <p className="text-xs text-destructive">
-              Недостаточно бананов. Пополните баланс.
-            </p>
-          </div>
+          <GenerationFundingOffer cost={cost} credits={credits} isAdmin={isAdmin}
+            paymentPackages={paymentPackages} onTopup={onOpenBalance} />
         )}
 
         {needsPhotoReference && (
