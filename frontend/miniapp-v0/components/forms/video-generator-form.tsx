@@ -318,9 +318,9 @@ export function VideoGeneratorForm({
   
   // Image-to-video uses the same photo-reference picker as every other photo input.
   // The backend promotes the first selected reference to the provider's primary image slot.
-  const needsPhotoReference = photoReferences.length === 0 && (
-    needsCatalogPersonalPhoto || (selectedScenario === 'imgtxt' && !isOmniVideo && !sourceFeedGenId)
-  )
+  const needsPhotoReference = needsCatalogPersonalPhoto
+    ? (photoReferences.length !== 1 || !photoReferences[0]?.url || photoReferences[0].uploading === true)
+    : (selectedScenario === 'imgtxt' && !isOmniVideo && !sourceFeedGenId && photoReferences.length === 0)
   const needsCharacterImage = !repeatSlots && selectedScenario === 'character' && startImage.length === 0
   const needsVideoRef = selectedScenario === 'video' && !isOmniVideo && !isWanPrime && !sourceFeedGenId && videoReferences.length === 0
   const needsWanEditSource = isWanPrime && selectedScenario === 'edit' && !sourceFeedGenId && videoReferences.length === 0
