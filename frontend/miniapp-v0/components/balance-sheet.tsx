@@ -83,6 +83,7 @@ export function BalanceSheet() {
   const [loadingPayment, setLoadingPayment] = useState<string | null>(null)
   const paymentFlightRef = useRef(false)
   const [customerEmail, setCustomerEmail] = useState('')
+  const [manualPaymentUrl, setManualPaymentUrl] = useState<string | null>(null)
   const [readyPayment, setReadyPayment] = useState<{
     url: string; orderId: string; packageId: string; provider: PaymentProvider; credits: number; amountRub: number | null
   } | null>(null)
@@ -132,12 +133,15 @@ export function BalanceSheet() {
     }, 50)
   }
 
-  const openExternalPayment = (url: string) => {
+  const openExternalPayment = (url: string): boolean => {
+    // Always retain a user-clickable link for Telegram Stars and Tribute,
+    // even if the bridge silently swallows an asynchronous open attempt.
+    setManualPaymentUrl(url)
     const webApp = getTelegramPaymentBridge()
     if (webApp?.openLink) {
       try {
         webApp.openLink(url)
-        return
+        return true
       } catch {
         // Continue to browser fallbacks for old or partially supported clients.
       }
@@ -145,10 +149,10 @@ export function BalanceSheet() {
 
     const opened = window.open(url, '_blank', 'noopener,noreferrer')
     if (!opened) {
-      // The verified link is also available as a direct anchor below.
-      // Replacing the WebView location would discard the repeat draft.
-      toast.message('Счёт готов', { description: 'Нажмите «Перейти к оплате» в карточке счёта.' })
+      // Do not replace the WebView location: it contains the repeat draft.
+      toast.message('Ссылка для оплаты готова', { description: 'Нажмите «Перейти к оплате» в окне пополнения.' })
     }
+    return Boolean(opened)
   }
 
   const openTelegramInvoice = (url: string) => {
@@ -172,15 +176,13 @@ export function BalanceSheet() {
   const handleTopup = async (packageId: string, provider: PaymentProvider = 'telegram_stars') => {
     const selectedPackage = paymentPackages.find((item) => item.id === packageId)
     if (mode !== 'live' || !selectedPackage || paymentFlightRef.current) return
-    if (readyPayment?.packageId === packageId && readyPayment.provider === provider) {
-      paymentReadyRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
-      toast.message('Счёт уже создан', { description: 'Используйте готовую ссылку для оплаты.' })
-      return
-    }
-
+    // Only prevent concurrent creates. Once the first invoice is returned,
+    // an explicit new tap must be able to create another invoice (expired,
+    // cancelled or a second purchase when one pack is insufficient).
     paymentFlightRef.current = true
     const loadingKey = `${packageId}:${provider}`
     setReadyPayment(null)
+    setManualPaymentUrl(null)
     setLoadingPayment(loadingKey)
     try {
       if (provider === ('tribute' as PaymentProvider)) {
@@ -188,10 +190,11 @@ export function BalanceSheet() {
         if (!tributeUrl) {
           throw new Error('Зарубежная / СНГ пока недоступна для этого пакета')
         }
-        openExternalPayment(tributeUrl)
-        toast.message('Открыта оплата Зарубежная / СНГ', {
-          description: 'После подтверждения платежа бананы начислятся автоматически.',
-        })
+        if (openExternalPayment(tributeUrl)) {
+          toast.message('Открыта оплата Зарубежная / СНГ', {
+            description: 'После подтверждения платежа бананы начислятся автоматически.',
+          })
+        }
         return
       }
 
@@ -208,7 +211,15 @@ export function BalanceSheet() {
           toast.success('Оплата Stars прошла', {
             description: `Начисляем ${payment.credits}🍌. Баланс обновится автоматически.`,
           })
-          await refreshBalance()
+          try {
+            await refreshBalance()
+          } catch {
+            // The native provider already confirmed payment. A stale bootstrap
+            // is NOT a failed checkout and must not suggest buying again.
+            toast.message('Платёж подтверждён, баланс пока не обновился', {
+              description: 'Проверьте зачисление позже в этом окне; повторно платить не нужно.',
+            })
+          }
         } else if (status === 'cancelled') {
           toast.message('Оплата отменена')
         } else if (status === 'failed') {
@@ -238,8 +249,8 @@ export function BalanceSheet() {
           toast.message('Счёт готов', { description: 'Нажмите «Перейти к оплате», чтобы открыть платёжную страницу.' })
           return
         }
-        openExternalPayment(payment.payment_url)
-        toast.message(
+        const externalOpened = openExternalPayment(payment.payment_url)
+        if (externalOpened) toast.message(
           provider === 'lava_sbp'
             ? 'Открыта резервная оплата Lava через СБП'
             : provider === 'lava_card'
@@ -337,6 +348,26 @@ export function BalanceSheet() {
                     void refreshBalance().catch(() => toast.error('Не удалось обновить баланс. Повторите попытку.'))
                   }}>
                     Проверить зачисление бананов
+                  </Button>
+                </section>
+              ) : null}
+              {manualPaymentUrl && !readyPayment ? (
+                <section aria-label="Ссылка на оплату" className="rounded-2xl border border-gold/40 bg-gold/10 p-4">
+                  <p className="text-sm text-muted-foreground">
+                    Платёжная страница подготовлена. Откройте её по ссылке — редактор видео останется здесь.
+                  </p>
+                  <Button asChild className="mt-3 w-full bg-gold text-primary-foreground hover:bg-gold/90">
+                    <a href={manualPaymentUrl} target="_blank" rel="noopener noreferrer" onClick={(event) => {
+                      const bridge = getTelegramPaymentBridge()
+                      if (bridge?.openLink) {
+                        try {
+                          bridge.openLink(manualPaymentUrl)
+                          event.preventDefault()
+                        } catch {
+                          // Keep the native browser anchor as fallback.
+                        }
+                      }
+                    }}>Перейти к оплате</a>
                   </Button>
                 </section>
               ) : null}
