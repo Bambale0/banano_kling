@@ -74,6 +74,9 @@ export function BalanceSheet() {
     : paymentPackages
   const emailInputRef = useRef<HTMLInputElement>(null)
   const selectedPackageRef = useRef<HTMLDivElement>(null)
+  // Immediate lock covers rapid taps before React commits disabled buttons.
+  // Only checkout initiation is guarded; the same signed payment link stays reusable.
+  const paymentRequestInFlight = useRef(false)
   const [loadingPayment, setLoadingPayment] = useState<string | null>(null)
   const [customerEmail, setCustomerEmail] = useState('')
   const [readyPayment, setReadyPayment] = useState<{
@@ -172,8 +175,10 @@ export function BalanceSheet() {
   }
 
   const handleTopup = async (packageId: string, provider: PaymentProvider = 'telegram_stars') => {
+    if (paymentRequestInFlight.current || mode !== 'live') return
     const selectedPackage = paymentPackages.find((item) => item.id === packageId)
     if (!selectedPackage) return
+    paymentRequestInFlight.current = true
 
     const loadingKey = `${packageId}:${provider}`
     setReadyPayment(null)
@@ -265,6 +270,7 @@ export function BalanceSheet() {
         focusCustomerEmail()
       }
     } finally {
+      paymentRequestInFlight.current = false
       setLoadingPayment(null)
     }
   }
