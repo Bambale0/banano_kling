@@ -425,7 +425,11 @@ export function VideoGeneratorForm({
     if (promptPreset.duration) {
       setSelectedDuration(promptPreset.duration)
     }
-    if (slots) {
+    if (slots || (promptPreset.sourceFeedGenId && promptPreset.repeatUserFields?.some(
+      (field) => Boolean(field.image_choices?.length),
+    ))) {
+      // Do not silently count an owner's original source picture as a photo
+      // explicitly chosen for this repeat. Saved references remain selectable.
       setStartImage([])
       setPhotoReferences([])
     } else if (promptPreset.scenario === 'character' || promptPreset.scenario === 'avatar') {
