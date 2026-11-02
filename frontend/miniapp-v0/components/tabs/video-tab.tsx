@@ -23,6 +23,7 @@ export function VideoTab() {
     setVideoPromptPreset,
     refreshTasks,
     setActiveTab,
+    openBalance,
   } = useApp()
   const presetTargetsSeedance25 = videoPromptPreset?.model === 'seedance_2_5'
   const presetIsIdentityTransfer = presetTargetsSeedance25 && videoPromptPreset?.seedance25IdentityTransfer === true
@@ -244,6 +245,8 @@ export function VideoTab() {
           <Seedance25PublicForm
             model={seedance25Model}
             credits={state.user.credits}
+            paymentPackages={state.mode === 'live' ? state.paymentPackages : []}
+            onOpenBalance={openBalance}
             isAdmin={state.user.isAdmin}
             promptPreset={videoPromptPreset}
             onPromptPresetConsumed={handleVideoPromptPresetConsumed}
@@ -266,6 +269,8 @@ export function VideoTab() {
             onPromptPresetConsumed={handleVideoPromptPresetConsumed}
             isSubmitting={isSubmitting}
             credits={state.user.credits}
+            paymentPackages={state.mode === 'live' ? state.paymentPackages : []}
+            onOpenBalance={openBalance}
             isAdmin={state.user.isAdmin}
             onWanQueued={result => {
               if (typeof result.credits === 'number') setCredits(result.credits)
