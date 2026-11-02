@@ -1469,9 +1469,11 @@ export function VideoGeneratorForm({
                       ? `Голос: ${omniBaseVoice}`
                       : isOmniCharacter
                         ? 'Character ID'
-                  : selectedScenario === 'video'
+                  : needsCatalogPersonalPhoto
+                    ? 'Своё фото обязательно'
+                    : selectedScenario === 'video'
                     ? 'Видео-режим активен'
-                    : needsCatalogPersonalPhoto || (selectedScenario === 'imgtxt' && !isOmniVideo && !sourceFeedGenId)
+                    : (selectedScenario === 'imgtxt' && !isOmniVideo && !sourceFeedGenId)
                       ? 'Своё фото обязательно'
                       : 'Фото-референсы опциональны'}
             </p>
