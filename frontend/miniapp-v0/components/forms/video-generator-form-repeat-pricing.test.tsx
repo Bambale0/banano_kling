@@ -37,6 +37,34 @@ const launchButton = () => screen.getByRole('button', {
 })
 
 describe('typed repeat price requires server measurement before debit', () => {
+  it('offers the cheapest sufficient package only after the exact video quote, without launching', async () => {
+    const onSubmit = jest.fn()
+    const onQuote = jest.fn().mockResolvedValue(quote)
+    const onOpenBalance = jest.fn()
+    const props = {
+      models: [model('seedance_2')], onSubmit, onQuote,
+      promptPreset: fixedPreset('seedance_2'), isSubmitting: false,
+      paymentPackages: [
+        { id: 'mini', name: 'Мини', credits: 15, price_rub: 150 },
+        { id: 'start', name: 'Старт', credits: 25, price_rub: 250 },
+      ], onOpenBalance,
+    }
+    const view = render(<VideoGeneratorForm {...props} credits={5} />)
+    expect(screen.queryByRole('region', { name: 'Пополнение для генерации' })).not.toBeInTheDocument()
+    fireEvent.click(launchButton())
+    await screen.findByText(/Видеореференсы: 10 с \+ генерация: 5 с = 15 с/)
+    expect(screen.getByRole('region', { name: 'Пополнение для генерации' })).toHaveTextContent('16🍌')
+    fireEvent.click(screen.getByRole('button', { name: 'Купить 25🍌 за 250 ₽' }))
+    expect(onOpenBalance).toHaveBeenCalledWith({ cost: 21, packageId: 'start' })
+    expect(onSubmit).not.toHaveBeenCalled()
+    view.rerender(<VideoGeneratorForm {...props} credits={25} />)
+    expect(screen.queryByRole('region', { name: 'Пополнение для генерации' })).not.toBeInTheDocument()
+    fireEvent.click(launchButton())
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      pricingQuoteHash: quote.quote_hash, sourceFeedGenId: 42,
+    })))
+  })
+
   it.each(['seedance_2', 'seedance_2_5'])(
     '%s waits for source+output quote and checks final affordability', async (id) => {
       const onSubmit = jest.fn().mockResolvedValue(undefined)
