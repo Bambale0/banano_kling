@@ -1330,7 +1330,6 @@ def test_four_image_seedance_repeat_uses_one_face_and_three_curated_choices():
 
 def test_catalog_source_slot_replacement_requires_real_face_upload():
     from bot import repeat_personalization as choices
-    from bot.video_repeat_reference_contract import VideoRepeatContractError
     fields = choices.normalize_repeat_fields([{
         "key": key, "label": key, "image_choices": [{
             "id": key, "label": key,
