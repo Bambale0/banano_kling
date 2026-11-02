@@ -142,6 +142,13 @@ async def test_admin_personalization_reaches_video_provider_without_losing_base_
         Image.new("RGB", (512, 512), "red").save(image_bytes, format="PNG")
         choice_url = repeat_personalization.save_repeat_choice_image(image_bytes.getvalue())
         raw["image_choices"] = [{"id": "dress", "label": "Платье", "image_url": choice_url}]
+        # Quote/launch must use an explicitly selected, visitor-owned image.
+        # Create an actual local image so this integration test keeps the
+        # production missing-media and ownership validation enabled.
+        owned_dir = tmp_path / "static" / "uploads" / "refs" / "image" / str(entry.user.telegram_id)
+        owned_dir.mkdir(parents=True)
+        Image.new("RGB", (32, 32), "blue").save(owned_dir / "personal.jpg", format="JPEG")
+        visitor_face = f"https://neuromixbot.com/uploads/refs/image/{entry.user.telegram_id}/personal.jpg"
     fields = repeat_personalization.normalize_repeat_fields(
         [raw],
         prompt=BASE,
@@ -155,6 +162,7 @@ async def test_admin_personalization_reaches_video_provider_without_losing_base_
         "v_model": model,
         "prompt": "Keep the smile",
         "repeat_user_values": {"clothes": "dress" if image_options else "red dress"},
+        **({"reference_images": [visitor_face]} if image_options else {}),
     }
     quote_response = await entry.call(Request({
         **request_body, "pricing_quote_only": True, "seedance25_quote_only": True,
@@ -171,7 +179,8 @@ async def test_admin_personalization_reaches_video_provider_without_losing_base_
     assert "SYNTHETIC PRIVATE BASE" in provider_prompt
     assert "cinematic forest" in provider_prompt
     if image_options:
-        assert "@Image2" in provider_prompt
+        assert "@Image2" in provider_prompt  # Explicitly selected personal face
+        assert "@Image3" in provider_prompt  # Curated outfit follows fixed source + face
         # Seedance 2 normalizes local inputs to PNG before transport; 2.5
         # retains the durable JPEG. Both must carry the selected catalog asset.
         expected_url = choice_url if model == "seedance_2_5" else choice_url.removesuffix(".jpg") + ".png"
@@ -179,7 +188,8 @@ async def test_admin_personalization_reaches_video_provider_without_losing_base_
         # Image groups now bind by the selected reference, not by a
         # required source-prompt substring. Keep the original private scene.
         assert "blue coat" in provider_prompt
-        assert "«Одежда»: используйте @Image2" in provider_prompt
+        assert "«Одежда»: используйте @Image3" in provider_prompt
+        assert "Personal identity: use @Image2" in provider_prompt
     else:
         assert "red dress" in provider_prompt
         assert "blue coat" not in provider_prompt
