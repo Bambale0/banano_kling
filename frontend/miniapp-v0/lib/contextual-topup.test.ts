@@ -38,6 +38,7 @@ describe('contextual top-up offer', () => {
       { id: 'cheap', name: 'Большой', credits: 60, price_rub: 500 },
     ])
     expect(offer.recommended?.package.id).toBe('cheap')
+    expect(offer.alternative).toBeNull()
   })
 
   it('does not recommend a package that leaves the balance insufficient', () => {
