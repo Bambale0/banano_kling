@@ -1,9 +1,10 @@
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { BalanceSheet } from '@/components/balance-sheet'
 import { useApp } from '@/lib/app-context'
 import { createPayment } from '@/lib/payment-api'
 import { bootstrapApp, sendMiniAppClientLog } from '@/lib/api'
+import { toast } from 'sonner'
 
 jest.mock('@/lib/app-context', () => ({ useApp: jest.fn() }))
 jest.mock('@/lib/payment-api', () => ({ createPayment: jest.fn() }))
@@ -13,7 +14,7 @@ const exactUrl = 'https://auth.robokassa.ru/Merchant/Index.aspx?InvId=9007199254
 const openLink = jest.fn()
 const fixture = { state: { mode: 'live', user: { credits: 1 }, recentTasks: [], paymentPackages: [
   { id: 'start', name: 'Старт', credits: 50, price_rub: 500, robokassa_enabled: true },
-] }, isBalanceOpen: true, closeBalance: jest.fn(), refreshTasks: jest.fn() }
+] }, isBalanceOpen: true, closeBalance: jest.fn(), refreshTasks: jest.fn(), refreshBalance: jest.fn() }
 
 beforeEach(() => {
   jest.clearAllMocks()
@@ -90,9 +91,16 @@ it('does not open a late checkout response after the balance sheet closes', asyn
   fireEvent.click(screen.getByRole('button', { name: 'СБП / карта' }))
   ;(useApp as jest.Mock).mockReturnValue({ ...fixture, isBalanceOpen: false })
   rerender(<BalanceSheet />)
-  resolvePayment({ ok: true, provider: 'robokassa', order_id: 'fixture', credits: 50, payment_url: exactUrl })
-  await waitFor(() => expect(sendMiniAppClientLog).toHaveBeenCalledWith('payment-checkout-ready', expect.anything()))
+  await act(async () => {
+    resolvePayment({ ok: true, provider: 'robokassa', order_id: 'fixture', credits: 50, payment_url: exactUrl })
+  })
   expect(openLink).not.toHaveBeenCalled()
+  expect(sendMiniAppClientLog).not.toHaveBeenCalledWith('payment-checkout-ready', expect.anything())
+
+  // A pending checkout from a closed repeat must not reappear later.
+  ;(useApp as jest.Mock).mockReturnValue(fixture)
+  rerender(<BalanceSheet />)
+  expect(screen.queryByRole('link', { name: 'Перейти к оплате' })).not.toBeInTheDocument()
 })
 
 it('keeps Telegram Stars on the native invoice flow', async () => {
@@ -185,4 +193,63 @@ it('shows Stars for a Stars-only automatic repeat package', async () => {
   await waitFor(() => expect(createPayment).toHaveBeenCalledWith(expect.objectContaining({
     packageId: 'stars', provider: 'telegram_stars',
   })))
+})
+
+
+it('keeps paid Stars confirmation separate from a failed authenticated balance refresh', async () => {
+  const refreshBalance = jest.fn().mockRejectedValue(new Error('Temporary bootstrap timeout'))
+  const refreshTasks = jest.fn()
+  ;(useApp as jest.Mock).mockReturnValue({ ...fixture, refreshBalance, refreshTasks })
+  ;(createPayment as jest.Mock).mockResolvedValue({
+    ok: true, provider: 'telegram_stars', invoice_url: 'https://t.me/$synthetic', credits: 50,
+  })
+  const openInvoice = jest.fn((_url: string, callback: (status: string) => void) => callback('paid'))
+  Object.assign(window.Telegram!.WebApp!, { openInvoice })
+  const errorSpy = jest.spyOn(toast, 'error')
+  const noticeSpy = jest.spyOn(toast, 'message')
+  const successSpy = jest.spyOn(toast, 'success')
+  render(<BalanceSheet />)
+
+  fireEvent.click(screen.getByRole('button', { name: /Stars/ }))
+  await waitFor(() => expect(refreshBalance).toHaveBeenCalledTimes(1))
+  await waitFor(() => expect(noticeSpy).toHaveBeenCalledWith(
+    expect.stringContaining('Платёж подтверждён'), expect.anything(),
+  ))
+  expect(successSpy).toHaveBeenCalledWith('Оплата Stars прошла', expect.anything())
+  expect(refreshTasks).not.toHaveBeenCalled()
+  expect(errorSpy).not.toHaveBeenCalled()
+  errorSpy.mockRestore()
+  noticeSpy.mockRestore()
+  successSpy.mockRestore()
+})
+
+it('keeps a user-clickable native Stars link if both Telegram and popup bridges fail', async () => {
+  Object.assign(window.Telegram!.WebApp!, { platform: 'android', openLink: undefined, openInvoice: undefined })
+  ;(createPayment as jest.Mock).mockResolvedValue({
+    ok: true, provider: 'telegram_stars', invoice_url: 'https://t.me/$synthetic', credits: 50,
+  })
+  const popup = jest.spyOn(window, 'open').mockReturnValue(null)
+  render(<BalanceSheet />)
+
+  fireEvent.click(screen.getByRole('button', { name: /Stars/ }))
+  const manual = await screen.findByRole('region', { name: 'Ссылка на оплату' })
+  expect(manual).toBeInTheDocument()
+  const link = screen.getByRole('link', { name: 'Перейти к оплате' })
+  expect(link).toHaveAttribute('href', 'https://t.me/$synthetic')
+  expect(link).toHaveAttribute('target', '_blank')
+  expect(createPayment).toHaveBeenCalledTimes(1)
+  popup.mockRestore()
+})
+
+it('keeps a Tribute fallback link in the same WebView without issuing a duplicate invoice', async () => {
+  Object.assign(window.Telegram!.WebApp!, { platform: 'android', openLink: undefined, openInvoice: undefined })
+  const popup = jest.spyOn(window, 'open').mockReturnValue(null)
+  render(<BalanceSheet />)
+
+  fireEvent.click(screen.getByRole('button', { name: 'Зарубежная / СНГ' }))
+  const link = await screen.findByRole('link', { name: 'Перейти к оплате' })
+  expect(link).toHaveAttribute('href', 'https://web.tribute.tg/p/Dxn')
+  expect(link).toHaveAttribute('target', '_blank')
+  expect(createPayment).not.toHaveBeenCalled()
+  popup.mockRestore()
 })
