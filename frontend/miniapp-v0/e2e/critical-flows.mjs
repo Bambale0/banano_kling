@@ -1072,7 +1072,7 @@ try {
   // not a frontend debit or a fabricated payment-success event.
   bootstrapPayload.credits = 15
   await fundingSheet.getByRole('button', { name: 'Проверить зачисление бананов' }).click()
-  await fundingSheet.getByText(/Баланс уже хватает для этого видео/).waitFor()
+  await fundingSheet.getByText(/Баланса уже хватает для этого видео/).waitFor()
   await page.getByRole('button', { name: 'Закрыть пополнение' }).click()
   await fundingSheet.waitFor({ state: 'hidden' })
   assert.equal(await fundingRunner.isVisible(), true)
