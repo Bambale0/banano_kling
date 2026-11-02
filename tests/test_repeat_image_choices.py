@@ -107,6 +107,23 @@ def test_mixed_text_and_image_fields_keep_strict_text_source_bindings():
         subject.normalize_repeat_fields(raw, prompt=base)
 
 
+def test_duplicate_image_group_names_are_rejected_before_publish_and_repeat():
+    first = raw_fields()[0]
+    first.pop('original_value')
+    duplicate = {**first, 'key': 'second', 'label': '  НАРЯД ДЕВУШКИ  '}
+    with pytest.raises(ValueError, match='Названия групп с изображениями'):
+        subject.normalize_repeat_fields([first, duplicate], prompt=PROMPT)
+
+    # Old persisted configurations must also fail closed before a provider call.
+    legacy = subject.normalize_repeat_fields([first], prompt=PROMPT)
+    legacy.append({**legacy[0], 'key': 'second'})
+    with pytest.raises(ValueError, match='Названия групп с изображениями'):
+        subject.render_repeat_base(
+            PROMPT, legacy, {'outfit': 'dress', 'second': 'dress'},
+            image_indices=[2, 3],
+        )
+
+
 def test_image_field_requires_valid_selected_reference_indices():
     fields = subject.normalize_repeat_fields(
         [{key: value for key, value in raw_fields()[0].items()
