@@ -185,6 +185,11 @@ def normalize_repeat_fields(raw_fields: Any, *, prompt: str) -> list[dict[str, A
                 raise ValueError("Изображения доступны только для текстовых параметров")
             field["image_choices"] = images
             field["allow_custom_image"] = raw.get("allow_custom_image") is True
+            slot_index = raw.get("image_slot_index")
+            if slot_index is not None and slot_index != "":
+                if type(slot_index) is not int or slot_index < 0:
+                    raise ValueError("Выберите корректное фото для параметра")
+                field["image_slot_index"] = slot_index
         raw_choices = raw_by_key.get(str(field["key"]), {}).get("choices", [])
         if raw_choices in (None, ""):
             raw_choices = []
@@ -233,9 +238,64 @@ def normalize_repeat_fields(raw_fields: Any, *, prompt: str) -> list[dict[str, A
 
 def public_repeat_fields(fields: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     return [
-        {key: value for key, value in dict(field).items() if key != "original_value"}
+        {key: value for key, value in dict(field).items()
+         if key not in {"original_value", "image_slot_index"}}
         for field in fields
     ]
+
+
+def assign_catalog_image_slots(
+    slots: Sequence[Mapping[str, Any]],
+    fields: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Bind curated image groups to existing *replaceable* source-image positions.
+
+    Owner's hidden source media are never reused by implication. A curated
+    option replaces a specific upload slot, it is not another required upload
+    or an extra provider image. In a four-photo recipe with three image groups,
+    the remaining single slot accepts the visitor's face. Authors may explicitly
+    map groups to source positions; older groups bind rightmost free positions
+    in display order. If there are too few eligible positions, keep the previous
+    append-only behavior instead of silently rewriting an unrelated recipe.
+    """
+    result = [dict(slot) for slot in slots]
+    image_fields = [field for field in fields if field.get("image_choices")]
+    if not image_fields:
+        return result
+    # "index" in a Wan frame slot can be zero just like image:0.
+    # Use the absolute ordinal among image slots, not the per-field index.
+    image_positions = [
+        pos for pos, slot in enumerate(result)
+        if slot.get("kind", "image") == "image"
+    ]
+    candidates = {
+        ordinal: position for ordinal, position in enumerate(image_positions)
+        if result[position].get("role") == "reference"
+        and result[position].get("binding") == "upload"
+    }
+    if len(candidates) < len(image_fields):
+        if any(field.get("image_slot_index") is not None for field in image_fields):
+            raise ValueError("Для выбранных вариантов не хватает заменяемых фото")
+        return result
+    claimed: set[int] = set()
+    mappings: list[tuple[Mapping[str, Any], int]] = []
+    for field in image_fields:
+        explicit = field.get("image_slot_index")
+        if explicit is None:
+            continue
+        if type(explicit) is not int or explicit not in candidates or explicit in claimed:
+            raise ValueError("Группы вариантов должны заменять разные доступные фото")
+        claimed.add(explicit)
+        mappings.append((field, candidates[explicit]))
+    free = [(ordinal, pos) for ordinal, pos in candidates.items() if ordinal not in claimed]
+    automatic = [field for field in image_fields if field.get("image_slot_index") is None]
+    # Reserve the leading source slots for the person's own photo(s).
+    for field, (_, position) in zip(automatic, free[-len(automatic):] if automatic else []):
+        mappings.append((field, position))
+    for field, position in mappings:
+        result[position]["binding"] = "choice"
+        result[position]["choice_key"] = str(field["key"])
+    return result
 
 
 def render_repeat_base(
@@ -485,6 +545,9 @@ def _decode_fields(raw: Any) -> list[dict[str, Any]]:
                 field.pop("original_value", None)
                 field["image_choices"] = images
                 field["allow_custom_image"] = raw.get("allow_custom_image") is True
+                slot_index = raw.get("image_slot_index")
+                if type(slot_index) is int and slot_index >= 0:
+                    field["image_slot_index"] = slot_index
         return fields
     except ValueError:
         return []
