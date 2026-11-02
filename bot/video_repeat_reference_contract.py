@@ -348,7 +348,10 @@ def merge_typed_video_inputs(
     image_fields = [item for item in fields if item.get("image_choices")]
     selected_by_key: dict[str, str] = {}
     if image_fields:
-        from bot.repeat_personalization import assign_catalog_image_slots, repeat_image_references
+        from bot.repeat_personalization import (
+            assign_catalog_image_slots,
+            repeat_image_references,
+        )
 
         try:
             plan["images"] = assign_catalog_image_slots(plan["images"], fields)
