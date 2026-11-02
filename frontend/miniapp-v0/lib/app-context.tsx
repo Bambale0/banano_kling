@@ -3,6 +3,7 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react'
 import type { AppState, BootstrapResponse, FeedDeepLink, FeedItem, PromptItem, PromptPreset, SavedReference, ScenarioType, Task, TaskDetail, UploadedFile, VideoPromptPreset, WorkspacePanel } from './types'
 import { mockAppState, mockImageModels, mockVideoModels } from './mock-data'
+import type { FundingIntent } from './generation-funding'
 import { bootstrapApp, fetchFeedItem, fetchPromptDetail, fetchTaskDetail, getInitData, getStartParamFallback, hasTelegramInitData, waitForTelegramInitData } from './api'
 import { genjutsuRecipeStartParam, parseMiniAppStartParam, startParamFromLocation } from './start-params'
 import { isVideoTrendItem, isWanTrendItem, resolveTrendSettings } from './trend-settings'
@@ -15,6 +16,7 @@ interface AppContextType {
   taskDetail: TaskDetail | null
   isTaskDetailOpen: boolean
   isBalanceOpen: boolean
+  fundingIntent: FundingIntent | null
   activeWorkspace: WorkspacePanel | null
   feedDeepLink: FeedDeepLink | null
   promptPreset: PromptPreset | null
@@ -26,7 +28,7 @@ interface AppContextType {
   openProfile: (referralCode?: string | null) => void
   selectTask: (task: Task | null) => void
   closeTaskDetail: () => void
-  openBalance: () => void
+  openBalance: (intent?: FundingIntent) => void
   closeBalance: () => void
   openWorkspace: (panel: WorkspacePanel) => void
   closeWorkspace: () => void
@@ -81,7 +83,7 @@ function createLockedState(message: string | null = telegramLockedMessage, isLoa
     videoModels: [],
     recentTasks: [],
     savedReferences: [],
-    paymentPackages: mockAppState.paymentPackages,
+    paymentPackages: [],
     lastSync: null,
   }
 }
@@ -164,6 +166,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [taskDetail, setTaskDetail] = useState<TaskDetail | null>(null)
   const [isTaskDetailOpen, setIsTaskDetailOpen] = useState(false)
   const [isBalanceOpen, setIsBalanceOpen] = useState(false)
+  const [fundingIntent, setFundingIntent] = useState<FundingIntent | null>(null)
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspacePanel | null>(null)
   const [feedDeepLink, setFeedDeepLink] = useState<FeedDeepLink | null>(null)
   const [promptPreset, setPromptPreset] = useState<PromptPreset | null>(null)
@@ -252,8 +255,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       videoModels: normalizeVideoModels(data.video_models),
       recentTasks: data.recent_tasks,
       savedReferences: (data.saved_references || []).map(toUploadedReference),
-      paymentPackages:
-        data.payment_packages?.length ? data.payment_packages : mockAppState.paymentPackages,
+      // The production checkout must never substitute demo package prices.
+      paymentPackages: Array.isArray(data.payment_packages) ? data.payment_packages : [],
       lastSync: new Date(),
     }))
   }, [])
@@ -282,10 +285,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       },
       recentTasks: prev.mode === 'live' ? prev.recentTasks : [],
       savedReferences: prev.mode === 'live' ? prev.savedReferences : [],
-      paymentPackages:
-        prev.mode === 'live' && prev.paymentPackages.length
-          ? prev.paymentPackages
-          : mockAppState.paymentPackages,
+      paymentPackages: prev.mode === 'live' ? prev.paymentPackages : [],
       lastSync: prev.mode === 'live' ? prev.lastSync : null,
     }))
   }, [])
@@ -324,13 +324,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }, 300)
   }, [applyTaskDetail])
 
-  const openBalance = useCallback(() => {
+  const openBalance = useCallback((intent?: FundingIntent) => {
     cancelStartNavigation()
+    setFundingIntent(intent ?? null)
     setIsBalanceOpen(true)
   }, [cancelStartNavigation])
 
   const closeBalance = useCallback(() => {
     setIsBalanceOpen(false)
+    setFundingIntent(null)
   }, [])
 
   const openWorkspace = useCallback((panel: WorkspacePanel) => {
@@ -708,6 +710,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         taskDetail,
         isTaskDetailOpen,
         isBalanceOpen,
+        fundingIntent,
         activeWorkspace,
         feedDeepLink,
         promptPreset,
