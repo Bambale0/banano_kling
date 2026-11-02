@@ -5,7 +5,7 @@ import { useApp } from '@/lib/app-context'
 import { generateVideo, uploadFile } from '@/lib/api'
 
 jest.mock('@/components/genjutsu-entry', () => ({ GenjutsuButton: () => null }))
-jest.mock('@/lib/app-context', () => ({ useApp: jest.fn() }))
+jest.mock('@/lib/app-context', () => ({ useApp: jest.fn(), useOptionalApp: () => null }))
 jest.mock('@/lib/api', () => ({ generateVideo: jest.fn(), uploadFile: jest.fn(), sendMiniAppClientLog: jest.fn(), getApiBasePath: () => '/mini-app/api', getInitData: () => 'signed', getStartParamFallback: () => '' }))
 jest.mock('@/components/forms/scenario-select', () => ({ ScenarioSelect: ({ value }: { value: string }) => <span>{value}</span> }))
 const upload = uploadFile as jest.MockedFunction<typeof uploadFile>
