@@ -618,7 +618,52 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
         consumer_task = source_task if source_task["_repeat_is_owner"] else foreign_video_repeat_task(
             source_task, retain_legacy_selection=not legacy_identity,
         )
-        enriched = enrich_video_repeat_body(body, consumer_task)
+        catalog_fields_digest = None
+        prepared_body = body
+        if body.get("repeat_catalog_mode") is True:
+            from bot.repeat_personalization import (
+                fill_repeat_catalog_uploads,
+                get_repeat_fields,
+            )
+            from bot.video_repeat_reference_contract import (
+                build_video_repeat_plan,
+                catalog_slot_fill_supported,
+            )
+
+            if not miniapp_module._repeat_personalization_allowed(_telegram_id):
+                raise VideoRepeatReferenceError("Готовые варианты для повтора сейчас недоступны.")
+            if any(body.get(key) for key in (
+                "v_image_url", "v_reference_videos", "audio_url", "audio_references",
+                "seedance25_reference_audio_urls", "seedance25_identity_transfer",
+            )):
+                raise VideoRepeatReferenceError(
+                    "Для готовых вариантов используйте фото в выбранных категориях."
+                )
+            plan = build_video_repeat_plan(consumer_task)
+            if not catalog_slot_fill_supported(plan):
+                raise VideoRepeatReferenceError(
+                    "Для этого видео выберите обычную загрузку референсов."
+                )
+            fields = await get_repeat_fields(source_id)
+            if not fields or "repeat_user_values" not in body:
+                raise VideoRepeatReferenceError("Выберите готовые изображения для повтора.")
+            selected_values = body["repeat_user_values"]
+            if not isinstance(selected_values, dict):
+                raise VideoRepeatReferenceError("Выберите готовые изображения для повтора.")
+            try:
+                assembled, selected_catalog = fill_repeat_catalog_uploads(
+                    plan["images"], fields, selected_values,
+                    body.get("reference_images", []), telegram_id=_telegram_id,
+                )
+            except ValueError as exc:
+                raise VideoRepeatReferenceError(str(exc)) from exc
+            # URLs of the catalog options are resolved from persisted author IDs
+            # on the authenticated server, never accepted from the browser.
+            prepared_body = {**body, "reference_images": assembled}
+            catalog_fields_digest = hashlib.sha256(
+                json.dumps(fields, sort_keys=True, ensure_ascii=False).encode()
+            ).hexdigest()
+        enriched = enrich_video_repeat_body(prepared_body, consumer_task)
     except VideoRepeatContractError as exc:
         raise VideoRepeatReferenceError(str(exc)) from exc
     # This authenticated boundary wraps both legacy video handlers and the
@@ -664,6 +709,7 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
         authorization = {
             "source_id": source_id, "viewer_user_id": context["user"].id,
             "snapshot": _video_repeat_snapshot(source_task), "active_media": active_media,
+            **({"catalog_fields_digest": catalog_fields_digest} if catalog_fields_digest else {}),
         }
         request._video_repeat_guard = authorization
         if not legacy_identity and effective_video_repeat_grant(source_task) is not None:
@@ -782,6 +828,17 @@ async def verify_video_repeat_before_charge(request: web.Request) -> web.Respons
             raise VideoRepeatReferenceError("Разрешение на повтор изменилось. Откройте публикацию заново.")
         if missing_local_upload_sources(authorization["active_media"]):
             raise VideoRepeatReferenceError("Референсы для повтора больше недоступны.")
+        if authorization.get("catalog_fields_digest"):
+            from bot.repeat_personalization import get_repeat_fields
+
+            current_fields = await get_repeat_fields(authorization["source_id"])
+            current_digest = hashlib.sha256(
+                json.dumps(current_fields, sort_keys=True, ensure_ascii=False).encode()
+            ).hexdigest()
+            if current_digest != authorization["catalog_fields_digest"]:
+                raise VideoRepeatReferenceError(
+                    "Варианты автора изменились. Откройте повтор заново."
+                )
     except Exception as exc:  # noqa: BLE001 - fail closed without disclosing source details
         logger.warning(
             "Video repeat consent recheck rejected: source_generation_id=%s error_type=%s",
