@@ -140,7 +140,10 @@ async def get_repeat_plan(actor, source_id: int) -> dict[str, Any]:
     if personalization_allowed(getattr(actor, "telegram_id", 0)):
         fields = await get_repeat_fields(source_id)
         if fields:
+            from bot.repeat_personalization import assign_catalog_image_slots
+
             plan["personalization_fields"] = fields
+            plan["slots"] = assign_catalog_image_slots(plan["slots"], fields)
     return plan
 
 
@@ -209,12 +212,33 @@ async def compile_repeat(actor, body: dict[str, Any], probe):
     if public_input.get("scenario", plan["recipe"]["scenario"]) != plan["recipe"]["scenario"]:
         raise Wan3PrimeValidationError("Режим должен соответствовать исходной публикации", status=409)
     compiled = deepcopy(plan["recipe"])
+    fields = plan.get("personalization_fields") or []
+    selected_images: list[str] = []
+    selected_by_key: dict[str, str] = {}
+    if any(slot["binding"] == "choice" for slot in plan["slots"]):
+        from bot.repeat_personalization import repeat_image_references
+
+        if "repeat_user_values" not in public_input:
+            raise Wan3PrimeValidationError("Выберите варианты изображений для повтора", status=409)
+        try:
+            selected_images = repeat_image_references(
+                fields, public_input["repeat_user_values"], telegram_id=actor.telegram_id,
+            )
+        except ValueError as exc:
+            raise Wan3PrimeValidationError(str(exc)) from exc
+        selected_by_key = {
+            str(field["key"]): url for field, url in zip(
+                (field for field in fields if field.get("image_choices")), selected_images,
+            )
+        }
     for slot in plan["slots"]:
-        if slot["binding"] != "upload":
+        if slot["binding"] not in {"upload", "choice"}:
             continue
-        value = replacements[slot["key"]].strip()
+        value = (selected_by_key[slot["choice_key"]] if slot["binding"] == "choice"
+                 else replacements[slot["key"]].strip())
         # Even a known original URL cannot be smuggled in as a user's upload.
-        if actor.user_id != plan["owner_id"] and any(value == item["url"] for item in plan["slots"]):
+        if (slot["binding"] == "upload" and actor.user_id != plan["owner_id"]
+                and any(value == item["url"] for item in plan["slots"])):
             raise Wan3PrimeValidationError("Загрузите собственный файл для заменяемого места", status=403)
         if slot["field"] in FRAME_FIELDS:
             compiled[slot["field"]] = value
@@ -227,8 +251,6 @@ async def compile_repeat(actor, body: dict[str, Any], probe):
     if not isinstance(edits, str):
         raise Wan3PrimeValidationError("Изменения должны быть текстом")
     original = str(compiled.get("prompt") or "")
-    fields = plan.get("personalization_fields") or []
-    selected_images = []
     if "repeat_user_values" in public_input:
         from bot.repeat_personalization import (
             append_repeat_images,
@@ -243,7 +265,17 @@ async def compile_repeat(actor, body: dict[str, Any], probe):
             if images and compiled["scenario"] not in {"reference", "edit"}:
                 raise ValueError("Выбор изображений доступен в режиме референсов или редактирования")
             existing = list(compiled.get("reference_image_urls") or [])
-            indices = append_repeat_images(existing, images)
+            if selected_by_key:
+                indices = []
+                for field in fields:
+                    if not field.get("image_choices"):
+                        continue
+                    image = selected_by_key[str(field["key"])]
+                    if image not in existing:
+                        raise ValueError("Выбранное фото не попало в повтор")
+                    indices.append(existing.index(image) + 1)
+            else:
+                indices = append_repeat_images(existing, images)
             original = render_repeat_base(original, fields, public_input["repeat_user_values"], image_indices=indices)
             compiled["reference_image_urls"] = existing
         except ValueError as exc:
