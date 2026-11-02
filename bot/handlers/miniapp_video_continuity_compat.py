@@ -20,7 +20,6 @@ from aiohttp import web
 from bot.database import generation_has_private_recipe, get_generation_task_payload
 from bot.services.media_input_utils import (
     missing_local_upload_sources,
-    reference_upload_owner_telegram_id,
     resolve_reference_source,
 )
 from bot.services.remix_prompt import compose_feed_remix_prompt
@@ -29,6 +28,7 @@ from bot.video_repeat_reference_contract import (
     VideoRepeatContractError,
     effective_video_repeat_grant,
     foreign_video_repeat_task,
+    is_owned_personal_image_reference,
     merge_typed_video_inputs,
     parse_video_repeat_grant,
     source_request,
@@ -294,7 +294,7 @@ def enrich_video_repeat_body(body: dict[str, Any], source_task: dict[str, Any]) 
             submitted_photos.insert(0, submitted_first)
         consumer = source_task.get("_repeat_consumer_telegram_id")
         if not isinstance(consumer, int) or not any(
-            reference_upload_owner_telegram_id(url) == consumer for url in submitted_photos
+            is_owned_personal_image_reference(url, consumer) for url in submitted_photos
         ):
             raise VideoRepeatReferenceError("Сначала добавьте своё фото для повтора.")
     if owner:
