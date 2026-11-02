@@ -105,3 +105,47 @@ it('keeps Telegram Stars on the native invoice flow', async () => {
   expect(openLink).not.toHaveBeenCalled()
   expect(screen.queryByRole('link', { name: 'Перейти к оплате' })).not.toBeInTheDocument()
 })
+
+it('prioritizes the selected adequate package without starting a payment automatically', async () => {
+  const refreshBalance = jest.fn().mockResolvedValue(undefined)
+  ;(useApp as jest.Mock).mockReturnValue({
+    ...fixture,
+    refreshBalance,
+    fundingIntent: { cost: 50, packageId: 'optimal' },
+    state: {
+      ...fixture.state,
+      user: { credits: 20 },
+      paymentPackages: [
+        { id: 'mini', name: 'Мини', credits: 15, price_rub: 150, robokassa_enabled: true },
+        { id: 'optimal', name: 'Оптимальный', credits: 50, price_rub: 500, robokassa_enabled: true },
+      ],
+    },
+  })
+  render(<BalanceSheet />)
+
+  expect(screen.getByRole('region', { name: 'Пополнение для повтора' }))
+    .toHaveTextContent('50🍌')
+  expect(screen.getByRole('region', { name: 'Пополнение для повтора' }))
+    .toHaveTextContent('30🍌')
+  expect(screen.getAllByRole('heading', { level: 4 })[0]).toHaveTextContent('Оптимальный')
+  expect(createPayment).not.toHaveBeenCalled()
+
+  fireEvent.click(screen.getByRole('button', { name: 'Проверить зачисление бананов' }))
+  await waitFor(() => expect(refreshBalance).toHaveBeenCalledTimes(1))
+  expect(createPayment).not.toHaveBeenCalled()
+  fireEvent.click(screen.getAllByRole('button', { name: 'СБП / карта' })[0])
+  await waitFor(() => expect(createPayment).toHaveBeenCalledWith(expect.objectContaining({
+    packageId: 'optimal', provider: 'robokassa',
+  })))
+})
+
+it('does not offer a real checkout for demo or locked packages', () => {
+  ;(useApp as jest.Mock).mockReturnValue({
+    ...fixture,
+    state: { ...fixture.state, mode: 'locked' },
+    fundingIntent: { cost: 50 },
+  })
+  render(<BalanceSheet />)
+  expect(screen.queryByRole('button', { name: 'СБП / карта' })).not.toBeInTheDocument()
+  expect(createPayment).not.toHaveBeenCalled()
+})
