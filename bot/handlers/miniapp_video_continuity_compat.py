@@ -20,6 +20,7 @@ from aiohttp import web
 from bot.database import generation_has_private_recipe, get_generation_task_payload
 from bot.services.media_input_utils import (
     missing_local_upload_sources,
+    reference_upload_owner_telegram_id,
     resolve_reference_source,
 )
 from bot.services.remix_prompt import compose_feed_remix_prompt
@@ -284,6 +285,18 @@ def _infer_scenario(request_data: dict[str, Any]) -> str:
 
 def enrich_video_repeat_body(body: dict[str, Any], source_task: dict[str, Any]) -> dict[str, Any]:
     owner = bool(source_task.get("_repeat_is_owner"))
+    if owner and any(field.get("image_choices") for field in source_task.get("_repeat_choice_fields") or []):
+        # Owner media and author-curated pictures must never implicitly satisfy
+        # an ordinary user's own-photo requirement.
+        submitted_photos = _clean_list(body.get("reference_images"))
+        submitted_first = str(body.get("v_image_url") or "").strip()
+        if submitted_first:
+            submitted_photos.insert(0, submitted_first)
+        consumer = source_task.get("_repeat_consumer_telegram_id")
+        if not isinstance(consumer, int) or not any(
+            reference_upload_owner_telegram_id(url) == consumer for url in submitted_photos
+        ):
+            raise VideoRepeatReferenceError("Сначала добавьте своё фото для повтора.")
     if owner:
         # Ownership authorizes editing/reusing the original source independently
         # of permissions granted to other users.

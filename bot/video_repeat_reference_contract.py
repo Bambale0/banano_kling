@@ -407,8 +407,27 @@ def merge_typed_video_inputs(
             result.pop(f"_private_repeat_reference_{kind}", None)
             continue
         slots = plan[kind]
-        if len(uploads) != sum(slot["binding"] == "upload" for slot in slots):
-            raise VideoRepeatContractError("Добавьте по одному файлу для каждого заменяемого места в публикации.")
+        # Curated source pictures are not an identity photo. When every source
+        # image position is fixed or a catalog choice, require an additional
+        # visitor-owned photo, including in old image-less publications.
+        needs_personal_photo = (
+            kind == "images" and bool(image_fields)
+            and not any(slot["binding"] == "upload" for slot in slots)
+        )
+        required_count = sum(slot["binding"] == "upload" for slot in slots) + int(needs_personal_photo)
+        if len(uploads) != required_count:
+            raise VideoRepeatContractError(
+                "Добавьте своё фото для повтора." if needs_personal_photo
+                else "Добавьте по одному файлу для каждого заменяемого места в публикации."
+            )
+        if needs_personal_photo:
+            personal_url = uploads.pop(0)
+            consumer = task.get("_repeat_consumer_telegram_id")
+            if not isinstance(consumer, int) or reference_upload_owner_telegram_id(personal_url) != consumer:
+                raise VideoRepeatContractError("Загрузите своё фото для повтора.")
+            # The personal photo precedes all catalog image references, so
+            # rendered @ImageN indices are computed from the real provider order.
+            result["reference_images"].append(personal_url)
         candidates = [slot["url"] for slot in slots]
         for value in uploads:
             try:
