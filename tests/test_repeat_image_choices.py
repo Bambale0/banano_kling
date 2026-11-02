@@ -32,10 +32,107 @@ def test_choice_uses_real_image_tag_after_existing_identity_and_retained_images(
     assert '@Image3' in rendered
     assert '@Image1' in rendered
     assert 'red car' in rendered
-    assert 'blue coat' not in rendered
+    # Image-only personalization preserves the private scene and overrides
+    # its outfit via the selected reference instead of matching source text.
+    assert 'blue coat' in rendered
+    assert 'ПРИОРИТЕТ ПОЛЬЗОВАТЕЛЬСКИХ ИЗОБРАЖЕНИЙ' in rendered
     assert subject.repeat_image_references(fields, {'outfit': 'dress'}, telegram_id=42) == [
         'https://neuromixbot.com/uploads/repeat-choices/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpg',
     ]
+
+
+
+def test_image_group_requires_only_its_label_not_a_prompt_fragment():
+    raw = raw_fields()
+    raw[0]['label'] = 'Образ'
+    raw[0]['original_value'] = 'образ которого нет в промпте'
+    fields = subject.normalize_repeat_fields(raw, prompt=PROMPT)
+
+    assert fields[0]['label'] == 'Образ'
+    assert 'original_value' not in fields[0]
+    assert 'original_value' not in subject._decode_fields(json.dumps(raw))[0]
+    rendered = subject.render_repeat_base(
+        PROMPT, fields, {'outfit': 'dress'}, image_indices=[2],
+    )
+    assert rendered.startswith(PROMPT)
+    assert '«Образ»: используйте @Image2' in rendered
+    assert 'имеют приоритет' in rendered
+
+
+def test_image_groups_use_ordered_real_media_indices_with_face_preserved():
+    raw = raw_fields()
+    raw[0].pop('original_value')
+    raw[0]['label'] = 'Одежда'
+    for key, label, prefix in [('cake', 'Торт', 'c'), ('car', 'Машина', 'd')]:
+        raw.append({
+            'key': key, 'label': label,
+            'image_choices': [{
+                'id': key, 'label': label,
+                'image_url': f"https://neuromixbot.com/uploads/repeat-choices/{prefix * 32}.jpg",
+            }],
+        })
+    prompt = 'A woman with the face from @Image1 celebrates her birthday.'
+    fields = subject.normalize_repeat_fields(raw, prompt=prompt)
+    chosen = [field['image_choices'][0]['image_url'] for field in fields]
+    face = 'https://neuromixbot.com/uploads/refs/image/42/face.jpg'
+    provider_images = [face]
+    indices = subject.append_repeat_images(provider_images, chosen)
+    assert indices == [2, 3, 4]
+    assert provider_images == [face, *chosen]
+
+    rendered = subject.render_repeat_base(
+        prompt, fields, {'outfit': 'dress', 'cake': 'cake', 'car': 'car'},
+        image_indices=indices,
+    )
+    assert rendered.startswith(prompt)
+    assert rendered.index('«Одежда»: используйте @Image2') < rendered.index(
+        '«Торт»: используйте @Image3'
+    ) < rendered.index('«Машина»: используйте @Image4')
+    assert '@Image1' in rendered
+
+
+def test_mixed_text_and_image_fields_keep_strict_text_source_bindings():
+    raw = raw_fields()
+    raw[0].pop('original_value')
+    raw.append({'key': 'age', 'label': 'Возраст', 'original_value': '30'})
+    base = 'Person aged 30 from @Image1 is walking by the river.'
+    fields = subject.normalize_repeat_fields(raw, prompt=base)
+    rendered = subject.render_repeat_base(
+        base, fields, {'outfit': 'suit', 'age': '21'}, image_indices=[2],
+    )
+    assert 'aged 21' in rendered
+    assert '«Наряд девушки»: используйте @Image2' in rendered
+    raw[1]['original_value'] = 'not in prompt'
+    with pytest.raises(ValueError, match='не найдено'):
+        subject.normalize_repeat_fields(raw, prompt=base)
+
+
+def test_duplicate_image_group_names_are_rejected_before_publish_and_repeat():
+    first = raw_fields()[0]
+    first.pop('original_value')
+    duplicate = {**first, 'key': 'second', 'label': '  НАРЯД ДЕВУШКИ  '}
+    with pytest.raises(ValueError, match='Названия групп с изображениями'):
+        subject.normalize_repeat_fields([first, duplicate], prompt=PROMPT)
+
+    # Old persisted configurations must also fail closed before a provider call.
+    legacy = subject.normalize_repeat_fields([first], prompt=PROMPT)
+    legacy.append({**legacy[0], 'key': 'second'})
+    with pytest.raises(ValueError, match='Названия групп с изображениями'):
+        subject.render_repeat_base(
+            PROMPT, legacy, {'outfit': 'dress', 'second': 'dress'},
+            image_indices=[2, 3],
+        )
+
+
+def test_image_field_requires_valid_selected_reference_indices():
+    fields = subject.normalize_repeat_fields(
+        [{key: value for key, value in raw_fields()[0].items()
+          if key != 'original_value'}], prompt=PROMPT,
+    )
+    for indices in ([], [0], [True], [1, 2]):
+        with pytest.raises(ValueError, match='референс'):
+            subject.render_repeat_base(PROMPT, fields, {'outfit': 'dress'}, image_indices=indices)
+
 
 
 def test_forged_choice_and_foreign_custom_upload_rejected():

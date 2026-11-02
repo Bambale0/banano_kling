@@ -133,11 +133,27 @@ def admin_preview_enabled() -> bool:
     }
 
 
+def _validate_image_group_labels(fields: Sequence[Mapping[str, Any]]) -> None:
+    """Image roles are identified by their names, not by source prompt spans."""
+    labels = [str(field.get("label") or "").strip().casefold() for field in fields]
+    for index, field in enumerate(fields):
+        if field.get("image_choices") and labels.count(labels[index]) > 1:
+            raise ValueError("Названия групп с изображениями не должны повторяться")
+
+
 def normalize_repeat_fields(raw_fields: Any, *, prompt: str) -> list[dict[str, Any]]:
     if raw_fields == []:
         return []
+    # An image choice is bound to an actual @ImageN reference, not to source
+    # text. Ignore stale source fragments from older image-choice editors.
+    # Text-only choices keep their exact original-prompt validation.
+    raw_for_trend = [
+        {key: value for key, value in item.items() if key != "original_value"}
+        if isinstance(item, Mapping) and item.get("image_choices") else item
+        for item in raw_fields
+    ] if isinstance(raw_fields, list) else raw_fields
     settings = normalize_user_fields_settings(
-        {"user_fields": raw_fields},
+        {"user_fields": raw_for_trend},
         prompt=str(prompt or ""),
     )
     fields = configured_user_fields(settings, prompt=str(prompt or ""))
@@ -172,10 +188,16 @@ def normalize_repeat_fields(raw_fields: Any, *, prompt: str) -> list[dict[str, A
                     str(prompt or ""), {"user_fields": [field]}, {field["key"]: choice},
                 )
             field["choices"] = choices
-    if any(not str(field.get("original_value") or "").strip() for field in fields):
-        raise ValueError("Для каждого параметра укажите точный исходный фрагмент промпта")
+    _validate_image_group_labels(fields)
+    if any(
+        not str(field.get("original_value") or "").strip()
+        for field in fields if not field.get("image_choices")
+    ):
+        raise ValueError("Для текстового параметра укажите исходный фрагмент промпта")
     spans: list[list[tuple[int, int]]] = []
     for field in fields:
+        if field.get("image_choices"):
+            continue
         binding = str(field["original_value"]).strip()
         pattern = (
             re.compile(r"(?<![\w:.])" + re.escape(binding) + r"(?![\w:]|\.\d)", re.IGNORECASE)
@@ -209,9 +231,15 @@ def render_repeat_base(
     image_start_index: int = 1,
     image_indices: Sequence[int] | None = None,
 ) -> str:
+    _validate_image_group_labels(fields)
     values = dict(raw_values) if isinstance(raw_values, Mapping) else {}
     image_index = image_start_index
     image_ordinal = 0
+    image_overrides: list[tuple[str, int]] = []
+    if image_indices is not None and len(image_indices) != sum(
+        bool(field.get("image_choices")) for field in fields
+    ):
+        raise ValueError("Неверное количество выбранных референсов")
     for field in fields:
         if field.get("image_choices"):
             value = str(values.get(field["key"]) or "")
@@ -220,7 +248,9 @@ def render_repeat_base(
             ):
                 raise ValueError(f"Выберите изображение для «{field['label']}»")
             selected_index = image_indices[image_ordinal] if image_indices is not None else image_index
-            values[field["key"]] = f"{field['label']} from @Image{selected_index}"
+            if type(selected_index) is not int or selected_index < 1:
+                raise ValueError("Неверный номер выбранного референса")
+            image_overrides.append((str(field["label"]), selected_index))
             image_ordinal += 1
             image_index += 1
             continue
@@ -239,6 +269,8 @@ def render_repeat_base(
     private_values = {}
     source = str(source_prompt or "")
     for field in fields:
+        if field.get("image_choices"):
+            continue
         binding = str(field.get("original_value") or "").strip()
         pattern = (
             re.compile(r"(?<![\w:.])" + re.escape(binding) + r"(?![\w:]|\.\d)", re.IGNORECASE)
@@ -259,7 +291,25 @@ def render_repeat_base(
             raise ValueError("Исходные фрагменты параметров не должны пересекаться")
         masked = masked[:start] + token + masked[end:]
         previous_start = start
-    return render_trend_prompt(masked, {"user_fields": private_fields}, private_values)
+    rendered = (
+        render_trend_prompt(masked, {"user_fields": private_fields}, private_values)
+        if private_fields else masked.strip()
+    )
+    if image_overrides:
+        directives = "\n".join(
+            f"- «{label}»: используйте @Image{index} как главный визуальный "
+            f"референс для этой детали, замените только «{label}» в исходной сцене."
+            for label, index in image_overrides
+        )
+        rendered = (
+            f"{rendered}\n\n"
+            "ПРИОРИТЕТ ПОЛЬЗОВАТЕЛЬСКИХ ИЗОБРАЖЕНИЙ: следующие референсы "
+            "выбраны пользователем и имеют приоритет над описанием этих деталей "
+            "в исходном промпте и на исходных изображениях. Сохраните остальных "
+            "персонажей, сценарий, ракурс, освещение и движения.\n"
+            f"{directives}"
+        )
+    return rendered.strip()
 
 
 def append_repeat_images(existing: list[str], images: Sequence[str]) -> list[int]:
@@ -416,6 +466,8 @@ def _decode_fields(raw: Any) -> list[dict[str, Any]]:
             raw = next((item for item in value if isinstance(item, Mapping) and item.get("key") == field["key"]), {})
             images = _image_choices(raw)
             if images:
+                # Previously stored image-choice bindings are no longer source-text matches.
+                field.pop("original_value", None)
                 field["image_choices"] = images
                 field["allow_custom_image"] = raw.get("allow_custom_image") is True
         return fields

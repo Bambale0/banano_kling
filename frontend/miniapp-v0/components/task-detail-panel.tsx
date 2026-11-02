@@ -244,6 +244,9 @@ export function TaskDetailPanel() {
     if (!taskDetail || publishBusy) return
     const target = publicationScope === 'profile' ? 'свой профиль' : 'ленту и свой профиль'
     if (!isPublished && !confirmPublication(target)) return
+    const repeatFieldsForPublication = repeatUserFields.map((field) =>
+      field.image_choices?.length ? { ...field, original_value: '' } : field
+    )
     setPublishBusy(true)
     try {
       const published = await publishGeneration(taskDetail.task_id, {
@@ -258,7 +261,7 @@ export function TaskDetailPanel() {
           blurred: feedBlurred,
           publicationScope,
           adultContent,
-          ...(taskDetail.repeat_personalization_editor_enabled ? { repeatUserFields } : {}),
+          ...(taskDetail.repeat_personalization_editor_enabled ? { repeatUserFields: repeatFieldsForPublication } : {}),
         })
         updateTask(taskDetail.task_id, {
           is_public_feed: published.publication_scope === 'feed',
@@ -279,7 +282,7 @@ export function TaskDetailPanel() {
             } : {}),
           },
           ...(taskDetail.repeat_personalization_editor_enabled ? {
-            repeat_user_fields: repeatUserFields,
+            repeat_user_fields: repeatFieldsForPublication,
           } : {}),
           feed_blurred: Boolean(published.feed_blurred),
         })
@@ -899,7 +902,7 @@ export function TaskDetailPanel() {
                       <div>
                         <h3 className="text-xs font-semibold text-foreground">Параметры персонализации повтора</h3>
                         <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-                          Админ-превью. Укажите название выбора и точный фрагмент скрытого промпта, который можно заменить. Полный промпт пользователю не показывается.
+                          Админ-превью. Для вариантов с изображениями достаточно названия группы и картинок — искать текст в скрытом промпте не нужно. Для текстовых вариантов укажите исходный фрагмент. Полный промпт пользователю не показывается.
                         </p>
                       </div>
                       {repeatUserFields.map((field, index) => (
@@ -918,14 +921,14 @@ export function TaskDetailPanel() {
                             index={index}
                             onChange={(choices) => updateRepeatUserField(index, { choices })}
                           /> : null}
-                          <input
+                          {!field.image_choices?.length ? <input
                             aria-label={`Исходный фрагмент ${index + 1}`}
                             value={field.original_value || ''}
                             maxLength={160}
                             placeholder="Точный текст: blue coat"
                             onChange={(event) => updateRepeatUserField(index, { original_value: event.target.value })}
                             className="min-h-10 rounded-md border border-border/60 bg-background px-3 text-sm text-foreground"
-                          />
+                          /> : null}
                           <Button
                             type="button"
                             variant="ghost"

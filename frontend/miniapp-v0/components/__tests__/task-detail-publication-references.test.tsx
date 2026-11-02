@@ -160,6 +160,38 @@ describe('TaskDetailPanel publication references', () => {
     })))
   })
 
+  it('publishes image-backed repeat groups by name without an original prompt fragment', async () => {
+    const context = mockedUseApp.getMockImplementation()!()
+    mockedUseApp.mockReturnValue({ ...context, taskDetail: {
+      ...context.taskDetail!,
+      repeat_personalization_editor_enabled: true,
+      repeat_image_choices_supported: true,
+      repeat_user_fields: [{
+        key: 'outfit', label: 'Образ', original_value: 'not found in hidden prompt',
+        type: 'text', required: true, max_length: 160,
+        image_choices: [{
+          id: 'dress', label: 'Платье',
+          image_url: 'https://neuromixbot.com/uploads/repeat-choices/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpg',
+        }],
+      }],
+    } } as ReturnType<typeof useApp>)
+
+    render(<TaskDetailPanel />)
+    fireEvent.click(screen.getByRole('button', { name: /^Опубликовать$/i }))
+    expect(screen.getByLabelText('Название параметра 1')).toHaveValue('Образ')
+    expect(screen.queryByLabelText('Исходный фрагмент 1')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Варианты параметра 1')).not.toBeInTheDocument()
+    expect(screen.getByText('Варианты с изображениями')).toBeInTheDocument()
+    fireEvent.click(screen.getAllByRole('button', { name: /^Опубликовать$/i })[0])
+
+    await waitFor(() => expect(mockedPublish).toHaveBeenCalledWith('seedance-task', expect.objectContaining({
+      repeatUserFields: [expect.objectContaining({
+        key: 'outfit', label: 'Образ', original_value: '',
+        image_choices: [expect.objectContaining({ id: 'dress' })],
+      })],
+    })))
+  })
+
   it.each(['image', 'video'])('lets a non-admin publish a private %s result without exporting its recipe', async (type) => {
     const context = mockedUseApp.getMockImplementation()!()
     mockedUseApp.mockReturnValue({ ...context, taskDetail: {
