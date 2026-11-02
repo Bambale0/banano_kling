@@ -34,6 +34,7 @@ interface AppContextType {
   closeWorkspace: () => void
   consumeFeedDeepLink: () => void
   refreshTasks: () => Promise<void>
+  refreshBalance: () => Promise<void>
   refreshTelegramChatAccess: (signal: AbortSignal) => Promise<boolean>
   setCredits: (amount: number) => void
   addTask: (task: Task) => void
@@ -323,6 +324,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       applyTaskDetail(null)
     }, 300)
   }, [applyTaskDetail])
+
+  // A balance refresh must not set global isLoading: doing so unmounts every
+  // generation form and would discard the repeat draft after a purchase.
+  const refreshBalance = useCallback(async () => {
+    if (!getInitData()) return
+    const data = await bootstrapApp()
+    applyBootstrap(data, chatAccessRevision.current)
+  }, [applyBootstrap])
 
   const openBalance = useCallback((intent?: FundingIntent) => {
     cancelStartNavigation()
@@ -728,6 +737,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         closeWorkspace,
         consumeFeedDeepLink,
         refreshTasks,
+        refreshBalance,
         refreshTelegramChatAccess,
         setCredits,
         addTask,
