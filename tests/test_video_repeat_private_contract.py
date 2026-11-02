@@ -1290,3 +1290,65 @@ def test_foreign_legacy_descriptor_requires_own_photo_without_revealing_author_u
     assert descriptor['available'] is True
     assert descriptor['images'] == [{'index': 0, 'role': 'reference', 'binding': 'upload'}]
     assert FACE not in json.dumps(descriptor)
+
+
+def test_four_image_seedance_repeat_uses_one_face_and_three_curated_choices():
+    from bot import repeat_personalization as choices
+    source_images = [f"https://private.test/source-{n}.jpg" for n in range(4)]
+    catalog = [
+        {"key": key, "label": label, "image_choices": [{
+            "id": key, "label": label,
+            "image_url": "https://neuromixbot.com/uploads/repeat-choices/" + marker * 32 + ".jpg",
+        }]}
+        for key, label, marker in [
+            ("car", "Машина", "a"), ("outfit", "Одежда", "b"), ("cake", "Торт", "c"),
+        ]
+    ]
+    fields = choices.normalize_repeat_fields(catalog, prompt="Keep the person from @Image1.")
+    source = {
+        "id": 500, "model": "seedance_2_5", "type": "video",
+        "prompt": "Keep the person from @Image1.",
+        "feed_repeat_reference_selection": {"version": 1, "images": [], "videos": []},
+        "_repeat_consumer_telegram_id": 880102, "_repeat_choice_fields": fields,
+        "request_data": {
+            "seedance25_scenario": "multimodal", "v_type": "video", "seedance25_resolution": "720p",
+            "reference_images": source_images, "v_reference_videos": [],
+        },
+    }
+    viewer_face = "https://viewer.test/own-face.jpg"
+    edited = continuity.enrich_video_repeat_body({
+        "v_model": "seedance_2_5", "v_type": "video",
+        "reference_images": [viewer_face], "v_reference_videos": [],
+        "repeat_user_values": {"car": "car", "outfit": "outfit", "cake": "cake"},
+    }, source)
+    assert edited["reference_images"] == [
+        viewer_face, *[field["image_choices"][0]["image_url"] for field in fields],
+    ]
+    assert edited["_repeat_choice_image_indices"] == [2, 3, 4]
+    assert all(original not in json.dumps(edited) for original in source_images)
+
+
+def test_catalog_source_slot_replacement_requires_real_face_upload():
+    from bot import repeat_personalization as choices
+    fields = choices.normalize_repeat_fields([{
+        "key": key, "label": key, "image_choices": [{
+            "id": key, "label": key,
+            "image_url": "https://neuromixbot.com/uploads/repeat-choices/" + marker * 32 + ".jpg",
+        }],
+    } for key, marker in [("car", "a"), ("outfit", "b"), ("cake", "c")]], prompt="Scene")
+    source = {
+        "id": 501, "model": "seedance_2_5", "type": "video",
+        "feed_repeat_reference_selection": {"version": 1, "images": [], "videos": []},
+        "_repeat_consumer_telegram_id": 880102, "_repeat_choice_fields": fields,
+        "request_data": {"seedance25_scenario": "multimodal", "v_type": "video",
+                         "reference_images": [f"https://private.test/{i}.jpg" for i in range(4)]},
+    }
+    request = {"v_model": "seedance_2_5", "v_type": "video",
+               "reference_images": [], "v_reference_videos": [],
+               "repeat_user_values": {"car": "car", "outfit": "outfit", "cake": "cake"}}
+    with pytest.raises(continuity.VideoRepeatReferenceError, match="Добавьте"):
+        continuity.enrich_video_repeat_body(request, source)
+    # Legacy publications without curated image groups still request all originals.
+    source["_repeat_choice_fields"] = []
+    with pytest.raises(continuity.VideoRepeatReferenceError, match="Добавьте"):
+        continuity.enrich_video_repeat_body(request, source)

@@ -225,6 +225,23 @@ async def _attach_repeat_personalization(
         fields = by_generation.get(int(card.get("id") or 0), [])
         if fields:
             card["repeat_user_fields"] = public_repeat_fields(fields)
+            # Catalog image choices occupy *existing* replaceable source slots;
+            # source URLs remain server-side and only the slot binding is public.
+            slots = card.get("repeat_reference_slots")
+            if (isinstance(slots, dict) and slots.get("available")
+                    and isinstance(slots.get("images"), list)):
+                from bot.repeat_personalization import assign_catalog_image_slots
+                try:
+                    assigned = assign_catalog_image_slots(slots["images"], fields)
+                    card["repeat_reference_slots"] = {
+                        **slots,
+                        "images": [{key: value for key, value in slot.items()
+                                    if key != "choice_key"} for slot in assigned],
+                    }
+                except ValueError:
+                    card["repeat_reference_slots"] = {
+                        "version": 1, "available": False, "images": [], "videos": [],
+                    }
 
 
 async def _repeat_personalized_source_prompt(
@@ -236,6 +253,7 @@ async def _repeat_personalized_source_prompt(
     image_references: list[str] | None = None,
     image_choices_supported: bool = True,
     image_model: str | None = None,
+    image_indices: list[int] | None = None,
 ) -> str:
     if "repeat_user_values" not in body:
         return source_prompt
@@ -252,7 +270,15 @@ async def _repeat_personalized_source_prompt(
     if images and image_references is None:
         raise ValueError("В этом режиме недоступен выбор изображений")
     compiled_images = list(image_references or [])
-    indices = append_repeat_images(compiled_images, images)
+    # A publication with curated source-slot choices already placed selected
+    # files into the original image positions at the authenticated boundary.
+    # Appending them again would double the provider inputs and lose face slots.
+    if image_indices is None:
+        indices = append_repeat_images(compiled_images, images)
+    else:
+        if len(image_indices) != len(images):
+            raise ValueError("Изображения для повтора изменились. Откройте работу заново")
+        indices = image_indices
     if images and image_model:
         from bot.handlers.generation import _prepare_banana_reference_images
         from bot.services.media_input_utils import reference_source_identity

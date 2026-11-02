@@ -239,4 +239,38 @@ describe('TaskDetailPanel publication references', () => {
 
   })
 
+
+  it('saves real source image ordinal when catalog photo options have gaps', async () => {
+    const context = mockedUseApp.getMockImplementation()!()
+    mockedUseApp.mockReturnValue({ ...context, taskDetail: {
+      ...context.taskDetail!,
+      publication_reference_images: [
+        'https://example.test/source-one.jpg',
+        'https://example.test/source-four.jpg',
+      ],
+      publication_reference_image_indices: [1, 4],
+      repeat_personalization_editor_enabled: true,
+      repeat_image_choices_supported: true,
+      repeat_user_fields: [{
+        key: 'car', label: 'Машина', type: 'text', required: true,
+        image_choices: [{
+          id: 'car', label: 'Машина',
+          image_url: 'https://neuromixbot.com/uploads/repeat-choices/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpg',
+        }],
+      }],
+    } } as ReturnType<typeof useApp>)
+
+    render(<TaskDetailPanel />)
+    fireEvent.click(screen.getByRole('button', { name: /^Опубликовать$/i }))
+    const sourceSelector = screen.getByRole('combobox', { name: 'Фото для варианта Машина' })
+    const options = Array.from(sourceSelector.querySelectorAll('option')).map(option => option.value)
+    expect(options).toEqual(['', '1', '4'])
+    fireEvent.change(sourceSelector, { target: { value: '4' } })
+    fireEvent.click(screen.getAllByRole('button', { name: /^Опубликовать$/i })[0])
+
+    await waitFor(() => expect(mockedPublish).toHaveBeenCalledWith('seedance-task', expect.objectContaining({
+      repeatUserFields: [expect.objectContaining({ key: 'car', image_slot_index: 4 })],
+    })))
+  })
+
 })

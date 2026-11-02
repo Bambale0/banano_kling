@@ -71,6 +71,7 @@ jobs:
           components/tabs/__tests__/video-tab-repeat.test.tsx
           components/forms/video-generator-form-repeat-pricing.test.tsx
           components/forms/video-generator-form-repeat.test.tsx
+          components/forms/wan3-prime-form.test.tsx
           components/forms/repeat-image-choices.test.tsx
           lib/__tests__/personalization-errors.test.ts
           components/forms/image-generator-form-remix.test.tsx

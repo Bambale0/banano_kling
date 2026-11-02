@@ -1324,10 +1324,10 @@ export function VideoGeneratorForm({
             ) : (
               <>
                 <p className="text-xs text-muted-foreground">Сохранено автором: {typedSlots.filter((slot) => slot.binding === 'fixed').length}</p>
-                <p className="text-xs text-muted-foreground">Сохранённые референсы используются скрыто. Загрузите свои файлы для остальных позиций.</p>
+                <p className="text-xs text-muted-foreground">Готовые варианты выбираются отдельно ниже. Загрузите только свои фото для свободных позиций.</p>
                 {typedSlots.map((slot) => {
                   const label = `${slot.role === 'first_frame' ? 'Первый кадр · ' : slot.role === 'last_frame' ? 'Последний кадр · ' : ''}${slot.type === 'image' ? 'Фото' : 'Видео'} ${slot.index + 1}`
-                  return slot.binding === 'fixed' ? (
+                  return slot.binding === 'choice' ? null : slot.binding === 'fixed' ? (
                     <p key={slot.key} className="text-xs text-muted-foreground">{label} · Сохранён автором</p>
                   ) : (
                     <fieldset key={`${slotSession}-${slot.key}`} aria-label={label} className="min-w-0 space-y-2" disabled={isSubmitting}>

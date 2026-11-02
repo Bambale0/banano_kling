@@ -224,7 +224,7 @@ async def test_wan_real_image_probe_quote_to_launch_keeps_choice_and_is_idempote
 
     from PIL import Image
 
-    from bot import miniapp
+    from bot import database, miniapp
     from bot.services.wan3_prime_lifecycle import (
         Wan3PrimeLifecycle,
         Wan3PrimeLifecycleError,
@@ -242,6 +242,24 @@ async def test_wan_real_image_probe_quote_to_launch_keeps_choice_and_is_idempote
 
     owner, source_id = await published_source()
     actor = await user_actor(100, telegram_id=991202)
+    # The source has two images (face replacement + consented fixed image).
+    # Add a distinct unconsented outfit slot: a catalog group must replace
+    # that slot, not steal the visitor's face or append a third provider image.
+    original = await database.get_generation_task_payload(source_id)
+    source_recipe = dict(original['request_data'])
+    image_slots = [
+        'https://owner.example/face.png',
+        'https://owner.example/outfit.png',
+        FIXED,
+    ]
+    source_recipe['reference_image_urls'] = image_slots
+    source_recipe['reference_images'] = image_slots
+    async with database.db_backend.connect(database.DATABASE_PATH) as conn:
+        await conn.execute(
+            'UPDATE generation_tasks SET request_data = ? WHERE id = ?',
+            (json.dumps(source_recipe, ensure_ascii=False), source_id),
+        )
+        await conn.commit()
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv(subject.FEATURE_FLAG, '1')
     monkeypatch.setattr(miniapp.config, 'is_admin', lambda _id: True)
@@ -259,6 +277,16 @@ async def test_wan_real_image_probe_quote_to_launch_keeps_choice_and_is_idempote
             return await ActualWan3PrimeProbe().probe_file(path, kind=kind)
 
     plan = public_plan(await get_repeat_plan(actor, source_id))
+    assert [(slot['key'], slot['binding']) for slot in plan['slots'] if slot['kind'] == 'image'] == [
+        ('image:0', 'upload'), ('image:1', 'choice'), ('image:2', 'fixed'),
+    ]
+    # The owner's original materials stay private; the curated thumbnail must
+    # remain public so the visitor can actually choose it in the repeat editor.
+    public_plan_json = json.dumps(plan)
+    assert 'outfit.png' not in public_plan_json
+    assert 'https://owner.example/face.png' not in public_plan_json
+    assert FIXED not in public_plan_json and SECRET not in public_plan_json
+    assert plan['repeat_user_fields'][0]['image_choices'][0]['image_url'] == choice
     request = {**plan['recipe'], 'source_feed_gen_id': source_id, 'repeat_plan_hash': plan['repeat_plan_hash'],
                'repeat_replacements': {'image:0': USER_FACE}, 'repeat_user_values': {'outfit': 'dress'}}
     provider = Provider()
@@ -275,8 +303,9 @@ async def test_wan_real_image_probe_quote_to_launch_keeps_choice_and_is_idempote
         assert await balance(actor.user_id) == 100
         return
     result = await lifecycle.launch(actor, request, quote, 'selected-image-once')
-    assert provider.recipe.reference_image_urls == [USER_FACE, FIXED, choice]
-    assert '@Image3' in provider.recipe.prompt
+    assert provider.recipe.reference_image_urls == [USER_FACE, choice, FIXED]
+    assert '@Image2' in provider.recipe.prompt
+    assert provider.recipe.reference_video_urls == ['https://owner.example/source.mp4']
     assert (await lifecycle.launch(actor, request, quote, 'selected-image-once'))['task_id'] == result['task_id']
     assert provider.creates == 1
 
@@ -373,3 +402,70 @@ async def test_catalog_http_upload_is_admin_only_and_not_a_personal_reference(mo
         assert '/uploads/repeat-choices/' in payload['url']
         assert payload['reference'] is None
     personal_save.assert_not_awaited()
+
+
+def test_curated_photo_groups_replace_last_three_source_slots_not_four_user_uploads():
+    slots = [
+        {"kind": "image", "role": "reference", "index": n, "binding": "upload",
+         "url": f"https://private.test/source-{n}.jpg"}
+        for n in range(4)
+    ]
+    fields = [
+        {"key": key, "label": label, "image_choices": [{"id": key}]}
+        for key, label in [("car", "Машина"), ("outfit", "Одежда"), ("cake", "Торт")]
+    ]
+    bound = subject.assign_catalog_image_slots(slots, fields)
+    assert [(slot["binding"], slot.get("choice_key")) for slot in bound] == [
+        ("upload", None), ("choice", "car"), ("choice", "outfit"), ("choice", "cake"),
+    ]
+    assert all(slot["binding"] == "upload" for slot in slots)  # input immutable
+
+
+def test_author_can_bind_categories_out_of_source_photo_order():
+    slots = [{"kind": "image", "role": "reference", "index": n, "binding": "upload"} for n in range(4)]
+    fields = [
+        {"key": "car", "image_choices": [{"id": "car"}], "image_slot_index": 3},
+        {"key": "outfit", "image_choices": [{"id": "outfit"}], "image_slot_index": 1},
+        {"key": "cake", "image_choices": [{"id": "cake"}], "image_slot_index": 2},
+    ]
+    mapped = subject.assign_catalog_image_slots(slots, fields)
+    assert [slot.get("choice_key") for slot in mapped] == [None, "outfit", "cake", "car"]
+    exposed = subject.public_repeat_fields(fields)
+    assert all("image_slot_index" not in item for item in exposed)
+
+
+def test_catalog_binding_preserves_fixed_face_video_and_other_media():
+    slots = [
+        {"kind": "image", "role": "first_frame", "binding": "upload", "index": 0},
+        {"kind": "video", "role": "reference", "binding": "upload", "index": 0},
+        {"kind": "image", "role": "reference", "binding": "upload", "index": 0},
+        {"kind": "image", "role": "reference", "binding": "fixed", "index": 1},
+        {"kind": "image", "role": "reference", "binding": "upload", "index": 2},
+    ]
+    mapped = subject.assign_catalog_image_slots(slots, [
+        {"key": "outfit", "image_choices": [{"id": "dress"}]},
+        {"key": "cake", "image_choices": [{"id": "cake"}]},
+    ])
+    assert [slot["binding"] for slot in mapped] == [
+        "upload", "upload", "choice", "fixed", "choice",
+    ]
+
+
+def test_duplicate_or_fixed_catalog_binding_is_rejected_without_fallback():
+    slots = [{"kind": "image", "role": "reference", "binding": "upload", "index": n} for n in range(4)]
+    fields = [{"key": key, "image_choices": [{"id": key}], "image_slot_index": 2}
+              for key in ("cake", "outfit")]
+    with pytest.raises(ValueError, match="разные доступные"):
+        subject.assign_catalog_image_slots(slots, fields)
+    slots[2]["binding"] = "fixed"
+    with pytest.raises(ValueError, match="разные доступные"):
+        subject.assign_catalog_image_slots(slots, fields[:1])
+
+
+def test_old_repeats_without_catalog_choices_still_use_original_upload_contract():
+    slots = [{"kind": "image", "role": "reference", "binding": "upload", "index": n} for n in range(4)]
+    assert subject.assign_catalog_image_slots(slots, []) == slots
+    # A text-mode source with no eligible slots preserves the previous append-only contract.
+    assert subject.assign_catalog_image_slots([], [
+        {"key": "outfit", "image_choices": [{"id": "dress"}]},
+    ]) == []

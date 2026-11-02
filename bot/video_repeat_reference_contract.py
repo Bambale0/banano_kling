@@ -341,6 +341,35 @@ def merge_typed_video_inputs(
                                   allow_audio_replacement=bool(explicit_audio or (identity and len(replaced) == 2)))
     if plan is None:
         return normalized
+    # Author-curated image groups replace source positions; the remaining
+    # positions alone require fresh visitor photos. The original source URLs
+    # are neither published nor reused unless explicitly granted as fixed.
+    fields = task.get("_repeat_choice_fields") or []
+    image_fields = [item for item in fields if item.get("image_choices")]
+    selected_by_key: dict[str, str] = {}
+    if image_fields:
+        from bot.repeat_personalization import (
+            assign_catalog_image_slots,
+            repeat_image_references,
+        )
+
+        try:
+            plan["images"] = assign_catalog_image_slots(plan["images"], fields)
+        except ValueError as exc:
+            raise VideoRepeatContractError(str(exc)) from exc
+        if any(slot["binding"] == "choice" for slot in plan["images"]):
+            if "repeat_user_values" not in body:
+                raise VideoRepeatContractError("Выберите варианты изображений для повтора")
+            consumer = task.get("_repeat_consumer_telegram_id")
+            if not isinstance(consumer, int) or consumer <= 0:
+                raise VideoRepeatContractError("Откройте повтор из Telegram")
+            try:
+                selected = repeat_image_references(
+                    fields, body["repeat_user_values"], telegram_id=consumer,
+                )
+            except ValueError as exc:
+                raise VideoRepeatContractError(str(exc)) from exc
+            selected_by_key = {str(item["key"]): url for item, url in zip(image_fields, selected)}
     result = dict(normalized)
     for key in MEDIA_KEYS:
         result.pop(key, None)
@@ -393,9 +422,13 @@ def merge_typed_video_inputs(
         iterator = iter(uploads)
         private: list[str] = []
         for slot in slots:
-            value = slot["url"] if slot["binding"] == "fixed" else next(iterator)
             if slot["binding"] == "fixed":
+                value = slot["url"]
                 private.append(value)
+            elif slot["binding"] == "choice":
+                value = selected_by_key[slot["choice_key"]]
+            else:
+                value = next(iterator)
             if kind == "videos" or slot["role"] == "reference":
                 result[field].append(value)
             elif slot["role"] == "first_frame":
@@ -411,6 +444,17 @@ def merge_typed_video_inputs(
             result.pop(f"_private_repeat_reference_{kind}", None)
     _validate_provider_list_slots(result["reference_images"])
     _validate_provider_list_slots(result["v_reference_videos"])
+    if selected_by_key:
+        # Match the exact provider image order, including a separate first
+        # frame when present. Do not append choices a second time later.
+        ordered = ([result["v_image_url"]] if result.get("v_image_url") else []) + result["reference_images"]
+        indices: list[int] = []
+        for field in image_fields:
+            selected_url = selected_by_key[str(field["key"])]
+            if selected_url not in ordered:
+                raise VideoRepeatContractError("Выбранное фото не попало в повтор")
+            indices.append(ordered.index(selected_url) + 1)
+        result["_repeat_choice_image_indices"] = indices
     result.pop("_private_repeat_reference_audios", None)
     # Source audio is never part of the new typed grant.
     audio_list = _list(body, AUDIO_LIST_KEYS)

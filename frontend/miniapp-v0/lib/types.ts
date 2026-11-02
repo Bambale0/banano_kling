@@ -32,7 +32,7 @@ export interface VideoRepeatReferenceSlots {
   /** Final server quotes for the retained Seedance quality, including video references. */
   duration_costs?: Record<string, number>
   pricing_quality?: '480p' | '720p'
-  images: Array<{ index: number; role: 'reference' | 'first_frame' | 'last_frame'; binding: 'fixed' | 'upload' }>
+  images: Array<{ index: number; role: 'reference' | 'first_frame' | 'last_frame'; binding: 'fixed' | 'upload' | 'choice' }>
   videos: Array<{ index: number; role: 'reference'; binding: 'fixed' | 'upload' }>
 }
 
@@ -249,6 +249,8 @@ export interface TrendUserField {
   /** Optional author-curated values shown as one-tap choices in admin preview. */
   choices?: string[]
   image_choices?: { id: string; label: string; image_url: string }[]
+  /** Optional position of the original image to replace with a curated choice. */
+  image_slot_index?: number
   allow_custom_image?: boolean
 }
 

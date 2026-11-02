@@ -611,3 +611,44 @@ test('all photos in one selection are prepared before the first network upload',
   expect(uploadWan3PrimeReference).toHaveBeenCalledTimes(2)
   spies.forEach(spy => expect(spy).not.toHaveBeenCalled())
 })
+
+
+test('WAN visitor uploads only a face when car outfit cake are configured as curated choices', async () => {
+  ;(fetchWan3PrimeRepeatPlan as jest.Mock).mockResolvedValue({
+    ok: true, source_feed_gen_id: 42, repeat_plan_hash: 'curated-repeat',
+    recipe: {
+      model: 'wan_3_prime', scenario: 'reference', prompt: '',
+      duration: 5, aspect_ratio: '9:16', resolution: '720P',
+      audio: true, nsfw_checker: false,
+    },
+    slots: [
+      { key: 'image:0', kind: 'image', role: 'reference', index: 0, binding: 'upload' },
+      { key: 'image:1', kind: 'image', role: 'reference', index: 1, binding: 'choice' },
+      { key: 'image:2', kind: 'image', role: 'reference', index: 2, binding: 'choice' },
+      { key: 'image:3', kind: 'image', role: 'reference', index: 3, binding: 'choice' },
+    ],
+    repeat_user_fields: ['Машина', 'Одежда', 'Торт'].map((label, index) => ({
+      key: ['car', 'outfit', 'cake'][index], label, type: 'text',
+      required: true, image_choices: [{
+        id: ['car', 'outfit', 'cake'][index], label: `Вариант ${label}`,
+        image_url: `https://catalog.test/${index}.jpg`,
+      }],
+    })),
+  })
+  render(<Wan3PrimeForm credits={1000} publicationSourceId={42} />)
+  await screen.findByLabelText('Загрузить Фото 1')
+  expect(screen.queryByLabelText('Загрузить Фото 2')).not.toBeInTheDocument()
+  expect(screen.queryByLabelText('Загрузить Фото 3')).not.toBeInTheDocument()
+  expect(screen.queryByLabelText('Загрузить Фото 4')).not.toBeInTheDocument()
+  for (const name of ['Машина', 'Одежда', 'Торт']) {
+    fireEvent.click(screen.getByRole('button', { name: `Вариант ${name}` }))
+  }
+  expect(screen.getByRole('button', { name: 'Рассчитать стоимость' })).toBeDisabled()
+  await upload('Загрузить Фото 1', 'face.jpg', 'image/jpeg')
+  fireEvent.click(screen.getByRole('button', { name: 'Рассчитать стоимость' }))
+  await waitFor(() => expect(quoteWan3Prime).toHaveBeenCalledTimes(1))
+  expect((quoteWan3Prime as jest.Mock).mock.calls[0][0].recipe).toMatchObject({
+    repeat_replacements: { 'image:0': 'https://owned.test/face.jpg' },
+    repeat_user_values: { car: 'car', outfit: 'outfit', cake: 'cake' },
+  })
+})
