@@ -19,7 +19,9 @@ import {
   type Seedance25Resolution,
   type Seedance25Scenario,
 } from '@/lib/seedance25-api'
-import type { UploadedFile, VideoModel, VideoPromptPreset } from '@/lib/types'
+import type { UploadedFile, VideoModel, VideoPromptPreset, PaymentPackage } from '@/lib/types'
+import type { FundingIntent } from '@/lib/generation-funding'
+import { GenerationFundingOffer } from '@/components/generation-funding-offer'
 
 const RATIOS = ['adaptive', '16:9', '9:16', '1:1', '4:3', '3:4', '21:9'] as const
 const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp', 'bmp', 'tiff', 'tif', 'gif'])
@@ -69,6 +71,8 @@ const SCENARIOS: Array<{
 interface Props {
   model?: VideoModel
   credits: number
+  paymentPackages?: PaymentPackage[]
+  onOpenBalance?: (intent: FundingIntent) => void
   isAdmin: boolean
   promptPreset?: VideoPromptPreset | null
   onPromptPresetConsumed?: () => void
@@ -262,7 +266,7 @@ function SectionTitle({ eyebrow, title, hint }: { eyebrow?: string; title: strin
   )
 }
 
-export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, onPromptPresetConsumed, onQueued, onSavedReference }: Props) {
+export function Seedance25PublicForm({ model, credits, paymentPackages, onOpenBalance, isAdmin, promptPreset, onPromptPresetConsumed, onQueued, onSavedReference }: Props) {
   const [scenario, setScenario] = useState<PublicScenario>('multimodal')
   const identityTransfer = scenario === 'identity_transfer'
   const referenceScenario = scenario === 'multimodal' || identityTransfer
@@ -959,6 +963,9 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
       </div>
 
       {error ? <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</div> : null}
+      {quoteReady && !canAfford && !isAdmin && price > credits ? (
+        <GenerationFundingOffer cost={price} credits={credits} paymentPackages={paymentPackages} onTopup={onOpenBalance} />
+      ) : null}
       {queued ? (
         <div className="rounded-xl border border-cyan/30 bg-cyan/5 p-3 text-sm">
           <strong>✅ Видео поставлено в очередь</strong>
