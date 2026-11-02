@@ -91,6 +91,7 @@ export function BalanceSheet() {
     url: string; orderId: string; provider: PaymentProvider; credits: number; amountRub: number | null
   } | null>(null)
   const paymentReadyRef = useRef<HTMLElement>(null)
+  const manualPaymentRef = useRef<HTMLElement>(null)
   const balanceOpenRef = useRef(isBalanceOpen)
 
   useEffect(() => {
@@ -116,6 +117,12 @@ export function BalanceSheet() {
       paymentReadyRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
     }
   }, [readyPayment, isBalanceOpen])
+
+  useEffect(() => {
+    if (manualPaymentUrl && !readyPayment && isBalanceOpen) {
+      manualPaymentRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
+    }
+  }, [manualPaymentUrl, readyPayment, isBalanceOpen])
 
   const normalizedCustomerEmail = normalizeCustomerEmail(customerEmail)
   const customerEmailValid = isValidCustomerEmail(normalizedCustomerEmail)
@@ -233,6 +240,9 @@ export function BalanceSheet() {
           ? normalizedCustomerEmail
           : undefined,
       })
+      // A checkout reply received after close must not launch Stars or store
+      // any stale signed URL (the regular payment path has the same guard).
+      if (!balanceOpenRef.current) return
       if (payment.provider === 'telegram_stars' && payment.invoice_url) {
         const status = await openTelegramInvoice(payment.invoice_url)
         if (status === 'paid') {
@@ -416,7 +426,7 @@ export function BalanceSheet() {
                 </section>
               ) : null}
               {manualPaymentUrl && !readyPayment ? (
-                <section role="region" aria-label="Ссылка на оплату"
+                <section ref={manualPaymentRef} role="region" aria-label="Ссылка на оплату"
                   className="rounded-2xl border border-gold/40 bg-gold/10 p-4">
                   <p className="text-sm text-muted-foreground">
                     Ссылка на оплату подготовлена. Откройте её отдельным нажатием,
