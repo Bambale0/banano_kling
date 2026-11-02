@@ -2,6 +2,7 @@
 
 import type { ComponentType } from 'react'
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Banana, CreditCard, Gift, Globe2, Loader2, Mail, QrCode, Receipt, Sparkles, Star, X } from 'lucide-react'
 import { useApp } from '@/lib/app-context'
@@ -11,6 +12,7 @@ import { cn } from '@/lib/utils'
 import { bootstrapApp, sendMiniAppClientLog } from '@/lib/api'
 import { createPayment } from '@/lib/payment-api'
 import type { PaymentProvider } from '@/lib/types'
+import { getGenerationFunding } from '@/lib/generation-funding'
 
 type TelegramPaymentBridge = {
   openInvoice?: (url: string, callback?: (status: string) => void) => void
@@ -66,8 +68,17 @@ function isIOSPaymentWebView() {
 }
 
 export function BalanceSheet() {
-  const { state, isBalanceOpen, closeBalance, refreshTasks } = useApp()
-  const { paymentPackages, user, recentTasks, mode } = state
+  const { state, isBalanceOpen, closeBalance, fundingIntent, refreshBalance } = useApp()
+  const { user, recentTasks, mode } = state
+  const paymentPackages = mode === 'live' ? state.paymentPackages : []
+  const funding = fundingIntent && mode === 'live'
+    ? getGenerationFunding(fundingIntent.cost, user.credits, paymentPackages)
+    : null
+  const preferredPackageId = paymentPackages.some((pkg) => pkg.id === fundingIntent?.packageId)
+    ? fundingIntent?.packageId : funding?.recommended?.package.id
+  const sortedPackages = preferredPackageId
+    ? [...paymentPackages].sort((left, right) => Number(right.id === preferredPackageId) - Number(left.id === preferredPackageId))
+    : paymentPackages
   const emailInputRef = useRef<HTMLInputElement>(null)
   const [loadingPayment, setLoadingPayment] = useState<string | null>(null)
   const [customerEmail, setCustomerEmail] = useState('')
@@ -133,7 +144,9 @@ export function BalanceSheet() {
 
     const opened = window.open(url, '_blank', 'noopener,noreferrer')
     if (!opened) {
-      window.location.assign(url)
+      // The verified link is also available as a direct anchor below.
+      // Replacing the WebView location would discard the repeat draft.
+      toast.message('Счёт готов', { description: 'Нажмите «Перейти к оплате» в карточке счёта.' })
     }
   }
 
@@ -157,7 +170,7 @@ export function BalanceSheet() {
 
   const handleTopup = async (packageId: string, provider: PaymentProvider = 'telegram_stars') => {
     const selectedPackage = paymentPackages.find((item) => item.id === packageId)
-    if (!selectedPackage) return
+    if (mode !== 'live' || !selectedPackage) return
 
     const loadingKey = `${packageId}:${provider}`
     setReadyPayment(null)
@@ -188,7 +201,7 @@ export function BalanceSheet() {
           toast.success('Оплата Stars прошла', {
             description: `Начисляем ${payment.credits}🍌. Баланс обновится автоматически.`,
           })
-          await refreshTasks()
+          await refreshBalance()
         } else if (status === 'cancelled') {
           toast.message('Оплата отменена')
         } else if (status === 'failed') {
@@ -253,7 +266,9 @@ export function BalanceSheet() {
     }
   }
 
-  return (
+  if (typeof document === 'undefined') return null
+
+  return createPortal(
     <AnimatePresence>
       {isBalanceOpen && (
         <>
@@ -291,6 +306,32 @@ export function BalanceSheet() {
             </div>
 
             <div className="space-y-5 px-5 pb-6">
+              {fundingIntent && funding ? (
+                <section className="space-y-2 rounded-2xl border border-gold/40 bg-gold/5 p-4"
+                  aria-label="Пополнение для повтора">
+                  <h3 className="text-sm font-semibold text-foreground">Бананы для вашего видео</h3>
+                  {funding.shortage > 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      Видео стоит <strong className="text-foreground">{fundingIntent.cost}🍌</strong>.
+                      Баланс <strong className="text-foreground">{user.credits}🍌</strong>,
+                      не хватает <strong className="text-gold">{funding.shortage}🍌</strong>.
+                      Ниже выбирайте пакет — рубли и бананы указаны отдельно.
+                    </p>
+                  ) : (
+                    <p className="text-sm text-foreground">
+                      Баланса уже хватает для этого видео. Закройте окно и нажмите «Создать видео».
+                    </p>
+                  )}
+                  {funding.shortage > 0 && preferredPackageId ? (
+                    <p className="text-xs text-gold">Подходящий пакет показан первым.</p>
+                  ) : null}
+                  <Button type="button" variant="outline" className="w-full" onClick={() => {
+                    void refreshBalance().catch(() => toast.error('Не удалось обновить баланс. Повторите попытку.'))
+                  }}>
+                    Проверить зачисление бананов
+                  </Button>
+                </section>
+              ) : null}
               {readyPayment ? (
                 <section ref={paymentReadyRef} aria-label="Готовый счёт" className="rounded-2xl border border-gold/40 bg-gold/10 p-4">
                   <p className="font-medium text-foreground">Счёт готов: {readyPayment.amountRub !== null ? `${readyPayment.amountRub} ₽ · ` : ''}{readyPayment.credits}🍌</p>
@@ -379,8 +420,9 @@ export function BalanceSheet() {
                 </div>
 
                 <div className="space-y-3">
-                  {paymentPackages.map((pkg) => {
-                    const pricePerBanana = Math.round(pkg.price_rub / pkg.credits)
+                  {sortedPackages.map((pkg) => {
+                    const totalPackageCredits = pkg.credits + (pkg.bonus_credits ?? 0)
+                    const pricePerBanana = Math.round(pkg.price_rub / totalPackageCredits)
                     const starsPrice = pkg.price_stars ?? pkg.price_rub
                     const lavaConfigured = Boolean(pkg.lava_offer_id)
                     const tributeConfigured = Boolean(TRIBUTE_LINKS[pkg.id])
@@ -402,9 +444,11 @@ export function BalanceSheet() {
                         key={pkg.id}
                         className={cn(
                           'rounded-2xl border p-4 transition-all duration-200',
-                          pkg.popular
-                            ? 'border-gold/40 bg-gold/10'
-                            : 'border-border/50 bg-secondary/20'
+                          pkg.id === preferredPackageId
+                            ? 'border-gold bg-gold/15 ring-1 ring-gold/40'
+                            : pkg.popular
+                              ? 'border-gold/40 bg-gold/10'
+                              : 'border-border/50 bg-secondary/20'
                         )}
                       >
                         <div className="flex items-start justify-between gap-4">
@@ -419,8 +463,12 @@ export function BalanceSheet() {
                             </div>
                             <p className="mt-1 text-sm text-muted-foreground">{pkg.description}</p>
                             <p className="mt-2 text-xs text-muted-foreground">
-                              {pkg.credits}🍌 • около {pricePerBanana}₽ за банан
+                              {totalPackageCredits}🍌 • около {pricePerBanana}₽ за банан
                             </p>
+                            {pkg.bonus_credits ? <p className="mt-1 text-xs text-gold">+{pkg.bonus_credits}🍌 бонусом в пакете</p> : null}
+                            {funding && pkg.id === preferredPackageId && totalPackageCredits < funding.shortage ? (
+                              <p className="mt-1 text-xs text-destructive">Этого пакета не хватит на всю генерацию.</p>
+                            ) : null}
                             {foreignConfigured || tributeConfigured ? (
                               <p className="mt-1 text-xs text-muted-foreground">
                                 Зарубежная / СНГ · отдельный способ
@@ -429,7 +477,7 @@ export function BalanceSheet() {
                           </div>
                           <div className="text-right">
                             <p className="text-xl font-semibold text-foreground">{pkg.price_rub}₽</p>
-                            <p className="text-xs text-muted-foreground">{pkg.credits} бананов</p>
+                            <p className="text-xs text-muted-foreground">{totalPackageCredits} бананов</p>
                           </div>
                         </div>
 
@@ -595,7 +643,8 @@ export function BalanceSheet() {
           </motion.div>
         </>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   )
 }
 
