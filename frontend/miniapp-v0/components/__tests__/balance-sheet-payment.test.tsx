@@ -253,3 +253,54 @@ it('keeps a Tribute fallback link in the same WebView without issuing a duplicat
   expect(createPayment).not.toHaveBeenCalled()
   popup.mockRestore()
 })
+
+
+it('discards a late Stars invoice and never reopens checkout after the user closed it', async () => {
+  let resolvePayment!: (value: unknown) => void
+  ;(createPayment as jest.Mock).mockImplementation(() => new Promise(resolve => { resolvePayment = resolve }))
+  const openInvoice = jest.fn((_url: string, callback: (status: string) => void) => callback('cancelled'))
+  Object.assign(window.Telegram!.WebApp!, { openInvoice, openLink: undefined })
+  const { rerender } = render(<BalanceSheet />)
+
+  fireEvent.click(screen.getByRole('button', { name: /Stars/ }))
+  ;(useApp as jest.Mock).mockReturnValue({ ...fixture, isBalanceOpen: false })
+  rerender(<BalanceSheet />)
+  await act(async () => {
+    resolvePayment({
+      ok: true, provider: 'telegram_stars',
+      invoice_url: 'https://t.me/$stale-synthetic', credits: 50,
+    })
+  })
+  expect(openInvoice).not.toHaveBeenCalled()
+  expect(screen.queryByRole('region', { name: 'Ссылка на оплату' })).not.toBeInTheDocument()
+
+  ;(useApp as jest.Mock).mockReturnValue(fixture)
+  rerender(<BalanceSheet />)
+  expect(screen.queryByRole('link', { name: 'Перейти к оплате' })).not.toBeInTheDocument()
+})
+
+it('scrolls the manual payment fallback into view even when checkout was selected below the fold', async () => {
+  const oldDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView')
+  const scroll = jest.fn()
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scroll })
+  try {
+    Object.assign(window.Telegram!.WebApp!, {
+      platform: 'android', openInvoice: undefined, openLink: undefined,
+    })
+    const popup = jest.spyOn(window, 'open').mockReturnValue(null)
+    ;(createPayment as jest.Mock).mockResolvedValue({
+      ok: true, provider: 'telegram_stars',
+      invoice_url: 'https://t.me/$synthetic', credits: 50,
+    })
+    render(<BalanceSheet />)
+    fireEvent.click(screen.getByRole('button', { name: /Stars/ }))
+    await screen.findByRole('region', { name: 'Ссылка на оплату' })
+    await waitFor(() => expect(scroll).toHaveBeenCalledWith(expect.objectContaining({
+      behavior: 'smooth', block: 'center',
+    })))
+    popup.mockRestore()
+  } finally {
+    if (oldDescriptor) Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', oldDescriptor)
+    else Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView')
+  }
+})
