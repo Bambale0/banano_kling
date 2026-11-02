@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { BalanceSheet } from '@/components/balance-sheet'
 import { useApp } from '@/lib/app-context'
 import { createPayment } from '@/lib/payment-api'
@@ -91,9 +91,14 @@ it('does not open a late checkout response after the balance sheet closes', asyn
   fireEvent.click(screen.getByRole('button', { name: 'СБП / карта' }))
   ;(useApp as jest.Mock).mockReturnValue({ ...fixture, isBalanceOpen: false })
   rerender(<BalanceSheet />)
-  resolvePayment({ ok: true, provider: 'robokassa', order_id: 'fixture', credits: 50, payment_url: exactUrl })
-  await waitFor(() => expect(sendMiniAppClientLog).toHaveBeenCalledWith('payment-checkout-ready', expect.anything()))
+  await act(async () => {
+    resolvePayment({ ok: true, provider: 'robokassa', order_id: 'fixture', credits: 50, payment_url: exactUrl })
+  })
   expect(openLink).not.toHaveBeenCalled()
+  expect(sendMiniAppClientLog).not.toHaveBeenCalledWith('payment-checkout-ready', expect.anything())
+  ;(useApp as jest.Mock).mockReturnValue({ ...fixture, isBalanceOpen: true })
+  rerender(<BalanceSheet />)
+  expect(screen.queryByRole('link', { name: 'Перейти к оплате' })).not.toBeInTheDocument()
 })
 
 it('keeps Telegram Stars on the native invoice flow', async () => {
