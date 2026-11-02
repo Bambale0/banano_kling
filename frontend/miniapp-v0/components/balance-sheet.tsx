@@ -90,7 +90,15 @@ export function BalanceSheet() {
   const paymentReadyRef = useRef<HTMLElement>(null)
   const balanceOpenRef = useRef(isBalanceOpen)
 
-  useEffect(() => { balanceOpenRef.current = isBalanceOpen }, [isBalanceOpen])
+  useEffect(() => {
+    balanceOpenRef.current = isBalanceOpen
+    // Old signed links must not become the checkout for a new repeat after
+    // leaving the sheet or changing the funding intent.
+    if (!isBalanceOpen) {
+      setReadyPayment(null)
+      setManualPaymentUrl(null)
+    }
+  }, [isBalanceOpen])
 
   useEffect(() => {
     if (readyPayment && isBalanceOpen) {
@@ -233,6 +241,7 @@ export function BalanceSheet() {
       }
 
       if (payment.payment_url) {
+        if (!balanceOpenRef.current) return
         // Keep the exact signed string. A fresh click can open externally even
         // when the API response consumed Telegram's user-interaction TTL.
         setReadyPayment({
