@@ -162,7 +162,7 @@ try {
     assert.equal(await duration.isEnabled(), true)
     assert.equal(await duration.inputValue(), '7', 'Leaving Auto restores manual seconds')
     if (mode === 'edit') await autoDuration.check()
-    await page.getByLabel('Seed Wan').fill('0')
+    await page.getByLabel('Вариант результата Wan').fill('0')
     await page.getByLabel('Аудио в результате').uncheck()
     await page.getByLabel('Проверка контента').check()
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false, 'Overflow in ' + mode)

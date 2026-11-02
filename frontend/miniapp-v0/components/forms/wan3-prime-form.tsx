@@ -51,7 +51,7 @@ function recipeIssue(recipe: Wan3PrimeRecipe): string | null {
   if (!recipe.source_feed_gen_id && !recipe.trend_id && ['text', 'edit'].includes(recipe.scenario) && !recipe.prompt.trim()) return 'Добавьте текст или инструкции изменения.'
   if (Array.from(recipe.prompt).length > 20000) return 'Максимальная длина инструкции — 20 000 символов.'
   if (recipe.duration !== -1 && (!Number.isInteger(recipe.duration) || recipe.duration < 2 || recipe.duration > 30)) return 'Выберите длительность 2–30 секунд или Auto.'
-  if (recipe.seed != null && (!Number.isInteger(recipe.seed) || recipe.seed < 0 || recipe.seed > 2147483647)) return 'Seed должен быть целым числом от 0 до 2147483647.'
+  if (recipe.seed != null && (!Number.isInteger(recipe.seed) || recipe.seed < 0 || recipe.seed > 2147483647)) return 'Укажите целое число от 0 до 2147483647 или оставьте поле пустым.'
   if (recipe.source_feed_gen_id || recipe.trend_id) return null // The server compiles the hidden recipe and validates each numbered replacement.
   if (images.length > 10 || videos.length > 5 || audios.length > 5 || files.length > 1 || links.length > 1) return 'Превышено число референсов Wan.'
   if ([...images, ...videos, ...audios, ...files, ...links].some(url => !url.trim())) return 'Добавьте исходное видео. Остальные выбранные файлы сохранены.'
@@ -468,7 +468,7 @@ function Wan3PrimeFormSession({ draftOnly = false, onDraftChange, expectedModel,
         <label className="space-y-1 text-xs">Качество<select aria-label="Качество Wan" className={SELECT} value={recipe.resolution} onChange={e => patch({ resolution: e.target.value as Wan3PrimeRecipe['resolution'] })}>{['480P', '720P', '1080P'].map(q => <option key={q}>{q}</option>)}</select></label>
         <label className="space-y-1 text-xs">Формат кадра<select aria-label="Формат Wan" className={SELECT} value={recipe.aspect_ratio} onChange={e => patch({ aspect_ratio: e.target.value as Wan3PrimeRecipe['aspect_ratio'] })}>{RATIOS.map(r => <option key={r} value={r}>{r === 'adaptive' ? 'Автоматически' : r}</option>)}</select></label>
         <Wan3DurationSelect value={recipe.duration} disabled={locked} onChange={duration => patch({ duration })} />
-        <label className="space-y-1 text-xs">Seed, необязательно<Input aria-label="Seed Wan" type="number" min={0} max={2147483647} step={1} placeholder="Случайный" value={recipe.seed ?? ''} onChange={e => patch({ seed: e.target.value === '' ? null : Number(e.target.value) })} /></label>
+        <label className="space-y-1 text-xs">Вариант результата, необязательно<Input aria-label="Вариант результата Wan" type="number" min={0} max={2147483647} step={1} placeholder="Случайный" value={recipe.seed ?? ''} onChange={e => patch({ seed: e.target.value === '' ? null : Number(e.target.value) })} /></label>
         <label className="flex items-center gap-2 text-xs"><input type="checkbox" aria-label="Аудио в результате" checked={recipe.audio} onChange={e => patch({ audio: e.target.checked })} />Аудио в результате</label>
         <label className="flex items-center gap-2 text-xs"><input type="checkbox" aria-label="Проверка контента" checked={recipe.nsfw_checker} onChange={e => patch({ nsfw_checker: e.target.checked })} />Проверка контента</label>
       </fieldset>
