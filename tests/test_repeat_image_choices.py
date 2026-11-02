@@ -224,7 +224,7 @@ async def test_wan_real_image_probe_quote_to_launch_keeps_choice_and_is_idempote
 
     from PIL import Image
 
-    from bot import miniapp
+    from bot import database, miniapp
     from bot.services.wan3_prime_lifecycle import (
         Wan3PrimeLifecycle,
         Wan3PrimeLifecycleError,
