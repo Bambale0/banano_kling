@@ -8,6 +8,9 @@ import {
   type ReactNode,
 } from "react";
 import { Button } from "@/components/ui/button";
+import { GenerationFundingOffer } from "@/components/generation-funding-offer";
+import type { PaymentPackage } from "@/lib/types";
+import type { FundingIntent } from "@/lib/generation-funding";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -213,10 +216,12 @@ const fresh = (): Kling4Recipe => ({
   mode: "reference",
   input: { prompt: "", duration: 5, resolution: "720p", aspect_ratio: "auto" },
 });
-export function Kling4Form({ modelSelector, credits, isAdmin }: {
+export function Kling4Form({ modelSelector, credits, isAdmin, paymentPackages, onOpenBalance }: {
   modelSelector: ReactNode;
   credits: number;
   isAdmin: boolean;
+  paymentPackages?: PaymentPackage[];
+  onOpenBalance?: (intent: FundingIntent) => void;
 }) {
   const [recipe, setRecipe] = useState<Kling4Recipe>(fresh),
     [quote, setQuote] = useState<Kling4Quote | null>(null),
@@ -677,7 +682,10 @@ export function Kling4Form({ modelSelector, credits, isAdmin }: {
                 ? `Цена: ${quote.cost} бананов. Для администратора списание отключено.`
                 : `К списанию: ${quote.charge_cost} бананов. Баланс: ${credits}🍌.`}
               {!quote.admin_free && quote.charge_cost > credits ? (
-                <p className="mt-1 text-destructive">Недостаточно бананов для запуска.</p>
+                <div className="mt-3">
+                  <GenerationFundingOffer cost={quote.charge_cost} credits={credits}
+                    paymentPackages={paymentPackages} onTopup={onOpenBalance} isAdmin={isAdmin} />
+                </div>
               ) : null}
             </div>
           )}
