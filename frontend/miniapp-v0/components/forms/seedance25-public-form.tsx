@@ -3,7 +3,7 @@
 import { normalizeRepeatPrompt } from '@/lib/repeat-prompt'
 import { GenerationFundingOffer } from '../generation-funding-offer'
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { uploadFile } from '@/lib/api'
 import {
   generateSeedance25,
@@ -300,8 +300,10 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
   const [queued, setQueued] = useState<Seedance25GenerateResponse | null>(null)
 
   const [sourceFeedGenId, setSourceFeedGenId] = useState<number | null>(null)
+  const repeatSession = useRef(0)
   useEffect(() => {
     if (!promptPreset?.seedance25IdentityTransfer) return
+    repeatSession.current += 1
     setScenario('identity_transfer')
     setVideoEditing(false)
     setPrompt(normalizeRepeatPrompt(promptPreset).prompt || '')
@@ -406,7 +408,9 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
   }, [duration, videoEditing, model?.quality_costs, model?.quality_duration_costs, resolution])
   const price = identityTransfer ? identityQuote?.cost ?? 0 : hasVideoReference ? regularQuote?.cost ?? 0 : basePrice
   const quoteReady = identityTransfer ? Boolean(identityQuote) : !hasVideoReference || Boolean(regularQuote)
-  const canAfford = quoteReady && (isAdmin || !price || credits >= price)
+  const quoteIsFree = regularQuote?.admin_free === true
+  const freeLaunch = isAdmin || quoteIsFree
+  const canAfford = quoteReady && (freeLaunch || !price || credits >= price)
   const promptStep = scenario === 'text' ? 2 : 3
   const settingsStep = promptStep + 1
   const promptPlaceholder = identityTransfer
@@ -934,9 +938,9 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
         <div className="flex items-end justify-between gap-4">
           <div>
             <div className="text-xs text-muted-foreground">Стоимость генерации</div>
-            <div className="mt-1 text-2xl font-bold text-foreground">{!quoteReady ? 'После проверки видео' : `${price || 0}🍌`}</div>
+            <div className="mt-1 text-2xl font-bold text-foreground">{!quoteReady ? 'После проверки видео' : freeLaunch ? 'Без списания' : `${price || 0}🍌`}</div>
           </div>
-          {!isAdmin ? <div className="text-right text-xs text-muted-foreground">Баланс<br /><span className="font-semibold text-foreground">{credits}🍌</span></div> : <div className="text-right text-xs text-cyan">Для админа<br /><span className="font-semibold">без списания</span></div>}
+          {!freeLaunch ? <div className="text-right text-xs text-muted-foreground">Баланс<br /><span className="font-semibold text-foreground">{credits}🍌</span></div> : <div className="text-right text-xs text-cyan">{isAdmin ? 'Для админа' : 'Серверный расчёт'}<br /><span className="font-semibold">без списания</span></div>}
         </div>
         {identityTransfer ? (
           <div className="mt-3 space-y-2 text-xs leading-relaxed text-muted-foreground" aria-live="polite">
@@ -959,7 +963,15 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
         )}
       </div>
 
-      {quoteReady ? <GenerationFundingOffer cost={price} credits={credits} adminFree={isAdmin} /> : null}
+      {quoteReady ? (
+        <GenerationFundingOffer
+          key={sourceFeedGenId ? `identity-repeat-funding-${repeatSession.current}` : 'seedance-funding'}
+          cost={price}
+          credits={credits}
+          adminFree={freeLaunch}
+          autoOpenKey={sourceFeedGenId ? `${repeatSession.current}:${sourceFeedGenId}` : null}
+        />
+      ) : null}
 
       {error ? <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</div> : null}
       {queued ? (
@@ -988,6 +1000,8 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
               ? `Не хватает ${Math.max(0, price - credits)}🍌`
               : isAdmin
                 ? '🚀 Создать видео'
+                : quoteIsFree
+                  ? '🚀 Создать видео · без списания'
                 : `🚀 Создать видео · ${price || 0}🍌`}
       </button>
     </div>

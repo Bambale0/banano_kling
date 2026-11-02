@@ -12,6 +12,7 @@ import { hydrateSeedance25IdentityPreset } from './seedance25-repeat'
 export interface BalanceRequest {
   packageId?: string
   requiredCredits?: number
+  reason?: 'video-repeat'
 }
 
 interface AppContextType {

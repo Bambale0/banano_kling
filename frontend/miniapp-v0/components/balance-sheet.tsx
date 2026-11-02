@@ -11,6 +11,11 @@ import { cn } from '@/lib/utils'
 import { bootstrapApp, sendMiniAppClientLog } from '@/lib/api'
 import { createPayment } from '@/lib/payment-api'
 import type { PaymentProvider } from '@/lib/types'
+import {
+  paymentPriceLabel,
+  preferredProviderForPackage,
+  totalPackageCredits,
+} from '@/lib/contextual-topup'
 
 type TelegramPaymentBridge = {
   openInvoice?: (url: string, callback?: (status: string) => void) => void
@@ -69,11 +74,13 @@ export function BalanceSheet() {
   const { state, isBalanceOpen, balanceRequest, closeBalance, refreshTasks } = useApp()
   const { paymentPackages, user, recentTasks, mode } = state
   const selectedPackageId = balanceRequest?.packageId
+  const selectedPackage = paymentPackages.find((pkg) => pkg.id === selectedPackageId)
   const orderedPackages = selectedPackageId
     ? [...paymentPackages].sort((a, b) => Number(b.id === selectedPackageId) - Number(a.id === selectedPackageId))
     : paymentPackages
   const emailInputRef = useRef<HTMLInputElement>(null)
   const selectedPackageRef = useRef<HTMLDivElement>(null)
+  const packagesRef = useRef<HTMLDivElement>(null)
   // Immediate lock covers rapid taps before React commits disabled buttons.
   // Only checkout initiation is guarded; the same signed payment link stays reusable.
   const paymentRequestInFlight = useRef(false)
@@ -88,13 +95,13 @@ export function BalanceSheet() {
   useEffect(() => { balanceOpenRef.current = isBalanceOpen }, [isBalanceOpen])
 
   useEffect(() => {
-    if (!isBalanceOpen || !selectedPackageId) return
+    if (!isBalanceOpen || !selectedPackageId || balanceRequest?.reason === 'video-repeat') return
     // A context purchase should land on the actual payment methods, not on statistics.
     const scrollId = window.setTimeout(() => {
       selectedPackageRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
     }, 0)
     return () => window.clearTimeout(scrollId)
-  }, [isBalanceOpen, selectedPackageId])
+  }, [balanceRequest?.reason, isBalanceOpen, selectedPackageId])
 
   useEffect(() => {
     if (readyPayment && isBalanceOpen) {
@@ -107,6 +114,15 @@ export function BalanceSheet() {
   const totalSpent = recentTasks.reduce((sum, task) => sum + task.cost, 0)
   const imageTasks = recentTasks.filter((task) => task.type === 'image').length
   const videoTasks = recentTasks.filter((task) => task.type === 'video').length
+  const requiredCredits = balanceRequest?.requiredCredits && Number.isFinite(balanceRequest.requiredCredits)
+    ? Math.max(0, balanceRequest.requiredCredits)
+    : 0
+  const missingCredits = Math.max(0, requiredCredits - user.credits)
+  const selectedCredits = selectedPackage ? totalPackageCredits(selectedPackage) : 0
+  const selectedProvider = selectedPackage ? preferredProviderForPackage(selectedPackage) : null
+  const selectedPrice = selectedPackage && selectedProvider
+    ? paymentPriceLabel(selectedPackage, selectedProvider)
+    : null
 
   useEffect(() => {
     if (!isBalanceOpen) return
@@ -293,7 +309,7 @@ export function BalanceSheet() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: '100%' }}
             transition={{ type: 'spring', damping: 28, stiffness: 280, mass: 0.8 }}
-            className="fixed bottom-0 left-0 right-0 z-50 max-h-[88vh] overflow-auto rounded-t-3xl border-t border-border/50 glass-strong safe-bottom"
+            className="fixed bottom-0 left-0 right-0 z-50 max-h-[88vh] overflow-auto rounded-t-3xl border-t border-border/50 bg-background shadow-2xl safe-bottom"
           >
             <div className="sticky top-0 z-10 bg-inherit px-5 pt-3 pb-3">
               <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-border" />
@@ -313,20 +329,66 @@ export function BalanceSheet() {
             </div>
 
             <div className="space-y-5 px-5 pb-6">
-              {balanceRequest?.requiredCredits && Number.isFinite(balanceRequest.requiredCredits) ? (
+              {requiredCredits > 0 ? (
                 <section role="region" aria-label="Пополнение для повтора" className="rounded-2xl border border-gold/30 bg-gold/5 p-4">
                   <p className="text-sm font-semibold text-foreground">Пополнение для вашего видео</p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Для запуска нужно {balanceRequest.requiredCredits}🍌. Сейчас {user.credits}🍌.
+                  <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
+                    <div className="rounded-xl bg-background/40 px-2 py-2">
+                      <span className="block text-muted-foreground">Нужно</span>
+                      <strong className="mt-0.5 block text-foreground">{requiredCredits}🍌</strong>
+                    </div>
+                    <div className="rounded-xl bg-background/40 px-2 py-2">
+                      <span className="block text-muted-foreground">На балансе</span>
+                      <strong className="mt-0.5 block text-foreground">{user.credits}🍌</strong>
+                    </div>
+                    <div className="rounded-xl bg-background/40 px-2 py-2">
+                      <span className="block text-muted-foreground">Не хватает</span>
+                      <strong className="mt-0.5 block text-gold">{missingCredits}🍌</strong>
+                    </div>
+                  </div>
+                  <p className="mt-3 text-sm text-muted-foreground">
+                    Для повтора нужно {requiredCredits}🍌. На балансе {user.credits}🍌. Не хватает {missingCredits}🍌.
                   </p>
-                  {user.credits >= balanceRequest.requiredCredits ? (
+                  {user.credits >= requiredCredits ? (
                     <Button onClick={closeBalance} className="mt-3 w-full bg-gold text-primary-foreground hover:bg-gold/90">
                       Вернуться к видео
                     </Button>
                   ) : (
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      После оплаты баланс обновится. Настройки видео останутся открытыми.
-                    </p>
+                    <>
+                      {selectedPackage && selectedProvider ? (
+                        <>
+                          <p className="mt-3 text-sm text-muted-foreground">
+                            Подойдёт пакет «{selectedPackage.name}»: {selectedCredits}🍌 за {selectedPrice}
+                          </p>
+                          <Button
+                            type="button"
+                            className="mt-3 w-full bg-gold text-primary-foreground hover:bg-gold/90"
+                            disabled={Boolean(loadingPayment)}
+                            onClick={() => void handleTopup(selectedPackage.id, selectedProvider)}
+                          >
+                            {loadingPayment?.startsWith(`${selectedPackage.id}:`) ? (
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : null}
+                            Купить {selectedCredits}🍌 за {selectedPrice}
+                          </Button>
+                        </>
+                      ) : (
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          Одного пакета недостаточно. Выберите подходящие суммы ниже.
+                        </p>
+                      )}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="mt-2 w-full text-foreground"
+                        onClick={() => packagesRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                      >
+                        Выбрать другой пакет
+                      </Button>
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        После оплаты баланс обновится. Настройки видео останутся открытыми.
+                      </p>
+                    </>
                   )}
                 </section>
               ) : null}
@@ -411,7 +473,7 @@ export function BalanceSheet() {
                 ) : null}
               </label>
 
-              <div>
+              <div ref={packagesRef}>
                 <div className="mb-3 flex items-center justify-between">
                   <h3 className="font-serif text-lg text-foreground">Пакеты бананов</h3>
                   <span className="text-xs text-muted-foreground">Быстрый выбор пакета</span>
@@ -424,7 +486,8 @@ export function BalanceSheet() {
                     </p>
                   ) : null}
                   {orderedPackages.map((pkg) => {
-                    const pricePerBanana = Math.round(pkg.price_rub / pkg.credits)
+                    const grantedCredits = totalPackageCredits(pkg)
+                    const pricePerBanana = Math.round(pkg.price_rub / grantedCredits)
                     const starsPrice = pkg.price_stars ?? pkg.price_rub
                     const lavaConfigured = Boolean(pkg.lava_offer_id)
                     const tributeConfigured = Boolean(TRIBUTE_LINKS[pkg.id])
@@ -468,8 +531,13 @@ export function BalanceSheet() {
                             </div>
                             <p className="mt-1 text-sm text-muted-foreground">{pkg.description}</p>
                             <p className="mt-2 text-xs text-muted-foreground">
-                              {pkg.credits}🍌 • около {pricePerBanana}₽ за банан
+                              {grantedCredits}🍌 • около {pricePerBanana}₽ за банан
                             </p>
+                            {(pkg.bonus_credits || 0) > 0 ? (
+                              <p className="mt-1 text-xs text-gold">
+                                {pkg.credits}🍌 + {pkg.bonus_credits}🍌 бонусом
+                              </p>
+                            ) : null}
                             {foreignConfigured || tributeConfigured ? (
                               <p className="mt-1 text-xs text-muted-foreground">
                                 Зарубежная / СНГ · отдельный способ
@@ -478,7 +546,7 @@ export function BalanceSheet() {
                           </div>
                           <div className="text-right">
                             <p className="text-xl font-semibold text-foreground">{pkg.price_rub}₽</p>
-                            <p className="text-xs text-muted-foreground">{pkg.credits} бананов</p>
+                            <p className="text-xs text-muted-foreground">{grantedCredits} бананов</p>
                           </div>
                         </div>
 

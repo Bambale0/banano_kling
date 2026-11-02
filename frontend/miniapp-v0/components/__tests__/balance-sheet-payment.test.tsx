@@ -145,3 +145,44 @@ it('offers explicit return to the unchanged repeat only once wallet funds cover 
   fireEvent.click(screen.getByRole('button', { name: 'Вернуться к видео' }))
   expect(fixture.closeBalance).toHaveBeenCalledTimes(1)
 })
+
+it('explains an automatic repeat shortage and starts its configured checkout', async () => {
+  ;(useApp as jest.Mock).mockReturnValue({
+    ...fixture,
+    balanceRequest: { packageId: 'start', requiredCredits: 50, reason: 'video-repeat' },
+    state: { ...fixture.state, user: { credits: 12 } },
+  })
+  render(<BalanceSheet />)
+
+  const region = screen.getByRole('region', { name: 'Пополнение для повтора' })
+  expect(region).toHaveTextContent('Для повтора нужно 50🍌')
+  expect(region).toHaveTextContent('На балансе 12🍌')
+  expect(region).toHaveTextContent('Не хватает 38🍌')
+  expect(region).toHaveTextContent('Подойдёт пакет «Старт»: 50🍌 за 500 ₽')
+  fireEvent.click(screen.getByRole('button', { name: 'Купить 50🍌 за 500 ₽' }))
+  await waitFor(() => expect(createPayment).toHaveBeenCalledWith(expect.objectContaining({
+    packageId: 'start', provider: 'robokassa',
+  })))
+  expect(screen.getByRole('button', { name: 'Выбрать другой пакет' })).toBeInTheDocument()
+})
+
+it('shows Stars for a Stars-only automatic repeat package', async () => {
+  ;(useApp as jest.Mock).mockReturnValue({
+    ...fixture,
+    balanceRequest: { packageId: 'stars', requiredCredits: 50, reason: 'video-repeat' },
+    state: { ...fixture.state, user: { credits: 0 }, paymentPackages: [
+      { id: 'stars', name: 'Stars', credits: 50, price_rub: 500, price_stars: 650 },
+    ] },
+  })
+  ;(createPayment as jest.Mock).mockResolvedValue({
+    ok: true, provider: 'telegram_stars', invoice_url: 'https://t.me/$synthetic', credits: 50,
+  })
+  const openInvoice = jest.fn((_url, callback) => callback('cancelled'))
+  Object.assign(window.Telegram!.WebApp!, { openInvoice })
+
+  render(<BalanceSheet />)
+  fireEvent.click(screen.getByRole('button', { name: 'Купить 50🍌 за 650 ⭐' }))
+  await waitFor(() => expect(createPayment).toHaveBeenCalledWith(expect.objectContaining({
+    packageId: 'stars', provider: 'telegram_stars',
+  })))
+})

@@ -1,14 +1,21 @@
 'use client'
 
 import { Banana, Wallet } from 'lucide-react'
+import { useEffect, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { useOptionalApp } from '@/lib/app-context'
-import { selectTopupPackages, type TopupPackageOption } from '@/lib/contextual-topup'
+import {
+  paymentPriceLabel,
+  preferredProviderForPackage,
+  selectTopupPackages,
+  type TopupPackageOption,
+} from '@/lib/contextual-topup'
 
 interface GenerationFundingOfferProps {
   cost: number | null | undefined
   credits: number
   adminFree?: boolean
+  autoOpenKey?: string | number | null
 }
 
 const format = (value: number) => new Intl.NumberFormat('ru-RU', {
@@ -20,17 +27,42 @@ export function GenerationFundingOffer({
   cost,
   credits,
   adminFree = false,
+  autoOpenKey = null,
 }: GenerationFundingOfferProps) {
   const app = useOptionalApp()
-  if (!app || app.state.mode !== 'live' || app.state.user.isAdmin || adminFree ||
-      typeof cost !== 'number' || !Number.isFinite(cost) || cost <= 0) return null
+  const autoOpenedRef = useRef<string | null>(null)
+  const eligible = Boolean(
+    app && app.state.mode === 'live' && !app.state.user.isAdmin && !adminFree &&
+    typeof cost === 'number' && Number.isFinite(cost) && cost > 0,
+  )
+  const offer = eligible
+    ? selectTopupPackages(cost!, credits, app!.state.paymentPackages)
+    : { shortage: 0, recommended: null, alternative: null }
 
-  const offer = selectTopupPackages(cost, credits, app.state.paymentPackages)
+  useEffect(() => {
+    if (!app || autoOpenKey == null || !offer.shortage || typeof cost !== 'number') return
+    const packageId = offer.recommended?.package.id
+    const key = `${autoOpenKey}:${cost}:${packageId ?? 'all-packages'}`
+    if (autoOpenedRef.current === key) return
+    autoOpenedRef.current = key
+    app.openBalance({
+      packageId,
+      requiredCredits: cost,
+      reason: 'video-repeat',
+    })
+  }, [app, autoOpenKey, cost, offer.recommended, offer.shortage])
+
+  if (!eligible || !app || typeof cost !== 'number') return null
   if (!offer.shortage) return null
 
   const select = (option?: TopupPackageOption) => {
     app.openBalance({ packageId: option?.package.id, requiredCredits: cost })
   }
+
+  const price = (option: TopupPackageOption) => paymentPriceLabel(
+    option.package,
+    preferredProviderForPackage(option.package),
+  )
 
   return (
     <section
@@ -58,7 +90,7 @@ export function GenerationFundingOffer({
             className="h-auto min-h-11 w-full whitespace-normal bg-gold py-3 text-center text-primary-foreground hover:bg-gold/90"
           >
             <Banana className="mr-2 h-4 w-4 shrink-0" aria-hidden="true" />
-            Купить {format(offer.recommended.credited)}🍌 за {format(offer.recommended.package.price_rub)} ₽
+            Купить {format(offer.recommended.credited)}🍌 за {price(offer.recommended)}
           </Button>
           {offer.alternative ? (
             <Button
@@ -67,7 +99,7 @@ export function GenerationFundingOffer({
               onClick={() => select(offer.alternative!)}
               className="h-auto min-h-11 w-full whitespace-normal border-gold/25 bg-background/40 py-2 text-center"
             >
-              Больше бананов: {format(offer.alternative.credited)}🍌 — {format(offer.alternative.package.price_rub)} ₽
+              Больше бананов: {format(offer.alternative.credited)}🍌 — {price(offer.alternative)}
             </Button>
           ) : null}
         </div>
