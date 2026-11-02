@@ -1316,7 +1316,7 @@ def test_four_image_seedance_repeat_uses_one_face_and_three_curated_choices():
             "reference_images": source_images, "v_reference_videos": [],
         },
     }
-    viewer_face = "https://viewer.test/own-face.jpg"
+    viewer_face = "https://neuromixbot.com/uploads/refs/image/880102/own-face.jpg"
     edited = continuity.enrich_video_repeat_body({
         "v_model": "seedance_2_5", "v_type": "video",
         "reference_images": [viewer_face], "v_reference_videos": [],
