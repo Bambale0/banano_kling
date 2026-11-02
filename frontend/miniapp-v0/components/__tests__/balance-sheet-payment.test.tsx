@@ -149,3 +149,22 @@ it('does not offer a real checkout for demo or locked packages', () => {
   expect(screen.queryByRole('button', { name: 'СБП / карта' })).not.toBeInTheDocument()
   expect(createPayment).not.toHaveBeenCalled()
 })
+
+it('rejects rapid duplicate checkout requests and keeps the original signed invoice', async () => {
+  let finishPayment!: (value: unknown) => void
+  ;(createPayment as jest.Mock).mockImplementation(() => new Promise(resolve => { finishPayment = resolve }))
+  render(<BalanceSheet />)
+
+  const checkoutButton = screen.getByRole('button', { name: 'СБП / карта' })
+  fireEvent.click(checkoutButton)
+  fireEvent.click(checkoutButton)
+  expect(createPayment).toHaveBeenCalledTimes(1)
+
+  finishPayment({
+    ok: true, provider: 'robokassa', order_id: 'one-invoice',
+    credits: 50, payment_url: exactUrl,
+  })
+  expect(await screen.findByRole('link', { name: 'Перейти к оплате' })).toHaveAttribute('href', exactUrl)
+  fireEvent.click(checkoutButton)
+  expect(createPayment).toHaveBeenCalledTimes(1)
+})
