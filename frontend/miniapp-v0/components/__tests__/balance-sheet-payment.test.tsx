@@ -4,6 +4,7 @@ import { BalanceSheet } from '@/components/balance-sheet'
 import { useApp } from '@/lib/app-context'
 import { createPayment } from '@/lib/payment-api'
 import { bootstrapApp, sendMiniAppClientLog } from '@/lib/api'
+import { toast } from 'sonner'
 
 jest.mock('@/lib/app-context', () => ({ useApp: jest.fn() }))
 jest.mock('@/lib/payment-api', () => ({ createPayment: jest.fn() }))
@@ -150,7 +151,7 @@ it('does not offer a real checkout for demo or locked packages', () => {
   expect(createPayment).not.toHaveBeenCalled()
 })
 
-it('rejects rapid duplicate checkout requests and keeps the original signed invoice', async () => {
+it('rejects rapid duplicate checkout requests but allows a new invoice for the same package', async () => {
   let finishPayment!: (value: unknown) => void
   ;(createPayment as jest.Mock).mockImplementation(() => new Promise(resolve => { finishPayment = resolve }))
   render(<BalanceSheet />)
@@ -166,5 +167,59 @@ it('rejects rapid duplicate checkout requests and keeps the original signed invo
   })
   expect(await screen.findByRole('link', { name: 'Перейти к оплате' })).toHaveAttribute('href', exactUrl)
   fireEvent.click(checkoutButton)
-  expect(createPayment).toHaveBeenCalledTimes(1)
+  expect(createPayment).toHaveBeenCalledTimes(2)
+  const secondUrl = 'https://auth.robokassa.ru/Merchant/Index.aspx?InvId=second-invoice'
+  finishPayment({
+    ok: true, provider: 'robokassa', order_id: 'second-invoice',
+    credits: 50, payment_url: secondUrl,
+  })
+  expect(await screen.findByRole('link', { name: 'Перейти к оплате' })).toHaveAttribute('href', secondUrl)
+})
+
+it('does not report a successful Stars charge as failed when the balance refresh is down', async () => {
+  const refreshBalance = jest.fn().mockRejectedValue(new Error('Temporary bootstrap outage'))
+  ;(useApp as jest.Mock).mockReturnValue({ ...fixture, refreshBalance })
+  ;(createPayment as jest.Mock).mockResolvedValue({
+    ok: true, provider: 'telegram_stars', invoice_url: 'https://t.me/$synthetic', credits: 50,
+  })
+  const errorSpy = jest.spyOn(toast, 'error')
+  const noticeSpy = jest.spyOn(toast, 'message')
+  Object.assign(window.Telegram!.WebApp!, {
+    openInvoice: jest.fn((_url, callback) => callback('paid')),
+  })
+  render(<BalanceSheet />)
+  fireEvent.click(screen.getByRole('button', { name: /Stars/ }))
+  await waitFor(() => expect(refreshBalance).toHaveBeenCalledTimes(1))
+  await waitFor(() => expect(noticeSpy).toHaveBeenCalledWith(
+    expect.stringContaining('Платёж подтверждён'), expect.anything(),
+  ))
+  expect(errorSpy).not.toHaveBeenCalled()
+  errorSpy.mockRestore()
+  noticeSpy.mockRestore()
+})
+
+it('retains a clickable Stars checkout link when the native invoice and popup are blocked', async () => {
+  Object.assign(window.Telegram!.WebApp!, { openLink: undefined, openInvoice: undefined, platform: 'android' })
+  ;(createPayment as jest.Mock).mockResolvedValue({
+    ok: true, provider: 'telegram_stars', invoice_url: 'https://t.me/$synthetic', credits: 50,
+  })
+  const popup = jest.spyOn(window, 'open').mockReturnValue(null)
+  render(<BalanceSheet />)
+  fireEvent.click(screen.getByRole('button', { name: /Stars/ }))
+  const link = await screen.findByRole('link', { name: 'Перейти к оплате' })
+  expect(link).toHaveAttribute('href', 'https://t.me/$synthetic')
+  expect(link).toHaveAttribute('target', '_blank')
+  expect(screen.getByRole('region', { name: 'Ссылка на оплату' })).toBeInTheDocument()
+  popup.mockRestore()
+})
+
+it('retains a clickable Tribute link without leaving the video editor', async () => {
+  Object.assign(window.Telegram!.WebApp!, { openLink: undefined, openInvoice: undefined, platform: 'android' })
+  const popup = jest.spyOn(window, 'open').mockReturnValue(null)
+  render(<BalanceSheet />)
+  fireEvent.click(screen.getByRole('button', { name: 'Зарубежная / СНГ' }))
+  const link = await screen.findByRole('link', { name: 'Перейти к оплате' })
+  expect(link).toHaveAttribute('href', 'https://web.tribute.tg/p/Dxn')
+  expect(createPayment).not.toHaveBeenCalled()
+  popup.mockRestore()
 })
