@@ -13,7 +13,8 @@ When an owner opens their own published video from the feed, the card intentiona
 - If there is a typed required image upload slot, it already enforces the photo. Do not add a duplicate.
 - Otherwise, with curated image choices, display one required personal-photo picker. It accepts uploaded or saved visitor-owned photos. The launch button stays disabled until supplied.
 - The authenticated server rejects missing or non-visitor-owned personal photo before provider submission or any debit, on both owner and foreign repeat paths.
-- For legacy typed recipes with zero upload image slots, the personal photo is added before the curated images. Prompt `@ImageN` indices use the actual assembled provider input order.
+- For typed recipes with zero upload image slots, the personal photo follows the preserved source image positions (including any choice-bound source slot). In the append-only catalog case it precedes the newly appended curated images. This preserves existing private `@ImageN` bindings; an explicit identity instruction refers to the actual additional-photo index.
+- Provider image limits are taken from existing model metadata and checked on the final assembled list before billing; no silent truncation of selected pictures is allowed.
 - No changes to price, provider routing, feature availability, database schema, permissions or payments. Text-only repeats and non-curated all-fixed recipes keep their previous behaviour.
 
 ## Regression and release gate
