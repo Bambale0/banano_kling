@@ -29,6 +29,7 @@ import { isWanTrendItem } from '@/lib/trend-settings'
 import type { PromptItem, TrendReferenceSlot, TrendUserField, UploadedFile } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Wan3PrimeForm } from '@/components/forms/wan3-prime-form'
+import { GenerationFundingOffer } from '@/components/generation-funding-offer'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 
 type RunnerPhase = 'idle' | 'uploading' | 'generating' | 'error'
@@ -98,6 +99,7 @@ export function TrendRunnerDialog({
 }: TrendRunnerDialogProps) {
   const {
     state,
+    isBalanceOpen,
     addTask,
     setCredits,
     setTaskDetail,
@@ -552,7 +554,16 @@ export function TrendRunnerDialog({
   }
 
   if (trend && isWanTrendItem(trend)) return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      modal={false}
+      onOpenChange={(nextOpen) => {
+        // The checkout is outside this Radix dialog. Keep the current video
+        // recipe and uploaded references when users tap a payment method.
+        if (!nextOpen && isBalanceOpen) return
+        onOpenChange(nextOpen)
+      }}
+    >
       <DialogContent className="max-h-[92vh] max-w-lg overflow-y-auto border-border/60 bg-background p-4">
         <DialogTitle>{trend.title}</DialogTitle>
         {open ? <Wan3PrimeForm model={trend.model === 'wan_3' || trend.model === 'wan_3_prime' ? trend.model : undefined} key={trend.id} trendId={trend.id} credits={state.user.credits} isAdmin={state.user.isAdmin}
@@ -570,7 +581,12 @@ export function TrendRunnerDialog({
   return (
     <Dialog
       open={open}
+      // A nested BalanceSheet must be keyboard/touch accessible without
+      // unmounting this repeat editor and losing the uploaded references.
+      modal={false}
       onOpenChange={(nextOpen) => {
+        // Do not reset the trend on payment-layer outside interactions.
+        if (!nextOpen && isBalanceOpen) return
         if (!busy) onOpenChange(nextOpen)
       }}
     >
@@ -950,6 +966,9 @@ export function TrendRunnerDialog({
             Видеореференсы: {confirmedTrendQuote.source_video_seconds} с + генерация: {confirmedTrendQuote.output_seconds} с.
             Итого {confirmedTrendQuote.billable_seconds} с; списание {confirmedTrendQuote.cost}🍌.
           </p>
+        ) : null}
+        {isVideoTrend && confirmedTrendQuote ? (
+          <GenerationFundingOffer cost={confirmedTrendQuote.cost} credits={state.user.credits} adminFree={state.user.isAdmin} />
         ) : null}
         <Button
           type="button"

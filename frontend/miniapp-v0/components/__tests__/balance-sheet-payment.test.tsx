@@ -105,3 +105,43 @@ it('keeps Telegram Stars on the native invoice flow', async () => {
   expect(openLink).not.toHaveBeenCalled()
   expect(screen.queryByRole('link', { name: 'Перейти к оплате' })).not.toBeInTheDocument()
 })
+
+
+it('puts the recommended package first while preserving every existing payment method', () => {
+  ;(useApp as jest.Mock).mockReturnValue({
+    ...fixture,
+    balanceRequest: { packageId: 'pro', requiredCredits: 50 },
+    state: {
+      ...fixture.state,
+      paymentPackages: [
+        { id: 'start', name: 'Старт', credits: 50, price_rub: 500, robokassa_enabled: true },
+        { id: 'pro', name: 'Про', credits: 100, price_rub: 1000, robokassa_enabled: true },
+      ],
+    },
+  })
+  render(<BalanceSheet />)
+  expect(screen.getByRole('region', { name: 'Пополнение для повтора' })).toHaveTextContent('нужно 50🍌')
+  expect(screen.getByText('Для вашего видео')).toBeInTheDocument()
+  const first = screen.getByRole('heading', { name: 'Про' })
+  const second = screen.getByRole('heading', { name: 'Старт' })
+  expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  expect(screen.getAllByRole('button', { name: 'СБП / карта' })).toHaveLength(2)
+})
+
+it('offers explicit return to the unchanged repeat only once wallet funds cover its cost', () => {
+  ;(useApp as jest.Mock).mockReturnValue({
+    ...fixture,
+    balanceRequest: { packageId: 'start', requiredCredits: 50 },
+  })
+  const { rerender } = render(<BalanceSheet />)
+  expect(screen.queryByRole('button', { name: 'Вернуться к видео' })).not.toBeInTheDocument()
+
+  ;(useApp as jest.Mock).mockReturnValue({
+    ...fixture,
+    balanceRequest: { packageId: 'start', requiredCredits: 50 },
+    state: { ...fixture.state, user: { credits: 51 } },
+  })
+  rerender(<BalanceSheet />)
+  fireEvent.click(screen.getByRole('button', { name: 'Вернуться к видео' }))
+  expect(fixture.closeBalance).toHaveBeenCalledTimes(1)
+})

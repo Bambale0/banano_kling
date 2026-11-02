@@ -32,6 +32,7 @@ try {
     const page = await context.newPage()
     page.setDefaultTimeout(20_000)
     let paymentRequests = 0
+    let creditedBalance = 1
     const errors = [], externalRequests = []
     page.on('pageerror', error => errors.push(error.message))
     await context.addInitScript(({ platform, bridge }) => {
@@ -67,11 +68,15 @@ try {
         let data = { ok: true }
         if (url.pathname.endsWith('/bootstrap')) data = {
           ok: true, telegram_id: 720005, first_name: 'Synthetic', telegram_username: 'fixture',
-          referral_code: 'FIXTURE', bot_username: 'fixture_bot', credits: 1, is_admin: false,
+          referral_code: 'FIXTURE', bot_username: 'fixture_bot', credits: creditedBalance, is_admin: false,
           telegram_chat_available: true, mini_app_url: baseUrl, actions: [],
           payment_packages: [{ id: 'start', name: 'Старт', credits: 50, price_rub: 500, robokassa_enabled: true }],
           image_models: [{ id: 'banana_pro', label: 'Nano Banana Pro', cost: 2, ratios: ['1:1'] }],
-          video_models: [], recent_tasks: [], saved_references: [],
+          video_models: [{
+            id: 'v3_pro', label: 'Synthetic video', description: 'Fixture video model',
+            durations: [5], ratios: ['16:9'], supports: ['text'],
+            costs: { '5': 50 }, max_image_references: 0, max_video_references: 0,
+          }], recent_tasks: [], saved_references: [],
         }
         else if (url.pathname.endsWith('/create-payment')) {
           paymentRequests++
@@ -123,6 +128,27 @@ try {
     for (const log of clientLogs.filter(item => item.event.startsWith('payment-checkout'))) {
       assert.equal(JSON.stringify(log).includes('SignatureValue'), false, 'No signed URLs in telemetry')
     }
+    // Funding a video must keep the form mounted, select the correct package,
+    // and never submit the generation or create a payment without explicit action.
+    await page.getByRole('button', { name: 'Закрыть пополнение' }).click()
+    await page.locator('nav').getByRole('button', { name: 'Видео', exact: true }).click()
+    const prompt = page.getByPlaceholder(/Опишите движение камеры/)
+    await prompt.fill('Синтетический текст повтора для проверки оплаты')
+    const offer = page.getByRole('region', { name: 'Пополнение для генерации' })
+    await offer.waitFor()
+    assert.match(await offer.innerText(), /Не хватает 49🍌/)
+    await offer.getByRole('button', { name: /Купить 50🍌 за 500 ₽/ }).click()
+    const repeatFunding = page.getByRole('region', { name: 'Пополнение для повтора' })
+    await repeatFunding.waitFor()
+    assert.match(await repeatFunding.innerText(), /нужно 50🍌/)
+    assert.equal(paymentRequests, 1, 'Package selection must not create a new invoice')
+    // The existing authenticated bootstrap refresh provides the confirmed wallet.
+    creditedBalance = 51
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    await page.getByRole('button', { name: 'Вернуться к видео' }).click()
+    assert.equal(await prompt.inputValue(), 'Синтетический текст повтора для проверки оплаты')
+    assert.equal(await offer.count(), 0, 'After confirmed funds, no top-up call-to-action is needed')
+    assert.equal(paymentRequests, 1, 'Returning from checkout must not create another invoice')
     console.log(`PASS payment browser: ${platform}, bridge=${bridge}, delayed API, exact URL, one invoice`)
     await browser.close(); browser = null
   }

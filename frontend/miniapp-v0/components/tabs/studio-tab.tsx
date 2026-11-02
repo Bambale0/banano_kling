@@ -26,7 +26,7 @@ export function StudioTab() {
           onPhotoClick={() => setActiveTab(1)}
           onVideoClick={() => setActiveTab(2)}
           onMotionClick={() => setActiveTab(3)}
-          onBalanceClick={openBalance}
+          onBalanceClick={() => openBalance()}
           onAssistantClick={() => openWorkspace('assistant')}
         />
       </section>

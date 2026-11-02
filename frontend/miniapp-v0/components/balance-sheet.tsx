@@ -66,9 +66,17 @@ function isIOSPaymentWebView() {
 }
 
 export function BalanceSheet() {
-  const { state, isBalanceOpen, closeBalance, refreshTasks } = useApp()
+  const { state, isBalanceOpen, balanceRequest, closeBalance, refreshTasks } = useApp()
   const { paymentPackages, user, recentTasks, mode } = state
+  const selectedPackageId = balanceRequest?.packageId
+  const orderedPackages = selectedPackageId
+    ? [...paymentPackages].sort((a, b) => Number(b.id === selectedPackageId) - Number(a.id === selectedPackageId))
+    : paymentPackages
   const emailInputRef = useRef<HTMLInputElement>(null)
+  const selectedPackageRef = useRef<HTMLDivElement>(null)
+  // Immediate lock covers rapid taps before React commits disabled buttons.
+  // Only checkout initiation is guarded; the same signed payment link stays reusable.
+  const paymentRequestInFlight = useRef(false)
   const [loadingPayment, setLoadingPayment] = useState<string | null>(null)
   const [customerEmail, setCustomerEmail] = useState('')
   const [readyPayment, setReadyPayment] = useState<{
@@ -78,6 +86,15 @@ export function BalanceSheet() {
   const balanceOpenRef = useRef(isBalanceOpen)
 
   useEffect(() => { balanceOpenRef.current = isBalanceOpen }, [isBalanceOpen])
+
+  useEffect(() => {
+    if (!isBalanceOpen || !selectedPackageId) return
+    // A context purchase should land on the actual payment methods, not on statistics.
+    const scrollId = window.setTimeout(() => {
+      selectedPackageRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
+    }, 0)
+    return () => window.clearTimeout(scrollId)
+  }, [isBalanceOpen, selectedPackageId])
 
   useEffect(() => {
     if (readyPayment && isBalanceOpen) {
@@ -133,7 +150,9 @@ export function BalanceSheet() {
 
     const opened = window.open(url, '_blank', 'noopener,noreferrer')
     if (!opened) {
-      window.location.assign(url)
+      // Do not navigate this Mini App away from an unsaved repeat draft.
+      // The signed checkout link remains in the visible readyPayment panel.
+      toast.message('Счёт готов', { description: 'Нажмите «Перейти к оплате», чтобы открыть платёжную страницу.' })
     }
   }
 
@@ -156,8 +175,10 @@ export function BalanceSheet() {
   }
 
   const handleTopup = async (packageId: string, provider: PaymentProvider = 'telegram_stars') => {
+    if (paymentRequestInFlight.current || mode !== 'live') return
     const selectedPackage = paymentPackages.find((item) => item.id === packageId)
     if (!selectedPackage) return
+    paymentRequestInFlight.current = true
 
     const loadingKey = `${packageId}:${provider}`
     setReadyPayment(null)
@@ -249,6 +270,7 @@ export function BalanceSheet() {
         focusCustomerEmail()
       }
     } finally {
+      paymentRequestInFlight.current = false
       setLoadingPayment(null)
     }
   }
@@ -291,6 +313,23 @@ export function BalanceSheet() {
             </div>
 
             <div className="space-y-5 px-5 pb-6">
+              {balanceRequest?.requiredCredits && Number.isFinite(balanceRequest.requiredCredits) ? (
+                <section role="region" aria-label="Пополнение для повтора" className="rounded-2xl border border-gold/30 bg-gold/5 p-4">
+                  <p className="text-sm font-semibold text-foreground">Пополнение для вашего видео</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Для запуска нужно {balanceRequest.requiredCredits}🍌. Сейчас {user.credits}🍌.
+                  </p>
+                  {user.credits >= balanceRequest.requiredCredits ? (
+                    <Button onClick={closeBalance} className="mt-3 w-full bg-gold text-primary-foreground hover:bg-gold/90">
+                      Вернуться к видео
+                    </Button>
+                  ) : (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      После оплаты баланс обновится. Настройки видео останутся открытыми.
+                    </p>
+                  )}
+                </section>
+              ) : null}
               {readyPayment ? (
                 <section ref={paymentReadyRef} aria-label="Готовый счёт" className="rounded-2xl border border-gold/40 bg-gold/10 p-4">
                   <p className="font-medium text-foreground">Счёт готов: {readyPayment.amountRub !== null ? `${readyPayment.amountRub} ₽ · ` : ''}{readyPayment.credits}🍌</p>
@@ -379,7 +418,12 @@ export function BalanceSheet() {
                 </div>
 
                 <div className="space-y-3">
-                  {paymentPackages.map((pkg) => {
+                  {mode === 'live' && !orderedPackages.length ? (
+                    <p role="status" className="rounded-xl border border-border/50 p-3 text-sm text-muted-foreground">
+                      Пакеты временно недоступны. Попробуйте обновить баланс позднее.
+                    </p>
+                  ) : null}
+                  {orderedPackages.map((pkg) => {
                     const pricePerBanana = Math.round(pkg.price_rub / pkg.credits)
                     const starsPrice = pkg.price_stars ?? pkg.price_rub
                     const lavaConfigured = Boolean(pkg.lava_offer_id)
@@ -400,9 +444,10 @@ export function BalanceSheet() {
                     return (
                       <div
                         key={pkg.id}
+                        ref={pkg.id === selectedPackageId ? selectedPackageRef : undefined}
                         className={cn(
                           'rounded-2xl border p-4 transition-all duration-200',
-                          pkg.popular
+                          pkg.id === selectedPackageId || pkg.popular
                             ? 'border-gold/40 bg-gold/10'
                             : 'border-border/50 bg-secondary/20'
                         )}
@@ -411,11 +456,15 @@ export function BalanceSheet() {
                           <div>
                             <div className="flex items-center gap-2">
                               <h4 className="text-base font-semibold text-foreground">{pkg.name}</h4>
-                              {pkg.popular && (
+                              {pkg.id === selectedPackageId ? (
                                 <span className="rounded-full border border-gold/30 bg-gold/15 px-2 py-0.5 text-[10px] font-medium text-gold">
-                                  Popular
+                                  Для вашего видео
                                 </span>
-                              )}
+                              ) : pkg.popular ? (
+                                <span className="rounded-full border border-gold/30 bg-gold/15 px-2 py-0.5 text-[10px] font-medium text-gold">
+                                  Популярный
+                                </span>
+                              ) : null}
                             </div>
                             <p className="mt-1 text-sm text-muted-foreground">{pkg.description}</p>
                             <p className="mt-2 text-xs text-muted-foreground">

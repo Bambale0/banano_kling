@@ -19,6 +19,7 @@ import { UploadArea } from './upload-area'
 import { ScenarioSelect } from './scenario-select'
 import { DurationSelect } from './duration-select'
 import { RepeatPersonalizationFields, repeatValuesComplete } from './repeat-personalization-fields'
+import { GenerationFundingOffer } from '../generation-funding-offer'
 import { getStorageItem, removeStorageItem } from '@/hooks/browser-storage'
 import { MiniAppApiError, type VideoGenerationQuote } from '@/lib/api'
 import {
@@ -1496,6 +1497,10 @@ export function VideoGeneratorForm({
             </p>
           </div>
         )}
+
+        {priceAvailable && (!hasAttachedVideo || confirmedVideoQuote) ? (
+          <GenerationFundingOffer cost={cost} credits={credits} adminFree={isAdmin} />
+        ) : null}
 
         {needsPhotoReference && (
           <div className="flex items-center gap-2 p-3 rounded-xl bg-cyan/10 border border-cyan/30">
