@@ -249,6 +249,8 @@ export interface TrendUserField {
   /** Optional author-curated values shown as one-tap choices in admin preview. */
   choices?: string[]
   image_choices?: { id: string; label: string; image_url: string }[]
+  /** Optional position of the original image to replace with a curated choice. */
+  image_slot_index?: number
   allow_custom_image?: boolean
 }
 
