@@ -307,9 +307,9 @@ it('scrolls the manual payment fallback into view even when checkout was selecte
 
 
 it.each([
-  ['Stars', 'telegram_stars', { ok: true, provider: 'telegram_stars', invoice_url: 'https://t.me/$previous-session', credits: 50 }],
-  ['СБП / карта', 'robokassa', { ok: true, provider: 'robokassa', order_id: 'old-order', payment_url: exactUrl, credits: 50 }],
-] as const)('rejects a previous sheet session %s invoice after closing and reopening', async (name, _provider, reply) => {
+  ['Stars', { ok: true, provider: 'telegram_stars', invoice_url: 'https://t.me/$previous-session', credits: 50 }],
+  ['СБП / карта', { ok: true, provider: 'robokassa', order_id: 'old-order', payment_url: exactUrl, credits: 50 }],
+] as const)('rejects a previous sheet session %s invoice after closing and reopening', async (name, reply) => {
   let resolvePayment!: (value: unknown) => void
   ;(createPayment as jest.Mock).mockImplementation(() => new Promise(resolve => { resolvePayment = resolve }))
   const openInvoice = jest.fn((_url: string, callback: (status: string) => void) => callback('cancelled'))
