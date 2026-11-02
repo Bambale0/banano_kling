@@ -289,7 +289,7 @@ try {
 
     currentCard = { ...card, repeat_reference_slots: { version: 1, available: false, images: [], videos: [] } }
     await page.goto(baseUrl + '?startapp=remix_777')
-    await page.getByRole('alert').filter({ hasText: 'Повтор недоступен' }).waitFor()
+    await page.getByRole('alert').filter({ hasText: 'Не удалось подготовить повтор' }).waitFor()
     assert.equal(await page.getByRole('button', { name: /Рассчитать точную стоимость|Подтвердить цену и запустить|Запустить видео/ }).isDisabled(), true)
     // Accepted/pending goes through real HTTP parsing, the tab, and the form.
     currentCard = { ...card, repeat_reference_slots: { ...slots,
