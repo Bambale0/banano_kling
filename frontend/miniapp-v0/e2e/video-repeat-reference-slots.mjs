@@ -169,7 +169,8 @@ try {
     await page.getByRole('group', { name: 'Референсы для повторов' }).waitFor({ state: 'hidden' })
     await page.getByRole('button', { name: 'Настроить публикацию', exact: true }).click()
     await page.getByRole('button', { name: 'Убрать публикацию', exact: true }).click()
-    await page.getByText('Synthetic withdrawal unavailable', { exact: true }).waitFor()
+    await page.getByText('Не удалось убрать публикацию', { exact: true }).waitFor()
+    assert.equal(await page.getByText('Synthetic withdrawal unavailable', { exact: true }).count(), 0)
     assert.equal(await videoConsent.getAttribute('aria-checked'), 'true')
     assert.equal(currentTask.is_profile_visible, true)
     assert.deepEqual(currentTask.feed_repeat_reference_selection, { images: [2], videos: [5] })
@@ -214,7 +215,7 @@ try {
       assert.equal(await launch.isEnabled(), true)
       // Server quote accounts for two 5s video references plus 5s output:
       // 15 seconds at 1🍌/s, without the old presence-only ×2.
-      await page.getByText(/Точная стоимость входящих видеореференсов/).waitFor()
+      await page.getByText(/Точная стоимость появится после проверки выбранных видео/).waitFor()
       await launch.click()
       const costSummary = page.getByText('Стоимость', { exact: true }).locator('..').locator('..')
       await costSummary.getByText('15', { exact: true }).waitFor()
@@ -270,7 +271,7 @@ try {
     await page.goto(baseUrl + '?startapp=remix_777')
     await page.getByText('Качество исходного видео: 480p', { exact: true }).waitFor()
 
-    await page.getByText(/Точная стоимость входящих видеореференсов/).waitFor()
+    await page.getByText(/Точная стоимость появится после проверки выбранных видео/).waitFor()
     const retainedLaunch = page.getByRole('button', { name: /Рассчитать точную стоимость|Подтвердить цену и запустить|Запустить видео/ })
     assert.equal(await retainedLaunch.isDisabled(), true)
     await page.getByRole('group', { name: 'Видео 1', exact: true }).locator('input[type=file]').setInputFiles({ name: 'replacement.mp4', mimeType: 'video/mp4', buffer: media })
