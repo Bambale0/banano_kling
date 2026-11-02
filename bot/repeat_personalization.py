@@ -133,6 +133,14 @@ def admin_preview_enabled() -> bool:
     }
 
 
+def _validate_image_group_labels(fields: Sequence[Mapping[str, Any]]) -> None:
+    """Image roles are identified by their names, not by source prompt spans."""
+    labels = [str(field.get("label") or "").strip().casefold() for field in fields]
+    for index, field in enumerate(fields):
+        if field.get("image_choices") and labels.count(labels[index]) > 1:
+            raise ValueError("Названия групп с изображениями не должны повторяться")
+
+
 def normalize_repeat_fields(raw_fields: Any, *, prompt: str) -> list[dict[str, Any]]:
     if raw_fields == []:
         return []
@@ -180,6 +188,7 @@ def normalize_repeat_fields(raw_fields: Any, *, prompt: str) -> list[dict[str, A
                     str(prompt or ""), {"user_fields": [field]}, {field["key"]: choice},
                 )
             field["choices"] = choices
+    _validate_image_group_labels(fields)
     if any(
         not str(field.get("original_value") or "").strip()
         for field in fields if not field.get("image_choices")
@@ -222,6 +231,7 @@ def render_repeat_base(
     image_start_index: int = 1,
     image_indices: Sequence[int] | None = None,
 ) -> str:
+    _validate_image_group_labels(fields)
     values = dict(raw_values) if isinstance(raw_values, Mapping) else {}
     image_index = image_start_index
     image_ordinal = 0
