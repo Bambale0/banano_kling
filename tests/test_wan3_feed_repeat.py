@@ -181,3 +181,66 @@ async def test_unpublished_child_even_with_visible_card_never_grants_repeat(monk
     with pytest.raises(Wan3PrimeValidationError) as err:
         await get_repeat_plan(SimpleNamespace(user_id=992), 810)
     assert err.value.status == 404
+
+
+@pytest.mark.asyncio
+async def test_curated_wan_repeat_needs_only_one_personal_photo_and_preserves_video(monkeypatch):
+    from types import SimpleNamespace
+
+    from bot import repeat_personalization as rp
+    from bot.services import wan3_prime_repeat as repeat
+
+    image_urls = [f"https://owner.test/source-{index}.jpg" for index in range(4)]
+    source = {
+        "id": 501, "user_id": 70, "telegram_id": 990077,
+        "model": "wan_3", "type": "video", "status": "completed",
+        "is_public_feed": True, "is_profile_visible": True,
+        "prompt": "Keep @Image1 as the visitor identity, preserve the cinematic motion.",
+        "feed_repeat_reference_selection": {"version": 1, "images": [], "videos": [VIDEO]},
+        "request_data": {
+            "scenario": "reference", "prompt": "Keep @Image1 as the visitor identity, preserve the cinematic motion.",
+            "reference_image_urls": image_urls, "reference_video_urls": [VIDEO],
+            "reference_audio_urls": [], "reference_file_urls": [], "reference_link_urls": [],
+            "resolution": "720P", "aspect_ratio": "9:16", "duration": 5,
+            "audio": False, "nsfw_checker": False,
+        },
+    }
+    fields = rp.normalize_repeat_fields([{
+        "key": key, "label": label, "image_choices": [{
+            "id": key, "label": label,
+            "image_url": "https://neuromixbot.com/uploads/repeat-choices/" + marker * 32 + ".jpg",
+        }],
+    } for key, label, marker in [
+        ("car", "Машина", "a"), ("outfit", "Одежда", "b"), ("cake", "Торт", "c"),
+    ]], prompt=source["prompt"])
+    plan = repeat.build_repeat_plan(source)
+    plan["personalization_fields"] = fields
+    plan["slots"] = rp.assign_catalog_image_slots(plan["slots"], fields)
+    async def fake_repeat_plan(_actor, _source_id):
+        return plan
+    monkeypatch.setattr(repeat, "get_repeat_plan", fake_repeat_plan)
+    public = repeat.public_plan(plan)
+    assert [slot["binding"] for slot in public["slots"] if slot["kind"] == "image"] == [
+        "upload", "choice", "choice", "choice",
+    ]
+    assert "private.test" not in json.dumps(public) and "owner.test" not in json.dumps(public)
+    actor = SimpleNamespace(user_id=701, telegram_id=991202)
+    recipe = {
+        **public["recipe"], "source_feed_gen_id": 501,
+        "repeat_plan_hash": public["repeat_plan_hash"], "repeat_replacements": {"image:0": USER_FACE},
+        "repeat_user_values": {"car": "car", "outfit": "outfit", "cake": "cake"},
+    }
+    compiled, _probe, _context, _public = await repeat.compile_repeat(actor, recipe, Probe())
+    assert compiled["reference_image_urls"] == [
+        USER_FACE, *[field["image_choices"][0]["image_url"] for field in fields],
+    ]
+    assert compiled["reference_video_urls"] == [VIDEO]
+    assert "@Image1" in compiled["prompt"]
+    assert "«Машина»: используйте @Image2" in compiled["prompt"]
+    assert "«Одежда»: используйте @Image3" in compiled["prompt"]
+    assert "«Торт»: используйте @Image4" in compiled["prompt"]
+    assert not any(img in json.dumps(compiled) for img in image_urls)
+
+    recipe["repeat_replacements"] = {}
+    with pytest.raises(Wan3PrimeValidationError, match="Загрузите"):
+        await repeat.compile_repeat(actor, recipe, Probe())
