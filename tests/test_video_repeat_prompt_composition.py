@@ -174,9 +174,13 @@ async def test_admin_personalization_reaches_video_provider_without_losing_base_
         # retains the durable JPEG. Both must carry the selected catalog asset.
         expected_url = choice_url if model == "seedance_2_5" else choice_url.removesuffix(".jpg") + ".png"
         assert expected_url in json.dumps(entry.transport.await_args.args[1], ensure_ascii=False)
+        # Image groups now bind by the selected reference, not by a
+        # required source-prompt substring. Keep the original private scene.
+        assert "blue coat" in provider_prompt
+        assert "«Одежда»: используйте @Image2" in provider_prompt
     else:
         assert "red dress" in provider_prompt
-    assert "blue coat" not in provider_prompt
+        assert "blue coat" not in provider_prompt
     assert "Keep the smile" in provider_prompt
     assert fixed_reference in json.dumps(entry.transport.await_args.args[1], ensure_ascii=False)
     assert fixed_video_reference in json.dumps(entry.transport.await_args.args[1], ensure_ascii=False)
