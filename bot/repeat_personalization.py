@@ -142,6 +142,44 @@ def repeat_image_references(fields, raw_values, *, telegram_id: int) -> list[str
             raise ValueError(f"Выберите изображение для «{field['label']}»")
     return result
 
+def fill_repeat_catalog_uploads(
+    slots: Sequence[Mapping[str, Any]],
+    fields: Sequence[Mapping[str, Any]],
+    raw_values: Any,
+    manual_uploads: Sequence[str],
+    *,
+    telegram_id: int,
+) -> tuple[list[str], list[str]]:
+    """Replace trailing unconsented image slots with owner-curated selections.
+
+    Catalog URLs come exclusively from persisted authorized choice IDs; the
+    caller cannot supply the catalog URLs directly. Earlier slots remain
+    available for a person's own photos, preserving the original provider
+    reference count and positions. This is opt-in, not a legacy-mode change.
+    """
+    if not isinstance(manual_uploads, (list, tuple)) or any(
+        not isinstance(url, str) or not url.strip() for url in manual_uploads
+    ):
+        raise ValueError("Загрузите свои фото для оставшихся мест повтора")
+    selected = repeat_image_references(fields, raw_values, telegram_id=telegram_id)
+    count = sum(slot.get("binding") == "upload" for slot in slots)
+    if not selected or len(selected) > count:
+        raise ValueError("Для этой публикации готовые варианты недоступны")
+    remaining = count - len(selected)
+    if len(manual_uploads) != remaining:
+        raise ValueError(
+            f"Для этого повтора нужно добавить ещё {remaining} своих фото"
+        )
+    # The typed provider contract requires a distinct file in each slot.
+    from bot.services.media_input_utils import reference_source_identity
+
+    uploads = [url.strip() for url in manual_uploads]
+    combined = [*uploads, *selected]
+    if len({reference_source_identity(url) for url in combined}) != len(combined):
+        raise ValueError("Для разных мест повтора выберите разные изображения")
+    return combined, selected
+
+
 def admin_preview_enabled() -> bool:
     return str(os.getenv(FEATURE_FLAG, "")).strip().lower() in {
         "1", "true", "yes", "on",
