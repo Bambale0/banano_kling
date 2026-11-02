@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from bot import creator_tariff, database, miniapp
+from bot import creator_tariff, database, miniapp, video_repeat_reference_contract
 from bot.handlers import miniapp_video_continuity_compat as continuity
 from bot.video_repeat_reference_contract import video_repeat_descriptors
 
@@ -1354,10 +1354,6 @@ def test_catalog_source_slot_replacement_requires_real_face_upload():
         continuity.enrich_video_repeat_body(request, source)
 
 def test_curated_zero_source_slot_requires_owned_personal_photo_before_charge():
-    from bot.video_repeat_reference_contract import (
-        VideoRepeatContractError, merge_typed_video_inputs,
-    )
-
     face = "https://neuromixbot.com/uploads/refs/image/42/face.jpg"
     choice = "https://neuromixbot.com/uploads/repeat-choices/" + "a" * 32 + ".jpg"
     task = {
@@ -1372,21 +1368,17 @@ def test_curated_zero_source_slot_requires_owned_personal_photo_before_charge():
     }
     body = {"v_type": "imgtxt", "repeat_user_values": {"car": "car"}, "reference_images": []}
     normalized = {"v_model": "seedance_2", "v_type": "imgtxt"}
-    with pytest.raises(VideoRepeatContractError, match="Добавьте своё фото"):
-        merge_typed_video_inputs(task, body, normalized)
-    with pytest.raises(VideoRepeatContractError, match="Загрузите своё фото"):
-        merge_typed_video_inputs(task, {**body, "reference_images": [
+    with pytest.raises(video_repeat_reference_contract.VideoRepeatContractError, match="Добавьте своё фото"):
+        video_repeat_reference_contract.merge_typed_video_inputs(task, body, normalized)
+    with pytest.raises(video_repeat_reference_contract.VideoRepeatContractError, match="Загрузите своё фото"):
+        video_repeat_reference_contract.merge_typed_video_inputs(task, {**body, "reference_images": [
             "https://neuromixbot.com/uploads/refs/image/99/foreign.jpg",
         ]}, normalized)
-    result = merge_typed_video_inputs(task, {**body, "reference_images": [face]}, normalized)
+    result = video_repeat_reference_contract.merge_typed_video_inputs(task, {**body, "reference_images": [face]}, normalized)
     assert result["reference_images"] == [face]
 
 
 def test_curated_only_source_photo_choice_still_requires_a_personal_photo():
-    from bot.video_repeat_reference_contract import (
-        VideoRepeatContractError, merge_typed_video_inputs,
-    )
-
     face = "https://neuromixbot.com/uploads/refs/image/42/face.jpg"
     choice = "https://neuromixbot.com/uploads/repeat-choices/" + "b" * 32 + ".jpg"
     task = {
@@ -1404,18 +1396,14 @@ def test_curated_only_source_photo_choice_still_requires_a_personal_photo():
     }
     body = {"v_type": "imgtxt", "repeat_user_values": {"car": "car"}, "reference_images": []}
     normalized = {"v_model": "seedance_2", "v_type": "imgtxt"}
-    with pytest.raises(VideoRepeatContractError, match="Добавьте своё фото"):
-        merge_typed_video_inputs(task, body, normalized)
-    result = merge_typed_video_inputs(task, {**body, "reference_images": [face]}, normalized)
+    with pytest.raises(video_repeat_reference_contract.VideoRepeatContractError, match="Добавьте своё фото"):
+        video_repeat_reference_contract.merge_typed_video_inputs(task, body, normalized)
+    result = video_repeat_reference_contract.merge_typed_video_inputs(task, {**body, "reference_images": [face]}, normalized)
     assert result["reference_images"] == [face, choice]
     assert result["_repeat_choice_image_indices"] == [2]
 
 
 def test_owner_curated_repeat_never_treats_source_media_as_new_personal_photo():
-    from bot.handlers.miniapp_video_continuity_compat import (
-        VideoRepeatReferenceError, enrich_video_repeat_body,
-    )
-
     face = "https://neuromixbot.com/uploads/refs/image/42/face.jpg"
     source = {
         "model": "seedance_2", "prompt": "A person with a car",
@@ -1425,7 +1413,7 @@ def test_owner_curated_repeat_never_treats_source_media_as_new_personal_photo():
         "_repeat_choice_fields": [{"key": "car", "image_choices": [{"id": "car"}]}],
     }
     body = {"v_model": "seedance_2", "v_type": "imgtxt", "reference_images": []}
-    with pytest.raises(VideoRepeatReferenceError, match="Сначала добавьте своё фото"):
-        enrich_video_repeat_body(body, source)
-    result = enrich_video_repeat_body({**body, "reference_images": [face]}, source)
+    with pytest.raises(continuity.VideoRepeatReferenceError, match="Сначала добавьте своё фото"):
+        continuity.enrich_video_repeat_body(body, source)
+    result = continuity.enrich_video_repeat_body({**body, "reference_images": [face]}, source)
     assert result["v_image_url"] == face
