@@ -26,5 +26,6 @@ export function normalizeVideoRepeatSlots(value: VideoRepeatReferenceSlots): Vid
   return { version: 1, available: true, cost_multiplier: value.cost_multiplier,
     ...(durationCosts ? { duration_costs: durationCosts } : {}),
     ...(value.pricing_quality ? { pricing_quality: value.pricing_quality } : {}),
+    ...(value.catalog_slot_fill_supported === true ? { catalog_slot_fill_supported: true } : {}),
     images: clean(value.images), videos: clean(value.videos) }
 }
