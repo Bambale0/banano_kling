@@ -305,7 +305,7 @@ export function BalanceSheet() {
                   </p>
                   {user.credits >= balanceRequest.requiredCredits ? (
                     <Button onClick={closeBalance} className="mt-3 w-full bg-gold text-primary-foreground hover:bg-gold/90">
-                      Вернуться к видео и запустить
+                      Вернуться к видео
                     </Button>
                   ) : (
                     <p className="mt-2 text-xs text-muted-foreground">
