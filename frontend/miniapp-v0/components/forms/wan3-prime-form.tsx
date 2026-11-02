@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Wan3DurationSelect } from './wan3-duration-select'
+import { GenerationFundingOffer } from '../generation-funding-offer'
 import { RepeatPersonalizationFields, repeatValuesComplete } from './repeat-personalization-fields'
 import { normalizeWan3ImageForRetry, Wan3ImagePreparationError } from '@/lib/wan3-image-normalize'
 import {
@@ -488,6 +489,9 @@ function Wan3PrimeFormSession({ draftOnly = false, onDraftChange, expectedModel,
       </div> : <p className="text-xs text-muted-foreground">Запуск станет доступен после расчёта. Изменение материалов или настроек требует нового расчёта.</p>}
       {error ? <p role="alert" className="break-words text-sm text-destructive">{error}</p> : null}
       {result ? <div role="status" className="space-y-1 rounded-lg border border-border p-3 text-sm"><p>{result.status === 'failed' ? `Генерация не выполнена. Возвращено: ${result.refunded_cost ?? result.reserve_cost}🍌.` : result.status === 'unknown' ? 'Запуск ещё не подтверждён. Проверяем эту же задачу.' : result.status === 'done' ? 'Видео готово.' : 'Видео принято в работу.'}</p><code className="block break-all text-xs">{result.internal_task_id}</code><p className="text-xs text-muted-foreground">Результат появится в истории. Доставка в Telegram зависит от доступности чата.</p></div> : null}
+      {approved && !issue && !disabledReason && !attempted ? (
+        <GenerationFundingOffer cost={approved.reserve_cost} credits={credits} adminFree={isAdmin || approved.admin_free} />
+      ) : null}
       <Button type="button" className="w-full" disabled={working || !!disabledReason || (attempted && !unknown) || (!attempted && (!approved || !!issue || (!isAdmin && !approved.admin_free && credits < approved.reserve_cost)))} onClick={() => { void launch() }}>{sending ? 'Проверяю…' : unknown ? 'Проверить запуск' : 'Запустить Wan'}</Button>
       {result && result.status !== 'unknown' ? <Button type="button" variant="outline" className="w-full" onClick={startNew}>Новая генерация с этими настройками</Button> : null}
     </section>}

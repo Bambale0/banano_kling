@@ -9,12 +9,18 @@ import { isVideoTrendItem, isWanTrendItem, resolveTrendSettings } from './trend-
 import { genjutsuCall, openGenjutsu } from './genjutsu-api'
 import { hydrateSeedance25IdentityPreset } from './seedance25-repeat'
 
+export interface BalanceRequest {
+  packageId?: string
+  requiredCredits?: number
+}
+
 interface AppContextType {
   state: AppState
   selectedTask: Task | null
   taskDetail: TaskDetail | null
   isTaskDetailOpen: boolean
   isBalanceOpen: boolean
+  balanceRequest: BalanceRequest | null
   activeWorkspace: WorkspacePanel | null
   feedDeepLink: FeedDeepLink | null
   promptPreset: PromptPreset | null
@@ -26,7 +32,7 @@ interface AppContextType {
   openProfile: (referralCode?: string | null) => void
   selectTask: (task: Task | null) => void
   closeTaskDetail: () => void
-  openBalance: () => void
+  openBalance: (request?: BalanceRequest) => void
   closeBalance: () => void
   openWorkspace: (panel: WorkspacePanel) => void
   closeWorkspace: () => void
@@ -164,6 +170,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [taskDetail, setTaskDetail] = useState<TaskDetail | null>(null)
   const [isTaskDetailOpen, setIsTaskDetailOpen] = useState(false)
   const [isBalanceOpen, setIsBalanceOpen] = useState(false)
+  const [balanceRequest, setBalanceRequest] = useState<BalanceRequest | null>(null)
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspacePanel | null>(null)
   const [feedDeepLink, setFeedDeepLink] = useState<FeedDeepLink | null>(null)
   const [promptPreset, setPromptPreset] = useState<PromptPreset | null>(null)
@@ -252,8 +259,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       videoModels: normalizeVideoModels(data.video_models),
       recentTasks: data.recent_tasks,
       savedReferences: (data.saved_references || []).map(toUploadedReference),
-      paymentPackages:
-        data.payment_packages?.length ? data.payment_packages : mockAppState.paymentPackages,
+      paymentPackages: data.payment_packages ?? [],
       lastSync: new Date(),
     }))
   }, [])
@@ -282,10 +288,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       },
       recentTasks: prev.mode === 'live' ? prev.recentTasks : [],
       savedReferences: prev.mode === 'live' ? prev.savedReferences : [],
-      paymentPackages:
-        prev.mode === 'live' && prev.paymentPackages.length
-          ? prev.paymentPackages
-          : mockAppState.paymentPackages,
+      // Never show demo prices in an authenticated session after a failed refresh.
+      paymentPackages: prev.mode === 'live' ? prev.paymentPackages : [],
       lastSync: prev.mode === 'live' ? prev.lastSync : null,
     }))
   }, [])
@@ -324,13 +328,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }, 300)
   }, [applyTaskDetail])
 
-  const openBalance = useCallback(() => {
+  const openBalance = useCallback((request?: BalanceRequest) => {
     cancelStartNavigation()
+    setBalanceRequest(request ?? null)
     setIsBalanceOpen(true)
   }, [cancelStartNavigation])
 
   const closeBalance = useCallback(() => {
     setIsBalanceOpen(false)
+    setBalanceRequest(null)
   }, [])
 
   const openWorkspace = useCallback((panel: WorkspacePanel) => {
@@ -708,6 +714,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         taskDetail,
         isTaskDetailOpen,
         isBalanceOpen,
+        balanceRequest,
         activeWorkspace,
         feedDeepLink,
         promptPreset,
@@ -747,4 +754,10 @@ export function useApp() {
     throw new Error('useApp must be used within AppProvider')
   }
   return context
+}
+
+// Standalone generator forms are also rendered by isolated Jest/preview mounts.
+// Optional access avoids binding their static cost rendering to the global app shell.
+export function useOptionalApp() {
+  return useContext(AppContext)
 }

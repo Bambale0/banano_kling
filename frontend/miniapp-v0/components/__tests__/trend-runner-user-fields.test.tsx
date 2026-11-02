@@ -2,7 +2,7 @@ import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { TrendRunnerDialog } from '@/components/trend-runner-dialog'
-import { useApp } from '@/lib/app-context'
+import { useApp, useOptionalApp } from '@/lib/app-context'
 import { uploadFile } from '@/lib/api'
 import {
   createTrendRunRequestId,
@@ -13,13 +13,19 @@ import {
 import type { PromptItem } from '@/lib/types'
 
 jest.mock('@/components/ui/dialog', () => ({
-  Dialog: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  Dialog: ({ children, onOpenChange }: { children: React.ReactNode; onOpenChange: (open: boolean) => void }) => (
+    <div>
+      <button type="button" aria-label="Снаружи редактора" onClick={() => onOpenChange(false)}>Outside</button>
+      {children}
+    </div>
+  ),
   DialogContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   DialogTitle: ({ children }: { children: React.ReactNode }) => <h2>{children}</h2>,
 }))
 
 jest.mock('@/lib/app-context', () => ({
   useApp: jest.fn(),
+  useOptionalApp: jest.fn(),
 }))
 
 jest.mock('@/lib/api', () => ({
@@ -45,6 +51,7 @@ jest.mock('@/lib/trend-api', () => {
 })
 
 const mockedUseApp = useApp as jest.MockedFunction<typeof useApp>
+const mockedUseOptionalApp = useOptionalApp as jest.MockedFunction<typeof useOptionalApp>
 const mockedUploadFile = uploadFile as jest.MockedFunction<typeof uploadFile>
 const mockedRunTrend = runTrend as jest.MockedFunction<typeof runTrend>
 const mockedQuoteTrendVideo = quoteTrendVideo as jest.MockedFunction<typeof quoteTrendVideo>
@@ -99,13 +106,18 @@ describe('TrendRunnerDialog user fields', () => {
       configurable: true,
       value: jest.fn(),
     })
-    mockedUseApp.mockReturnValue({
+    const appFixture = {
+      state: { mode: 'live', user: { credits: 100, isAdmin: false }, paymentPackages: [] },
+      isBalanceOpen: false,
+      openBalance: jest.fn(),
       addTask: jest.fn(),
       setCredits: jest.fn(),
       setTaskDetail: jest.fn(),
       selectTask: jest.fn(),
       addSavedReference: jest.fn(),
-    } as unknown as ReturnType<typeof useApp>)
+    } as unknown as ReturnType<typeof useApp>
+    mockedUseApp.mockReturnValue(appFixture)
+    mockedUseOptionalApp.mockReturnValue(appFixture)
     mockedUploadFile.mockResolvedValue({
       id: 'ref-1',
       name: 'portrait.jpg',
@@ -134,6 +146,18 @@ describe('TrendRunnerDialog user fields', () => {
       },
       credits: 96,
     })
+  })
+
+  it('keeps uploaded trend changes when the payment sheet receives outside clicks', () => {
+    const fixture = mockedUseApp.getMockImplementation()?.() as ReturnType<typeof useApp>
+    mockedUseApp.mockReturnValue({ ...fixture, isBalanceOpen: true })
+    const onOpenChange = jest.fn()
+    render(<TrendRunnerDialog trend={trend} open onOpenChange={onOpenChange} />)
+    const ageInput = screen.getByRole('textbox', { name: /Возраст/ })
+    fireEvent.change(ageInput, { target: { value: '31' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Снаружи редактора' }))
+    expect(onOpenChange).not.toHaveBeenCalled()
+    expect(ageInput).toHaveValue('31')
   })
 
   it('shows an empty admin-selected field and lets the user fill it', async () => {

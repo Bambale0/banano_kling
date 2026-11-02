@@ -63,6 +63,10 @@ jobs:
           components/__tests__/task-detail-publication-references.test.tsx
           __tests__/wan3-manual-trend.test.tsx
           components/__tests__/balance-sheet-payment.test.tsx
+          components/generation-funding-offer.test.tsx
+          components/__tests__/trend-runner-user-fields.test.tsx
+          components/forms/video-generator-form-topup.test.tsx
+          lib/contextual-topup.test.ts
           lib/__tests__/trend-api.test.ts
           components/tabs/__tests__/video-tab-repeat.test.tsx
           components/forms/video-generator-form-repeat-pricing.test.tsx

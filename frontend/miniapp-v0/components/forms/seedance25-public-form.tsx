@@ -1,6 +1,7 @@
 'use client'
 
 import { normalizeRepeatPrompt } from '@/lib/repeat-prompt'
+import { GenerationFundingOffer } from '../generation-funding-offer'
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { uploadFile } from '@/lib/api'
@@ -957,6 +958,8 @@ export function Seedance25PublicForm({ model, credits, isAdmin, promptPreset, on
           <div className="mt-2 text-[11px] text-muted-foreground">Цена зависит от качества и длительности ролика</div>
         )}
       </div>
+
+      {quoteReady ? <GenerationFundingOffer cost={price} credits={credits} adminFree={isAdmin} /> : null}
 
       {error ? <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</div> : null}
       {queued ? (
