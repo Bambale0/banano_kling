@@ -429,7 +429,7 @@ function Wan3PrimeFormSession({ draftOnly = false, onDraftChange, expectedModel,
       <h3 className="text-sm font-semibold">Повтор публикации Wan</h3>
       <p className="text-xs text-muted-foreground">Основные детали работы автора сохранятся. Выберите варианты и добавьте свои файлы в отмеченные места.</p>
       {planLoading ? <p role="status">Проверяю разрешения…</p> : null}
-      {repeatPlan?.slots.map(slot => slot.binding === 'fixed'
+      {repeatPlan?.slots.map(slot => slot.binding === 'choice' ? null : slot.binding === 'fixed'
         ? <p key={slot.key} className="rounded-lg border border-border p-3 text-xs">{repeatSlotTitle(slot)} · материал автора, подставится при запуске</p>
         : <MediaField key={slot.key} {...mediaProps} title={repeatSlotTitle(slot)} label={`Загрузить ${repeatSlotTitle(slot)}`}
             kind={slot.kind} limit={1} prefix={repeatSlotTitle(slot) + ' '} offset={1}
