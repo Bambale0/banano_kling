@@ -12,6 +12,7 @@ from typing import Any
 from bot.services.media_input_utils import (
     canonicalize_local_upload_url,
     reference_upload_owner_telegram_id,
+    reference_source_identity,
     resolve_reference_source,
 )
 
@@ -28,6 +29,18 @@ MEDIA_KEYS = set(IMAGE_LIST_KEYS + VIDEO_LIST_KEYS + AUDIO_LIST_KEYS + FIRST_KEY
 
 class VideoRepeatContractError(ValueError):
     """A safe, user-facing repeat-consent or recipe validation error."""
+
+
+def is_owned_personal_image_reference(source: str, telegram_id: Any) -> bool:
+    """Allow only a current viewer's local image upload, never their video/audio."""
+    if not isinstance(telegram_id, int) or telegram_id <= 0:
+        return False
+    kind, path = reference_source_identity(source)
+    return (
+        kind == "local"
+        and path.startswith("static/uploads/refs/image/")
+        and reference_upload_owner_telegram_id(source) == telegram_id
+    )
 
 
 def parse_video_repeat_grant(raw: Any) -> dict[str, Any] | None:
@@ -424,7 +437,7 @@ def merge_typed_video_inputs(
         if needs_personal_photo:
             personal_url = uploads.pop(0)
             consumer = task.get("_repeat_consumer_telegram_id")
-            if not isinstance(consumer, int) or reference_upload_owner_telegram_id(personal_url) != consumer:
+            if not is_owned_personal_image_reference(personal_url, consumer):
                 raise VideoRepeatContractError("Загрузите своё фото для повтора.")
             # Keep all original source positions stable. Attach the additional
             # personal photo only *after* processing all source slots, then
@@ -438,7 +451,7 @@ def merge_typed_video_inputs(
                 raise VideoRepeatContractError("Загрузите свои файлы для заменяемых референсов.") from exc
             consumer = task.get("_repeat_consumer_telegram_id")
             owned_upload = consumer is not None and reference_upload_owner_telegram_id(value) == consumer
-            if kind == "images" and image_fields and not owned_upload:
+            if kind == "images" and image_fields and not is_owned_personal_image_reference(value, consumer):
                 # An arbitrary public URL is not an authenticated visitor photo.
                 raise VideoRepeatContractError("Загрузите своё фото для повтора.")
             if inherited is not None and not owned_upload:
