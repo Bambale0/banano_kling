@@ -244,6 +244,9 @@ export function TaskDetailPanel() {
     if (!taskDetail || publishBusy) return
     const target = publicationScope === 'profile' ? 'свой профиль' : 'ленту и свой профиль'
     if (!isPublished && !confirmPublication(target)) return
+    const repeatFieldsForPublication = repeatUserFields.map((field) =>
+      field.image_choices?.length ? { ...field, original_value: '' } : field
+    )
     setPublishBusy(true)
     try {
       const published = await publishGeneration(taskDetail.task_id, {
@@ -258,7 +261,7 @@ export function TaskDetailPanel() {
           blurred: feedBlurred,
           publicationScope,
           adultContent,
-          ...(taskDetail.repeat_personalization_editor_enabled ? { repeatUserFields } : {}),
+          ...(taskDetail.repeat_personalization_editor_enabled ? { repeatUserFields: repeatFieldsForPublication } : {}),
         })
         updateTask(taskDetail.task_id, {
           is_public_feed: published.publication_scope === 'feed',
@@ -279,9 +282,7 @@ export function TaskDetailPanel() {
             } : {}),
           },
           ...(taskDetail.repeat_personalization_editor_enabled ? {
-            repeat_user_fields: repeatUserFields.map((field) => field.image_choices?.length
-              ? { ...field, original_value: '' }
-              : field),
+            repeat_user_fields: repeatFieldsForPublication,
           } : {}),
           feed_blurred: Boolean(published.feed_blurred),
         })
