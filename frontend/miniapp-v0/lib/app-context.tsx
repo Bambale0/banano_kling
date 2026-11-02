@@ -387,8 +387,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // successful checkout: refreshTasks() intentionally sets global isLoading.
   const refreshBalance = useCallback(async () => {
     if (!getInitData()) throw new Error('Откройте Mini App из Telegram, чтобы обновить баланс.')
+    // An access grant may complete while this request is in flight.
+    const accessRevision = chatAccessRevision.current
     const data = await bootstrapApp()
-    applyBootstrap(data, chatAccessRevision.current)
+    applyBootstrap(data, accessRevision)
   }, [applyBootstrap])
 
   const refreshTasks = useCallback(async () => {
