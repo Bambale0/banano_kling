@@ -602,6 +602,10 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
     source_task = {**source_task, "_repeat_consumer_telegram_id": _telegram_id, "_repeat_is_owner": (
         source_task.get("user_id") == context["user"].id and not generation_has_private_recipe(source_task)
     )}
+    # The same private catalog revision drives the public choices, typed slots
+    # and provider payload. No owner's source URL is added to the public DTO.
+    if miniapp_module._repeat_personalization_allowed(_telegram_id):
+        source_task["_repeat_choice_fields"] = await miniapp_module.get_repeat_fields(source_id)
     # Only this authenticated boundary can authorize the owner's legacy reuse.
     # Foreign repeats retain only explicit typed or validated historical slots.
     # Every other source slot requires a caller-supplied replacement.
@@ -632,6 +636,7 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
         if first_image:
             repeat_images = [first_image, *[url for url in repeat_images if url != first_image]]
         initial_images = list(repeat_images)
+        chosen_indices = enriched.pop("_repeat_choice_image_indices", None)
         from bot.repeat_personalization import repeat_image_mode_supported
 
         choice_mode_supported = repeat_image_mode_supported({
@@ -644,6 +649,7 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
             telegram_id=_telegram_id,
             image_references=repeat_images,
             image_choices_supported=choice_mode_supported,
+            image_indices=chosen_indices,
         )
         if repeat_images != initial_images:
             enriched["reference_images"] = repeat_images
@@ -665,6 +671,11 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
             "source_id": source_id, "viewer_user_id": context["user"].id,
             "snapshot": _video_repeat_snapshot(source_task), "active_media": active_media,
         }
+        if "repeat_user_values" in body:
+            authorization["personalization_hash"] = hashlib.sha256(json.dumps(
+                source_task.get("_repeat_choice_fields") or [], sort_keys=True,
+                ensure_ascii=False,
+            ).encode()).hexdigest()
         request._video_repeat_guard = authorization
         if not legacy_identity and effective_video_repeat_grant(source_task) is not None:
             request._video_repeat_authorization = authorization
@@ -782,6 +793,13 @@ async def verify_video_repeat_before_charge(request: web.Request) -> web.Respons
             raise VideoRepeatReferenceError("Разрешение на повтор изменилось. Откройте публикацию заново.")
         if missing_local_upload_sources(authorization["active_media"]):
             raise VideoRepeatReferenceError("Референсы для повтора больше недоступны.")
+        if authorization.get("personalization_hash"):
+            current_fields = await miniapp_module.get_repeat_fields(authorization["source_id"])
+            field_hash = hashlib.sha256(json.dumps(
+                current_fields, sort_keys=True, ensure_ascii=False,
+            ).encode()).hexdigest()
+            if field_hash != authorization["personalization_hash"]:
+                raise VideoRepeatReferenceError("Варианты повтора изменились. Откройте публикацию заново.")
     except Exception as exc:  # noqa: BLE001 - fail closed without disclosing source details
         logger.warning(
             "Video repeat consent recheck rejected: source_generation_id=%s error_type=%s",
