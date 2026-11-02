@@ -28,6 +28,7 @@ import { formatTrendRepeatCost, formatTrendRepeatPrice } from '@/lib/trend-price
 import { isWanTrendItem } from '@/lib/trend-settings'
 import type { PromptItem, TrendReferenceSlot, TrendUserField, UploadedFile } from '@/lib/types'
 import { Button } from '@/components/ui/button'
+import { GenerationFundingOffer } from '@/components/generation-funding-offer'
 import { Wan3PrimeForm } from '@/components/forms/wan3-prime-form'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 
@@ -103,6 +104,8 @@ export function TrendRunnerDialog({
     setTaskDetail,
     selectTask,
     addSavedReference,
+    isBalanceOpen,
+    openBalance,
   } = useApp()
   const inputRefs = useRef<Array<HTMLInputElement | null>>([])
   const previewRefs = useRef<string[]>([])
@@ -406,6 +409,7 @@ export function TrendRunnerDialog({
 
   const handleGenerate = async () => {
     if (!trend || busy || !readyToGenerate) return
+    if (!state.user.isAdmin && isVideoTrend && confirmedTrendQuote && state.user.credits < confirmedTrendQuote.cost) return
     setError(null)
     setPhase('generating')
     const referenceUrls = pinterestRepeat
@@ -552,10 +556,13 @@ export function TrendRunnerDialog({
   }
 
   if (trend && isWanTrendItem(trend)) return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} modal={!isBalanceOpen} onOpenChange={(nextOpen) => {
+      if (!isBalanceOpen) onOpenChange(nextOpen)
+    }}>
       <DialogContent className="max-h-[92vh] max-w-lg overflow-y-auto border-border/60 bg-background p-4">
         <DialogTitle>{trend.title}</DialogTitle>
         {open ? <Wan3PrimeForm model={trend.model === 'wan_3' || trend.model === 'wan_3_prime' ? trend.model : undefined} key={trend.id} trendId={trend.id} credits={state.user.credits} isAdmin={state.user.isAdmin}
+          paymentPackages={state.mode === 'live' ? state.paymentPackages : []} onOpenBalance={openBalance}
           previewPriceHint={formatTrendRepeatPrice(trend)}
           onQueued={result => {
             if (typeof result.credits === 'number') setCredits(result.credits)
@@ -570,8 +577,9 @@ export function TrendRunnerDialog({
   return (
     <Dialog
       open={open}
+      modal={!isBalanceOpen}
       onOpenChange={(nextOpen) => {
-        if (!busy) onOpenChange(nextOpen)
+        if (!busy && !isBalanceOpen) onOpenChange(nextOpen)
       }}
     >
       <DialogContent className="max-h-[92vh] max-w-lg overflow-y-auto border-border/60 bg-background p-4">
@@ -951,9 +959,15 @@ export function TrendRunnerDialog({
             Итого {confirmedTrendQuote.billable_seconds} с; списание {confirmedTrendQuote.cost}🍌.
           </p>
         ) : null}
+        {isVideoTrend && confirmedTrendQuote && state.mode === 'live' && !state.user.isAdmin
+          && state.user.credits < confirmedTrendQuote.cost ? (
+          <GenerationFundingOffer cost={confirmedTrendQuote.cost} credits={state.user.credits}
+            paymentPackages={state.paymentPackages} onTopup={openBalance} />
+        ) : null}
         <Button
           type="button"
-          disabled={busy || !readyToGenerate}
+          disabled={busy || !readyToGenerate || Boolean(isVideoTrend && confirmedTrendQuote
+            && !state.user.isAdmin && state.user.credits < confirmedTrendQuote.cost)}
           onClick={() => void handleGenerate()}
           className={pinterestRepeat ? 'h-12 text-base font-semibold' : undefined}
         >
