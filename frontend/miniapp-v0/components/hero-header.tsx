@@ -47,7 +47,7 @@ export function HeroHeader() {
             </button>
 
             <button
-              onClick={openBalance}
+              onClick={() => openBalance()}
               className="inline-flex items-center gap-2 rounded-full border border-gold/25 bg-gold/10 px-3 py-1.5 transition-colors hover:bg-gold/15"
             >
               <Banana className="h-4 w-4 text-gold" />
