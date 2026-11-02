@@ -1375,6 +1375,12 @@ def test_curated_zero_source_slot_requires_owned_personal_photo_before_charge():
         video_repeat_reference_contract.merge_typed_video_inputs(task, {**body, "reference_images": [
             "https://neuromixbot.com/uploads/refs/image/99/foreign.jpg",
         ]}, normalized)
+    for bad_media in ("video/42/trick.mp4", "audio/42/trick.mp3"):
+        with pytest.raises(video_repeat_reference_contract.VideoRepeatContractError, match="Загрузите своё фото"):
+            video_repeat_reference_contract.merge_typed_video_inputs(task, {
+                **body,
+                "reference_images": [f"https://neuromixbot.com/uploads/refs/{bad_media}"],
+            }, normalized)
     result = video_repeat_reference_contract.merge_typed_video_inputs(task, {**body, "reference_images": [face]}, normalized)
     assert result["reference_images"] == [face]
 
@@ -1417,6 +1423,10 @@ def test_owner_curated_repeat_never_treats_source_media_as_new_personal_photo():
     body = {"v_model": "seedance_2", "v_type": "imgtxt", "reference_images": []}
     with pytest.raises(continuity.VideoRepeatReferenceError, match="Сначала добавьте своё фото"):
         continuity.enrich_video_repeat_body(body, source)
+    with pytest.raises(continuity.VideoRepeatReferenceError, match="Сначала добавьте своё фото"):
+        continuity.enrich_video_repeat_body({
+            **body, "reference_images": ["https://neuromixbot.com/uploads/refs/video/42/clip.mp4"],
+        }, source)
     result = continuity.enrich_video_repeat_body({**body, "reference_images": [face]}, source)
     assert result["v_image_url"] == face
 
@@ -1442,6 +1452,11 @@ def test_curated_existing_image_upload_slot_rejects_unowned_public_url():
     with pytest.raises(video_repeat_reference_contract.VideoRepeatContractError, match="Загрузите своё фото"):
         video_repeat_reference_contract.merge_typed_video_inputs(task, {
             **payload, "reference_images": ["https://third-party.test/unowned-face.png"],
+        }, normalized)
+    with pytest.raises(video_repeat_reference_contract.VideoRepeatContractError, match="Загрузите своё фото"):
+        video_repeat_reference_contract.merge_typed_video_inputs(task, {
+            **payload,
+            "reference_images": ["https://neuromixbot.com/uploads/refs/audio/42/fake.mp3"],
         }, normalized)
     result = video_repeat_reference_contract.merge_typed_video_inputs(task, {
         **payload, "reference_images": [face],
