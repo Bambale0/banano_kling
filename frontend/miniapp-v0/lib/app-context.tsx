@@ -328,7 +328,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // A balance refresh must not set global isLoading: doing so unmounts every
   // generation form and would discard the repeat draft after a purchase.
   const refreshBalance = useCallback(async () => {
-    if (!getInitData()) return
+    if (!getInitData()) throw new Error('Откройте Mini App через Telegram, чтобы обновить баланс.')
     const data = await bootstrapApp()
     applyBootstrap(data, chatAccessRevision.current)
   }, [applyBootstrap])
