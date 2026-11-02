@@ -266,7 +266,7 @@ def assign_catalog_image_slots(
     # Use the absolute ordinal among image slots, not the per-field index.
     image_positions = [
         pos for pos, slot in enumerate(result)
-        if slot.get("kind", "image") == "image"
+        if slot.get("kind", "image") in {"image", "images"}
     ]
     candidates = {
         ordinal: position for ordinal, position in enumerate(image_positions)
