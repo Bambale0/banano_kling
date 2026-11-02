@@ -81,9 +81,10 @@ export function BalanceSheet() {
     : paymentPackages
   const emailInputRef = useRef<HTMLInputElement>(null)
   const [loadingPayment, setLoadingPayment] = useState<string | null>(null)
+  const paymentFlightRef = useRef(false)
   const [customerEmail, setCustomerEmail] = useState('')
   const [readyPayment, setReadyPayment] = useState<{
-    url: string; orderId: string; provider: PaymentProvider; credits: number; amountRub: number | null
+    url: string; orderId: string; packageId: string; provider: PaymentProvider; credits: number; amountRub: number | null
   } | null>(null)
   const paymentReadyRef = useRef<HTMLElement>(null)
   const balanceOpenRef = useRef(isBalanceOpen)
@@ -170,8 +171,14 @@ export function BalanceSheet() {
 
   const handleTopup = async (packageId: string, provider: PaymentProvider = 'telegram_stars') => {
     const selectedPackage = paymentPackages.find((item) => item.id === packageId)
-    if (mode !== 'live' || !selectedPackage) return
+    if (mode !== 'live' || !selectedPackage || paymentFlightRef.current) return
+    if (readyPayment?.packageId === packageId && readyPayment.provider === provider) {
+      paymentReadyRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
+      toast.message('Счёт уже создан', { description: 'Используйте готовую ссылку для оплаты.' })
+      return
+    }
 
+    paymentFlightRef.current = true
     const loadingKey = `${packageId}:${provider}`
     setReadyPayment(null)
     setLoadingPayment(loadingKey)
@@ -218,7 +225,7 @@ export function BalanceSheet() {
         // Keep the exact signed string. A fresh click can open externally even
         // when the API response consumed Telegram's user-interaction TTL.
         setReadyPayment({
-          url: payment.payment_url, orderId: payment.order_id, provider: payment.provider,
+          url: payment.payment_url, orderId: payment.order_id, packageId, provider: payment.provider,
           credits: payment.credits,
           amountRub: payment.provider.startsWith('lava_foreign') ? null : selectedPackage.price_rub,
         })
@@ -262,6 +269,7 @@ export function BalanceSheet() {
         focusCustomerEmail()
       }
     } finally {
+      paymentFlightRef.current = false
       setLoadingPayment(null)
     }
   }
