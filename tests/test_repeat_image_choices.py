@@ -242,6 +242,24 @@ async def test_wan_real_image_probe_quote_to_launch_keeps_choice_and_is_idempote
 
     owner, source_id = await published_source()
     actor = await user_actor(100, telegram_id=991202)
+    # The source has two images (face replacement + consented fixed image).
+    # Add a distinct unconsented outfit slot: a catalog group must replace
+    # that slot, not steal the visitor's face or append a third provider image.
+    original = await database.get_generation_task_payload(source_id)
+    source_recipe = dict(original['request_data'])
+    image_slots = [
+        'https://owner.example/face.png',
+        'https://owner.example/outfit.png',
+        FIXED,
+    ]
+    source_recipe['reference_image_urls'] = image_slots
+    source_recipe['reference_images'] = image_slots
+    async with database.db_backend.connect(database.DATABASE_PATH) as conn:
+        await conn.execute(
+            'UPDATE generation_tasks SET request_data = ? WHERE id = ?',
+            (json.dumps(source_recipe, ensure_ascii=False), source_id),
+        )
+        await conn.commit()
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv(subject.FEATURE_FLAG, '1')
     monkeypatch.setattr(miniapp.config, 'is_admin', lambda _id: True)
@@ -259,6 +277,10 @@ async def test_wan_real_image_probe_quote_to_launch_keeps_choice_and_is_idempote
             return await ActualWan3PrimeProbe().probe_file(path, kind=kind)
 
     plan = public_plan(await get_repeat_plan(actor, source_id))
+    assert [(slot['key'], slot['binding']) for slot in plan['slots'] if slot['kind'] == 'image'] == [
+        ('image:0', 'upload'), ('image:1', 'choice'), ('image:2', 'fixed'),
+    ]
+    assert 'outfit.png' not in json.dumps(plan) and choice not in json.dumps(plan)
     request = {**plan['recipe'], 'source_feed_gen_id': source_id, 'repeat_plan_hash': plan['repeat_plan_hash'],
                'repeat_replacements': {'image:0': USER_FACE}, 'repeat_user_values': {'outfit': 'dress'}}
     provider = Provider()
@@ -275,8 +297,9 @@ async def test_wan_real_image_probe_quote_to_launch_keeps_choice_and_is_idempote
         assert await balance(actor.user_id) == 100
         return
     result = await lifecycle.launch(actor, request, quote, 'selected-image-once')
-    assert provider.recipe.reference_image_urls == [USER_FACE, FIXED, choice]
-    assert '@Image3' in provider.recipe.prompt
+    assert provider.recipe.reference_image_urls == [USER_FACE, choice, FIXED]
+    assert '@Image2' in provider.recipe.prompt
+    assert provider.recipe.reference_video_urls == ['https://owner.example/source.mp4']
     assert (await lifecycle.launch(actor, request, quote, 'selected-image-once'))['task_id'] == result['task_id']
     assert provider.creates == 1
 
