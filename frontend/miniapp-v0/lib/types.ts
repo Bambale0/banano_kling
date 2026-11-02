@@ -32,6 +32,8 @@ export interface VideoRepeatReferenceSlots {
   /** Final server quotes for the retained Seedance quality, including video references. */
   duration_costs?: Record<string, number>
   pricing_quality?: '480p' | '720p'
+  /** Server permits curated choices to satisfy replaceable slots. */
+  catalog_slot_fill_supported?: boolean
   images: Array<{ index: number; role: 'reference' | 'first_frame' | 'last_frame'; binding: 'fixed' | 'upload' }>
   videos: Array<{ index: number; role: 'reference'; binding: 'fixed' | 'upload' }>
 }
