@@ -33,6 +33,7 @@ try {
     page.setDefaultTimeout(20_000)
     let paymentRequests = 0
     let creditedBalance = 1
+    let showTrend = false
     const errors = [], externalRequests = []
     page.on('pageerror', error => errors.push(error.message))
     await context.addInitScript(({ platform, bridge }) => {
@@ -86,9 +87,19 @@ try {
           data = { ok: true, provider: 'robokassa', order_id: '9007199254740993123', payment_id: 'fixture', payment_url: exactUrl, credits: 50 }
         }
         else if (url.pathname.endsWith('/client-log')) return route.fulfill({ json: { ok: true } })
-        else if (url.pathname.endsWith('/prompts')) data = { ok: true, prompts: [] }
+        else if (url.pathname.endsWith('/prompts')) data = { ok: true, prompts: showTrend ? [{
+          id: 77, title: 'Synthetic repeat payment', description: '', prompt_text: '', prompt_hidden: true,
+          category: 'video', model: 'seedance_2_5', tags: ['trend', 'trend-video'], status: 'approved',
+          likes: 0, uses_count: 0, preview_url: '', repeat_cost: 50,
+          generation_settings: { kind: 'video', ratio: '16:9', reference_count: 1, reference_labels: ['Ваше фото'] },
+        }] : [] }
         else if (url.pathname.endsWith('/feed')) data = { ok: true, feed: [], models: [] }
         else if (url.pathname.endsWith('/genjutsu')) data = { ok: true, visible: false }
+        else if (url.pathname.endsWith('/upload')) data = { ok: true, url: 'https://example.test/face.png', kind: 'image', filename: 'face.png' }
+        else if (url.pathname.endsWith('/trends/run') && request.postDataJSON().pricing_quote_only === true) data = {
+          ok: true, quote_only: true, cost: 50, quote_hash: 'fixture', source_video_seconds: 0,
+          output_seconds: 10, billable_seconds: 10, admin_free: false,
+        }
         else if (/generate|repeat|remix|trends\/run/.test(url.pathname)) throw new Error(`Unexpected mutation: ${url.pathname}`)
         return route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) })
       }
@@ -149,6 +160,38 @@ try {
     assert.equal(await prompt.inputValue(), 'Синтетический текст повтора для проверки оплаты')
     assert.equal(await offer.count(), 0, 'After confirmed funds, no top-up call-to-action is needed')
     assert.equal(paymentRequests, 1, 'Returning from checkout must not create another invoice')
+    // Regression: checkout opened FROM a portalled Radix trend dialog.
+    // DOM visibility alone misses a sheet painted behind the repeat editor.
+    creditedBalance = 1
+    showTrend = true
+    await page.goto(baseUrl, { waitUntil: 'networkidle' })
+    await page.locator('nav').getByRole('button', { name: 'Тренды', exact: true }).click()
+    await page.getByRole('button', { name: /Повторить · 50/ }).click()
+    const repeatDialog = page.getByRole('dialog')
+    await repeatDialog.locator('input[type=file]').setInputFiles({
+      name: 'face.png', mimeType: 'image/png',
+      buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a++sAAAAASUVORK5CYII=', 'base64'),
+    })
+    await repeatDialog.getByRole('button', { name: 'Рассчитать точную стоимость', exact: true }).click()
+    const funding = repeatDialog.getByRole('region', { name: 'Пополнение для генерации' })
+    await funding.getByRole('button', { name: /Купить 50🍌 за 500 ₽/ }).click()
+    const checkout = page.getByRole('region', { name: 'Пополнение для повтора' })
+    await checkout.waitFor()
+    const buy = checkout.getByRole('button', { name: /Купить 50🍌 за 500 ₽/ })
+    await buy.scrollIntoViewIfNeeded()
+    await page.waitForTimeout(500)
+    assert.equal(await buy.evaluate(el => {
+      const r = el.getBoundingClientRect()
+      return el.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2))
+    }), true, 'Repeat dialog must not cover the checkout button')
+    await buy.click()
+    await proceed.waitFor()
+    assert.equal(paymentRequests, 2, 'Repeat checkout creates exactly one invoice after explicit click')
+    await page.getByRole('button', { name: 'Закрыть пополнение' }).click()
+    await repeatDialog.waitFor()
+    assert.equal(await repeatDialog.getByText('Готово ✓', { exact: true }).count(), 1, 'Uploaded photo survives checkout')
+    assert.equal(await repeatDialog.getByRole('button', { name: /Подтвердить 50🍌/ }).count(), 1, 'Quote survives checkout')
+    assert.deepEqual(errors, [])
     console.log(`PASS payment browser: ${platform}, bridge=${bridge}, delayed API, exact URL, one invoice`)
     await browser.close(); browser = null
   }
