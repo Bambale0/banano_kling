@@ -954,7 +954,7 @@ export function TaskDetailPanel() {
                                 className="block min-h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground">
                                 <option value="">Автоматически — последние доступные фото</option>
                                 {publicationReferenceImages.map((_, imageIndex) => (
-                                  <option key={imageIndex} value={imageIndex}>Фото {imageIndex + 1}</option>
+                                  <option key={publicationReferenceImageIndices[imageIndex] ?? imageIndex} value={publicationReferenceImageIndices[imageIndex] ?? imageIndex}>Фото {imageIndex + 1}</option>
                                 ))}
                               </select>
                             </label>
