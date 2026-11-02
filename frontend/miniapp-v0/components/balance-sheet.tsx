@@ -73,6 +73,7 @@ export function BalanceSheet() {
     ? [...paymentPackages].sort((a, b) => Number(b.id === selectedPackageId) - Number(a.id === selectedPackageId))
     : paymentPackages
   const emailInputRef = useRef<HTMLInputElement>(null)
+  const selectedPackageRef = useRef<HTMLDivElement>(null)
   const [loadingPayment, setLoadingPayment] = useState<string | null>(null)
   const [customerEmail, setCustomerEmail] = useState('')
   const [readyPayment, setReadyPayment] = useState<{
@@ -82,6 +83,15 @@ export function BalanceSheet() {
   const balanceOpenRef = useRef(isBalanceOpen)
 
   useEffect(() => { balanceOpenRef.current = isBalanceOpen }, [isBalanceOpen])
+
+  useEffect(() => {
+    if (!isBalanceOpen || !selectedPackageId) return
+    // A context purchase should land on the actual payment methods, not on statistics.
+    const scrollId = window.setTimeout(() => {
+      selectedPackageRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
+    }, 0)
+    return () => window.clearTimeout(scrollId)
+  }, [isBalanceOpen, selectedPackageId])
 
   useEffect(() => {
     if (readyPayment && isBalanceOpen) {
@@ -428,6 +438,7 @@ export function BalanceSheet() {
                     return (
                       <div
                         key={pkg.id}
+                        ref={pkg.id === selectedPackageId ? selectedPackageRef : undefined}
                         className={cn(
                           'rounded-2xl border p-4 transition-all duration-200',
                           pkg.id === selectedPackageId || pkg.popular
