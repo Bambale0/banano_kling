@@ -134,7 +134,7 @@ it('offers explicit return to the unchanged repeat only once wallet funds cover 
     balanceRequest: { packageId: 'start', requiredCredits: 50 },
   })
   const { rerender } = render(<BalanceSheet />)
-  expect(screen.queryByRole('button', { name: 'Вернуться к видео и запустить' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Вернуться к видео' })).not.toBeInTheDocument()
 
   ;(useApp as jest.Mock).mockReturnValue({
     ...fixture,
@@ -142,6 +142,6 @@ it('offers explicit return to the unchanged repeat only once wallet funds cover 
     state: { ...fixture.state, user: { credits: 51 } },
   })
   rerender(<BalanceSheet />)
-  fireEvent.click(screen.getByRole('button', { name: 'Вернуться к видео и запустить' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Вернуться к видео' }))
   expect(fixture.closeBalance).toHaveBeenCalledTimes(1)
 })
