@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
+import { GenerationFundingOffer } from '@/components/generation-funding-offer'
+import type { PaymentPackage } from '@/lib/types'
+import type { FundingIntent } from '@/lib/generation-funding'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Wan3DurationSelect } from './wan3-duration-select'
@@ -204,7 +207,7 @@ interface Wan3PrimeFormProps {
   draftOnly?: boolean
   onDraftChange?: (draft: Wan3DraftState) => void
   model?: Wan3PrimeRecipe['model']
-  credits: number; isAdmin?: boolean; modelSelector?: ReactNode; initialRecipe?: Wan3PrimeRecipe | null
+  credits: number; isAdmin?: boolean; paymentPackages?: PaymentPackage[]; onOpenBalance?: (intent: FundingIntent) => void; modelSelector?: ReactNode; initialRecipe?: Wan3PrimeRecipe | null
   ownerTaskId?: string | null; publicationSourceId?: number | null; trendId?: number | null; disabledReason?: string
   previewPriceHint?: string | null
   onQueued?: (result: Wan3PrimeGenerateResponse) => void | Promise<void>
@@ -222,7 +225,7 @@ export function Wan3PrimeForm(props: Wan3PrimeFormProps) {
   return <Wan3PrimeFormSession key={session} {...props} model={model} expectedModel={props.model} initialRecipe={initialRecipe} />
 }
 
-function Wan3PrimeFormSession({ draftOnly = false, onDraftChange, expectedModel, model = 'wan_3_prime', credits, isAdmin = false, modelSelector, initialRecipe, ownerTaskId, publicationSourceId, trendId: selectedTrendId, previewPriceHint, disabledReason: externalDisabledReason, onQueued }: Wan3PrimeFormProps & { expectedModel?: Wan3PrimeRecipe['model'] }) {
+function Wan3PrimeFormSession({ draftOnly = false, onDraftChange, expectedModel, model = 'wan_3_prime', credits, isAdmin = false, paymentPackages, onOpenBalance, modelSelector, initialRecipe, ownerTaskId, publicationSourceId, trendId: selectedTrendId, previewPriceHint, disabledReason: externalDisabledReason, onQueued }: Wan3PrimeFormProps & { expectedModel?: Wan3PrimeRecipe['model'] }) {
   const disabledReason = externalDisabledReason || ''
   const [recipe, setRecipe] = useState<Wan3PrimeRecipe>(() => initialRecipe ? { ...emptyRecipe('text', model), ...initialRecipe } : emptyRecipe('text', model))
   const drafts = useRef<Partial<Record<Wan3PrimeScenario, Wan3PrimeRecipe>>>({})
@@ -486,6 +489,10 @@ function Wan3PrimeFormSession({ draftOnly = false, onDraftChange, expectedModel,
         <p className="text-xs text-muted-foreground">Вход: {approved.source_video_duration_seconds} с + выход: {approved.billing_duration_seconds - approved.source_video_duration_seconds} с · {approved.auto_duration ? 'максимум' : 'всего'} {approved.billing_duration_seconds} с.</p>
         <p className="text-xs text-muted-foreground">{approved.settlement_notice || (approved.auto_duration ? 'Неиспользованный резерв возвращается после результата.' : 'Показанная стоимость фиксируется при запуске.')}</p>
       </div> : <p className="text-xs text-muted-foreground">Запуск станет доступен после расчёта. Изменение материалов или настроек требует нового расчёта.</p>}
+      {approved && !isAdmin && !approved.admin_free && credits < approved.reserve_cost ? (
+        <GenerationFundingOffer cost={approved.reserve_cost} credits={credits}
+          paymentPackages={paymentPackages} onTopup={onOpenBalance} />
+      ) : null}
       {error ? <p role="alert" className="break-words text-sm text-destructive">{error}</p> : null}
       {result ? <div role="status" className="space-y-1 rounded-lg border border-border p-3 text-sm"><p>{result.status === 'failed' ? `Генерация не выполнена. Возвращено: ${result.refunded_cost ?? result.reserve_cost}🍌.` : result.status === 'unknown' ? 'Запуск ещё не подтверждён. Проверяем эту же задачу.' : result.status === 'done' ? 'Видео готово.' : 'Видео принято в работу.'}</p><code className="block break-all text-xs">{result.internal_task_id}</code><p className="text-xs text-muted-foreground">Результат появится в истории. Доставка в Telegram зависит от доступности чата.</p></div> : null}
       <Button type="button" className="w-full" disabled={working || !!disabledReason || (attempted && !unknown) || (!attempted && (!approved || !!issue || (!isAdmin && !approved.admin_free && credits < approved.reserve_cost)))} onClick={() => { void launch() }}>{sending ? 'Проверяю…' : unknown ? 'Проверить запуск' : 'Запустить Wan'}</Button>
