@@ -1297,6 +1297,7 @@ export function VideoGeneratorForm({
               files={photoReferences}
               onFilesChange={setPhotoReferences}
               maxFiles={
+                needsCatalogPersonalPhoto ? 1 :
                 selectedScenario === 'first_last'
                   ? 1
                   : selectedScenario === 'imgtxt'
