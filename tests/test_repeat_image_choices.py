@@ -373,3 +373,70 @@ async def test_catalog_http_upload_is_admin_only_and_not_a_personal_reference(mo
         assert '/uploads/repeat-choices/' in payload['url']
         assert payload['reference'] is None
     personal_save.assert_not_awaited()
+
+
+def test_curated_photo_groups_replace_last_three_source_slots_not_four_user_uploads():
+    slots = [
+        {"kind": "image", "role": "reference", "index": n, "binding": "upload",
+         "url": f"https://private.test/source-{n}.jpg"}
+        for n in range(4)
+    ]
+    fields = [
+        {"key": key, "label": label, "image_choices": [{"id": key}]}
+        for key, label in [("car", "Машина"), ("outfit", "Одежда"), ("cake", "Торт")]
+    ]
+    bound = subject.assign_catalog_image_slots(slots, fields)
+    assert [(slot["binding"], slot.get("choice_key")) for slot in bound] == [
+        ("upload", None), ("choice", "car"), ("choice", "outfit"), ("choice", "cake"),
+    ]
+    assert all(slot["binding"] == "upload" for slot in slots)  # input immutable
+
+
+def test_author_can_bind_categories_out_of_source_photo_order():
+    slots = [{"kind": "image", "role": "reference", "index": n, "binding": "upload"} for n in range(4)]
+    fields = [
+        {"key": "car", "image_choices": [{"id": "car"}], "image_slot_index": 3},
+        {"key": "outfit", "image_choices": [{"id": "outfit"}], "image_slot_index": 1},
+        {"key": "cake", "image_choices": [{"id": "cake"}], "image_slot_index": 2},
+    ]
+    mapped = subject.assign_catalog_image_slots(slots, fields)
+    assert [slot.get("choice_key") for slot in mapped] == [None, "outfit", "cake", "car"]
+    exposed = subject.public_repeat_fields(fields)
+    assert all("image_slot_index" not in item for item in exposed)
+
+
+def test_catalog_binding_preserves_fixed_face_video_and_other_media():
+    slots = [
+        {"kind": "image", "role": "first_frame", "binding": "upload", "index": 0},
+        {"kind": "video", "role": "reference", "binding": "upload", "index": 0},
+        {"kind": "image", "role": "reference", "binding": "upload", "index": 0},
+        {"kind": "image", "role": "reference", "binding": "fixed", "index": 1},
+        {"kind": "image", "role": "reference", "binding": "upload", "index": 2},
+    ]
+    mapped = subject.assign_catalog_image_slots(slots, [
+        {"key": "outfit", "image_choices": [{"id": "dress"}]},
+        {"key": "cake", "image_choices": [{"id": "cake"}]},
+    ])
+    assert [slot["binding"] for slot in mapped] == [
+        "upload", "upload", "choice", "fixed", "choice",
+    ]
+
+
+def test_duplicate_or_fixed_catalog_binding_is_rejected_without_fallback():
+    slots = [{"kind": "image", "role": "reference", "binding": "upload", "index": n} for n in range(4)]
+    fields = [{"key": key, "image_choices": [{"id": key}], "image_slot_index": 2}
+              for key in ("cake", "outfit")]
+    with pytest.raises(ValueError, match="разные доступные"):
+        subject.assign_catalog_image_slots(slots, fields)
+    slots[2]["binding"] = "fixed"
+    with pytest.raises(ValueError, match="разные доступные"):
+        subject.assign_catalog_image_slots(slots, fields[:1])
+
+
+def test_old_repeats_without_catalog_choices_still_use_original_upload_contract():
+    slots = [{"kind": "image", "role": "reference", "binding": "upload", "index": n} for n in range(4)]
+    assert subject.assign_catalog_image_slots(slots, []) == slots
+    # A text-mode source with no eligible slots preserves the previous append-only contract.
+    assert subject.assign_catalog_image_slots([], [
+        {"key": "outfit", "image_choices": [{"id": "dress"}]},
+    ]) == []
