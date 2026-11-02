@@ -350,7 +350,10 @@ def merge_typed_video_inputs(
     if image_fields:
         from bot.repeat_personalization import assign_catalog_image_slots, repeat_image_references
 
-        plan["images"] = assign_catalog_image_slots(plan["images"], fields)
+        try:
+            plan["images"] = assign_catalog_image_slots(plan["images"], fields)
+        except ValueError as exc:
+            raise VideoRepeatContractError(str(exc)) from exc
         if any(slot["binding"] == "choice" for slot in plan["images"]):
             if "repeat_user_values" not in body:
                 raise VideoRepeatContractError("Выберите варианты изображений для повтора")
