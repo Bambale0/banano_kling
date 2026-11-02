@@ -39,6 +39,7 @@ interface AppContextType {
   closeWorkspace: () => void
   consumeFeedDeepLink: () => void
   refreshTasks: () => Promise<void>
+  refreshBalance: () => Promise<void>
   refreshTelegramChatAccess: (signal: AbortSignal) => Promise<boolean>
   setCredits: (amount: number) => void
   addTask: (task: Task) => void
@@ -381,6 +382,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }))
     return available
   }, [])
+
+  // Keep the composer and reference selections mounted while reconciling a
+  // successful checkout: refreshTasks() intentionally sets global isLoading.
+  const refreshBalance = useCallback(async () => {
+    if (!getInitData()) throw new Error('Откройте Mini App из Telegram, чтобы обновить баланс.')
+    // An access grant may complete while this request is in flight.
+    const accessRevision = chatAccessRevision.current
+    const data = await bootstrapApp()
+    applyBootstrap(data, accessRevision)
+  }, [applyBootstrap])
 
   const refreshTasks = useCallback(async () => {
     setState(prev => ({ ...prev, isLoading: true, error: null }))
@@ -733,6 +744,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         closeWorkspace,
         consumeFeedDeepLink,
         refreshTasks,
+        refreshBalance,
         refreshTelegramChatAccess,
         setCredits,
         addTask,
