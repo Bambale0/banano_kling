@@ -1458,6 +1458,7 @@ export async function generateVideo(payload: {
   duration: number
   sourceFeedGenId?: number | null
   repeatUserValues?: Record<string, string>
+  repeatCatalogMode?: boolean
   pricingQuoteOnly?: boolean
   pricingQuoteHash?: string
   grokMode?: string
@@ -1536,6 +1537,7 @@ export async function generateVideo(payload: {
     v_duration: payload.duration,
     source_feed_gen_id: payload.sourceFeedGenId || null,
     ...(payload.repeatUserValues ? { repeat_user_values: payload.repeatUserValues } : {}),
+    ...(payload.repeatCatalogMode === true ? { repeat_catalog_mode: true } : {}),
     pricing_quote_only: payload.pricingQuoteOnly === true,
     pricing_quote_hash: payload.pricingQuoteHash,
     grok_mode: payload.grokMode,
