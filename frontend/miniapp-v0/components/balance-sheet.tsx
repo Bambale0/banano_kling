@@ -1,6 +1,7 @@
 'use client'
 
 import type { ComponentType } from 'react'
+import { createPortal } from 'react-dom'
 import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Banana, CreditCard, Gift, Globe2, Loader2, Mail, QrCode, Receipt, Sparkles, Star, X } from 'lucide-react'
@@ -329,7 +330,10 @@ export function BalanceSheet() {
     }
   }
 
-  return (
+  // Trend editors use a Radix portal. Render checkout at the document root
+  // above that portal so opening it never leaves buttons behind the editor.
+  if (typeof document === 'undefined') return null
+  return createPortal(
     <AnimatePresence>
       {isBalanceOpen && (
         <>
@@ -339,7 +343,7 @@ export function BalanceSheet() {
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
             onClick={closeBalance}
-            className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm"
+            className="fixed inset-0 z-[70] bg-background/80 backdrop-blur-sm"
           />
 
           <motion.div
@@ -347,7 +351,7 @@ export function BalanceSheet() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: '100%' }}
             transition={{ type: 'spring', damping: 28, stiffness: 280, mass: 0.8 }}
-            className="fixed bottom-0 left-0 right-0 z-50 max-h-[88vh] overflow-auto rounded-t-3xl border-t border-border/50 bg-background shadow-2xl safe-bottom"
+            className="fixed bottom-0 left-0 right-0 z-[70] max-h-[88vh] overflow-auto rounded-t-3xl border-t border-border/50 bg-background shadow-2xl safe-bottom"
           >
             <div className="sticky top-0 z-10 bg-inherit px-5 pt-3 pb-3">
               <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-border" />
@@ -773,7 +777,8 @@ export function BalanceSheet() {
           </motion.div>
         </>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   )
 }
 
