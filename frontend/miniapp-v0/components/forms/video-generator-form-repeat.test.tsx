@@ -397,3 +397,53 @@ describe('retriable errors never masquerade as revoked author consent', () => {
     expect(screen.getByRole('button', { name: /Запустить видео/ })).toBeDisabled()
   })
 })
+
+
+it('shows one personal face upload plus three photo-option grids for a four-image foreign repeat', async () => {
+  const onSubmit = jest.fn().mockResolvedValue(undefined)
+  const makeChoice = (key: string, label: string) => ({
+    key, label, type: 'text' as const,
+    required: true,
+    image_choices: [{ id: key, label: `Выбрать ${label}`, image_url: `https://catalog.test/${key}.jpg` }],
+    allow_custom_image: true,
+  })
+  const curatedPreset: VideoPromptPreset = {
+    ...preset, scenario: 'video', prompt: '', promptHidden: true,
+    repeatReferenceSlots: {
+      version: 1, available: true, cost_multiplier: 1,
+      duration_costs: { '5': 10, '10': 20 }, pricing_quality: '720p',
+      images: [
+        { index: 0, role: 'reference', binding: 'upload' },
+        { index: 1, role: 'reference', binding: 'choice' },
+        { index: 2, role: 'reference', binding: 'choice' },
+        { index: 3, role: 'reference', binding: 'choice' },
+      ],
+      videos: [],
+    },
+    repeatUserFields: [
+      makeChoice('car', 'Машина'),
+      makeChoice('outfit', 'Одежда'),
+      makeChoice('cake', 'Торт'),
+    ],
+  }
+  const { container } = render(<VideoGeneratorForm models={models} promptPreset={curatedPreset}
+    onSubmit={onSubmit} credits={100} isSubmitting={false} savedImageReferences={[savedFrame]} />)
+  const launch = screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость|Подтвердить цену и запустить/i })
+  expect(launch).toBeDisabled()
+  expect(screen.getByRole('group', { name: 'Фото 1' })).toBeInTheDocument()
+  expect(screen.queryByRole('group', { name: 'Фото 2' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('group', { name: 'Фото 3' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('group', { name: 'Фото 4' })).not.toBeInTheDocument()
+  expect(container.innerHTML).not.toContain('https://private.test/source-')
+  for (const label of ['Машина', 'Одежда', 'Торт']) {
+    fireEvent.click(screen.getByRole('button', { name: `Выбрать ${label}` }))
+  }
+  expect(launch).toBeDisabled()
+  fireEvent.click(within(screen.getByRole('group', { name: 'Фото 1' })).getByRole('button', { name: 'saved-frame.jpg' }))
+  expect(launch).toBeEnabled()
+  fireEvent.click(launch)
+  await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+    sourceFeedGenId: 42, references: [savedFrame.url],
+    repeatUserValues: { car: 'car', outfit: 'outfit', cake: 'cake' },
+  })))
+})
