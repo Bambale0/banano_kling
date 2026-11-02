@@ -249,7 +249,7 @@ describe('video repeat slot lifecycle', () => {
   it('blocks unavailable or unknown descriptors and resets for a fresh publication', () => {
     const props = { models, onSubmit: jest.fn(), isSubmitting: false, credits: 100 }
     const view = render(<VideoGeneratorForm {...props} promptPreset={{ ...fixed, repeatReferenceSlots: { ...fixed.repeatReferenceSlots!, available: false } }} />)
-    expect(screen.getByRole('alert')).toHaveTextContent('Откройте публикацию заново')
+    expect(screen.getByRole('alert')).toHaveTextContent('Откройте работу заново')
     expect(screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость|Подтвердить цену и запустить/i })).toBeDisabled()
     view.rerender(<VideoGeneratorForm {...props} promptPreset={fixed} />)
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
@@ -367,7 +367,8 @@ describe('retriable errors never masquerade as revoked author consent', () => {
     const button = screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость/ })
     expect(button).toBeEnabled()
     fireEvent.click(button)
-    await screen.findByText('Провайдер временно недоступен')
+    await screen.findByText('Не удалось запустить видео. Попробуйте ещё раз.')
+    expect(screen.queryByText('Провайдер временно недоступен')).not.toBeInTheDocument()
     expect(screen.queryByText(/Повтор недоступен\. Откройте публикацию/)).not.toBeInTheDocument()
     expect(screen.getByRole('group', { name: 'Референсы повтора' })).toHaveTextContent('Сохранено автором: 1')
     expect(button).toBeEnabled()

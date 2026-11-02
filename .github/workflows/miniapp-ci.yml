@@ -69,6 +69,10 @@ jobs:
           lib/contextual-topup.test.ts
           lib/__tests__/trend-api.test.ts
           components/tabs/__tests__/video-tab-repeat.test.tsx
+          components/forms/video-generator-form-repeat-pricing.test.tsx
+          components/forms/video-generator-form-repeat.test.tsx
+          components/forms/repeat-image-choices.test.tsx
+          lib/__tests__/personalization-errors.test.ts
           components/forms/image-generator-form-remix.test.tsx
           components/tabs/__tests__/feed-image-remix.test.tsx
 

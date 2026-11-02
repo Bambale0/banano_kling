@@ -66,7 +66,7 @@ afterEach(() => {
 
 async function expectPrivatePlan(model: 'wan_3' | 'wan_3_prime') {
   await waitFor(() => expect(wanMock.fetchWan3PrimeTrendPlan).toHaveBeenCalledWith(731, expect.any(AbortSignal)))
-  await screen.findByLabelText('Загрузить Image1')
+  await screen.findByLabelText('Загрузить Фото 1')
   expect(screen.getByRole('heading', { name: model === 'wan_3' ? 'Wan 3.0 Video' : 'Wan 3.0 Video Prime' })).toBeInTheDocument()
   expect(current.videoPromptPreset).toBeNull()
   expect(current.trendToRun?.id).toBe(731)
@@ -105,7 +105,7 @@ test('missing private plan fails closed and permits retry without generic routin
   expect(current.videoPromptPreset).toBeNull()
   expect(screen.queryByText('private missing record')).not.toBeInTheDocument()
   expect(screen.queryByRole('button', { name: 'Запустить Wan' })).not.toBeInTheDocument()
-  fireEvent.click(screen.getByRole('button', { name: 'Повторить загрузку рецепта' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Попробовать ещё раз' }))
   await expectPrivatePlan('wan_3')
 })
 
@@ -135,7 +135,7 @@ test('marker-only WAN3 keeps its private-plan model in optimistic history when g
   wanMock.generateWan3Prime.mockResolvedValue({ ok: true, status: 'queued', internal_task_id: 'synthetic-only', reserve_cost: 0 })
   render(<AppProvider><Probe /></AppProvider>)
   await expectPrivatePlan('wan_3')
-  fireEvent.change(screen.getByLabelText('Загрузить Image1'), { target: { files: [new File(['synthetic'], 'replacement.png', { type: 'image/png' })] } })
+  fireEvent.change(screen.getByLabelText('Загрузить Фото 1'), { target: { files: [new File(['synthetic'], 'replacement.png', { type: 'image/png' })] } })
   const launch = await screen.findByRole('button', { name: 'Запустить Wan' })
   await waitFor(() => expect(launch).toBeEnabled())
   fireEvent.click(launch)

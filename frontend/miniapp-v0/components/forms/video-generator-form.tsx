@@ -1,5 +1,7 @@
 'use client'
 
+import { personalizationError } from '@/lib/personalization-errors'
+
 import { normalizeRepeatPrompt } from '@/lib/repeat-prompt'
 import { normalizeVideoRepeatSlots } from '@/lib/video-repeat-references'
 import { getPendingVideoRepeat, isVideoStatusPending, VIDEO_REPEAT_PENDING_CHANGED, type PendingVideoRepeat } from '@/lib/video-repeat-pending'
@@ -645,7 +647,8 @@ export function VideoGeneratorForm({
     await onSubmit({ ...request, ...(hasAttachedVideo ? { pricingQuoteHash: confirmedVideoQuote?.quote_hash } : {}) })
     } catch (error) {
       if (hasAttachedVideo && confirmedVideoQuote) setApprovedVideoQuote(null)
-      setVideoQuoteError(error instanceof Error ? error.message : 'Не удалось рассчитать цену видео.')
+      setVideoQuoteError(personalizationError(error, hasAttachedVideo && !confirmedVideoQuote
+        ? 'Не удалось рассчитать цену видео.' : 'Не удалось запустить видео. Попробуйте ещё раз.'))
       if (submittedSession === repeatSession.current) {
         if (isVideoStatusPending(error)) setRepeatPending(getPendingVideoRepeat(sourceFeedGenId))
         else if (repeatSlots && error instanceof MiniAppApiError
@@ -910,7 +913,7 @@ export function VideoGeneratorForm({
           <div className="grid gap-3 lg:grid-cols-2">
             {model.supports_negative_prompt ? (
               <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">Negative prompt</label>
+                <label className="text-sm font-medium text-foreground">Что исключить</label>
                 <Input
                   value={klingNegativePrompt}
                   onChange={(e) => setKlingNegativePrompt(e.target.value)}
@@ -991,7 +994,7 @@ export function VideoGeneratorForm({
 
               {model.supports_translation ? (
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">Перевод prompt</label>
+                  <label className="text-sm font-medium text-foreground">Перевод описания</label>
                   <button
                     type="button"
                     onClick={() => setVeoTranslation((prev) => !prev)}
@@ -1105,7 +1108,7 @@ export function VideoGeneratorForm({
                 </span>
               </div>
               <p className="mt-1">
-                Фото: {omniImageCount} · Видео: {omniVideoCount}×2 · Character ID: {parsedOmniCharacterIds.length}
+                Фото: {omniImageCount} · Видео: {omniVideoCount}×2 · Персонажи: {parsedOmniCharacterIds.length}
               </p>
               {omniHasVideoReference ? (
                 <p className="mt-1 text-cyan">
@@ -1316,7 +1319,7 @@ export function VideoGeneratorForm({
                   ? 'Модель исходной публикации сейчас недоступна. Попробуйте позже или выберите другой тренд.'
                   : repeatError
                     ? 'Повтор недоступен: разрешение автора или исходные файлы изменились. Откройте публикацию заново.'
-                    : 'Повтор недоступен: сервер не подтвердил сохранённый рецепт или разрешённые референсы. Откройте публикацию заново, попросите автора обновить её или выберите другой тренд.'}
+                    : 'Не удалось подготовить повтор. Откройте работу заново или выберите другую.'}
               </p>
             ) : (
               <>
@@ -1364,7 +1367,7 @@ export function VideoGeneratorForm({
                 {repeatTitle || 'Повторить видео из ленты'}
               </p>
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                {repeatSlots ? 'Промпт и сохранённые референсы подставляются на сервере. Заполните позиции своими файлами.' : 'Настройки и промпт подставлены. Можно поменять длительность, формат или добавить свои референсы.'}
+                {repeatSlots ? 'Детали работы автора сохранятся. Добавьте свои файлы в отмеченные места.' : 'Работа готова к повтору. Можно изменить длительность, формат и добавить свои фото.'}
               </p>
             </div>
           ) : null}
@@ -1398,8 +1401,8 @@ export function VideoGeneratorForm({
                 ? !repeatSlots?.available || repeatError ? 'Повтор нужно открыть заново' : 'Заполните референсы для повтора'
                 : sourceFeedGenId
                 ? prompt.trim().length > 0
-                  ? 'Промпт из ленты готов к запуску'
-                  : 'Промпт скрыт автором, запуск доступен'
+                  ? 'Всё готово к повтору'
+                  : 'Описание автора скрыто. Можно запускать повтор'
                 : scenarioSupported
                 ? 'Сценарий поддерживается выбранной моделью'
                 : 'Выбранный сценарий для модели недоступен'}
@@ -1463,7 +1466,7 @@ export function VideoGeneratorForm({
 
         {!priceAvailable ? <p className="text-sm text-muted-foreground">Стоимость недоступна</p> : hasAttachedVideo && !confirmedVideoQuote ? (
           <p className="text-sm text-muted-foreground" role="status">
-            Точная стоимость входящих видеореференсов появится после проверки файлов на сервере. Цена не умножается на два.
+            Точная стоимость появится после проверки выбранных видео.
           </p>
         ) : <div className="flex items-center justify-between">
           <div>

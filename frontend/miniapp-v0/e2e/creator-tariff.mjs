@@ -132,7 +132,12 @@ try {
         await approve.waitFor()
         await approve.click()
       }
-      await page.getByText('Synthetic rejection: no provider request', { exact: true }).first().waitFor()
+      if (model === 'seedance_2') {
+        await page.getByText('Не удалось запустить видео', { exact: true }).first().waitFor()
+        assert.equal(await page.getByText('Synthetic rejection: no provider request', { exact: true }).count(), 0)
+      } else {
+        await page.getByText('Synthetic rejection: no provider request', { exact: true }).first().waitFor()
+      }
       assert.equal(requests.length, 1)
       assert.equal(quoteRequests.length, model === 'seedance_2' ? 1 : 2)
       assert.equal(quoteRequests.at(-1).prompt, 'Synthetic motion')

@@ -136,9 +136,8 @@ async def get_repeat_plan(actor, source_id: int) -> dict[str, Any]:
     # Do NOT reroute to the ancestor trend: the source is the video the viewer
     # actually chose, with its own edited prompt, media slots and settings.
     plan = build_repeat_plan(source)
-    from bot.config import config
-    from bot.repeat_personalization import admin_preview_enabled, get_repeat_fields
-    if admin_preview_enabled() and config.is_admin(getattr(actor, "telegram_id", 0)):
+    from bot.repeat_personalization import get_repeat_fields, personalization_allowed
+    if personalization_allowed(getattr(actor, "telegram_id", 0)):
         fields = await get_repeat_fields(source_id)
         if fields:
             plan["personalization_fields"] = fields

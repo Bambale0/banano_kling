@@ -106,7 +106,7 @@ it('uses retained-quality server duration quotes from an actual Seedance feed re
   const onSubmit = jest.fn()
   render(<VideoGeneratorForm models={[{ ...videoModel, id: 'seedance_2_5', durations: [5, 10], costs: { '5': 5, '10': 10 } }]} promptPreset={hydrated} onSubmit={onSubmit} isSubmitting={false} credits={4} />)
   expect(screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость|Подтвердить цену и запустить/ })).toBeEnabled()
-  expect(screen.getByText('Точная стоимость входящих видеореференсов появится после проверки файлов на сервере. Цена не умножается на два.')).toBeInTheDocument()
+  expect(screen.getByText('Точная стоимость появится после проверки выбранных видео.')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: /10с.*0.8\/с/ })).toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: /10с.*0.8\/с/ }))
   expect(screen.getByRole('button', { name: /Рассчитать точную стоимость/ })).toBeEnabled()

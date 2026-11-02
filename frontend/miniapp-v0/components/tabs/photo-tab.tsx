@@ -1,5 +1,7 @@
 'use client'
 
+import { personalizationError } from '@/lib/personalization-errors'
+
 import { useState } from 'react'
 import { useApp } from '@/lib/app-context'
 import { ImageGeneratorForm } from '../forms/image-generator-form'
@@ -69,7 +71,7 @@ export function PhotoTab() {
       }
 
     } catch (e) {
-      const message = e instanceof Error ? e.message : 'Не удалось запустить фото'
+      const message = personalizationError(e, 'Не удалось запустить фото')
       setError(acceptedCount > 0 ? `Запущено ${acceptedCount} из ${data.count}. ${message}` : message)
     } finally {
       if (lastTask) {

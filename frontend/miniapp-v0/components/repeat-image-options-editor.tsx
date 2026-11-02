@@ -1,5 +1,7 @@
 'use client'
 
+import { personalizationError } from '@/lib/personalization-errors'
+
 import { useEffect, useRef, useState } from 'react'
 import type { TrendUserField } from '@/lib/types'
 import { uploadFile } from '@/lib/api'
@@ -44,7 +46,7 @@ export function RepeatImageOptionsEditor({ field, onChange, onBusyChange }: {
             if (alive.current) changeRef.current({ type: 'text', choices: [], image_choices: [...(fieldRef.current.image_choices || []),
               { id: createTrendRunRequestId(), label: (file.name.replace(/\.[^.]+$/, '') || 'Вариант').slice(0, 80), image_url: uploaded.url }] })
           } catch (cause) {
-            if (alive.current) setError(cause instanceof Error ? cause.message : 'Не удалось загрузить изображение')
+            if (alive.current) setError(personalizationError(cause, 'Не удалось загрузить изображение'))
           } finally {
             if (alive.current) { setBusy(false); onBusyChange(false) }
           }

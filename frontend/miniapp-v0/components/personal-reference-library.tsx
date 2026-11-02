@@ -1,5 +1,7 @@
 'use client'
 
+import { personalizationError } from '@/lib/personalization-errors'
+
 import { useEffect, useRef, useState } from 'react'
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -46,7 +48,7 @@ export function PersonalReferenceLibrary({ kind: forcedKind, onSelect, disabled 
       setNextOffset(page?.next_offset ?? null)
       setRename(catalog.categories?.find(item => item.id === category)?.name || '')
     })().catch(cause => {
-      if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Не удалось открыть референсы')
+      if (!controller.signal.aborted) setError(personalizationError(cause, 'Не удалось открыть референсы'))
     }).finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => { controller.abort(); generation.current += 1 }
   }, [open, category, kind, refresh])
@@ -55,7 +57,7 @@ export function PersonalReferenceLibrary({ kind: forcedKind, onSelect, disabled 
     if (lock.current) return
     lock.current = true; setBusy(true); setError('')
     try { await operation(); if (reload) setRefresh(value => value + 1) }
-    catch (cause) { setError(cause instanceof Error ? cause.message : 'Не удалось сохранить') }
+    catch (cause) { setError(personalizationError(cause, 'Не удалось сохранить')) }
     finally { lock.current = false; setBusy(false) }
   }
 
