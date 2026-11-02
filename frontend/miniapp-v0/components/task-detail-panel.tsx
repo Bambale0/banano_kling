@@ -943,6 +943,22 @@ export function TaskDetailPanel() {
                           {taskDetail.repeat_image_choices_supported ? <RepeatImageOptionsEditor key={`${taskDetail.task_id}:${field.key}`} field={field}
                             onChange={patch => updateRepeatUserField(index, patch)}
                             onBusyChange={busy => setImageOptionUploads(current => ({ ...current, [field.key]: busy }))} /> : null}
+                          {taskDetail.type === 'video' && field.image_choices?.length && publicationReferenceImages.length > 0 ? (
+                            <label className="col-span-full space-y-1 text-xs text-muted-foreground">
+                              <span>Какое фото автора заменяет «{field.label || 'этот вариант'}»?</span>
+                              <select aria-label={`Фото для варианта ${field.label || index + 1}`}
+                                value={field.image_slot_index ?? ''}
+                                onChange={(event) => updateRepeatUserField(index, {
+                                  image_slot_index: event.target.value === '' ? undefined : Number(event.target.value),
+                                })}
+                                className="block min-h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground">
+                                <option value="">Автоматически — последние доступные фото</option>
+                                {publicationReferenceImages.map((_, imageIndex) => (
+                                  <option key={imageIndex} value={imageIndex}>Фото {imageIndex + 1}</option>
+                                ))}
+                              </select>
+                            </label>
+                          ) : null}
                         </div>
                       ))}
                       <Button type="button" variant="outline" size="sm" disabled={repeatUserFields.length >= 6} onClick={addRepeatUserField}>
