@@ -331,7 +331,7 @@ export function BalanceSheet() {
                     </p>
                   )}
                   {funding.shortage > 0 && preferredPackageId ? (
-                    <p className="text-xs text-gold">Подходящий пакет показан первым.</p>
+                    <p className="text-xs text-gold">Выбранный пакет показан первым.</p>
                   ) : null}
                   <Button type="button" variant="outline" className="w-full" onClick={() => {
                     void refreshBalance().catch(() => toast.error('Не удалось обновить баланс. Повторите попытку.'))
