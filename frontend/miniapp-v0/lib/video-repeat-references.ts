@@ -17,7 +17,7 @@ export function normalizeVideoRepeatSlots(value: VideoRepeatReferenceSlots): Vid
   if (value.pricing_quality !== undefined && !['480p', '720p'].includes(value.pricing_quality)) return unavailable
   const valid = (slots: VideoRepeatReferenceSlots['images'], roles: string[]) => Array.isArray(slots)
     && slots.every((slot) => slot && Number.isInteger(slot.index) && slot.index >= 0
-      && roles.includes(slot.role) && ['fixed', 'upload'].includes(slot.binding))
+      && roles.includes(slot.role) && ['fixed', 'upload', ...(roles.includes('first_frame') ? ['choice'] : [])].includes(slot.binding))
     && new Set(slots.map((slot) => slot.index)).size === slots.length
   if (!valid(value.images, ['reference', 'first_frame', 'last_frame']) || !valid(value.videos, ['reference'])) return unavailable
   const clean = <T extends VideoRepeatReferenceSlots['images'][number]>(slots: T[]) => slots
