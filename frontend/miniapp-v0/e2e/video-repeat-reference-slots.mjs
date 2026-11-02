@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { chromium } from 'playwright'
@@ -10,8 +10,13 @@ const port = Number(process.env.VIDEO_REPEAT_SLOTS_E2E_PORT || 4188)
 const origin = `http://127.0.0.1:${port}`
 const baseUrl = `${origin}/mini-app/`
 const root = mkdtempSync(join(tmpdir(), 'video-repeat-slots-e2e-'))
-symlinkSync(resolve('out'), join(root, 'mini-app'), 'dir')
-const server = spawn('python3', ['-m', 'http.server', String(port), '--bind', '127.0.0.1', '--directory', root], { stdio: 'ignore' })
+try {
+  symlinkSync(resolve('out'), join(root, 'mini-app'), 'dir')
+} catch (error) {
+  if (error?.code !== 'EPERM') throw error
+  cpSync(resolve('out'), join(root, 'mini-app'), { recursive: true })
+}
+const server = spawn(process.env.PYTHON || 'python3', ['-m', 'http.server', String(port), '--bind', '127.0.0.1', '--directory', root], { stdio: 'ignore' })
 const media = readFileSync(new URL('./fixtures/genjutsu-result.mp4', import.meta.url))
 const secret = 'SYNTHETIC_PRIVATE_VIDEO_RECIPE'
 const slots = { version: 1, available: true, cost_multiplier: 1, duration_costs: { '5': 5 }, pricing_quality: '720p', images: [
@@ -31,7 +36,12 @@ const task = { task_id: 'owner-video', type: 'video', model: 'seedance_2_5', mod
   publication_reference_videos: ['https://example.test/owner-video.mp4'], publication_reference_video_indices: [5] }
 const bootstrap = { ok: true, telegram_id: 424242, first_name: 'E2E', last_name: 'Owner', telegram_username: 'e2e_owner', photo_url: '',
   referral_code: 'E2EOWNER', profile_link: '', referral_link: '', channel_url: '', prompt_repeat_balance_rub: 0, prompt_repeat_total_rub: 0,
-  bot_username: 'test_bot', credits: 125, is_admin: false, mini_app_url: baseUrl, actions: [], payment_packages: [], image_models: [],
+  bot_username: 'test_bot', credits: 125, is_admin: false, mini_app_url: baseUrl, actions: [], payment_packages: [
+    { id: 'repeat-mini', name: 'Для повтора', credits: 10, price_rub: 100, price_stars: 100,
+      robokassa_enabled: true, description: 'Минимальное пополнение для теста' },
+    { id: 'repeat-more', name: 'С запасом', credits: 50, price_rub: 450, price_stars: 450,
+      robokassa_enabled: true, description: 'Больше бананов' },
+  ], image_models: [],
   video_models: [{ id: 'seedance_2_5', label: 'Seedance 2.5', description: 'Synthetic', durations: [5], ratios: ['16:9'], supports: ['text', 'imgtxt', 'video'], costs: { '5': 5 }, max_image_references: 8, max_video_references: 5 }],
   recent_tasks: [task], saved_references: [
     { id: 'first', kind: 'image', filename: 'first.jpg', url: 'https://example.test/first.jpg' },
@@ -46,7 +56,10 @@ try {
     if (Date.now() > deadline) throw new Error('Static export unavailable')
     await new Promise(resolve => setTimeout(resolve, 100))
   }
-  browser = await chromium.launch({ headless: true })
+  browser = await chromium.launch({
+    headless: true,
+    executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH || undefined,
+  })
   for (const width of [320, 390, 430]) {
     const context = await browser.newContext({ viewport: { width, height: 900 } })
     const page = await context.newPage()
@@ -248,10 +261,25 @@ try {
     await page.goto(baseUrl + '?startapp=remix_777')
     await page.getByRole('group', { name: 'Референсы повтора', exact: true }).waitFor()
     assert.equal(await page.getByRole('group', { name: 'Референсы повтора', exact: true }).locator('input[type=file]').count(), 0)
+    const beforeInsufficient = generations.length
     const fixedLaunch = page.getByRole('button', { name: /Рассчитать точную стоимость|Подтвердить цену и запустить|Запустить видео/ })
     assert.equal(await fixedLaunch.isEnabled(), true)
     await fixedLaunch.click()
-    await page.getByText('Недостаточно бананов. Пополните баланс.', { exact: true }).waitFor()
+    const topupRegion = page.getByRole('region', { name: 'Пополнение для повтора' })
+    await topupRegion.waitFor()
+    await topupRegion.getByText('Для повтора нужно 15🍌. На балансе 7🍌. Не хватает 8🍌.', { exact: true }).waitFor()
+    await topupRegion.getByText('Подойдёт пакет «Для повтора»: 10🍌 за 100 ₽', { exact: true }).waitFor()
+    assert.equal(await topupRegion.getByRole('button', { name: 'Купить 10🍌 за 100 ₽' }).isEnabled(), true)
+    assert.equal(generations.length, beforeInsufficient, 'Insufficient balance never launches a paid generation')
+    if (width === 390) {
+      mkdirSync('test-results', { recursive: true })
+      await page.screenshot({ path: 'test-results/video-repeat-topup-390.png' })
+    }
+    await page.getByRole('button', { name: 'Закрыть пополнение' }).click()
+    const inlineOffer = page.getByRole('region', { name: 'Пополнение для генерации' })
+    await inlineOffer.getByRole('button', { name: /Купить 10🍌 за 100 ₽/ }).click()
+    await topupRegion.waitFor()
+    await page.getByRole('button', { name: 'Закрыть пополнение' }).click()
     assert.equal(await fixedLaunch.isDisabled(), true)
     const fixedCost = page.getByText('Стоимость', { exact: true }).locator('..').locator('..')
     assert.equal(await fixedCost.getByText('15', { exact: true }).count(), 1)

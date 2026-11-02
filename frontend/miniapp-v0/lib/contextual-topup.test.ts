@@ -9,7 +9,7 @@ const packages: PaymentPackage[] = [
 ]
 
 describe('contextual top-up offer', () => {
-  it('recommends the cheapest package covering the shortage, not the entire generation cost', () => {
+  it('recommends the smallest package covering the shortage, not the entire generation cost', () => {
     const offer = selectTopupPackages(50, 20, packages)
     expect(offer.shortage).toBe(30)
     expect(offer.recommended?.package.id).toBe('optimal')
@@ -32,13 +32,13 @@ describe('contextual top-up offer', () => {
     expect(offer.recommended?.credited).toBe(30)
   })
 
-  it('uses the smallest payable price even if package sizes are non-monotonic', () => {
+  it('does not oversell a larger package only because its configured price is lower', () => {
     const offer = selectTopupPackages(40, 0, [
       { id: 'expensive', name: 'Малый', credits: 40, price_rub: 800 },
       { id: 'cheap', name: 'Большой', credits: 60, price_rub: 500 },
     ])
-    expect(offer.recommended?.package.id).toBe('cheap')
-    expect(offer.alternative).toBeNull()
+    expect(offer.recommended?.package.id).toBe('expensive')
+    expect(offer.alternative?.package.id).toBe('cheap')
   })
 
   it('does not recommend a package that leaves the balance insufficient', () => {

@@ -9,7 +9,7 @@
 
 ## User-visible outcome
 
-When a repeat video requires more 🍌 than the user's current balance, show the confirmed generation cost, current balance, shortage, and the cheapest current package sufficient for the missing amount. Show a larger package (if available) and a link to all packages/methods. Explicitly separate rubles paid and bananas credited. Opening payment must not clear the open editor. After payment, update the wallet and let the user explicitly return to the same repeat and press Generate; never auto-start paid work.
+When a repeat video requires more 🍌 than the user's current balance, show the confirmed generation cost, current balance, shortage, and the smallest configured package sufficient for the missing amount. Show a larger package (if available) and a link to all packages/methods. Explicitly separate rubles or Stars paid and bananas credited. Opening payment must not clear the open editor. After payment, update the wallet and let the user explicitly return to the same repeat and press Generate; never auto-start paid work.
 
 ## Observed baseline
 
@@ -54,3 +54,19 @@ When a repeat video requires more 🍌 than the user's current balance, show the
 - Some checkout providers might be disabled at runtime despite package metadata; existing backend remains final authority and returns an actionable error. Validate production methods before release.
 - Trend editor uses nonmodal Radix mode so the top-level balance sheet stays interactive without remounting state. Check accessibility and outside-click behavior in browser E2E.
 - No paid production generation must be used solely to prove this UI feature.
+
+## Convergence follow-up after PR #394
+
+- PR #394 merged while the direct video-repeat task was in CI. Its shared contextual offer for videos, trends and WAN remains the base implementation; the follow-up preserves those surfaces instead of replacing them.
+- The user's voice instruction requires an insufficient repeat to land immediately in the payment form. After an authoritative repeat quote, the shared offer now opens the existing balance sheet once with the recommended package selected. This only opens UI; invoice creation still requires an explicit user tap and generation never auto-starts.
+- The automatic sheet states required credits, live balance and exact shortage, offers one direct configured checkout action, and retains the complete package/payment list. Closing it leaves the shared inline offer available for an explicit reopen.
+- Recommendation uses the smallest configured total grant (`credits + bonus_credits`) that covers the shortage. A Stars-only package is labelled and invoiced in Stars rather than promising a ruble checkout.
+- Generic video repeats use the existing repeat-session identity for deduplication; Seedance identity repeats use their own repeat session. Administrators and server `admin_free` quotes never open payment.
+- Added focused component and mobile browser regressions. The mocked browser scenario asserts `15🍌` required, `7🍌` balance, `8🍌` shortage, a configured `10🍌` package, explicit reopen, and no generation mutation at 320/390/430 px. No real payment or paid generation is used.
+
+### Follow-up verification for PR #396
+
+- Reconciled on `tanyapi` at `72716c92a1172f1449e6ca693cc7ec633daa4a2c`, preserving the shared PR #394 implementation.
+- Local GREEN: 79 Jest suites / 606 tests, TypeScript `--noEmit`, changed-file ESLint, production Next.js export, and the mocked mobile browser flow at 320/390/430 px.
+- Independent spec and standards reviews found no remaining actionable issues after fixes for server-free quotes, bonus credits, Stars-only packages, and the no-single-package fallback.
+- Production merge and exact-SHA deployment verification remain gated on protected PR #396 and required CI. No real invoice, payment, or paid generation was used.

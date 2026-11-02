@@ -289,7 +289,8 @@ export function VideoGeneratorForm({
   // A verified quote includes incoming video seconds. Dividing by the
   // generated length alone would display a fake 2x per-second tariff.
   const perSecondCost = cost / Math.max(confirmedVideoQuote?.billable_seconds ?? selectedDuration, 1)
-  const canAfford = priceAvailable && (hasAttachedVideo && !confirmedVideoQuote ? true : credits >= cost)
+  const quoteIsFree = confirmedVideoQuote?.admin_free === true
+  const canAfford = priceAvailable && (isAdmin || quoteIsFree || (hasAttachedVideo && !confirmedVideoQuote ? true : credits >= cost))
   const parseAssetIds = (value: string) =>
     value
       .split(/[\s,;]+/)
@@ -1502,7 +1503,13 @@ export function VideoGeneratorForm({
         )}
 
         {priceAvailable && (!hasAttachedVideo || confirmedVideoQuote) ? (
-          <GenerationFundingOffer cost={cost} credits={credits} adminFree={isAdmin} />
+          <GenerationFundingOffer
+            key={sourceFeedGenId ? `repeat-funding-${repeatSession.current}` : 'generation-funding'}
+            cost={cost}
+            credits={credits}
+            adminFree={isAdmin || quoteIsFree}
+            autoOpenKey={sourceFeedGenId ? `${repeatSession.current}:${sourceFeedGenId}` : null}
+          />
         ) : null}
 
         {needsPhotoReference && (

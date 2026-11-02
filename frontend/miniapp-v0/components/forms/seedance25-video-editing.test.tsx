@@ -126,3 +126,16 @@ it('uses authenticated measured seconds instead of doubling creator totals', asy
   expect(quoteSeedance25Reference).toHaveBeenCalledWith(expect.objectContaining({ duration: 5, resolution: '720p' }))
   expect(screen.queryByLabelText('Редактировать видео')).not.toBeInTheDocument()
 })
+
+it('allows a server-authoritative free reference quote with an empty balance', async () => {
+  ;(quoteSeedance25Reference as jest.Mock).mockResolvedValueOnce({
+    ok: true, quote_only: true, quote_hash: 'free-reference-quote', cost: 60,
+    source_video_duration_seconds: 10, output_seconds: 5, billable_seconds: 15, admin_free: true,
+  })
+  render(<Seedance25PublicForm credits={0} isAdmin={false} />)
+  fireEvent.change(screen.getByLabelText(/Видео — по одному/), { target: { value: 'https://example.com/source.mp4' } })
+  await screen.findByText(/Видеореференсы: 10 с/)
+  expect(screen.queryByText(/Не хватает 60🍌/)).not.toBeInTheDocument()
+  expect(screen.getByText('Серверный расчёт')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '🚀 Создать видео · без списания' })).toBeEnabled()
+})
