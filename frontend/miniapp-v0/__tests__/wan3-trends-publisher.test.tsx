@@ -70,7 +70,7 @@ test.each(['wan_3', 'wan_3_prime'] as const)('rendered manual editor publishes f
   fireEvent.change(screen.getByLabelText('Качество Wan'), { target: { value: '720P' } })
   fireEvent.change(screen.getByLabelText('Формат Wan'), { target: { value: '9:16' } })
   fireEvent.change(screen.getByLabelText('Длительность Wan'), { target: { value: '8' } })
-  fireEvent.change(screen.getByLabelText('Seed Wan'), { target: { value: '42' } })
+  fireEvent.change(screen.getByLabelText('Вариант результата Wan'), { target: { value: '42' } })
   fireEvent.click(screen.getByLabelText('Аудио в результате'))
   fireEvent.click(screen.getByLabelText('Проверка контента'))
   await upload('Загрузить исходное видео', 'source.mp4', 'video/mp4')
