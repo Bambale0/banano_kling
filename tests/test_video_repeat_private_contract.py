@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from aiohttp import web
 
 from bot import creator_tariff, database, miniapp, video_repeat_reference_contract
 from bot.handlers import miniapp_video_continuity_compat as continuity
@@ -1473,10 +1474,6 @@ def test_curated_fixed_source_references_keep_original_image_indices_when_person
 
 @pytest.mark.asyncio
 async def test_curated_image_capacity_is_checked_before_launch_or_payment(monkeypatch):
-    from aiohttp import web
-
-    from bot.trend_task_privacy import recipe_privacy_rows
-
     fixed = [f"https://owner.test/face{i}.jpg" for i in range(9)]
     face = "https://neuromixbot.com/uploads/refs/image/42/face.jpg"
     choice = "https://neuromixbot.com/uploads/repeat-choices/" + "f" * 32 + ".jpg"
