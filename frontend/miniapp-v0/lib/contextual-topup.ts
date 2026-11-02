@@ -43,10 +43,11 @@ export function selectTopupPackages(
   )
 
   const recommended = covering[0] ?? null
+  // The secondary CTA says "More bananas"; never label a smaller bundle
+  // that way even when prices were configured non-monotonically.
   const alternative = recommended
     ? covering.find(item => item.package.id !== recommended.package.id &&
-      item.credited > recommended.credited) ??
-      covering.find(item => item.package.id !== recommended.package.id) ?? null
+      item.credited > recommended.credited) ?? null
     : null
 
   return { shortage, recommended, alternative }
