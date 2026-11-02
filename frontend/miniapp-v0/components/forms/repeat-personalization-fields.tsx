@@ -1,5 +1,7 @@
 'use client'
 
+import { personalizationError } from '@/lib/personalization-errors'
+
 import type { TrendUserField } from '@/lib/types'
 import { Input } from '@/components/ui/input'
 import { useEffect, useRef, useState } from 'react'
@@ -52,7 +54,7 @@ function ImageChoices({ field, value, onChange }: {
           const uploaded = await uploadFile('image_reference', file)
           if (alive.current) changeRef.current(`upload:${uploaded.url}`)
         } catch (cause) {
-          if (alive.current) setError(cause instanceof Error ? cause.message : 'Не удалось загрузить изображение')
+          if (alive.current) setError(personalizationError(cause, 'Не удалось загрузить изображение'))
         } finally {
           uploadLock.current = false
           if (alive.current) setBusy(false)

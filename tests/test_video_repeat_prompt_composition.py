@@ -109,8 +109,9 @@ async def test_private_base_and_edit_reach_actual_provider_payload(
 
 @pytest.mark.parametrize("model", ["seedance_2", "seedance_2_5"])
 @pytest.mark.parametrize("image_options", [False, True])
+@pytest.mark.parametrize("public", [False, True])
 async def test_admin_personalization_reaches_video_provider_without_losing_base_or_edit(
-    repeat_endpoint, model, monkeypatch, image_options, tmp_path,
+    repeat_endpoint, model, monkeypatch, image_options, tmp_path, public,
 ):
     entry = repeat_endpoint
     entry.source["model"] = entry.card["model"] = model
@@ -127,7 +128,8 @@ async def test_admin_personalization_reaches_video_provider_without_losing_base_
         "v_reference_videos": [fixed_video_reference],
     }
     monkeypatch.setenv(repeat_personalization.FEATURE_FLAG, "1")
-    monkeypatch.setattr(miniapp.config, "is_admin", lambda _actor: True)
+    monkeypatch.setenv(repeat_personalization.PUBLIC_FEATURE_FLAG, "1" if public else "0")
+    monkeypatch.setattr(miniapp.config, "is_admin", lambda _actor: not public)
     raw = {"key": "clothes", "label": "Одежда", "original_value": "blue coat"}
     if image_options:
         import io

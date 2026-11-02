@@ -2883,3 +2883,7 @@ Baseline 024525ea831010ef9e7b88c7f8fc9dd158fea7c4. Production exact image revisi
 ## 2026-11-02 — Neironych primary / KIE fallback
 
 Active execution ledger: [Seedance routing](EXECUTION/seedance-neironych-primary-20261102.md). Baseline da48cd12; implementation and verification in task branch; production routing is not yet switched.
+
+
+## 2026-11-02 — Public repeat personalization and user copy
+Baseline e584d005082ed818ec26cdbd4652dc3d20bfa9cc; branch feature/public-repeat-personalization-20261102. User authorizes public rollout and removal of technical copy. Audit: visual choices and personal library are present; four backend gates remain admin-only. Reuse source ownership, signed actor auth, own-file validation, price/quote and revision checks. Add default-off public runtime flag with existing preview compatibility, then enable through backed-up production env after validation. No schema/pricing/provider changes or paid live generation. Acceptance: ordinary authors can configure own publications/upload choices, other owners rejected; ordinary viewers get safe choices in feed/profile/WAN, retain hidden source/media, normal retail/idempotency; public flag off preserves admin preview. Audit user copy/editor/library/repeat/WAN errors and prevent raw technical errors. Test-first gates, targeted regressions, full frontend/build/browser, protected PR/autodeploy and exact-SHA live acceptance. Guidance reused: diagnosing-bugs and code-review (Bambale0/skills), Claw release discipline, anthropics webapp-testing.

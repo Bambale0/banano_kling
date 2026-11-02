@@ -345,7 +345,7 @@ export function ImageGeneratorForm({
 
           <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
             <div className="rounded-xl bg-background/40 px-3 py-2 text-muted-foreground">
-              Режим: <span className="text-foreground">{model?.requires_reference ? 'Edit / reference' : 'Text / image mix'}</span>
+              Режим: <span className="text-foreground">{model?.requires_reference ? 'По образцу' : 'По описанию и фото'}</span>
             </div>
             <div className="rounded-xl bg-background/40 px-3 py-2 text-muted-foreground">
               Формат: <span className="text-foreground">{selectedRatio} • {selectedCount}x</span>
@@ -394,7 +394,7 @@ export function ImageGeneratorForm({
                   {remixTitle || 'Повторить образ из ленты'}
                 </p>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  Исходный промпт автора сохранится автоматически. Здесь укажите только свои изменения.
+                  Основной замысел автора сохранится. Укажите только свои изменения.
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">

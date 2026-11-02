@@ -130,7 +130,7 @@ def test_image_field_requires_valid_selected_reference_indices():
           if key != 'original_value'}], prompt=PROMPT,
     )
     for indices in ([], [0], [True], [1, 2]):
-        with pytest.raises(ValueError, match='референс'):
+        with pytest.raises(ValueError, match='изображени'):
             subject.render_repeat_base(PROMPT, fields, {'outfit': 'dress'}, image_indices=indices)
 
 

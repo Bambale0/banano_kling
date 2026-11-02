@@ -931,7 +931,7 @@ async def _miniapp_generation_share_scoped(module, request):
                 )
             if not module._repeat_personalization_allowed(telegram_id):
                 return module.web.json_response(
-                    {"ok": False, "error": "Настройка параметров повтора пока доступна только администраторам"},
+                    {"ok": False, "error": "Настройка повторов сейчас недоступна. Попробуйте позже."},
                     status=403,
                 )
             owner_task = await database.get_generation_task_payload(gen_id, user_id=user_id)
@@ -942,7 +942,7 @@ async def _miniapp_generation_share_scoped(module, request):
             source_prompt = str(owner_task.get("prompt") or "").strip()
             if not source_prompt:
                 return module.web.json_response(
-                    {"ok": False, "error": "У исходной генерации нет prompt"}, status=400,
+                    {"ok": False, "error": "Для этой работы пока нельзя настроить изменение текста"}, status=400,
                 )
             pending_repeat_fields = module.normalize_repeat_fields(
                 body.get("repeat_user_fields"), prompt=source_prompt,

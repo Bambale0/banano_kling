@@ -427,11 +427,10 @@ class Wan3PrimeLifecycle:
 
         request = client_recipe(body)
         if "repeat_user_values" in request:
-            from bot.config import config
-            from bot.repeat_personalization import admin_preview_enabled
-            if not admin_preview_enabled() or not config.is_admin(actor.telegram_id):
+            from bot.repeat_personalization import personalization_allowed
+            if not personalization_allowed(actor.telegram_id):
                 raise Wan3PrimeValidationError(
-                    "Персонализация повтора пока доступна только администраторам", status=403,
+                    "Изменение деталей сейчас недоступно. Попробуйте позже.", status=403,
                 )
             if not request.get("source_feed_gen_id") or request.get("trend_id"):
                 raise Wan3PrimeValidationError("Укажите опубликованную работу для персонализации")

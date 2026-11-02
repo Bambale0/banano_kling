@@ -23,9 +23,10 @@ from tests.test_wan3_prime_lifecycle import Prices, Probe, Provider, balance, us
 
 
 @pytest.mark.parametrize("endpoint", ["feed", "profile"])
-@pytest.mark.parametrize("admin,flag", [(True, "1"), (False, "1"), (True, "0")])
-async def test_installed_feed_wrappers_attach_only_admin_safe_fields(monkeypatch, endpoint, admin, flag):
+@pytest.mark.parametrize("admin,flag,public", [(True, "1", "0"), (False, "1", "0"), (True, "0", "0"), (False, "0", "1")])
+async def test_installed_feed_wrappers_attach_only_admin_safe_fields(monkeypatch, endpoint, admin, flag, public):
     monkeypatch.setenv(personalization.FEATURE_FLAG, flag)
+    monkeypatch.setenv(personalization.PUBLIC_FEATURE_FLAG, public)
     fields = personalization.normalize_repeat_fields([{
         "key": "clothes", "label": "Одежда", "original_value": "blue coat", "choices": ["red dress"],
     }], prompt="Private scene in a blue coat")
@@ -47,7 +48,7 @@ async def test_installed_feed_wrappers_attach_only_admin_safe_fields(monkeypatch
     result = await (miniapp.miniapp_feed if endpoint == "feed" else miniapp.miniapp_profile_feed)(request)
     assert result.status == 200, result.text
     card = json.loads(result.text)["feed"][0]
-    if admin and flag == "1":
+    if public == "1" or (admin and flag == "1"):
         assert card["repeat_user_fields"][0]["choices"] == ["red dress"]
     else:
         assert "repeat_user_fields" not in card

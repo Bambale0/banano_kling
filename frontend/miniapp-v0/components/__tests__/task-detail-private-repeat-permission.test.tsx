@@ -172,7 +172,7 @@ describe('TaskDetailPanel private image-repeat permission', () => {
     openPublicationEditor()
 
     expect(screen.getByRole('heading', { name: 'Что показать в публикации' })).toBeTruthy()
-    expect(screen.getByRole('group', { name: 'Референсы для повторов' }).textContent).toContain('их превью и ссылки не передаются')
+    expect(screen.getByRole('group', { name: 'Референсы для повторов' }).textContent).toContain('При повторе исходные файлы не показываются')
     fireEvent.click(screen.getByRole('checkbox', { name: 'Фото-референс 2 для повторов' }))
     savePublication()
 
@@ -400,7 +400,7 @@ describe('TaskDetailPanel private image-repeat permission', () => {
     useTask(task)
     const { rerender } = render(<TaskDetailPanel />)
     openPublicationEditor()
-    fireEvent.click(screen.getByRole('button', { name: 'Prompt' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Описание' }))
     fireEvent.click(screen.getByRole('button', { name: 'Рефы (2)' }))
     fireEvent.click(screen.getByRole('button', { name: 'Исключить фото-референс 1' }))
     fireEvent.click(screen.getByRole('button', { name: 'Blur' }))

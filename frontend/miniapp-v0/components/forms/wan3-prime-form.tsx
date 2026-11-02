@@ -38,7 +38,7 @@ function emptyRecipe(scenario: Wan3PrimeScenario = 'text', model: Wan3PrimeRecip
 function repeatSlotTitle(slot: Wan3PrimeRepeatSlot): string {
   if (slot.role === 'first_frame') return 'Первый кадр'
   if (slot.role === 'last_frame') return 'Последний кадр'
-  const prefix = { image: 'Image', video: 'Video', audio: 'Audio', file: 'Документ ', link: 'Страница ' }[slot.kind]
+  const prefix = { image: 'Фото ', video: 'Видео ', audio: 'Аудио ', file: 'Документ ', link: 'Страница ' }[slot.kind]
   return prefix + (slot.index + 1) + (slot.role === 'source_video' ? ' · исходное видео' : '')
 }
 function fileName(url: string) {
@@ -53,7 +53,7 @@ function recipeIssue(recipe: Wan3PrimeRecipe): string | null {
   if (recipe.seed != null && (!Number.isInteger(recipe.seed) || recipe.seed < 0 || recipe.seed > 2147483647)) return 'Seed должен быть целым числом от 0 до 2147483647.'
   if (recipe.source_feed_gen_id || recipe.trend_id) return null // The server compiles the hidden recipe and validates each numbered replacement.
   if (images.length > 10 || videos.length > 5 || audios.length > 5 || files.length > 1 || links.length > 1) return 'Превышено число референсов Wan.'
-  if ([...images, ...videos, ...audios, ...files, ...links].some(url => !url.trim())) return 'Добавьте исходное видео Video1; дополнительные референсы сохранены.'
+  if ([...images, ...videos, ...audios, ...files, ...links].some(url => !url.trim())) return 'Добавьте исходное видео. Остальные выбранные файлы сохранены.'
   if (files.length && links.length) return 'Выберите документ или веб-страницу, не оба одновременно.'
   if (recipe.scenario === 'text' && (recipe.first_frame_url || recipe.last_frame_url || images.length || videos.length || audios.length || files.length || links.length)) return 'Текстовый режим не использует скрытые референсы.'
   if (['first_frame', 'first_last'].includes(recipe.scenario)) {
@@ -61,7 +61,7 @@ function recipeIssue(recipe: Wan3PrimeRecipe): string | null {
     if (recipe.scenario === 'first_last' && !recipe.last_frame_url) return 'Загрузите последний кадр.'
     if (images.length || videos.length || audios.length || files.length || links.length) return 'Кадры не совмещаются с референсами.'
   }
-  if (recipe.scenario === 'edit' && !videos[0]) return 'Загрузите исходное видео Video1.'
+  if (recipe.scenario === 'edit' && !videos[0]) return 'Загрузите исходное видео.'
   if (recipe.scenario === 'reference' && !images.length && !videos.length && !audios.length && !files.length && !links.length) return 'Добавьте хотя бы один референс.'
   if (recipe.scenario === 'file' && !files.length) return 'Загрузите документ.'
   if (recipe.scenario === 'link' && !links.length) return 'Добавьте публичную веб-страницу.'
@@ -331,7 +331,7 @@ function Wan3PrimeFormSession({ draftOnly = false, onDraftChange, expectedModel,
         }
       })
       setQuoteState(null)
-    }).catch(error => { if (!abort.signal.aborted) setPlanError(wan3SafeError(error, error instanceof Wan3PrimeApiError && error.status === 404 ? (trendId ? 'Тренд недоступен для повтора. Попросите автора опубликовать его заново.' : 'Публикация больше недоступна. Откройте другую опубликованную работу.') : 'Не удалось загрузить рецепт повтора. Попробуйте ещё раз.')) })
+    }).catch(error => { if (!abort.signal.aborted) setPlanError(wan3SafeError(error, error instanceof Wan3PrimeApiError && error.status === 404 ? (trendId ? 'Тренд недоступен для повтора. Попросите автора опубликовать его заново.' : 'Публикация больше недоступна. Откройте другую опубликованную работу.') : 'Не удалось подготовить повтор. Попробуйте ещё раз.')) })
       .finally(() => { if (!abort.signal.aborted) setPlanLoading(false) })
     return () => abort.abort()
   }, [repeatKey, sourceId, trendId, expectedModel, planRetry, draftOnly])
@@ -402,11 +402,11 @@ function Wan3PrimeFormSession({ draftOnly = false, onDraftChange, expectedModel,
   const videos = recipe.reference_video_urls || []
   const unknown = attempted && (!result || result.status === 'unknown')
   if (!draftOnly && sourceId && (!repeatPlan || (trendId ? repeatPlan.trend_id !== trendId : repeatPlan.source_feed_gen_id !== feedSourceId))) {
-    return <section className={CARD} aria-label="Рецепт повтора Wan">
+    return <section className={CARD} aria-label="Подготовка повтора">
       <h3 className="text-sm font-semibold">Повтор публикации Wan</h3>
       {planError ? <><p role="alert" className="text-sm text-destructive">{planError}</p>
-        <Button type="button" disabled={planLoading} onClick={() => setPlanRetry(n => n + 1)}>Повторить загрузку рецепта</Button></>
-        : <p role="status">Загружаю рецепт повтора…</p>}
+        <Button type="button" disabled={planLoading} onClick={() => setPlanRetry(n => n + 1)}>Попробовать ещё раз</Button></>
+        : <p role="status">Подготавливаю повтор…</p>}
     </section>
   }
   if (!draftOnly && ownerTaskId && !ownerReady) return <section className={CARD} aria-label="Настройки задачи Wan">
@@ -417,16 +417,16 @@ function Wan3PrimeFormSession({ draftOnly = false, onDraftChange, expectedModel,
   return <div className={draftOnly ? 'min-w-0 space-y-4' : 'min-w-0 space-y-4 pb-[calc(6rem+env(safe-area-inset-bottom))]'} data-testid="wan3-prime-form">
     {modelSelector ? <section className={CARD}><h3 className="text-sm font-medium">Модель</h3>{modelSelector}</section> : null}
     <section className={CARD}>
-      <div><h3 className="font-serif text-lg font-semibold">{recipe.model === 'wan_3' ? 'Wan 3.0 Video' : 'Wan 3.0 Video Prime'}</h3><p className="mt-1 text-xs text-muted-foreground">{draftOnly ? 'Настройте скрытый рецепт тренда. Смена режима очищает материалы.' : 'Выберите задачу. Черновики каждого режима сохраняются при переключении.'}</p></div>
+      <div><h3 className="font-serif text-lg font-semibold">{recipe.model === 'wan_3' ? 'Wan 3.0 Video' : 'Wan 3.0 Video Prime'}</h3><p className="mt-1 text-xs text-muted-foreground">{draftOnly ? 'Настройте тренд. При смене режима выбранные файлы удаляются из формы.' : 'Выберите задачу. Черновики каждого режима сохраняются при переключении.'}</p></div>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3" aria-label="Режим Wan">
         {MODES.filter(([mode]) => !draftOnly || mode !== 'link').map(([mode, label]) => <button type="button" key={mode} disabled={locked || Boolean(sourceId)} aria-pressed={recipe.scenario === mode} onClick={() => selectMode(mode)}
           className={`rounded-xl border px-3 py-2.5 text-left text-xs transition disabled:opacity-50 ${recipe.scenario === mode ? 'border-cyan/60 bg-cyan/10 text-foreground' : 'border-border/50 text-muted-foreground hover:bg-secondary'}`}>{label}</button>)}
       </div>
-      {recipe.scenario === 'edit' ? <p className="rounded-lg border border-cyan/20 bg-cyan/5 p-3 text-xs leading-relaxed">Video1 — исходник для правки. Опишите, что изменить и что сохранить. Фото и дополнительные видео задают нужные детали. Это генеративное редактирование: точное совпадение каждого кадра и лица не гарантируется.</p> : null}
+      {recipe.scenario === 'edit' ? <p className="rounded-lg border border-cyan/20 bg-cyan/5 p-3 text-xs leading-relaxed">Загрузите видео для редактирования. Опишите, что изменить и что сохранить. Фото и дополнительные видео помогут передать нужные детали.</p> : null}
     </section>
     {sourceId ? <section className={CARD} aria-label="Материалы для повтора">
       <h3 className="text-sm font-semibold">Повтор публикации Wan</h3>
-      <p className="text-xs text-muted-foreground">Промпт и разрешённые автором материалы подставит сервер. Загрузите свои файлы на заменяемые места; порядок и роли сохраняются.</p>
+      <p className="text-xs text-muted-foreground">Основные детали работы автора сохранятся. Выберите варианты и добавьте свои файлы в отмеченные места.</p>
       {planLoading ? <p role="status">Проверяю разрешения…</p> : null}
       {repeatPlan?.slots.map(slot => slot.binding === 'fixed'
         ? <p key={slot.key} className="rounded-lg border border-border p-3 text-xs">{repeatSlotTitle(slot)} · материал автора, подставится при запуске</p>
@@ -444,13 +444,13 @@ function Wan3PrimeFormSession({ draftOnly = false, onDraftChange, expectedModel,
       {recipe.scenario === 'first_last' ? <MediaField {...mediaProps} title="Последний кадр" label="Загрузить последний кадр" prefix="Кадр " offset={2} kind="image" limit={1} values={recipe.last_frame_url ? [recipe.last_frame_url] : []} onChange={urls => patch({ last_frame_url: urls[0] || null })} /> : null}
     </div> : null}
     {isReferences ? <div className="min-w-0 space-y-3">
-      {recipe.scenario === 'edit' ? <MediaField {...mediaProps} title="Исходное видео · Video1" label="Загрузить исходное видео (Video1)" prefix="Video" kind="video" limit={1} values={videos[0] ? [videos[0]] : []}
-        onChange={urls => patch({ reference_video_urls: urls[0] ? [urls[0], ...videos.slice(1)] : videos.length > 1 ? ['', ...videos.slice(1)] : [] })} hint="MP4/MOV, 1–15 секунд, до 100 MB. Удаление исходника не превращает дополнительный референс в Video1." /> : null}
+      {recipe.scenario === 'edit' ? <MediaField {...mediaProps} title="Исходное видео" label="Загрузить исходное видео" prefix="Видео " kind="video" limit={1} values={videos[0] ? [videos[0]] : []}
+        onChange={urls => patch({ reference_video_urls: urls[0] ? [urls[0], ...videos.slice(1)] : videos.length > 1 ? ['', ...videos.slice(1)] : [] })} hint="Видео от 1 до 15 секунд, до 100 МБ. Для замены исходного видео загрузите новый файл." /> : null}
       <div className="grid min-w-0 gap-3 lg:grid-cols-2">
-        <MediaField {...mediaProps} title="Фото-референсы" label="Загрузить фото-референсы" prefix="Image" kind="image" limit={10} values={recipe.reference_image_urls || []} onChange={urls => patch({ reference_image_urls: urls })} hint="До 10 изображений, 20 MB каждое. Номер соответствует порядку в инструкции." />
-        <MediaField {...mediaProps} disabled={locked || (recipe.scenario === 'edit' && !videos[0])} title={recipe.scenario === 'edit' ? 'Дополнительные видео' : 'Видео-референсы'} label="Загрузить видео-референсы" prefix="Video" kind="video" limit={recipe.scenario === 'edit' ? 4 : 5} offset={recipe.scenario === 'edit' ? 2 : 1}
+        <MediaField {...mediaProps} title="Фото-референсы" label="Загрузить фото-референсы" prefix="Фото " kind="image" limit={10} values={recipe.reference_image_urls || []} onChange={urls => patch({ reference_image_urls: urls })} hint="До 10 изображений, до 20 МБ каждое." />
+        <MediaField {...mediaProps} disabled={locked || (recipe.scenario === 'edit' && !videos[0])} title={recipe.scenario === 'edit' ? 'Дополнительные видео' : 'Видео-референсы'} label="Загрузить видео-референсы" prefix="Видео " kind="video" limit={recipe.scenario === 'edit' ? 4 : 5} offset={recipe.scenario === 'edit' ? 2 : 1}
           values={recipe.scenario === 'edit' ? videos.slice(1) : videos} onChange={urls => patch({ reference_video_urls: recipe.scenario === 'edit' ? [videos[0] || '', ...urls] : urls })} hint="До 5 видео вместе с исходником. Каждое 1–15 секунд; суммарно до 15 секунд и 100 MB на файл." />
-        <MediaField {...mediaProps} title="Аудио-референсы" label="Загрузить аудио-референсы" prefix="Audio" kind="audio" limit={5} values={recipe.reference_audio_urls || []} onChange={urls => patch({ reference_audio_urls: urls })} hint="WAV/MP3, до 15 MB, 1–15 секунд каждый и до 15 секунд суммарно. Можно использовать только аудио." />
+        <MediaField {...mediaProps} title="Аудио-референсы" label="Загрузить аудио-референсы" prefix="Аудио " kind="audio" limit={5} values={recipe.reference_audio_urls || []} onChange={urls => patch({ reference_audio_urls: urls })} hint="WAV/MP3, до 15 MB, 1–15 секунд каждый и до 15 секунд суммарно. Можно использовать только аудио." />
       </div>
       {['reference', 'edit'].includes(recipe.scenario) ? <label className="block space-y-1 text-sm">Дополнительный источник<select aria-label="Дополнительный источник" className={SELECT} disabled={locked} value={extraSource} onChange={event => {
         const kind = event.target.value as 'none' | 'file' | 'link'; setExtraSource(kind)
@@ -460,8 +460,8 @@ function Wan3PrimeFormSession({ draftOnly = false, onDraftChange, expectedModel,
       {recipe.scenario === 'link' || extraSource === 'link' ? <MediaField {...mediaProps} title="Веб-страница" label="Добавить веб-страницу" prefix="Ссылка " kind="link" limit={1} values={recipe.reference_link_urls || []} onChange={urls => patch({ reference_link_urls: urls, reference_file_urls: [] })} hint="Одна публичная страница без входа в аккаунт. Фото, видео и аудио можно добавить выше." /> : null}
     </div> : null}
     <section className={CARD}>
-      <label className="block space-y-2 text-sm"><span>{sourceId ? 'Ваши изменения (необязательно)' : recipe.scenario === 'edit' ? 'Что изменить в Video1?' : 'Инструкция'}</span>
-        <Textarea aria-label="Инструкции Wan" value={recipe.prompt} disabled={locked} onChange={e => patch({ prompt: e.target.value })} rows={5} placeholder={recipe.scenario === 'edit' ? 'Заменить одежду на Image1. Сохранить движения, сцену и камеру Video1.' : 'Опишите результат. Для референсов используйте Image1, Video1, Audio1.'} /></label>
+      <label className="block space-y-2 text-sm"><span>{sourceId ? 'Ваши изменения (необязательно)' : recipe.scenario === 'edit' ? 'Что изменить в видео?' : 'Инструкция'}</span>
+        <Textarea aria-label="Инструкции Wan" value={recipe.prompt} disabled={locked} onChange={e => patch({ prompt: e.target.value })} rows={5} placeholder={recipe.scenario === 'edit' ? 'Опишите, что изменить в видео и какие детали сохранить.' : 'Опишите, какой результат хотите получить.'} /></label>
       <p className="text-right text-xs text-muted-foreground">{Array.from(recipe.prompt).length.toLocaleString('ru-RU')} / 20 000</p>
       <fieldset disabled={locked} className="grid min-w-0 grid-cols-2 gap-3">
         <label className="space-y-1 text-xs">Качество<select aria-label="Качество Wan" className={SELECT} value={recipe.resolution} onChange={e => patch({ resolution: e.target.value as Wan3PrimeRecipe['resolution'] })}>{['480P', '720P', '1080P'].map(q => <option key={q}>{q}</option>)}</select></label>
@@ -471,7 +471,7 @@ function Wan3PrimeFormSession({ draftOnly = false, onDraftChange, expectedModel,
         <label className="flex items-center gap-2 text-xs"><input type="checkbox" aria-label="Аудио в результате" checked={recipe.audio} onChange={e => patch({ audio: e.target.checked })} />Аудио в результате</label>
         <label className="flex items-center gap-2 text-xs"><input type="checkbox" aria-label="Проверка контента" checked={recipe.nsfw_checker} onChange={e => patch({ nsfw_checker: e.target.checked })} />Проверка контента</label>
       </fieldset>
-      <p className="text-xs leading-relaxed text-muted-foreground">{draftOnly ? 'Исходные видеосекунды + длительность результата — не более 30 секунд. Публикация сохраняет рецепт без запуска генерации.' : 'Исходные видеосекунды + длительность результата — не более 30 секунд. Сервер проверит файлы и рассчитает стоимость до запуска.'}</p>
+      <p className="text-xs leading-relaxed text-muted-foreground">{draftOnly ? 'Общая длительность исходных видео и результата — до 30 секунд. Публикация сохраняет настройки без создания видео.' : 'Общая длительность исходных видео и результата — до 30 секунд. Стоимость будет рассчитана до запуска.'}</p>
     </section>
     {draftOnly ? <>{issue ? <p className="text-xs text-muted-foreground">{issue}</p> : null}{error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}</> : <section className={CARD} aria-label="Стоимость Wan">
       {disabledReason || issue ? <p className="text-xs text-muted-foreground">{disabledReason || issue}</p> : null}

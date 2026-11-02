@@ -128,3 +128,12 @@ describe('typed repeat price requires server measurement before debit', () => {
     },
   )
 })
+
+it('never shows technical quote failures to a person repeating a video', async () => {
+  const onQuote = jest.fn().mockRejectedValue(new Error('HTTP 502 provider Nexus /v1/tasks?key=secret'))
+  render(<VideoGeneratorForm models={[model('seedance_2')]} credits={100} isSubmitting={false}
+    promptPreset={fixedPreset('seedance_2')} onSubmit={jest.fn()} onQuote={onQuote} />)
+  fireEvent.click(launchButton())
+  expect(await screen.findByRole('alert')).toHaveTextContent('Не удалось рассчитать цену видео.')
+  expect(screen.getByRole('alert')).not.toHaveTextContent(/HTTP|Nexus|provider|secret/)
+})

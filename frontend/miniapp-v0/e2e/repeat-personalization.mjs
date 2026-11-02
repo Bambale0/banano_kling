@@ -28,6 +28,7 @@ try {
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   browser = await chromium.launch({ headless: true })
+  for (const publicAccess of [true, false]) {
   for (const admin of [true, false]) {
     for (const model of ['banana_pro', 'seedance_2', 'wan_3', 'wan_3_prime']) {
       const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
@@ -43,7 +44,7 @@ try {
         result_urls: ['https://example.test/result'], prompt: '', prompt_hidden: true, prompt_actions_allowed: false,
         references_hidden: true, reference_images: [], reference_videos: [], scenario: 'text', aspect_ratio: '16:9',
         duration: 5, author: 'Synthetic', likes_count: 0, shares_count: 0, remixes: 0, score: 0,
-        ...(admin ? { repeat_user_fields: fields } : {}) }
+        ...(publicAccess || admin ? { repeat_user_fields: fields } : {}) }
       await page.route('**/*', async route => {
         const url = new URL(route.request().url())
         if (url.pathname.endsWith('/telegram-web-app.js')) return route.fulfill({ contentType: 'application/javascript', body: '// fixture' })
@@ -70,7 +71,7 @@ try {
           else if (url.pathname.endsWith('/wan3/repeat-plan')) data = { ok: true, source_feed_gen_id: 777,
             repeat_plan_hash: 'synthetic-hash', recipe: { model, scenario: 'text', prompt: '',
               resolution: '720P', aspect_ratio: '16:9', duration: 5, audio: true, nsfw_checker: true },
-            slots: [], ...(admin ? { repeat_user_fields: fields } : {}) }
+            slots: [], ...(publicAccess || admin ? { repeat_user_fields: fields } : {}) }
           else if (url.pathname.endsWith('/wan3/quote')) {
             quotes.push(route.request().postDataJSON())
             data = { ok: true, quote_hash: 'synthetic-quote', reserve_cost: 0, admin_free: true }
@@ -83,7 +84,7 @@ try {
       })
       await page.goto(base + '?startapp=remix_777', { waitUntil: 'networkidle' })
       await page.locator('textarea').first().waitFor()
-      if (admin) {
+      if (publicAccess || admin) {
         await page.getByAltText('red dress', { exact: true }).waitFor()
         await page.getByRole('button', { name: 'red dress', exact: true }).click()
         assert.equal(await page.getByRole('button', { name: 'Загрузить свой вариант: Наряд девушки' }).count(), 1)
@@ -105,14 +106,17 @@ try {
         await page.getByRole('button', { name: 'Выбрать Сохранённый наряд', exact: true }).waitFor()
         if (admin) await page.screenshot({ path: '/tmp/personal-reference-library-mobile.png', fullPage: true })
         await page.getByRole('button', { name: 'Выбрать Сохранённый наряд', exact: true }).click()
-        if (admin) assert.equal(await page.getByRole('button', { name: 'Загрузить свой вариант: Наряд девушки' }).getAttribute('aria-pressed'), 'true')
+        if (publicAccess || admin) assert.equal(await page.getByRole('button', { name: 'Загрузить свой вариант: Наряд девушки' }).getAttribute('aria-pressed'), 'true')
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
       }
+      const visibleText = await page.locator('body').innerText()
+      assert.doesNotMatch(visibleText, /админ-превью|на сервере|скрытый рецепт|provider|payload|@Image|Image[0-9]|Video[0-9]/i)
       assert.deepEqual(errors, [])
       assert.deepEqual(mutations, [])
-      console.log('PASS ' + (admin ? 'admin ' : 'ordinary ') + model + ': safe fields and choices')
+      console.log('PASS ' + (publicAccess ? 'public ' : 'preview ') + (admin ? 'admin ' : 'ordinary ') + model + ': safe fields and choices')
       await context.close()
     }
+  }
   }
 } finally {
   await browser?.close()

@@ -123,7 +123,7 @@ try {
     if (mode === 'first_frame' || mode === 'first_last') await upload(page, 'Загрузить первый кадр', 'first.png')
     if (mode === 'first_last') await upload(page, 'Загрузить последний кадр', 'last.png')
     if (mode === 'edit') {
-      await upload(page, 'Загрузить исходное видео (Video1)', 'source.mp4', 'video/mp4', video)
+      await upload(page, 'Загрузить исходное видео', 'source.mp4', 'video/mp4', video)
       await upload(page, 'Загрузить фото-референсы', 'person.png')
       await upload(page, 'Загрузить видео-референсы', 'style.mp4', 'video/mp4', video)
       await upload(page, 'Загрузить аудио-референсы', 'sound.mp3', 'audio/mpeg', Buffer.from('synthetic audio'))

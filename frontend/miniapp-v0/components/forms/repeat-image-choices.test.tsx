@@ -84,3 +84,13 @@ test('simultaneous uploads in different groups preserve both selections', async 
     outfit: 'upload:https://example.test/outfit.jpg', car: 'upload:https://example.test/car.jpg',
   })
 })
+
+test('technical upload errors are replaced by a simple user message', async () => {
+  ;(uploadFile as jest.Mock).mockRejectedValue(new Error('HTTP 502 provider Nexus /v1/tasks?token=secret'))
+  render(<Example />)
+  fireEvent.change(screen.getByLabelText('Свой вариант: Наряд девушки'), {
+    target: { files: [new File(['photo'], 'own.jpg', { type: 'image/jpeg' })] },
+  })
+  expect(await screen.findByRole('alert')).toHaveTextContent('Не удалось загрузить изображение')
+  expect(screen.getByRole('alert')).not.toHaveTextContent(/HTTP|provider|Nexus|token|v1/)
+})
