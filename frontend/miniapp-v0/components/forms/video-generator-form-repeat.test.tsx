@@ -463,6 +463,8 @@ describe('curated video choices still require a personal photo', () => {
     const onSubmit = jest.fn().mockResolvedValue(undefined)
     render(<VideoGeneratorForm models={models} promptPreset={{
       ...preset, prompt: '', promptHidden: true, repeatUserFields: [carChoice],
+      // Original owner picture must not become this repeat's uploaded face.
+      initialPhotoReferences: [savedFrame],
     }} onSubmit={onSubmit} credits={100} isSubmitting={false} savedImageReferences={[savedFrame]} />)
     const launch = screen.getByRole('button', { name: /Запустить видео/ })
     fireEvent.click(screen.getByRole('button', { name: 'Чёрная машина' }))
