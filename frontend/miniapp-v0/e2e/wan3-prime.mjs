@@ -123,7 +123,7 @@ try {
     if (mode === 'first_frame' || mode === 'first_last') await upload(page, 'Загрузить первый кадр', 'first.png')
     if (mode === 'first_last') await upload(page, 'Загрузить последний кадр', 'last.png')
     if (mode === 'edit') {
-      await upload(page, 'Загрузить исходное видео (Video1)', 'source.mp4', 'video/mp4', video)
+      await upload(page, 'Загрузить исходное видео', 'source.mp4', 'video/mp4', video)
       await upload(page, 'Загрузить фото-референсы', 'person.png')
       await upload(page, 'Загрузить видео-референсы', 'style.mp4', 'video/mp4', video)
       await upload(page, 'Загрузить аудио-референсы', 'sound.mp3', 'audio/mpeg', Buffer.from('synthetic audio'))
@@ -162,7 +162,7 @@ try {
     assert.equal(await duration.isEnabled(), true)
     assert.equal(await duration.inputValue(), '7', 'Leaving Auto restores manual seconds')
     if (mode === 'edit') await autoDuration.check()
-    await page.getByLabel('Seed Wan').fill('0')
+    await page.getByLabel('Вариант результата Wan').fill('0')
     await page.getByLabel('Аудио в результате').uncheck()
     await page.getByLabel('Проверка контента').check()
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false, 'Overflow in ' + mode)

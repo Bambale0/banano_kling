@@ -1,5 +1,7 @@
 'use client'
 
+import { personalizationError } from '@/lib/personalization-errors'
+
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useApp } from '@/lib/app-context'
 import { VideoGeneratorForm } from '../forms/video-generator-form'
@@ -130,7 +132,7 @@ export function VideoTab() {
         // Keep the composer mounted so its accepted status remains visible.
         setError(null)
       } else {
-        setError(e instanceof Error ? e.message : 'Не удалось запустить видео')
+        setError(personalizationError(e, 'Не удалось запустить видео'))
       }
       throw e
     } finally {

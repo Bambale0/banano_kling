@@ -1,4 +1,4 @@
-"""Admin-preview personalization for repeats of ordinary publications.
+"""Gated personalization for repeats of ordinary publications.
 
 The browser only receives labels and validation metadata. Source bindings and the
 assembled prompt stay behind the authenticated server boundary.
@@ -22,6 +22,21 @@ from bot.trend_user_fields import (
 )
 
 FEATURE_FLAG = "REPEAT_PERSONALIZATION_ADMIN_PREVIEW_ENABLED"
+PUBLIC_FEATURE_FLAG = "REPEAT_PERSONALIZATION_PUBLIC_ENABLED"
+
+
+def public_enabled() -> bool:
+    return str(os.getenv(PUBLIC_FEATURE_FLAG, "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def personalization_allowed(telegram_id: int) -> bool:
+    if not isinstance(telegram_id, int) or isinstance(telegram_id, bool) or telegram_id <= 0:
+        return False
+    if public_enabled():
+        return True
+    from bot.config import config
+    return admin_preview_enabled() and config.is_admin(telegram_id)
+
 MAX_CHOICES = 12
 MAX_CHOICE_LENGTH = 80
 
@@ -193,7 +208,7 @@ def normalize_repeat_fields(raw_fields: Any, *, prompt: str) -> list[dict[str, A
         not str(field.get("original_value") or "").strip()
         for field in fields if not field.get("image_choices")
     ):
-        raise ValueError("Для текстового параметра укажите исходный фрагмент промпта")
+        raise ValueError("Укажите слова из описания, которые можно заменить")
     spans: list[list[tuple[int, int]]] = []
     for field in fields:
         if field.get("image_choices"):
@@ -239,7 +254,7 @@ def render_repeat_base(
     if image_indices is not None and len(image_indices) != sum(
         bool(field.get("image_choices")) for field in fields
     ):
-        raise ValueError("Неверное количество выбранных референсов")
+        raise ValueError("Не удалось применить выбранные изображения. Выберите их заново")
     for field in fields:
         if field.get("image_choices"):
             value = str(values.get(field["key"]) or "")
@@ -249,7 +264,7 @@ def render_repeat_base(
                 raise ValueError(f"Выберите изображение для «{field['label']}»")
             selected_index = image_indices[image_ordinal] if image_indices is not None else image_index
             if type(selected_index) is not int or selected_index < 1:
-                raise ValueError("Неверный номер выбранного референса")
+                raise ValueError("Не удалось применить выбранное изображение. Выберите его заново")
             image_overrides.append((str(field["label"]), selected_index))
             image_ordinal += 1
             image_index += 1

@@ -207,7 +207,8 @@ class RepeatPersonalizationAccessError(PermissionError):
 
 
 def _repeat_personalization_allowed(telegram_id: int) -> bool:
-    return repeat_personalization_preview_enabled() and config.is_admin(telegram_id)
+    from bot.repeat_personalization import personalization_allowed
+    return personalization_allowed(telegram_id)
 
 
 async def _attach_repeat_personalization(
@@ -239,7 +240,7 @@ async def _repeat_personalized_source_prompt(
     if "repeat_user_values" not in body:
         return source_prompt
     if not _repeat_personalization_allowed(telegram_id):
-        raise RepeatPersonalizationAccessError("Персонализация повтора пока доступна только администраторам")
+        raise RepeatPersonalizationAccessError("Изменение деталей сейчас недоступно. Попробуйте позже.")
     fields = await get_repeat_fields(int(source_id))
     if not fields:
         raise TrendUserFieldsError("Для этой публикации параметры повтора не настроены")
@@ -247,7 +248,7 @@ async def _repeat_personalized_source_prompt(
 
     images = repeat_image_references(fields, body.get("repeat_user_values"), telegram_id=telegram_id)
     if images and not image_choices_supported:
-        raise ValueError("В этом режиме недоступен выбор изображений. Используйте режим референсов.")
+        raise ValueError("В этом режиме нельзя выбрать картинки. Выберите создание по образцам.")
     if images and image_references is None:
         raise ValueError("В этом режиме недоступен выбор изображений")
     compiled_images = list(image_references or [])
@@ -3570,7 +3571,7 @@ async def miniapp_upload(request: web.Request) -> web.Response:
         _ = telegram_id
 
         if file_kind == "repeat_choice_image" and not _repeat_personalization_allowed(telegram_id):
-            return web.json_response({"ok": False, "error": "Доступно только администраторам"}, status=403)
+            return web.json_response({"ok": False, "error": "Загрузка вариантов сейчас недоступна. Попробуйте позже."}, status=403)
 
         if file_kind not in FILE_KIND_MAP:
             return web.json_response(
@@ -4825,7 +4826,7 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
         source_task = (await recipe_privacy_rows([source_task]))[0]
         source_prompt = str(source_task.get("prompt") or "").strip()
         if not source_prompt:
-            return web.json_response({"ok": False, "error": "У исходной генерации нет prompt"}, status=400)
+            return web.json_response({"ok": False, "error": "Для этой работы пока нельзя настроить изменение текста"}, status=400)
 
         img_service = str(body.get("img_service") or body.get("model") or source.get("model") or "banana_pro")
         img_ratio = str(body.get("img_ratio") or source.get("aspect_ratio") or "1:1")
@@ -5051,7 +5052,7 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
             source_prompt = str(source_feed_payload.get("prompt") or "").strip()
             if not source_prompt:
                 return web.json_response(
-                    {"ok": False, "error": "У исходной генерации нет prompt"},
+                    {"ok": False, "error": "Для этой работы пока нельзя настроить изменение текста"},
                     status=400,
                 )
             # Use the same owner/foreign recipe assembly as the feed remix API.

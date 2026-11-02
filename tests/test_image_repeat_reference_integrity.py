@@ -9,8 +9,9 @@ from bot import database, miniapp, repeat_personalization
 @pytest.mark.asyncio
 @pytest.mark.parametrize("endpoint", ["remix", "generate"])
 @pytest.mark.parametrize("invalid_values", [False, True])
+@pytest.mark.parametrize("public", [False, True])
 async def test_admin_image_personalization_keeps_base_and_authorized_reference(
-    monkeypatch, endpoint, invalid_values,
+    monkeypatch, endpoint, invalid_values, public,
 ):
     fixed = "https://example.test/fixed-cake.png"
     source_prompt = "Cinematic scene, blue coat, stable camera and lighting"
@@ -31,12 +32,13 @@ async def test_admin_image_personalization_keeps_base_and_authorized_reference(
         "repeat_user_values": {} if invalid_values else {"clothes": "red dress"},
     }
     monkeypatch.setenv(repeat_personalization.FEATURE_FLAG, "1")
+    monkeypatch.setenv(repeat_personalization.PUBLIC_FEATURE_FLAG, "1" if public else "0")
     monkeypatch.setattr(miniapp, "_miniapp_payload", AsyncMock(return_value=body))
     monkeypatch.setattr(miniapp, "_get_user_context", AsyncMock(return_value=(123, {"user": SimpleNamespace(id=7, credits=100)})))
     monkeypatch.setattr(miniapp, "_get_feed_remix_source_card", AsyncMock(return_value=card))
     monkeypatch.setattr(miniapp, "_get_repeat_source_card", AsyncMock(return_value=card))
     monkeypatch.setattr(miniapp, "get_generation_task_payload", AsyncMock(return_value=source))
-    monkeypatch.setattr(miniapp.config, "is_admin", lambda _id: True)
+    monkeypatch.setattr(miniapp.config, "is_admin", lambda _id: not public)
     monkeypatch.setattr(miniapp, "missing_local_upload_sources", lambda _refs: [])
     monkeypatch.setattr(miniapp, "touch_saved_references", AsyncMock())
     monkeypatch.setattr(miniapp, "_resolve_image_unit_cost", lambda *_args: 1)

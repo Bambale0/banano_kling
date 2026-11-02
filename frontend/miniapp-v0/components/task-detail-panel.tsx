@@ -1,4 +1,6 @@
 'use client'
+
+import { personalizationError } from '@/lib/personalization-errors'
 import { GenjutsuButton } from './genjutsu-entry'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -295,7 +297,7 @@ export function TaskDetailPanel() {
             : 'Опубликовано в ленте и профиле'
         )
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Не удалось опубликовать')
+      toast.error(personalizationError(e, 'Не удалось опубликовать'))
     } finally {
       setPublishBusy(false)
     }
@@ -322,7 +324,7 @@ export function TaskDetailPanel() {
       notifyFeedChanged()
       toast.success('Публикация убрана')
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Не удалось убрать публикацию')
+      toast.error(personalizationError(e, 'Не удалось убрать публикацию'))
     } finally {
       setPublishBusy(false)
     }
@@ -334,7 +336,7 @@ export function TaskDetailPanel() {
       await copyTextToClipboard(publicationLink)
       toast.success('Ссылка скопирована')
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Не удалось скопировать ссылку')
+      toast.error(personalizationError(e, 'Не удалось скопировать ссылку'))
     }
   }
 
@@ -353,7 +355,7 @@ export function TaskDetailPanel() {
         toast.success('Промпт сохранён')
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Не удалось сохранить prompt')
+      toast.error(personalizationError(e, 'Не удалось сохранить описание'))
     } finally {
       setLibraryBusy(false)
     }
@@ -558,7 +560,7 @@ export function TaskDetailPanel() {
 
               {/* Task ID */}
               <div className="flex items-center gap-2 p-3 rounded-xl bg-secondary/50">
-                <span className="text-xs text-muted-foreground">ID:</span>
+                <span className="text-xs text-muted-foreground">Номер работы:</span>
                 <code className="text-xs text-foreground font-mono flex-1 truncate">
                   {taskDetail.task_id}
                 </code>
@@ -588,7 +590,7 @@ export function TaskDetailPanel() {
                   ) : null}
                 </div>
                 <p className="text-sm text-muted-foreground leading-relaxed p-3 rounded-xl bg-secondary/50 whitespace-pre-wrap break-words">
-                  {taskDetail.prompt_hidden ? 'Промпт автора скрыт. Результат можно опубликовать и повторить.' : taskDetail.prompt || '—'}
+                  {taskDetail.prompt_hidden ? 'Описание автора скрыто. Работу можно опубликовать и повторить.' : taskDetail.prompt || '—'}
                 </p>
               </div>
 
@@ -718,7 +720,7 @@ export function TaskDetailPanel() {
                           )}
                         >
                           {feedPromptVisible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-                          Prompt
+                          Описание
                         </button>
                         <button
                           type="button"
@@ -805,8 +807,7 @@ export function TaskDetailPanel() {
                       </h3>
                       <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
                         Выберите {taskDetail.type === 'video' ? 'фото и видео' : 'фото'}, которые разрешаете использовать при чужих повторах.
-                        Для повтора они используются только на сервере: их превью и ссылки не передаются другим пользователям.
-                        Показ референсов в публикации настраивается отдельно выше.
+                        При повторе исходные файлы не показываются. Их показ в публикации настраивается отдельно выше.
                       </p>
                       {referenceCount > 0 ? (
                         <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
@@ -900,9 +901,9 @@ export function TaskDetailPanel() {
                   {taskDetail.repeat_personalization_editor_enabled ? (
                     <div className="mt-3 space-y-3 rounded-lg border border-gold/30 bg-gold/10 p-3">
                       <div>
-                        <h3 className="text-xs font-semibold text-foreground">Параметры персонализации повтора</h3>
+                        <h3 className="text-xs font-semibold text-foreground">Что можно изменить при повторе</h3>
                         <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-                          Админ-превью. Для вариантов с изображениями достаточно названия группы и картинок — искать текст в скрытом промпте не нужно. Для текстовых вариантов укажите исходный фрагмент. Полный промпт пользователю не показывается.
+                          Выберите, что можно менять при повторе: например, одежду или предмет. Добавьте название и варианты с картинками. Для текстовых вариантов укажите слова, которые нужно заменить.
                         </p>
                       </div>
                       {repeatUserFields.map((field, index) => (
@@ -925,7 +926,7 @@ export function TaskDetailPanel() {
                             aria-label={`Исходный фрагмент ${index + 1}`}
                             value={field.original_value || ''}
                             maxLength={160}
-                            placeholder="Точный текст: blue coat"
+                            placeholder="Слова из описания, например: синее пальто"
                             onChange={(event) => updateRepeatUserField(index, { original_value: event.target.value })}
                             className="min-h-10 rounded-md border border-border/60 bg-background px-3 text-sm text-foreground"
                           /> : null}

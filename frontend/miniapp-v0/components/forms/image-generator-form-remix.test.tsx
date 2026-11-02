@@ -56,7 +56,7 @@ describe('ImageGeneratorForm feed remix', () => {
 
     const textarea = screen.getByRole('textbox')
     expect(textarea).toHaveValue('')
-    expect(screen.getByText(/Исходный промпт автора сохранится автоматически/i)).toBeInTheDocument()
+    expect(screen.getByText(/Основной замысел автора сохранится/i)).toBeInTheDocument()
 
     fireEvent.change(textarea, { target: { value: 'Сделай волосы блонд' } })
     fireEvent.click(screen.getByRole('button', { name: /Повторить образ/i }))

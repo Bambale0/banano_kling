@@ -146,7 +146,7 @@ describe('TaskDetailPanel publication references', () => {
 
     render(<TaskDetailPanel />)
     fireEvent.click(screen.getByRole('button', { name: /^Опубликовать$/i }))
-    expect(screen.getByText('Параметры персонализации повтора')).toBeInTheDocument()
+    expect(screen.getByText('Что можно изменить при повторе')).toBeInTheDocument()
     expect(screen.getByLabelText('Название параметра 1')).toHaveValue('Одежда')
     expect(screen.getByLabelText('Исходный фрагмент 1')).toHaveValue('blue coat')
     expect(screen.getByLabelText('Варианты параметра 1')).toHaveValue('red dress, black suit')
@@ -200,7 +200,7 @@ describe('TaskDetailPanel publication references', () => {
       publication_reference_videos: [], request_data: {},
     } } as ReturnType<typeof useApp>)
     render(<TaskDetailPanel />)
-    expect(screen.getByText('Промпт автора скрыт. Результат можно опубликовать и повторить.')).toBeInTheDocument()
+    expect(screen.getByText('Описание автора скрыто. Работу можно опубликовать и повторить.')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /^Опубликовать$/i }))
     fireEvent.click(screen.getAllByRole('button', { name: /^Опубликовать$/i })[0])
     await waitFor(() => expect(mockedPublish).toHaveBeenCalledTimes(1))
