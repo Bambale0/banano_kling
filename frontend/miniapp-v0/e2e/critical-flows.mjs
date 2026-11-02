@@ -400,7 +400,7 @@ try {
           order_id: 'e2e-order',
           payment_id: 'e2e-payment',
           payment_url: 'https://pay.example/e2e',
-          credits: 25,
+          credits: bootstrapPayload.payment_packages.find((pkg) => pkg.id === paymentPayload.package_id)?.credits ?? 25,
         }),
       })
       return
@@ -1022,6 +1022,69 @@ try {
   })
   await page.getByRole('button', { name: 'Закрыть студию' }).click()
   await page.getByRole('dialog').waitFor({ state: 'hidden' })
+
+  // Contextual funding journey: a real (mocked) server quote is the sole
+  // source for the offer; checkout does not generate, debit, or reset the
+  // original trend's uploaded reference and personalization draft.
+  bootstrapPayload.is_admin = false
+  bootstrapPayload.credits = 0
+  bootstrapPayload.payment_packages = [
+    { id: 'mini', name: 'Мини', credits: 15, price_rub: 150, robokassa_enabled: true },
+    { id: 'optimal', name: 'Оптимальный', credits: 50, price_rub: 500, robokassa_enabled: true },
+  ]
+  paymentPayload = null
+  trendGenerationPayload = null
+  await page.goto(baseUrl)
+  await page.getByRole('button', { name: 'Тренды', exact: true }).waitFor()
+  const fundingCard = page.locator('article').filter({ hasText: curatedTrend.title })
+  await fundingCard.getByRole('button', { name: 'Повторить · 10🍌', exact: true }).click()
+  const fundingRunner = page.getByRole('dialog')
+  await fundingRunner.getByText('Загрузите свои фото', { exact: true }).waitFor()
+  uploadQueue.push({
+    url: 'https://cdn.example/user-trend-photo.jpg',
+    kind: 'image',
+    filename: 'funding-user-photo.jpg',
+  })
+  await fundingRunner.locator('input[type="file"]').setInputFiles({
+    name: 'funding-user-photo.jpg',
+    mimeType: 'image/jpeg',
+    buffer: Buffer.from([255, 216, 255, 224, 0, 16, 74, 70, 73, 70]),
+  })
+  await fundingRunner.getByRole('button', { name: 'Рассчитать точную стоимость', exact: true }).click()
+  const fundingOffer = fundingRunner.getByRole('region', { name: 'Пополнение для генерации' })
+  await fundingOffer.getByRole('button', { name: 'Купить 15🍌 за 150 ₽' }).waitFor()
+  assert.ok((await fundingOffer.innerText()).includes('Не хватает 10🍌'))
+  assert.equal(trendGenerationPayload, null, 'Funding offer must not launch a generation')
+  await fundingOffer.getByRole('button', { name: 'Купить 15🍌 за 150 ₽' }).click()
+  const fundingSheet = page.getByRole('region', { name: 'Пополнение для повтора' })
+  await fundingSheet.getByText('Бананы для вашего видео').waitFor()
+  assert.equal(await fundingRunner.isVisible(), true, 'Trend draft must stay mounted under checkout')
+  assert.equal(paymentPayload, null, 'Opening payment packages must not create an invoice')
+
+  const checkoutResponse = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/create-payment'))
+  await page.getByRole('button', { name: 'СБП / карта', exact: true }).first().click()
+  await checkoutResponse
+  assert.equal(paymentPayload?.package_id, 'mini')
+  assert.equal(paymentPayload?.provider, 'robokassa')
+  assert.equal(trendGenerationPayload, null, 'Creating an invoice cannot submit a repeat')
+
+  // Simulate the eventual verified balance on the authenticated bootstrap,
+  // not a frontend debit or a fabricated payment-success event.
+  bootstrapPayload.credits = 15
+  await fundingSheet.getByRole('button', { name: 'Проверить зачисление бананов' }).click()
+  await fundingSheet.getByText(/Баланс уже хватает для этого видео/).waitFor()
+  await page.getByRole('button', { name: 'Закрыть пополнение' }).click()
+  await fundingSheet.waitFor({ state: 'hidden' })
+  assert.equal(await fundingRunner.isVisible(), true)
+  const approveFundedVideo = fundingRunner.getByRole('button', { name: 'Подтвердить 10🍌 и запустить', exact: true })
+  assert.equal(await approveFundedVideo.isEnabled(), true, 'User must explicitly authorize generation after payment')
+  assert.equal(trendGenerationPayload, null)
+  const fundedVideoResponse = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/trends/run'))
+  await approveFundedVideo.click()
+  await fundedVideoResponse
+  assert.equal(trendGenerationPayload?.pricing_quote_hash, 'trend-e2e-approved-price')
+  assert.deepEqual(trendGenerationPayload?.reference_urls, ['https://cdn.example/user-trend-photo.jpg'])
+  console.log('Mini App contextual funding browser E2E passed')
 
   console.log('Mini App critical browser E2E passed')
 } finally {
