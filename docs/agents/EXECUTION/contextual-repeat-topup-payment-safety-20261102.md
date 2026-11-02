@@ -34,4 +34,10 @@
 - After squash auto-merge, confirm exact merge SHA and deployment for backend and Mini App static export, public `/health`, `revision.txt`, operational logs. No real customer payment or paid generation is to be triggered.
 - Rollback: revert fix PR in `tanyapi` and use standard CI/CD, leaving #394/#396 base intact.
 
-Status: awaiting exact-head CI, review and release verification.
+## Exact-head review iteration
+
+- PR #398 first CI: focused Jest `11 suites / 80 tests` passed, Mini App static build, Python/deploy validation, PostgreSQL schema, WAN provider tests and publication scope green; required browser E2E / full Python regression were still running on that superseded SHA.
+- Exact-head Codex review identified three P2 edge cases. Patched: (1) reject **late Stars** response after sheet closes before even reaching native invoice/fallback; (2) snapshot `chatAccessRevision` *before* async bootstrap to avoid race with write-access grants; (3) automatically scroll the fallback link into view, like signed `readyPayment` panel.
+- Added Jest checks for late Stars response never opening old invoice, and visibility/scroll behavior for manual payment fallback. Recheck latest SHA through strict gates and review; no shortcuts to production.
+
+Status: awaiting latest-head CI, review, protected squash auto-merge, exact-SHA production deploy and read-only smoke.
