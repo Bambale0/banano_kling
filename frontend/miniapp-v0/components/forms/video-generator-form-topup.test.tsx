@@ -19,7 +19,7 @@ const preset: VideoPromptPreset = {
   title: 'Повторить чужое видео', model: 'seedance_2', prompt: '',
   promptHidden: true, sourceFeedGenId: 42, scenario: 'video', ratio: '16:9',
   duration: 5, repeatReferenceSlots: {
-    version: 1, available: true, images: [], videos: [
+    version: 1, available: true, cost_multiplier: 1, images: [], videos: [
       { index: 0, role: 'reference', binding: 'fixed' },
     ],
   },
