@@ -11,8 +11,8 @@ from typing import Any
 
 from bot.services.media_input_utils import (
     canonicalize_local_upload_url,
-    reference_upload_owner_telegram_id,
     reference_source_identity,
+    reference_upload_owner_telegram_id,
     resolve_reference_source,
 )
 
