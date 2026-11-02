@@ -375,7 +375,14 @@ def merge_typed_video_inputs(
             raise VideoRepeatContractError("Для этого повтора используйте сценарий исходной публикации.")
         result["seedance25_scenario"] = plan["scenario"]
         result["seedance25_resolution"] = plan["pricing_quality"]
-        result["v_type"] = "text" if plan["scenario"] == "text" else "imgtxt" if plan["scenario"] in {"first_frame", "first_last"} else "video"
+        result["v_type"] = (
+            "text" if plan["scenario"] == "text"
+            else "imgtxt" if (
+                plan["scenario"] in {"first_frame", "first_last"}
+                or (plan["scenario"] == "multimodal" and plan["images"] and not plan["videos"])
+            )
+            else "video"
+        )
     elif not identity:
         if body.get("v_type") and body["v_type"] != plan["scenario"]:
             raise VideoRepeatContractError("Для этого повтора используйте сценарий исходной публикации.")
