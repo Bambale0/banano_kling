@@ -288,10 +288,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       },
       recentTasks: prev.mode === 'live' ? prev.recentTasks : [],
       savedReferences: prev.mode === 'live' ? prev.savedReferences : [],
-      paymentPackages:
-        prev.mode === 'live' && prev.paymentPackages.length
-          ? prev.paymentPackages
-          : mockAppState.paymentPackages,
+      // Never show demo prices in an authenticated session after a failed refresh.
+      paymentPackages: prev.mode === 'live' ? prev.paymentPackages : [],
       lastSync: prev.mode === 'live' ? prev.lastSync : null,
     }))
   }, [])
