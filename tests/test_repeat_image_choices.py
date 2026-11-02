@@ -280,7 +280,13 @@ async def test_wan_real_image_probe_quote_to_launch_keeps_choice_and_is_idempote
     assert [(slot['key'], slot['binding']) for slot in plan['slots'] if slot['kind'] == 'image'] == [
         ('image:0', 'upload'), ('image:1', 'choice'), ('image:2', 'fixed'),
     ]
-    assert 'outfit.png' not in json.dumps(plan) and choice not in json.dumps(plan)
+    # The owner's original materials stay private; the curated thumbnail must
+    # remain public so the visitor can actually choose it in the repeat editor.
+    public_plan_json = json.dumps(plan)
+    assert 'outfit.png' not in public_plan_json
+    assert 'https://owner.example/face.png' not in public_plan_json
+    assert FIXED not in public_plan_json and SECRET not in public_plan_json
+    assert plan['repeat_user_fields'][0]['image_choices'][0]['image_url'] == choice
     request = {**plan['recipe'], 'source_feed_gen_id': source_id, 'repeat_plan_hash': plan['repeat_plan_hash'],
                'repeat_replacements': {'image:0': USER_FACE}, 'repeat_user_values': {'outfit': 'dress'}}
     provider = Provider()
