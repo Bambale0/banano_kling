@@ -225,6 +225,23 @@ async def _attach_repeat_personalization(
         fields = by_generation.get(int(card.get("id") or 0), [])
         if fields:
             card["repeat_user_fields"] = public_repeat_fields(fields)
+            # Catalog image choices occupy *existing* replaceable source slots;
+            # source URLs remain server-side and only the slot binding is public.
+            slots = card.get("repeat_reference_slots")
+            if (isinstance(slots, dict) and slots.get("available")
+                    and isinstance(slots.get("images"), list)):
+                from bot.repeat_personalization import assign_catalog_image_slots
+                try:
+                    assigned = assign_catalog_image_slots(slots["images"], fields)
+                    card["repeat_reference_slots"] = {
+                        **slots,
+                        "images": [{key: value for key, value in slot.items()
+                                    if key != "choice_key"} for slot in assigned],
+                    }
+                except ValueError:
+                    card["repeat_reference_slots"] = {
+                        "version": 1, "available": False, "images": [], "videos": [],
+                    }
 
 
 async def _repeat_personalized_source_prompt(
