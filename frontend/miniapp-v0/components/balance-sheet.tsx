@@ -93,9 +93,13 @@ export function BalanceSheet() {
   const paymentReadyRef = useRef<HTMLElement>(null)
   const manualPaymentRef = useRef<HTMLElement>(null)
   const balanceOpenRef = useRef(isBalanceOpen)
+  const balanceSessionRef = useRef(0)
 
   useEffect(() => {
     balanceOpenRef.current = isBalanceOpen
+    // Increment on *every* close/open transition: a pending checkout from the
+    // previous sheet session must never be usable in the next session.
+    balanceSessionRef.current += 1
     if (!isBalanceOpen) {
       // A closed sheet must not expose an earlier, possibly expired invoice.
       setReadyPayment(null)
@@ -215,6 +219,7 @@ export function BalanceSheet() {
     const selectedPackage = paymentPackages.find((item) => item.id === packageId)
     if (!selectedPackage) return
     paymentRequestInFlight.current = true
+    const paymentSession = balanceSessionRef.current
 
     const loadingKey = `${packageId}:${provider}`
     setReadyPayment(null)
@@ -242,7 +247,7 @@ export function BalanceSheet() {
       })
       // A checkout reply received after close must not launch Stars or store
       // any stale signed URL (the regular payment path has the same guard).
-      if (!balanceOpenRef.current) return
+      if (!balanceOpenRef.current || balanceSessionRef.current !== paymentSession) return
       if (payment.provider === 'telegram_stars' && payment.invoice_url) {
         const status = await openTelegramInvoice(payment.invoice_url)
         if (status === 'paid') {
