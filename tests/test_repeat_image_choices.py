@@ -181,9 +181,12 @@ async def test_seedream_effective_provider_cap_rejects_selected_image_before_mut
     monkeypatch.setattr(miniapp.config, 'is_admin', lambda _id: True)
     fields = subject.normalize_repeat_fields(raw_fields(), prompt=PROMPT)
     await subject.save_repeat_fields(42, fields, actor_telegram_id=42)
-    images = [f'https://example.test/ref{index}.jpg' for index in range(5)]
+    face = 'https://neuromixbot.com/uploads/refs/image/42/face.jpg'
+    images = [face, *[f'https://example.test/ref{index}.jpg' for index in range(4)]]
     with pytest.raises(ValueError, match='Слишком много референсов'):
-        await miniapp._repeat_personalized_source_prompt(42, PROMPT, {'repeat_user_values': {'outfit': 'dress'}},
+        await miniapp._repeat_personalized_source_prompt(42, PROMPT, {
+            'repeat_user_values': {'outfit': 'dress'}, 'reference_images': [face],
+        },
             telegram_id=42, image_references=images, image_model='seedream_edit')
     assert len(images) == 5
 

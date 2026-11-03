@@ -69,8 +69,9 @@ export function ImageGeneratorForm({
   const cost = unitCost * selectedCount
   const canAfford = credits >= cost
   const isFeedRemix = sourceFeedGenId !== null
-  // Source repeats restore permitted references on the server before validation.
-  const requiresLocalReference = Boolean(model?.requires_reference) && !isFeedRemix
+  const requiresPersonalPhoto = isFeedRemix && repeatUserFields.some(field => field.image_choices?.length)
+  // Author/catalog references cannot fill the user's personal-photo picker.
+  const requiresLocalReference = requiresPersonalPhoto || (Boolean(model?.requires_reference) && !isFeedRemix)
   const needsReference = requiresLocalReference && references.length === 0
   const referencesUploading = references.some((reference) => reference.uploading)
   const hasPrompt = prompt.trim().length > 0 || isFeedRemix
@@ -131,7 +132,8 @@ export function ImageGeneratorForm({
     if (promptPreset.ratio) {
       setSelectedRatio(promptPreset.ratio)
     }
-    setReferences(promptPreset.initialReferences || [])
+    const curatedRepeat = isSourceRepeat && promptPreset.repeatUserFields?.some(field => field.image_choices?.length)
+    setReferences(curatedRepeat ? [] : (promptPreset.initialReferences || []))
     onPromptPresetConsumed?.()
   }, [models, onPromptPresetConsumed, promptPreset])
 
@@ -371,7 +373,9 @@ export function ImageGeneratorForm({
             libraryLabel="Сохранённые фото-референсы"
           />
           <p className="text-xs text-muted-foreground">
-            {isFeedRemix
+            {requiresPersonalPhoto
+              ? 'Добавьте своё фото для повтора с промптом автора. Выбранные варианты его не заменяют.'
+              : isFeedRemix
               ? references.length > 0
                 ? 'Выбранные файлы заменят или дополнят исходные референсы перед повтором.'
                 : 'Для повтора используются доступные исходные референсы. Если чего-то не хватает, добавьте свои фото.'
@@ -475,7 +479,7 @@ export function ImageGeneratorForm({
             <p className="text-muted-foreground mb-1">Файлы</p>
             <p className="text-foreground font-medium">{references.length} / {model?.max_references || 0}</p>
             <p className="text-muted-foreground mt-1">
-              {isFeedRemix ? 'Свои фото для повтора' : requiresLocalReference ? 'Минимум 1 обязателен' : 'Опционально'}
+              {requiresPersonalPhoto ? 'Своё фото обязательно' : isFeedRemix ? 'Свои фото для повтора' : requiresLocalReference ? 'Минимум 1 обязателен' : 'Опционально'}
             </p>
           </div>
         </div>
@@ -501,7 +505,7 @@ export function ImageGeneratorForm({
           <div className="flex items-center gap-2 p-3 rounded-xl bg-gold/10 border border-gold/30">
             <AlertCircle className="w-4 h-4 text-gold flex-shrink-0" />
             <p className="text-xs text-gold">
-              Загрузите референс для этой модели
+              {requiresPersonalPhoto ? 'Сначала добавьте своё фото для повтора' : 'Загрузите референс для этой модели'}
             </p>
           </div>
         )}

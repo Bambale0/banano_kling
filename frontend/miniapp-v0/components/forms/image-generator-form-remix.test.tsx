@@ -11,7 +11,14 @@ jest.mock('@/components/forms/quality-select', () => ({
   QualitySelect: ({ value }: { value: string }) => <div data-testid="quality">{value}</div>,
 }))
 jest.mock('@/components/forms/upload-area', () => ({
-  UploadArea: () => <div data-testid="upload-area" />,
+  UploadArea: ({ libraryFiles = [], onFilesChange, required }: {
+    libraryFiles?: Array<{ id: string; name: string; url: string; type: string; size: number }>
+    onFilesChange: (files: unknown[]) => void
+    required?: boolean
+  }) => <div data-testid="upload-area" data-required={required}>
+    {libraryFiles.map(file => <button key={file.id} type="button" onClick={() => onFilesChange([file])}>{file.name}</button>)}
+    <button type="button" onClick={() => onFilesChange([])}>Убрать своё фото</button>
+  </div>,
 }))
 
 import { ImageGeneratorForm } from '@/components/forms/image-generator-form'
@@ -37,6 +44,33 @@ const remixPreset: PromptPreset = {
 }
 
 describe('ImageGeneratorForm feed remix', () => {
+  it('requires an explicit personal photo and keeps the author prompt server-side with curated choices', async () => {
+    const onSubmit = jest.fn().mockResolvedValue(false)
+    const face = { id: 'face', name: 'Моё фото', type: 'image' as const,
+      url: 'https://neuromixbot.com/uploads/refs/image/123/own.jpg', size: 1 }
+    render(<ImageGeneratorForm models={models} onSubmit={onSubmit} savedReferences={[face]}
+      promptPreset={{ ...remixPreset, initialReferences: [face], repeatUserFields: [{
+        key: 'car', label: 'Машина', type: 'text',
+        image_choices: [{ id: 'car', label: 'Чёрная машина', image_url: 'https://catalog.test/car.jpg' }],
+      }] }} isSubmitting={false} credits={100} />)
+    const launch = screen.getByRole('button', { name: /Повторить образ/i })
+    fireEvent.click(screen.getByRole('button', { name: 'Чёрная машина' }))
+    expect(launch).toBeDisabled()
+    expect(screen.getByTestId('upload-area')).toHaveAttribute('data-required', 'true')
+    expect(screen.getByText('Своё фото обязательно')).toBeInTheDocument()
+    fireEvent.click(launch)
+    expect(onSubmit).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Моё фото' }))
+    expect(launch).toBeEnabled()
+    fireEvent.click(launch)
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      sourceFeedGenId: 42, prompt: '', references: [face.url], repeatUserValues: { car: 'car' },
+    })))
+    expect(screen.queryByDisplayValue(remixPreset.prompt)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Убрать своё фото' }))
+    expect(launch).toBeDisabled()
+  })
+
   it('uses the textarea only for user changes and does not expose the author prompt as editable text', async () => {
     const onSubmit = jest.fn().mockResolvedValue(true)
     const consumed = jest.fn()

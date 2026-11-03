@@ -55,7 +55,9 @@ try {
           if (url.pathname.endsWith('/bootstrap')) data = { ok: true, telegram_id: 424242, first_name: 'Synthetic',
             is_admin: admin, credits: 100, telegram_chat_available: true, image_models: [{ id: 'banana_pro', label: 'Nano Banana Pro',
               ratios: ['1:1', '16:9'], qualities: ['2K'], max_references: 8, cost: 1 }], video_models: models,
-            recent_tasks: [], saved_references: [], actions: [], payment_packages: [], mini_app_url: base }
+            recent_tasks: [], saved_references: isImage ? [{ id: 'personal', kind: 'image',
+              filename: 'my-personal-photo.jpg', url: 'https://example.test/personal.svg' }] : [],
+            actions: [], payment_packages: [], mini_app_url: base }
           else if (url.pathname.endsWith('/reference-library')) {
             const body = route.request().postDataJSON()
             data = body.action === 'categories'
@@ -91,6 +93,12 @@ try {
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
         if (model === 'seedance_2') await page.screenshot({ path: '/tmp/repeat-image-personalization-mobile.png', fullPage: true })
         assert.equal(await page.getByRole('button', { name: 'red dress', exact: true }).getAttribute('aria-pressed'), 'true')
+        if (isImage) {
+          const launch = page.getByRole('button', { name: /Повторить образ/ })
+          assert.equal(await launch.isDisabled(), true, 'Catalog picture cannot satisfy the mandatory user photo')
+          await page.getByRole('button', { name: 'my-personal-photo.jpg', exact: true }).click()
+          assert.equal(await launch.isEnabled(), true, 'Explicit saved personal photo unlocks the author-prompt repeat')
+        }
         if (model.startsWith('wan_')) {
           await page.waitForFunction(() => document.querySelector('[aria-pressed="true"]') != null)
           await new Promise(resolve => setTimeout(resolve, 600))
