@@ -144,10 +144,10 @@ async def test_admin_personalization_reaches_video_provider_without_losing_base_
         raw["image_choices"] = [{"id": "dress", "label": "Платье", "image_url": choice_url}]
         # Quote/launch must use an explicitly selected, visitor-owned image.
         # Create an actual local image so this integration test keeps the
-        # production missing-media and ownership validation enabled.
+        # production missing-media, ownership and >=300px validation enabled.
         owned_dir = tmp_path / "static" / "uploads" / "refs" / "image" / str(entry.user.telegram_id)
         owned_dir.mkdir(parents=True)
-        Image.new("RGB", (32, 32), "blue").save(owned_dir / "personal.jpg", format="JPEG")
+        Image.new("RGB", (512, 512), "blue").save(owned_dir / "personal.jpg", format="JPEG")
         visitor_face = f"https://neuromixbot.com/uploads/refs/image/{entry.user.telegram_id}/personal.jpg"
     fields = repeat_personalization.normalize_repeat_fields(
         [raw],
