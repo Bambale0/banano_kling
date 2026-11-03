@@ -48,6 +48,7 @@ describe('BotWriteAccessGate', () => {
 
   it.each([
     ['ref_PARTNER', 'ref_PARTNER'],
+    ['genjutsu_recipe_' + 'a'.repeat(32) + '_ref_PARTNER', 'ref_PARTNER'],
     ['feed_42_ref_PARTNER', 'ref_PARTNER'],
     ['prompt_42_ref_PARTNER', 'ref_PARTNER'],
     ['posts_AUTHOR_ref_PARTNER', 'ref_PARTNER'],
@@ -208,3 +209,29 @@ describe('optional delivery offer', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 })
+
+
+it.each(['dialog-content', 'sheet-content', 'alert-dialog-content'])(
+  'defers the offer until the %s interaction owner unmounts, including exit animation', async (slot) => {
+    window.sessionStorage.clear()
+    const modal = document.createElement('section')
+    modal.dataset.slot = slot
+    modal.dataset.state = 'open'
+    document.body.appendChild(modal)
+    try {
+      render(<BotWriteAccessGate required botUsername="neuromix_bot" onRefresh={jest.fn()} />)
+      expect(screen.queryByRole('dialog')).toBeNull()
+      modal.dataset.state = 'closed'
+      await act(async () => {})
+      expect(screen.queryByRole('dialog')).toBeNull()
+      modal.remove()
+      await waitFor(() => expect(screen.getByRole('link', { name: 'Открыть бота' })).toBeVisible())
+      const nextModal = document.createElement('section')
+      nextModal.dataset.slot = slot
+      await act(async () => { document.body.appendChild(nextModal) })
+      expect(screen.queryByRole('dialog')).toBeNull()
+      await act(async () => { nextModal.remove() })
+      await waitFor(() => expect(screen.getByRole('link', { name: 'Открыть бота' })).toBeVisible())
+    } finally { modal.remove() }
+  },
+)

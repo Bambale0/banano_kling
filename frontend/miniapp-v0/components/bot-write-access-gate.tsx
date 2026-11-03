@@ -25,7 +25,7 @@ function botStartUrl(botUsername?: string) {
   const target = parseMiniAppStartParam(launch)
   const referral = launch.startsWith('ref_')
     ? launch.slice(4).trim().toUpperCase()
-    : target && 'referralCodeForAttribution' in target && target.kind !== 'genjutsu_recipe'
+    : target && 'referralCodeForAttribution' in target
       ? target.referralCodeForAttribution || ''
       : ''
   const start = /^[A-Z0-9_-]{1,60}$/.test(referral) ? `ref_${referral}` : 'miniapp_delivery'
@@ -37,6 +37,8 @@ export function BotWriteAccessGate({ required, botUsername, onRefresh }: BotWrit
   const [dismissed, setDismissed] = useState(() => {
     try { return typeof window !== 'undefined' && window.sessionStorage.getItem(DISMISS_STORAGE_KEY) === '1' } catch { return false }
   })
+  const [modalOwnsInteraction, setModalOwnsInteraction] = useState(false)
+  const modalPresent = useRef(false)
   const openedBot = useRef(false)
   const attempt = useRef(0)
   const pending = useRef<{ controller: AbortController; timer: ReturnType<typeof setTimeout> } | null>(null)
@@ -110,7 +112,27 @@ export function BotWriteAccessGate({ required, botUsername, onRefresh }: BotWrit
     }
   }, [cancelCheck, checkAccess, required])
 
-  if (!required) return null
+  useEffect(() => {
+    // Radix disables body pointer events and traps focus while a dialog/sheet
+    // is mounted, including its closing animation. A higher z-index alone
+    // cannot make this independent offer interactive. Defer it until the
+    // owning layer unmounts; do not alter Radix's interaction protection.
+    const syncModal = () => {
+      const present = Boolean(document.querySelector(
+        '[data-slot="dialog-content"], [data-slot="sheet-content"], [data-slot="alert-dialog-content"]',
+      ))
+      if (modalPresent.current !== present) {
+        modalPresent.current = present
+        setModalOwnsInteraction(present)
+      }
+    }
+    syncModal()
+    const observer = new MutationObserver(syncModal)
+    observer.observe(document.body, { childList: true, subtree: true })
+    return () => observer.disconnect()
+  }, [])
+
+  if (!required || modalOwnsInteraction) return null
 
   const skipOffer = () => {
     cancelCheck()
