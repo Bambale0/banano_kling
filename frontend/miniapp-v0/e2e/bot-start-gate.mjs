@@ -228,6 +228,47 @@ try {
       await route.abort('blockedbyclient')
     })
 
+    // A capability refresh can finish after a user opens another modal.
+    // The optional offer must not cover Radix's focus/pointer owner.
+    await page.goto(baseUrl + '?startapp=ref_E2ESTART')
+    await page.waitForLoadState('networkidle')
+    await page.getByRole('button', { name: 'Сервисы', exact: true }).click()
+    await page.getByRole('button', { name: /Поддержка/ }).click()
+    const support = page.locator('[data-slot="sheet-content"]')
+    await support.waitFor()
+    chatAvailable = false
+    const deniedCapability = page.waitForResponse(response => response.url().endsWith('/bootstrap'))
+    await emitReturn(page, 'focus')
+    await deniedCapability
+    // Synchronize on render, rather than testing the pre-response UI.
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    const deferredGate = page.locator('[aria-labelledby="bot-write-access-title"]')
+    assert.equal(await deferredGate.count(), 0, 'No unclickable delivery offer over active Support modal')
+    await support.getByRole('button', { name: 'Close', exact: true }).click()
+    await support.waitFor({ state: 'detached' })
+    await deferredGate.waitFor()
+    const consentLink = deferredGate.getByRole('link', { name: 'Открыть бота', exact: true })
+    const consentChat = page.waitForEvent('popup')
+    await consentLink.click()
+    const consentPopup = await consentChat
+    await consentPopup.waitForLoadState('domcontentloaded')
+    assert.equal(consentPopup.url(), 'https://t.me/test_bot?start=ref_E2ESTART')
+    await consentPopup.close()
+    chatAvailable = true
+    await emitReturn(page, 'activated')
+    await deferredGate.waitFor({ state: 'hidden' })
+
+    if (process.env.BOT_START_CONSENT_ONLY === '1') {
+      assert.equal(page.url(), baseUrl + '?startapp=ref_E2ESTART', 'Consent preserves launch context')
+      assert.equal(await page.evaluate(() => window.__nativeWriteAccessCalls), 0)
+      assert.ok(bootstrapRequests.every(payload => payload.start_param_fallback === 'ref_E2ESTART'))
+      assert.deepEqual(unexpected, [], 'Consent has no unexpected API requests')
+      assert.deepEqual(errors, [], 'Consent has no browser errors')
+      console.log('PASS consent ' + width + 'px: active modal defers offer; real click opens referral text chat; server-confirmed Start clears offer')
+      await context.close()
+      continue
+    }
+
     // A direct referral is retained in /start; the existing Mini App URL stays
     // unchanged so the user can return to the same selected form.
     await page.goto(baseUrl + '?startapp=ref_E2ESTART')

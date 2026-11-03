@@ -424,3 +424,38 @@ async def test_positive_history_write_failure_cannot_rollback_delivery_receipt(m
     task = await database.get_task_by_id("fixture-delivery-receipt")
     assert json.loads(task.request_data)["delivery_status"] == "delivered"
     database.mark_telegram_chat_available.assert_awaited_once_with(user.telegram_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("attached_in_miniapp", [False, True])
+async def test_referral_consent_start_preserves_attribution_and_is_idempotent(monkeypatch, attached_in_miniapp):
+    from bot.handlers import common
+    from bot.services import referral_service
+
+    # The service imports this path at module load; bind it to the same
+    # per-test database as the handler and lifecycle fixture.
+    monkeypatch.setattr(referral_service, "DATABASE_PATH", database.DATABASE_PATH)
+    process_referral_click = referral_service.process_referral_click
+    partner = await database.get_or_create_user(881001)
+    visitor = await database.get_or_create_user(881002, initial_telegram_chat_state="never_started")
+    if attached_in_miniapp:
+        result = await process_referral_click(visitor.telegram_id, partner.referral_code, source="miniapp")
+        assert result.attached
+    initial_credits = (await database.get_or_create_user(visitor.telegram_id)).credits
+    monkeypatch.setattr(common, "_sync_telegram_profile", AsyncMock())
+    monkeypatch.setattr(common, "_notify_partner_about_new_referral", AsyncMock())
+    message = SimpleNamespace(
+        text=f"/start ref_{partner.referral_code}",
+        from_user=types.User(id=visitor.telegram_id, is_bot=False, first_name="Synthetic consent visitor"),
+        bot=SimpleNamespace(), answer=AsyncMock(),
+    )
+    state = SimpleNamespace(clear=AsyncMock())
+    await common.cmd_start(message, state)
+    await common.cmd_start(message, state)
+    updated = await database.get_or_create_user(visitor.telegram_id)
+    assert updated.referred_by == partner.id
+    assert updated.credits == initial_credits
+    assert (await database.get_referral_stats(partner.telegram_id))["referrals_count"] == 1
+    assert await database.needs_telegram_bot_start(visitor.telegram_id) is False
+    assert await database.can_attempt_telegram_delivery(visitor.telegram_id) is True
+    assert message.answer.await_count == 2
