@@ -260,7 +260,9 @@ async def _repeat_personalized_source_prompt(
     if image_model and _repeat_personalization_allowed(telegram_id):
         fields = await get_repeat_fields(int(source_id))
         if any(field.get("image_choices") for field in fields):
-            from bot.video_repeat_reference_contract import is_owned_personal_image_reference
+            from bot.video_repeat_reference_contract import (
+                is_owned_personal_image_reference,
+            )
 
             submitted = body.get("reference_images")
             if (not isinstance(submitted, list) or not submitted
