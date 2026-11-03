@@ -194,6 +194,10 @@ export function VideoGeneratorForm({
     ...repeatSlots.images.map((slot) => ({ ...slot, type: 'image' as const, key: `image-${slot.index}` })),
     ...repeatSlots.videos.map((slot) => ({ ...slot, type: 'video' as const, key: `video-${slot.index}` })),
   ] : []
+  // Catalog pictures (car/outfit/cake) never replace the visitor's face.
+  const hasImageChoices = repeatUserFields.some((field) => Boolean(field.image_choices?.length))
+  const hasImageUploadSlot = typedSlots.some((slot) => slot.type === 'image' && slot.binding === 'upload')
+  const needsCatalogPersonalPhoto = Boolean(sourceFeedGenId && hasImageChoices && !hasImageUploadSlot)
   const missingRepeatUploads = typedSlots.some((slot) => slot.binding === 'upload'
     && (!repeatUploads[slot.key]?.[0]?.url || repeatUploads[slot.key][0].uploading))
   const repeatBlocked = Boolean(repeatPending) || Boolean(repeatSlots && (!repeatSlots.available || missingRepeatUploads || repeatError))
@@ -314,7 +318,9 @@ export function VideoGeneratorForm({
   
   // Image-to-video uses the same photo-reference picker as every other photo input.
   // The backend promotes the first selected reference to the provider's primary image slot.
-  const needsPhotoReference = selectedScenario === 'imgtxt' && !isOmniVideo && !sourceFeedGenId && photoReferences.length === 0
+  const needsPhotoReference = needsCatalogPersonalPhoto
+    ? (photoReferences.length !== 1 || !photoReferences[0]?.url || photoReferences[0].uploading === true)
+    : (selectedScenario === 'imgtxt' && !isOmniVideo && !sourceFeedGenId && photoReferences.length === 0)
   const needsCharacterImage = !repeatSlots && selectedScenario === 'character' && startImage.length === 0
   const needsVideoRef = selectedScenario === 'video' && !isOmniVideo && !isWanPrime && !sourceFeedGenId && videoReferences.length === 0
   const needsWanEditSource = isWanPrime && selectedScenario === 'edit' && !sourceFeedGenId && videoReferences.length === 0
@@ -419,7 +425,11 @@ export function VideoGeneratorForm({
     if (promptPreset.duration) {
       setSelectedDuration(promptPreset.duration)
     }
-    if (slots) {
+    if (slots || (promptPreset.sourceFeedGenId && promptPreset.repeatUserFields?.some(
+      (field) => Boolean(field.image_choices?.length),
+    ))) {
+      // Do not silently count an owner's original source picture as a photo
+      // explicitly chosen for this repeat. Saved references remain selectable.
       setStartImage([])
       setPhotoReferences([])
     } else if (promptPreset.scenario === 'character' || promptPreset.scenario === 'avatar') {
@@ -621,7 +631,10 @@ export function VideoGeneratorForm({
           ? null
           : startImage[0]?.url || null,
       references:
-        repeatSlots ? typedSlots.filter((slot) => slot.type === 'image' && slot.binding === 'upload').map((slot) => repeatUploads[slot.key][0].url) : isOmniAudio || isOmniCharacter
+        repeatSlots ? [
+          ...(needsCatalogPersonalPhoto ? photoReferences.map((item) => item.url) : []),
+          ...typedSlots.filter((slot) => slot.type === 'image' && slot.binding === 'upload').map((slot) => repeatUploads[slot.key][0].url),
+        ] : isOmniAudio || isOmniCharacter
           ? []
           : selectedScenario === 'imgtxt' || (model?.max_image_references ?? 8) > 0
             ? photoReferences.map((item) => item.url)
@@ -1274,11 +1287,11 @@ export function VideoGeneratorForm({
           </div>
         ) : null}
 
-        {!repeatSlots && !isOmniAudio && !isOmniCharacter && ((model?.max_image_references ?? 8) > 0 || selectedScenario === 'imgtxt' || selectedScenario === 'first_last') ? (
+        {(!repeatSlots || needsCatalogPersonalPhoto) && !isOmniAudio && !isOmniCharacter && (needsCatalogPersonalPhoto || (model?.max_image_references ?? 8) > 0 || selectedScenario === 'imgtxt' || selectedScenario === 'first_last') ? (
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground">
               Фото-референсы
-              {(selectedScenario === 'imgtxt' || selectedScenario === 'first_last') && !isOmniVideo && !sourceFeedGenId ? (
+              {needsCatalogPersonalPhoto || ((selectedScenario === 'imgtxt' || selectedScenario === 'first_last') && !isOmniVideo && !sourceFeedGenId) ? (
                 <span className="text-destructive ml-1">*</span>
               ) : (
                 <span className="text-xs text-muted-foreground ml-2">(опционально)</span>
@@ -1288,6 +1301,7 @@ export function VideoGeneratorForm({
               files={photoReferences}
               onFilesChange={setPhotoReferences}
               maxFiles={
+                needsCatalogPersonalPhoto ? 1 :
                 selectedScenario === 'first_last'
                   ? 1
                   : selectedScenario === 'imgtxt'
@@ -1295,7 +1309,7 @@ export function VideoGeneratorForm({
                     : model?.max_image_references || 8
               }
               accept="image/*"
-              required={(selectedScenario === 'imgtxt' || selectedScenario === 'first_last') && !isOmniVideo && !sourceFeedGenId}
+              required={needsCatalogPersonalPhoto || ((selectedScenario === 'imgtxt' || selectedScenario === 'first_last') && !isOmniVideo && !sourceFeedGenId)}
               onUpload={onUploadImageReference}
               libraryFiles={savedImageReferences}
               libraryLabel="Сохранённые фото-референсы"
@@ -1367,7 +1381,9 @@ export function VideoGeneratorForm({
                 {repeatTitle || 'Повторить видео из ленты'}
               </p>
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                {repeatSlots ? 'Детали работы автора сохранятся. Добавьте свои файлы в отмеченные места.' : 'Работа готова к повтору. Можно изменить длительность, формат и добавить свои фото.'}
+                {needsCatalogPersonalPhoto
+                   ? 'Выбранные варианты не заменяют ваше фото. Добавьте своё фото перед запуском.'
+                   : repeatSlots ? 'Детали работы автора сохранятся. Добавьте свои файлы в отмеченные места.' : 'Работа готова к повтору. Можно изменить длительность, формат и добавить свои фото.'}
               </p>
             </div>
           ) : null}
@@ -1399,6 +1415,8 @@ export function VideoGeneratorForm({
                   ? 'Стоимость пока недоступна'
                 : repeatBlocked
                 ? !repeatSlots?.available || repeatError ? 'Повтор нужно открыть заново' : 'Заполните референсы для повтора'
+                : needsCatalogPersonalPhoto && needsPhotoReference
+                ? 'Сначала добавьте своё фото для повтора'
                 : sourceFeedGenId
                 ? prompt.trim().length > 0
                   ? 'Всё готово к повтору'
@@ -1440,7 +1458,7 @@ export function VideoGeneratorForm({
           <div className="rounded-xl bg-secondary/40 p-3">
             <p className="text-muted-foreground mb-1">Референсы</p>
             <p className="text-foreground font-medium">
-              {repeatSlots ? typedSlots.length : startImage.length + photoReferences.length + videoReferences.length + audioReference.length}
+              {repeatSlots ? typedSlots.length + (needsCatalogPersonalPhoto ? photoReferences.length : 0) : startImage.length + photoReferences.length + videoReferences.length + audioReference.length}
             </p>
             <p className="text-muted-foreground mt-1">
               {model?.grok_modes?.length
@@ -1455,10 +1473,12 @@ export function VideoGeneratorForm({
                       ? `Голос: ${omniBaseVoice}`
                       : isOmniCharacter
                         ? 'Character ID'
-                  : selectedScenario === 'video'
+                  : needsCatalogPersonalPhoto
+                    ? 'Своё фото обязательно'
+                    : selectedScenario === 'video'
                     ? 'Видео-режим активен'
-                    : selectedScenario === 'imgtxt' && !isOmniVideo && !sourceFeedGenId
-                      ? 'Фото-референс обязателен'
+                    : (selectedScenario === 'imgtxt' && !isOmniVideo && !sourceFeedGenId)
+                      ? 'Своё фото обязательно'
                       : 'Фото-референсы опциональны'}
             </p>
           </div>

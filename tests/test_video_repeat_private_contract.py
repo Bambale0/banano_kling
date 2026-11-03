@@ -5,8 +5,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from aiohttp import web
 
-from bot import creator_tariff, database, miniapp
+from bot import creator_tariff, database, miniapp, video_repeat_reference_contract
 from bot.handlers import miniapp_video_continuity_compat as continuity
 from bot.video_repeat_reference_contract import video_repeat_descriptors
 
@@ -1315,7 +1316,7 @@ def test_four_image_seedance_repeat_uses_one_face_and_three_curated_choices():
             "reference_images": source_images, "v_reference_videos": [],
         },
     }
-    viewer_face = "https://viewer.test/own-face.jpg"
+    viewer_face = "https://neuromixbot.com/uploads/refs/image/880102/own-face.jpg"
     edited = continuity.enrich_video_repeat_body({
         "v_model": "seedance_2_5", "v_type": "video",
         "reference_images": [viewer_face], "v_reference_videos": [],
@@ -1352,3 +1353,169 @@ def test_catalog_source_slot_replacement_requires_real_face_upload():
     source["_repeat_choice_fields"] = []
     with pytest.raises(continuity.VideoRepeatReferenceError, match="Добавьте"):
         continuity.enrich_video_repeat_body(request, source)
+
+def test_curated_zero_source_slot_requires_owned_personal_photo_before_charge():
+    face = "https://neuromixbot.com/uploads/refs/image/42/face.jpg"
+    choice = "https://neuromixbot.com/uploads/repeat-choices/" + "a" * 32 + ".jpg"
+    task = {
+        "model": "seedance_2",
+        "request_data": {"v_model": "seedance_2", "v_type": "imgtxt"},
+        "feed_repeat_reference_selection": {"version": 1, "images": [], "videos": []},
+        "_repeat_choice_fields": [{
+            "key": "car", "label": "Машина",
+            "image_choices": [{"id": "car", "image_url": choice}],
+        }],
+        "_repeat_consumer_telegram_id": 42,
+    }
+    body = {"v_type": "imgtxt", "repeat_user_values": {"car": "car"}, "reference_images": []}
+    normalized = {"v_model": "seedance_2", "v_type": "imgtxt"}
+    with pytest.raises(video_repeat_reference_contract.VideoRepeatContractError, match="Добавьте своё фото"):
+        video_repeat_reference_contract.merge_typed_video_inputs(task, body, normalized)
+    with pytest.raises(video_repeat_reference_contract.VideoRepeatContractError, match="Загрузите своё фото"):
+        video_repeat_reference_contract.merge_typed_video_inputs(task, {**body, "reference_images": [
+            "https://neuromixbot.com/uploads/refs/image/99/foreign.jpg",
+        ]}, normalized)
+    for bad_media in ("video/42/trick.mp4", "audio/42/trick.mp3"):
+        with pytest.raises(video_repeat_reference_contract.VideoRepeatContractError, match="Загрузите своё фото"):
+            video_repeat_reference_contract.merge_typed_video_inputs(task, {
+                **body,
+                "reference_images": [f"https://neuromixbot.com/uploads/refs/{bad_media}"],
+            }, normalized)
+    result = video_repeat_reference_contract.merge_typed_video_inputs(task, {**body, "reference_images": [face]}, normalized)
+    assert result["reference_images"] == [face]
+
+
+def test_curated_only_source_photo_choice_still_requires_a_personal_photo():
+    face = "https://neuromixbot.com/uploads/refs/image/42/face.jpg"
+    choice = "https://neuromixbot.com/uploads/repeat-choices/" + "b" * 32 + ".jpg"
+    task = {
+        "model": "seedance_2",
+        "request_data": {
+            "v_model": "seedance_2", "v_type": "imgtxt",
+            "reference_images": ["https://owner.test/car.jpg"],
+        },
+        "feed_repeat_reference_selection": {"version": 1, "images": [], "videos": []},
+        "_repeat_choice_fields": [{
+            "key": "car", "label": "Машина",
+            "image_choices": [{"id": "car", "image_url": choice}],
+        }],
+        "_repeat_consumer_telegram_id": 42,
+    }
+    body = {"v_type": "imgtxt", "repeat_user_values": {"car": "car"}, "reference_images": []}
+    normalized = {"v_model": "seedance_2", "v_type": "imgtxt"}
+    with pytest.raises(video_repeat_reference_contract.VideoRepeatContractError, match="Добавьте своё фото"):
+        video_repeat_reference_contract.merge_typed_video_inputs(task, body, normalized)
+    result = video_repeat_reference_contract.merge_typed_video_inputs(task, {**body, "reference_images": [face]}, normalized)
+    assert result["reference_images"] == [choice, face]
+    assert result["_repeat_choice_image_indices"] == [1]
+    assert result["_repeat_personal_photo_url"] == face
+
+
+def test_owner_curated_repeat_never_treats_source_media_as_new_personal_photo():
+    face = "https://neuromixbot.com/uploads/refs/image/42/face.jpg"
+    source = {
+        "model": "seedance_2", "prompt": "A person with a car",
+        "request_data": {"v_model": "seedance_2", "v_type": "imgtxt"},
+        "_repeat_is_owner": True,
+        "_repeat_consumer_telegram_id": 42,
+        "_repeat_choice_fields": [{"key": "car", "image_choices": [{"id": "car"}]}],
+    }
+    body = {"v_model": "seedance_2", "v_type": "imgtxt", "reference_images": []}
+    with pytest.raises(continuity.VideoRepeatReferenceError, match="Сначала добавьте своё фото"):
+        continuity.enrich_video_repeat_body(body, source)
+    with pytest.raises(continuity.VideoRepeatReferenceError, match="Сначала добавьте своё фото"):
+        continuity.enrich_video_repeat_body({
+            **body, "reference_images": ["https://neuromixbot.com/uploads/refs/video/42/clip.mp4"],
+        }, source)
+    result = continuity.enrich_video_repeat_body({**body, "reference_images": [face]}, source)
+    assert result["v_image_url"] == face
+
+
+def test_curated_existing_image_upload_slot_rejects_unowned_public_url():
+    face = "https://neuromixbot.com/uploads/refs/image/42/face.jpg"
+    choice = "https://neuromixbot.com/uploads/repeat-choices/" + "d" * 32 + ".jpg"
+    task = {
+        "model": "seedance_2",
+        "request_data": {
+            "v_model": "seedance_2", "v_type": "imgtxt",
+            "reference_images": ["https://owner.test/person.jpg", "https://owner.test/car.jpg"],
+        },
+        "feed_repeat_reference_selection": {"version": 1, "images": [], "videos": []},
+        "_repeat_choice_fields": [{
+            "key": "car", "label": "Машина",
+            "image_choices": [{"id": "car", "image_url": choice}],
+        }],
+        "_repeat_consumer_telegram_id": 42,
+    }
+    payload = {"v_type": "imgtxt", "repeat_user_values": {"car": "car"}}
+    normalized = {"v_model": "seedance_2", "v_type": "imgtxt"}
+    with pytest.raises(video_repeat_reference_contract.VideoRepeatContractError, match="Загрузите своё фото"):
+        video_repeat_reference_contract.merge_typed_video_inputs(task, {
+            **payload, "reference_images": ["https://third-party.test/unowned-face.png"],
+        }, normalized)
+    with pytest.raises(video_repeat_reference_contract.VideoRepeatContractError, match="Загрузите своё фото"):
+        video_repeat_reference_contract.merge_typed_video_inputs(task, {
+            **payload,
+            "reference_images": ["https://neuromixbot.com/uploads/refs/audio/42/fake.mp3"],
+        }, normalized)
+    result = video_repeat_reference_contract.merge_typed_video_inputs(task, {
+        **payload, "reference_images": [face],
+    }, normalized)
+    assert result["reference_images"] == [face, choice]
+    assert result["_repeat_choice_image_indices"] == [2]
+
+
+def test_curated_fixed_source_references_keep_original_image_indices_when_personal_photo_added():
+    face = "https://neuromixbot.com/uploads/refs/image/42/face.jpg"
+    fixed = ["https://owner.test/source1.jpg", "https://owner.test/source2.jpg"]
+    choice = "https://neuromixbot.com/uploads/repeat-choices/" + "e" * 32 + ".jpg"
+    task = {
+        "model": "seedance_2",
+        "request_data": {"v_model": "seedance_2", "v_type": "imgtxt", "reference_images": fixed},
+        "feed_repeat_reference_selection": {"version": 1, "images": fixed, "videos": []},
+        "_repeat_choice_fields": [{
+            "key": "car", "label": "Машина",
+            "image_choices": [{"id": "car", "image_url": choice}],
+        }],
+        "_repeat_consumer_telegram_id": 42,
+    }
+    output = video_repeat_reference_contract.merge_typed_video_inputs(task, {
+        "v_type": "imgtxt", "repeat_user_values": {"car": "car"}, "reference_images": [face],
+    }, {"v_model": "seedance_2", "v_type": "imgtxt"})
+    assert output["reference_images"] == [*fixed, face]
+    assert output["_repeat_personal_photo_url"] == face
+    assert output.get("_repeat_choice_image_indices") is None
+
+
+@pytest.mark.asyncio
+async def test_curated_image_capacity_is_checked_before_launch_or_payment(monkeypatch):
+    fixed = [f"https://owner.test/face{i}.jpg" for i in range(9)]
+    face = "https://neuromixbot.com/uploads/refs/image/42/face.jpg"
+    choice = "https://neuromixbot.com/uploads/repeat-choices/" + "f" * 32 + ".jpg"
+    task = {
+        "id": 777, "model": "seedance_2", "type": "video", "status": "completed",
+        "user_id": 111, "is_public_feed": True, "prompt": "Use @Image1 for the main scene",
+        "request_data": {"v_model": "seedance_2", "v_type": "imgtxt", "reference_images": fixed},
+        "feed_repeat_reference_selection": {"version": 1, "images": fixed, "videos": []},
+    }
+    async def fake_prompt(_sid, source_prompt, _body, *, image_references, **_kwargs):
+        image_references.append(choice)
+        return source_prompt + "\nCurated car at @Image11"
+
+    monkeypatch.setattr(miniapp, "_get_user_context", AsyncMock(
+        return_value=(42, {"user": SimpleNamespace(id=222)}),
+    ))
+    monkeypatch.setattr(miniapp, "_get_repeat_source_card", AsyncMock(return_value={"gen_type": "video"}))
+    monkeypatch.setattr(continuity, "get_generation_task_payload", AsyncMock(return_value=task))
+    monkeypatch.setattr("bot.trend_task_privacy.recipe_privacy_rows", AsyncMock(return_value=[task]))
+    monkeypatch.setattr(miniapp, "_repeat_personalization_allowed", lambda _id: True)
+    monkeypatch.setattr(miniapp, "get_repeat_fields", AsyncMock(return_value=[{
+        "key": "car", "label": "Машина", "image_choices": [{"id": "car", "image_url": choice}],
+    }]))
+    monkeypatch.setattr(miniapp, "_repeat_personalized_source_prompt", fake_prompt)
+    with pytest.raises(web.HTTPBadRequest, match="Слишком много фотографий"):
+        await continuity._restore_repeat_request(
+            SimpleNamespace(app={}),
+            {"source_feed_gen_id": 777, "v_model": "seedance_2", "v_type": "imgtxt",
+             "reference_images": [face], "repeat_user_values": {"car": "car"}},
+        )

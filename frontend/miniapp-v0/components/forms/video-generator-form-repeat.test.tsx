@@ -447,3 +447,54 @@ it('shows one personal face upload plus three photo-option grids for a four-imag
     repeatUserValues: { car: 'car', outfit: 'outfit', cake: 'cake' },
   })))
 })
+
+describe('curated video choices still require a personal photo', () => {
+  const carChoice = {
+    key: 'car', label: 'Машина', type: 'text' as const, required: true,
+    image_choices: [{ id: 'black', label: 'Чёрная машина', image_url: 'https://catalog.test/car.jpg' }],
+  }
+  const noSourceSlots = {
+    version: 1 as const, available: true, cost_multiplier: 1,
+    pricing_quality: '720p' as const, duration_costs: { '5': 5, '10': 10 },
+    images: [], videos: [],
+  }
+
+  it('blocks the owner after selecting catalog variants until their own photo is added', async () => {
+    const onSubmit = jest.fn().mockResolvedValue(undefined)
+    render(<VideoGeneratorForm models={models} promptPreset={{
+      ...preset, prompt: '', promptHidden: true, repeatUserFields: [carChoice],
+      // Original owner picture must not become this repeat's uploaded face.
+      initialPhotoReferences: [savedFrame],
+    }} onSubmit={onSubmit} credits={100} isSubmitting={false} savedImageReferences={[savedFrame]} />)
+    const launch = screen.getByRole('button', { name: /Запустить видео/ })
+    fireEvent.click(screen.getByRole('button', { name: 'Чёрная машина' }))
+    expect(screen.getByText('Своё фото обязательно')).toBeInTheDocument()
+    expect(launch).toBeDisabled()
+    fireEvent.click(launch)
+    expect(onSubmit).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'saved-frame.jpg' }))
+    expect(launch).toBeEnabled()
+    fireEvent.click(launch)
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      sourceFeedGenId: 42, references: [savedFrame.url], repeatUserValues: { car: 'black' },
+    })))
+  })
+
+  it('blocks a foreign zero-source-slot repeat and submits a separate visitor photo', async () => {
+    const onSubmit = jest.fn().mockResolvedValue(undefined)
+    render(<VideoGeneratorForm models={models} promptPreset={{
+      ...preset, prompt: '', promptHidden: true,
+      repeatUserFields: [carChoice], repeatReferenceSlots: noSourceSlots,
+    }} onSubmit={onSubmit} credits={100} isSubmitting={false} savedImageReferences={[savedFrame]} />)
+    const launch = screen.getByRole('button', { name: /Запустить видео/ })
+    fireEvent.click(screen.getByRole('button', { name: 'Чёрная машина' }))
+    expect(launch).toBeDisabled()
+    expect(screen.getByText('Своё фото обязательно')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'saved-frame.jpg' }))
+    expect(launch).toBeEnabled()
+    fireEvent.click(launch)
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      references: [savedFrame.url], repeatUserValues: { car: 'black' },
+    })))
+  })
+})

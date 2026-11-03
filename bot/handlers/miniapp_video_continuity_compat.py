@@ -28,6 +28,7 @@ from bot.video_repeat_reference_contract import (
     VideoRepeatContractError,
     effective_video_repeat_grant,
     foreign_video_repeat_task,
+    is_owned_personal_image_reference,
     merge_typed_video_inputs,
     parse_video_repeat_grant,
     source_request,
@@ -284,6 +285,18 @@ def _infer_scenario(request_data: dict[str, Any]) -> str:
 
 def enrich_video_repeat_body(body: dict[str, Any], source_task: dict[str, Any]) -> dict[str, Any]:
     owner = bool(source_task.get("_repeat_is_owner"))
+    if owner and any(field.get("image_choices") for field in source_task.get("_repeat_choice_fields") or []):
+        # Owner media and author-curated pictures must never implicitly satisfy
+        # an ordinary user's own-photo requirement.
+        submitted_photos = _clean_list(body.get("reference_images"))
+        submitted_first = str(body.get("v_image_url") or "").strip()
+        if submitted_first:
+            submitted_photos.insert(0, submitted_first)
+        consumer = source_task.get("_repeat_consumer_telegram_id")
+        if not isinstance(consumer, int) or not any(
+            is_owned_personal_image_reference(url, consumer) for url in submitted_photos
+        ):
+            raise VideoRepeatReferenceError("Сначала добавьте своё фото для повтора.")
     if owner:
         # Ownership authorizes editing/reusing the original source independently
         # of permissions granted to other users.
@@ -651,6 +664,28 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
             image_choices_supported=choice_mode_supported,
             image_indices=chosen_indices,
         )
+        personal_photo_url = enriched.pop("_repeat_personal_photo_url", None)
+        if personal_photo_url:
+            if personal_photo_url not in repeat_images:
+                raise ValueError("Личное фото для повтора не найдено. Загрузите его заново.")
+            # Append-only source positions are preserved: an extra user face is
+            # always after the author's fixed/choice source inputs, never ahead.
+            personal_index = repeat_images.index(personal_photo_url) + 1
+            source_prompt += (
+                f"\n\nPersonal identity: use @Image{personal_index} as the"
+                " face and appearance reference for the person in this video."
+            )
+        model_meta = miniapp_module._find_video_model_meta(
+            str(enriched.get("v_model") or source_task.get("model") or ""),
+        )
+        image_limit = int((model_meta or {}).get("max_image_references") or 0)
+        if image_limit and len(repeat_images) > image_limit:
+            # Seedance adapters would otherwise silently truncate the final
+            # image, while the prompt would still reference its @ImageN index.
+            raise ValueError(
+                f"Слишком много фотографий для повтора (максимум {image_limit}). "
+                "Откройте другую публикацию или попросите автора уменьшить число вариантов."
+            )
         if repeat_images != initial_images:
             enriched["reference_images"] = repeat_images
     except miniapp_module.RepeatPersonalizationAccessError as exc:
