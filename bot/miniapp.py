@@ -3572,7 +3572,7 @@ async def miniapp_write_access(request: web.Request) -> web.Response:
             # idempotent DB write after a broken connection; never replay send.
             try:
                 await mark_telegram_chat_available(telegram_id)
-            except Exception as exc:  # noqa: BLE001 - classify DB errors separately
+            except Exception as exc:
                 if database_error_response(exc) is None:
                     raise
                 logger.warning(
