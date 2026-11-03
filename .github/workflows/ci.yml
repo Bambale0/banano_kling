@@ -274,6 +274,7 @@ jobs:
           node e2e/video-repeat-reference-slots.mjs
           node e2e/bot-start-gate.mjs
           node e2e/bot-start-media-targets.mjs
+          BOT_WRITE_NATIVE_E2E=1 node e2e/bot-start-media-targets.mjs
           node e2e/bot-start-genjutsu.mjs
           node e2e/creator-tariff.mjs
           node e2e/kling4.mjs

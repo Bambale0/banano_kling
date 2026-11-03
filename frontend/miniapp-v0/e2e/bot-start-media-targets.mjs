@@ -6,7 +6,8 @@ import { spawn } from 'node:child_process'
 import { mkdtempSync, symlinkSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve, join } from 'node:path'
-import { chromium } from 'playwright'
+import { chromium, webkit } from 'playwright'
+const nativeMode = process.env.BOT_WRITE_NATIVE_E2E === '1'
 const root = mkdtempSync(join(tmpdir(), 'target-return-e2e-'))
 symlinkSync(resolve('out'), join(root, 'mini-app'), 'dir')
 const port = Number(process.env.BOT_START_MEDIA_E2E_PORT || 4187), origin = 'http://127.0.0.1:' + port, base = origin + '/mini-app/'
@@ -35,21 +36,25 @@ let browser
 try {
   const deadline=Date.now()+15000
   while(true) { try { if((await fetch(base)).ok) break } catch{}; if(Date.now()>deadline) throw Error('no export'); await new Promise(r=>setTimeout(r,100)) }
-  browser=await chromium.launch({headless:true})
-  for(const c of cases.filter(c => !c.trend).concat(cases.filter(c => c.trend))) {
+  browser=await (process.env.BOT_WRITE_E2E_BROWSER === 'webkit' ? webkit : chromium).launch({headless:true})
+  for(const c of cases.filter(c => !c.trend).concat(cases.filter(c => c.trend)).map(c => nativeMode ? {...c,start:c.start+'_ref_PARTNER'} : c)) {
     const context=await browser.newContext({viewport:{width:390,height:900},serviceWorkers:'block'})
     const page=await context.newPage()
     page.setDefaultTimeout(8000)
     let available=false
     const calls=[],errors=[],unexpected=[]
     page.on('pageerror',e=>errors.push(e.message))
-    await page.addInitScript(()=>{
+    const popups=[]
+    page.on('popup', popup=>popups.push(popup))
+    await page.addInitScript((native)=>{
       window.__opened=[]
+      window.__nativeRequests=0
+      window.__nativeCallback=null
       window.Telegram={WebApp:{initData:'query_id=media-target-e2e',initDataUnsafe:{},ready(){},expand(){},
-        openTelegramLink(url){window.__opened.push(url)},requestWriteAccess(){throw Error('native permission called')},
+        openTelegramLink(url){window.__opened.push(url)},isVersionAtLeast() { return native }, requestWriteAccess(callback){window.__nativeRequests++;window.__nativeCallback=callback},
         onEvent(event,handler){window.addEventListener('fixture:'+event,handler)},
         offEvent(event,handler){window.removeEventListener('fixture:'+event,handler)}}}
-    })
+    }, nativeMode)
     const result='https://example.test/'+c.id+(c.video?'.mp4':'.svg')
     const promptText='Exact source prompt '+c.id
     const feed={id:c.id,task_id:'task-'+c.id,model:c.video?'v3_pro':'banana_pro',gen_type:c.video?'video':'image',
@@ -79,6 +84,12 @@ try {
         calls.push({path,body})
         let data
         if(path==='bootstrap') data={...bootstrap,telegram_chat_available:available,telegram_bot_start_required:!available}
+        else if(path==='write-access'&&nativeMode) {
+          assert.equal(body.granted,true)
+          assert.equal(body.start_param_fallback,c.start,'Native confirmation preserves exact referral/source')
+          available=true
+          data={ok:true,chat_available:true,confirmation_sent:true,needs_bot_start:false}
+        }
         else if(path==='prompts/detail') {assert.equal(body.prompt_id,c.id);data={ok:true,prompt}}
         else if(path==='feed/item') {assert.equal(body.gen_id,c.id);data={ok:true,feed_item:feed}}
         else if(path==='feed/profile') {assert.equal(body.referral_code,'AUTHOR');data={ok:true,profile:{referral_code:'AUTHOR',display_name:'Target Author',username:'target_author',photo_url:'',posts_count:0,likes_count:0,shares_count:0,remixes_count:0},feed:[]}}
@@ -96,6 +107,27 @@ try {
     await page.goto(base+'?startapp='+c.start)
     const gate=page.locator('[role="dialog"][aria-labelledby="bot-write-access-title"]')
     const openTextBot = async () => {
+      if(nativeMode) {
+        const before=page.url()
+        const sourceNode=!c.trend ? await marker.elementHandle() : null
+        const allow=gate.getByRole('button',{name:'Разрешить',exact:true})
+        assert.equal(await gate.getByRole('link',{name:'Открыть бота',exact:true}).count(),0)
+        await allow.click()
+        assert.equal(await page.evaluate(()=>window.__nativeRequests),1)
+        assert.equal(await gate.getByRole('button',{name:'Подожди…',exact:true}).isDisabled(),true)
+        await page.evaluate(()=>window.__nativeCallback(false))
+        await gate.getByRole('status').getByText(/Разрешение не выдано/).waitFor()
+        assert.equal(calls.filter(x=>x.path==='write-access').length,0)
+        await allow.click()
+        await page.evaluate(()=>{ window.__nativeCallback(true);window.__nativeCallback(true) })
+        await gate.waitFor({state:'hidden'})
+        assert.equal(calls.filter(x=>x.path==='write-access').length,1)
+        assert.equal(page.url(),before,'Native consent never navigates')
+        assert.equal(popups.length,0,'Native consent never opens chat or another tab')
+        assert.deepEqual(await page.evaluate(()=>window.__opened),[])
+        if(sourceNode) {assert.equal(await sourceNode.evaluate(el=>el.isConnected),true,'Exact source DOM remains mounted');await sourceNode.dispose()}
+        return
+      }
       const link=gate.getByRole('link',{name:'Открыть бота',exact:true})
       const destination=await link.getAttribute('href')
       assert.ok(destination?.startsWith('https://t.me/test_bot?start='),c.label+' uses textual /start deep link')
@@ -196,7 +228,7 @@ try {
     if(c.remix&&!c.video) assert.ok(await page.locator('img[src="'+reference+'"]').count()>0,'reference survives')
     assert.deepEqual(unexpected,[],c.label+' unexpected requests')
     assert.deepEqual(errors,[],c.label+' browser errors')
-    console.log('PASS '+c.label+': '+c.start+' target ID, source view/DOM, URL retained after Start + activated/focus/visibility; no generation')
+    console.log('PASS '+(nativeMode?'native consent ':'fallback chat ')+c.label+': '+c.start+' target ID, source view/DOM, URL retained after Start + activated/focus/visibility; no generation')
     await context.close()
   }
 } finally {await browser?.close();server.kill('SIGTERM');rmSync(root,{recursive:true,force:true})}

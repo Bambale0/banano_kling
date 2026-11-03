@@ -3540,8 +3540,6 @@ async def miniapp_write_access(request: web.Request) -> web.Response:
             body.get("init_data", ""),
             body.get("start_param_fallback"),
         )
-        await mark_telegram_chat_available(telegram_id)
-
         confirmation_sent = False
         needs_bot_start = False
         try:
@@ -3549,8 +3547,9 @@ async def miniapp_write_access(request: web.Request) -> web.Response:
                 telegram_id,
                 "✅ Готово! Теперь результаты фото и видео из NEUROMIX будут приходить сюда.",
             )
+            await mark_telegram_chat_available(telegram_id)
             confirmation_sent = True
-        except Exception as exc:  # noqa: BLE001 - permission proof is best-effort
+        except Exception as exc:  # noqa: BLE001 - keep unconfirmed consent retryable
             from bot.services.delivery_state import terminal_telegram_delivery_reason
 
             reason = terminal_telegram_delivery_reason(exc)
@@ -3572,7 +3571,7 @@ async def miniapp_write_access(request: web.Request) -> web.Response:
         return web.json_response(
             {
                 "ok": True,
-                "chat_available": not needs_bot_start,
+                "chat_available": confirmation_sent,
                 "confirmation_sent": confirmation_sent,
                 "needs_bot_start": needs_bot_start,
             }

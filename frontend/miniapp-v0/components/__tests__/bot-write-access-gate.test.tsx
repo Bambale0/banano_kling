@@ -1,13 +1,13 @@
 import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { BotWriteAccessGate } from '@/components/bot-write-access-gate'
-import { getStartParamFallback } from '@/lib/api'
+import { confirmTelegramWriteAccess, getStartParamFallback } from '@/lib/api'
 
 jest.mock('lucide-react', () => {
   const Icon = (props: React.SVGProps<SVGSVGElement>) => <svg {...props} />
   return { ExternalLink: Icon, LoaderCircle: Icon, MessageCircle: Icon }
 })
-jest.mock('@/lib/api', () => ({ getStartParamFallback: jest.fn(() => '') }))
+jest.mock('@/lib/api', () => ({ getStartParamFallback: jest.fn(() => ''), confirmTelegramWriteAccess: jest.fn() }))
 const startParam = getStartParamFallback as jest.Mock
 const webApp = () => window.Telegram!.WebApp as any
 const open = () => fireEvent.click(screen.getByRole('link', { name: 'Открыть бота' }))
@@ -18,6 +18,7 @@ describe('BotWriteAccessGate', () => {
     jest.clearAllMocks()
     window.sessionStorage.clear()
     startParam.mockReturnValue('')
+    webApp().isVersionAtLeast = jest.fn(() => false)
     webApp().requestWriteAccess = jest.fn()
     webApp().openTelegramLink = jest.fn()
     webApp().onEvent = jest.fn()
@@ -235,3 +236,125 @@ it.each(['dialog-content', 'sheet-content', 'alert-dialog-content'])(
     } finally { modal.remove() }
   },
 )
+
+
+describe('native write permission', () => {
+  let callback: (allowed: boolean) => void
+  const confirm = confirmTelegramWriteAccess as jest.Mock
+  beforeEach(() => {
+    jest.clearAllMocks()
+    window.sessionStorage.clear()
+    startParam.mockReturnValue('feed_42_ref_PARTNER')
+    webApp().isVersionAtLeast = jest.fn(() => true)
+    webApp().requestWriteAccess = jest.fn((done) => { callback = done })
+    webApp().openTelegramLink = jest.fn()
+    confirm.mockResolvedValue({ ok: true, chat_available: true, confirmation_sent: true, needs_bot_start: false })
+  })
+  afterEach(() => jest.useRealTimers())
+  const allow = () => fireEvent.click(screen.getByRole('button', { name: 'Разрешить' }))
+
+  it('asks synchronously, confirms once and refreshes capability without navigation', async () => {
+    const refresh = jest.fn().mockResolvedValue(true)
+    render(<BotWriteAccessGate required botUsername="neuromix_bot" onRefresh={refresh} />)
+    expect(screen.queryByRole('link', { name: 'Открыть бота' })).toBeNull()
+    allow()
+    expect(webApp().requestWriteAccess).toHaveBeenCalledTimes(1)
+    expect(confirm).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Подожди…' })).toBeDisabled()
+    await act(async () => { callback(true); callback(true) })
+    expect(confirm).toHaveBeenCalledTimes(1)
+    expect(confirm.mock.calls[0][0]).toBeInstanceOf(AbortSignal)
+    expect(refresh).toHaveBeenCalledTimes(1)
+    expect(webApp().openTelegramLink).not.toHaveBeenCalled()
+  })
+
+  it.each([false, undefined, 'allowed'])('denial or malformed native result %s never posts consent or navigates', async (result) => {
+    render(<BotWriteAccessGate required onRefresh={jest.fn()} />)
+    allow()
+    await act(async () => callback(result as boolean))
+    expect(confirm).not.toHaveBeenCalled()
+    expect(screen.getByText(/Разрешение не выдано/)).toBeVisible()
+    allow()
+    expect(webApp().requestWriteAccess).toHaveBeenCalledTimes(2)
+  })
+
+  it('offers explicit referral chat recovery when the native request throws', () => {
+    webApp().requestWriteAccess.mockImplementation(() => { throw Error('Unsupported') })
+    render(<BotWriteAccessGate required botUsername="neuromix_bot" onRefresh={jest.fn()} />)
+    allow()
+    expect(screen.getByRole('link', { name: 'Открыть бота' })).toHaveAttribute('href', 'https://t.me/neuromix_bot?start=ref_PARTNER')
+    expect(confirm).not.toHaveBeenCalled()
+    expect(webApp().openTelegramLink).not.toHaveBeenCalled()
+  })
+
+  it('does not refresh/grant access when confirmation fails or requires Start', async () => {
+    const refresh = jest.fn()
+    confirm.mockResolvedValue({ ok: true, chat_available: false, confirmation_sent: false, needs_bot_start: true })
+    render(<BotWriteAccessGate required botUsername="neuromix_bot" onRefresh={refresh} />)
+    allow()
+    await act(async () => callback(true))
+    expect(refresh).not.toHaveBeenCalled()
+    expect(screen.getByRole('link', { name: 'Открыть бота' })).toBeVisible()
+    expect(screen.getByRole('dialog')).toBeVisible()
+  })
+
+  it('times out an unanswered native prompt and ignores its late callback', async () => {
+    jest.useFakeTimers()
+    render(<BotWriteAccessGate required botUsername="neuromix_bot" onRefresh={jest.fn()} />)
+    allow()
+    await act(async () => jest.advanceTimersByTime(60_000))
+    expect(screen.getByRole('link', { name: 'Открыть бота' })).toBeVisible()
+    await act(async () => callback(true))
+    expect(confirm).not.toHaveBeenCalled()
+  })
+
+  it('skip aborts confirmation and ignores late success', async () => {
+    let resolve!: (value: unknown) => void
+    confirm.mockImplementationOnce(() => new Promise(done => { resolve = done }))
+    const refresh = jest.fn()
+    render(<BotWriteAccessGate required botUsername="neuromix_bot" onRefresh={refresh} />)
+    allow()
+    await act(async () => callback(true))
+    fireEvent.click(screen.getByRole('button', { name: 'Пропустить' }))
+    expect(confirm.mock.calls[0][0].aborted).toBe(true)
+    await act(async () => resolve({ ok: true, chat_available: true }))
+    expect(refresh).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('keeps the offer recoverable after a confirmation network error', async () => {
+    confirm.mockRejectedValueOnce(new Error('Synthetic network failure'))
+    const refresh = jest.fn()
+    render(<BotWriteAccessGate required botUsername="neuromix_bot" onRefresh={refresh} />)
+    allow()
+    await act(async () => callback(true))
+    expect(screen.getByText(/Не удалось проверить доступ/)).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Разрешить' })).toBeEnabled()
+    expect(refresh).not.toHaveBeenCalled()
+    expect(webApp().openTelegramLink).not.toHaveBeenCalled()
+  })
+
+  it('aborts an unanswered confirmation and ignores its late success', async () => {
+    jest.useFakeTimers()
+    let resolve!: (value: unknown) => void
+    confirm.mockImplementationOnce(() => new Promise(done => { resolve = done }))
+    const refresh = jest.fn()
+    render(<BotWriteAccessGate required botUsername="neuromix_bot" onRefresh={refresh} />)
+    allow()
+    await act(async () => callback(true))
+    await act(async () => jest.advanceTimersByTime(12_000))
+    expect(confirm.mock.calls[0][0].aborted).toBe(true)
+    await act(async () => resolve({ ok: true, chat_available: true }))
+    expect(refresh).not.toHaveBeenCalled()
+    expect(screen.getByText(/Не удалось проверить доступ/)).toBeVisible()
+  })
+
+  it('ignores native callback after unmount', async () => {
+    const view = render(<BotWriteAccessGate required onRefresh={jest.fn()} />)
+    allow()
+    view.unmount()
+    await act(async () => callback(true))
+    expect(confirm).not.toHaveBeenCalled()
+  })
+
+})
