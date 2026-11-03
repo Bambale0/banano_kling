@@ -110,3 +110,43 @@ async def test_transient_confirmation_failure_does_not_grant_delivery(monkeypatc
     available.assert_not_awaited()
     unavailable.assert_not_awaited()
     context.assert_awaited_once_with(request.app, "signed", "feed_42_ref_PARTNER")
+
+
+@pytest.mark.asyncio
+async def test_delivery_proof_persistence_retries_without_resending(monkeypatch):
+    from psycopg import OperationalError
+
+    bot = SimpleNamespace(send_message=AsyncMock())
+    request = SimpleNamespace(app={"bot": bot})
+    monkeypatch.setattr(miniapp, "_miniapp_payload", AsyncMock(return_value={"init_data": "signed", "granted": True}))
+    monkeypatch.setattr(miniapp, "_get_user_context", AsyncMock(return_value=(771004, {})))
+    available = AsyncMock(side_effect=[OperationalError("connection lost"), True])
+    unavailable = AsyncMock()
+    monkeypatch.setattr(miniapp, "mark_telegram_chat_available", available)
+    monkeypatch.setattr(miniapp, "mark_telegram_chat_unavailable", unavailable)
+    response = await miniapp.miniapp_write_access(request)
+    assert response.status == 200
+    assert json.loads(response.text)["chat_available"] is True
+    assert available.await_count == 2
+    bot.send_message.assert_awaited_once()
+    unavailable.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_persistent_proof_storage_outage_is_not_a_telegram_denial(monkeypatch):
+    from psycopg import OperationalError
+
+    bot = SimpleNamespace(send_message=AsyncMock())
+    request = SimpleNamespace(app={"bot": bot})
+    monkeypatch.setattr(miniapp, "_miniapp_payload", AsyncMock(return_value={"init_data": "signed", "granted": True}))
+    monkeypatch.setattr(miniapp, "_get_user_context", AsyncMock(return_value=(771005, {})))
+    available = AsyncMock(side_effect=OperationalError("connection lost"))
+    unavailable = AsyncMock()
+    monkeypatch.setattr(miniapp, "mark_telegram_chat_available", available)
+    monkeypatch.setattr(miniapp, "mark_telegram_chat_unavailable", unavailable)
+    response = await miniapp.miniapp_write_access(request)
+    assert response.status == 503
+    assert json.loads(response.text)["code"] == "database_unavailable"
+    assert available.await_count == 2
+    bot.send_message.assert_awaited_once()
+    unavailable.assert_not_awaited()

@@ -3547,7 +3547,6 @@ async def miniapp_write_access(request: web.Request) -> web.Response:
                 telegram_id,
                 "✅ Готово! Теперь результаты фото и видео из NEUROMIX будут приходить сюда.",
             )
-            await mark_telegram_chat_available(telegram_id)
             confirmation_sent = True
         except Exception as exc:  # noqa: BLE001 - keep unconfirmed consent retryable
             from bot.services.delivery_state import terminal_telegram_delivery_reason
@@ -3567,6 +3566,21 @@ async def miniapp_write_access(request: web.Request) -> web.Response:
                     telegram_id,
                     type(exc).__name__,
                 )
+
+        if confirmation_sent:
+            # Telegram has already delivered the message. Retry only this
+            # idempotent DB write after a broken connection; never replay send.
+            try:
+                await mark_telegram_chat_available(telegram_id)
+            except Exception as exc:  # noqa: BLE001 - classify DB errors separately
+                if database_error_response(exc) is None:
+                    raise
+                logger.warning(
+                    "Mini App write access proof persistence retry: telegram_id=%s error=%s",
+                    telegram_id,
+                    type(exc).__name__,
+                )
+                await mark_telegram_chat_available(telegram_id)
 
         return web.json_response(
             {
