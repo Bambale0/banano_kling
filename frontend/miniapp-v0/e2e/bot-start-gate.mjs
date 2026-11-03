@@ -119,7 +119,7 @@ try {
       window.Telegram = { WebApp: {
         initData: 'query_id=bot-start-e2e', initDataUnsafe: {},
         ready() {}, expand() {},
-        requestWriteAccess() { window.__nativeWriteAccessCalls += 1 /* Deliberately never calls back. */ },
+        isVersionAtLeast() { return false }, requestWriteAccess() { window.__nativeWriteAccessCalls += 1 /* Deliberately never calls back. */ },
         openTelegramLink(url) { window.__openedBotLinks.push(url) },
         onEvent(event, handler) {
           const handlers = window.__telegramHandlers[event] || []

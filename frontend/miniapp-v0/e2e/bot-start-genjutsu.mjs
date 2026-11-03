@@ -39,7 +39,7 @@ try {
     await page.addInitScript(() => {
       window.__opened = []
       window.Telegram = { WebApp: { initData: 'query_id=genjutsu-offer-e2e', initDataUnsafe: {}, ready() {}, expand() {},
-        openTelegramLink(url) { window.__opened.push(url) }, requestWriteAccess() { throw Error('native permission called') },
+        openTelegramLink(url) { window.__opened.push(url) }, isVersionAtLeast() { return false }, requestWriteAccess() { throw Error('native permission called') },
         onEvent(name, handler) { window.addEventListener('fixture:' + name, handler) },
         offEvent(name, handler) { window.removeEventListener('fixture:' + name, handler) } } }
     })

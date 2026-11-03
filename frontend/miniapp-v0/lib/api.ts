@@ -29,6 +29,7 @@ declare global {
         initDataUnsafe?: { start_param?: string }
         ready?: () => void
         expand?: () => void
+        isVersionAtLeast?: (version: string) => boolean
         requestWriteAccess?: (callback?: (allowed: boolean) => void) => void
         openTelegramLink?: (url: string) => void
         openInvoice?: (url: string, callback?: (status: string) => void) => void
@@ -447,7 +448,7 @@ export async function bootstrapApp(signal?: AbortSignal): Promise<BootstrapRespo
   return response
 }
 
-export async function confirmTelegramWriteAccess(): Promise<{
+export async function confirmTelegramWriteAccess(signal?: AbortSignal): Promise<{
   ok: true
   chat_available: boolean
   confirmation_sent: boolean
@@ -460,7 +461,7 @@ export async function confirmTelegramWriteAccess(): Promise<{
   return postJson('write-access', {
     init_data: initData,
     granted: true,
-  })
+  }, signal)
 }
 
 export async function createPayment(payload: {

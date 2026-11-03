@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ExternalLink, LoaderCircle, MessageCircle } from 'lucide-react'
 
-import { getStartParamFallback } from '@/lib/api'
+import { confirmTelegramWriteAccess, getStartParamFallback } from '@/lib/api'
 import { parseMiniAppStartParam } from '@/lib/start-params'
 
 interface BotWriteAccessGateProps {
@@ -12,8 +12,9 @@ interface BotWriteAccessGateProps {
   onRefresh: (signal: AbortSignal) => Promise<boolean>
 }
 
-type GatePhase = 'idle' | 'open-bot' | 'checking' | 'not-started' | 'error'
+type GatePhase = 'idle' | 'requesting' | 'confirming' | 'denied' | 'unsupported' | 'open-bot' | 'checking' | 'not-started' | 'error'
 const RETURN_CHECK_TIMEOUT_MS = 12_000
+const NATIVE_REQUEST_TIMEOUT_MS = 60_000
 const DISMISS_STORAGE_KEY = 'neuromix_bot_delivery_offer_dismissed'
 
 function botStartUrl(botUsername?: string) {
@@ -78,6 +79,67 @@ export function BotWriteAccessGate({ required, botUsername, onRefresh }: BotWrit
       }
     }
   }, [cancelCheck, onRefresh, required])
+
+  const requestNativeAccess = useCallback(() => {
+    if (pending.current) return
+    const webApp = window.Telegram?.WebApp
+    if (!webApp?.requestWriteAccess || webApp.isVersionAtLeast?.('6.9') === false) {
+      setPhase('unsupported')
+      return
+    }
+    cancelCheck()
+    openedBot.current = false
+    const id = attempt.current
+    const controller = new AbortController()
+    const active = () => id === attempt.current && !controller.signal.aborted
+    const expire = () => {
+      if (!active()) return
+      cancelCheck()
+      setPhase('error')
+    }
+    const timer = setTimeout(expire, NATIVE_REQUEST_TIMEOUT_MS)
+    pending.current = { controller, timer }
+    setPhase('requesting')
+    let settled = false
+    // Must run synchronously inside the trusted tap, before any network await.
+    try {
+      webApp.requestWriteAccess((allowed) => {
+        if (settled || !active()) return
+        settled = true
+        clearTimeout(timer)
+        if (allowed !== true) {
+          pending.current = null
+          setPhase('denied')
+          return
+        }
+        setPhase('confirming')
+        const confirmationTimer = setTimeout(expire, RETURN_CHECK_TIMEOUT_MS)
+        pending.current = { controller, timer: confirmationTimer }
+        void (async () => {
+          try {
+            const proof = await confirmTelegramWriteAccess(controller.signal)
+            if (!active()) return
+            if (proof.chat_available !== true) {
+              setPhase(proof.needs_bot_start ? 'not-started' : 'error')
+              return
+            }
+            const available = await onRefresh(controller.signal)
+            if (active()) setPhase(available ? 'idle' : 'error')
+          } catch {
+            if (active()) setPhase('error')
+          } finally {
+            if (active()) {
+              clearTimeout(confirmationTimer)
+              pending.current = null
+            }
+          }
+        })()
+      })
+    } catch {
+      cancelCheck()
+      setPhase('unsupported')
+    }
+  }, [cancelCheck, onRefresh])
 
   // Only record intent here. Navigation must be a real user-activated link:
   // the Telegram SDK intercepts ordinary t.me anchors without target=_blank
@@ -153,13 +215,25 @@ export function BotWriteAccessGate({ required, botUsername, onRefresh }: BotWrit
   // ?start= opens the text chat; ?startapp= would reopen Mini App instead.
   const botChatUrl = botStartUrl(botUsername)
 
-  const helperText = !botChatUrl
-    ? 'Адрес Telegram-бота пока недоступен. Попробуй открыть Mini App ещё раз.'
-    : phase === 'error'
-      ? 'Не удалось проверить доступ. Открой чат с ботом или попробуй проверить снова.'
-      : phase === 'not-started'
-        ? 'Доступ пока не подтверждён. В чате нажми «Начать», затем вернись и проверь снова.'
-        : 'Открой текстовый чат бота, нажми «Начать» и вернись сюда.'
+  const webApp = typeof window !== 'undefined' ? window.Telegram?.WebApp : undefined
+  const nativeSupported = Boolean(webApp?.requestWriteAccess) && webApp?.isVersionAtLeast?.('6.9') !== false
+  const nativeBusy = phase === 'requesting' || phase === 'confirming'
+  const recovery = !nativeSupported || ['unsupported', 'error', 'not-started', 'open-bot', 'checking'].includes(phase)
+  const helperText = phase === 'requesting'
+    ? 'Подтверди разрешение в окне Telegram.'
+    : phase === 'confirming'
+      ? 'Проверяем, что бот может отправлять тебе сообщения…'
+      : phase === 'checking'
+        ? 'Проверяем, может ли бот отправлять тебе сообщения…'
+        : phase === 'denied'
+          ? 'Разрешение не выдано. Можно попробовать снова или продолжить в Студии.'
+        : phase === 'error'
+          ? 'Не удалось проверить доступ. Попробуй снова или открой чат с ботом.'
+          : recovery
+            ? !botChatUrl
+              ? 'Адрес Telegram-бота пока недоступен. Попробуй открыть Mini App ещё раз.'
+              : 'Доступ пока не подтверждён. В чате нажми «Начать», затем вернись и проверь снова.'
+            : 'После разрешения ты останешься на этой странице — выбранное видео, промпт и фото сохранятся.'
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center overflow-y-auto bg-black/70 px-5 py-6 backdrop-blur-md" role="dialog" aria-modal="true" aria-labelledby="bot-write-access-title">
@@ -169,11 +243,17 @@ export function BotWriteAccessGate({ required, botUsername, onRefresh }: BotWrit
         </div>
         <h2 id="bot-write-access-title" className="text-2xl font-semibold leading-tight text-white">Разреши боту писать тебе</h2>
         <p className="mt-5 text-[17px] leading-7 text-white/55">
-          Так готовые фото и видео будут приходить прямо в чат с ботом — в максимальном качестве.
-          Можно пропустить: все результаты будут доступны в Студии.
+          Готовые фото и видео будут приходить в сообщения от бота — в максимальном качестве.
+          А чат с ботом поможет быстро найти приложение в Telegram.
         </p>
         <p role="status" className="mt-4 rounded-2xl bg-white/[0.05] px-4 py-3 text-sm leading-5 text-white/65">{helperText}</p>
-        {botChatUrl ? (
+        {nativeSupported && (
+          <button type="button" onClick={requestNativeAccess} disabled={nativeBusy || phase === 'checking'} className="mt-7 flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-gold px-5 py-3 text-lg font-semibold text-black transition active:scale-[0.99] disabled:opacity-70">
+            {nativeBusy ? <LoaderCircle className="h-5 w-5 animate-spin" /> : null}
+            {nativeBusy ? 'Подожди…' : 'Разрешить'}
+          </button>
+        )}
+        {recovery && (botChatUrl ? (
           <a
             href={botChatUrl}
             target="_blank"
@@ -193,11 +273,11 @@ export function BotWriteAccessGate({ required, botUsername, onRefresh }: BotWrit
             <ExternalLink className="h-5 w-5 shrink-0" />
             Открыть бота
           </button>
-        )}
-        <button type="button" onClick={() => void checkAccess()} disabled={phase === 'checking'} className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-medium text-white/75 disabled:opacity-70">
+        ))}
+        {recovery && <button type="button" onClick={() => void checkAccess()} disabled={phase === 'checking'} className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-medium text-white/75 disabled:opacity-70">
           {phase === 'checking' ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
           {phase === 'checking' ? 'Проверяем…' : 'Проверить снова'}
-        </button>
+        </button>}
         <button type="button" onClick={skipOffer} className="mt-2 min-h-11 w-full rounded-xl px-4 py-2 text-sm text-white/60 hover:text-white">Пропустить</button>
       </section>
     </div>
