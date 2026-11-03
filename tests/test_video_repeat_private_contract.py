@@ -1431,6 +1431,26 @@ def test_owner_curated_repeat_never_treats_source_media_as_new_personal_photo():
     assert result["v_image_url"] == face
 
 
+@pytest.mark.parametrize("explicit_first", [False, True])
+@pytest.mark.parametrize("model", ["seedance_2", "seedance_2_5"])
+def test_owner_curated_repeat_cannot_hide_unowned_primary_behind_owned_secondary(explicit_first, model):
+    face = "https://neuromixbot.com/uploads/refs/image/42/face.jpg"
+    foreign = "https://neuromixbot.com/uploads/refs/image/99/foreign.jpg"
+    source = {
+        "model": model, "prompt": "Person from @Image1",
+        "request_data": {"v_model": model, "v_type": "imgtxt", "seedance25_scenario": "multimodal"},
+        "_repeat_is_owner": True, "_repeat_consumer_telegram_id": 42,
+        "_repeat_choice_fields": [{"key": "car", "image_choices": [{"id": "car"}]}],
+    }
+    body = {"v_model": model, "v_type": "imgtxt", "reference_images": [foreign, face]}
+    if explicit_first:
+        # Seedance multimodal consumes the list even if an owned alias is present.
+        body.update(v_image_url=face if model == "seedance_2_5" else foreign,
+                    reference_images=[foreign, face] if model == "seedance_2_5" else [face])
+    with pytest.raises(continuity.VideoRepeatReferenceError, match="Сначала добавьте своё фото"):
+        continuity.enrich_video_repeat_body(body, source)
+
+
 def test_curated_existing_image_upload_slot_rejects_unowned_public_url():
     face = "https://neuromixbot.com/uploads/refs/image/42/face.jpg"
     choice = "https://neuromixbot.com/uploads/repeat-choices/" + "d" * 32 + ".jpg"

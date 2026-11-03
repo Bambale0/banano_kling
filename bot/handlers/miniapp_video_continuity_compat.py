@@ -285,7 +285,10 @@ def _infer_scenario(request_data: dict[str, Any]) -> str:
 
 def enrich_video_repeat_body(body: dict[str, Any], source_task: dict[str, Any]) -> dict[str, Any]:
     owner = bool(source_task.get("_repeat_is_owner"))
-    if owner and any(field.get("image_choices") for field in source_task.get("_repeat_choice_fields") or []):
+    requires_personal_photo = owner and any(
+        field.get("image_choices") for field in source_task.get("_repeat_choice_fields") or []
+    )
+    if requires_personal_photo:
         # Owner media and author-curated pictures must never implicitly satisfy
         # an ordinary user's own-photo requirement.
         submitted_photos = _clean_list(body.get("reference_images"))
@@ -293,15 +296,30 @@ def enrich_video_repeat_body(body: dict[str, Any], source_task: dict[str, Any]) 
         if submitted_first:
             submitted_photos.insert(0, submitted_first)
         consumer = source_task.get("_repeat_consumer_telegram_id")
-        if not isinstance(consumer, int) or not any(
-            is_owned_personal_image_reference(url, consumer) for url in submitted_photos
-        ):
+        if not any(is_owned_personal_image_reference(url, consumer) for url in submitted_photos):
             raise VideoRepeatReferenceError("Сначала добавьте своё фото для повтора.")
     if owner:
         # Ownership authorizes editing/reusing the original source independently
         # of permissions granted to other users.
         source_task = {**source_task, "feed_repeat_reference_selection": None, "feed_reference_selection": None}
-        return _enrich_legacy_video_repeat_body(body, source_task)
+        normalized = _enrich_legacy_video_repeat_body(body, source_task)
+        if requires_personal_photo:
+            # Validate the actual provider primary after scenario/alias resolution.
+            # A conflicting v_image_url must not authorize a foreign multimodal Image1.
+            images = _clean_list(normalized.get("reference_images"))
+            primary = str(normalized.get("v_image_url") or "").strip()
+            if str(normalized.get("v_model") or "") == "seedance_2_5":
+                scenario = str(normalized.get("seedance25_scenario") or "")
+                if scenario in {"first_frame", "first_last"}:
+                    primary = str(normalized.get("seedance25_first_frame_url") or "").strip()
+                elif scenario == "multimodal":
+                    primary = images[0] if images else ""
+            if not primary and images:
+                primary = images[0]
+            if (not is_owned_personal_image_reference(primary, consumer)
+                    or _resolve_repeat_source(primary, submitted_photos) is None):
+                raise VideoRepeatReferenceError("Сначала добавьте своё фото для повтора.")
+        return normalized
     try:
         grant = parse_video_repeat_grant(source_task.get("feed_repeat_reference_selection"))
         if grant is None:

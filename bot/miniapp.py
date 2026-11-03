@@ -253,13 +253,45 @@ async def _repeat_personalized_source_prompt(
     image_references: list[str] | None = None,
     image_choices_supported: bool = True,
     image_model: str | None = None,
+    image_source_references: list[str] | None = None,
     image_indices: list[int] | None = None,
 ) -> str:
+    fields = None
+    if image_model and _repeat_personalization_allowed(telegram_id):
+        fields = await get_repeat_fields(int(source_id))
+        if any(field.get("image_choices") for field in fields):
+            from bot.video_repeat_reference_contract import is_owned_personal_image_reference
+
+            submitted = body.get("reference_images")
+            if (not isinstance(submitted, list) or not submitted
+                    or not isinstance(submitted[0], str)
+                    or not is_owned_personal_image_reference(submitted[0].strip(), telegram_id)):
+                logger.info("Image repeat rejected: source_id=%s user_id=%s reason=personal_photo_required",
+                            source_id, telegram_id)
+                raise ValueError("Сначала добавьте своё фото для повтора.")
+            # Check explicit client input, never restored author/catalog images.
+            # Slot-preserving assembly must still contain the user's own file.
+            if resolve_reference_source(submitted[0].strip(), image_references or []) is None:
+                raise ValueError("Личное фото для повтора не найдено. Загрузите его заново.")
+            personal_photo = submitted[0].strip()
+            if image_references and image_source_references:
+                # A grant may retain the author's Image1 as well as auxiliaries.
+                # Replace only that primary slot; keep Image2..N at their ordinals.
+                source_primary = image_source_references[0]
+                if resolve_reference_source(image_references[0], [source_primary]) is not None:
+                    image_references[0] = personal_photo
+                    image_references[:] = [image_references[0], *[
+                        url for url in image_references[1:]
+                        if resolve_reference_source(url, [personal_photo]) is None
+                    ]]
+            if not image_references or resolve_reference_source(image_references[0], [personal_photo]) is None:
+                raise ValueError("Добавьте своё фото первым референсом для повтора.")
     if "repeat_user_values" not in body:
         return source_prompt
     if not _repeat_personalization_allowed(telegram_id):
         raise RepeatPersonalizationAccessError("Изменение деталей сейчас недоступно. Попробуйте позже.")
-    fields = await get_repeat_fields(int(source_id))
+    if fields is None:
+        fields = await get_repeat_fields(int(source_id))
     if not fields:
         raise TrendUserFieldsError("Для этой публикации параметры повтора не настроены")
     from bot.repeat_personalization import append_repeat_images, repeat_image_references
@@ -1585,7 +1617,9 @@ def _selected_published_image_references(
     return retained
 
 
-def _selected_private_repeat_references(task_payload: dict[str, Any]) -> list[str]:
+def _selected_private_repeat_references(
+    task_payload: dict[str, Any], *, reference_images: list[str] | None = None,
+) -> list[str]:
     """Server-only permission, independent from preview/publication visibility."""
     if (task_payload.get("type") != "image"
         or task_payload.get("status") != "completed"
@@ -1598,7 +1632,12 @@ def _selected_private_repeat_references(task_payload: dict[str, Any]) -> list[st
     sources = _source_image_references_from_task_payload(task_payload)
     resolved = [resolve_reference_source(url, sources)
                 for url in generation_repeat_reference_selection(task_payload)]
-    return [url for url in resolved if url and _is_feed_result_url_available(task_payload, url)]
+    available = [url for url in resolved if url and _is_feed_result_url_available(task_payload, url)]
+    if reference_images is None:
+        return available
+    # Replaced personal slots no longer belong to the outgoing private snapshot.
+    retained = [resolve_reference_source(url, reference_images) for url in available]
+    return [url for url in retained if url is not None]
 
 
 def _merge_private_repeat_references(task_payload: dict[str, Any], references: list[str]) -> list[str]:
@@ -4881,6 +4920,7 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
         try:
             source_prompt = await _repeat_personalized_source_prompt(
                 int(source["id"]), source_prompt, body, telegram_id=telegram_id, image_references=references, image_model=img_service,
+                image_source_references=_source_image_references_from_task_payload(source_task),
             )
         except RepeatPersonalizationAccessError as exc:
             return web.json_response({"ok": False, "error": str(exc)}, status=403)
@@ -4970,7 +5010,7 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
             private_repeat_permission_source_id=int(source["id"]),
             parent_generation_id=int(source["id"]),
             action_type="remix",
-            private_repeat_reference_images=_selected_private_repeat_references(source_task),
+            private_repeat_reference_images=_selected_private_repeat_references(source_task, reference_images=references),
         )
 
         if launch_result["status"] == "failed":
@@ -5104,6 +5144,7 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
                 source_prompt = await _repeat_personalized_source_prompt(
                     int(source_feed_gen_id), source_prompt, body, telegram_id=telegram_id, image_references=references,
                     image_model=str(body.get("img_service") or source_feed_task.get("model") or "banana_pro"),
+                    image_source_references=_source_image_references_from_task_payload(source_feed_payload),
                 )
             except RepeatPersonalizationAccessError as exc:
                 return web.json_response({"ok": False, "error": str(exc)}, status=403)
@@ -5231,7 +5272,7 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
             parent_generation_id=(immediate_parent_id if source_feed_gen_id else None),
             action_type=("remix" if source_feed_gen_id else None),
             private_repeat_reference_images=(
-                _selected_private_repeat_references(source_feed_payload) if source_feed_gen_id else []
+                _selected_private_repeat_references(source_feed_payload, reference_images=references) if source_feed_gen_id else []
             ),
         )
 
