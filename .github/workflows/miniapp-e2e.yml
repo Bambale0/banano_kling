@@ -68,7 +68,7 @@ jobs:
           node e2e/repeat-personalization.mjs
           node e2e/trend-share-clipboard.mjs
           node e2e/bot-start-gate.mjs
-          BOT_START_E2E_BROWSER=webkit node e2e/bot-start-gate.mjs
+          BOT_START_E2E_BROWSER=webkit BOT_START_CONSENT_ONLY=1 node e2e/bot-start-gate.mjs
 
       - name: Capture locked dependency audit report
         if: always()

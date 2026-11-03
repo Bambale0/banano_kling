@@ -258,6 +258,17 @@ try {
     await emitReturn(page, 'activated')
     await deferredGate.waitFor({ state: 'hidden' })
 
+    if (process.env.BOT_START_CONSENT_ONLY === '1') {
+      assert.equal(page.url(), baseUrl + '?startapp=ref_E2ESTART', 'Consent preserves launch context')
+      assert.equal(await page.evaluate(() => window.__nativeWriteAccessCalls), 0)
+      assert.ok(bootstrapRequests.every(payload => payload.start_param_fallback === 'ref_E2ESTART'))
+      assert.deepEqual(unexpected, [], 'Consent has no unexpected API requests')
+      assert.deepEqual(errors, [], 'Consent has no browser errors')
+      console.log('PASS consent ' + width + 'px: active modal defers offer; real click opens referral text chat; server-confirmed Start clears offer')
+      await context.close()
+      continue
+    }
+
     // A direct referral is retained in /start; the existing Mini App URL stays
     // unchanged so the user can return to the same selected form.
     await page.goto(baseUrl + '?startapp=ref_E2ESTART')
