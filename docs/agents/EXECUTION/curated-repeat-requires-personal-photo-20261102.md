@@ -24,3 +24,10 @@ Jest: owner choice-only + foreign zero-slot choice-only form; selected catalog o
 Pytest: missing photo rejects; forged foreign upload rejects; zero-source image recipe and one choice-bound source photo include actual viewer face before catalog; owner shortcut cannot restore hidden author photo in lieu of an explicit upload.
 
 Check existing Seedance/WAN repeat suites, browser E2E, full CI, protected merge, exact production SHA, backend health, Mini App revision and personal-reference feature flag. No paid generation is required to verify this fix.
+
+## Final regression root-cause follow-up (2026-11-03)
+
+- The first full CI run (at `d897c3e2`) identified five incompatible synthetic test inputs after the new mandatory-photo rule. Tests were updated to explicitly supply a visitor-owned image without weakening backend validation.
+- The second full CI (at `4fc147b0`) reached **4,471 passing / 2 failing**. Both remaining failures were Seedance 2.5 personalized quote paths with a synthetic *32×32* image. The actual Seedance 2.5 source validator requires **at least 300 pixels per side**, so production correctly rejected the quote before charging or calling the provider.
+- Updated the fixture to a real local **512×512 JPEG** in `tests/test_video_repeat_prompt_composition.py`. This preserves the full private-prompt, image-index, provider payload and quote validation; no service or policy change was made.
+- Final exact-HEAD CI, code review, merge and deploy verification remain mandatory gates. Do not report production complete until `tanyapi` and both live revisions match the merge SHA, health is good, and workflow succeeds.
