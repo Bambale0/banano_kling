@@ -367,6 +367,9 @@ async def share_to_profile(
             repeat_reference_image_indices,
             repeat_reference_video_indices,
         )
+        from bot.repeat_personalization import validate_saved_catalog_slots
+
+        await validate_saved_catalog_slots(db, row, repeat_reference_selection)
         references_visible = bool(references_visible and (selected_images or selected_videos))
 
         result_urls = database._generation_result_urls(row)
@@ -859,6 +862,17 @@ def install_common_publication_scope_compat(common_module) -> None:
     _COMMON_PATCHED = True
 
 
+def _validate_catalog_publication(source, fields, image_indices, video_indices):
+    if source.get("type") != "video" or not any(field.get("image_choices") for field in fields):
+        return
+    from bot.repeat_personalization import validate_catalog_slots
+
+    grant = database._repeat_reference_selection_for_publication(
+        source, image_indices, video_indices,
+    )
+    validate_catalog_slots(source, fields, grant)
+
+
 async def _miniapp_generation_share_scoped(module, request):
     repeat_rollback = None
 
@@ -951,6 +965,10 @@ async def _miniapp_generation_share_scoped(module, request):
 
             if any(field.get("image_choices") for field in pending_repeat_fields) and not repeat_image_mode_supported(owner_task):
                 return module.web.json_response({"ok": False, "error": "Изображения вариантов недоступны в режиме этой работы. Используйте режим референсов."}, status=400)
+            _validate_catalog_publication(
+                owner_task, pending_repeat_fields,
+                repeat_reference_image_indices, repeat_reference_video_indices,
+            )
             generation_id = int(owner_task["id"])
             if pending_repeat_fields:
                 write_token, previous_fields = await module.save_repeat_fields(
@@ -966,6 +984,17 @@ async def _miniapp_generation_share_scoped(module, request):
             repeat_rollback = (
                 module, generation_id, write_token, previous_fields, telegram_id,
             )
+
+        if ("repeat_user_fields" not in body and scope not in {"private", "none", "hidden"}
+                and (repeat_reference_image_indices is not None or repeat_reference_video_indices is not None)):
+            owner_task = await database.get_generation_task_payload(gen_id, user_id=user_id)
+            if owner_task and owner_task.get("type") == "video":
+                from bot.repeat_personalization import get_repeat_fields
+
+                _validate_catalog_publication(
+                    owner_task, await get_repeat_fields(int(owner_task["id"])),
+                    repeat_reference_image_indices, repeat_reference_video_indices,
+                )
 
         async def finish_repeat_change(card):
             nonlocal repeat_rollback

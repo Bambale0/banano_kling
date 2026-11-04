@@ -8250,6 +8250,9 @@ async def share_to_feed(
             repeat_reference_image_indices,
             repeat_reference_video_indices,
         )
+        from bot.repeat_personalization import validate_saved_catalog_slots
+
+        await validate_saved_catalog_slots(db, row, repeat_reference_selection)
         references_visible = bool(references_visible and (selected_images or selected_videos))
 
         result_urls = _generation_result_urls(row)

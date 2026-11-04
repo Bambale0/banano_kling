@@ -209,6 +209,12 @@ def normalize_repeat_fields(raw_fields: Any, *, prompt: str) -> list[dict[str, A
                 )
             field["choices"] = choices
     _validate_image_group_labels(fields)
+    explicit_slots = [
+        field["image_slot_index"] for field in fields
+        if field.get("image_choices") and "image_slot_index" in field
+    ]
+    if len(set(explicit_slots)) != len(explicit_slots):
+        raise ValueError("Выберите разные фото для групп вариантов")
     if any(
         not str(field.get("original_value") or "").strip()
         for field in fields if not field.get("image_choices")
@@ -296,6 +302,34 @@ def assign_catalog_image_slots(
         result[position]["binding"] = "choice"
         result[position]["choice_key"] = str(field["key"])
     return result
+
+
+def validate_catalog_slots(source, fields, grant):
+    if source.get("type") != "video" or not any(field.get("image_choices") for field in fields):
+        return
+    from bot.video_repeat_reference_contract import (
+        build_video_repeat_plan,
+        foreign_video_repeat_task,
+    )
+
+    candidate = {**source, "feed_repeat_reference_selection": grant}
+    plan = build_video_repeat_plan(foreign_video_repeat_task(candidate))
+    if plan is None:
+        raise ValueError("Для этой работы не удалось подготовить повтор")
+    assign_catalog_image_slots(plan["images"], fields)
+
+
+async def validate_saved_catalog_slots(db, source, grant):
+    """Recheck the latest groups while the publication transaction holds its parent lock."""
+    if source["type"] != "video":
+        return
+    cursor = await db.execute(
+        "SELECT fields_json FROM generation_repeat_personalization WHERE generation_id = ?",
+        (int(source["id"]),),
+    )
+    row = await cursor.fetchone()
+    if row:
+        validate_catalog_slots(dict(source), _decode_fields(row["fields_json"]), grant)
 
 
 def render_repeat_base(

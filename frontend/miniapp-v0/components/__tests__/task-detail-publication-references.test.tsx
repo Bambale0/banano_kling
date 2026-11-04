@@ -273,4 +273,37 @@ describe('TaskDetailPanel publication references', () => {
     })))
   })
 
+  it('makes a catalog replacement exclusive with retained originals and other groups', async () => {
+    const context = mockedUseApp.getMockImplementation()!()
+    mockedUseApp.mockReturnValue({ ...context, taskDetail: {
+      ...context.taskDetail!,
+      publication_reference_images: ['https://example.test/face.jpg', 'https://example.test/car.jpg', 'https://example.test/outfit.jpg'],
+      publication_reference_image_indices: [0, 1, 2],
+      feed_repeat_reference_selection: { images: [1], videos: [] },
+      repeat_personalization_editor_enabled: true,
+      repeat_image_choices_supported: true,
+      repeat_user_fields: [
+        { key: 'car', label: 'Машина', type: 'text', required: true,
+          image_choices: [{ id: 'car', label: 'Машина', image_url: 'https://example.test/car-choice.jpg' }] },
+        { key: 'outfit', label: 'Одежда', type: 'text', required: true, image_slot_index: 2,
+          image_choices: [{ id: 'outfit', label: 'Одежда', image_url: 'https://example.test/outfit-choice.jpg' }] },
+      ],
+    } } as ReturnType<typeof useApp>)
+    render(<TaskDetailPanel />)
+    fireEvent.click(screen.getByRole('button', { name: /^Опубликовать$/i }))
+    fireEvent.change(screen.getByRole('combobox', { name: 'Фото для варианта Машина' }), { target: { value: '1' } })
+    const outfit = screen.getByRole('combobox', { name: 'Фото для варианта Одежда' })
+    expect(outfit.querySelector('option[value="1"]')).toBeDisabled()
+    expect(screen.getByRole('checkbox', { name: 'Фото-референс 2 для повторов' })).toBeDisabled()
+    expect(screen.getByRole('checkbox', { name: 'Фото-референс 1 для повторов' })).not.toBeDisabled()
+    fireEvent.click(screen.getAllByRole('button', { name: /^Опубликовать$/i })[0])
+    await waitFor(() => expect(mockedPublish).toHaveBeenCalledWith('seedance-task', expect.objectContaining({
+      repeatReferenceImageIndices: [],
+      repeatUserFields: [
+        expect.objectContaining({ key: 'car', image_slot_index: 1 }),
+        expect.objectContaining({ key: 'outfit', image_slot_index: 2 }),
+      ],
+    })))
+  })
+
 })
