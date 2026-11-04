@@ -112,9 +112,18 @@ async def cleanup_results(*, limit: int = 100) -> int:
 
 
 async def lock_publication(db, generation_id: int | str, user_id: int) -> None:
-    """Hold expiry's lock from the fresh publication read through media copy/commit."""
+    """Lock storage first, then the generation through the fresh read and commit."""
     clause, value = database._generation_identifier_clause(generation_id)
     row = await (await db.execute(f'SELECT task_id, model FROM generation_tasks WHERE {clause} AND user_id = ?',
                                   (value, user_id))).fetchone()
-    if row and (str(row[0] or '').startswith(('wan3_', 'kling4_')) or row[1] in {'wan_3_prime', 'kling_4'}):
+    if not row:
+        return
+    if str(row[0] or '').startswith(('wan3_', 'kling4_')) or row[1] in {'wan_3_prime', 'kling_4'}:
         await lock_storage(db)
+    else:
+        await db.execute("BEGIN" if db_backend.is_postgres() else "BEGIN IMMEDIATE")
+    if db_backend.is_postgres():
+        await db.execute(
+            f"SELECT id FROM generation_tasks WHERE {clause} AND user_id = ? FOR UPDATE",
+            (value, user_id),
+        )

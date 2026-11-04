@@ -76,6 +76,9 @@ export function TaskDetailPanel() {
   const [selectedRepeatReferenceImages, setSelectedRepeatReferenceImages] = useState<Set<number>>(new Set())
   const [selectedRepeatReferenceVideos, setSelectedRepeatReferenceVideos] = useState<Set<number>>(new Set())
   const [repeatUserFields, setRepeatUserFields] = useState<TrendUserField[]>([])
+  const catalogImageSlots = new Set(repeatUserFields.flatMap((field) =>
+    field.image_choices?.length && field.image_slot_index !== undefined ? [field.image_slot_index] : [],
+  ))
   const publicationSourceRef = useRef<{
     taskId?: string
     repeatImages: number[]
@@ -189,6 +192,14 @@ export function TaskDetailPanel() {
   }
 
   const updateRepeatUserField = (index: number, patch: Partial<TrendUserField>) => {
+    if (patch.image_slot_index !== undefined) {
+      const sourceIndex = patch.image_slot_index
+      setSelectedRepeatReferenceImages((current) => {
+        const next = new Set(current)
+        next.delete(sourceIndex)
+        return next
+      })
+    }
     setRepeatUserFields((current) => current.map((field, fieldIndex) =>
       fieldIndex === index ? { ...field, ...patch } : field
     ))
@@ -822,7 +833,7 @@ export function TaskDetailPanel() {
                                 role="checkbox"
                                 aria-label={`Фото-референс ${index + 1} для повторов`}
                                 aria-checked={selected}
-                                disabled={publishBusy}
+                                disabled={publishBusy || catalogImageSlots.has(sourceIndex)}
                                 onClick={() => toggleReference(sourceIndex, setSelectedRepeatReferenceImages)}
                                 className={cn(
                                   'relative h-20 w-20 shrink-0 overflow-hidden rounded-lg border-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan disabled:cursor-not-allowed disabled:opacity-50',
@@ -954,7 +965,13 @@ export function TaskDetailPanel() {
                                 className="block min-h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground">
                                 <option value="">Автоматически — последние доступные фото</option>
                                 {publicationReferenceImages.map((_, imageIndex) => (
-                                  <option key={publicationReferenceImageIndices[imageIndex] ?? imageIndex} value={publicationReferenceImageIndices[imageIndex] ?? imageIndex}>Фото {imageIndex + 1}</option>
+                                  <option key={publicationReferenceImageIndices[imageIndex] ?? imageIndex}
+                                    value={publicationReferenceImageIndices[imageIndex] ?? imageIndex}
+                                    disabled={repeatUserFields.some((other, otherIndex) => otherIndex !== index
+                                      && Boolean(other.image_choices?.length)
+                                      && other.image_slot_index === (publicationReferenceImageIndices[imageIndex] ?? imageIndex))}>
+                                    Фото {imageIndex + 1}
+                                  </option>
                                 ))}
                               </select>
                             </label>
