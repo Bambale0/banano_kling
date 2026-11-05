@@ -2929,3 +2929,8 @@ Baseline: 189e578d. Production evidence: ordinary image repeats inherit source d
 Progress: production diagnosis complete; regression added before fix.
 
 Verification: regression before fix 9 failed / 9 passed; after fix 393 focused tests passed including actual Telegram confirmation debit and Mini App remix debit (mock provider, no external billing). Test-file Ruff passes; generation.py has 89 pre-existing lint findings and no added findings versus baseline. git diff --check passes. No UI/schema/admin-config changes; existing CI browser checks cover unchanged UI. Engineering guidance inspected: Bambale0/skills diagnosing-bugs; Bambale0/claw README; anthropics webapp-testing.
+
+
+## 2026-11-05 — TG–VK shared accounts, administrator preview
+
+See [TG_VK_EXECUTION.md](TG_VK_EXECUTION.md) for the live ledger. Isolated Draft PR only; user prohibits production merge/deploy until full completion.

@@ -10,6 +10,7 @@ from urllib.parse import parse_qsl, urlencode
 from aiohttp import web
 
 from bot.config import config
+from bot.shared_accounts.api import setup_shared_account_routes
 from bot.services.trend_preview_service import (
     ensure_lightweight_trend_preview_url,
     ensure_trend_preview_assets,
@@ -308,6 +309,7 @@ def setup_browser_auth_routes(app: web.Application) -> None:
     # Exact routes must be registered before setup_miniapp_routes adds its
     # catch-all /mini-app/api/{tail:.*} handler.
     setup_trend_routes(app, miniapp_root)
+    setup_shared_account_routes(app, miniapp_root)
     app.router.add_get(
         miniapp_root + "/api/browser-auth/config",
         browser_telegram_auth_config,
