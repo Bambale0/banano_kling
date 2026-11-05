@@ -8,6 +8,8 @@ jest.mock('@/lib/shared-account-api', () => ({
   saveAccountPreviewSettings: jest.fn(),
   checkAccountPreviewLogin: jest.fn(),
 }))
+jest.mock('../shared-wallet-preview', () => ({ SharedWalletPreview: () => null }))
+jest.mock('../shared-account-link-preview', () => ({ SharedAccountLinkPreview: () => null }))
 
 const policy = { enabled: false, revision: 0, vk_app_id: null, vk_admin_ids: [], session_ttl_seconds: 3600, launch_max_age_seconds: 600 }
 

@@ -23,6 +23,7 @@ class PreviewPolicy:
     vk_admin_ids: tuple[int, ...] = ()
     session_ttl_seconds: int = 3600
     launch_max_age_seconds: int = 600
+    link_ttl_seconds: int = 600
 
     @classmethod
     def parse(cls, raw: dict) -> PreviewPolicy:
@@ -31,7 +32,7 @@ class PreviewPolicy:
         data = asdict(cls()) | raw
         if type(data['enabled']) is not bool:
             raise ValueError('Enabled must be boolean')
-        for key, lower, upper in [('revision', 0, 2**63 - 1), ('session_ttl_seconds', 60, 86400), ('launch_max_age_seconds', 60, 86400)]:
+        for key, lower, upper in [('revision', 0, 2**63 - 1), ('session_ttl_seconds', 60, 86400), ('launch_max_age_seconds', 60, 86400), ('link_ttl_seconds', 60, 86400)]:
             if type(data[key]) is not int or not lower <= data[key] <= upper:
                 raise ValueError(f'Invalid {key}')
         try:

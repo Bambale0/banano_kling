@@ -1,6 +1,7 @@
 'use client'
 
 import { forgetPendingPublication } from './feed-events'
+import { containsAccountLink } from './account-launch-security'
 import { getPendingVideoRepeat, getPendingVideoTaskIds, isVideoStatusPending, markVideoRepeatPending, reconcilePendingVideoDetail, reconcilePendingVideoRepeats } from './video-repeat-pending'
 
 import type {
@@ -123,7 +124,11 @@ export function getInitData(): string {
   if (initData && typeof window !== 'undefined') {
     try {
       window.__BANANO_TG_INIT_DATA__ = initData
-      window.sessionStorage.setItem(INIT_DATA_STORAGE_KEY, initData)
+      if (containsAccountLink(initData)) {
+        for (const key of [INIT_DATA_STORAGE_KEY, '__banano_initial_hash', '__banano_initial_search']) window.sessionStorage.removeItem(key)
+      } else {
+        window.sessionStorage.setItem(INIT_DATA_STORAGE_KEY, initData)
+      }
     } catch {}
     return initData
   }

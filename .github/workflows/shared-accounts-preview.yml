@@ -8,7 +8,7 @@ on:
       - 'bot/browser_auth.py'
       - 'bot/db.py'
       - 'bot/postgres*.py'
-      - 'tests/test_shared_account*.py'
+      - 'tests/test_shared_*.py'
       - 'scripts/audit_shared_account_migration.py'
       - '.github/workflows/shared-accounts-preview.yml'
 
@@ -47,8 +47,8 @@ jobs:
       - name: Check preview sources
         run: >-
           ruff check bot/shared_accounts tests/test_shared_accounts.py
-          tests/test_shared_account_audit.py scripts/audit_shared_account_migration.py
+          tests/test_shared_account_audit.py tests/test_shared_wallet.py tests/test_shared_account_links.py scripts/audit_shared_account_migration.py
       - name: SQLite and PostgreSQL HTTP, security and concurrency contracts
         run: >-
           python -m pytest tests/test_shared_accounts.py
-          tests/test_shared_account_audit.py tests/test_browser_auth.py -q
+          tests/test_shared_account_audit.py tests/test_shared_wallet.py tests/test_shared_account_links.py tests/test_browser_auth.py -q

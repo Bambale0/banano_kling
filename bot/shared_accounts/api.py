@@ -11,8 +11,10 @@ from bot.config import config
 
 from .auth import verify_telegram, verify_vk
 from .errors import AuthenticationError, PreviewConflict
+from .links import LinkExpired, LinkService
 from .policy import load_policy, save_policy
 from .store import create_session, get_session, revoke_session
+from .wallet import InsufficientFunds, WalletService
 
 logger = logging.getLogger(__name__)
 
@@ -91,15 +93,53 @@ async def profile(request: web.Request) -> web.Response:
     account = await get_session(_bearer(request), policy.revision)
     if not policy.allows(account.identity):
         raise PermissionError('Administrator preview only')
-    return response({'ok': True, 'account': account.payload()})
+    return response({'ok': True, 'account': account.payload(), 'preview': {
+        'revision': policy.revision, 'vk_app_id': policy.vk_app_id,
+        'link_ttl_seconds': policy.link_ttl_seconds,
+    }})
 
 
 async def logout(request: web.Request) -> web.Response:
-    authorized = await profile(request)
-    if authorized.status != 200:
-        return authorized
+    # Revoking one's own opaque token remains safe after account merging or
+    # preview shutdown. It grants no access and is intentionally idempotent.
     await revoke_session(_bearer(request))
     return response({'ok': True})
+
+
+async def wallet(request: web.Request) -> web.Response:
+    policy = await load_policy()
+    if not policy.enabled:
+        return response({'ok': False, 'error': 'Preview unavailable'}, 404)
+    account = await get_session(_bearer(request), policy.revision)
+    if not policy.allows(account.identity):
+        raise PermissionError('Administrator preview only')
+    # No client field can select the live wallet or another account.
+    service = WalletService('sandbox')
+    receipt = None
+    if request.method == 'POST':
+        body = await _body(request)
+        receipt = await service.apply(account.id, body.get('action'), body.get('amount'),
+                                      body.get('idempotency_key'), body.get('reference_key', ''))
+    return response({'ok': True, **(await service.snapshot(account.id)), 'receipt': receipt})
+
+
+async def links(request: web.Request) -> web.Response:
+    policy = await load_policy()
+    if not policy.enabled:
+        return response({'ok': False, 'error': 'Preview unavailable'}, 404)
+    account = await get_session(_bearer(request), policy.revision)
+    if not policy.allows(account.identity):
+        raise PermissionError('Administrator preview only')
+    service = LinkService(policy)
+    body = await _body(request) if request.method == 'POST' else {}
+    link_id = request.match_info.get('link_id')
+    if request.path.endswith('/links/accept'):
+        result = await service.accept_token(account, body.get('token'))
+    elif link_id is None:
+        result = await service.create(account, body.get('target_platform'))
+    else:
+        result = await service.operate(account, link_id, request.match_info.get('action', 'get'), body)
+    return response({'ok': True, 'link': result})
 
 
 def _guard(handler):
@@ -112,6 +152,10 @@ def _guard(handler):
             return response({'ok': False, 'error': str(exc)}, 403)
         except PreviewConflict as exc:
             return response({'ok': False, 'error': str(exc)}, 409)
+        except LinkExpired:
+            return response({'ok': False, 'error': 'Invitation expired or cancelled'}, 410)
+        except InsufficientFunds:
+            return response({'ok': False, 'error': 'Insufficient available balance'}, 402)
         except (ValueError, TypeError):
             return response({'ok': False, 'error': 'Invalid request'}, 400)
         except Exception as exc:  # noqa: BLE001 - HTTP boundary returns a stable, redacted failure.
@@ -128,3 +172,9 @@ def setup_shared_account_routes(app: web.Application, miniapp_root: str) -> None
     app.router.add_post(root + '/session', _guard(session))
     app.router.add_get(root + '/me', _guard(profile))
     app.router.add_post(root + '/logout', _guard(logout))
+    app.router.add_get(root + '/wallet', _guard(wallet))
+    app.router.add_post(root + '/wallet', _guard(wallet))
+    app.router.add_post(root + '/links', _guard(links))
+    app.router.add_post(root + '/links/accept', _guard(links))
+    app.router.add_get(root + '/links/{link_id}', _guard(links))
+    app.router.add_post(root + '/links/{link_id}/{action:accept|confirm|cancel}', _guard(links))

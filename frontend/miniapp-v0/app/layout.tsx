@@ -1,21 +1,30 @@
 import type { Metadata, Viewport } from 'next'
 import { BRAND_DESCRIPTION, BRAND_NAME } from '@/lib/brand'
+import { containsAccountLink } from '@/lib/account-launch-security'
 import './globals.css'
 
 const telegramBootstrapScript = `
 (function () {
   var attempts = 0;
+  var vkLaunch = new URLSearchParams(window.location.search).has('vk_app_id') || new URLSearchParams(window.location.search).has('vk_user_id');
+  var containsAccountLink = ${containsAccountLink.toString()};
 
   try {
     window.__BANANO_INITIAL_LAUNCH__ = {
       hash: window.location.hash || '',
       search: window.location.search || ''
     };
-    if (window.sessionStorage) {
+    if (window.sessionStorage && !vkLaunch && !containsAccountLink(window.location.hash + window.location.search)) {
       window.sessionStorage.setItem('__banano_initial_hash', window.location.hash || '');
       window.sessionStorage.setItem('__banano_initial_search', window.location.search || '');
+    } else if (window.sessionStorage) {
+      window.sessionStorage.removeItem('__banano_initial_hash');
+      window.sessionStorage.removeItem('__banano_initial_search');
+      window.sessionStorage.removeItem('__banano_tg_init_data');
     }
   } catch (e) {}
+
+  if (vkLaunch) return;
 
   function postTelegramEvent(eventType, eventData) {
     if (eventData === undefined) {

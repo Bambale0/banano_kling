@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { SharedWalletPreview } from '@/components/shared-wallet-preview'
+import { SharedAccountLinkPreview } from '@/components/shared-account-link-preview'
 import {
   checkAccountPreviewLogin, fetchAccountPreviewSettings, saveAccountPreviewSettings,
   type AccountPreviewSettings,
@@ -14,6 +16,7 @@ export function SharedAccountPreview({ isAdmin }: { isAdmin: boolean }) {
   const [admins, setAdmins] = useState('')
   const [sessionTtl, setSessionTtl] = useState(3600)
   const [launchAge, setLaunchAge] = useState(600)
+  const [linkTtl, setLinkTtl] = useState(600)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const operation = useRef<AbortController | null>(null)
@@ -25,6 +28,7 @@ export function SharedAccountPreview({ isAdmin }: { isAdmin: boolean }) {
     setAdmins(value.vk_admin_ids.join(', '))
     setSessionTtl(value.session_ttl_seconds)
     setLaunchAge(value.launch_max_age_seconds)
+    setLinkTtl(value.link_ttl_seconds ?? 600)
   }
 
   useEffect(() => {
@@ -63,7 +67,7 @@ export function SharedAccountPreview({ isAdmin }: { isAdmin: boolean }) {
   return (
     <section aria-label="Проверка общих аккаунтов" className="space-y-3 rounded-xl border border-border bg-card p-4">
       <h3 className="font-semibold">Общие аккаунты ТГ и ВК</h3>
-      <p className="text-sm text-muted-foreground">Проверка входа для администраторов. Связывание и общий баланс появятся на следующих этапах.</p>
+      <p className="text-sm text-muted-foreground">Проверка входа, связи аккаунтов и тестового баланса для администраторов.</p>
       {policy ? <>
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} disabled={busy} />
@@ -83,12 +87,15 @@ export function SharedAccountPreview({ isAdmin }: { isAdmin: boolean }) {
             <input type="number" min={60} max={86400} className="mt-1 w-full rounded border border-border bg-background p-2" value={launchAge} onChange={(event) => setLaunchAge(Number(event.target.value))} disabled={busy} />
           </label>
         </div>
+        <label className="block text-sm">Срок ссылки, секунд
+          <input type="number" min={60} max={86400} className="mt-1 w-full rounded border border-border bg-background p-2" value={linkTtl} onChange={(event) => setLinkTtl(Number(event.target.value))} disabled={busy} />
+        </label>
         <div className="flex flex-wrap gap-2">
           <Button disabled={busy} onClick={() => void run(async (signal) => {
             const next = await saveAccountPreviewSettings({
               enabled, vk_app_id: appId.trim() ? identifier(appId.trim()) : null,
               vk_admin_ids: admins.trim() ? admins.trim().split(/[,;\s]+/).map(identifier) : [],
-              session_ttl_seconds: sessionTtl, launch_max_age_seconds: launchAge,
+              session_ttl_seconds: sessionTtl, launch_max_age_seconds: launchAge, link_ttl_seconds: linkTtl,
             }, policy.revision, signal)
             apply(next)
             setMessage('Настройки сохранены.')
@@ -100,6 +107,8 @@ export function SharedAccountPreview({ isAdmin }: { isAdmin: boolean }) {
         </div>
       </> : <p className="text-sm text-muted-foreground">Загрузка настроек…</p>}
       {message ? <p role="status" className="text-sm">{message}</p> : null}
+      {policy?.enabled ? <SharedWalletPreview key={policy.revision} /> : null}
+      {policy?.enabled ? <SharedAccountLinkPreview key={'link:' + policy.revision} vkAppId={policy.vk_app_id} /> : null}
     </section>
   )
 }

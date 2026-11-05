@@ -49,7 +49,7 @@ Baseline tanyapi@03a9918db303b8ac075115fde8cbccecf6d10aeb.
    negative Telegram launch tests; added and reviewer confirmed resolved. Initial
    implementation committed as 15084a0e; follow-up regression/CI commit pending.
    Draft PR and no production merge/deploy remain mandatory.
-8. [ ] Push final branch, open Draft PR, verify auto-merge remains off, and record
+8. [x] Push initial branch, open Draft PR, verify auto-merge remains off, and record
    exact SHA/check status in #408/#409. All epic descriptions now reflect the user
    restriction: implementation allowed, production merge/deploy held until complete.
 
@@ -62,8 +62,9 @@ concern and must not restore independent writable legacy wallets after cutover.
 
 ## Remaining work
 
-No common wallet, magic-link merge, public VK bootstrap, generation parity,
-delivery, referrals or production rollout is complete in this first slice.
+The isolated administrator preview now has a wallet and two-sided magic-link
+merge. Live financial cutover, complete VK Mini App generation parity, payments,
+delivery, referrals and production rollout remain incomplete.
 App-cabinet credentials/settings and migration policy decisions remain external
 prerequisites. Complete feature acceptance follows #408, not this initial PR.
 
@@ -73,3 +74,50 @@ Draft PR #415 opened, not merged. Initial exact-head CI found an import-order
 error in the existing browser_auth import block; corrected without behavior
 changes and reproduced the repository changed-line gate. Full production
 release hold is unchanged.
+
+## E2 wallet implementation started
+
+User reconfirmed: finish the entire product, no deployment; merge only the
+finished product. PR #415 remains Draft. All seven CI workflows for 653cb41e
+passed, including Mini App Browser E2E. Next seam: common wallet operations
+(credit/reserve/capture/release/refund), exact minor units and immutable ledger,
+validated on SQLite and PostgreSQL with concurrent/replayed operations.
+Administrator HTTP preview uses a separate sandbox namespace: synthetic funds
+can never be promoted/imported as live money. Production wallets and real
+provider submissions remain untouched while the new authority is built.
+
+### E2 wallet foundation evidence
+
+Exact 4-place minor-unit wallet, credit/reserve/partial capture/release/refund,
+request-bound idempotency and immutable journal implemented. API is admin-only
+and sandbox-scoped. HTTP/domain SQLite/PostgreSQL wallet checks: 52 passed;
+combined account/wallet/adjacent matrix: 109 passed. Frontend focused UI/API:
+11 passed; TypeScript passed. Regression caught and fixed PostgreSQL Mapping
+row iteration and Decimal context rounding on long coefficients. Live balances
+and legacy writers are still not switched; production release remains held.
+
+
+## E2/E4 wallet and two-sided linking checkpoint
+
+- Exact minor-unit wallet and append-only ledger; atomic credit/reserve/partial
+  capture/release/refund. Paired merge transfers preserve active reservations.
+  Aliases preserve late callback idempotency and historical partial refunds.
+- Invites store only token hashes; configurable expiry, revisioned consent,
+  explicit accept plus independent confirmations; GET never consumes consent.
+  Parties see verified counterpart IDs; conflicts/overflow roll back atomically.
+- VK preview has a signed entry independent of TG bootstrap; ordinary VK users
+  cannot mount wallet/link controls. TG ordinary users make no preview requests.
+- New tokens never enter browser storage, including signed startapp launches.
+  Normal referral launch caching retains its existing behavior.
+- Latest backend combined matrix before the last 6 added cases: 127 passed.
+  Final link-only SQLite/PostgreSQL suite: 24 passed (includes those 6 cases).
+  Full frontend before credential-cache additions: 86 suites / 661 tests passed;
+  final focused sources incl. credential caches: 7 suites / 24 passed.
+  Ruff, ESLint, TypeScript/build and all 6 browser scenarios passed.
+- Independent spec/standards reviewers found internal key namespace collision,
+  hidden counterpart identity, VK UI reachability and expired-link recovery;
+  all fixed with regressions and reviewers confirmed no open findings.
+- No production migrations, deploys, provider submissions or real-money writes.
+  This checkpoint is NOT the finished #408 product; live writer conversion,
+  legacy opening reconciliation, VK generation parity and payment/delivery/
+  referral adapters still require implementation and acceptance.
