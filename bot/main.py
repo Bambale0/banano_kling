@@ -40,6 +40,7 @@ import aiohttp
 
 from bot import db as db_backend
 from bot.config import config
+from bot.services.telegram_video_geometry import telegram_video_geometry
 from bot.services.kie_webhook_verification import serialize_kie_callback
 from bot.services.delivery_state import (
     has_retryable_result,
@@ -1281,6 +1282,7 @@ async def _send_video_file_from_url(
         await bot_instance.send_video(
             chat_id=telegram_id,
             video=FSInputFile(tmp_file),
+            **(await telegram_video_geometry(FSInputFile(tmp_file))),
             caption=caption,
             parse_mode="HTML",
             supports_streaming=True,
@@ -3272,6 +3274,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                 await bot_instance.send_video(
                                     chat_id=telegram_id,
                                     video=video_url,
+                                    **(await telegram_video_geometry(video_url)),
                                     caption=media_caption,
                                     parse_mode="HTML",
                                     supports_streaming=True,
@@ -3524,6 +3527,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                     await bot_instance.send_video(
                                         chat_id=telegram_id,
                                         video=video_file,
+                                        **(await telegram_video_geometry(video_file)),
                                         caption=_build_single_result_caption(_with_original_link(caption, video_url), task, reference_preview_urls),
                                         parse_mode="HTML",
                                         supports_streaming=True,
@@ -3550,6 +3554,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                         await bot_instance.send_video(
                                             chat_id=telegram_id,
                                             video=video_url,
+                                            **(await telegram_video_geometry(video_url)),
                                             caption=_build_single_result_caption(_with_original_link(caption, video_url), task, reference_preview_urls),
                                             parse_mode="HTML",
                                             supports_streaming=True,
@@ -3817,6 +3822,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 await bot_instance.send_video(
                     chat_id=telegram_id,
                     video=video_url,
+                    **(await telegram_video_geometry(video_url)),
                     caption=_build_single_result_caption(_with_original_link(caption, video_url), task, reference_preview_urls),
                     parse_mode="HTML",
                     supports_streaming=True,
@@ -3868,6 +3874,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                             await bot_instance.send_video(
                                 chat_id=telegram_id,
                                 video=video_file,
+                                **(await telegram_video_geometry(video_file)),
                                 caption=_build_single_result_caption(_with_original_link(caption, video_url), task, reference_preview_urls),
                                 parse_mode="HTML",
                                 supports_streaming=True,
@@ -4525,6 +4532,7 @@ async def handle_wanx_webhook(request: web.Request) -> web.Response:
                 await bot_instance.send_video(
                     chat_id=telegram_id,
                     video=video_url,
+                    **(await telegram_video_geometry(video_url)),
                     caption=media_caption,
                     parse_mode="HTML",
                     supports_streaming=True,
@@ -4978,6 +4986,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         await bot_instance.send_video(
                             chat_id=telegram_id,
                             video=result_url,
+                            **(await telegram_video_geometry(result_url)),
                             caption=_build_single_result_caption(_with_original_link(full_caption, result_url), task, reference_preview_urls),
                             parse_mode="HTML",
                             supports_streaming=True,
@@ -5032,6 +5041,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                             await bot_instance.send_video(
                                 chat_id=telegram_id,
                                 video=video_file,
+                                **(await telegram_video_geometry(video_file)),
                                 caption=_build_single_result_caption(_with_original_link(full_caption, result_url), task, reference_preview_urls),
                                 parse_mode="HTML",
                                 supports_streaming=True,
