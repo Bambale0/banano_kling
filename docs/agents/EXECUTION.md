@@ -2915,3 +2915,17 @@ Combined-head validation: all 80 frontend suites / 604 tests passed; production 
 - Final lock review found the former storage lock did not lock ordinary Seedance generations. Shared publication locking now keeps WAN/Kling storage-first order, then locks the generation; other models acquire a transaction and the same parent lock as personalization writers. Feed/profile regressions pause after validation during media persistence, and a real isolated PostgreSQL contender proves the Seedance row cannot be locked until publication ends. Focused new API matrix 13 passed; native PostgreSQL 2 passed. Both reviewers report no remaining blockers.
 - Mini App full Jest 81 suites/643 tests passed; production Next export/TypeScript passed; 16 intercepted repeat browser cases passed; changed-file ESLint and changed-line Ruff (0 new diagnostics) passed. Broad backend first run reached 4573 passed/120 skipped but one unrelated PDF parser subprocess lacked the declared parser in the legacy interpreter; a separate QA interpreter with the runtime parser resolves that environment issue without changing production packages. Final full rerun/required CI pending.
 - GitHub connector cannot read branch-protection administration endpoint (403); no protection setting was changed. GitHub-native protected auto-merge plus required repository CI remain the release mechanism. Local server GitHub CLI token is expired, so source publication uses the connected GitHub API and byte-for-byte Git blob SHA checks.
+
+
+## 2026-11-05 — Repeat prices belong to the launching actor
+
+Baseline: 189e578d. Production evidence: ordinary image repeats inherit source debit through Telegram repeat resolver; membership itself remains isolated. Mini App remix and image launch already resolve actor prices. Invariant: source cost is historical accounting only, never a new repeat quote; ordinary users use live ordinary prices, Creators use their live profile, admins retain existing free access. No balances, historical tasks, memberships or business rates are changed.
+
+1. Add regression for source costs 0/discounted/high, ordinary and Creator actors, Banana Pro/2/Seedream.
+2. Requote all Telegram image repeats using actor tariff and live price resolver at confirmation and launch.
+3. Verify repeat, pricing and Mini App tests; update docs; review diff.
+4. PR to tanyapi, CI and autodeploy, exact SHA and production read-only quote smoke.
+
+Progress: production diagnosis complete; regression added before fix.
+
+Verification: regression before fix 9 failed / 9 passed; after fix 393 focused tests passed including actual Telegram confirmation debit and Mini App remix debit (mock provider, no external billing). Test-file Ruff passes; generation.py has 89 pre-existing lint findings and no added findings versus baseline. git diff --check passes. No UI/schema/admin-config changes; existing CI browser checks cover unchanged UI. Engineering guidance inspected: Bambale0/skills diagnosing-bugs; Bambale0/claw README; anthropics webapp-testing.

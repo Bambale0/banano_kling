@@ -1277,16 +1277,8 @@ async def _resolve_repeat_image_unit_cost(
     img_quality: str,
     historical_cost: float | None,
 ) -> float:
-    """Requote Creator-supported image repeats; preserve legacy price otherwise."""
-    historical = historical_cost or 0
+    """Price a new repeat for its actor; source debit is historical accounting."""
     tariff = await get_actor_tariff(actor_id)
-    if tariff != "creator":
-        return historical
-
-    from bot.creator_tariff import image_quality_rates
-
-    if not image_quality_rates(img_service, tariff=tariff):
-        return historical
     return _resolve_image_unit_cost(img_service, img_quality, tariff=tariff)
 
 
