@@ -59,3 +59,13 @@ Remaining integration: explicit opening snapshots/authority barriers, all legacy
 payment/credit/debit/refund writers, both bot adapters, account merge transfers
 and provider acceptance/outbox/reconciliation. These are release blockers for
 the complete product. Sandbox balances must never be imported into live scope.
+
+
+## Reconciliation
+
+The administrator sandbox can compare current balances and reservations against
+the immutable journal. It includes merged aliases, checks per-wallet sequences
+and running totals, operation kind/amount/delta semantics, paired transfers,
+reservation ownership and settlement counters, and refund limits. It reports
+fixed issue codes and never repairs financial data automatically. The canonical
+account lock makes the report consistent with wallet mutations and merges.

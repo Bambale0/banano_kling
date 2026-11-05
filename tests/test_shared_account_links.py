@@ -104,6 +104,7 @@ async def test_merge_preserves_reservations_old_refunds_and_callback_idempotency
         assert balance['balance']['available'] == '5.0000'
         assert balance['balance']['reserved'] == '0.0000'
         assert any(entry['operation_key'] == 'job:old:capture' for entry in balance['entries'])
+        assert (await service.reconcile(old))['consistent'] is True
         assert (await client.post(ROOT + '/logout', headers=target)).status == 200
 
 
@@ -258,3 +259,21 @@ async def test_concurrent_final_confirmation_and_cancel_have_one_terminal_result
             assert any(result.status == 410 for result in results)
         else:
             assert (await state.json())['link']['state'] == 'committed'
+
+
+async def test_reconciliation_detects_orphan_reservation_on_merged_alias(monkeypatch):
+    from bot import db as db_backend
+    from bot.shared_accounts.wallet import WalletService
+
+    async with pair(monkeypatch) as (client, source, target):
+        result, _ = await commit_link(client, source, target)
+        canonical = (await result.json())['link']['account_id']
+        async with db_backend.connect() as db:
+            alias = await (await db.execute("SELECT id FROM shared_accounts WHERE status = 'merged' AND merged_into = ?", (canonical,))).fetchone()
+            await db.execute('INSERT INTO shared_wallet_reservations(scope, reservation_key, account_id, amount_units) VALUES (?, ?, ?, ?)', ('sandbox', 'corrupt:alias', alias[0], 10000))
+            await db.commit()
+        report = await WalletService('sandbox').reconcile(canonical)
+        assert report['consistent'] is False
+        assert 'reservation_not_canonical' in report['issues']
+        assert 'reservation_ledger_mismatch' in report['issues']
+        assert report['open_reservations'] == 1

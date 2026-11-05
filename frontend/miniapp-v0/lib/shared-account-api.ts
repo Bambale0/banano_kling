@@ -153,3 +153,16 @@ export async function updateAccountLink(link: AccountLink, action: 'get' | 'conf
 export async function fetchAccountPreviewAccess(signal?: AbortSignal): Promise<{ revision: number; vk_app_id: number | null }> {
   return withPreviewSession(async headers => (await request<{ preview: { revision: number; vk_app_id: number | null } }>('me', { headers, signal })).preview, signal)
 }
+
+export interface PreviewWalletReconciliation {
+  scope: 'sandbox'
+  consistent: boolean
+  issues: string[]
+  ledger_entries: number
+  open_reservations: number
+  balance: PreviewWallet['balance']
+}
+
+export async function reconcileAccountPreviewWallet(signal?: AbortSignal): Promise<PreviewWalletReconciliation> {
+  return withPreviewSession(headers => request<PreviewWalletReconciliation>('wallet/reconcile', { headers, signal }), signal)
+}

@@ -210,3 +210,67 @@ async def test_wallet_requires_current_administrator_session():
         assert (await client.get(ROOT + '/wallet')).status == 404
         await enable(client)
         assert (await client.post(ROOT + '/wallet', json={'action': 'credit', 'amount': '10', 'idempotency_key': 'fake', 'is_admin': True})).status == 401
+
+
+async def test_reconciliation_detects_mutable_wallet_drift_without_repairing_it():
+    async with funded_wallet() as (client, headers, _command):
+        account = (await (await client.get(ROOT + '/me', headers=headers)).json())['account']['id']
+        service = WalletService('sandbox')
+        assert (await service.reconcile(account))['consistent'] is True
+        async with db_backend.connect() as db:
+            await db.execute('UPDATE shared_wallets SET available_units = available_units + 1 WHERE scope = ? AND account_id = ?', ('sandbox', account))
+            await db.commit()
+        report = await service.reconcile(account)
+        assert report['consistent'] is False
+        assert report['issues'] == ['available_ledger_mismatch']
+        assert (await service.snapshot(account))['balance']['available'] == '10.0001'
+
+
+async def test_reconciliation_tracks_partial_settlement_and_refund():
+    async with funded_wallet() as (client, headers, command):
+        account = (await (await client.get(ROOT + '/me', headers=headers)).json())['account']['id']
+        for action, amount, key, reference in [
+            ('reserve', '6', 'check:reserve', ''), ('capture', '2', 'check:capture', 'check:reserve'),
+            ('release', '1', 'check:release', 'check:reserve'), ('refund', '1', 'check:refund', 'check:capture'),
+        ]:
+            assert (await command(action, amount, key, reference)).status == 200
+        assert await WalletService('sandbox').reconcile(account) == {
+            'scope': 'sandbox', 'consistent': True, 'issues': [], 'ledger_entries': 5,
+            'open_reservations': 1, 'balance': {'available': '6.0000', 'reserved': '3.0000', 'revision': 5},
+        }
+
+
+async def test_reconciliation_http_is_admin_only_and_sandbox_scoped():
+    async with funded_wallet() as (client, headers, _):
+        report = await client.get(ROOT + '/wallet/reconcile?scope=live', headers=headers)
+        assert report.status == 200
+        assert (await report.json())['scope'] == 'sandbox'
+        assert (await client.get(ROOT + '/wallet/reconcile')).status == 401
+
+
+async def test_reconciliation_detects_reservation_counter_drift():
+    async with funded_wallet() as (client, headers, command):
+        assert (await command('reserve', '4', 'drift:reserve')).status == 200
+        account = (await (await client.get(ROOT + '/me', headers=headers)).json())['account']['id']
+        async with db_backend.connect() as db:
+            await db.execute('UPDATE shared_wallet_reservations SET released_units = 1 WHERE scope = ? AND reservation_key = ?', ('sandbox', 'drift:reserve'))
+            await db.commit()
+        report = await WalletService('sandbox').reconcile(account)
+        assert report['issues'] == ['reservation_balance_mismatch', 'reservation_settlement_mismatch']
+
+
+async def test_reconciliation_detects_operation_amount_delta_disagreement():
+    async with funded_wallet() as (client, headers, _):
+        account = (await (await client.get(ROOT + '/me', headers=headers)).json())['account']['id']
+        async with db_backend.connect() as db:
+            # Valid CHECK constraints but economically wrong: a malformed writer
+            # grants two units while declaring a one-unit credit.
+            await db.execute('''INSERT INTO shared_wallet_entries(scope, operation_key, account_id, request_hash, kind,
+                amount_units, reference_key, available_delta, reserved_delta, available_after, reserved_after, sequence)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                             ('sandbox', 'corrupt:credit', account, 'not-a-real-request-hash', 'credit', 10000, '', 20000, 0, 120000, 0, 2))
+            await db.execute('UPDATE shared_wallets SET available_units = 120000, revision = 2 WHERE scope = ? AND account_id = ?', ('sandbox', account))
+            await db.commit()
+        report = await WalletService('sandbox').reconcile(account)
+        assert report['consistent'] is False
+        assert report['issues'] == ['ledger_operation_delta_mismatch']

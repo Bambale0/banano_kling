@@ -115,6 +115,11 @@ async def wallet(request: web.Request) -> web.Response:
         raise PermissionError('Administrator preview only')
     # No client field can select the live wallet or another account.
     service = WalletService('sandbox')
+    if request.path.endswith('/wallet/reconcile'):
+        report = await service.reconcile(account.id)
+        logger.info('shared_wallet_reconciliation account_id=%s scope=sandbox consistent=%s issues=%s',
+                    account.id, report['consistent'], ','.join(report['issues']))
+        return response({'ok': True, **report})
     receipt = None
     if request.method == 'POST':
         body = await _body(request)
@@ -174,6 +179,7 @@ def setup_shared_account_routes(app: web.Application, miniapp_root: str) -> None
     app.router.add_post(root + '/logout', _guard(logout))
     app.router.add_get(root + '/wallet', _guard(wallet))
     app.router.add_post(root + '/wallet', _guard(wallet))
+    app.router.add_get(root + '/wallet/reconcile', _guard(wallet))
     app.router.add_post(root + '/links', _guard(links))
     app.router.add_post(root + '/links/accept', _guard(links))
     app.router.add_get(root + '/links/{link_id}', _guard(links))

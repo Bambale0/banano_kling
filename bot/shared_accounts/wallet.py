@@ -11,6 +11,7 @@ from decimal import Decimal, InvalidOperation, localcontext
 from bot import db as db_backend
 
 from .errors import PreviewConflict
+from .reconciliation import reconcile_in_transaction
 from .schema import ensure_schema
 
 UNITS_PER_BANANA = 10000  # Immutable currency precision, not an economic rate.
@@ -224,6 +225,10 @@ class WalletService:
         if await canonical_account(db, row[5]) != account_id or row[6] != request_hash:
             raise WalletConflict('Operation key belongs to another request')
         return _receipt(row)
+
+    async def reconcile(self, requested_account_id: str) -> dict:
+        async with self._transaction(requested_account_id) as (db, balance, account_id):
+            return await reconcile_in_transaction(db, self.scope, account_id, balance)
 
     async def _append(self, db, account_id: str, before: Balance, key: str, kind: str,
                       units: int, reference: str, available_delta: int, reserved_delta: int) -> dict:

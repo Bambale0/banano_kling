@@ -121,3 +121,16 @@ and legacy writers are still not switched; production release remains held.
   This checkpoint is NOT the finished #408 product; live writer conversion,
   legacy opening reconciliation, VK generation parity and payment/delivery/
   referral adapters still require implementation and acceptance.
+
+
+### Reconciliation checkpoint
+
+Added administrator-only sandbox reconciliation and explicit balance refresh.
+Review caught orphan reservations on merged aliases and operation/delta semantic
+mismatches; both now have regressions and reviewers confirmed resolution.
+Final combined SQLite/PostgreSQL/account/audit/browser-auth suite: 145 passed.
+The initial final run was interrupted by OOM in the disposable PostgreSQL tmpfs
+container (256MiB includes WAL/tmpfs); replaced only that task-owned container
+with bounded disk-backed disposable data, then the exact checks passed. No
+production databases or runtime configuration were changed. Focused wallet UI
+4 tests, TypeScript, ESLint, build and 6 Chromium scenarios passed.

@@ -1,9 +1,9 @@
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { SharedWalletPreview } from '../shared-wallet-preview'
-import { fetchAccountPreviewWallet, applyAccountPreviewWallet } from '@/lib/shared-account-api'
+import { fetchAccountPreviewWallet, applyAccountPreviewWallet, reconcileAccountPreviewWallet } from '@/lib/shared-account-api'
 
-jest.mock('@/lib/shared-account-api', () => ({ fetchAccountPreviewWallet: jest.fn(), applyAccountPreviewWallet: jest.fn() }))
+jest.mock('@/lib/shared-account-api', () => ({ fetchAccountPreviewWallet: jest.fn(), applyAccountPreviewWallet: jest.fn(), reconcileAccountPreviewWallet: jest.fn() }))
 const empty = { scope: 'sandbox' as const, balance: { available: '0.0000', reserved: '0.0000', revision: 0 }, entries: [], receipt: null }
 
 beforeEach(() => {
@@ -42,4 +42,15 @@ test('settlement sends the selected reference without numeric rounding', async (
   fireEvent.change(screen.getByLabelText('Ключ резерва или списания'), { target: { value: 'reserve-one' } })
   fireEvent.click(screen.getByRole('button', { name: 'Выполнить проверку' }))
   await waitFor(() => expect(applyAccountPreviewWallet).toHaveBeenCalledWith(expect.objectContaining({ action: 'capture', amount: '1.2500', reference_key: 'reserve-one' }), expect.any(AbortSignal)))
+})
+
+test('reconciliation reports drift and refreshes the displayed balance without a mutation', async () => {
+  jest.mocked(reconcileAccountPreviewWallet).mockResolvedValue({ scope: 'sandbox', consistent: false, issues: ['available_ledger_mismatch'], ledger_entries: 1, open_reservations: 0, balance: empty.balance })
+  render(<SharedWalletPreview />)
+  await screen.findByText('Доступно: 0.0000')
+  jest.mocked(fetchAccountPreviewWallet).mockResolvedValue({ ...empty, balance: { available: '5.0000', reserved: '0.0000', revision: 2 } })
+  fireEvent.click(screen.getByRole('button', { name: 'Сверить журнал' }))
+  expect(await screen.findByText('Найдено расхождение. Требуется проверка журнала.')).toBeInTheDocument()
+  expect(await screen.findByText('Доступно: 5.0000')).toBeInTheDocument()
+  expect(applyAccountPreviewWallet).not.toHaveBeenCalled()
 })
