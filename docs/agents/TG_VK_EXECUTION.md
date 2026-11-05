@@ -66,3 +66,10 @@ No common wallet, magic-link merge, public VK bootstrap, generation parity,
 delivery, referrals or production rollout is complete in this first slice.
 App-cabinet credentials/settings and migration policy decisions remain external
 prerequisites. Complete feature acceptance follows #408, not this initial PR.
+
+## Draft publication and CI follow-up
+
+Draft PR #415 opened, not merged. Initial exact-head CI found an import-order
+error in the existing browser_auth import block; corrected without behavior
+changes and reproduced the repository changed-line gate. Full production
+release hold is unchanged.

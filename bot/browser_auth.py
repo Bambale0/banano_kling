@@ -10,11 +10,11 @@ from urllib.parse import parse_qsl, urlencode
 from aiohttp import web
 
 from bot.config import config
-from bot.shared_accounts.api import setup_shared_account_routes
 from bot.services.trend_preview_service import (
     ensure_lightweight_trend_preview_url,
     ensure_trend_preview_assets,
 )
+from bot.shared_accounts.api import setup_shared_account_routes
 from bot.trend_api import setup_trend_routes
 from bot.trend_task_privacy import sanitize_task_api_payload
 from bot.trend_visibility import (
