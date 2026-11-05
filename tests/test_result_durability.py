@@ -415,3 +415,59 @@ async def test_final_canonical_lookup_never_retries_paid_generation_after_succes
     task = await original_lookup(task_id)
     assert (task.status, task.result_url) == ("completed", url)
     assert json.loads(task.request_data)["delivery_status"] == "pending"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dimensions", [(720, 1280), (1280, 720)])
+@pytest.mark.parametrize("route", ["canonical", "kling", "legacy"])
+async def test_seedance_result_sends_actual_video_preview_dimensions(
+    monkeypatch, tmp_path, dimensions, route
+):
+    import asyncio
+    import subprocess
+
+    from bot.services import media_input_utils
+
+    width, height = dimensions
+    video = tmp_path / "result.mp4"
+    await asyncio.to_thread(
+        subprocess.run,
+        ["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+         f"color=c=black:s={width}x{height}:d=0.1",
+         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-y", str(video)],
+        check=True, timeout=15,
+    )
+    _user, _task_id, _url, handler, request = await prepare_callback(monkeypatch, route)
+    monkeypatch.setattr(
+        media_input_utils, "resolve_local_upload_path", lambda source: str(video)
+    )
+    assert (await handler(request)).status == 200
+    sent = request.app["bot"].send_video.await_args.kwargs
+    assert (sent.get("width"), sent.get("height")) == dimensions
+
+
+@pytest.mark.asyncio
+async def test_remote_video_geometry_does_not_probe_or_fetch(monkeypatch):
+    import importlib
+    geometry = importlib.import_module("bot.services.telegram_video_geometry")
+
+    def unexpected_probe(_path):
+        raise AssertionError("remote files must not be probed")
+    monkeypatch.setattr(geometry, "video_preview_dimensions", unexpected_probe)
+    assert await geometry.telegram_video_geometry("https://untrusted.example/video.mp4") == {}
+
+
+@pytest.mark.asyncio
+async def test_local_video_delivery_survives_missing_ffprobe(monkeypatch, tmp_path):
+    import importlib
+    import subprocess
+
+    from aiogram.types import FSInputFile
+    geometry = importlib.import_module("bot.services.telegram_video_geometry")
+    path = tmp_path / "video.mp4"
+    path.write_bytes(b"invalid")
+
+    def missing_probe(*args, **kwargs):
+        raise FileNotFoundError("ffprobe")
+    monkeypatch.setattr(subprocess, "run", missing_probe)
+    assert await geometry.telegram_video_geometry(FSInputFile(path)) == {}
