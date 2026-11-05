@@ -33,10 +33,25 @@ Baseline tanyapi@03a9918db303b8ac075115fde8cbccecf6d10aeb.
 3. [x] Implement typed preview policy, source-scoped auth, accounts and revocable
    hashed sessions; legacy credits untouched. Initial signed-session GREEN: 9 passed.
 4. [x] Add admin UI controls and exact route wiring. UI RED on absent API/component.
-5. [ ] Pass SQLite and isolated PostgreSQL HTTP/security/concurrency matrix.
-6. [ ] Pass UI/API/profile regressions, lint, type checking and production build.
-7. [ ] Review standards/spec against baseline; resolve findings; commit/push Draft PR.
-8. [ ] Update issues with exact SHA/check results and remaining E1/E2–E8 work.
+5. [x] SQLite + isolated PostgreSQL HTTP/security/concurrency matrix and adjacent
+   browser-auth/audit checks: final 57 passed. Policy revision binds sessions;
+   disable/re-enable regression RED on both engines, GREEN after fix. Review
+   follow-up adds tamper/stale/future/duplicate/unsigned Telegram launches on both
+   session and settings routes, plus equal cross-platform IDs.
+6. [x] Full backend safe suite before final narrow security additions: 4641 passed,
+   121 skipped, 76 subtests. Full frontend: 82 suites / 647 tests passed; final new
+   UI/API focused checks: 8 passed. Ruff, ESLint, TypeScript, compileall, diff
+   whitespace and final production build passed. New Chromium browser check
+   passes ordinary/admin at mobile 430px and desktop 1280px. General critical-flows
+   attempt timed out at 210s and is NOT counted as passed. Its existing CI remains
+   required; the new browser scenario is also wired into Mini App Browser E2E.
+7. [x] Independent Standards review: no blocking findings. Spec review: missing
+   negative Telegram launch tests; added and reviewer confirmed resolved. Initial
+   implementation committed as 15084a0e; follow-up regression/CI commit pending.
+   Draft PR and no production merge/deploy remain mandatory.
+8. [ ] Push final branch, open Draft PR, verify auto-merge remains off, and record
+   exact SHA/check status in #408/#409. All epic descriptions now reflect the user
+   restriction: implementation allowed, production merge/deploy held until complete.
 
 ## Risk and rollback
 

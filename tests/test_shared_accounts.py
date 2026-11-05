@@ -55,8 +55,8 @@ async def account_database(request, monkeypatch, isolated_database):
             await connection.execute('DROP SCHEMA ' + schema + ' CASCADE')
 
 
-def telegram_launch(user_id=ADMIN):
-    fields = {'auth_date': str(int(time.time())), 'user': json.dumps({'id': user_id})}
+def telegram_launch(user_id=ADMIN, timestamp=None):
+    fields = {'auth_date': str(int(time.time()) if timestamp is None else timestamp), 'user': json.dumps({'id': user_id})}
     key = hmac.new(b'WebAppData', b'test:fake-bot-token', hashlib.sha256).digest()
     fields['hash'] = hmac.new(key, '\n'.join(f'{k}={v}' for k, v in sorted(fields.items())).encode(), hashlib.sha256).hexdigest()
     return urlencode(fields)
@@ -282,3 +282,28 @@ async def test_reenabling_preview_does_not_resurrect_old_session():
             assert result.status == 200
         assert (await client.get(ROOT + '/me', headers={'Authorization': 'Bearer ' + token})).status == 401
         assert (await login(client)).status == 200
+
+
+async def test_telegram_tamper_stale_future_and_duplicate_launch_are_rejected():
+    now = int(time.time())
+    launches = [
+        telegram_launch().replace(str(ADMIN), '1001'),
+        telegram_launch(timestamp=now - 700),
+        telegram_launch(timestamp=now + 120),
+        telegram_launch() + '&auth_date=' + str(now),
+        'auth_date=' + str(now) + '&user=%7B%22id%22%3A999999999%7D',
+    ]
+    async with preview_client() as client:
+        await enable(client)
+        for launch in launches:
+            assert (await client.post(ROOT + '/session', json={'platform': 'telegram', 'launch_data': launch})).status == 401
+            assert (await client.get(ROOT + '/settings', headers={'X-Telegram-Init-Data': launch})).status == 401
+
+
+async def test_equal_external_ids_on_both_platforms_remain_different_accounts(monkeypatch):
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123, vk_admin_ids=[ADMIN])
+        telegram = await (await login(client)).json()
+        vk = await (await client.post(ROOT + '/session', json={'platform': 'vk', 'launch_data': vk_launch(ADMIN)})).json()
+        assert telegram['account']['id'] != vk['account']['id']
