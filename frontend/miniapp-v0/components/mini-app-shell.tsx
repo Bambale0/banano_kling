@@ -9,6 +9,7 @@ import { genjutsuRecipeStartParam, parseMiniAppStartParam } from '@/lib/start-pa
 import { HeroHeader } from './hero-header'
 import { TabNav } from './tab-nav'
 import { Toaster } from '@/components/ui/sonner'
+import { currentAccountPlatform } from '@/lib/account-platform'
 import { ClientErrorBoundary } from './client-error-boundary'
 import { MiniAppLoader } from './mini-app-loader'
 import { TelegramOpenGate } from './telegram-open-gate'
@@ -36,6 +37,7 @@ function MiniAppBody({ children }: MiniAppShellProps) {
   const [genjutsuOpen, setGenjutsuOpen] = useState(false)
   const isBootstrapping = state.isLoading
   const isLocked = state.mode === 'locked'
+  const isVk = currentAccountPlatform() === 'vk'
 
   useEffect(() => {
     if (typeof window === 'undefined' || state.mode !== 'live') return
@@ -70,7 +72,7 @@ function MiniAppBody({ children }: MiniAppShellProps) {
           {/* A deep-linked trend owns the active Radix modal. Delivery is optional,
               so defer its offer instead of blocking the trend or fighting its focus trap. */}
           <BotWriteAccessGate
-            required={state.user.telegramBotStartRequired && !trendToRun && !genjutsuOpen}
+            required={!isVk && state.user.telegramBotStartRequired && !trendToRun && !genjutsuOpen}
             botUsername={state.user.botUsername}
             onRefresh={refreshTelegramChatAccess}
           />

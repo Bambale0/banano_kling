@@ -7,7 +7,7 @@ import { chromium } from 'playwright'
 
 // Run after npm run build:vk. Signed-auth responses are mocked here; backend
 // signature/admin checks remain covered by the shared-account HTTP matrix.
-test('VK root export loads assets and keeps unsigned/ordinary visitors out', async () => {
+test('VK root export opens the shared Mini App only for linked admins', async () => {
   const root = resolve('out')
   assert.ok(existsSync(join(root, 'index.html')), 'Build the VK root export first')
   const types = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.svg': 'image/svg+xml', '.png': 'image/png' }
@@ -29,42 +29,64 @@ test('VK root export loads assets and keeps unsigned/ordinary visitors out', asy
       const requests = []; const failedAssets = []
       page.on('request', req => requests.push(req.url()))
       page.on('response', res => { if (res.url().includes('/_next/') && res.status() >= 400) failedAssets.push(res.url()) })
+      page.on('pageerror', error => console.error('VK root page error:', error.message))
+      page.on('console', message => { if (message.type() === 'error') console.error('VK root console error:', message.text()) })
       await page.goto(origin + '/', { waitUntil: 'networkidle' })
       await page.getByText('Откройте приложение из ВКонтакте.', { exact: true }).waitFor()
       assert.ok(!requests.some(url => /account-preview|telegram-web-app/.test(url)))
       assert.ok(requests.some(url => url.startsWith(origin + '/_next/')))
       assert.deepEqual(failedAssets, [])
-      const logins = []
-      await page.route('**/mini-app/api/account-preview/**', async route => {
+      const logins = []; const appCredentials = []
+      await page.route('**/mini-app/api/**', async route => {
         const req = route.request(); const path = new URL(req.url()).pathname
-        let payload = { ok: true }; let status = 200
+        let payload = { ok: true, items: [], feed: [], prompts: [], categories: [], references: [], notifications: [] }; let status = 200
         if (path.endsWith('/session')) {
           const body = req.postDataJSON(); logins.push(body)
           assert.equal(body.platform, 'vk')
           if (new URLSearchParams(body.launch_data).get('vk_user_id') !== '2001') {
-            status = 403; payload = { ok: false }
-          } else payload = { ok: true, session_token: 'test-session', account: { id: 'test-account' } }
-        } else if (path.endsWith('/me')) payload = { ok: true, account: { id: 'test-account' }, preview: { revision: 1, vk_app_id: 123, telegram_bot_username: 'Neuromixx_bot' } }
-        else if (path.endsWith('/wallet')) payload = { ok: true, scope: 'sandbox', balance: { available: '0', reserved: '0', revision: 0 }, entries: [], receipt: null }
-        else if (path.endsWith('/links') && req.method() === 'POST') payload = { ok: true, link: { id: 'link-1', state: 'pending', revision: 0, expires_at_epoch: 4102444800, token: 'a'.repeat(43) } }
-        else if (path.endsWith('/commerce')) payload = { ok: true, catalog: { revision: 0, default_tariff_id: null, default_partner_group_id: null, tariffs: {}, partner_groups: {} } }
-        else if (path.includes('/commerce/accounts/')) payload = { ok: true, target: { account_id: 'test-account', settings: { revision: 0, tariff_id: null, partner_group_id: null, first_level_percent: null, second_level_percent: null, repeat_reward_rub: null }, effective: {} } }
+            status = 403; payload = { ok: false, error: 'Требуется доступ администратора.' }
+          } else payload = { ok: true, session_token: 's'.repeat(43), account: { id: 'test-account' } }
+        } else if (path.endsWith('/me')) {
+          payload = { ok: true, account: { id: 'test-account' }, preview: { revision: 1, vk_app_id: 123, telegram_bot_username: 'Neuromixx_bot', telegram_linked: true } }
+        } else if (path.endsWith('/logout')) {
+          payload = { ok: true }
+        } else if (path.endsWith('/bootstrap')) {
+          const body = req.postDataJSON(); appCredentials.push(body.init_data)
+          payload = {
+            ...payload, telegram_id: 1001, first_name: 'VK', last_name: 'Admin', telegram_username: 'linked_admin',
+            credits: 301, is_admin: true, bot_username: 'Neuromixx_bot', referral_code: 'VKADMIN',
+            telegram_chat_available: false, telegram_bot_start_required: true,
+            actions: [], payment_packages: [], image_models: [], video_models: [], recent_tasks: [], saved_references: [],
+          }
+        } else if (req.method() === 'POST') {
+          const body = req.postDataJSON()
+          if (body && 'init_data' in body) appCredentials.push(body.init_data)
+        }
         await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(payload) })
       })
       await page.goto(origin + '/?vk_app_id=123&vk_user_id=3001&sign=browser-test', { waitUntil: 'networkidle' })
       await page.getByText('Требуется доступ администратора.', { exact: true }).waitFor()
       assert.equal(await page.getByRole('heading', { name: 'Общие аккаунты ТГ и ВК' }).count(), 0)
       await page.goto(origin + '/?vk_app_id=123&vk_user_id=2001&sign=browser-test', { waitUntil: 'networkidle' })
-      await page.getByRole('heading', { name: 'Общие аккаунты ТГ и ВК' }).waitFor()
+      try {
+        await page.getByRole('button', { name: 'Профиль', exact: true }).waitFor()
+      } catch (error) {
+        console.error('VK root diagnostic', { requests, body: (await page.locator('body').innerText()).slice(0, 4000) })
+        throw error
+      }
       assert.ok(logins.length >= 2)
-      await page.getByRole('button', { name: 'Создать ссылку' }).click()
-      await page.getByLabel('Ссылка для другого аккаунта').waitFor()
-      assert.equal(await page.getByLabel('Ссылка для другого аккаунта').inputValue(), `https://t.me/Neuromixx_bot?startapp=link_${'a'.repeat(43)}`)
+      for (const tab of ['Студия', 'Тренды', 'Фото', 'Видео', 'Motion', 'Лента', 'Сервисы', 'Профиль']) {
+        assert.equal(await page.getByRole('button', { name: tab, exact: true }).count(), 1)
+      }
+      assert.equal(await page.getByRole('heading', { name: 'Общие аккаунты ТГ и ВК' }).count(), 0)
+      assert.equal(await page.getByRole('heading', { name: 'Разреши боту писать тебе' }).count(), 0)
+      assert.ok(appCredentials.length >= 1)
+      assert.ok(appCredentials.every(value => value === 'vk_session:' + 's'.repeat(43)))
       assert.ok(!requests.some(url => /telegram-web-app/.test(url)))
       assert.deepEqual(failedAssets, [])
       assert.equal(await page.evaluate(() => sessionStorage.getItem('__banano_initial_search')), null)
       await context.close()
-      console.log(`VK root ${width}px: direct entry, ordinary denial, admin preview passed`)
+      console.log(`VK root ${width}px: linked admin opened the shared studio`)
     }
   } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)) }
 })

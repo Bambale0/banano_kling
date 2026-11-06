@@ -109,3 +109,21 @@ async def revoke_session(token: str) -> None:
         await db.execute('UPDATE shared_account_sessions SET revoked_at_epoch = ? WHERE token_hash = ? AND revoked_at_epoch IS NULL',
                          (int(time.time()), _token_hash(token)))
         await db.commit()
+
+
+async def linked_telegram_id(account_id: str) -> int | None:
+    """Resolve the single legacy Telegram identity owned by a shared account."""
+    if not isinstance(account_id, str) or not re.fullmatch(r'[0-9a-f]{32}', account_id):
+        raise AuthenticationError('Invalid account')
+    async with db_backend.connect() as db:
+        rows = await (await db.execute(
+            '''SELECT users.telegram_id
+               FROM shared_account_legacy_links legacy
+               JOIN users ON users.id = legacy.legacy_user_id
+               WHERE legacy.source = ? AND legacy.account_id = ?
+               ORDER BY users.id LIMIT 2''',
+            ('telegram', account_id),
+        )).fetchall()
+    if len(rows) > 1:
+        raise AuthenticationError('Ambiguous linked account')
+    return int(rows[0][0]) if rows else None

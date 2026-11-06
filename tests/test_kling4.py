@@ -806,6 +806,31 @@ async def test_nonadmin_denied_before_user_creation_or_channel_probe(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_vk_session_uses_shared_actor_without_telegram_validation(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from bot import kling4_api, miniapp, wan3_prime_api
+
+    actor = SimpleNamespace(is_admin=True)
+    shared_auth = AsyncMock(return_value=actor)
+    monkeypatch.setattr(wan3_prime_api, "_actor_from_request", shared_auth)
+    monkeypatch.setattr(
+        miniapp,
+        "_validate_init_data",
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("VK session must not use Telegram validation")
+        ),
+    )
+    request = SimpleNamespace(headers={})
+    body = {"init_data": "vk_session:" + "k" * 43}
+
+    resolved = await kling4_api._actor(request, body, launch=True)
+
+    assert resolved is actor
+    shared_auth.assert_awaited_once_with(request, body)
+
+
+@pytest.mark.asyncio
 async def test_telegram_parallel_uploads_preserve_both_materials_and_cancel_stale_session(
     engine_context, monkeypatch
 ):

@@ -24,6 +24,7 @@ from bot.database import (
     get_transaction_by_order,
     update_transaction_status,
 )
+from bot.payment_platform_policy import vk_payment_provider_denied
 from bot.payment_utils import package_bonus_credits, total_package_credits
 from bot.services.preset_manager import preset_manager
 
@@ -637,6 +638,9 @@ def install_prodamus_miniapp_payment() -> None:
                 body.get("init_data", ""),
                 body.get("start_param_fallback"),
             )
+            provider_denied = vk_payment_provider_denied(ctx, "prodamus")
+            if provider_denied is not None:
+                return provider_denied
             user = ctx["user"]
             package = miniapp_module.preset_manager.get_package(package_id)
             if not package:

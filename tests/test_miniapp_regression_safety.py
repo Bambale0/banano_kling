@@ -177,6 +177,51 @@ async def test_lava_payment_uses_and_saves_request_local_email(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_lava_payment_accepts_linked_vk_session(monkeypatch):
+    resolved: list[tuple[object, str, object]] = []
+
+    async def fake_context(app, init_data, fallback):
+        resolved.append((app, init_data, fallback))
+        return 42, {"platform": "vk"}
+
+    def fail_telegram_validation(*_args):
+        raise AssertionError("VK session must use the shared account authenticator")
+
+    async def fake_save(telegram_id, email):
+        assert telegram_id == 42
+        return email
+
+    async def fake_original(_request):
+        return web.json_response(
+            {"ok": True, "email": safety._REQUEST_LAVA_EMAIL.get()}
+        )
+
+    monkeypatch.setattr(
+        safety,
+        "_get_miniapp_module",
+        lambda: SimpleNamespace(
+            _get_user_context=fake_context,
+            _validate_init_data=fail_telegram_validation,
+        ),
+    )
+    monkeypatch.setattr(safety, "_save_payment_email", fake_save)
+
+    request = DummyRequest(
+        {
+            "provider": "lava",
+            "customer_email": "vk.user@gmail.com",
+            "init_data": "vk_session:" + "v" * 43,
+            "start_param_fallback": "feed_1",
+        }
+    )
+    response = await safety._secure_create_payment(fake_original, request)
+
+    assert response.status == 200
+    assert json.loads(response.text)["email"] == "vk.user@gmail.com"
+    assert resolved == [(request.app, "vk_session:" + "v" * 43, "feed_1")]
+
+
+@pytest.mark.asyncio
 async def test_lava_payment_reuses_saved_account_email(monkeypatch):
     async def fake_original(_request):
         return web.json_response(

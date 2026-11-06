@@ -200,6 +200,22 @@ compose() { return 1; }
         ):
             self.assertIn(check, text)
 
+    def test_miniapp_release_keeps_vk_on_the_exact_same_revision(self):
+        text = MINIAPP.read_text()
+        telegram_build = text.index("npm run build\n")
+        vk_build = text.index("npm run build:vk")
+        self.assertLess(telegram_build, vk_build)
+        for check in (
+            'VK_FRONTEND_DOMAIN="${VK_MINIAPP_FRONTEND_DOMAIN:-vk.neuromixbot.com}"',
+            'VK_RELEASE_ROOT="${VK_WEB_ROOT}/releases"',
+            'printf \'%s\\n\' "$EXPECTED_SHA" > "$vk_revision_file"',
+            'mv -T -- "$vk_current_link" "${VK_WEB_ROOT}/current"',
+            '[[ "$vk_live_revision" == "$EXPECTED_SHA" ]]',
+            '"${VK_BASE_URL}/?revision=${EXPECTED_SHA}"',
+        ):
+            self.assertIn(check, text)
+        self.assertNotIn('rm -rf "$VK_RELEASE_ROOT"', text)
+
     def test_miniapp_backup_creation_retains_every_previous_backup(self):
         text = MINIAPP.read_text()
         start = text.index('if [[ -f "${MINIAPP_ROOT}/index.html" ]]')

@@ -109,6 +109,63 @@ async def test_partner_overview_approved_preserves_legacy_links(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_partner_overview_supports_linked_vk_session(monkeypatch):
+    vk_init_data = "vk_session:" + "p" * 43
+
+    async def payload(_request):
+        return {"init_data": vk_init_data}
+
+    async def user_context(_app, init_data, _fallback):
+        assert init_data == vk_init_data
+        return 710004, {"platform": "vk"}
+
+    def fail_telegram_validation(*_args):
+        raise AssertionError("VK session must not use Telegram validation")
+
+    fake_miniapp = SimpleNamespace(
+        _miniapp_payload=payload,
+        _get_user_context=user_context,
+        _validate_init_data=fail_telegram_validation,
+    )
+    monkeypatch.setattr(safety, "_get_miniapp_module", lambda: fake_miniapp)
+
+    async def approved_state(telegram_id):
+        assert telegram_id == 710004
+        return {
+            "status": "approved",
+            "is_partner": True,
+            "application_id": None,
+            "can_apply": False,
+        }
+
+    monkeypatch.setattr(
+        approval_service,
+        "get_partner_application_state",
+        approved_state,
+    )
+
+    async def legacy_overview(_request):
+        return web.json_response(
+            {
+                "ok": True,
+                "is_partner": True,
+                "status": "partner",
+                "referral_link": "https://example.test/ref/VK",
+            }
+        )
+
+    response = await safety._partner_overview_with_approval(
+        legacy_overview,
+        SimpleNamespace(app={}),
+    )
+    body = json.loads(response.text)
+
+    assert response.status == 200
+    assert body["status"] == "partner"
+    assert body["referral_link"].endswith("/VK")
+
+
+@pytest.mark.asyncio
 async def test_stale_partner_apply_returns_open_access_without_notifications(monkeypatch):
     original_calls = 0
     notifications: list[tuple[object, int]] = []

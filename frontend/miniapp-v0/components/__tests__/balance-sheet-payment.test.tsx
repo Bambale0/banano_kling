@@ -17,6 +17,7 @@ const fixture = { state: { mode: 'live', user: { credits: 1 }, recentTasks: [], 
 ] }, isBalanceOpen: true, closeBalance: jest.fn(), refreshTasks: jest.fn(), refreshBalance: jest.fn() }
 
 beforeEach(() => {
+  window.history.replaceState({}, '', '/')
   jest.clearAllMocks()
   openLink.mockReset()
   ;(useApp as jest.Mock).mockReturnValue(fixture)
@@ -328,4 +329,34 @@ it.each([
   expect(screen.queryByRole('link', { name: 'Перейти к оплате' })).not.toBeInTheDocument()
   expect(screen.queryByRole('region', { name: 'Ссылка на оплату' })).not.toBeInTheDocument()
   expect(sendMiniAppClientLog).not.toHaveBeenCalledWith('payment-checkout-ready', expect.anything())
+})
+
+
+it('shows only Lava payment methods in the VK application', () => {
+  window.history.replaceState({}, '', '/?vk_app_id=54880352&vk_user_id=2001&sign=test')
+  ;(useApp as jest.Mock).mockReturnValue({
+    ...fixture,
+    state: {
+      ...fixture.state,
+      paymentPackages: [{
+        id: 'start',
+        name: 'Старт',
+        credits: 50,
+        price_rub: 500,
+        price_stars: 500,
+        robokassa_enabled: true,
+        freekassa_enabled: true,
+        lava_offer_id: 'offer',
+      }],
+    },
+  })
+
+  render(<BalanceSheet />)
+
+  expect(screen.queryByRole('button', { name: 'СБП / карта' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /Stars/ })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Зарубежная / СНГ' })).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Карта' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'СБП' })).toBeInTheDocument()
+  expect(screen.getByText('Lava')).toBeInTheDocument()
 })
