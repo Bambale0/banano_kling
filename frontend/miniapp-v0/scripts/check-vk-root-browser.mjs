@@ -27,12 +27,19 @@ test('VK root export opens the shared Mini App only for linked admins', async ()
       const context = await browser.newContext({ viewport: { width, height: 900 } })
       const page = await context.newPage()
       const requests = []; const failedAssets = []
+      await page.addInitScript(() => {
+        window.__vkBridgeMessages = []
+        window.addEventListener('message', event => window.__vkBridgeMessages.push(event.data))
+      })
       page.on('request', req => requests.push(req.url()))
       page.on('response', res => { if (res.url().includes('/_next/') && res.status() >= 400) failedAssets.push(res.url()) })
       page.on('pageerror', error => console.error('VK root page error:', error.message))
       page.on('console', message => { if (message.type() === 'error') console.error('VK root console error:', message.text()) })
       await page.goto(origin + '/', { waitUntil: 'networkidle' })
       await page.getByText('Откройте приложение из ВКонтакте.', { exact: true }).waitFor()
+      assert.equal(await page.evaluate(() => window.__vkBridgeMessages.some(message =>
+        message?.type === 'vk-connect' && message?.handler === 'VKWebAppInit'
+      )), true)
       assert.ok(!requests.some(url => /account-preview|telegram-web-app/.test(url)))
       assert.ok(requests.some(url => url.startsWith(origin + '/_next/')))
       assert.deepEqual(failedAssets, [])
@@ -90,3 +97,4 @@ test('VK root export opens the shared Mini App only for linked admins', async ()
     }
   } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)) }
 })
+
