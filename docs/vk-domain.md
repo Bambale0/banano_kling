@@ -40,3 +40,6 @@ Telegram продолжает использовать свой существу
 Важно для приёмки: CSS 100dvh заполняет viewport приложения, но не является доказательством системного fullscreen или скрытия оболочки ВК. В официальных типах VK Bridge проверены VKWebAppResizeWindow (размер iframe) и VKWebAppSetViewSettings (цвета/status-bar style); отдельного fullscreen-метода в проверенном контракте нет. Не добавлять выдуманные VKWebAppExpand/VKWebAppRequestFullscreen и не считать resizeWindow системным fullscreen. Реальное поведение запуска необходимо проверить в мобильном клиенте с настоящим app_id.
 
 Источник контракта: https://github.com/VKCOM/vk-bridge/blob/master/packages/core/src/types/data.ts .
+
+
+06.11.2026 пользователь зарегистрировал VK Mini App **54880352**: https://vk.com/app54880352 . Этот ID должен использоваться в VK signed-launch policy и нативной кнопке; companion-конфигурация подготовлена в tanyavk PR65. ID публичный, секрет приложения в репозиторий не добавляется. Регистрация ещё не является подтверждённым входом через VK: Mini App secret и реальная клиентская приёмка остаются необходимы.
