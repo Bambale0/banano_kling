@@ -31,6 +31,7 @@ from bot.handlers.payments import (
     _transaction_promo_text,
 )
 from bot.keyboards import get_back_keyboard, get_main_menu_keyboard
+from bot.payment_platform_policy import vk_payment_provider_denied
 from bot.payment_utils import (
     package_bonus_credits,
     package_stars_amount,
@@ -421,6 +422,9 @@ async def _create_robokassa_miniapp_checkout(
         body.get("init_data", ""),
         body.get("start_param_fallback"),
     )
+    provider_denied = vk_payment_provider_denied(ctx, "robokassa")
+    if provider_denied is not None:
+        return provider_denied
     user = ctx["user"]
     package = miniapp_module.preset_manager.get_package(package_id)
     if not package:

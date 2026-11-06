@@ -39,3 +39,4 @@ def test_reliable_deploy_verifies_the_new_public_origin():
         encoding="utf-8"
     )
     assert "https://neuromixbot.com/mini-app/revision.txt" in workflow
+    assert "https://vk.neuromixbot.com/revision.txt" in workflow

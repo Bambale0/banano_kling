@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { accountLaunch, accountLinkUrl, incomingAccountLink } from '@/lib/account-platform'
 import { acceptAccountLink, createAccountLink, updateAccountLink, type AccountLink } from '@/lib/shared-account-api'
 
-export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '' }: { vkAppId: number | null; telegramBotUsername?: string }) {
+export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '', onCommitted }: { vkAppId: number | null; telegramBotUsername?: string; onCommitted?: () => void }) {
   const [link, setLink] = useState<AccountLink | null>(null)
   const [url, setUrl] = useState('')
   const [token, setToken] = useState('')
@@ -29,10 +29,15 @@ export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '' }: 
     finally { if (!controller.signal.aborted) setBusy(false) }
   }
 
+  function applyLink(next: AccountLink) {
+    setLink(next)
+    if (next.state === 'committed') onCommitted?.()
+  }
+
   const active = link && !['committed', 'cancelled'].includes(link.state)
   return <section aria-label="Связывание аккаунтов" className="space-y-3 rounded-lg border border-border p-3">
     <h4 className="font-medium">Связать ТГ и ВК</h4>
-    <p className="text-sm text-muted-foreground">Откройте ссылку в своём аккаунте другой платформы. Затем подтвердите связь с обеих сторон. Тестовый баланс объединится после двух подтверждений.</p>
+    <p className="text-sm text-muted-foreground">Откройте ссылку в своём аккаунте другой платформы. Затем подтвердите связь с обеих сторон. Баланс, история и генерации станут общими после двух подтверждений.</p>
     {!active ? <Button disabled={busy} onClick={() => void run(async signal => {
       const target = accountLaunch().platform === 'telegram' ? 'vk' : 'telegram'
       // Validate configured destination before creating a one-time invitation.
@@ -51,7 +56,7 @@ export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '' }: 
       <Button variant="outline" disabled={busy || !token} onClick={() => void run(async signal => {
         const code = token.match(/(?:link_)?([A-Za-z0-9_-]{43})$/)?.[1]
         if (!code) throw new Error('Вставьте код или ссылку целиком.')
-        setLink(await acceptAccountLink(code, signal))
+        applyLink(await acceptAccountLink(code, signal))
         setToken('')
       })}>Принять приглашение</Button>
     </> : null}
@@ -59,10 +64,10 @@ export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '' }: 
       <p className="text-sm">Отправитель: {link.source_identity?.platform ?? '—'} {link.source_identity?.external_id ?? '—'}. Получатель: {link.target_identity ? `${link.target_identity.platform} ${link.target_identity.external_id}` : 'ещё не вошёл'}.</p>
       <p className="text-sm">Подтверждение отправителя: {link.source_confirmed ? 'да' : 'ожидается'}. Подтверждение получателя: {link.target_confirmed ? 'да' : 'ожидается'}.</p>
       <div className="flex flex-wrap gap-2">
-        <Button variant="outline" disabled={busy} onClick={() => void run(async signal => setLink(await updateAccountLink(link, 'get', signal)))}>Обновить статус</Button>
-        <Button disabled={busy || link.state === 'pending'} onClick={() => void run(async signal => setLink(await updateAccountLink(link, 'confirm', signal)))}>Подтверждаю связь аккаунтов</Button>
+        <Button variant="outline" disabled={busy} onClick={() => void run(async signal => applyLink(await updateAccountLink(link, 'get', signal)))}>Обновить статус</Button>
+        <Button disabled={busy || link.state === 'pending'} onClick={() => void run(async signal => applyLink(await updateAccountLink(link, 'confirm', signal)))}>Подтверждаю связь аккаунтов</Button>
         {url ? <Button variant="outline" disabled={busy} onClick={() => void run(async signal => {
-          setLink(await updateAccountLink(link, 'cancel', signal)); setUrl('')
+          applyLink(await updateAccountLink(link, 'cancel', signal)); setUrl('')
         })}>Отменить ссылку</Button> : null}
       </div>
     </> : null}

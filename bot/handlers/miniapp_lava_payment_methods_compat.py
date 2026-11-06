@@ -8,6 +8,7 @@ from typing import Any
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiohttp import web
 
+from bot.payment_platform_policy import vk_payment_provider_denied
 from bot.services.freekassa_service import (
     FREEKASSA_CARD_RUB_METHOD_ID,
     FREEKASSA_SBP_METHOD_ID,
@@ -152,6 +153,9 @@ async def _create_freekassa_miniapp_checkout(
         body.get("init_data", ""),
         body.get("start_param_fallback"),
     )
+    provider_denied = vk_payment_provider_denied(ctx, raw_provider)
+    if provider_denied is not None:
+        return provider_denied
     user = ctx["user"]
     package = miniapp_module.preset_manager.get_package(package_id)
     if not package:

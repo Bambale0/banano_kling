@@ -11,6 +11,7 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { bootstrapApp, sendMiniAppClientLog } from '@/lib/api'
 import { createPayment } from '@/lib/payment-api'
+import { currentAccountPlatform } from '@/lib/account-platform'
 import type { PaymentProvider } from '@/lib/types'
 import {
   paymentPriceLabel,
@@ -74,6 +75,7 @@ function isIOSPaymentWebView() {
 export function BalanceSheet() {
   const { state, isBalanceOpen, balanceRequest, closeBalance, refreshBalance } = useApp()
   const { paymentPackages, user, recentTasks, mode } = state
+  const vkPaymentsOnly = currentAccountPlatform() === 'vk'
   const selectedPackageId = balanceRequest?.packageId
   const selectedPackage = paymentPackages.find((pkg) => pkg.id === selectedPackageId)
   const orderedPackages = selectedPackageId
@@ -219,6 +221,10 @@ export function BalanceSheet() {
     if (paymentRequestInFlight.current || mode !== 'live') return
     const selectedPackage = paymentPackages.find((item) => item.id === packageId)
     if (!selectedPackage) return
+    if (vkPaymentsOnly && !isLavaProvider(provider)) {
+      toast.error('В приложении ВК доступна только оплата через Lava.')
+      return
+    }
     paymentRequestInFlight.current = true
     const paymentSession = balanceSessionRef.current
 
@@ -616,7 +622,7 @@ export function BalanceSheet() {
                         </div>
 
                         <div className="mt-4 grid grid-cols-2 gap-2">
-                          {robokassaConfigured ? (
+                          {!vkPaymentsOnly && robokassaConfigured ? (
                             <>
                               <p className="col-span-2 px-1 text-center text-[11px] font-medium text-foreground">
                                 Robokassa · основной способ
@@ -635,7 +641,7 @@ export function BalanceSheet() {
                               </Button>
                             </>
                           ) : null}
-                          {freekassaConfigured ? (
+                          {!vkPaymentsOnly && freekassaConfigured ? (
                             <>
                               <p className="col-span-2 mt-1 px-1 text-center text-[11px] text-muted-foreground">
                                 Резерв · KASSA
@@ -668,7 +674,7 @@ export function BalanceSheet() {
                               </Button>
                             </>
                           ) : null}
-                          <Button
+                          {!vkPaymentsOnly ? <Button
                             onClick={() => handleTopup(pkg.id, 'tribute' as PaymentProvider)}
                             disabled={Boolean(loadingPayment) || !tributeConfigured}
                             className="col-span-2 w-full bg-secondary text-foreground hover:bg-secondary/80"
@@ -679,8 +685,8 @@ export function BalanceSheet() {
                               <Globe2 className="mr-2 h-4 w-4" />
                             )}
                             Зарубежная / СНГ
-                          </Button>
-                          <Button
+                          </Button> : null}
+                          {!vkPaymentsOnly ? <Button
                             onClick={() => handleTopup(pkg.id, 'telegram_stars')}
                             disabled={Boolean(loadingPayment)}
                             variant="outline"
@@ -692,11 +698,11 @@ export function BalanceSheet() {
                               <Star className="mr-2 h-4 w-4" />
                             )}
                             Stars · {starsPrice}⭐
-                          </Button>
+                          </Button> : null}
                           {lavaConfigured ? (
                             <>
                               <p className="col-span-2 mt-1 px-1 text-center text-[11px] text-muted-foreground">
-                                Lava · дополнительный способ
+                                {vkPaymentsOnly ? 'Lava' : 'Lava · дополнительный способ'}
                               </p>
                               <Button
                                 onClick={() => handleTopup(pkg.id, 'lava_card')}

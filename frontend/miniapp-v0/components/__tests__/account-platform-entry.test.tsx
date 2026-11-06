@@ -2,41 +2,66 @@ jest.mock('../shared-commercial-preview', () => ({ SharedCommercialPreview: () =
 import '@testing-library/jest-dom'
 import { render, screen } from '@testing-library/react'
 import { AccountPlatformEntry } from '../account-platform-entry'
-import { fetchAccountPreviewAccess } from '@/lib/shared-account-api'
+import { startAccountAppSession, stopAccountAppSession } from '@/lib/shared-account-api'
 
-jest.mock('@/lib/shared-account-api', () => ({ fetchAccountPreviewAccess: jest.fn() }))
-jest.mock('../shared-wallet-preview', () => ({ SharedWalletPreview: () => <p>Тестовый кошелёк</p> }))
+jest.mock('@/lib/shared-account-api', () => ({
+  startAccountAppSession: jest.fn(),
+  stopAccountAppSession: jest.fn(),
+}))
 jest.mock('../shared-account-link-preview', () => ({ SharedAccountLinkPreview: ({ telegramBotUsername }: { telegramBotUsername: string }) => <p>Связать аккаунты {telegramBotUsername}</p> }))
-afterEach(() => { window.history.replaceState({}, '', '/'); delete process.env.NEXT_PUBLIC_MINIAPP_PLATFORM; jest.resetAllMocks() })
 
-test('dedicated VK build opened directly never mounts Telegram or requests an unsigned session', () => {
+afterEach(() => {
+  window.history.replaceState({}, '', '/')
+  delete process.env.NEXT_PUBLIC_MINIAPP_PLATFORM
+  jest.resetAllMocks()
+})
+
+test('dedicated VK build opened directly never mounts application or requests an unsigned session', () => {
   process.env.NEXT_PUBLIC_MINIAPP_PLATFORM = 'vk'
-  render(<AccountPlatformEntry><p>Telegram bootstrap</p></AccountPlatformEntry>)
+  render(<AccountPlatformEntry><p>Общая студия</p></AccountPlatformEntry>)
   expect(screen.getByText('Откройте приложение из ВКонтакте.')).toBeInTheDocument()
-  expect(screen.queryByText('Telegram bootstrap')).not.toBeInTheDocument()
-  expect(fetchAccountPreviewAccess).not.toHaveBeenCalled()
+  expect(screen.queryByText('Общая студия')).not.toBeInTheDocument()
+  expect(startAccountAppSession).not.toHaveBeenCalled()
 })
 
-test('VK starts its signed preview without mounting Telegram bootstrap', async () => {
+test('linked VK account mounts the same application', async () => {
   window.history.replaceState({}, '', '/?vk_app_id=123&vk_user_id=2001&sign=example')
-  jest.mocked(fetchAccountPreviewAccess).mockResolvedValue({ revision: 1, vk_app_id: 123, telegram_bot_username: 'Neuromixx_bot' })
-  render(<AccountPlatformEntry><p>Telegram bootstrap</p></AccountPlatformEntry>)
-  expect(await screen.findByRole('main', { name: 'Проверка аккаунта ВК' })).toBeInTheDocument()
-  expect(screen.queryByText('Telegram bootstrap')).not.toBeInTheDocument()
-  expect(screen.getByText('Связать аккаунты Neuromixx_bot')).toBeInTheDocument()
+  jest.mocked(startAccountAppSession).mockResolvedValue({
+    revision: 1,
+    vk_app_id: 123,
+    telegram_bot_username: 'Neuromixx_bot',
+    telegram_linked: true,
+  })
+  render(<AccountPlatformEntry><p>Общая студия</p></AccountPlatformEntry>)
+  expect(await screen.findByText('Общая студия')).toBeInTheDocument()
+  expect(screen.queryByText(/Связать аккаунты/)).not.toBeInTheDocument()
 })
 
-test('ordinary VK user is denied and sees no account or wallet controls', async () => {
+test('unlinked VK account sees only the mandatory link gate', async () => {
+  window.history.replaceState({}, '', '/?vk_app_id=123&vk_user_id=2001&sign=example')
+  jest.mocked(startAccountAppSession).mockResolvedValue({
+    revision: 1,
+    vk_app_id: 123,
+    telegram_bot_username: 'Neuromixx_bot',
+    telegram_linked: false,
+  })
+  render(<AccountPlatformEntry><p>Общая студия</p></AccountPlatformEntry>)
+  expect(await screen.findByText('Связать аккаунты Neuromixx_bot')).toBeInTheDocument()
+  expect(screen.queryByText('Общая студия')).not.toBeInTheDocument()
+})
+
+test('ordinary VK user is denied and sees no application controls', async () => {
   window.history.replaceState({}, '', '/?vk_app_id=123&vk_user_id=3001&sign=example')
-  jest.mocked(fetchAccountPreviewAccess).mockRejectedValue(new Error('Требуется доступ администратора.'))
-  render(<AccountPlatformEntry><p>Telegram bootstrap</p></AccountPlatformEntry>)
+  jest.mocked(startAccountAppSession).mockRejectedValue(new Error('Требуется доступ администратора.'))
+  render(<AccountPlatformEntry><p>Общая студия</p></AccountPlatformEntry>)
   expect(await screen.findByText('Требуется доступ администратора.')).toBeInTheDocument()
   expect(screen.queryByText(/Связать аккаунты/)).not.toBeInTheDocument()
-  expect(screen.queryByText('Telegram bootstrap')).not.toBeInTheDocument()
+  expect(screen.queryByText('Общая студия')).not.toBeInTheDocument()
 })
 
 test('Telegram entry retains the existing application', () => {
-  render(<AccountPlatformEntry><p>Telegram bootstrap</p></AccountPlatformEntry>)
-  expect(screen.getByText('Telegram bootstrap')).toBeInTheDocument()
-  expect(fetchAccountPreviewAccess).not.toHaveBeenCalled()
+  render(<AccountPlatformEntry><p>Общая студия</p></AccountPlatformEntry>)
+  expect(screen.getByText('Общая студия')).toBeInTheDocument()
+  expect(startAccountAppSession).not.toHaveBeenCalled()
+  expect(stopAccountAppSession).not.toHaveBeenCalled()
 })

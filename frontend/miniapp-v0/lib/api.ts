@@ -45,6 +45,7 @@ declare global {
       search?: string
     }
     __BANANO_TG_INIT_DATA__?: string
+    __BANANO_PLATFORM_INIT_DATA__?: string
   }
 }
 
@@ -110,7 +111,23 @@ function getInitDataFromLocation(): string {
   return ''
 }
 
+export function setPlatformSessionToken(token: string): void {
+  if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new Error('Некорректная сессия ВК.')
+  if (typeof window === 'undefined') throw new Error('Сессия ВК недоступна.')
+  // Intentionally memory-only: never expose the opaque bearer in URLs or storage.
+  window.__BANANO_PLATFORM_INIT_DATA__ = `vk_session:${token}`
+}
+
+export function clearPlatformSessionToken(): void {
+  if (typeof window !== 'undefined') delete window.__BANANO_PLATFORM_INIT_DATA__
+}
+
 export function getInitData(): string {
+  const platformSession = typeof window !== 'undefined'
+    ? String(window.__BANANO_PLATFORM_INIT_DATA__ || '').trim()
+    : ''
+  if (/^vk_session:[A-Za-z0-9_-]{43}$/.test(platformSession)) return platformSession
+
   // Prefer initData from location hash (tgWebAppData) — it's available
   // before window.Telegram.WebApp is fully initialized. This is critical
   // on slow networks/VPN where the Telegram SDK CDN may be delayed.

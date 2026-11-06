@@ -253,12 +253,23 @@ async def trend_prompt_privacy_middleware(
         request_body = {}
     try:
         init_data = str(request_body.get("init_data") or request.headers.get("X-Telegram-Init-Data") or "")
-        telegram_id = verified_telegram_id_from_init_data(init_data, config.BOT_TOKEN)
+        if init_data.startswith("vk_session:"):
+            # The shared adapter validates policy revision, VK allowlist and the
+            # linked legacy owner before any administrator field is retained.
+            from bot.miniapp import _get_user_context
+
+            telegram_id, _context = await _get_user_context(
+                request.app,
+                init_data,
+                request_body.get("start_param_fallback"),
+            )
+        else:
+            telegram_id = verified_telegram_id_from_init_data(init_data, config.BOT_TOKEN)
+            if telegram_id:
+                signed_start_param = str(
+                    dict(parse_qsl(init_data, keep_blank_values=True)).get("start_param") or ""
+                ).strip()
         viewer_is_admin = bool(telegram_id and config.is_admin(telegram_id))
-        if telegram_id:
-            signed_start_param = str(
-                dict(parse_qsl(init_data, keep_blank_values=True)).get("start_param") or ""
-            ).strip()
     except Exception:  # noqa: BLE001 - privacy middleware must fail closed
         viewer_is_admin = False
         signed_start_param = ""

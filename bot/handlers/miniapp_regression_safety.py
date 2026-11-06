@@ -193,6 +193,31 @@ async def _secure_bootstrap(
     return web.json_response(payload, status=response.status, headers=headers)
 
 
+async def _resolve_legacy_user_id(
+    miniapp_module: Any,
+    request: web.Request,
+    body: dict[str, Any],
+) -> int:
+    """Resolve both Telegram initData and a linked VK shared session.
+
+    Telegram keeps its existing signature-only path here so this regression
+    wrapper does not repeat the profile/referral side effects performed by the
+    actual route. VK has no Telegram initData and must use the shared account
+    session adapter to reach the same legacy balance and generation owner.
+    """
+
+    init_data = str(body.get("init_data") or "")
+    if init_data.startswith("vk_session:"):
+        telegram_id, _ctx = await miniapp_module._get_user_context(
+            request.app,
+            init_data,
+            body.get("start_param_fallback"),
+        )
+        return int(telegram_id)
+    payload = miniapp_module._validate_init_data(init_data, config.BOT_TOKEN)
+    return int(payload["user"]["id"])
+
+
 async def _secure_create_payment(
     original_handler: RequestHandler,
     request: web.Request,
@@ -216,23 +241,19 @@ async def _secure_create_payment(
 
     miniapp_module = _get_miniapp_module()
     try:
-        payload = miniapp_module._validate_init_data(
-            body.get("init_data", ""),
-            config.BOT_TOKEN,
-        )
-    except ValueError as exc:
+        telegram_id = await _resolve_legacy_user_id(miniapp_module, request, body)
+    except (KeyError, TypeError, ValueError, PermissionError) as exc:
         error_messages = {
-            "Missing init_data": "Откройте Mini App из Telegram и попробуйте снова.",
-            "Missing Telegram hash": "Откройте Mini App из Telegram и попробуйте снова.",
-            "Invalid Telegram signature": "Откройте Mini App заново из Telegram.",
-            "Expired Telegram session": "Сессия Telegram истекла. Откройте Mini App заново из Telegram.",
-            "Missing Telegram user": "Откройте Mini App заново из Telegram.",
+            "Missing init_data": "Откройте приложение заново и попробуйте снова.",
+            "Missing Telegram hash": "Откройте приложение заново и попробуйте снова.",
+            "Invalid Telegram signature": "Откройте приложение заново.",
+            "Expired Telegram session": "Сессия истекла. Откройте приложение заново.",
+            "Missing Telegram user": "Откройте приложение заново.",
         }
         return web.json_response(
             {"ok": False, "error": error_messages.get(str(exc), str(exc))},
             status=401,
         )
-    telegram_id = int(payload["user"]["id"])
 
     customer_email = submitted_email or await _get_saved_payment_email(telegram_id)
     if not customer_email:
@@ -295,8 +316,7 @@ async def _banned_miniapp_response(request: web.Request) -> web.Response | None:
         init_data = str(body.get("init_data") or "")
         if not init_data:
             return None
-        auth_payload = miniapp_module._validate_init_data(init_data, config.BOT_TOKEN)
-        telegram_id = int(auth_payload["user"]["id"])
+        telegram_id = await _resolve_legacy_user_id(miniapp_module, request, body)
     except (KeyError, TypeError, ValueError):
         return None
 
@@ -368,11 +388,7 @@ async def _partner_overview_with_approval(
     miniapp_module = _get_miniapp_module()
     try:
         body = await miniapp_module._miniapp_payload(request)
-        auth_payload = miniapp_module._validate_init_data(
-            str(body.get("init_data") or ""),
-            config.BOT_TOKEN,
-        )
-        telegram_id = int(auth_payload["user"]["id"])
+        telegram_id = await _resolve_legacy_user_id(miniapp_module, request, body)
     except (KeyError, TypeError, ValueError):
         return response
 

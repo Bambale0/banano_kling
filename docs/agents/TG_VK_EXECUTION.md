@@ -258,3 +258,46 @@ Final shared-account matrix including opening rehearsals now verified locally on
 The owner explicitly authorized merge and production deployment of the current administrator preview. This supersedes the earlier no-deploy hold only for the signed, server-enforced admin surface. Ordinary VK and Telegram users remain denied; the sandbox wallet cannot become live funds. Public rollout, live financial cutover, payments, generation/history/feed parity and offer changes remain out of scope and blocked.
 
 Release additions after exact-head review: magic-link launch data is removed from the application cache, launch snapshot and Telegram SDK session key; the authenticated `/me` response supplies the configured Telegram bot username so the standalone VK root can create a VK→Telegram invitation without a hardcoded client value. Production requires `VK_MINI_APP_SECRET` and `TELEGRAM_BOT_USERNAME` in secret/runtime configuration. Rollback is the isolated PR revert plus restoration of the maintenance vhost; preview policy can be disabled independently.
+
+
+## Common Mini App parity — 06.11.2026
+
+- Baseline: production `tanyapi` SHA
+  `398a503856308736e9eb57f7dd9e43ec79c7772f`; isolated branch
+  `feature/vk-full-miniapp-parity-20261106`.
+- User-visible result: a linked administrator entering from VK mounts the same
+  `MiniAppShell` and backend routes as Telegram, with the linked Telegram
+  legacy owner as the only balance/task/history/generation authority. No shadow
+  user or second balance is created. Unlinked VK actors stop at the mandatory
+  two-sided link gate.
+- Root cause of the earlier maintenance/preview screen: the VK entry component
+  routed every signed VK launch to the account-preview cabinet instead of the
+  common application shell, even though most product APIs already shared one
+  authenticated actor boundary.
+- Security: the signed VK session is kept only in browser memory; every request
+  revalidates the preview-policy revision and server administrator allowlist.
+  Telegram authentication behavior is unchanged. VK does not execute Telegram
+  subscription, referral or text-bot side effects.
+- Payments: verified VK sessions are restricted to the existing Lava route on
+  both UI and server boundaries. Prices, Creator terms, balance mutations and
+  the offer are not changed. The text VK bot is unchanged.
+- Compatibility fixes: the regression-safety, ban, partner and Kling 4 wrappers
+  now resolve the same linked legacy actor for VK instead of requiring Telegram
+  init data directly. Telegram early-rejection and no-side-effect behavior is
+  preserved.
+- RED/GREEN evidence: VK failed the regression-safety wrappers and Kling 4
+  actor seam before the adapters. After the fixes the selected backend matrix
+  is **93 passed, 26 skipped**. Full Mini App Jest is **90 suites / 682 tests
+  passed**; ESLint has no errors (one pre-existing hooks warning); both VK-root
+  and Telegram production exports pass. The VK Chromium journey passes at
+  430px and 1280px and proves common navigation, memory-only VK credentials,
+  no Telegram SDK request and no Telegram write gate.
+- No migration or mutable price/config update is required. Rollback is a normal
+  reviewed revert; disabling the existing preview policy immediately blocks new
+  VK sessions. Ordinary users stay denied until a separate public-rollout
+  decision.
+- Remaining release gates at this checkpoint: protected PR to `tanyapi`,
+  exact-head required CI/autodeploy, exact deployed SHA and real signed VK
+  administrator acceptance. Public rollout remains a separate decision.
+
+Release-candidate verification: full backend **4722 passed, 223 skipped, 826 warnings, 76 subtests passed** in 405.51s. Deployment-contract matrix **27 passed, 6 subtests passed**. A first frontend rerun reused stale Jest compilation for two unrelated reference suites; the clean `--no-cache` regression rerun passed **90/90 suites, 682/682 tests** in 56.351s. ESLint completed with only the pre-existing Kling 4 hooks warning. Telegram and VK production exports and the VK Chromium root smoke (430px/1280px) passed. The production deploy now builds and publishes both origins from the exact same expected SHA, writes and verifies both `revision.txt` files, retains prior VK releases and atomically replaces only the VK `current` symlink.

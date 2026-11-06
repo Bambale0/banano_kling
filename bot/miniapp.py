@@ -23,6 +23,7 @@ from bot.config import config
 from bot.creator_tariff import VideoQuote, quote_video_for_actor
 from bot.kling4_api import catalog_entry as kling4_catalog_entry
 from bot.kling4_tariff import kling4_public_enabled
+from bot.payment_platform_policy import vk_payment_provider_denied
 from bot.services.runtime_http import database_error_response
 from bot.trend_user_fields import (
     TrendUserFieldsError,
@@ -1385,7 +1386,52 @@ async def _activate_start_param_referral(
         )
 
 
+async def _get_vk_session_user_context(init_data: str) -> tuple[int, dict]:
+    """Map an authenticated VK session to the already-linked legacy user."""
+    from bot.shared_accounts.errors import AuthenticationError
+    from bot.shared_accounts.policy import load_policy
+    from bot.shared_accounts.store import get_session, linked_telegram_id
+
+    prefix = "vk_session:"
+    token = init_data[len(prefix):] if init_data.startswith(prefix) else ""
+    policy = await load_policy()
+    try:
+        if not policy.enabled:
+            raise AuthenticationError("VK Mini App is unavailable")
+        account = await get_session(token, policy.revision)
+        if account.identity.platform != "vk" or not policy.allows(account.identity):
+            raise AuthenticationError("VK Mini App access denied")
+        telegram_id = await linked_telegram_id(account.id)
+    except (AuthenticationError, PermissionError) as exc:
+        raise ValueError("Откройте приложение заново из ВКонтакте.") from exc
+    if telegram_id is None:
+        raise ValueError("Сначала свяжите аккаунты ТГ и ВК.")
+    # A legacy link is created only for an existing Telegram user. Reusing it
+    # keeps balance, tasks, history and generation ownership in one source.
+    user = await get_or_create_user(telegram_id)
+    payload = {
+        "platform": "vk",
+        "vk_user_id": account.identity.external_id,
+        "user": {
+            "id": telegram_id,
+            "username": user.username or "",
+            "first_name": user.first_name or "",
+            "last_name": user.last_name or "",
+            "photo_url": user.photo_url or "",
+        },
+    }
+    return telegram_id, {
+        "payload": payload,
+        "user": user,
+        "platform": "vk",
+        "platform_external_id": account.identity.external_id,
+        "shared_account_id": account.id,
+    }
+
+
 async def _get_user_context(app: web.Application, init_data: str, start_param_fallback: Any = None) -> tuple[int, dict]:
+    if isinstance(init_data, str) and init_data.startswith("vk_session:"):
+        return await _get_vk_session_user_context(init_data)
     payload = _validate_init_data(init_data, config.BOT_TOKEN)
     telegram_user = payload["user"]
     telegram_id = int(telegram_user["id"])
@@ -1461,7 +1507,12 @@ async def _get_user_context(app: web.Application, init_data: str, start_param_fa
             telegram_id,
             start_param_fallback,
         )
-    return telegram_id, {"payload": payload, "user": user}
+    return telegram_id, {
+        "payload": payload,
+        "user": user,
+        "platform": "telegram",
+        "platform_external_id": telegram_id,
+    }
 
 
 async def _get_state(app: web.Application, telegram_id: int):
@@ -3794,6 +3845,9 @@ async def miniapp_create_payment(request: web.Request) -> web.Response:
             )
 
         telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
+        provider_denied = vk_payment_provider_denied(ctx, raw_provider)
+        if provider_denied is not None:
+            return provider_denied
         user = ctx["user"]
 
         package = preset_manager.get_package(package_id)

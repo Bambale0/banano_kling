@@ -2,6 +2,14 @@ import { getInitData, getRuntimeBotUsername } from './api'
 
 export type AccountPlatform = 'telegram' | 'vk'
 
+export function currentAccountPlatform(): AccountPlatform {
+  if (typeof window === 'undefined') return process.env.NEXT_PUBLIC_MINIAPP_PLATFORM === 'vk' ? 'vk' : 'telegram'
+  const params = new URLSearchParams(window.location.search)
+  return process.env.NEXT_PUBLIC_MINIAPP_PLATFORM === 'vk' || params.has('vk_app_id') || params.has('vk_user_id')
+    ? 'vk'
+    : 'telegram'
+}
+
 export function accountLaunch(): { platform: AccountPlatform; launch_data: string } {
   if (typeof window === 'undefined') throw new Error('Откройте приложение из ТГ или ВК.')
   // Explicit VK launch wins over a previous Telegram session in this browser.

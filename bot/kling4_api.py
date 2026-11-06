@@ -15,8 +15,9 @@ logger = logging.getLogger(__name__)
 
 
 async def _actor(request, body, *, launch=False, admin_only=False):
-    # Reject nonadmins before channel probes or user creation. Cryptographic
-    # Telegram verification must precede reading the claimed user ID.
+    # Preserve the early Telegram admin gate: it deliberately rejects a
+    # nonadmin before channel probes or user creation. A VK credential cannot
+    # be decoded locally, so it goes through the shared session adapter first.
     from bot import miniapp
     from bot.wan3_prime_api import _actor_from_request
 
@@ -26,14 +27,21 @@ async def _actor(request, body, *, launch=False, admin_only=False):
         or body.get("initData")
         or ""
     )
-    try:
-        from bot.config import config
+    from bot.config import config
 
-        verified = miniapp._validate_init_data(str(init_data), config.BOT_TOKEN)
-        telegram_id = int(verified["user"]["id"])
-    except (ValueError, TypeError, KeyError) as exc:
-        raise Kling4Error("Откройте Mini App заново из Telegram.", status=401) from exc
-    is_admin = config.is_admin(telegram_id)
+    if str(init_data).startswith("vk_session:"):
+        actor = await _actor_from_request(request, body)
+        is_admin = actor.is_admin
+    else:
+        try:
+            verified = miniapp._validate_init_data(str(init_data), config.BOT_TOKEN)
+            telegram_id = int(verified["user"]["id"])
+        except (ValueError, TypeError, KeyError) as exc:
+            raise Kling4Error(
+                "Откройте Mini App заново из Telegram.", status=401
+            ) from exc
+        is_admin = config.is_admin(telegram_id)
+
     if admin_only and not is_admin:
         raise Kling4Error("Доступно только администратору.", status=403)
     if launch and not is_admin:
@@ -41,6 +49,8 @@ async def _actor(request, body, *, launch=False, admin_only=False):
 
         if not kling4_public_enabled():
             raise Kling4Error("Kling 4 пока недоступен.", status=403)
+    if str(init_data).startswith("vk_session:"):
+        return actor
     return await _actor_from_request(request, body)
 
 

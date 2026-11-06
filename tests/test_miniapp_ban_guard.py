@@ -54,6 +54,36 @@ async def test_admin_bypasses_miniapp_ban_guard(monkeypatch):
     assert response is None
 
 
+@pytest.mark.asyncio
+async def test_linked_vk_user_uses_same_ban_guard(monkeypatch):
+    class FakeVkMiniAppModule(FakeMiniAppModule):
+        def __init__(self):
+            super().__init__(telegram_id=987654321, init_data="vk_session:" + "s" * 43)
+
+        async def _get_user_context(self, _app, init_data, _fallback):
+            assert init_data == self.init_data
+            return self.telegram_id, {"platform": "vk"}
+
+        def _validate_init_data(self, *_args):
+            raise AssertionError("VK session must not use Telegram validation")
+
+    fake_module = FakeVkMiniAppModule()
+
+    async def fake_is_banned(telegram_id: int) -> bool:
+        return telegram_id == fake_module.telegram_id
+
+    monkeypatch.setattr(safety, "_get_miniapp_module", lambda: fake_module)
+    monkeypatch.setattr(safety.config, "is_admin", lambda _telegram_id: False)
+    monkeypatch.setattr(database, "is_user_banned", fake_is_banned)
+
+    request = type("Request", (), {"app": {}})()
+    response = await safety._banned_miniapp_response(request)
+
+    assert response is not None
+    assert response.status == 403
+    assert json.loads(response.text)["code"] == "user_banned"
+
+
 def test_miniapp_ban_guard_only_targets_api_routes(monkeypatch):
     monkeypatch.setattr(safety.config, "MINI_APP_PATH", "/mini-app")
 

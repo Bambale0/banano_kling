@@ -1,4 +1,4 @@
-import { getApiBasePath, getInitData } from './api'
+import { clearPlatformSessionToken, getApiBasePath, getInitData, setPlatformSessionToken } from './api'
 import { accountLaunch } from './account-platform'
 
 export interface AccountPreviewSettings {
@@ -63,19 +63,16 @@ async function withPreviewSession<T>(operation: (headers: Record<string, string>
   })
   // The token lives only in this operation's memory, never in a URL/storage.
   const headers = { Authorization: `Bearer ${login.session_token}` }
-  let profileFailed = false
   try {
     return await operation(headers, login.account.id)
-  } catch (error) {
-    profileFailed = true
-    throw error
   } finally {
     const cleanup = new AbortController()
     const timeout = setTimeout(() => cleanup.abort(), 3000)
     try {
       await request('logout', { method: 'POST', headers, signal: cleanup.signal })
-    } catch (error) {
-      if (!profileFailed) throw error
+    } catch {
+      // Session cleanup is best-effort and must never turn a successful
+      // idempotent operation (including account merge) into a client failure.
     } finally {
       clearTimeout(timeout)
     }
@@ -158,6 +155,56 @@ export interface AccountPreviewAccess {
   revision: number
   vk_app_id: number | null
   telegram_bot_username: string
+  telegram_linked: boolean
+}
+
+let activeAppSessionToken = ''
+
+async function revokeAppSession(token: string): Promise<void> {
+  if (!token) return
+  try {
+    await request('logout', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+  } catch {
+    // Expiry, policy changes and account merges already revoke the session.
+  }
+}
+
+export async function startAccountAppSession(signal?: AbortSignal): Promise<AccountPreviewAccess> {
+  if (activeAppSessionToken) await stopAccountAppSession()
+  const login = await request<{ session_token: string; account: { id: string } }>('session', {
+    method: 'POST',
+    signal,
+    body: JSON.stringify(accountLaunch()),
+  })
+  const token = login.session_token
+  if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new Error('Не удалось подтвердить сессию ВК.')
+  try {
+    const profile = await request<{ account: { id: string }; preview: AccountPreviewAccess }>('me', {
+      signal,
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (profile.account.id !== login.account.id) throw new Error('Не удалось подтвердить аккаунт.')
+    if (!profile.preview.telegram_linked) {
+      await revokeAppSession(token)
+      return profile.preview
+    }
+    setPlatformSessionToken(token)
+    activeAppSessionToken = token
+    return profile.preview
+  } catch (error) {
+    await revokeAppSession(token)
+    throw error
+  }
+}
+
+export async function stopAccountAppSession(): Promise<void> {
+  const token = activeAppSessionToken
+  activeAppSessionToken = ''
+  clearPlatformSessionToken()
+  await revokeAppSession(token)
 }
 
 export async function fetchAccountPreviewAccess(signal?: AbortSignal): Promise<AccountPreviewAccess> {

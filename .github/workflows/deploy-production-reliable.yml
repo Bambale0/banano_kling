@@ -292,6 +292,8 @@ jobs:
           curl -fsS --max-time 20 https://tanyapi.chillcreative.ru/health >/dev/null
           live_frontend_revision="$(curl -fsS --max-time 20 "https://neuromixbot.com/mini-app/revision.txt?revision=${EXPECTED_SHA}")"
           [ "$live_frontend_revision" = "$EXPECTED_SHA" ]
+          live_vk_frontend_revision="$(curl -fsS --max-time 20 "https://vk.neuromixbot.com/revision.txt?revision=${EXPECTED_SHA}")"
+          [ "$live_vk_frontend_revision" = "$EXPECTED_SHA" ]
 
           tribute_http="$(curl -sS --max-time 20 -o /tmp/tribute-probe.json -w '%{http_code}' \
             -X POST https://tanyapi.chillcreative.ru/tribute/webhook \
@@ -325,6 +327,7 @@ jobs:
           echo "container_revision=$revision"
           echo "container_health=$health"
           echo "miniapp_revision=$live_frontend_revision"
+          echo "vk_miniapp_revision=$live_vk_frontend_revision"
           echo "tribute_webhook_probe=401"
           REMOTE
 

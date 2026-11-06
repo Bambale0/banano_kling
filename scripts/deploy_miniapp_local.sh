@@ -21,6 +21,9 @@ PROFILE_FILE="/etc/banano-miniapp/profiles/${FRONTEND_DOMAIN}.env"
 WEB_ROOT="/var/www/${FRONTEND_DOMAIN}"
 MINIAPP_ROOT="${WEB_ROOT}/mini-app"
 BACKUP_ROOT="/var/backups/banano-miniapp/${FRONTEND_DOMAIN}"
+VK_FRONTEND_DOMAIN="${VK_MINIAPP_FRONTEND_DOMAIN:-vk.neuromixbot.com}"
+VK_WEB_ROOT="${VK_MINIAPP_WEB_ROOT:-/var/www/${VK_FRONTEND_DOMAIN}}"
+VK_RELEASE_ROOT="${VK_WEB_ROOT}/releases"
 RUN_NPM_AUDIT="${RUN_NPM_AUDIT:-0}"
 
 log() {
@@ -166,6 +169,7 @@ node_major="$(node -p 'process.versions.node.split(".")[0]')"
 # Increase DEPLOY_MIN_FREE_BYTES for larger builds; retained history is not pruned.
 require_disk_space "$PROJECT_DIR"
 require_disk_space "$BACKUP_ROOT"
+require_disk_space "$VK_RELEASE_ROOT"
 
 log "Building exact commit ${EXPECTED_SHA} on $(hostname)"
 cd "$FRONTEND_DIR"
@@ -175,14 +179,40 @@ if [[ "$RUN_NPM_AUDIT" == "1" ]]; then
   run_npm_audit
 fi
 
+build_work="$(mktemp -d)"
+work=""
+vk_stage=""
+vk_current_link=""
+cleanup() {
+  rm -rf -- "$build_work"
+  [[ -z "$work" ]] || rm -rf -- "$work"
+  [[ -z "$vk_stage" ]] || rm -rf -- "$vk_stage"
+  [[ -z "$vk_current_link" ]] || rm -f -- "$vk_current_link"
+}
+trap cleanup EXIT
+
 npm run lint
 rm -rf .next out
 npm run build
 [[ -s "${OUT_DIR}/index.html" ]] || die "static export did not create out/index.html"
 [[ -d "${OUT_DIR}/_next/static" ]] || die "static export is missing _next/static"
+install -d -m 0700 "$build_work/telegram"
+rsync -a "${OUT_DIR}/" "$build_work/telegram/"
+
+rm -rf .next out
+npm run build:vk
+[[ -s "${OUT_DIR}/index.html" ]] || die "VK static export did not create out/index.html"
+[[ -d "${OUT_DIR}/_next/static" ]] || die "VK static export is missing _next/static"
+grep -q '/_next/static/' "${OUT_DIR}/index.html" || die "VK export has no root static assets"
+if grep -q '/mini-app/_next/static/' "${OUT_DIR}/index.html"; then
+  die "VK export contains Telegram-prefixed assets"
+fi
+install -d -m 0700 "$build_work/vk"
+rsync -a "${OUT_DIR}/" "$build_work/vk/"
 
 install -d -m 0755 "$MINIAPP_ROOT"
 install -d -m 0700 "$BACKUP_ROOT"
+install -d -m 0755 "$VK_RELEASE_ROOT"
 
 if [[ -f "${MINIAPP_ROOT}/index.html" ]]; then
   stamp="$(date '+%Y%m%d-%H%M%S')"
@@ -199,7 +229,7 @@ fi
 log "Publishing static export to ${MINIAPP_ROOT}"
 # Keep older hashed chunks for in-flight Telegram WebViews while replacing the
 # entrypoint and all current assets atomically enough for static Nginx serving.
-rsync -a --chmod=D755,F644 "${OUT_DIR}/" "${MINIAPP_ROOT}/"
+rsync -a --chmod=D755,F644 "$build_work/telegram/" "${MINIAPP_ROOT}/"
 # Backups use hard links: replace the inode instead of truncating old revisions.
 revision_file="$(mktemp "${MINIAPP_ROOT}/.revision-XXXXXX")"
 printf '%s\n' "$EXPECTED_SHA" > "$revision_file"
@@ -207,10 +237,33 @@ chmod 0644 "$revision_file"
 mv -f -- "$revision_file" "${MINIAPP_ROOT}/revision.txt"
 chown -R root:root "$WEB_ROOT"
 
+vk_release_name="$EXPECTED_SHA"
+vk_release_dir="${VK_RELEASE_ROOT}/${vk_release_name}"
+if [[ -e "$vk_release_dir" || -L "$vk_release_dir" ]]; then
+  vk_release_name="${EXPECTED_SHA}-$(date '+%Y%m%d-%H%M%S')-$$"
+  vk_release_dir="${VK_RELEASE_ROOT}/${vk_release_name}"
+fi
+vk_stage="$(mktemp -d "${VK_RELEASE_ROOT}/.${vk_release_name}.staging.XXXXXX")"
+log "Publishing VK export to ${vk_release_dir}"
+rsync -a --chmod=D755,F644 "$build_work/vk/" "$vk_stage/"
+vk_revision_file="$(mktemp "$vk_stage/.revision-XXXXXX")"
+printf '%s\n' "$EXPECTED_SHA" > "$vk_revision_file"
+chmod 0644 "$vk_revision_file"
+mv -f -- "$vk_revision_file" "$vk_stage/revision.txt"
+chown -R root:root "$vk_stage"
+chmod 0755 "$vk_stage"
+mv -T -- "$vk_stage" "$vk_release_dir"
+vk_stage=""
+
+# Replace only the symlink. Existing releases remain available for rollback and
+# in-flight clients that still request their hashed assets.
+vk_current_link="${VK_WEB_ROOT}/.current-${EXPECTED_SHA}-$$"
+ln -s -- "$vk_release_dir" "$vk_current_link"
+mv -T -- "$vk_current_link" "${VK_WEB_ROOT}/current"
+vk_current_link=""
+
 BASE_URL="https://${FRONTEND_DOMAIN}/mini-app"
 work="$(mktemp -d)"
-cleanup() { rm -rf "$work"; }
-trap cleanup EXIT
 
 live_revision="$(
   curl -fsS --retry 8 --retry-delay 2 --retry-all-errors \
@@ -233,4 +286,29 @@ while IFS= read -r asset; do
     "https://${FRONTEND_DOMAIN}${asset}?revision=${EXPECTED_SHA}" >/dev/null
 done < "$work/assets.txt"
 
+VK_BASE_URL="https://${VK_FRONTEND_DOMAIN}"
+vk_live_revision="$(
+  curl -fsS --retry 8 --retry-delay 2 --retry-all-errors \
+    -H 'Cache-Control: no-cache' \
+    "${VK_BASE_URL}/revision.txt?revision=${EXPECTED_SHA}"
+)"
+[[ "$vk_live_revision" == "$EXPECTED_SHA" ]] \
+  || die "VK live revision mismatch: expected=$EXPECTED_SHA actual=$vk_live_revision"
+
+curl -fsS --retry 8 --retry-delay 2 --retry-all-errors \
+  -H 'Cache-Control: no-cache' \
+  "${VK_BASE_URL}/?revision=${EXPECTED_SHA}" > "$work/vk-index.html"
+grep -q '/_next/static/' "$work/vk-index.html" || die "VK live HTML has no root static assets"
+if grep -q '/mini-app/_next/static/\|telegram-web-app.js' "$work/vk-index.html"; then
+  die "VK live HTML contains Telegram-only assets"
+fi
+grep -oE '/_next/static/[^" ]+\.js' "$work/vk-index.html" \
+  | sort -u > "$work/vk-assets.txt"
+[[ -s "$work/vk-assets.txt" ]] || die "VK live HTML did not expose JavaScript assets"
+while IFS= read -r asset; do
+  curl -fsSI --retry 5 --retry-delay 2 --retry-all-errors \
+    "${VK_BASE_URL}${asset}?revision=${EXPECTED_SHA}" >/dev/null
+done < "$work/vk-assets.txt"
+
 log "LIVE_OK ${BASE_URL}/ revision=${EXPECTED_SHA}"
+log "VK_LIVE_OK ${VK_BASE_URL}/ revision=${EXPECTED_SHA}"

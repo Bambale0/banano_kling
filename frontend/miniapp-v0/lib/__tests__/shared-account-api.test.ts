@@ -1,12 +1,19 @@
-import { checkAccountPreviewLogin, saveAccountPreviewSettings } from '../shared-account-api'
+import { checkAccountPreviewLogin, saveAccountPreviewSettings, startAccountAppSession, stopAccountAppSession } from '../shared-account-api'
+import { setPlatformSessionToken } from '../api'
 
-jest.mock('../api', () => ({ getApiBasePath: () => '/mini-app/api', getInitData: () => 'signed-launch' }))
+jest.mock('../api', () => ({
+  getApiBasePath: () => '/mini-app/api',
+  getInitData: () => 'signed-launch',
+  setPlatformSessionToken: jest.fn(),
+  clearPlatformSessionToken: jest.fn(),
+}))
 
 function reply(status: number, payload = {}) {
   return { status, ok: status === 200, json: async () => ({ ok: status === 200, ...payload }) } as Response
 }
 
 beforeEach(() => {
+  jest.clearAllMocks()
   global.fetch = jest.fn()
 })
 afterEach(() => {
@@ -66,4 +73,56 @@ test('settings submit uses the viewed revision and signed administrator credenti
   fetch.mockResolvedValue(reply(409))
   await expect(saveAccountPreviewSettings({ enabled: true, vk_app_id: null, vk_admin_ids: [], session_ttl_seconds: 3600, launch_max_age_seconds: 600 }, 7)).rejects.toThrow('Настройки изменились.')
   expect(JSON.parse(String(fetch.mock.calls[0][1]?.body))).toEqual(expect.objectContaining({ expected_revision: 7, init_data: 'signed-launch' }))
+})
+
+
+test('linked VK application session stays in memory for the shared API', async () => {
+  const query = 'vk_app_id=123&vk_user_id=456&vk_ts=1000&sign=signed-value'
+  window.history.replaceState({}, '', '/?' + query)
+  const fetch = jest.mocked(global.fetch)
+  fetch.mockResolvedValueOnce(reply(200, {
+    session_token: 'a'.repeat(43),
+    account: { id: 'account-1' },
+  })).mockResolvedValueOnce(reply(200, {
+    account: { id: 'account-1' },
+    preview: {
+      revision: 1,
+      vk_app_id: 123,
+      telegram_bot_username: 'Neuromixx_bot',
+      telegram_linked: true,
+    },
+  }))
+
+  const access = await startAccountAppSession()
+
+  expect(access.telegram_linked).toBe(true)
+  expect(setPlatformSessionToken).toHaveBeenCalledWith('a'.repeat(43))
+  expect(fetch).toHaveBeenCalledTimes(2)
+  expect(fetch.mock.calls.every(([url]) => !String(url).includes('a'.repeat(43)))).toBe(true)
+  fetch.mockResolvedValueOnce(reply(200))
+  await stopAccountAppSession()
+})
+
+test('unlinked VK account does not retain an application credential', async () => {
+  const query = 'vk_app_id=123&vk_user_id=456&vk_ts=1000&sign=signed-value'
+  window.history.replaceState({}, '', '/?' + query)
+  const fetch = jest.mocked(global.fetch)
+  fetch.mockResolvedValueOnce(reply(200, {
+    session_token: 'b'.repeat(43),
+    account: { id: 'account-1' },
+  })).mockResolvedValueOnce(reply(200, {
+    account: { id: 'account-1' },
+    preview: {
+      revision: 1,
+      vk_app_id: 123,
+      telegram_bot_username: 'Neuromixx_bot',
+      telegram_linked: false,
+    },
+  })).mockResolvedValueOnce(reply(200))
+
+  const access = await startAccountAppSession()
+
+  expect(access.telegram_linked).toBe(false)
+  expect(setPlatformSessionToken).not.toHaveBeenCalled()
+  expect(fetch.mock.calls[2][0]).toBe('/mini-app/api/account-preview/logout')
 })
