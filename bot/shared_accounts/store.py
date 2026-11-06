@@ -127,3 +127,15 @@ async def linked_telegram_id(account_id: str) -> int | None:
     if len(rows) > 1:
         raise AuthenticationError('Ambiguous linked account')
     return int(rows[0][0]) if rows else None
+
+
+async def linked_platforms(account_id: str) -> list[str]:
+    """Read persisted platform membership for an authenticated shared account."""
+    if not isinstance(account_id, str) or not re.fullmatch(r'[0-9a-f]{32}', account_id):
+        raise AuthenticationError('Invalid account')
+    async with db_backend.connect() as db:
+        rows = await (await db.execute(
+            'SELECT DISTINCT platform FROM shared_account_identities WHERE account_id = ? ORDER BY platform',
+            (account_id,),
+        )).fetchall()
+    return [row[0] for row in rows]

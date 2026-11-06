@@ -156,6 +156,7 @@ export interface AccountPreviewAccess {
   vk_app_id: number | null
   telegram_bot_username: string
   telegram_linked: boolean
+  linked_platforms?: ('telegram' | 'vk')[]
 }
 
 let activeAppSessionToken = ''

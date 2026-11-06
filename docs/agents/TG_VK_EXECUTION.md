@@ -1,5 +1,28 @@
 # TG–VK shared accounts execution ledger
 
+## Linked accounts card — 06.11.2026
+
+- Baseline: `tanyapi@992c9b17a05649552873c582b6ecddbd4bad163d`; branch `fix/tanyapi-linked-accounts-card`.
+- Request/spec: the supplied screenshot; a compact «Связанные аккаунты» card with Telegram/VKontakte brand icons, real connection status, a green check for connected identities and «Привязать» for the other platform.
+- Audit: signed platform sessions, server administrator restrictions, configurable invitation URLs/lifetime and two-sided confirmation already exist. Linking is currently a technical form nested in the administrator tools and the unlinked VK entry. Reuse those services; no prefactor required. Missing: a clean initial card and persisted VK connection status in the authenticated profile.
+- Scope: preserve the administrator preview boundary and explicit consent; change the shared linking surface on both platforms. Do not enable public rollout or migrate balances. No schema, tariff, payment, generation, provider, Telegram FSM or runtime configuration changes.
+- No-hardcode: IDs, bot username, policy and link destinations remain server/configuration derived. Status comes from authenticated persisted identities; failed reads must never display «Не привязан» as a fabricated fact. Brand colors and labels are presentation constants.
+- Risk: opening an invitation must not accept/confirm it; one confirmation must not show success. Keep revision checks, expiry/cancel recovery, double-click protection, errors and token privacy. Existing server link/session logs remain authoritative; no credentials added to telemetry.
+- Test seams: component clicks/status/error/cancel/consent; authenticated HTTP profile before/after actual two-sided merge; mocked browser at narrow mobile/desktop widths. DB schema/migrations, provider/retry/payment mutations, generation and bot FSM tests are not applicable: their implementation is unchanged. SQLite link/security regressions remain applicable because statuses expose persisted identities; PostgreSQL CI runs the existing matrix.
+- Steps: (1) behavior tests and RED; (2) authenticated linked-platform metadata and reusable card; (3) both entry surfaces and clean placement; (4) component/backend/lint/types/build/browser checks; (5) independent standards/spec review; (6) protected PR to `tanyapi`, native squash auto-merge and exact-SHA release verification.
+- Acceptance: screenshot structure, no initial code field, one clear action, both platform directions, no false linked status, separate explicit acceptance and consent, retry/cancel/expired paths, no overflow at 320px.
+- Rollback: revert this PR via `tanyapi`; no data/config rollback needed. Local source is a separate checkout because the original OneDrive checkout has unavailable placeholders and unrelated changes. Production runtime/log evidence is not yet available and no deployment is claimed.
+
+### Implementation and verification
+
+- Added the shared card, authenticated `linked_platforms` metadata and persisted membership query. Both entry directions reuse the existing invitation/accept/confirm/cancel services; settings are in a native disclosure. Added bounded status loading, retry, successful-state cleanup and synchronous operation deduplication.
+- Focused Jest: 27/27 passed; focused SQLite HTTP/security/link tests: 39 passed, 39 PostgreSQL cases skipped because no isolated local DSN is configured. Ruff on the four changed Python files passed. TypeScript `--noEmit`, changed TypeScript/TSX ESLint, E2E syntax and diff whitespace passed.
+- Full Jest: 90 suites / 688 tests passed on the fresh `--no-cache` run. The first run had one unrelated timing failure in the unchanged WAN Prime quote test; it passed in isolation (39 tests including the linking suite), then the full clean run passed. No WAN implementation or test change was made.
+- Telegram production static export compiled, type-checked and patched head assets. Browser preview passed ordinary/admin Telegram at 320/430/1280px and ordinary/admin VK at 430px (8 scenarios), with all APIs mocked. Verified real actions through configured URL generation and cancellation, disabled premature confirmation, no unsolicited invitation mutation, no token storage, and no name/button collision or card overflow. Local browser uses installed Chrome via optional test-only `E2E_BROWSER_CHANNEL`; CI defaults to its pinned Playwright Chromium. Final icon-radius polish is being rebuilt and rechecked before ready-for-review.
+- Local dependencies were installed from the existing manifest's semver ranges because npm is absent; committed package/lock files are unchanged and CI verifies the locked dependency set. Native PostgreSQL, both locked exports, required production gates and deployment are verified separately in CI.
+- Independent Standards review found and then cleared the missing status timeout and stale error after commit; independent Spec review found no confirmed violation and requested narrow-screen verification, which passed. Applied `Bambale0/skills` implement/code-review, `Bambale0/claw` UX/frontend audit, and `anthropics/skills` frontend-design guidance.
+- Read-only production baseline via SentinelX: image revision `992c9b17a05649552873c582b6ecddbd4bad163d`, healthy container; latest bounded 1,000-log-line sample had zero shared-account failure events and zero tracebacks. `tanyapi` protection is verified `strict=true` with all four required contexts. No production writes or paid calls were made.
+
 ## Opening-balance readiness audit — 06.11.2026
 
 Baseline PR415 f1e8b32e873dd27dc36daa6cfa6c0ea54340ea04; VK master

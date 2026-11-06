@@ -19,6 +19,21 @@ invitation revision. Both parties see the server-verified platform and external
 ID of the sender and recipient before confirmation. The source can cancel.
 Expired or cancelled invitations cannot be committed; the UI can start again.
 
+### Linked accounts card
+
+The administrator profile and the VK linking gate share a compact «Связанные
+аккаунты» card. Telegram and VKontakte each show their persisted connection
+status and a check mark or «Привязать» action. The authenticated `/me` preview
+metadata includes `linked_platforms`, read from `shared_account_identities`;
+the existing `telegram_linked` legacy application-access check is unchanged.
+The invitation form opens only after a linking action or an incoming link.
+Opening the form does not create, accept or confirm an invitation. A failed or
+15-second timed-out status read offers retry rather than inventing an unlinked
+identity. Both check marks appear only after server-proven membership or a
+committed link receipt. Administrator settings remain available in a separate
+disclosure below the card. All existing access, financial and rollout boundaries
+still apply.
+
 Only Telegram administrators and explicitly configured VK administrators may
 use this preview. The VK entry verifies a VK launch directly and never mounts
 the Telegram bootstrap. Settings management remains restricted to Telegram

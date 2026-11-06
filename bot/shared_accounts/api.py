@@ -15,7 +15,13 @@ from .commercial_store import CommercialStore
 from .errors import AuthenticationError, PreviewConflict
 from .links import LinkExpired, LinkService
 from .policy import load_policy, save_policy
-from .store import create_session, get_session, linked_telegram_id, revoke_session
+from .store import (
+    create_session,
+    get_session,
+    linked_platforms,
+    linked_telegram_id,
+    revoke_session,
+)
 from .wallet import InsufficientFunds, WalletService
 
 logger = logging.getLogger(__name__)
@@ -99,6 +105,7 @@ async def profile(request: web.Request) -> web.Response:
         'revision': policy.revision, 'vk_app_id': policy.vk_app_id,
         'telegram_bot_username': os.getenv('TELEGRAM_BOT_USERNAME', '').strip().lstrip('@'),
         'telegram_linked': await linked_telegram_id(account.id) is not None,
+        'linked_platforms': await linked_platforms(account.id),
         'link_ttl_seconds': policy.link_ttl_seconds,
     }})
 

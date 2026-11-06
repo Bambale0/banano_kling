@@ -1,12 +1,13 @@
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { SharedAccountLinkPreview } from '../shared-account-link-preview'
-import { acceptAccountLink, createAccountLink, updateAccountLink } from '@/lib/shared-account-api'
-import { incomingAccountLink } from '@/lib/account-platform'
+import { acceptAccountLink, createAccountLink, fetchAccountPreviewAccess, updateAccountLink } from '@/lib/shared-account-api'
+import { currentAccountPlatform, incomingAccountLink } from '@/lib/account-platform'
 
-jest.mock('@/lib/shared-account-api', () => ({ acceptAccountLink: jest.fn(), createAccountLink: jest.fn(), updateAccountLink: jest.fn() }))
+jest.mock('@/lib/shared-account-api', () => ({ acceptAccountLink: jest.fn(), createAccountLink: jest.fn(), updateAccountLink: jest.fn(), fetchAccountPreviewAccess: jest.fn() }))
 jest.mock('@/lib/account-platform', () => ({
   accountLaunch: () => ({ platform: 'telegram' }),
+  currentAccountPlatform: jest.fn(),
   accountLinkUrl: (_platform: string, token: string) => 'https://vk.com/app123#link_' + token,
   incomingAccountLink: jest.fn(),
 }))
@@ -15,6 +16,77 @@ const invitation = { id: 'invite1', state: 'awaiting_confirmation' as const, rev
 beforeEach(() => {
   jest.resetAllMocks()
   jest.mocked(incomingAccountLink).mockReturnValue('')
+  jest.mocked(currentAccountPlatform).mockReturnValue('telegram')
+  jest.mocked(fetchAccountPreviewAccess).mockResolvedValue({ revision: 1, vk_app_id: 123, telegram_bot_username: 'test_bot', telegram_linked: false, linked_platforms: ['telegram'] })
+})
+
+test('initial card shows real platform statuses and hides the technical form', async () => {
+  render(<SharedAccountLinkPreview vkAppId={123} />)
+  const card = screen.getByRole('region', { name: 'Связанные аккаунты' })
+  expect(within(card).getByText('Telegram')).toBeInTheDocument()
+  expect(await within(card).findByText('Не привязан')).toBeInTheDocument()
+  expect(within(card).getByText('Привязан')).toBeInTheDocument()
+  expect(screen.queryByLabelText('Код из ссылки')).not.toBeInTheDocument()
+  expect(createAccountLink).not.toHaveBeenCalled()
+  fireEvent.click(within(card).getByRole('button', { name: 'Привязать ВКонтакте' }))
+  expect(screen.getByLabelText('Код из ссылки')).toBeInTheDocument()
+  expect(createAccountLink).not.toHaveBeenCalled()
+})
+
+test('persisted link shows both check marks after reopening', async () => {
+  jest.mocked(fetchAccountPreviewAccess).mockResolvedValue({ revision: 1, vk_app_id: 123, telegram_bot_username: 'test_bot', telegram_linked: true, linked_platforms: ['telegram', 'vk'] })
+  render(<SharedAccountLinkPreview vkAppId={123} />)
+  expect(await screen.findByLabelText('ВКонтакте привязан')).toBeInTheDocument()
+  expect(screen.getByLabelText('Telegram привязан')).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /^Привязать/ })).not.toBeInTheDocument()
+})
+
+test('VK entry offers to link Telegram', async () => {
+  jest.mocked(currentAccountPlatform).mockReturnValue('vk')
+  jest.mocked(fetchAccountPreviewAccess).mockResolvedValue({ revision: 1, vk_app_id: 123, telegram_bot_username: 'test_bot', telegram_linked: false, linked_platforms: ['vk'] })
+  render(<SharedAccountLinkPreview vkAppId={123} />)
+  expect(await screen.findByRole('button', { name: 'Привязать Telegram' })).toBeEnabled()
+  expect(screen.getByLabelText('ВКонтакте привязан')).toBeInTheDocument()
+})
+
+test('failed status read offers retry without inventing a disconnected account', async () => {
+  jest.mocked(fetchAccountPreviewAccess).mockRejectedValueOnce(new Error('Не удалось выполнить запрос. Попробуйте ещё раз.'))
+  render(<SharedAccountLinkPreview vkAppId={123} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Повторить проверку' }))
+  expect(await screen.findByRole('button', { name: 'Привязать ВКонтакте' })).toBeEnabled()
+  expect(fetchAccountPreviewAccess).toHaveBeenCalledTimes(2)
+})
+
+test('stalled status read has a deadline and a retry action', async () => {
+  jest.useFakeTimers()
+  try {
+    jest.mocked(fetchAccountPreviewAccess).mockReturnValue(new Promise(() => {}))
+    render(<SharedAccountLinkPreview vkAppId={123} />)
+    await act(async () => { jest.advanceTimersByTime(15000) })
+    expect(screen.getByText('Проверка заняла слишком много времени. Попробуйте ещё раз.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Повторить проверку' })).toBeEnabled()
+    expect(jest.mocked(fetchAccountPreviewAccess).mock.calls[0][0]?.aborted).toBe(true)
+    expect(screen.queryByText('Не привязан')).not.toBeInTheDocument()
+  } finally {
+    jest.useRealTimers()
+  }
+})
+
+test('successful explicit linking clears an earlier status error', async () => {
+  jest.mocked(incomingAccountLink).mockReturnValue('a'.repeat(43))
+  jest.mocked(fetchAccountPreviewAccess).mockRejectedValue(new Error('Статус временно недоступен.'))
+  jest.mocked(acceptAccountLink).mockResolvedValue(invitation)
+  jest.mocked(updateAccountLink).mockResolvedValue({ ...invitation, state: 'committed', source_confirmed: true, target_confirmed: true })
+  const onCommitted = jest.fn()
+  render(<SharedAccountLinkPreview vkAppId={123} onCommitted={onCommitted} />)
+  await screen.findByText('Статус временно недоступен.')
+  fireEvent.click(screen.getByRole('button', { name: 'Принять приглашение' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Подтверждаю связь аккаунтов' }))
+  expect(await screen.findByText('Аккаунты связаны.')).toBeInTheDocument()
+  expect(screen.getByLabelText('ВКонтакте привязан')).toBeInTheDocument()
+  expect(screen.queryByText('Статус временно недоступен.')).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Повторить проверку' })).not.toBeInTheDocument()
+  expect(onCommitted).toHaveBeenCalledTimes(1)
 })
 
 test('opening a link never accepts or confirms without a click', () => {
@@ -33,12 +105,14 @@ test('acceptance displays a separate explicit confirmation with the current revi
   fireEvent.click(screen.getByRole('button', { name: 'Принять приглашение' }))
   fireEvent.click(await screen.findByRole('button', { name: 'Подтверждаю связь аккаунтов' }))
   expect(await screen.findByText(/Подтверждение получателя: да/)).toBeInTheDocument()
+  expect(screen.queryByLabelText('ВКонтакте привязан')).not.toBeInTheDocument()
   expect(updateAccountLink).toHaveBeenCalledWith(invitation, 'confirm', expect.any(AbortSignal))
 })
 
 test('sender can copy the destination URL while waiting for acceptance', async () => {
   jest.mocked(createAccountLink).mockResolvedValue({ ...invitation, state: 'pending', revision: 0, token: 'a'.repeat(43) })
   render(<SharedAccountLinkPreview vkAppId={123} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Привязать ВКонтакте' }))
   fireEvent.click(screen.getByRole('button', { name: 'Создать ссылку' }))
   expect(await screen.findByLabelText('Ссылка для другого аккаунта')).toHaveValue('https://vk.com/app123#link_' + 'a'.repeat(43))
   expect(screen.getByRole('button', { name: 'Подтверждаю связь аккаунтов' })).toBeDisabled()
