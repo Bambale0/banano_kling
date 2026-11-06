@@ -145,3 +145,47 @@ verified-origin backend restriction, immutable accepted snapshots. Offer/feed
 wording remains a clarification; no visibility behavior inferred. Source audit
 confirmed VK global rate and TG per-recipient policy/creator seams. No runtime
 prices, percentages, merchant registrations, live databases or deployment changed.
+
+
+## Commercial control-plane implementation — 06.11.2026
+
+Customer clarified: do not change the offer document. Continue implementation
+without production merge/deploy. Scope of this slice: one administrator-managed
+preview catalog and account-specific tariff/partner terms, visible in both TG
+and VK preview; exact strings, audited CAS, explicit merge conflicts, VK Lava
+ceiling based on verified session platform. Legacy generation prices, wallets,
+merchant credentials and historical orders remain untouched until their adapters
+and cutover gates are complete. Pending source-state conflict prevents a silent
+rate downgrade or privilege escalation. Tests first on isolated SQLite/Postgres.
+
+
+### Commercial preview verification
+
+Implemented one shared administrator catalog, independent tariff/partner-group
+assignment, individual exact rates and repeat rewards, identity lookup, immutable
+self-quote snapshots and verified VK-origin Lava ceiling. Shared structured editor
+is mounted in TG/VK preview. Does not mutate legacy production price/referral
+settings or create invoices/debits. The offer is explicitly unchanged.
+
+RED missing commerce route; catalog tracer GREEN, then RED quote/terms routes
+on SQLite/PostgreSQL and GREEN after implementation. Combined final account/
+wallet/link/commerce/audit/browser-auth matrix: 167 passed. Full frontend: 89
+suites/673 tests passed; focused commercial/account UI 20 passed. Initial full
+UI attempt exceeded its capture timeout and only task-owned Jest processes were
+stopped; bounded streaming rerun completed exit0 in58.246s. Ruff, ESLint,
+TypeScript/build and all6 browser TG/VK ordinary/admin scenarios passed. Browser
+selector diagnostic caught ambiguous native select labels; explicit ARIA labels
+now expose the correct controls, and the complete smoke passed.
+
+Independent Standards review caught a stale-alias CAS hole; every merge now
+bumps canonical terms revision even when incoming assignment is empty. Regression
+proves stale default PUT cannot replace40%with30%. Spec review caught stale
+effective terms after group edits; editor refreshes saved effective values while
+preserving unsaved form and originalCASrevision. Regression covers inheritance
+and individual override. Both reviewers confirmed no remaining findings.
+
+Remaining integration gates: production financial authority/writers and opening
+balances, checkout/order and recipient reward snapshots, legacy assignment import,
+full VK generation/history/feed parity and real cabinet/client acceptance. The
+preview quote's account terms are not a recipient payout calculation. PR remains
+Draft; no production migration, deployment, real-money operation or provider call.

@@ -1,3 +1,4 @@
+jest.mock('../shared-commercial-preview', () => ({ SharedCommercialPreview: () => null }))
 import '@testing-library/jest-dom'
 import { render, screen } from '@testing-library/react'
 import { AccountPlatformEntry } from '../account-platform-entry'

@@ -5,6 +5,71 @@ import { createServer } from 'node:http'
 import { extname, resolve, sep } from 'node:path'
 import { chromium } from 'playwright'
 
+function commercialFixture(platform) {
+  let catalog = { revision: 0, default_tariff_id: 'ordinary', default_partner_group_id: 'base',
+    tariffs: { ordinary: { label: 'Обычный', prices: { 'photo:test': { amount: '2.5000', unit: 'job' } } } },
+    partner_groups: { base: { label: 'Базовая', first_level_percent: '30.0000', second_level_percent: '7.0000', repeat_reward_rub: '5.00' } } }
+  let settings = { revision: 0, tariff_id: null, partner_group_id: null, first_level_percent: null, second_level_percent: null, repeat_reward_rub: null }
+  function effective() {
+    const group = settings.partner_group_id || catalog.default_partner_group_id
+    return { tariff_id: settings.tariff_id || catalog.default_tariff_id, partner_group_id: group,
+      first_level_percent: settings.first_level_percent ?? catalog.partner_groups[group]?.first_level_percent ?? null,
+      second_level_percent: settings.second_level_percent ?? catalog.partner_groups[group]?.second_level_percent ?? null,
+      repeat_reward_rub: settings.repeat_reward_rub ?? catalog.partner_groups[group]?.repeat_reward_rub ?? null }
+  }
+  return {
+    reply(path, request) {
+      if (!path.includes('/commerce')) return null
+      if (path.endsWith('/commerce')) {
+        if (request.method() === 'PUT') {
+          const body = request.postDataJSON()
+          assert.equal(body.expected_revision, catalog.revision)
+          catalog = { ...body.settings, revision: catalog.revision + 1 }
+        }
+        return { ok: true, catalog }
+      }
+      if (path.includes('/commerce/accounts/')) {
+        if (request.method() === 'PUT') {
+          const body = request.postDataJSON()
+          assert.equal(body.expected_revision, settings.revision)
+          settings = { ...body.settings, revision: settings.revision + 1 }
+          if (settings.first_level_percent === '40') settings.first_level_percent = '40.0000'
+        }
+        return { ok: true, target: { account_id: platform === 'vk' ? 'vk-browser-account' : 'browser-account', settings, effective: effective() } }
+      }
+      if (path.endsWith('/commerce/quote')) {
+        const body = request.postDataJSON()
+        assert.deepEqual(Object.keys(body).sort(), ['price_key', 'quantity'])
+        const price = catalog.tariffs[effective().tariff_id].prices[body.price_key]
+        assert.equal(typeof price.amount, 'string')
+        return { ok: true, quote: { id: 'browser-quote', scope: 'preview', platform, total: price.amount,
+          terms: effective(), allowed_payment_providers: platform === 'vk' ? ['lava'] : [] } }
+      }
+      throw new Error('Unexpected commercial route ' + path)
+    }
+  }
+}
+
+async function checkCommercialPanel(page, platform) {
+  await page.getByLabel('Код тарифа', { exact: true }).fill('creator')
+  await page.getByLabel('Название тарифа', { exact: true }).fill('Креатор')
+  await page.getByLabel('Позиция прайса', { exact: true }).fill('photo:test')
+  await page.getByLabel('Стоимость в бананах', { exact: true }).fill('1.2500')
+  await page.getByRole('button', { name: 'Сохранить цену', exact: true }).click()
+  await page.getByText('Цена сохранена в общем каталоге.', { exact: true }).waitFor()
+  try {
+    await page.getByLabel('Тариф аккаунта', { exact: true }).selectOption('creator')
+  } catch (error) {
+    console.error('Commercial DOM diagnostic', await page.locator('section[aria-label="Тарифы и партнёрские условия"]').innerText(), await page.locator('select').evaluateAll(nodes => nodes.map(node => node.outerHTML)))
+    throw error
+  }
+  await page.getByLabel('Индивидуальный процент первого уровня', { exact: true }).fill('40')
+  await page.getByRole('button', { name: 'Сохранить условия аккаунта', exact: true }).click()
+  await page.getByText('Индивидуальные условия сохранены.', { exact: true }).waitFor()
+  await page.getByRole('button', { name: 'Рассчитать стоимость', exact: true }).click()
+  await page.getByText('Стоимость: 1.2500 банана. Ставка: 40.0000%.' + (platform === 'vk' ? ' Для ВК предусмотрена только Lava.' : ''), { exact: true }).waitFor()
+}
+
 const directory = resolve('out')
 const types = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json', '.woff2': 'font/woff2' }
 const server = createServer(async (request, response) => {
@@ -36,6 +101,7 @@ try {
       const apiRequests = []
       const clientErrors = []
       let policy = { enabled: false, revision: 0, vk_app_id: null, vk_admin_ids: [], session_ttl_seconds: 3600, launch_max_age_seconds: 600 }
+      const commercial = commercialFixture('telegram')
       let wallet = { scope: 'sandbox', balance: { available: '0.0000', reserved: '0.0000', revision: 0 }, entries: [], receipt: null }
       await page.addInitScript(() => {
         window.Telegram = { WebApp: { initData: 'query_id=browser-test&start_param=link_' + 'b'.repeat(43), initDataUnsafe: {}, ready() {}, expand() {}, onEvent() {}, offEvent() {} } }
@@ -61,6 +127,8 @@ try {
             await route.fulfill({ status: 403, json: { ok: false } })
             return
           }
+          const commercePayload = commercial.reply(path, request)
+          if (commercePayload) return route.fulfill({ json: commercePayload })
           if (path.endsWith('/settings')) {
             if (request.method() === 'PUT') {
               const submitted = request.postDataJSON()
@@ -104,6 +172,7 @@ try {
         await page.getByRole('button', { name: 'Проверить вход', exact: true }).click()
         await page.getByText('Вход подтверждён.', { exact: true }).waitFor()
         assert(previewRequests.some(request => request.path.endsWith('/logout')))
+        await checkCommercialPanel(page, 'telegram')
       } else {
         assert.equal(await page.getByLabel('Доступ администраторам').count(), 0)
         assert.equal(previewRequests.length, 0)
@@ -119,6 +188,7 @@ try {
     const page = await context.newPage()
     page.setDefaultTimeout(15000)
     const requests = []
+    const commercial = commercialFixture('vk')
     const token = 'a'.repeat(43)
     let link = { id: 'browser-link', state: 'awaiting_confirmation', revision: 1,
       expires_at_epoch: 9999999999, source_confirmed: false, target_confirmed: false,
@@ -131,6 +201,8 @@ try {
       requests.push(path)
       assert(!path.endsWith('/bootstrap'), 'VK entry must not initialize Telegram bootstrap')
       if (!admin) return route.fulfill({ status: 403, json: { ok: false } })
+      const commercePayload = commercial.reply(path, request)
+      if (commercePayload) return route.fulfill({ json: commercePayload })
       let payload = { ok: true }
       if (path.endsWith('/session')) {
         assert.equal(request.postDataJSON().platform, 'vk')
@@ -152,6 +224,7 @@ try {
     await page.goto(base + '?vk_app_id=123&vk_user_id=2001&sign=browser-fixture#link_' + token)
     if (admin) {
       await page.getByRole('main', { name: 'Проверка аккаунта ВК' }).waitFor()
+      await checkCommercialPanel(page, 'vk')
       assert.equal(requests.filter(path => path.includes('/links')).length, 0, 'Opening must never accept or confirm')
       await page.getByRole('button', { name: 'Принять приглашение' }).click()
       await page.getByText('Отправитель: telegram 999999999. Получатель: vk 2001.', { exact: true }).waitFor()

@@ -46,11 +46,12 @@ Telegram identity cannot enable Telegram payment methods inside a VK session.
 Historical orders and webhook reconciliation continue under their original order
 snapshot; hiding a checkout option must not lose a previously accepted payment.
 
-## Pending clarification
+## Protected documents
 
-The transcript phrase 'public offer' is ambiguous with a public feed of works.
-Ask whether it means the offer document or public feed before changing either.
-Do not hide documents, disable the feed, or change model visibility by guessing.
+The user clarified: leave the offer document unchanged. Do not edit, hide or
+republish it. No public-feed or model-visibility change is inferred from the
+earlier ambiguous transcript. Continue the already authorized implementation
+without production merge or deployment.
 
 ## Acceptance additions
 

@@ -18,7 +18,11 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json', ...init.headers },
   })
-  if (response.status === 409) throw new Error(path.startsWith('links') ? 'Состояние связи изменилось. Нажмите «Обновить статус».' : path === 'wallet' ? 'Операция уже обработана с другими параметрами или резерв закрыт.' : 'Настройки изменились. Обновите страницу.')
+  if (response.status === 400 && path.startsWith('commerce')) {
+    const result = await response.json().catch(() => ({}))
+    throw new Error(result.error_code === 'commerce_invalid' ? result.error : 'Проверьте значения настроек.')
+  }
+  if (response.status === 409) throw new Error(path.startsWith('links') ? 'Состояние связи или индивидуальные условия изменились. Обновите статус и проверьте настройки аккаунтов.' : path === 'wallet' ? 'Операция уже обработана с другими параметрами или резерв закрыт.' : 'Настройки изменились. Обновите страницу.')
   if (response.status === 410) throw new Error('Ссылка истекла или отменена. Создайте новую.')
   if (response.status === 401) throw new Error('Откройте приложение заново для подтверждения входа.')
   if (response.status === 403) throw new Error('Требуется доступ администратора.')
@@ -165,4 +169,64 @@ export interface PreviewWalletReconciliation {
 
 export async function reconcileAccountPreviewWallet(signal?: AbortSignal): Promise<PreviewWalletReconciliation> {
   return withPreviewSession(headers => request<PreviewWalletReconciliation>('wallet/reconcile', { headers, signal }), signal)
+}
+
+export interface CommercialCatalog {
+  revision: number
+  default_tariff_id: string | null
+  default_partner_group_id: string | null
+  tariffs: Record<string, { label: string; prices: Record<string, { amount: string; unit: 'job' | 'second' }> }>
+  partner_groups: Record<string, { label: string; first_level_percent: string; second_level_percent: string; repeat_reward_rub: string }>
+}
+export interface CommercialTerms {
+  revision: number
+  tariff_id: string | null
+  partner_group_id: string | null
+  first_level_percent: string | null
+  second_level_percent: string | null
+  repeat_reward_rub: string | null
+}
+export interface CommercialTarget {
+  account_id: string
+  settings: CommercialTerms
+  effective: Omit<CommercialTerms, 'revision'>
+}
+export interface CommercialQuote {
+  id: string
+  scope: 'preview'
+  platform: 'telegram' | 'vk'
+  total: string
+  terms: CommercialTarget['effective']
+  allowed_payment_providers: string[]
+}
+export async function fetchCommercialCatalog(signal?: AbortSignal): Promise<CommercialCatalog> {
+  return withPreviewSession(async headers => (await request<{ catalog: CommercialCatalog }>('commerce', { headers, signal })).catalog, signal)
+}
+export async function saveCommercialCatalog(catalog: CommercialCatalog, signal?: AbortSignal): Promise<CommercialCatalog> {
+  const { revision, ...settings } = catalog
+  return withPreviewSession(async headers => (await request<{ catalog: CommercialCatalog }>('commerce', {
+    method: 'PUT', headers, signal, body: JSON.stringify({ expected_revision: revision, settings }),
+  })).catalog, signal)
+}
+export async function findCommercialAccount(platform: 'telegram' | 'vk', externalId: string, signal?: AbortSignal): Promise<CommercialTarget> {
+  const query = new URLSearchParams({ platform, external_id: externalId })
+  return withPreviewSession(async headers => (await request<{ target: CommercialTarget }>('commerce/accounts?' + query, { headers, signal })).target, signal)
+}
+export async function fetchOwnCommercialTerms(signal?: AbortSignal): Promise<CommercialTarget> {
+  return withPreviewSession(async (headers, accountId) => (await request<{ target: CommercialTarget }>(`commerce/accounts/${accountId}`, { headers, signal })).target, signal)
+}
+export async function saveCommercialTerms(target: CommercialTarget, signal?: AbortSignal): Promise<CommercialTarget> {
+  const { revision, ...settings } = target.settings
+  return withPreviewSession(async headers => (await request<{ target: CommercialTarget }>(`commerce/accounts/${target.account_id}`, {
+    method: 'PUT', headers, signal, body: JSON.stringify({ expected_revision: revision, settings }),
+  })).target, signal)
+}
+export async function createCommercialQuote(priceKey: string, quantity: number, signal?: AbortSignal): Promise<CommercialQuote> {
+  return withPreviewSession(async headers => (await request<{ quote: CommercialQuote }>('commerce/quote', {
+    method: 'POST', headers, signal, body: JSON.stringify({ price_key: priceKey, quantity }),
+  })).quote, signal)
+}
+
+export async function fetchCommercialTerms(accountId: string, signal?: AbortSignal): Promise<CommercialTarget> {
+  return withPreviewSession(async headers => (await request<{ target: CommercialTarget }>(`commerce/accounts/${accountId}`, { headers, signal })).target, signal)
 }

@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { SharedAccountLinkPreview } from '@/components/shared-account-link-preview'
 import { SharedWalletPreview } from '@/components/shared-wallet-preview'
+import { SharedCommercialPreview } from '@/components/shared-commercial-preview'
 import { fetchAccountPreviewAccess } from '@/lib/shared-account-api'
 
 function VkAccountPreview() {
@@ -21,6 +22,7 @@ function VkAccountPreview() {
     <p className="text-sm text-muted-foreground">Доступ для администраторов. Здесь можно проверить связь аккаунтов и тестовый баланс.</p>
     <SharedAccountLinkPreview vkAppId={access.vk_app_id} />
     <SharedWalletPreview />
+    <SharedCommercialPreview />
   </main>
 }
 

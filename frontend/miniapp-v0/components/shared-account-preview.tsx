@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { SharedWalletPreview } from '@/components/shared-wallet-preview'
+import { SharedCommercialPreview } from '@/components/shared-commercial-preview'
 import { SharedAccountLinkPreview } from '@/components/shared-account-link-preview'
 import {
   checkAccountPreviewLogin, fetchAccountPreviewSettings, saveAccountPreviewSettings,
@@ -108,6 +109,7 @@ export function SharedAccountPreview({ isAdmin }: { isAdmin: boolean }) {
       </> : <p className="text-sm text-muted-foreground">Загрузка настроек…</p>}
       {message ? <p role="status" className="text-sm">{message}</p> : null}
       {policy?.enabled ? <SharedWalletPreview key={policy.revision} /> : null}
+      {policy?.enabled ? <SharedCommercialPreview key={'commerce:' + policy.revision} /> : null}
       {policy?.enabled ? <SharedAccountLinkPreview key={'link:' + policy.revision} vkAppId={policy.vk_app_id} /> : null}
     </section>
   )

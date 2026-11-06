@@ -9,7 +9,9 @@ from aiohttp import web
 
 from bot.config import config
 
-from .auth import verify_telegram, verify_vk
+from .auth import external_id, verify_telegram, verify_vk
+from .commercial import CommercialValidation
+from .commercial_store import CommercialStore
 from .errors import AuthenticationError, PreviewConflict
 from .links import LinkExpired, LinkService
 from .policy import load_policy, save_policy
@@ -147,6 +149,54 @@ async def links(request: web.Request) -> web.Response:
     return response({'ok': True, 'link': result})
 
 
+async def commerce(request: web.Request) -> web.Response:
+    policy = await load_policy()
+    if not policy.enabled:
+        return response({'ok': False, 'error': 'Preview unavailable'}, 404)
+    account = await get_session(_bearer(request), policy.revision)
+    if not policy.allows(account.identity):
+        raise PermissionError('Administrator preview only')
+    service = CommercialStore()
+    if request.path.endswith('/commerce/quote'):
+        body = await _body(request)
+        if set(body) - {'price_key', 'quantity'}:
+            raise CommercialValidation('Тариф и платформа определяются сервером.')
+        quote = await service.quote(account, body.get('price_key'), body.get('quantity', 1))
+        logger.info('shared_commerce_quote_created quote_id=%s account_id=%s platform=%s catalog_revision=%s',
+                    quote['id'], account.id, account.identity.platform, quote['catalog_revision'])
+        return response({'ok': True, 'quote': quote})
+    if request.match_info.get('quote_id'):
+        return response({'ok': True, 'quote': await service.get_quote(account.id, request.match_info['quote_id'])})
+    if request.path.endswith('/commerce/accounts'):
+        platform = request.query.get('platform')
+        if platform not in {'telegram', 'vk'}:
+            raise CommercialValidation('Выберите платформу аккаунта.')
+        try:
+            target_external_id = external_id(request.query.get('external_id'))
+        except AuthenticationError as exc:
+            raise CommercialValidation('Укажите корректный ID пользователя.') from exc
+        target = await service.find_account(platform, target_external_id)
+        return response({'ok': True, 'target': target})
+    if request.match_info.get('account_id'):
+        target_id = request.match_info['account_id']
+        if request.method == 'PUT':
+            body = await _body(request)
+            target = await service.save_terms(account.identity, target_id, body.get('settings'), body.get('expected_revision'))
+            logger.info('shared_commerce_terms_updated account_id=%s actor_platform=%s actor_external_id=%s revision=%s',
+                        target['account_id'], account.identity.platform, account.identity.external_id, target['settings']['revision'])
+        else:
+            target = await service.terms(target_id)
+        return response({'ok': True, 'target': target})
+    if request.method == 'PUT':
+        body = await _body(request)
+        catalog = await service.save_catalog(account.identity, body.get('settings'), body.get('expected_revision'))
+        logger.info('shared_commerce_catalog_updated actor_platform=%s actor_external_id=%s revision=%s',
+                    account.identity.platform, account.identity.external_id, catalog.revision)
+    else:
+        catalog = await service.catalog()
+    return response({'ok': True, 'catalog': catalog.payload()})
+
+
 def _guard(handler):
     async def guarded(request):
         try:
@@ -161,6 +211,8 @@ def _guard(handler):
             return response({'ok': False, 'error': 'Invitation expired or cancelled'}, 410)
         except InsufficientFunds:
             return response({'ok': False, 'error': 'Insufficient available balance'}, 402)
+        except CommercialValidation as exc:
+            return response({'ok': False, 'error': str(exc), 'error_code': 'commerce_invalid'}, 400)
         except (ValueError, TypeError):
             return response({'ok': False, 'error': 'Invalid request'}, 400)
         except Exception as exc:  # noqa: BLE001 - HTTP boundary returns a stable, redacted failure.
@@ -184,3 +236,10 @@ def setup_shared_account_routes(app: web.Application, miniapp_root: str) -> None
     app.router.add_post(root + '/links/accept', _guard(links))
     app.router.add_get(root + '/links/{link_id}', _guard(links))
     app.router.add_post(root + '/links/{link_id}/{action:accept|confirm|cancel}', _guard(links))
+    app.router.add_get(root + '/commerce', _guard(commerce))
+    app.router.add_put(root + '/commerce', _guard(commerce))
+    app.router.add_get(root + '/commerce/accounts', _guard(commerce))
+    app.router.add_get(root + '/commerce/accounts/{account_id}', _guard(commerce))
+    app.router.add_put(root + '/commerce/accounts/{account_id}', _guard(commerce))
+    app.router.add_post(root + '/commerce/quote', _guard(commerce))
+    app.router.add_get(root + '/commerce/quotes/{quote_id}', _guard(commerce))

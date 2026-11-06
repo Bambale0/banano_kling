@@ -9,6 +9,11 @@ from uuid import uuid4
 
 from bot import db as db_backend
 
+from .commercial_store import (
+    ensure_commercial_schema,
+    lock_catalog,
+    merge_commercial_terms,
+)
 from .errors import AuthenticationError, PreviewConflict
 from .store import Account, _token_hash
 from .wallet import Balance, WalletService, canonical_account, ensure_wallet_schema
@@ -62,6 +67,7 @@ def _payload(link: dict) -> dict:
 
 async def ensure_link_schema(db) -> None:
     await ensure_wallet_schema(db)
+    await ensure_commercial_schema(db)
     if db_backend.is_postgres():
         await db.execute('SELECT pg_advisory_xact_lock(?)', (80420161107,))
     else:
@@ -174,6 +180,9 @@ class LinkService:
             return _payload(link)
 
     async def _merge(self, db, link: dict) -> str:
+        # Global lock order: link, catalog, sorted accounts. Commercial edits
+        # take catalog before account too, preventing merge/edit deadlocks.
+        await lock_catalog(db)
         originals = [link['source_account_id'], link['target_account_id']]
         accounts = sorted({await canonical_account(db, account_id) for account_id in originals})
         suffix = ' FOR UPDATE' if db_backend.is_postgres() else ''
@@ -192,6 +201,7 @@ class LinkService:
         if len(accounts) == 1:
             return canonical
         other = accounts[1]
+        await merge_commercial_terms(db, canonical, other, link['id'])
         conflict = await (await db.execute('''SELECT platform FROM shared_account_identities WHERE account_id IN (?, ?)
             GROUP BY platform HAVING COUNT(*) > 1''', (canonical, other))).fetchone()
         if conflict:

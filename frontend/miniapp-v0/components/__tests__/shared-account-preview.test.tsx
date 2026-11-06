@@ -1,3 +1,4 @@
+jest.mock('../shared-commercial-preview', () => ({ SharedCommercialPreview: () => null }))
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { SharedAccountPreview } from '../shared-account-preview'
