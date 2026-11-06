@@ -186,54 +186,116 @@ try {
   for (const admin of [false, true]) {
     const context = await browser.newContext({ viewport: { width: 430, height: 900 } })
     const page = await context.newPage()
+    page.on('pageerror', error => console.error('VK common app page error:', error.message))
+    page.on('console', message => { if (message.type() === 'error') console.error('VK common app console error:', message.text()) })
     page.setDefaultTimeout(15000)
     const requests = []
+    const appCredentials = []
     const commercial = commercialFixture('vk')
     const token = 'a'.repeat(43)
-    let link = { id: 'browser-link', state: 'awaiting_confirmation', revision: 1,
-      expires_at_epoch: 9999999999, source_confirmed: false, target_confirmed: false,
-      source_identity: { platform: 'telegram', external_id: '999999999' },
-      target_identity: { platform: 'vk', external_id: '2001' } }
     await page.route('**/telegram-web-app.js', route => route.fulfill({ contentType: 'application/javascript', body: '// deterministic bridge' }))
     await page.route('**/mini-app/api/**', async route => {
       const request = route.request()
       const path = new URL(request.url()).pathname
       requests.push(path)
-      assert(!path.endsWith('/bootstrap'), 'VK entry must not initialize Telegram bootstrap')
-      if (!admin) return route.fulfill({ status: 403, json: { ok: false } })
+      if (!admin) {
+        assert(!path.endsWith('/bootstrap'), 'Denied VK entry must not initialize the shared app')
+        return route.fulfill({ status: 403, json: { ok: false } })
+      }
       const commercePayload = commercial.reply(path, request)
       if (commercePayload) return route.fulfill({ json: commercePayload })
-      let payload = { ok: true }
+      let payload = { ok: true, items: [], feed: [], prompts: [], categories: [], references: [], notifications: [] }
       if (path.endsWith('/session')) {
         assert.equal(request.postDataJSON().platform, 'vk')
-        payload = { ok: true, session_token: 'synthetic-vk-session', account: { id: 'vk-browser-account' } }
+        payload = { ok: true, session_token: 's'.repeat(43), account: { id: 'vk-browser-account' } }
       } else if (path.endsWith('/me')) {
-        payload = { ok: true, account: { id: 'vk-browser-account' }, preview: { revision: 1, vk_app_id: 123 } }
+        payload = {
+          ok: true,
+          account: { id: 'vk-browser-account' },
+          preview: {
+            revision: 1,
+            vk_app_id: 123,
+            telegram_bot_username: 'test_bot',
+            telegram_linked: true,
+          },
+        }
+      } else if (path.endsWith('/bootstrap')) {
+        const body = request.postDataJSON()
+        appCredentials.push(body.init_data)
+        payload = {
+          ok: true,
+          items: [],
+          feed: [],
+          prompts: [],
+          categories: [],
+          references: [],
+          notifications: [],
+          telegram_id: 1001,
+          first_name: 'VK',
+          last_name: 'Admin',
+          telegram_username: 'linked_admin',
+          credits: 301,
+          is_admin: true,
+          bot_username: 'test_bot',
+          referral_code: 'VKADMIN',
+          telegram_chat_available: false,
+          telegram_bot_start_required: true,
+          actions: [],
+          payment_packages: [],
+          image_models: [],
+          video_models: [],
+          recent_tasks: [],
+          saved_references: [],
+        }
+      } else if (path.endsWith('/settings')) {
+        payload = {
+          ok: true,
+          settings: {
+            enabled: true,
+            revision: 1,
+            vk_app_id: 123,
+            vk_admin_ids: [2001],
+            session_ttl_seconds: 3600,
+            launch_max_age_seconds: 600,
+            link_ttl_seconds: 600,
+          },
+        }
       } else if (path.endsWith('/wallet')) {
-        payload = { ok: true, scope: 'sandbox', balance: { available: '0.0000', reserved: '0.0000', revision: 0 }, entries: [], receipt: null }
-      } else if (path.endsWith('/links/accept')) {
-        assert.equal(request.postDataJSON().token, token)
-        payload = { ok: true, link }
-      } else if (path.endsWith('/links/browser-link/confirm')) {
-        assert.equal(request.postDataJSON().expected_revision, 1)
-        link = { ...link, revision: 2, target_confirmed: true }
-        payload = { ok: true, link }
+        payload = {
+          ok: true,
+          scope: 'sandbox',
+          balance: { available: '0.0000', reserved: '0.0000', revision: 0 },
+          entries: [],
+          receipt: null,
+        }
+      } else if (path.endsWith('/logout')) {
+        payload = { ok: true }
       }
       await route.fulfill({ json: payload })
     })
     await page.goto(base + '?vk_app_id=123&vk_user_id=2001&sign=browser-fixture#link_' + token)
     if (admin) {
-      await page.getByRole('main', { name: 'Проверка аккаунта ВК' }).waitFor()
-      await checkCommercialPanel(page, 'vk')
-      assert.equal(requests.filter(path => path.includes('/links')).length, 0, 'Opening must never accept or confirm')
-      await page.getByRole('button', { name: 'Принять приглашение' }).click()
-      await page.getByText('Отправитель: telegram 999999999. Получатель: vk 2001.', { exact: true }).waitFor()
-      await page.getByRole('button', { name: 'Подтверждаю связь аккаунтов' }).click()
-      await page.getByText('Подтверждение отправителя: ожидается. Подтверждение получателя: да.', { exact: true }).waitFor()
+      await page.getByRole('button', { name: 'Профиль', exact: true }).waitFor()
+      for (const tab of ['Студия', 'Тренды', 'Фото', 'Видео', 'Motion', 'Лента', 'Сервисы', 'Профиль']) {
+        assert.equal(await page.getByRole('button', { name: tab, exact: true }).count(), 1)
+      }
+      assert.equal(requests.filter(path => path.includes('/links')).length, 0, 'Linked opening must not accept or confirm')
+      assert.ok(requests.some(path => path.endsWith('/bootstrap')), 'Linked VK admin must initialize the shared app')
+      assert.ok(appCredentials.length >= 1)
+      assert.ok(appCredentials.every(value => value === 'vk_session:' + 's'.repeat(43)))
+      assert.equal(await page.getByRole('heading', { name: 'Свяжите аккаунты ТГ и ВК' }).count(), 0)
+      assert.equal(await page.getByRole('heading', { name: 'Разреши боту писать тебе' }).count(), 0)
+      await page.getByRole('button', { name: 'Профиль', exact: true }).click()
+      try {
+        await checkCommercialPanel(page, 'vk')
+      } catch (error) {
+        console.error('VK common app diagnostic', { requests, body: (await page.locator('body').innerText()).slice(0, 4000) })
+        throw error
+      }
     } else {
       await page.getByText('Требуется доступ администратора.', { exact: true }).waitFor()
       assert.equal(await page.getByLabel('Код из ссылки').count(), 0)
-      assert.equal(requests.filter(path => path.includes('/links') || path.endsWith('/wallet')).length, 0)
+      assert.equal(requests.filter(path => path.includes('/links') || path.endsWith('/bootstrap')).length, 0)
     }
     assert.equal(await page.evaluate(() => Object.values(sessionStorage).some(value => /link_[A-Za-z0-9_-]{43}/.test(value))), false, 'VK invitation must stay out of browser storage')
     console.log(`PASS VK entry admin=${admin} width=430`)
