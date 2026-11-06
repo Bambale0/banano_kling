@@ -1,0 +1,52 @@
+# Домен приложения ВКонтакте
+
+Канонический адрес: **https://vk.neuromixbot.com/**, приложение должно открываться в корне `/`.
+Telegram продолжает использовать свой существующий адрес и путь.
+
+## Подготовлено 2026-11-06
+
+- DNS указывает напрямую на сервер Тани (144.76.188.75).
+- Выпущен отдельный сертификат Let's Encrypt для vk.neuromixbot.com, срок до 2027-02-04; Certbot настроил автоматическое продление через webroot /var/www/html.
+- HTTP перенаправляет на HTTPS; ACME challenge обслуживается отдельно.
+- Загружен maintenance-only vhost из ops/nginx/vk.neuromixbot.com.maintenance.conf. Все прикладные пути возвращают 503 с Cache-Control: no-store. API и незавершённая сборка не опубликованы.
+- Проверено: HTTP / → 301 на HTTPS; HTTPS / и прикладной API → 503; отсутствующий ACME challenge → 404; TLS hostname verification успешна; certbot.timer active; существующая Telegram mini-app → 200.
+- frame-ancestors допускает VK; Telegram-домен и его vhost не изменялись.
+
+## До публикации приложения
+
+Это подготовка домена, а не релиз приложения. Сохраняется запрет пользователя на production merge/deploy незавершённого общего продукта.
+
+Реализована отдельная сборка `npm run build:vk`: NEXT_PUBLIC_MINIAPP_BASE_PATH=/, NEXT_PUBLIC_MINIAPP_PLATFORM=vk, NEXT_PUBLIC_MINIAPP_API_BASE=/mini-app/api. Неопределённый base path сохраняет /mini-app для Telegram. VK-экспорт использует ресурсы /_next в корне; post-export patch учитывает выбранный префикс, inline CSS и версии ресурсов. Telegram SDK и ready/expand bootstrap в VK-сборке не запускаются. Прямой вход без VK launch показывает предложение открыть приложение из ВКонтакте; сохранённый Telegram initData не используется. Это выбор поверхности, не авторизация: сервер по-прежнему проверяет подпись, срок и allowlist администратора.
+
+Проверено: обе статические сборки и TypeScript; 3 проверки export-конфига/постобработки; 89 Jest suites / 676 tests; браузерные сценарии прямого входа, отказа обычному пользователю и интерфейса администратора на 430px и 1280px. Browser API замокан: реальная VK-подпись и доступ из кабинета этим не подтверждаются. CI включает обе сборки, export-проверки и Chromium smoke. Сборка остаётся в изолированной рабочей копии, не в /var/www.
+
+После завершения интеграции привязать проверенную сборку и согласованные API-маршруты в отдельном vhost. Публичное открытие — отдельным этапом после полной приёмки. Не копировать Telegram iframe-заголовки и не открывать приложение простым наличием VK-параметров в URL.
+
+В кабинете VK требуется указать https://vk.neuromixbot.com/ как URL приложения; кабинет на этом этапе не менялся. Публичная оферта не менялась.
+
+## Оставшиеся условия запуска
+
+На 06.11.2026 в рабочем TG-контейнере отсутствует VK_MINI_APP_SECRET; политика preview и настройки native mini-app не настроены. Найденный VK_SECRET_KEY относится к существующему боту и не может автоматически считаться секретом Mini App. Нужны реальные параметры зарегистрированного VK-приложения и проверенный VK allowlist, затем вход из VK cabinet/client. Секрет вводится в серверный secret store, не в Git, документацию или чат.
+
+Полный продукт также блокируют перечисленные в docs/adr/20261106-opening-balance-readiness.md финансовые адаптеры/переход и полная VK generation/history/feed parity. Root-сборка не объявляется готовым общим продуктом.
+
+
+## Уточнение пользовательского сценария — 06.11.2026
+
+В текстовом ВК-боте требуется только нативная кнопка «Открыть приложение» (`open_app`) из companion PR tanyavk#65. Сценарии текстового бота не переносятся и не перерабатываются. Общая апка использует согласованные аккаунты и серверные данные, а не отдельную копию Telegram UI и данных для ВК. Это уточнение не отменяет требования безопасной общей финансовой системы.
+
+Апка должна открываться сразу на весь доступный экран клиента ВК. VK entry теперь занимает как минимум 100dvh и всю доступную ширину (контент ограничен по ширине для читаемости). Нативный запуск использует app_id; обычная URL-кнопка на домен не заменяет native Mini App launch и подписанные параметры.
+
+Важно для приёмки: CSS 100dvh заполняет viewport приложения, но не является доказательством системного fullscreen или скрытия оболочки ВК. В официальных типах VK Bridge проверены VKWebAppResizeWindow (размер iframe) и VKWebAppSetViewSettings (цвета/status-bar style); отдельного fullscreen-метода в проверенном контракте нет. Не добавлять выдуманные VKWebAppExpand/VKWebAppRequestFullscreen и не считать resizeWindow системным fullscreen. Реальное поведение запуска необходимо проверить в мобильном клиенте с настоящим app_id.
+
+Источник контракта: https://github.com/VKCOM/vk-bridge/blob/master/packages/core/src/types/data.ts .
+
+
+06.11.2026 пользователь зарегистрировал VK Mini App **54880352**: https://vk.com/app54880352 . Этот ID должен использоваться в VK signed-launch policy и нативной кнопке; companion-конфигурация подготовлена в tanyavk PR65. ID публичный, секрет приложения в репозиторий не добавляется. Регистрация ещё не является подтверждённым входом через VK: Mini App secret и реальная клиентская приёмка остаются необходимы.
+
+
+## Admin-only production preview authorization — 06.11.2026
+
+The owner explicitly authorized merge and production deployment of the current administrator preview. This supersedes the earlier no-deploy hold only for the signed, server-enforced admin surface. Ordinary VK and Telegram users remain denied; the sandbox wallet cannot become live funds. Public rollout, live financial cutover, payments, generation/history/feed parity and offer changes remain out of scope and blocked.
+
+Release additions after exact-head review: magic-link launch data is removed from the application cache, launch snapshot and Telegram SDK session key; the authenticated `/me` response supplies the configured Telegram bot username so the standalone VK root can create a VK→Telegram invitation without a hardcoded client value. Production requires `VK_MINI_APP_SECRET` and `TELEGRAM_BOT_USERNAME` in secret/runtime configuration. Rollback is the isolated PR revert plus restoration of the maintenance vhost; preview policy can be disabled independently.

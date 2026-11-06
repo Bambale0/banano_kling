@@ -61,6 +61,9 @@ jobs:
           mkdir -p .e2e-server/mini-app
           cp -R out/. .e2e-server/mini-app/
 
+      - name: Verify shared-account administrator preview
+        run: node e2e/shared-account-preview.mjs
+
       - name: Run critical browser and iOS share flows
         run: |
           node e2e/payment-browser.mjs

@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "NEXT_EXPORT=1 next build --webpack && node scripts/patch-telegram-head.mjs",
+    "build:vk": "NEXT_PUBLIC_MINIAPP_BASE_PATH=/ NEXT_PUBLIC_MINIAPP_PLATFORM=vk NEXT_PUBLIC_MINIAPP_API_BASE=/mini-app/api npm run build",
     "start": "next start",
     "lint": "eslint .",
     "test": "jest --config jest.config.ts --passWithNoTests"
