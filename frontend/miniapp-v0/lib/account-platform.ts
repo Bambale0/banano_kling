@@ -15,13 +15,13 @@ export function accountLaunch(): { platform: AccountPlatform; launch_data: strin
   return { platform: 'telegram', launch_data: launch }
 }
 
-export function accountLinkUrl(platform: AccountPlatform, token: string, vkAppId: number | null): string {
+export function accountLinkUrl(platform: AccountPlatform, token: string, vkAppId: number | null, telegramBotUsername = ''): string {
   if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new Error('Некорректная ссылка.')
   if (platform === 'vk') {
     if (!vkAppId) throw new Error('Сначала укажите ID приложения ВК.')
     return `https://vk.com/app${vkAppId}#link_${token}`
   }
-  const username = getRuntimeBotUsername()
+  const username = telegramBotUsername.trim().replace(/^@/, '') || getRuntimeBotUsername()
   if (!/^[A-Za-z0-9_]+$/.test(username)) throw new Error('Имя бота пока не настроено.')
   return `https://t.me/${username}?startapp=link_${token}`
 }

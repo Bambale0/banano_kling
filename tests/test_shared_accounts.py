@@ -109,7 +109,8 @@ async def login(client, user_id=ADMIN):
     })
 
 
-async def test_admin_can_login_and_reuse_a_platform_neutral_account():
+async def test_admin_can_login_and_reuse_a_platform_neutral_account(monkeypatch):
+    monkeypatch.setenv('TELEGRAM_BOT_USERNAME', 'Neuromixx_bot')
     async with preview_client() as client:
         await enable(client)
         first = await login(client)
@@ -120,7 +121,9 @@ async def test_admin_can_login_and_reuse_a_platform_neutral_account():
         headers = {'Authorization': 'Bearer ' + token}
         profile = await client.get(ROOT + '/me', headers=headers)
         assert profile.status == 200
-        assert (await profile.json())['account']['id'] == session['account']['id']
+        profile_data = await profile.json()
+        assert profile_data['account']['id'] == session['account']['id']
+        assert profile_data['preview']['telegram_bot_username'] == 'Neuromixx_bot'
         again = await (await login(client)).json()
         assert again['account']['id'] == session['account']['id']
         assert 'credits' not in session['account']  # No invented/migrated wallet.

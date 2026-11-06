@@ -154,8 +154,14 @@ export async function updateAccountLink(link: AccountLink, action: 'get' | 'conf
   })).link, signal)
 }
 
-export async function fetchAccountPreviewAccess(signal?: AbortSignal): Promise<{ revision: number; vk_app_id: number | null }> {
-  return withPreviewSession(async headers => (await request<{ preview: { revision: number; vk_app_id: number | null } }>('me', { headers, signal })).preview, signal)
+export interface AccountPreviewAccess {
+  revision: number
+  vk_app_id: number | null
+  telegram_bot_username: string
+}
+
+export async function fetchAccountPreviewAccess(signal?: AbortSignal): Promise<AccountPreviewAccess> {
+  return withPreviewSession(async headers => (await request<{ preview: AccountPreviewAccess }>('me', { headers, signal })).preview, signal)
 }
 
 export interface PreviewWalletReconciliation {

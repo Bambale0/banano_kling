@@ -251,3 +251,10 @@ Final shared-account matrix including opening rehearsals now verified locally on
 
 
 06.11 clarification: text VK bot needs only the native launch button, no new text flows or text-bot feature parity. Common app/server synchronization remains required. Requested immediate full-screen launch; VK entry surfaces now fill the available viewport (min-height100dvh,width100%, bounded readable content). Official VK Bridge contract inspected: resizeWindow only sizes iframe; view settings only control appearance; no invented fullscreen method added. CSS viewport fill is not acceptance of client-level fullscreen. Actual native launch/button enablement remains blocked on registered app_id and client acceptance, and shared app authentication requires its real secret.
+
+
+## Admin-only production preview authorization — 06.11.2026
+
+The owner explicitly authorized merge and production deployment of the current administrator preview. This supersedes the earlier no-deploy hold only for the signed, server-enforced admin surface. Ordinary VK and Telegram users remain denied; the sandbox wallet cannot become live funds. Public rollout, live financial cutover, payments, generation/history/feed parity and offer changes remain out of scope and blocked.
+
+Release additions after exact-head review: magic-link launch data is removed from the application cache, launch snapshot and Telegram SDK session key; the authenticated `/me` response supplies the configured Telegram bot username so the standalone VK root can create a VK→Telegram invitation without a hardcoded client value. Production requires `VK_MINI_APP_SECRET` and `TELEGRAM_BOT_USERNAME` in secret/runtime configuration. Rollback is the isolated PR revert plus restoration of the maintenance vhost; preview policy can be disabled independently.

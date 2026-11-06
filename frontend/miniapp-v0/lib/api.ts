@@ -125,7 +125,7 @@ export function getInitData(): string {
     try {
       window.__BANANO_TG_INIT_DATA__ = initData
       if (containsAccountLink(initData)) {
-        for (const key of [INIT_DATA_STORAGE_KEY, '__banano_initial_hash', '__banano_initial_search']) window.sessionStorage.removeItem(key)
+        for (const key of [INIT_DATA_STORAGE_KEY, '__banano_initial_href', '__banano_initial_hash', '__banano_initial_search', '__telegram__initParams']) window.sessionStorage.removeItem(key)
       } else {
         window.sessionStorage.setItem(INIT_DATA_STORAGE_KEY, initData)
       }

@@ -96,3 +96,10 @@ Protocol references: [Telegram launch validation](https://core.telegram.org/bots
 [VK launch-signature example](https://github.com/VKCOM/vk-apps-launch-params).
 The latter is an archived official example; real VK-client launch and cabinet
 configuration remain an acceptance gate for the later VK entrypoint slice.
+
+
+## Admin-only production preview authorization — 06.11.2026
+
+The owner explicitly authorized merge and production deployment of the current administrator preview. This supersedes the earlier no-deploy hold only for the signed, server-enforced admin surface. Ordinary VK and Telegram users remain denied; the sandbox wallet cannot become live funds. Public rollout, live financial cutover, payments, generation/history/feed parity and offer changes remain out of scope and blocked.
+
+Release additions after exact-head review: magic-link launch data is removed from the application cache, launch snapshot and Telegram SDK session key; the authenticated `/me` response supplies the configured Telegram bot username so the standalone VK root can create a VK→Telegram invitation without a hardcoded client value. Production requires `VK_MINI_APP_SECRET` and `TELEGRAM_BOT_USERNAME` in secret/runtime configuration. Rollback is the isolated PR revert plus restoration of the maintenance vhost; preview policy can be disabled independently.

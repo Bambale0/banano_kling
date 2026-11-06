@@ -97,6 +97,7 @@ async def profile(request: web.Request) -> web.Response:
         raise PermissionError('Administrator preview only')
     return response({'ok': True, 'account': account.payload(), 'preview': {
         'revision': policy.revision, 'vk_app_id': policy.vk_app_id,
+        'telegram_bot_username': os.getenv('TELEGRAM_BOT_USERNAME', '').strip().lstrip('@'),
         'link_ttl_seconds': policy.link_ttl_seconds,
     }})
 

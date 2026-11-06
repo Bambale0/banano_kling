@@ -7,7 +7,7 @@ import { SharedCommercialPreview } from '@/components/shared-commercial-preview'
 import { fetchAccountPreviewAccess } from '@/lib/shared-account-api'
 
 function VkAccountPreview() {
-  const [access, setAccess] = useState<{ revision: number; vk_app_id: number | null } | null>(null)
+  const [access, setAccess] = useState<{ revision: number; vk_app_id: number | null; telegram_bot_username: string } | null>(null)
   const [message, setMessage] = useState('Подтверждаем вход…')
   useEffect(() => {
     const controller = new AbortController()
@@ -20,7 +20,7 @@ function VkAccountPreview() {
   return <main className="mx-auto min-h-dvh w-full max-w-lg space-y-4 p-4" aria-label="Проверка аккаунта ВК">
     <h1 className="text-xl font-semibold">Общие аккаунты ТГ и ВК</h1>
     <p className="text-sm text-muted-foreground">Доступ для администраторов. Здесь можно проверить связь аккаунтов и тестовый баланс.</p>
-    <SharedAccountLinkPreview vkAppId={access.vk_app_id} />
+    <SharedAccountLinkPreview vkAppId={access.vk_app_id} telegramBotUsername={access.telegram_bot_username} />
     <SharedWalletPreview />
     <SharedCommercialPreview />
   </main>

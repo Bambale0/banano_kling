@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { accountLaunch, accountLinkUrl, incomingAccountLink } from '@/lib/account-platform'
 import { acceptAccountLink, createAccountLink, updateAccountLink, type AccountLink } from '@/lib/shared-account-api'
 
-export function SharedAccountLinkPreview({ vkAppId }: { vkAppId: number | null }) {
+export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '' }: { vkAppId: number | null; telegramBotUsername?: string }) {
   const [link, setLink] = useState<AccountLink | null>(null)
   const [url, setUrl] = useState('')
   const [token, setToken] = useState('')
@@ -36,10 +36,10 @@ export function SharedAccountLinkPreview({ vkAppId }: { vkAppId: number | null }
     {!active ? <Button disabled={busy} onClick={() => void run(async signal => {
       const target = accountLaunch().platform === 'telegram' ? 'vk' : 'telegram'
       // Validate configured destination before creating a one-time invitation.
-      accountLinkUrl(target, 'a'.repeat(43), vkAppId)
+      accountLinkUrl(target, 'a'.repeat(43), vkAppId, telegramBotUsername)
       const created = await createAccountLink(target, signal)
       setLink(created)
-      setUrl(accountLinkUrl(target, created.token!, vkAppId))
+      setUrl(accountLinkUrl(target, created.token!, vkAppId, telegramBotUsername))
     })}>Создать ссылку</Button> : null}
     {url && active ? <label className="block text-sm">Ссылка для другого аккаунта
       <input aria-label="Ссылка для другого аккаунта" readOnly value={url} className="mt-1 w-full rounded border border-border bg-background p-2" onFocus={event => event.target.select()} />
