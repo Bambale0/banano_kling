@@ -1,5 +1,48 @@
 # TG–VK shared accounts execution ledger
 
+## Opening-balance readiness audit — 06.11.2026
+
+Baseline PR415 f1e8b32e873dd27dc36daa6cfa6c0ea54340ea04; VK master
+cbbfb48ab494591b60ab06fd81a76a3cee69c08e. No production access or writes.
+Existing exact wallet/link/reconciliation services are reused. Missing: opening
+claims, precision approval, writer fencing, legacy event/settlement bridge.
+Public test seams authorized by this task: import rehearsal service, wallet
+commands, confirmed linking API, read-only migration diagnostics. No UI change.
+Plan: (1) inventory financial writers and evidence; (2) test-first sandbox-only
+one-time opening claims incl. zero, identity ownership and merge/replay races;
+(3) regression diagnostics for invalid/ambiguous balances; (4) focused DB tests
+and review; (5) publish to the existing Draft branch without merge/deploy.
+No mutable economic settings added. Exact currency precision remains 10,000;
+historical float normalization is an explicit release decision, never automatic.
+PostgreSQL unavailable locally: no service/Docker; package-backed server also
+could not initialize due restricted user creation. No production fallback used.
+Real provider/bot/browser smoke is inapplicable to this offline sandbox slice.
+
+Implemented sandbox-only opening rehearsal on the existing wallet, immutable
+identity-scoped claims (including zero), exact amount/evidence binding and
+atomic rollback. No live switch/route/CLI. Read-only preflight now reports
+exact/review/invalid balances in consistent read snapshots. Full writer audit,
+precision/history caveats and checkable cutover rules are in
+docs/adr/20261106-opening-balance-readiness.md. Production remains NOT READY.
+
+RED/GREEN: missing rehearsal module; diagnostic readiness keys absent; tiny
+scientific amount incorrectly exact-zero before lower-bound fix. Independent
+standards review reproduced that Decimal underflow; fixed with public audit
+regression. Spec review requested equal TG/VK numeric IDs and conflicting
+concurrent snapshot claims; added, then tightened exact expected balances.
+No unresolved review blockers in this sandbox slice.
+
+Final combined account/wallet/opening/link/commerce/audit/browser-auth matrix:
+109 passed, 102 skipped (PostgreSQL not configured). Focused opening/audit:
+24 passed, 21 PostgreSQL skipped. Ruff and diff whitespace passed. The existing
+Shared accounts preview CI explicitly includes opening tests on SQLite + isolated
+PostgreSQL; exact published SHA CI is checked separately, not assumed green.
+Synthetic actual VK Database-method reproduction passed for both legacy and
+extracted classes: start10 +2.5 -1.125 +refund =12.5; units stayed0, transaction
+sum2.5 excludes starting10; duplicate refund rejected. No VK production code
+changed. All real writer conversion, legacy event/refund bridge, freeze protocol,
+normalization approval and production migration remain release blockers.
+
 Parent plan #408; E1 #409. Isolated branch:
 feature/tg-vk-identity-preview-20261105.
 Baseline tanyapi@03a9918db303b8ac075115fde8cbccecf6d10aeb.

@@ -96,6 +96,19 @@ WALLET_SCHEMA = (
         PRIMARY KEY(scope, reservation_key),
         FOREIGN KEY(scope, account_id) REFERENCES shared_wallets(scope, account_id),
         CHECK(released_units <= amount_units AND captured_units <= amount_units - released_units))''',
+    '''CREATE TABLE IF NOT EXISTS shared_wallet_opening_claims (
+        scope TEXT NOT NULL CHECK(scope = 'sandbox'),
+        platform TEXT NOT NULL CHECK(platform IN ('telegram', 'vk')),
+        external_id BIGINT NOT NULL CHECK(external_id > 0),
+        account_id TEXT NOT NULL REFERENCES shared_accounts(id),
+        request_hash TEXT NOT NULL,
+        snapshot_id TEXT NOT NULL,
+        evidence_hash TEXT NOT NULL,
+        amount_units BIGINT NOT NULL CHECK(amount_units >= 0),
+        operation_key TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY(scope, platform, external_id),
+        FOREIGN KEY(scope, operation_key) REFERENCES shared_wallet_entries(scope, operation_key))''',
 )
 
 
@@ -126,6 +139,20 @@ async def ensure_wallet_schema(db) -> None:
                 await execute(f'''CREATE TRIGGER IF NOT EXISTS shared_wallet_entries_no_{operation.lower()}
                     BEFORE {operation} ON shared_wallet_entries
                     BEGIN SELECT RAISE(ABORT, 'wallet ledger is append-only'); END''')
+        if db_backend.is_postgres():
+            await execute('''DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_trigger
+                    WHERE tgname = 'shared_wallet_opening_claims_append_only_guard'
+                    AND tgrelid = 'shared_wallet_opening_claims'::regclass) THEN
+                    CREATE TRIGGER shared_wallet_opening_claims_append_only_guard
+                    BEFORE UPDATE OR DELETE OR TRUNCATE ON shared_wallet_opening_claims
+                    FOR EACH STATEMENT EXECUTE FUNCTION shared_wallet_entries_append_only();
+                END IF; END $$''')
+        else:
+            for operation in ('UPDATE', 'DELETE'):
+                await execute(f'''CREATE TRIGGER IF NOT EXISTS shared_wallet_opening_claims_no_{operation.lower()}
+                    BEFORE {operation} ON shared_wallet_opening_claims
+                    BEGIN SELECT RAISE(ABORT, 'opening claims are append-only'); END''')
         await db.commit()
     except Exception:
         await db.rollback()

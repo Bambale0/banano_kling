@@ -47,6 +47,7 @@ backups/
 tests/
 !tests/
 tests/*
+!tests/test_shared_wallet_openings.py
 !tests/test_seedance25_direct_edit.py
 !tests/live/
 tests/live/*

@@ -1,5 +1,9 @@
 # Shared wallet foundation
 
+Opening import readiness and sandbox rehearsal:
+[20261106-opening-balance-readiness.md](20261106-opening-balance-readiness.md).
+Production financial cutover remains blocked; the rehearsal is not a migration.
+
 Status: E2 implementation, no production release. Parent #408, E2 #410.
 
 The wallet uses integer units (10,000 units per banana), never binary floating
