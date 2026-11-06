@@ -134,3 +134,14 @@ container (256MiB includes WAL/tmpfs); replaced only that task-owned container
 with bounded disk-backed disposable data, then the exact checks passed. No
 production databases or runtime configuration were changed. Focused wallet UI
 4 tests, TypeScript, ESLint, build and 6 Chromium scenarios passed.
+
+
+## Commercial requirements update — 06.11.2026
+
+Recorded customer steering in #408/#413 and ADR 20261106-tg-vk-commercial-requirements:
+shared editable prices, independent tariff/collaboration/commission settings,
+preserve individual terms (40% must not become generic30%), VK Lava-only with
+verified-origin backend restriction, immutable accepted snapshots. Offer/feed
+wording remains a clarification; no visibility behavior inferred. Source audit
+confirmed VK global rate and TG per-recipient policy/creator seams. No runtime
+prices, percentages, merchant registrations, live databases or deployment changed.
