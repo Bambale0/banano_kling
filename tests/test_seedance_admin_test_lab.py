@@ -547,6 +547,7 @@ async def test_seedance_admin_video_preview_uses_source_portrait_dimensions(
         ({"width": 1920, "height": 1080, "side_data_list": [{"rotation": -90}]}, (1080, 1920)),
         ({"width": 720, "height": 576, "sample_aspect_ratio": "16:11"}, (1047, 576)),
         ({"width": 0, "height": 1080}, None),
+        ({"width": 720, "height": 1280, "tags": {"rotate": "inf"}}, None),
         ({"width": 720, "height": 1280, "sample_aspect_ratio": "1:1"}, (720, 1280)),
     ],
 )
