@@ -58,7 +58,7 @@ jobs:
         run: npm ci
 
       - name: Check Telegram and VK export profiles
-        run: node --test scripts/check-build-profile.mjs
+        run: node --test scripts/check-build-profile.mjs scripts/check-vk-init-handshake.mjs
 
       - name: Run Mini App regression tests
         run: >-
@@ -93,3 +93,4 @@ jobs:
 
       - name: Check VK root entry and administrator surface
         run: node --test scripts/check-vk-root-browser.mjs
+

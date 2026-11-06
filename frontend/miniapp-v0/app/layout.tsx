@@ -9,6 +9,46 @@ const telegramBootstrapScript = `
   var vkLaunch = ${JSON.stringify(process.env.NEXT_PUBLIC_MINIAPP_PLATFORM === 'vk')} || new URLSearchParams(window.location.search).has('vk_app_id') || new URLSearchParams(window.location.search).has('vk_user_id');
   var containsAccountLink = ${containsAccountLink.toString()};
 
+  function postVkInit() {
+    // Keep the pre-hydration transport compatible with VK Bridge so the host
+    // can dismiss its native loader before the React bundle starts.
+    var handler = 'VKWebAppInit';
+    var params = {};
+
+    try {
+      if (window.AndroidBridge && typeof window.AndroidBridge[handler] === 'function') {
+        window.AndroidBridge[handler](JSON.stringify(params));
+        return;
+      }
+    } catch (e) {}
+
+    try {
+      var iosHandler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers[handler];
+      if (iosHandler && typeof iosHandler.postMessage === 'function') {
+        iosHandler.postMessage(params);
+        return;
+      }
+    } catch (e) {}
+
+    try {
+      if (window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage === 'function') {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ handler: handler, params: params }));
+        return;
+      }
+    } catch (e) {}
+
+    if (window.parent && typeof window.parent.postMessage === 'function') {
+      try {
+        window.parent.postMessage({
+          handler: handler,
+          params: params,
+          type: 'vk-connect',
+          connectVersion: '3.0.2'
+        }, '*');
+      } catch (e) {}
+    }
+  }
+
   try {
     window.__BANANO_INITIAL_LAUNCH__ = {
       hash: window.location.hash || '',
@@ -24,7 +64,10 @@ const telegramBootstrapScript = `
     }
   } catch (e) {}
 
-  if (vkLaunch) return;
+  if (vkLaunch) {
+    postVkInit();
+    return;
+  }
 
   function postTelegramEvent(eventType, eventData) {
     if (eventData === undefined) {
@@ -139,3 +182,4 @@ export default function RootLayout({
     </html>
   )
 }
+
