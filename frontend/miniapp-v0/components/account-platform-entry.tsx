@@ -16,8 +16,8 @@ function VkAccountPreview() {
     })
     return () => controller.abort()
   }, [])
-  if (!access) return <main className="mx-auto max-w-lg p-6"><p role="status">{message}</p></main>
-  return <main className="mx-auto max-w-lg space-y-4 p-4" aria-label="Проверка аккаунта ВК">
+  if (!access) return <main className="mx-auto min-h-dvh w-full max-w-lg p-6"><p role="status">{message}</p></main>
+  return <main className="mx-auto min-h-dvh w-full max-w-lg space-y-4 p-4" aria-label="Проверка аккаунта ВК">
     <h1 className="text-xl font-semibold">Общие аккаунты ТГ и ВК</h1>
     <p className="text-sm text-muted-foreground">Доступ для администраторов. Здесь можно проверить связь аккаунтов и тестовый баланс.</p>
     <SharedAccountLinkPreview vkAppId={access.vk_app_id} />
@@ -35,6 +35,6 @@ export function AccountPlatformEntry({ children }: { children: ReactNode }) {
   }, [])
   // Do not mount the Telegram store/bootstrap while deciding a VK launch.
   if (platform === null) return null
-  if (platform === 'vk-launch-required') return <main className="mx-auto max-w-lg p-6"><p role="status">Откройте приложение из ВКонтакте.</p></main>
+  if (platform === 'vk-launch-required') return <main className="mx-auto min-h-dvh w-full max-w-lg p-6"><p role="status">Откройте приложение из ВКонтакте.</p></main>
   return platform === 'vk' ? <VkAccountPreview /> : children
 }

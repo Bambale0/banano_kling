@@ -248,3 +248,6 @@ Production financial cutover remains blocked: legacy writer fencing/event/refund
 
 
 Final shared-account matrix including opening rehearsals now verified locally on SQLite and isolated PostgreSQL17: 211 passed in87.75s. Test database removed. Fresh nearest-four-decimal diagnostic: all precision-review differences <=2.121e-11 TG /1.4e-13 VK bananas, no HALF_UP/HALF_EVEN disagreement; no rounding applied. Details added to opening-balance ADR. Independent final spec/standards reviews confirmed no remaining findings in the root-build slice. Release of the complete product remains blocked for the reasons above.
+
+
+06.11 clarification: text VK bot needs only the native launch button, no new text flows or text-bot feature parity. Common app/server synchronization remains required. Requested immediate full-screen launch; VK entry surfaces now fill the available viewport (min-height100dvh,width100%, bounded readable content). Official VK Bridge contract inspected: resizeWindow only sizes iframe; view settings only control appearance; no invented fullscreen method added. CSS viewport fill is not acceptance of client-level fullscreen. Actual native launch/button enablement remains blocked on registered app_id and client acceptance, and shared app authentication requires its real secret.
