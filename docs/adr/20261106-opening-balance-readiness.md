@@ -130,3 +130,26 @@ Historical payment/capture/reserve/event watermark import is deliberately absent
 
 No real balances, production schema/config, offer, provider requests or deployment
 changed. PR remains Draft; auto-merge off.
+
+
+## Subsequent production read-only evidence — 06.11.2026
+
+A later read-only run of scripts/audit_shared_account_migration.py inspected the
+currently running TG container's PostgreSQL and the active VK vkbanana.db. It
+confirms double precision TG credits, 790 precision-review TG rows, 214 VK rows
+and one negative VK balance (-5). Fresh aggregate counts and exact-only subtotals
+are recorded in docs/agents/TG_VK_EXECUTION.md. No live balances were changed.
+
+Diagnostic nearest-four-decimal candidates (ROUND_HALF_UP; not applied): TG max
+absolute difference 2.121e-11 bananas and aggregate signed difference
++2.5100616988479543614138e-11; VK max 1.4e-13 and aggregate -1.6091e-13. No row
+exceeds 1e-9; HALF_UP/HALF_EVEN proposals agree on this snapshot. These are
+floating-point residue candidates, not automatic normalization approval. The
+negative row is excluded and needs an explicit accounting decision; do not zero
+it silently. Running bots continue to mutate the sources, so this diagnostic is
+not a frozen migration manifest, an activation gate or proof that writers are fenced.
+
+The refreshed combined SQLite + isolated PostgreSQL shared-account/wallet/
+opening/link/commerce/browser-auth matrix passed: 211 tests in87.75s. The owned
+PostgreSQL test container was removed. Financial cutover is still NOT READY;
+those tests cover rehearsal and preview, not integration of live legacy writers.

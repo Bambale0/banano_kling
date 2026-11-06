@@ -9,6 +9,27 @@ function reply(status: number, payload = {}) {
 beforeEach(() => {
   global.fetch = jest.fn()
 })
+afterEach(() => {
+  delete process.env.NEXT_PUBLIC_MINIAPP_PLATFORM
+  window.history.replaceState({}, '', '/')
+})
+
+test('dedicated VK build refuses a cached Telegram launch before making any request', async () => {
+  process.env.NEXT_PUBLIC_MINIAPP_PLATFORM = 'vk'
+  await expect(checkAccountPreviewLogin()).rejects.toThrow('Откройте приложение из ВКонтакте.')
+  expect(global.fetch).not.toHaveBeenCalled()
+})
+
+test('VK launch forwards the signed query intact and never substitutes Telegram credentials', async () => {
+  process.env.NEXT_PUBLIC_MINIAPP_PLATFORM = 'vk'
+  const query = 'vk_app_id=123&vk_user_id=456&vk_ts=1000&sign=signed-value'
+  window.history.replaceState({}, '', '/?' + query)
+  const fetch = jest.mocked(global.fetch)
+  fetch.mockResolvedValueOnce(reply(200, { session_token: 'private-session', account: { id: 'account-1' } }))
+    .mockResolvedValueOnce(reply(200, { account: { id: 'account-1' } })).mockResolvedValueOnce(reply(200))
+  await checkAccountPreviewLogin()
+  expect(JSON.parse(String(fetch.mock.calls[0][1]?.body))).toEqual({ platform: 'vk', launch_data: query })
+})
 
 test('login probe verifies the same account and revokes its operation-local token', async () => {
   const fetch = jest.mocked(global.fetch)

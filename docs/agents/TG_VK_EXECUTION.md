@@ -232,3 +232,19 @@ balances, checkout/order and recipient reward snapshots, legacy assignment impor
 full VK generation/history/feed parity and real cabinet/client acceptance. The
 preview quote's account terms are not a recipient payout calculation. PR remains
 Draft; no production migration, deployment, real-money operation or provider call.
+
+
+## VK domain root build and fresh read-only financial audit — 06.11.2026
+
+Baseline b5cfdf67. User requested finishing and deployment; initial visibility remains administrator-only, offer unchanged. Pre-agreed test seams: browser entry and shared-account HTTP/DB contracts. No new production application or database writes.
+
+Implemented `build:vk` at root /, shared build-prefix normalization, prefix-aware export patch, no Telegram SDK/ready bootstrap or cached Telegram credential fallback on VK profile, unsigned direct-entry hint. Default Telegram build retains /mini-app. Added Node export checks, public API/entry regressions and Chromium root-export smoke (430/1280 widths, direct/ordinary/admin flows; API mocked). CI builds both profiles and runs Chromium smoke. Independent spec/standards review requested docs reality and browser launch-failure cleanup; both fixed. Generated tsconfig.tsbuildinfo excluded.
+
+RED: root basePath returned /, root asset version/CSS processing absent, direct VK build mounted TG. GREEN: 3 Node checks, 18 focused Jest tests, both builds and root browser scenarios. Full first run picked Node scripts as Jest suites; renamed standalone checks to check-*.mjs. Two reference suites also failed with cached compilation and attempted localhost API; fresh --no-cache focused run and entire suite passed (89 suites, 676 tests, 59.134s). No production source change was made to suppress these failures. ESLint and TypeScript passed. Real VK acceptance remains blocked on configured app ID/secret/admin allowlist; no fake identity or trust in query parameters introduced.
+
+Fresh live read-only snapshots (not simultaneous, not a migration manifest): TG 87,877 users, 790 precision-review balances, 0 invalid; 87,087 exact balances subtotal 6,662,460,000 units. VK 7,248 users, 214 precision-review balances, 1 invalid negative balance (-5); 7,033 exact balances subtotal 250,949,000 units; 6,098 legacy unit mismatches, 1 uncomparable. Subtotals exclude blocked rows and are not total liability. No balances normalized, cleared or imported. Snapshot moves as live activity continues; these counts cannot be used as a writer fence or final import manifest.
+
+Production financial cutover remains blocked: legacy writer fencing/event/refund bridge, approved precision handling and negative-balance resolution, live importer and reconciliation. Native cabinet configuration and full generation/history/feed parity also remain incomplete. Maintenance HTTPS vhost stays in place. This slice is preparation for the requested release, not a claim that the complete product is finished.
+
+
+Final shared-account matrix including opening rehearsals now verified locally on SQLite and isolated PostgreSQL17: 211 passed in87.75s. Test database removed. Fresh nearest-four-decimal diagnostic: all precision-review differences <=2.121e-11 TG /1.4e-13 VK bananas, no HALF_UP/HALF_EVEN disagreement; no rounding applied. Details added to opening-balance ADR. Independent final spec/standards reviews confirmed no remaining findings in the root-build slice. Release of the complete product remains blocked for the reasons above.

@@ -1,10 +1,12 @@
 import { readdirSync, readFileSync, statSync, writeFileSync, copyFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { miniAppBasePath, vkBuild } from '../miniapp-build-profile.mjs'
 
 const outDir = join(process.cwd(), 'out')
 const localTelegramJs = 'telegram-web-app.js'
-const localTelegramSrc = `/mini-app/${localTelegramJs}`
-const telegramScript = `<script defer src="${localTelegramSrc}"></script>`
+const localTelegramSrc = `${miniAppBasePath}/${localTelegramJs}`
+const telegramScript = vkBuild ? '' : `<script defer src="${localTelegramSrc}"></script>`
+const escapedBasePath = miniAppBasePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const inlineMiniappCss = process.env.MINIAPP_INLINE_CSS === '1'
 const assetVersion =
   process.env.MINIAPP_ASSET_VERSION ||
@@ -15,13 +17,14 @@ const telegramEarlyScriptPattern =
 const telegramSdkScriptPattern =
   /<script\b(?=[^>]*\bsrc=(["'])https:\/\/telegram\.org\/js\/telegram-web-app\.js\1)[^>]*>\s*<\/script>/gi
 const localTelegramScriptPattern =
-  /<script\b(?=[^>]*\bsrc=(["'])\/mini-app\/telegram-web-app\.js\1)[^>]*>\s*<\/script>/gi
+  /<script\b(?=[^>]*\bsrc=(["'])[^"']*\/telegram-web-app\.js\1)[^>]*>\s*<\/script>/gi
 const telegramSdkPreloadPattern =
   /<link\b(?=[^>]*\brel=(["'])preload\1)(?=[^>]*\bhref=(["'])https:\/\/telegram\.org\/js\/telegram-web-app\.js\2)[^>]*\/?>/gi
 const scriptTagPattern = /<script\b(?![^>]*\bsrc=)[^>]*>[\s\S]*?<\/script>/gi
 const charsetPattern = /<head><meta\b[^>]*(?:charset|charSet)=(["'])utf-8\1[^>]*\/?>/i
-const stylesheetPattern =
-  /<link\b(?=[^>]*\brel=(["'])stylesheet\1)(?=[^>]*\bhref=(["'])(\/mini-app\/_next\/static\/css\/[^"']+\.css)\2)[^>]*\/?>/i
+const stylesheetPattern = new RegExp(
+  `<link\\b(?=[^>]*\\brel=(["'])stylesheet\\1)(?=[^>]*\\bhref=(["'])(${escapedBasePath}/_next/static/css/[^"']+\\.css)\\2)[^>]*\\/?>`, 'i',
+)
 
 function htmlFiles(dir) {
   return readdirSync(dir).flatMap((entry) => {
@@ -59,7 +62,7 @@ function inlineMiniappStyles(html) {
     return html
   }
 
-  const cssPath = join(outDir, stylesheetHref.replace(/^\/mini-app\//, ''))
+  const cssPath = join(outDir, stylesheetHref.slice(miniAppBasePath.length + 1))
   const css = readFileSync(cssPath, 'utf8').replace(/<\/style/gi, '<\\/style')
   const inlineStyle = `<style data-miniapp-inline-css="${stylesheetHref}">${css}</style>`
 
@@ -72,7 +75,7 @@ function inlineMiniappStyles(html) {
 
 function versionStaticAssets(html) {
   return html.replace(
-    /(\/mini-app\/_next\/static\/[^"']+\.(?:js|css))(?!\?v=)/g,
+    new RegExp(`(${escapedBasePath}/_next/static/[^"']+\\.(?:js|css))(?!\\?v=)`, 'g'),
     `$1?v=${assetVersion}`,
   )
 }

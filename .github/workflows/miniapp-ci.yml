@@ -57,9 +57,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check Telegram and VK export profiles
+        run: node --test scripts/check-build-profile.mjs
+
       - name: Run Mini App regression tests
         run: >-
           npm test -- --runInBand
+          components/__tests__/account-platform-entry.test.tsx
+          lib/__tests__/shared-account-api.test.ts
           components/__tests__/task-detail-publication-references.test.tsx
           __tests__/wan3-manual-trend.test.tsx
           components/__tests__/balance-sheet-payment.test.tsx
@@ -79,3 +84,12 @@ jobs:
 
       - name: Build static Mini App
         run: npm run build
+
+      - name: Build VK Mini App at domain root
+        run: npm run build:vk
+
+      - name: Install Chromium for VK root smoke
+        run: npx playwright install --with-deps chromium
+
+      - name: Check VK root entry and administrator surface
+        run: node --test scripts/check-vk-root-browser.mjs

@@ -7,7 +7,15 @@ import { fetchAccountPreviewAccess } from '@/lib/shared-account-api'
 jest.mock('@/lib/shared-account-api', () => ({ fetchAccountPreviewAccess: jest.fn() }))
 jest.mock('../shared-wallet-preview', () => ({ SharedWalletPreview: () => <p>Тестовый кошелёк</p> }))
 jest.mock('../shared-account-link-preview', () => ({ SharedAccountLinkPreview: () => <p>Связать аккаунты</p> }))
-afterEach(() => { window.history.replaceState({}, '', '/'); jest.resetAllMocks() })
+afterEach(() => { window.history.replaceState({}, '', '/'); delete process.env.NEXT_PUBLIC_MINIAPP_PLATFORM; jest.resetAllMocks() })
+
+test('dedicated VK build opened directly never mounts Telegram or requests an unsigned session', () => {
+  process.env.NEXT_PUBLIC_MINIAPP_PLATFORM = 'vk'
+  render(<AccountPlatformEntry><p>Telegram bootstrap</p></AccountPlatformEntry>)
+  expect(screen.getByText('Откройте приложение из ВКонтакте.')).toBeInTheDocument()
+  expect(screen.queryByText('Telegram bootstrap')).not.toBeInTheDocument()
+  expect(fetchAccountPreviewAccess).not.toHaveBeenCalled()
+})
 
 test('VK starts its signed preview without mounting Telegram bootstrap', async () => {
   window.history.replaceState({}, '', '/?vk_app_id=123&vk_user_id=2001&sign=example')

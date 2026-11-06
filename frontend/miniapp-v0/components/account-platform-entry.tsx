@@ -27,12 +27,14 @@ function VkAccountPreview() {
 }
 
 export function AccountPlatformEntry({ children }: { children: ReactNode }) {
-  const [platform, setPlatform] = useState<'telegram' | 'vk' | null>(null)
+  const [platform, setPlatform] = useState<'telegram' | 'vk' | 'vk-launch-required' | null>(null)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
-    setPlatform(params.has('vk_app_id') || params.has('vk_user_id') ? 'vk' : 'telegram')
+    setPlatform(params.has('vk_app_id') || params.has('vk_user_id') ? 'vk'
+      : process.env.NEXT_PUBLIC_MINIAPP_PLATFORM === 'vk' ? 'vk-launch-required' : 'telegram')
   }, [])
   // Do not mount the Telegram store/bootstrap while deciding a VK launch.
   if (platform === null) return null
+  if (platform === 'vk-launch-required') return <main className="mx-auto max-w-lg p-6"><p role="status">Откройте приложение из ВКонтакте.</p></main>
   return platform === 'vk' ? <VkAccountPreview /> : children
 }

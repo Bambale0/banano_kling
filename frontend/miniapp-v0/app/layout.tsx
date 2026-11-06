@@ -6,7 +6,7 @@ import './globals.css'
 const telegramBootstrapScript = `
 (function () {
   var attempts = 0;
-  var vkLaunch = new URLSearchParams(window.location.search).has('vk_app_id') || new URLSearchParams(window.location.search).has('vk_user_id');
+  var vkLaunch = ${JSON.stringify(process.env.NEXT_PUBLIC_MINIAPP_PLATFORM === 'vk')} || new URLSearchParams(window.location.search).has('vk_app_id') || new URLSearchParams(window.location.search).has('vk_user_id');
   var containsAccountLink = ${containsAccountLink.toString()};
 
   try {
@@ -127,7 +127,7 @@ export default function RootLayout({
   return (
     <html lang="ru" className="bg-background">
       <head>
-        <script defer src="/mini-app/telegram-web-app.js" />
+        {process.env.NEXT_PUBLIC_MINIAPP_PLATFORM !== 'vk' && <script defer src={`${process.env.NEXT_PUBLIC_MINIAPP_BASE_PATH?.replace(/\/$/, '') ?? '/mini-app'}/telegram-web-app.js`} />}
         <script
           id="telegram-early-ready"
           dangerouslySetInnerHTML={{ __html: telegramBootstrapScript }}
