@@ -65,7 +65,10 @@ export function SharedAccountPreview({ isAdmin }: { isAdmin: boolean }) {
     return value
   }
 
-  return (
+  return <div className="space-y-4">
+    {policy?.enabled ? <SharedAccountLinkPreview key={'link:' + policy.revision} vkAppId={policy.vk_app_id} /> : null}
+    <details className="rounded-xl border border-border bg-card">
+      <summary className="cursor-pointer p-4 text-sm font-medium">Настройки общих аккаунтов</summary>
     <section aria-label="Проверка общих аккаунтов" className="space-y-3 rounded-xl border border-border bg-card p-4">
       <h3 className="font-semibold">Общие аккаунты ТГ и ВК</h3>
       <p className="text-sm text-muted-foreground">Проверка входа, связи аккаунтов и тестового баланса для администраторов.</p>
@@ -110,7 +113,7 @@ export function SharedAccountPreview({ isAdmin }: { isAdmin: boolean }) {
       {message ? <p role="status" className="text-sm">{message}</p> : null}
       {policy?.enabled ? <SharedWalletPreview key={policy.revision} /> : null}
       {policy?.enabled ? <SharedCommercialPreview key={'commerce:' + policy.revision} /> : null}
-      {policy?.enabled ? <SharedAccountLinkPreview key={'link:' + policy.revision} vkAppId={policy.vk_app_id} /> : null}
     </section>
-  )
+    </details>
+  </div>
 }

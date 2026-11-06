@@ -52,6 +52,8 @@ async def test_link_requires_both_confirmations_and_merges_money_once(monkeypatc
         vk = await (await client.post(ROOT + '/session', json={'platform': 'vk', 'launch_data': vk_launch(2001)})).json()
         assert telegram['account']['id'] == vk['account']['id'] == result['account_id']
         fresh = {'Authorization': 'Bearer ' + telegram['session_token']}
+        profile = await (await client.get(ROOT + '/me', headers=fresh)).json()
+        assert profile['preview']['linked_platforms'] == ['telegram', 'vk']
         balance = await (await client.get(ROOT + '/wallet', headers=fresh)).json()
         assert balance['balance']['available'] == '5.0000'
         replay = await client.post(path + '/confirm', headers=fresh, json={'expected_revision': 0})

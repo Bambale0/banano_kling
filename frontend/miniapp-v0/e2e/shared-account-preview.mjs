@@ -89,8 +89,8 @@ await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
 const base = `http://127.0.0.1:${server.address().port}/mini-app/`
 let browser
 try {
-  browser = await chromium.launch({ headless: true })
-  for (const width of [430, 1280]) {
+  browser = await chromium.launch({ headless: true, channel: process.env.E2E_BROWSER_CHANNEL || undefined })
+  for (const width of [320, 430, 1280]) {
     for (const admin of [false, true]) {
       const context = await browser.newContext({ viewport: { width, height: 900 } })
       const page = await context.newPage()
@@ -100,8 +100,9 @@ try {
       const previewRequests = []
       const apiRequests = []
       const clientErrors = []
-      let policy = { enabled: false, revision: 0, vk_app_id: null, vk_admin_ids: [], session_ttl_seconds: 3600, launch_max_age_seconds: 600 }
+      let policy = { enabled: false, revision: 0, vk_app_id: 123, vk_admin_ids: [], session_ttl_seconds: 3600, launch_max_age_seconds: 600 }
       const commercial = commercialFixture('telegram')
+      let accountLink = null
       let wallet = { scope: 'sandbox', balance: { available: '0.0000', reserved: '0.0000', revision: 0 }, entries: [], receipt: null }
       await page.addInitScript(() => {
         window.Telegram = { WebApp: { initData: 'query_id=browser-test&start_param=link_' + 'b'.repeat(43), initDataUnsafe: {}, ready() {}, expand() {}, onEvent() {}, offEvent() {} } }
@@ -139,7 +140,15 @@ try {
           } else if (path.endsWith('/session')) {
             payload = { ok: true, session_token: 'synthetic-browser-session', account: { id: 'browser-account' } }
           } else if (path.endsWith('/me')) {
-            payload = { ok: true, account: { id: 'browser-account' } }
+            payload = { ok: true, account: { id: 'browser-account' }, preview: { revision: policy.revision, vk_app_id: policy.vk_app_id, telegram_bot_username: 'test_bot', telegram_linked: true, linked_platforms: ['telegram'] } }
+          } else if (path.endsWith('/links')) {
+            assert.equal(request.postDataJSON().target_platform, 'vk')
+            accountLink = { id: 'browser-invite', state: 'pending', revision: 0, token: 'c'.repeat(43), source_confirmed: false, target_confirmed: false, expires_at_epoch: 9999999999 }
+            payload = { ok: true, link: accountLink }
+          } else if (path.endsWith('/links/browser-invite/cancel')) {
+            assert.equal(request.postDataJSON().expected_revision, accountLink.revision)
+            accountLink = { ...accountLink, state: 'cancelled', revision: accountLink.revision + 1 }
+            payload = { ok: true, link: accountLink }
           } else if (path.endsWith('/wallet')) {
             if (request.method() === 'POST') {
               const submitted = request.postDataJSON()
@@ -157,6 +166,7 @@ try {
       await page.getByRole('button', { name: 'Профиль', exact: true }).click()
       await page.waitForFunction(() => document.body.textContent.includes('постов'))
       if (admin) {
+        await page.getByText('Настройки общих аккаунтов', { exact: true }).click()
         try {
           await page.getByLabel('Доступ администраторам').check()
         } catch (error) {
@@ -173,7 +183,24 @@ try {
         await page.getByText('Вход подтверждён.', { exact: true }).waitFor()
         assert(previewRequests.some(request => request.path.endsWith('/logout')))
         await checkCommercialPanel(page, 'telegram')
+        const accounts = page.getByRole('region', { name: 'Связанные аккаунты', exact: true })
+        await accounts.getByLabel('Telegram привязан', { exact: true }).waitFor()
+        const connect = accounts.getByRole('button', { name: 'Привязать ВКонтакте', exact: true })
+        await connect.waitFor()
+        const platformBox = await accounts.getByText('ВКонтакте', { exact: true }).boundingBox()
+        const buttonBox = await connect.boundingBox()
+        assert(platformBox.x + platformBox.width <= buttonBox.x, 'Platform name must not overlap the linking button')
+        assert.equal(await accounts.evaluate(node => node.scrollWidth <= node.clientWidth), true, 'Card must not overflow')
+        await accounts.screenshot({ path: resolve(process.env.TEMP || '/tmp', `neuromix-linked-accounts-${width}.png`) })
+        assert.equal(previewRequests.filter(request => request.path.includes('/links')).length, 0, 'Opening an invitation must not mutate its state')
+        await connect.click()
+        await page.getByRole('button', { name: 'Создать ссылку', exact: true }).click()
+        assert.equal(await page.getByLabel('Ссылка для другого аккаунта', { exact: true }).inputValue(), 'https://vk.com/app123#link_' + 'c'.repeat(43))
+        assert.equal(await page.getByRole('button', { name: 'Подтверждаю связь аккаунтов', exact: true }).isDisabled(), true)
+        await page.getByRole('button', { name: 'Отменить ссылку', exact: true }).click()
+        await page.getByText('Ссылка отменена.', { exact: true }).waitFor()
       } else {
+        assert.equal(await page.getByRole('region', { name: 'Связанные аккаунты', exact: true }).count(), 0)
         assert.equal(await page.getByLabel('Доступ администраторам').count(), 0)
         assert.equal(previewRequests.length, 0)
       }
@@ -217,6 +244,7 @@ try {
             vk_app_id: 123,
             telegram_bot_username: 'test_bot',
             telegram_linked: true,
+            linked_platforms: ['telegram', 'vk'],
           },
         }
       } else if (path.endsWith('/bootstrap')) {
@@ -286,6 +314,7 @@ try {
       assert.equal(await page.getByRole('heading', { name: 'Свяжите аккаунты ТГ и ВК' }).count(), 0)
       assert.equal(await page.getByRole('heading', { name: 'Разреши боту писать тебе' }).count(), 0)
       await page.getByRole('button', { name: 'Профиль', exact: true }).click()
+      await page.getByText('Настройки общих аккаунтов', { exact: true }).click()
       try {
         await checkCommercialPanel(page, 'vk')
       } catch (error) {

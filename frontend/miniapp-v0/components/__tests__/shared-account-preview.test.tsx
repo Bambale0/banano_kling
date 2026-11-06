@@ -28,6 +28,7 @@ test('ordinary user sees no preview controls and makes no preview request', () =
 test('administrator can enable access only for administrators', async () => {
   jest.mocked(saveAccountPreviewSettings).mockResolvedValue({ ...policy, enabled: true, revision: 1 })
   render(<SharedAccountPreview isAdmin />)
+  fireEvent.click(screen.getByText('Настройки общих аккаунтов'))
   const toggle = await screen.findByLabelText('Доступ администраторам')
   fireEvent.click(toggle)
   fireEvent.click(screen.getByRole('button', { name: 'Сохранить доступ' }))
@@ -39,6 +40,7 @@ test('administrator can check login without exposing session credentials', async
   jest.mocked(fetchAccountPreviewSettings).mockResolvedValue({ ...policy, enabled: true })
   jest.mocked(checkAccountPreviewLogin).mockResolvedValue(undefined)
   render(<SharedAccountPreview isAdmin />)
+  fireEvent.click(screen.getByText('Настройки общих аккаунтов'))
   fireEvent.click(await screen.findByRole('button', { name: 'Проверить вход' }))
   expect(await screen.findByText('Вход подтверждён.')).toBeInTheDocument()
   expect(checkAccountPreviewLogin).toHaveBeenCalledTimes(1)
@@ -47,6 +49,7 @@ test('administrator can check login without exposing session credentials', async
 test('a stale configuration asks the administrator to reload', async () => {
   jest.mocked(saveAccountPreviewSettings).mockRejectedValue(new Error('Настройки изменились. Обновите страницу.'))
   render(<SharedAccountPreview isAdmin />)
+  fireEvent.click(screen.getByText('Настройки общих аккаунтов'))
   await screen.findByLabelText('Доступ администраторам')
   fireEvent.click(screen.getByRole('button', { name: 'Сохранить доступ' }))
   expect(await screen.findByText('Настройки изменились. Обновите страницу.')).toBeInTheDocument()

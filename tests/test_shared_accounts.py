@@ -125,6 +125,7 @@ async def test_admin_can_login_and_reuse_a_platform_neutral_account(monkeypatch)
         assert profile_data['account']['id'] == session['account']['id']
         assert profile_data['preview']['telegram_bot_username'] == 'Neuromixx_bot'
         assert profile_data['preview']['telegram_linked'] is False
+        assert profile_data['preview']['linked_platforms'] == ['telegram']
         again = await (await login(client)).json()
         assert again['account']['id'] == session['account']['id']
         assert 'credits' not in session['account']  # No invented/migrated wallet.
