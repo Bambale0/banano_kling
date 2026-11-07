@@ -22,15 +22,18 @@ try {
         const response = await page.request.get(origin + path, {
           headers: { Range: 'bytes=0-7' }, timeout: 20000,
         })
-        assert([200, 206].includes(response.status()), 'Successful real media response')
-        assert.match(response.headers()['content-type'] || '', /^image\/png\b/)
+        assert([200, 206].includes(response.status()), `${origin}: successful real media response`)
+        assert.match(response.headers()['content-type'] || '', /^image\/png\b/, `${origin}: expected PNG, not SPA HTML`)
         assert.deepEqual([...((await response.body()).subarray(0, 8))], [137, 80, 78, 71, 13, 10, 26, 10])
         await response.dispose()
         const dimensions = await page.evaluate(async (source) => {
           const image = new Image()
           image.src = source
           document.body.replaceChildren(image)
-          await image.decode()
+          await Promise.race([
+            image.decode(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Image decode timed out')), 20000)),
+          ])
           return { width: image.naturalWidth, height: image.naturalHeight }
         }, origin + path)
         assert(dimensions.width > 0 && dimensions.height > 0, 'Full image decodes in browser')

@@ -67,5 +67,20 @@ Bambale0/claw UX audit; anthropics/skills webapp-testing.
 - Real production browser smoke script accepts public paths from environment,
   checks status/content type/PNG magic and full decode on both app origins.
   Before the routing change, canonical passes and VK fails on text/html.
-- Independent review and exact-SHA CI/release verification pending. No production
-  configuration has been changed manually.
+- Final local checks: 18 installer/production URL tests passed; Ruff and Node
+  syntax passed; 7 existing deploy-contract functions passed through an isolated
+  harness normalizing their Windows-only path issue (no source edits).
+- Exact provisioned VK vhost was copied read-only into a temporary local fixture:
+  installer dry-run retained all original bytes except the managed include and
+  derived the verified 1888 upstream. Nginx validation/reload were intercepted in
+  this local fixture; no host configuration was modified.
+- Actual published-asset browser smoke: three canonical PNGs passed 206,
+  image/png, signature and 1536×2752 full decode; VK failed on text/html as
+  expected before the route repair. This is the concrete deployment acceptance
+  regression; no paid request, user token or mocked media used.
+- Independent Standards review found a regex custom-route bypass; Spec review
+  found cross-server ambiguity and unbounded decode. All addressed, regression
+  cases added; both independent rereviews are clean. Integrated current tanyapi
+  `84df6be850dc0d9f7906354f8e08ff47b2ac099c` before PR.
+- Exact-SHA CI/release verification pending. No production configuration has
+  been changed manually. Canonical Windows symptom remains an explicit follow-up.

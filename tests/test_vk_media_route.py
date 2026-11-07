@@ -91,6 +91,7 @@ def test_uses_actual_api_upstream_and_updates_existing_managed_include(files):
     SITE.replace("location / { try_files", "location /app/ { try_files"),
     SITE.replace("location / { try_files", "location /uploads/ { return 403; }\n    location / { try_files"),
     SITE.replace("location / { try_files", "location ~* /uploads/private/ { return 403; }\n    location / { try_files"),
+    SITE.replace("location / { try_files", "location ~ ^/uploads(?:/|$) { return 403; }\n    location / { try_files"),
 ])
 def test_unknown_or_custom_routing_fails_without_changes(files, source):
     site, snippet = files
@@ -104,3 +105,35 @@ def test_unknown_or_custom_routing_fails_without_changes(files, source):
 def test_normal_frontend_deploy_installs_route_before_publishing():
     deploy = (ROOT / "scripts/deploy_miniapp_local.sh").read_text()
     assert deploy.index("configure_vk_media_route.py") < deploy.index('log "Publishing static export')
+
+
+def test_cross_server_api_and_spa_are_rejected_without_changes(files):
+    site, snippet = files
+    source = SITE.replace("    location / { try_files", "}\nserver {\n    location / { try_files")
+    site.write_text(source)
+    with pytest.raises(ValueError):
+        installer.configure(site, snippet, run=lambda args: pytest.fail("No reload"))
+    assert site.read_text() == source
+    assert not snippet.exists()
+
+
+def test_comments_and_quoted_braces_do_not_change_context(files):
+    site, snippet = files
+    source = SITE.replace("    listen 443 ssl;", '''    listen 443 ssl;
+    add_header X-Test "brace } and #quoted";
+    # location ^~ /mini-app/api/ { proxy_pass http://invalid;
+    # location /uploads/ { return 403; }
+''')
+    site.write_text(source)
+    installer.configure(site, snippet, run=lambda args: None)
+    assert site.read_text().replace(f'    include "{snippet.as_posix()}";\n', "", 1) == source
+
+
+def test_commented_api_does_not_qualify(files):
+    site, snippet = files
+    source = SITE.replace("    location ^~ /mini-app/api/", "    # location ^~ /mini-app/api/")
+    site.write_text(source)
+    with pytest.raises(ValueError):
+        installer.configure(site, snippet, run=lambda args: pytest.fail("No reload"))
+    assert site.read_text() == source
+    assert not snippet.exists()

@@ -33,20 +33,54 @@ def _run(args: list[str]) -> None:
     subprocess.run(args, check=True, timeout=30)
 
 
+def _server_span(text: str, position: int) -> tuple[int, int]:
+    """Find the enclosing server, respecting Nginx comments and quoted braces."""
+    tokens = re.finditer(r'''"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\#[^\n]*|[{};]|[^\s{};]+''', text)
+    stack = []
+    header = []
+    servers = []
+    for token in tokens:
+        value = token[0]
+        if value.startswith("#"):
+            continue
+        if value == "{":
+            stack.append((header[0] if header else "", token.start()))
+            header = []
+        elif value == "}":
+            if not stack:
+                raise ValueError("Unbalanced Nginx blocks")
+            kind, start = stack.pop()
+            if kind == "server" and start < position < token.start():
+                servers.append((start, token.start()))
+            header = []
+        elif value == ";":
+            header = []
+        else:
+            header.append(value)
+    if stack or len(servers) != 1:
+        raise ValueError("Expected one enclosing Nginx server")
+    return servers[0]
+
+
 def configure(site: Path, snippet: Path, *, run=_run) -> None:
     # sites-enabled is normally a symlink; replace its target, never the link.
     site = site.resolve(strict=True)
     snippet = snippet.resolve()
     original = site.read_bytes()
     text = original.decode("utf-8")
+    # Mask comments in place so regex offsets still identify the original bytes.
+    active = re.sub(r'''"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\#[^\n]*''',
+                    lambda match: " " * len(match[0]) if match[0].startswith("#") else match[0], text)
     if any(character in snippet.as_posix() for character in ('"', "\n", "\r", ";")):
         raise ValueError("Unsafe Nginx snippet path")
-    upstream = re.search(
+    upstream_matches = list(re.finditer(
         r"location\s+\^~\s+/mini-app/api/\s*\{\s*proxy_pass\s+([^;\s]+)\s*;",
-        text,
-    )
-    if not upstream:
+        active,
+    ))
+    if len(upstream_matches) != 1:
         raise ValueError("Expected existing Mini App API proxy")
+    upstream = upstream_matches[0]
+    server_start, server_end = _server_span(text, upstream.start())
     origin = urlsplit(upstream[1])
     if (
         origin.scheme not in {"http", "https"}
@@ -59,18 +93,18 @@ def configure(site: Path, snippet: Path, *, run=_run) -> None:
         or "$" in upstream[1]
     ):
         raise ValueError("Expected a literal API upstream origin")
-    if re.search(r"location[^\n{]*/uploads(?:/|\s)", text):
+    if re.search(r"location[^\n{]*/uploads", active):
         raise ValueError("Existing custom upload route requires review")
     include = f'    include "{snippet.as_posix()}";\n'
-    if include.strip() not in text:
+    if include.strip() not in active:
         # HTTP redirect may also have location /. Only the SPA after the API
         # block is eligible; ambiguous layouts fail without modifying anything.
-        candidates = list(re.finditer(r"(?m)^([ \t]*)location\s+/\s*\{", text[upstream.end():]))
+        candidates = list(re.finditer(r"(?m)^([ \t]*)location\s+/\s*\{", active[upstream.end():server_end]))
         if len(candidates) != 1:
             raise ValueError("Expected one SPA fallback after the API proxy")
         position = upstream.end() + candidates[0].start()
         text = text[:position] + include + text[position:]
-    elif text.count(include.strip()) != 1:
+    elif active.count(include.strip()) != 1 or include.strip() not in active[server_start:server_end]:
         raise ValueError("Duplicate managed media include")
     fragment = (
         "# Managed by scripts/configure_vk_media_route.py.\n"

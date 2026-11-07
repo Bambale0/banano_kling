@@ -2937,4 +2937,3 @@ See [TG_VK_EXECUTION.md](TG_VK_EXECUTION.md) for the live ledger. Isolated Draft
 # 2026-11-07 — Preview delivery recovery
 
 Live ledger: [PREVIEW_RECOVERY_EXECUTION.md](PREVIEW_RECOVERY_EXECUTION.md).
-
