@@ -139,6 +139,19 @@ async def test_enabled_preview_still_rejects_ordinary_telegram_user():
         assert (await login(client, 1001)).status == 403
 
 
+async def test_expired_telegram_launch_is_rejected_with_safe_diagnostics(caplog):
+    async with preview_client() as client:
+        await enable(client)
+        expired = telegram_launch(timestamp=int(time.time()) - 900)
+        with caplog.at_level('INFO', logger='bot.shared_accounts.api'):
+            response = await client.get(ROOT + '/settings', headers={'X-Telegram-Init-Data': expired})
+        assert response.status == 401
+        assert (await response.json())['error'] == 'Expired launch credentials'
+        assert 'shared_account_authentication_rejected' in caplog.text
+        assert 'reason=Expired launch credentials' in caplog.text
+        assert expired not in caplog.text
+
+
 async def test_disable_revokes_existing_sessions_immediately():
     async with preview_client() as client:
         await enable(client)
