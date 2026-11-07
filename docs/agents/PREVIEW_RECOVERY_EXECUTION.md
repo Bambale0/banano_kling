@@ -3,8 +3,8 @@
 Baseline: tanyapi `9eda416c861f8634b28fd94c81f634a24b7de875`.
 
 User-visible acceptance: published reference/trend thumbnails resolve to actual
-media on both deployed Mini App surfaces. Canonical Telegram screenshot remains
-under investigation; the confirmed VK routing failure is a separate finding.
+media on both deployed Mini App surfaces, including the exact VK-origin image
+copied from the user's failing Windows Telegram card.
 
 ## Preflight and diagnosis
 
@@ -20,9 +20,14 @@ under investigation; the confirmed VK routing failure is a separate finding.
   pressure from large originals. Only (1) is reproduced: the same saved uploads
   on VK return 200 text/html with SPA bytes instead of PNG. The frontend uses
   same-origin uploads, while the provisioned VK vhost has no upload route.
-- Canonical native/server failure is not established. UA classification must
-  distinguish TelegramBot crawlers from Chromium clients; server 200 alone does
-  not prove a card rendered. No native OOM/cache assertion or speculative patch.
+- Initial canonical native/server failure was not established. UA classification
+  distinguishes TelegramBot from Chromium clients; server 200 alone does not
+  prove a card rendered. No native OOM/cache assertion or speculative patch.
+- Root cause confirmed from the user's actual failed image address: the Windows
+  Telegram card requests `https://vk.neuromixbot.com/uploads/refs/image/...png`.
+  This exact public resource is among the three production smoke assets: VK
+  returns SPA HTML; canonical returns a valid PNG. The missing VK upload route
+  therefore directly explains the reported Telegram card failure too.
 - Existing deploy publishes TG and VK exports but manages no VK media route.
   Reuse its privileged exact-SHA CI deployment and existing API proxy upstream.
 
@@ -82,5 +87,13 @@ Bambale0/claw UX audit; anthropics/skills webapp-testing.
   found cross-server ambiguity and unbounded decode. All addressed, regression
   cases added; both independent rereviews are clean. Integrated current tanyapi
   `84df6be850dc0d9f7906354f8e08ff47b2ac099c` before PR.
-- Exact-SHA CI/release verification pending. No production configuration has
-  been changed manually. Canonical Windows symptom remains an explicit follow-up.
+- PR421 native squash auto-merge armed. First required Python check rejected
+  the script's shebang without executable mode (Windows Ruff did not enforce
+  EXE001); executable Git mode corrected. Strict protection remains true with
+  all four required gates; no bypass or manual production change.
+- User confirmed the Windows failure persists after reopen, then supplied the
+  exact failed public VK image address without query/hash. Its response matches
+  the already-reproduced HTML fallback; additional native telemetry is unnecessary
+  for this fix and is excluded from the final change.
+- Exact-SHA CI/release verification pending. Final scope remains routing,
+  regression and real-asset smoke only; no speculative frontend source change.
