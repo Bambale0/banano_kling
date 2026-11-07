@@ -45,6 +45,9 @@ async def account_database(request, monkeypatch, isolated_database):
         # Exercise the actual application bootstrap plus its compatibility layer,
         # whose startup also prepares legacy generation/credit columns.
         await connection.execute((Path(__file__).parents[1] / 'schema_postgres.sql').read_text())
+        # database.init_db adds this legacy chat-capability column at startup;
+        # the isolated HTTP fixture does not run that full application startup.
+        await connection.execute('ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_chat_state TEXT')
     query = parse_qsl(parsed.query) + [('options', '-csearch_path=' + schema)]
     monkeypatch.setenv('DATABASE_URL', urlunsplit(parsed._replace(query=urlencode(query))))
     try:

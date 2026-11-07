@@ -72,6 +72,13 @@
   row, with one shared revision/atomic audit transaction. The old auth JSON stays
   readable, and old-client updates preserve delivery controls. Credential storage
   remains separate. No manual SQL or production configuration change was made.
+- Final local backend matrix: 169 passed, 127 native-PG cases skipped, 13 existing
+  warnings. First source CI exposed isolated PostgreSQL fixture omissions: the
+  shared schema lacked the startup chat-state column (23 failures, 251 passed),
+  and runtime cleanup omitted the newly created FK outbox (2 failures/10 setup
+  errors, 21 passed). Fixtures now mirror that startup column and explicitly
+  truncate the outbox only when present, preserving its production FK and avoiding
+  broad CASCADE. Native PostgreSQL rerun remains required before release.
 
 ## Missing card after authentication failure — 07.11.2026
 
