@@ -2,12 +2,13 @@ jest.mock('../shared-commercial-preview', () => ({ SharedCommercialPreview: () =
 import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { SharedAccountPreview } from '../shared-account-preview'
-import { fetchAccountPreviewSettings, saveAccountPreviewSettings, checkAccountPreviewLogin } from '@/lib/shared-account-api'
+import { fetchAccountPreviewSettings, saveAccountPreviewSettings, checkAccountPreviewLogin, fetchAccountReferencePhotos } from '@/lib/shared-account-api'
 
 jest.mock('@/lib/shared-account-api', () => ({
   fetchAccountPreviewSettings: jest.fn(),
   saveAccountPreviewSettings: jest.fn(),
   checkAccountPreviewLogin: jest.fn(),
+  fetchAccountReferencePhotos: jest.fn(),
 }))
 jest.mock('../shared-wallet-preview', () => ({ SharedWalletPreview: () => null }))
 jest.mock('../shared-account-link-preview', () => ({ SharedAccountLinkPreview: () => <section aria-label="Связанные аккаунты">Связанные аккаунты</section> }))
@@ -63,6 +64,20 @@ test('an expired settings login cannot hide the linked-account card or leave a l
   expect(screen.getByRole('region', { name: 'Связанные аккаунты' })).toBeInTheDocument()
   expect(screen.queryByText('Загрузка настроек…')).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Повторить загрузку настроек' })).toBeEnabled()
+})
+
+test('linked VK profile can open its private photos when Telegram-only settings reject login', async () => {
+  window.history.replaceState({}, '', '/?vk_app_id=123&vk_user_id=2001&sign=fixture')
+  try {
+    jest.mocked(fetchAccountPreviewSettings).mockRejectedValue(new Error('Откройте приложение заново для подтверждения входа.'))
+    jest.mocked(fetchAccountReferencePhotos).mockResolvedValue({ references: [], next_offset: null })
+    render(<SharedAccountPreview isAdmin />)
+    fireEvent.click(screen.getByText('Настройки общих аккаунтов'))
+    await screen.findByText('Откройте приложение заново для подтверждения входа.')
+    fireEvent.click(screen.getByRole('button', { name: 'Фото аккаунта' }))
+    expect(await screen.findByText('Пока нет сохранённых фото.')).toBeInTheDocument()
+    expect(fetchAccountReferencePhotos).toHaveBeenCalledWith(0, expect.any(AbortSignal))
+  } finally { window.history.replaceState({}, '', '/') }
 })
 
 test('settings can be retried after authorization becomes available', async () => {

@@ -178,6 +178,10 @@ from bot.services.photo_prompt_billing import (
 )
 from bot.services.preset_manager import preset_manager
 from bot.services.reference_storage_service import save_reference_file
+from bot.services.upload_limits import (
+    DEFAULT_UPLOAD_MAX_BYTES as MINIAPP_UPLOAD_DEFAULT_MAX_BYTES,
+)
+from bot.services.upload_limits import UPLOAD_TIMEOUT_SECONDS as MINIAPP_UPLOAD_TIMEOUT_SECONDS
 from bot.services.remix_prompt import compose_feed_remix_prompt
 from bot.services.subscription_service import (
     REQUIRED_CHANNEL_USERNAME,
@@ -197,8 +201,6 @@ from bot.video_reference_policy import (
 
 MINIAPP_MEDIA_CACHE_DIR = Path("static/uploads/miniapp-media-cache")
 MINIAPP_MEDIA_MAX_BYTES = 50 * 1024 * 1024
-MINIAPP_UPLOAD_TIMEOUT_SECONDS = 900
-MINIAPP_UPLOAD_DEFAULT_MAX_BYTES = 50 * 1024 * 1024
 MINIAPP_TREND_VIDEO_MAX_BYTES = 200 * 1024 * 1024
 _miniapp_media_locks: dict[str, asyncio.Lock] = {}
 
