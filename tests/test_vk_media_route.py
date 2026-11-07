@@ -105,6 +105,7 @@ def test_unknown_or_custom_routing_fails_without_changes(files, source):
 def test_normal_frontend_deploy_installs_route_before_publishing():
     deploy = (ROOT / "scripts/deploy_miniapp_local.sh").read_text()
     assert deploy.index("configure_vk_media_route.py") < deploy.index('log "Publishing static export')
+    assert deploy.index("configure_vk_media_route.py") < deploy.index('if [[ -f "${MINIAPP_ROOT}/index.html" ]]')
 
 
 def test_cross_server_api_and_spa_are_rejected_without_changes(files):

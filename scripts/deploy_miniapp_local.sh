@@ -214,6 +214,12 @@ install -d -m 0755 "$MINIAPP_ROOT"
 install -d -m 0700 "$BACKUP_ROOT"
 install -d -m 0755 "$VK_RELEASE_ROOT"
 
+# The VK root SPA must not answer saved /uploads/ media requests with HTML.
+# Derive the upstream from its existing API proxy and preserve the vhost.
+python3 "${PROJECT_DIR}/scripts/configure_vk_media_route.py" \
+  --site "/etc/nginx/sites-enabled/${VK_FRONTEND_DOMAIN}.conf" \
+  --snippet "/etc/nginx/snippets/banano-vk-media.conf"
+
 if [[ -f "${MINIAPP_ROOT}/index.html" ]]; then
   stamp="$(date '+%Y%m%d-%H%M%S')"
   backup_dir="${BACKUP_ROOT}/${stamp}"
@@ -225,12 +231,6 @@ if [[ -f "${MINIAPP_ROOT}/index.html" ]]; then
   # separately reviewed maintenance operation, never a deployment side effect.
   log "Preserving all existing Mini App backups"
 fi
-
-# The VK root SPA must not answer saved /uploads/ media requests with HTML.
-# Derive the upstream from its existing API proxy and preserve the vhost.
-python3 "${PROJECT_DIR}/scripts/configure_vk_media_route.py" \
-  --site "/etc/nginx/sites-enabled/${VK_FRONTEND_DOMAIN}.conf" \
-  --snippet "/etc/nginx/snippets/banano-vk-media.conf"
 
 log "Publishing static export to ${MINIAPP_ROOT}"
 # Keep older hashed chunks for in-flight Telegram WebViews while replacing the

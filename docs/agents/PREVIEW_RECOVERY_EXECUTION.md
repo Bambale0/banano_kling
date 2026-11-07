@@ -102,3 +102,14 @@ Bambale0/claw UX audit; anthropics/skills webapp-testing.
   first-party host restores the existing same-origin behavior. VK-root cases
   cover canonical, legacy, current and relative uploads; external signed media
   remains unchanged. No new fallback origin or build environment is introduced.
+- Final source local verification: 92 Jest suites / 700 tests passed; production
+  Next export + TypeScript + Telegram head patch passed. Protected CI caught one
+  backup-history shell harness failure (4737 passed, 224 skipped): the route
+  install block sat inside its backup-if-to-publish extraction. Moved installation
+  before the backup block, retaining route validation before publish and leaving
+  the history test/backup behavior unchanged. Added ordering regression.
+- Exact previous-head shell extraction reproduced RED in an isolated Linux
+  temporary fixture. After the move, all 15 existing deployment-history tests,
+  all 10 release/production-URL contract functions, and `bash -n` pass. The 18
+  focused installer/production-URL tests and Ruff pass. Both independent reviews
+  of the exact move are clean; no baseline history test was changed.
