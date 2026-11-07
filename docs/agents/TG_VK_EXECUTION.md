@@ -340,3 +340,57 @@ Release additions after exact-head review: magic-link launch data is removed fro
   administrator acceptance. Public rollout remains a separate decision.
 
 Release-candidate verification: full backend **4722 passed, 223 skipped, 826 warnings, 76 subtests passed** in 405.51s. Deployment-contract matrix **27 passed, 6 subtests passed**. A first frontend rerun reused stale Jest compilation for two unrelated reference suites; the clean `--no-cache` regression rerun passed **90/90 suites, 682/682 tests** in 56.351s. ESLint completed with only the pre-existing Kling 4 hooks warning. Telegram and VK production exports and the VK Chromium root smoke (430px/1280px) passed. The production deploy now builds and publishes both origins from the exact same expected SHA, writes and verifies both `revision.txt` files, retains prior VK releases and atomically replaces only the VK `current` symlink.
+## Native VK journey and missing reference — 07.11.2026
+
+- Baseline `00b40366c40b4684e23d8dfde0c3fc2c188bfbfb`; dedicated task branch
+  `feature/tanyapi-vk-native-journey`. Original OneDrive checkout is untouched.
+- User clarified Integer screenshots are examples; the incident is NEUROMIX.
+  Requested native VK entry without required Telegram, preserved reference input
+  and delivery on the originating platform, with optional explicit linking.
+- Fresh read-only administrator task/log audit confirms the 11:33:38 Moscow
+  Banana Pro task had zero source/provider references and Telegram delivery.
+  Current shared-app code requires a linked Telegram legacy actor and drops the
+  launch platform before task persistence. No live account/balance mutation.
+- Execution/preflight and local wayfinder map:
+  [Independent VK journey](VK_NATIVE_JOURNEY_MAP.md). Existing signed identity,
+  upload/library/provider snapshots and delivery state are reusable; account
+  and finance compatibility require evidence before enabling public access.
+- Planned seams: actual form/library -> submitted reference URLs; signed VK HTTP
+  -> native actor; task creation -> provider snapshot and delivery destination;
+  completion/retry -> correct platform; both browser journeys. Configuration,
+  schema and migration decisions remain pending the backend research.
+- Progress: project/playbook/docs/contracts and current exact production baseline
+  inspected; administrator diagnostics are aggregate/metadata only. No provider
+  call, message send, migration or production release performed for this task.
+- Reference slice RED: actual ImageGeneratorForm + UploadArea + personal library,
+  category upload then generation submitted `references: []` instead of the
+  uploaded URL. Minimal fix selects the completed upload only in selection mode;
+  separate library management still saves without selecting. The mode label now
+  distinguishes text-only from photo input. Focused regression matrix: 14 passed.
+  Initial type check caught a missing filename in the synthetic test fixture;
+  fixture corrected to the existing API contract. No provider contract changed.
+- Full clean Jest: 93 suites / 701 tests passed. TypeScript and changed-file
+  ESLint passed. Added a browser regression for both signed-platform fixture
+  entries that asserts the actual generation HTTP request carries the uploaded
+  URL and retains the reference after a rejected request; every API is intercepted.
+  Browser/export verification is in progress, not yet claimed.
+- External read-only Research completed: active VK checkout tree matches remote
+  master, native workers/SQLite/VK delivery exist but there is no browser API.
+  Existing GET-only HMAC cannot authorize financial writes unchanged. Current
+  balance precision/shadow divergence confirms the existing financial readiness
+  barriers. Owner financial-scope question is pending; native activation, migration
+  and result-channel parity remain unimplemented and are not claimed by this slice.
+- Additional RED/GREEN: uploading while editing categories inside the picker
+  also omitted selection. Any upload initiated from a picker now selects; the
+  standalone management screen remains save-only. The action says «Загрузить и
+  выбрать». Focused matrix now 15 passed; TypeScript passed again.
+- Browser export seam passed Telegram and linked-VK fixtures through the actual
+  HTTP generation payload, with failed-request reference retention. The first
+  harness expected a synthetic English error that the existing UI intentionally
+  redacts; switched the fixture to a valid short localized validation message.
+- Unchanged backend reference/privacy matrix on Windows: 84 passed / 16 failed.
+  Failing owned-upload cases are caused by existing `os.path.normpath` returning
+  backslashes before a POSIX-prefix ownership check. No backend/tests changed;
+  this is not a production Linux reproduction. The exact-baseline production
+  Linux suite passed previously; this PR still requires its own full Linux gate.
+  Do not weaken the ownership tests or change backend behavior for this UI slice.
