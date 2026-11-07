@@ -1920,6 +1920,7 @@ async def _deliver_miniapp_direct_image_result(
     img_ratio: str,
     unit_cost: float,
     prompt_hidden: bool,
+    origin_platform: str = "telegram",
 ) -> None:
     """Send Mini App direct image results to Telegram chat.
 
@@ -1927,7 +1928,7 @@ async def _deliver_miniapp_direct_image_result(
     results otherwise only appear in Mini App history, which makes them hard to
     save from Telegram clients.
     """
-    if launch_result.get("status") != "done" or not launch_result.get("saved_url"):
+    if origin_platform == "vk" or launch_result.get("status") != "done" or not launch_result.get("saved_url"):
         return
     chat_probe = getattr(app["bot"], "get_chat", None)
     can_deliver = (
@@ -2021,9 +2022,10 @@ async def _notify_miniapp_image_task_queued(
     img_service: str,
     img_ratio: str,
     unit_cost: float,
+    origin_platform: str = "telegram",
 ) -> None:
     """Notify Telegram chat when a Mini App image task enters provider queue."""
-    if launch_result.get("status") != "queued" or not launch_result.get("task_id"):
+    if origin_platform == "vk" or launch_result.get("status") != "queued" or not launch_result.get("task_id"):
         return
     if not await can_attempt_telegram_delivery(telegram_id):
         logger.info(
@@ -5064,6 +5066,7 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
         launch_result = await _start_image_generation_task_lazy(
             user=user,
             telegram_id=telegram_id,
+            origin_platform=ctx.get("platform") or "telegram",
             img_service=img_service,
             prompt=prompt,
             img_ratio=img_ratio,
@@ -5094,6 +5097,7 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
             request.app,
             telegram_id,
             launch_result,
+            origin_platform=ctx.get("platform") or "telegram",
             img_service=img_service,
             img_ratio=img_ratio,
             unit_cost=unit_cost,
@@ -5103,6 +5107,7 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
             request.app,
             telegram_id,
             launch_result,
+            origin_platform=ctx.get("platform") or "telegram",
             img_service=img_service,
             img_ratio=img_ratio,
             unit_cost=unit_cost,
@@ -5326,6 +5331,7 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
         launch_result = await _start_image_generation_task_lazy(
             user=user,
             telegram_id=telegram_id,
+            origin_platform=ctx.get("platform") or "telegram",
             img_service=img_service,
             prompt=prompt,
             img_ratio=img_ratio,
@@ -5361,6 +5367,7 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
             request.app,
             telegram_id,
             launch_result,
+            origin_platform=ctx.get("platform") or "telegram",
             img_service=img_service,
             img_ratio=img_ratio,
             unit_cost=unit_cost,
@@ -5369,6 +5376,7 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
             request.app,
             telegram_id,
             launch_result,
+            origin_platform=ctx.get("platform") or "telegram",
             img_service=img_service,
             img_ratio=img_ratio,
             unit_cost=unit_cost,

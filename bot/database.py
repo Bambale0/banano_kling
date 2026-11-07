@@ -5823,7 +5823,7 @@ async def mark_task_delivery_status(
         effective_status = normalized_status
         # Historical count increments on claims as well as status transitions.
         attempts = int(request_data.get("delivery_attempts") or 0)
-        if normalized_status != "result_ready":
+        if normalized_status not in {"result_ready", "available_in_app"}:
             attempts += 1
         has_link = bool(request_data.get("delivery_link_sent"))
         if normalized_status == "pending" and (
@@ -5927,7 +5927,7 @@ async def store_task_result_ready(task_id: str, result_url: str) -> bool:
         if task.status == "failed":
             # Never resurrect an already failed/refunded generation.
             return False
-        if task.status == "completed" and current_status in {"delivered", "failed", "link_only", "uncertain"}:
+        if task.status == "completed" and current_status in {"delivered", "failed", "link_only", "uncertain", "available_in_app"}:
             return bool(task.result_url)
         if task.status == "completed" and current_status == "unavailable":
             return bool(task.result_url)
@@ -5961,6 +5961,25 @@ async def store_task_result_ready(task_id: str, result_url: str) -> bool:
     return bool(task and task.status == "completed" and task.result_url)
 
 
+async def complete_task_in_app(task_id: str, result_url: str) -> bool:
+    """Finalize a VK-origin result without inventing a messenger receipt."""
+    task = await get_task_by_id(task_id)
+    if not task or _parse_json_dict(task.request_data).get("origin_platform") != "vk":
+        return False
+    if not await store_task_result_ready(task_id, result_url):
+        return False
+    ready = await get_task_by_id(task_id)
+    if not ready or not ready.result_url:
+        return False
+    # Retain the same acceptance/repeat-reward bookkeeping as messenger delivery.
+    if not await complete_video_task(task_id, ready.result_url):
+        return False
+    marked = await mark_task_delivery_status(task_id, "available_in_app")
+    if marked:
+        logger.info("Generation result available in Mini App: task_id=%s origin_platform=vk", task_id)
+    return marked
+
+
 async def claim_task_delivery(task_id: str, *, lease_seconds: int = 300) -> bool:
     """Atomically claim one Telegram delivery attempt.
 
@@ -5973,6 +5992,10 @@ async def claim_task_delivery(task_id: str, *, lease_seconds: int = 300) -> bool
 
     old_json = task.request_data or "{}"
     request_data = _parse_json_dict(old_json)
+    if request_data.get("origin_platform") == "vk":
+        if task.status == "completed" and task.result_url:
+            await mark_task_delivery_status(task_id, "available_in_app")
+        return False
     current_status = str(request_data.get("delivery_status") or "").strip().lower()
     if current_status in TERMINAL_TASK_DELIVERY_STATUSES:
         return False

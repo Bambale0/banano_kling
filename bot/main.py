@@ -1636,6 +1636,7 @@ async def _send_polled_nexus_image_result(
 ) -> bool:
     from bot.database import (
         can_attempt_telegram_delivery,
+        complete_task_in_app,
         complete_video_task,
         mark_task_delivery_status,
         store_task_result_ready,
@@ -1647,6 +1648,8 @@ async def _send_polled_nexus_image_result(
     persisted_url = await _persist_result_url_if_needed(result_url, task_type="image")
     if not await store_task_result_ready(task_lookup_id, persisted_url):
         return False
+    if _extract_task_request_data(task).get("origin_platform") == "vk":
+        return await complete_task_in_app(task_lookup_id, persisted_url)
     telegram_id = await _resolve_task_telegram_id(task, context="image_provider_poller")
     if not telegram_id:
         logger.error(
@@ -1896,6 +1899,8 @@ async def _fail_polled_nexus_image_task(
         )
         return False
 
+    if _extract_task_request_data(task).get("origin_platform") == "vk":
+        return True
     telegram_id = await _resolve_task_telegram_id(
         task,
         context="image_provider_poller",
@@ -4178,6 +4183,12 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
             reference_preview_urls = _extract_reference_image_urls(task)
             image_url = await _persist_result_url_if_needed(image_url, task_type="image")
 
+            # Preserve VK's application destination before any Telegram send.
+            if _extract_task_request_data(task).get("origin_platform") == "vk":
+                from bot.database import complete_task_in_app
+                if not await complete_task_in_app(task_id, image_url):
+                    return await _result_storage_failure_response(task_id)
+                return web.Response(status=200)
             # Обновляем задачу в БД
             await complete_video_task(task_id, image_url)
 
@@ -4359,6 +4370,12 @@ async def handle_novita_webhook(request: web.Request) -> web.Response:
             reference_preview_urls = _extract_reference_image_urls(task)
             image_url = await _persist_result_url_if_needed(image_url, task_type="image")
 
+            # Preserve VK's application destination before any Telegram send.
+            if _extract_task_request_data(task).get("origin_platform") == "vk":
+                from bot.database import complete_task_in_app
+                if not await complete_task_in_app(task_id, image_url):
+                    return await _result_storage_failure_response(task_id)
+                return web.Response(status=200)
             # Обновляем задачу в БД
             await complete_video_task(task_id, image_url)
 
@@ -4630,6 +4647,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             add_credits,
             can_attempt_telegram_delivery,
             claim_task_delivery,
+            complete_task_in_app,
             complete_video_task,
             get_task_by_id,
             mark_task_delivery_status,
@@ -4875,6 +4893,11 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                     telegram_id,
                 )
                 return await _result_storage_failure_response(task_id)
+
+            if _extract_task_request_data(task).get("origin_platform") == "vk":
+                if not await complete_task_in_app(task_id, result_url):
+                    return await _result_storage_failure_response(task_id)
+                return web.Response(status=200)
 
             if not telegram_id:
                 logger.error(f"Cannot find telegram_id for user_id {task.user_id}")
@@ -5355,7 +5378,8 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
 
             from bot.database import can_attempt_telegram_delivery
 
-            if telegram_id and await can_attempt_telegram_delivery(telegram_id):
+            if (telegram_id and _extract_task_request_data(task).get("origin_platform") != "vk"
+                    and await can_attempt_telegram_delivery(telegram_id)):
                 bot_instance = request.app["bot"]
                 try:
                     refund_text = (

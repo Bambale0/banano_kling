@@ -340,6 +340,7 @@ Release additions after exact-head review: magic-link launch data is removed fro
   administrator acceptance. Public rollout remains a separate decision.
 
 Release-candidate verification: full backend **4722 passed, 223 skipped, 826 warnings, 76 subtests passed** in 405.51s. Deployment-contract matrix **27 passed, 6 subtests passed**. A first frontend rerun reused stale Jest compilation for two unrelated reference suites; the clean `--no-cache` regression rerun passed **90/90 suites, 682/682 tests** in 56.351s. ESLint completed with only the pre-existing Kling 4 hooks warning. Telegram and VK production exports and the VK Chromium root smoke (430px/1280px) passed. The production deploy now builds and publishes both origins from the exact same expected SHA, writes and verifies both `revision.txt` files, retains prior VK releases and atomically replaces only the VK `current` symlink.
+
 ## Native VK journey and missing reference — 07.11.2026
 
 - Baseline `00b40366c40b4684e23d8dfde0c3fc2c188bfbfb`; dedicated task branch
@@ -401,3 +402,58 @@ Release-candidate verification: full backend **4722 passed, 223 skipped, 826 war
   the dedicated VK-root export (three journeys). Independent Standards and Spec
   reviews of e5e7af9 report no actionable findings. No native public activation,
   real provider generation, live message send or financial migration is claimed.
+
+## Image generation origin and cross-platform delivery — 07.11.2026
+
+- Baseline `tanyapi@00b40366c40b4684e23d8dfde0c3fc2c188bfbfb`; independent
+  branch `fix/tanyapi-vk-result-origin`. Reference-picker fix is tracked by #422.
+- Intended result: an ordinary image launched through a verified VK session stays
+  available in that Mini App and is not silently sent to the linked Telegram chat.
+  Native VK messaging/public onboarding remains a separate pending product slice.
+- Current audit: VK launch context already has a verified platform; ordinary image,
+  remix and image-trend launch paths discard it. Persisted tasks retain the linked
+  legacy Telegram ownership ID; direct and queued notifications and provider
+  callback/poller deliveries therefore assume Telegram. Existing request metadata,
+  atomic completion and delivery leases can be reused; no financial prefactor.
+- Plan: (1) RED public completion/lease and launch-origin tests; (2) persist server-
+  derived origin at image creation; (3) gate direct/queued/callback/poller Telegram
+  delivery while keeping result completion/repeat rewards intact; (4) API/ownership,
+  DB/lease/retry/legacy regressions, review, protected PR/exact-SHA release checks.
+- Technical contract: optional additive origin metadata and a terminal in-app
+  availability state; old tasks and Telegram launches keep existing behavior.
+  Client-supplied platform cannot select a destination. No new external messaging
+  API, secret, price, mutable business setting, schema or balance migration.
+- Risks/seams: direct and asynchronous provider paths, duplicate callbacks, task ID
+  aliases and completion rewards; verify the owner can read the completed result
+  and no Telegram send/lease is performed for persisted VK origin. Existing signed
+  auth/admin limits stay enforced. Native VK delivery capability is not fabricated.
+- Rollout: first let #422 finish normal CI/autodeploy; rebase this branch onto the
+  then-current tanyapi, run required checks and use native squash auto-merge. No
+  production result replay, live chat send or paid generation is authorized by tests.
+- RED/GREEN: VK completion originally acquired a Telegram lease; the Mini App
+  HTTP path dropped the verified origin; real queued/direct notification helpers
+  sent to Telegram; poll completion returned failure for an app-only result.
+  Added the saved origin, non-Telegram lease guard and an in-app completion path.
+- Public callback regression covers success/failure plus a repeated callback,
+  retaining normal completion bookkeeping and a single refund while sending no
+  Telegram message. Replayed in-app completion initially replaced a terminal URL;
+  fixed by using the durable saved URL. Provider-ID replacement preserves origin.
+  Current focused matrix: 8 passed on SQLite; unrelated Linux resource diagnostics
+  are isolated in the Windows test fixture. Native PostgreSQL and larger regression
+  verification, legacy callback variants, image-trend propagation and review remain
+  in progress. No source from this branch is deployed.
+- Rebased onto #422 merge `b9834c795707dc3037340ea553f41c1ea50f0f9b`;
+  both ledger sections were preserved. Broader collection revealed the installed
+  generation-start UX replacement also needed the new origin argument/guard.
+  Added that real runtime installer to the regression fixture and fixed the
+  notifier. The callback fixture now binds watchdog storage to its isolated DB.
+- Expanded SQLite matrix: 139 passed (HTTP, result polling, KIE verification,
+  provider IDs, creator pricing/debit guards and image trends). Final focused
+  origin matrix: 14 passed, including Telegram/default compatibility and both
+  legacy image callbacks. An earlier wider run also exposed two unchanged Windows
+  POSIX-path ownership failures; those are not weakened or fixed by this slice.
+- Ruff changed-line gate passed in UTF-8 mode (0 relevant findings, 407 legacy
+  findings ignored by the repository's existing gate); full new-test/delivery-
+  state Ruff and syntax checks passed. Added native PG durability cases to the
+  existing Runtime PostgreSQL workflow's test module; native execution is pending
+  CI, not claimed locally. Design/rollback: ADR 20261107-image-launch-platform.
