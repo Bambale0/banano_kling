@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Build and publish the Tanya Mini App on the production server itself.
-# This script intentionally does not configure DNS, TLS or Nginx. It only
-# refreshes the already configured static Mini App web root for the exact
-# checked-out production commit.
+# Refresh the static Mini App roots for the exact checked-out commit. The
+# existing VK vhost also receives a validated, reversible media-route include;
+# DNS, TLS and other provisioned Nginx settings remain operator-owned.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -213,6 +213,12 @@ rsync -a "${OUT_DIR}/" "$build_work/vk/"
 install -d -m 0755 "$MINIAPP_ROOT"
 install -d -m 0700 "$BACKUP_ROOT"
 install -d -m 0755 "$VK_RELEASE_ROOT"
+
+# The VK root SPA must not answer saved /uploads/ media requests with HTML.
+# Derive the upstream from its existing API proxy and preserve the vhost.
+python3 "${PROJECT_DIR}/scripts/configure_vk_media_route.py" \
+  --site "/etc/nginx/sites-enabled/${VK_FRONTEND_DOMAIN}.conf" \
+  --snippet "/etc/nginx/snippets/banano-vk-media.conf"
 
 if [[ -f "${MINIAPP_ROOT}/index.html" ]]; then
   stamp="$(date '+%Y%m%d-%H%M%S')"

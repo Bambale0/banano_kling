@@ -2934,3 +2934,6 @@ Verification: regression before fix 9 failed / 9 passed; after fix 393 focused t
 ## 2026-11-05 — TG–VK shared accounts, administrator preview
 
 See [TG_VK_EXECUTION.md](TG_VK_EXECUTION.md) for the live ledger. Isolated Draft PR only; user prohibits production merge/deploy until full completion.
+# 2026-11-07 — Preview delivery recovery
+
+Live ledger: [PREVIEW_RECOVERY_EXECUTION.md](PREVIEW_RECOVERY_EXECUTION.md).
