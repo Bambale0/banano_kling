@@ -313,13 +313,6 @@ async def test_vk_image_callback_keeps_settlement_without_telegram(monkeypatch, 
     bot.get_chat.assert_not_awaited()
 
 
-import json
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
-
-import pytest
-
-from bot import database, miniapp
 from bot.creator_tariff import VideoQuote
 from bot.services.generation_origin import (
     generation_origin_from_context,

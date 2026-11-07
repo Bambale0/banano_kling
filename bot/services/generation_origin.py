@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 _ACCOUNT_ID = re.compile(r"[0-9a-f]{32}")
 
