@@ -1,6 +1,6 @@
 jest.mock('../shared-commercial-preview', () => ({ SharedCommercialPreview: () => null }))
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { SharedAccountPreview } from '../shared-account-preview'
 import { fetchAccountPreviewSettings, saveAccountPreviewSettings, checkAccountPreviewLogin } from '@/lib/shared-account-api'
 
@@ -10,7 +10,7 @@ jest.mock('@/lib/shared-account-api', () => ({
   checkAccountPreviewLogin: jest.fn(),
 }))
 jest.mock('../shared-wallet-preview', () => ({ SharedWalletPreview: () => null }))
-jest.mock('../shared-account-link-preview', () => ({ SharedAccountLinkPreview: () => null }))
+jest.mock('../shared-account-link-preview', () => ({ SharedAccountLinkPreview: () => <section aria-label="Связанные аккаунты">Связанные аккаунты</section> }))
 
 const policy = { enabled: false, revision: 0, vk_app_id: null, vk_admin_ids: [], session_ttl_seconds: 3600, launch_max_age_seconds: 600 }
 
@@ -53,4 +53,37 @@ test('a stale configuration asks the administrator to reload', async () => {
   await screen.findByLabelText('Доступ администраторам')
   fireEvent.click(screen.getByRole('button', { name: 'Сохранить доступ' }))
   expect(await screen.findByText('Настройки изменились. Обновите страницу.')).toBeInTheDocument()
+})
+
+test('an expired settings login cannot hide the linked-account card or leave a loading message', async () => {
+  jest.mocked(fetchAccountPreviewSettings).mockRejectedValue(new Error('Откройте приложение заново для подтверждения входа.'))
+  render(<SharedAccountPreview isAdmin />)
+  fireEvent.click(screen.getByText('Настройки общих аккаунтов'))
+  await screen.findByText('Откройте приложение заново для подтверждения входа.')
+  expect(screen.getByRole('region', { name: 'Связанные аккаунты' })).toBeInTheDocument()
+  expect(screen.queryByText('Загрузка настроек…')).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Повторить загрузку настроек' })).toBeEnabled()
+})
+
+test('settings can be retried after authorization becomes available', async () => {
+  jest.mocked(fetchAccountPreviewSettings).mockRejectedValueOnce(new Error('Вход не подтверждён.')).mockResolvedValueOnce(policy)
+  render(<SharedAccountPreview isAdmin />)
+  fireEvent.click(screen.getByText('Настройки общих аккаунтов'))
+  fireEvent.click(await screen.findByRole('button', { name: 'Повторить загрузку настроек' }))
+  expect(await screen.findByLabelText('Доступ администраторам')).toBeInTheDocument()
+  expect(screen.queryByText('Вход не подтверждён.')).not.toBeInTheDocument()
+})
+
+test('stalled settings stop loading and offer retry after a finite deadline', async () => {
+  jest.useFakeTimers()
+  try {
+    jest.mocked(fetchAccountPreviewSettings).mockReturnValue(new Promise(() => {}))
+    render(<SharedAccountPreview isAdmin />)
+    fireEvent.click(screen.getByText('Настройки общих аккаунтов'))
+    await act(async () => { jest.advanceTimersByTime(15000) })
+    expect(screen.queryByText('Загрузка настроек…')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Повторить загрузку настроек' })).toBeEnabled()
+    expect(screen.getByRole('region', { name: 'Связанные аккаунты' })).toBeInTheDocument()
+    expect(jest.mocked(fetchAccountPreviewSettings).mock.calls[0][0]?.aborted).toBe(true)
+  } finally { jest.useRealTimers() }
 })

@@ -211,6 +211,7 @@ def _guard(handler):
         try:
             return await handler(request)
         except AuthenticationError as exc:
+            logger.info('shared_account_authentication_rejected path=%s reason=%s', request.path, str(exc))
             return response({'ok': False, 'error': str(exc)}, 401)
         except PermissionError as exc:
             return response({'ok': False, 'error': str(exc)}, 403)

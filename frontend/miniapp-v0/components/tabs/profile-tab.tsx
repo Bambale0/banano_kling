@@ -710,7 +710,7 @@ export function ProfileTab() {
         </div>
 
         {isOwnProfile ? <PersonalReferenceLibrary /> : null}
-        {isOwnProfile && state.user.isAdmin ? <SharedAccountPreview isAdmin /> : null}
+        {isOwnProfile && state.user.isAdmin ? <SharedAccountPreview isAdmin telegramBotUsername={state.user.botUsername} /> : null}
         {isOwnProfile ? (
           <div className="grid grid-cols-2 gap-2">
             <div className="rounded-lg border border-border/50 bg-card/45 p-3">
