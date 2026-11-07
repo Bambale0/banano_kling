@@ -2,13 +2,16 @@ import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { SharedAccountLinkPreview } from '../shared-account-link-preview'
 import { acceptAccountLink, createAccountLink, fetchAccountPreviewAccess, updateAccountLink } from '@/lib/shared-account-api'
-import { currentAccountPlatform, incomingAccountLink } from '@/lib/account-platform'
+import { accountLinkUrl, currentAccountPlatform, incomingAccountLink } from '@/lib/account-platform'
+import { buildTelegramMiniAppUrl } from '@/lib/api'
+
+jest.mock('@/lib/api', () => ({ buildTelegramMiniAppUrl: jest.fn(() => 'https://t.me/configured_bot?startapp') }))
 
 jest.mock('@/lib/shared-account-api', () => ({ acceptAccountLink: jest.fn(), createAccountLink: jest.fn(), updateAccountLink: jest.fn(), fetchAccountPreviewAccess: jest.fn() }))
 jest.mock('@/lib/account-platform', () => ({
   accountLaunch: () => ({ platform: 'telegram' }),
   currentAccountPlatform: jest.fn(),
-  accountLinkUrl: (_platform: string, token: string) => 'https://vk.com/app123#link_' + token,
+  accountLinkUrl: jest.fn(),
   incomingAccountLink: jest.fn(),
 }))
 
@@ -17,6 +20,8 @@ beforeEach(() => {
   jest.resetAllMocks()
   jest.mocked(incomingAccountLink).mockReturnValue('')
   jest.mocked(currentAccountPlatform).mockReturnValue('telegram')
+  jest.mocked(buildTelegramMiniAppUrl).mockReturnValue('https://t.me/configured_bot?startapp')
+  jest.mocked(accountLinkUrl).mockImplementation((_platform, token) => 'https://vk.com/app123#link_' + token)
   jest.mocked(fetchAccountPreviewAccess).mockResolvedValue({ revision: 1, vk_app_id: 123, telegram_bot_username: 'test_bot', telegram_linked: false, linked_platforms: ['telegram'] })
 })
 
@@ -55,6 +60,26 @@ test('failed status read offers retry without inventing a disconnected account',
   fireEvent.click(await screen.findByRole('button', { name: 'Повторить проверку' }))
   expect(await screen.findByRole('button', { name: 'Привязать ВКонтакте' })).toBeEnabled()
   expect(fetchAccountPreviewAccess).toHaveBeenCalledTimes(2)
+})
+
+test('expired login keeps the card visible and offers the configured Telegram relaunch', async () => {
+  jest.mocked(buildTelegramMiniAppUrl).mockReturnValue('')
+  jest.mocked(fetchAccountPreviewAccess).mockRejectedValue(new Error('Откройте приложение заново для подтверждения входа.'))
+  render(<SharedAccountLinkPreview vkAppId={null} telegramBotUsername="@configured_bot" />)
+  const reopen = await screen.findByRole('link', { name: 'Открыть приложение заново' })
+  expect(reopen).toHaveAttribute('href', 'https://t.me/configured_bot?startapp')
+  expect(screen.getByRole('region', { name: 'Связанные аккаунты' })).toBeInTheDocument()
+  expect(screen.queryByText('Не привязан')).not.toBeInTheDocument()
+  expect(createAccountLink).not.toHaveBeenCalled()
+})
+
+test('linking uses authenticated metadata even when administrator settings are unavailable', async () => {
+  jest.mocked(createAccountLink).mockResolvedValue({ ...invitation, state: 'pending', revision: 0, token: 'a'.repeat(43) })
+  render(<SharedAccountLinkPreview vkAppId={null} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Привязать ВКонтакте' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Создать ссылку' }))
+  await screen.findByLabelText('Ссылка для другого аккаунта')
+  expect(accountLinkUrl).toHaveBeenLastCalledWith('vk', 'a'.repeat(43), 123, 'test_bot')
 })
 
 test('stalled status read has a deadline and a retry action', async () => {

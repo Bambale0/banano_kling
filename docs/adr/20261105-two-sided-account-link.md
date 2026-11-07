@@ -34,6 +34,15 @@ committed link receipt. Administrator settings remain available in a separate
 disclosure below the card. All existing access, financial and rollout boundaries
 still apply.
 
+Settings loading and authentication failure never remove the card from the
+administrator profile. Linking obtains destinations from its own authenticated
+profile metadata; settings have bounded loading and explicit retry. Expired
+Telegram login offers a configured Mini App relaunch link. The ordinary Mini
+App's longer login window does not relax the configurable, shorter linking
+freshness policy. Policy revisions refresh metadata without remounting an
+in-progress invitation or discarding its consent state. Authentication rejection
+logs include only the request path and constant failure reason, never credentials.
+
 Only Telegram administrators and explicitly configured VK administrators may
 use this preview. The VK entry verifies a VK launch directly and never mounts
 the Telegram bootstrap. Settings management remains restricted to Telegram

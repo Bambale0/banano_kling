@@ -10,7 +10,7 @@ import {
   type AccountPreviewSettings,
 } from '@/lib/shared-account-api'
 
-export function SharedAccountPreview({ isAdmin }: { isAdmin: boolean }) {
+export function SharedAccountPreview({ isAdmin, telegramBotUsername = '' }: { isAdmin: boolean; telegramBotUsername?: string }) {
   const [policy, setPolicy] = useState<AccountPreviewSettings | null>(null)
   const [enabled, setEnabled] = useState(false)
   const [appId, setAppId] = useState('')
@@ -20,6 +20,8 @@ export function SharedAccountPreview({ isAdmin }: { isAdmin: boolean }) {
   const [linkTtl, setLinkTtl] = useState(600)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [attempt, setAttempt] = useState(0)
   const operation = useRef<AbortController | null>(null)
 
   function apply(value: AccountPreviewSettings) {
@@ -36,11 +38,24 @@ export function SharedAccountPreview({ isAdmin }: { isAdmin: boolean }) {
     if (!isAdmin) return
     const controller = new AbortController()
     operation.current = controller
-    fetchAccountPreviewSettings(controller.signal).then(apply).catch((error: unknown) => {
+    setLoading(true)
+    setMessage('')
+    const timeout = setTimeout(() => {
+      if (controller.signal.aborted) return
+      controller.abort()
+      setLoading(false)
+      setMessage('Загрузка настроек заняла слишком много времени. Попробуйте ещё раз.')
+    }, 15000)
+    fetchAccountPreviewSettings(controller.signal).then(value => {
+      if (!controller.signal.aborted) apply(value)
+    }).catch((error: unknown) => {
       if (!controller.signal.aborted) setMessage(error instanceof Error ? error.message : 'Не удалось загрузить настройки.')
+    }).finally(() => {
+      clearTimeout(timeout)
+      if (!controller.signal.aborted) setLoading(false)
     })
-    return () => operation.current?.abort()
-  }, [isAdmin])
+    return () => { clearTimeout(timeout); operation.current?.abort() }
+  }, [isAdmin, attempt])
 
   async function run(action: (signal: AbortSignal) => Promise<void>) {
     operation.current?.abort()
@@ -66,7 +81,7 @@ export function SharedAccountPreview({ isAdmin }: { isAdmin: boolean }) {
   }
 
   return <div className="space-y-4">
-    {policy?.enabled ? <SharedAccountLinkPreview key={'link:' + policy.revision} vkAppId={policy.vk_app_id} /> : null}
+    <SharedAccountLinkPreview policyRevision={policy?.revision} vkAppId={policy?.vk_app_id ?? null} telegramBotUsername={telegramBotUsername} />
     <details className="rounded-xl border border-border bg-card">
       <summary className="cursor-pointer p-4 text-sm font-medium">Настройки общих аккаунтов</summary>
     <section aria-label="Проверка общих аккаунтов" className="space-y-3 rounded-xl border border-border bg-card p-4">
@@ -109,7 +124,7 @@ export function SharedAccountPreview({ isAdmin }: { isAdmin: boolean }) {
             setMessage('Вход подтверждён.')
           })}>Проверить вход</Button>
         </div>
-      </> : <p className="text-sm text-muted-foreground">Загрузка настроек…</p>}
+      </> : loading ? <p className="text-sm text-muted-foreground">Загрузка настроек…</p> : <Button variant="outline" disabled={busy} onClick={() => setAttempt(value => value + 1)}>Повторить загрузку настроек</Button>}
       {message ? <p role="status" className="text-sm">{message}</p> : null}
       {policy?.enabled ? <SharedWalletPreview key={policy.revision} /> : null}
       {policy?.enabled ? <SharedCommercialPreview key={'commerce:' + policy.revision} /> : null}

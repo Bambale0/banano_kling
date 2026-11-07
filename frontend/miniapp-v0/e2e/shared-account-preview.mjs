@@ -210,6 +210,54 @@ try {
       await context.close()
     }
   }
+  // Regression: a real expired launch returns 401; the card must remain findable.
+  for (const metadataAllowed of [false, true]) {
+    const context = await browser.newContext({ viewport: { width: 430, height: 900 } })
+    const page = await context.newPage()
+    const mutations = []
+    await page.addInitScript(() => {
+      window.Telegram = { WebApp: { initData: 'expired-signed-launch', initDataUnsafe: {}, ready() {}, expand() {}, onEvent() {}, offEvent() {} } }
+    })
+    await page.route('**/telegram-web-app.js', route => route.fulfill({ contentType: 'application/javascript', body: '// deterministic bridge' }))
+    await page.route('**/mini-app/api/**', async route => {
+      const path = new URL(route.request().url()).pathname
+      let payload = { ok: true, items: [], feed: [], prompts: [], categories: [], references: [], notifications: [] }
+      if (path.endsWith('/bootstrap')) payload = { ...payload,
+        telegram_id: 1001, first_name: 'Expired', credits: 10, is_admin: true, bot_username: 'test_bot',
+        telegram_chat_available: true, telegram_bot_start_required: false, actions: [], payment_packages: [],
+        image_models: [], video_models: [], recent_tasks: [], saved_references: [],
+      }
+      if (path.includes('/account-preview/')) {
+        if (path.includes('/links')) mutations.push(path)
+        if (path.endsWith('/settings') || (!metadataAllowed && path.endsWith('/session'))) {
+          return route.fulfill({ status: 401, json: { ok: false, error: 'Expired launch credentials' } })
+        }
+        if (path.endsWith('/session')) payload = { ok: true, session_token: 's'.repeat(43), account: { id: 'regression-account' } }
+        if (path.endsWith('/me')) payload = { ok: true, account: { id: 'regression-account' }, preview: {
+          revision: 1, vk_app_id: 123, telegram_bot_username: 'test_bot', telegram_linked: true, linked_platforms: ['telegram'],
+        } }
+      }
+      return route.fulfill({ json: payload })
+    })
+    await page.goto(base)
+    await page.getByRole('button', { name: 'Профиль', exact: true }).click()
+    const card = page.getByRole('region', { name: 'Связанные аккаунты', exact: true })
+    await card.waitFor()
+    await page.getByText('Настройки общих аккаунтов', { exact: true }).click()
+    await page.getByRole('button', { name: 'Повторить загрузку настроек', exact: true }).waitFor()
+    assert.equal(await page.getByText('Загрузка настроек…', { exact: true }).count(), 0)
+    if (metadataAllowed) {
+      await card.getByRole('button', { name: 'Привязать ВКонтакте', exact: true }).waitFor()
+    } else {
+      await card.getByRole('button', { name: 'Повторить проверку', exact: true }).waitFor()
+      const reopen = page.getByRole('link', { name: 'Открыть приложение заново', exact: true })
+      assert.equal(await reopen.getAttribute('href'), 'https://t.me/test_bot?startapp')
+      assert.equal(await card.getByText('Не привязан', { exact: true }).count(), 0)
+    }
+    assert.deepEqual(mutations, [], 'An authentication error must never create or accept an invitation')
+    console.log(`PASS settings-401 card retained metadataAllowed=${metadataAllowed}`)
+    await context.close()
+  }
   for (const admin of [false, true]) {
     const context = await browser.newContext({ viewport: { width: 430, height: 900 } })
     const page = await context.newPage()

@@ -3,10 +3,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { LinkedAccountsCard } from '@/components/linked-accounts-card'
+import { buildTelegramMiniAppUrl } from '@/lib/api'
 import { currentAccountPlatform, accountLinkUrl, incomingAccountLink, type AccountPlatform } from '@/lib/account-platform'
 import { acceptAccountLink, createAccountLink, fetchAccountPreviewAccess, updateAccountLink, type AccountLink } from '@/lib/shared-account-api'
 
-export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '', onCommitted }: { vkAppId: number | null; telegramBotUsername?: string; onCommitted?: () => void }) {
+export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '', policyRevision, onCommitted }: { vkAppId: number | null; telegramBotUsername?: string; policyRevision?: number; onCommitted?: () => void }) {
   const [link, setLink] = useState<AccountLink | null>(null)
   const [url, setUrl] = useState('')
   const [token, setToken] = useState('')
@@ -16,6 +17,7 @@ export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '', on
   const [linkedPlatforms, setLinkedPlatforms] = useState<AccountPlatform[] | null>(null)
   const [statusError, setStatusError] = useState('')
   const [statusRetry, setStatusRetry] = useState(0)
+  const [destination, setDestination] = useState({ vkAppId, telegramBotUsername })
   const operation = useRef<AbortController | null>(null)
   const statusOperation = useRef<AbortController | null>(null)
   useEffect(() => {
@@ -30,6 +32,7 @@ export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '', on
     const controller = new AbortController()
     statusOperation.current = controller
     setStatusError('')
+    setLinkedPlatforms(null)
     const timeout = setTimeout(() => {
       if (controller.signal.aborted) return
       controller.abort()
@@ -40,6 +43,7 @@ export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '', on
       // Older servers cannot prove the other platform's status.
       if (!access.linked_platforms) throw new Error('Обновите приложение, чтобы проверить связанные аккаунты.')
       setLinkedPlatforms(access.linked_platforms)
+      setDestination({ vkAppId: access.vk_app_id, telegramBotUsername: access.telegram_bot_username })
     }).catch(error => {
       if (!controller.signal.aborted) setStatusError(error instanceof Error ? error.message : 'Не удалось проверить связанные аккаунты.')
     }).finally(() => clearTimeout(timeout))
@@ -47,7 +51,7 @@ export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '', on
       clearTimeout(timeout)
       controller.abort()
     }
-  }, [statusRetry])
+  }, [statusRetry, policyRevision])
 
   async function run(action: (signal: AbortSignal) => Promise<void>) {
     if (operation.current && !operation.current.signal.aborted) return
@@ -76,6 +80,10 @@ export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '', on
   }
 
   const active = link && !['committed', 'cancelled'].includes(link.state)
+  const botUsername = telegramBotUsername.trim().replace(/^@/, '')
+  const reopenUrl = statusError && currentAccountPlatform() === 'telegram'
+    ? /^[A-Za-z0-9_]+$/.test(botUsername) ? `https://t.me/${botUsername}?startapp` : buildTelegramMiniAppUrl()
+    : ''
   return <div className="space-y-3">
     <LinkedAccountsCard
       linkedPlatforms={linkedPlatforms}
@@ -85,16 +93,17 @@ export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '', on
       onRetry={() => setStatusRetry(value => value + 1)}
     />
     {statusError ? <p role="status" className="text-sm text-muted-foreground">{statusError}</p> : null}
+    {reopenUrl ? <Button variant="outline" asChild><a href={reopenUrl} target="_blank" rel="noopener noreferrer">Открыть приложение заново</a></Button> : null}
     {showFlow ? <section aria-label="Связывание аккаунтов" className="space-y-3 rounded-xl border border-border bg-card p-4">
     <h4 className="font-medium">Связать ТГ и ВК</h4>
     <p className="text-sm text-muted-foreground">Откройте ссылку в своём аккаунте другой платформы. Затем подтвердите связь с обеих сторон. Баланс, история и генерации станут общими после двух подтверждений.</p>
     {!active ? <Button disabled={busy} onClick={() => void run(async signal => {
       const target = currentAccountPlatform() === 'telegram' ? 'vk' : 'telegram'
       // Validate configured destination before creating a one-time invitation.
-      accountLinkUrl(target, 'a'.repeat(43), vkAppId, telegramBotUsername)
+      accountLinkUrl(target, 'a'.repeat(43), destination.vkAppId, destination.telegramBotUsername)
       const created = await createAccountLink(target, signal)
       setLink(created)
-      setUrl(accountLinkUrl(target, created.token!, vkAppId, telegramBotUsername))
+      setUrl(accountLinkUrl(target, created.token!, destination.vkAppId, destination.telegramBotUsername))
     })}>Создать ссылку</Button> : null}
     {url && active ? <label className="block text-sm">Ссылка для другого аккаунта
       <input aria-label="Ссылка для другого аккаунта" readOnly value={url} className="mt-1 w-full rounded border border-border bg-background p-2" onFocus={event => event.target.select()} />
