@@ -43,6 +43,18 @@
   cache only in this test fixture so each fresh schema runs real compatibility
   preparation. No production schema/helper behavior was changed; native rerun
   remains required and is not counted green.
+- Native rerun at 5d1c41acb159047431cc8d019387c03d6badbd99 passed: 234 tests /
+  3 expected skips in 104.85s, including PostgreSQL stale-snapshot fencing, real
+  credit/debit/payment writes, rollback and all shared identity/wallet/link checks
+  (workflow 42364226745). Both reviewers cleared the fixture-only follow-up.
+  Draft #424 remains unmerged with auto-merge off. Full main CI is tracked
+  separately; no production installation or complete cutover is claimed.
+- Additional guidance for the native VK counterpart: wondelai/skills
+  ddia-systems and its transactions reference; apply row-lock/atomicity/outbox
+  principles without assuming a cross-database transaction. Wider migration
+  diagnostic has evidence for relational fit, isolation and source/derived
+  separation (3/7, about 4.2/10); replication/failover, hot-key load, measured
+  retry budgets and production recovery remain unverified full-release gates.
 
 ## Missing card after authentication failure — 07.11.2026
 
