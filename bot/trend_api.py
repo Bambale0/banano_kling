@@ -743,6 +743,9 @@ async def _run_image_trend(
     user: Any,
     trend: TrustedTrendRun,
     origin_platform: str = "telegram",
+    origin_vk_user_id: int | None = None,
+    origin_account_id: str | None = None,
+    vk_chat_delivery_requested: bool = False,
 ) -> web.Response:
     from bot import miniapp as miniapp_module
 
@@ -790,6 +793,9 @@ async def _run_image_trend(
     try:
         launch_result = await miniapp_module._start_image_generation_task_lazy(
             origin_platform=origin_platform,
+            origin_vk_user_id=origin_vk_user_id,
+            origin_account_id=origin_account_id,
+            vk_chat_delivery_requested=vk_chat_delivery_requested,
             user=user,
             telegram_id=telegram_id,
             img_service=trend.model,
@@ -1374,6 +1380,9 @@ async def miniapp_run_trend(request: web.Request) -> web.Response:
                 user=user,
                 trend=trend,
                 origin_platform=context.get("platform") or "telegram",
+                origin_vk_user_id=context.get("platform_external_id") if context.get("platform") == "vk" else None,
+                origin_account_id=context.get("shared_account_id") if context.get("platform") == "vk" else None,
+                vk_chat_delivery_requested=context.get("vk_chat_delivery_requested") is True,
             )
 
         response_payload = _trend_response_payload(response)

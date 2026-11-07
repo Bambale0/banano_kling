@@ -1426,6 +1426,7 @@ async def _get_vk_session_user_context(init_data: str) -> tuple[int, dict]:
         "platform": "vk",
         "platform_external_id": account.identity.external_id,
         "shared_account_id": account.id,
+        "vk_chat_delivery_requested": policy.vk_result_delivery_enabled,
     }
 
 
@@ -5067,6 +5068,9 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
             user=user,
             telegram_id=telegram_id,
             origin_platform=ctx.get("platform") or "telegram",
+            origin_vk_user_id=ctx.get("platform_external_id") if ctx.get("platform") == "vk" else None,
+            origin_account_id=ctx.get("shared_account_id") if ctx.get("platform") == "vk" else None,
+            vk_chat_delivery_requested=ctx.get("vk_chat_delivery_requested") is True,
             img_service=img_service,
             prompt=prompt,
             img_ratio=img_ratio,
@@ -5332,6 +5336,9 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
             user=user,
             telegram_id=telegram_id,
             origin_platform=ctx.get("platform") or "telegram",
+            origin_vk_user_id=ctx.get("platform_external_id") if ctx.get("platform") == "vk" else None,
+            origin_account_id=ctx.get("shared_account_id") if ctx.get("platform") == "vk" else None,
+            vk_chat_delivery_requested=ctx.get("vk_chat_delivery_requested") is True,
             img_service=img_service,
             prompt=prompt,
             img_ratio=img_ratio,

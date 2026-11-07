@@ -5979,6 +5979,12 @@ async def complete_task_in_app(task_id: str, result_url: str) -> bool:
     marked = await mark_task_delivery_status(task_id, "available_in_app")
     if marked:
         logger.info("Generation result available in Mini App: task_id=%s origin_platform=vk", task_id)
+        try:
+            from bot.services.vk_result_delivery import enqueue_vk_result
+
+            await enqueue_vk_result(task_id)
+        except Exception as exc:  # noqa: BLE001 - reconciliation repairs a missed enqueue.
+            logger.error("vk_result_enqueue_failed task_id=%s error_type=%s", task_id, type(exc).__name__)
     return marked
 
 

@@ -1,5 +1,78 @@
 # TG–VK shared accounts execution ledger
 
+## VK result absent from community chat — 07.11.2026
+
+- Baseline 4f6387d65135b04a17c2d448ebeef793c5b08482; dedicated branch
+  fix/tanyapi-vk-chat-delivery. Latest administrator task at 16:07 Moscow has one
+  source/provider reference and a completed durable result, available_in_app.
+  No VK send occurred: PR423 removed wrong TG delivery but added no VK sender.
+- Audit: verified request context already exposes VK external/shared account IDs;
+  task snapshot retains only origin_platform. Existing TG lease must keep rejecting
+  VK. Native VK sender couples task/refund/block state and has unbounded download;
+  native read-only HMAC cannot authorize a POST unchanged. Common deployment has
+  launch secret but no community sender credential. No secret values were read out.
+- Reuse common durable tasks, canonical identities/legacy links, audited preview
+  policy and safe public-at-connect media downloader. Implement transport-only
+  direct VK adapter/common outbox, avoiding two queues or new internal networking.
+  Community credential must be configured securely before activation. No native
+  task/user/financial mutations or public rollout are part of this slice.
+- Plan: (1) RED signed launch/recipient and completion/outbox tests; (2) persist
+  verified recipient, typed administrative delivery policy and durable CAS outbox;
+  (3) bounded VK media/send adapter, permission and uncertainty handling;
+  (4) authenticated status/explicit owner retry, client guidance/consent;
+  (5) SQLite/PG/provider-contract/browser/regression/review/Draft CI evidence.
+- Acceptance: new VK image completion reaches its verified user's community chat
+  once under callback/poller races, keeps Mini App result available, never sends
+  to TG, never charges/refunds again; denied permission and uncertain sends are
+  visible and not silently retried. Old missing-recipient tasks require explicit
+  fresh owner acceptance. Additive schema, default-disabled audited policy,
+  secret-only transport configuration, no migration of wallets. Rollout hold stays.
+- Applied existing diagnosing-bugs/wayfinder Research/implement/TDD/code-review,
+  Claw backend integration and DDIA durable transaction guidance. Official VK
+  schema was inspected; dev.vk.com was unavailable. No live send/provider call.
+- Implemented recipient/account/intent snapshots for image/remix/image-trend
+  launches; client-supplied identities/intent do not select the destination.
+  Added a completion hook, fair recovery scan and durable per-task outbox with
+  CAS leases, frozen copy/attachment and separate VK receipts. Signed negative
+  random IDs avoid the native sender's positive timestamps; uniqueness and
+  bounded collision recovery are tested. No native DB or financial code is used.
+- The authenticated result view reports actual photo/link receipt, opens native
+  VK consent without claiming permission, and supports explicit old-owner
+  acceptance/retry. Unknown sends cannot be resent. New audited settings expose
+  community/enable/retry/copy; enabling rejects an unbound credential. Default is
+  disabled, and pre-enable launches do not silently become a message backlog.
+- Independent Standards review found scan starvation and escaped result fields;
+  both reproduced RED then passed GREEN. Same-lease late positive receipt was
+  also reproduced RED and repaired without enabling another send. Spec review
+  caught a task404 falsely labelled preview-disabled; neutral recovery regression
+  passed. Both final reviewers report no remaining actionable findings.
+- Local broad backend HTTP/auth/link/commerce/VK-origin/transport matrix passed
+  104 tests, 70 isolated-PG cases skipped, with existing AppKey warnings. Final
+  focused transport/outbox/HTTP additions are rerun separately. Full frontend
+  96 suites / 717 tests passed before the isolated404 mapping; its final focused
+  recovery matrix passed 19. TypeScript, changed ESLint and new-source Ruff pass.
+- Telegram-path and dedicated VK-root production exports passed. Actual exported
+  VK result browser scenarios passed at 320/430px on both (16 runs): permission
+  dialog + explicit acceptance, old-result send, uncertain receipt/no resend and
+  link-only receipt. API/provider/media were intercepted; no real message or paid
+  generation was sent. Final source CI/native PG is still pending, not assumed.
+- Read-only operational readiness: current task owner resolves uniquely through
+  persisted legacy→shared→verified VK identity plus a committed two-sided link
+  receipt. Existing native credential's token-default community matches its
+  configuration; actual messages permission is true. photos.getMessagesUploadServer
+  returned a valid HTTPS/public-IP upload endpoint without any upload/save/send.
+  No credential, response URL or private user ID was output. Common-backend
+  credential setup, activation and actual chat receipt remain release steps.
+- Separate private-photo Draft425 final a0a7c4e0d985c6f39d4c62e961f7adb32207c883
+  has all four main CI gates and native PG green (Linux safe 4779 passed,
+  250 skipped, 76 subtests); Draft/auto-merge-off verified. It is not merged or
+  deployed and is not a dependency for this chat-delivery slice.
+- Rollback preflight reproduced RED: old authentication policy readers reject
+  additive delivery JSON keys. Delivery now uses its own existing bot_settings
+  row, with one shared revision/atomic audit transaction. The old auth JSON stays
+  readable, and old-client updates preserve delivery controls. Credential storage
+  remains separate. No manual SQL or production configuration change was made.
+
 ## Missing card after authentication failure — 07.11.2026
 
 - Baseline `tanyapi@9eda416c861f8634b28fd94c81f634a24b7de875`; branch `fix/tanyapi-account-card-auth`.
