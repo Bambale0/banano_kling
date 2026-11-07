@@ -457,3 +457,18 @@ Release-candidate verification: full backend **4722 passed, 223 skipped, 826 war
   state Ruff and syntax checks passed. Added native PG durability cases to the
   existing Runtime PostgreSQL workflow's test module; native execution is pending
   CI, not claimed locally. Design/rollback: ADR 20261107-image-launch-platform.
+- Independent review found missed no-result and watchdog failure notifications,
+  plus a stale-URL rewrite race in the first in-app completion helper. Reproduced
+  all three RED: empty-result callback sent twice to Telegram, watchdog failure
+  sent twice despite a one-time refund, and controlled interleaving overwrote an
+  already-terminal URL. Guards now cover both notifications. Completion runs the
+  existing shared acceptance/repeat hooks without another unconditional result
+  rewrite; the controlled race is GREEN. Final focused origin matrix: 17 passed;
+  the expanded callback/poller/pricing/refund matrix passed 148 tests.
+- #422 release recovery: first autodeploy attempt stopped at the backup free-space
+  gate (about 35 MiB below its 10-GiB reserve); running release stayed healthy at
+  00b40366. Read-only Docker disk audit identified unused builder cache. Pruned
+  only cache older than 24 hours with explicit retained-cache/free-space bounds,
+  reclaiming 4.275 GB; available root space verified at 14,882,099,200 bytes.
+  Failed GitHub deploy jobs for exact b9834c7 were rerun normally; no manual deploy,
+  backup deletion, volume/image/container prune or financial mutation.

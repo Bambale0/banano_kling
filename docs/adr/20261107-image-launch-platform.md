@@ -43,6 +43,9 @@ runtime notifier, real task/provider-ID persistence, direct/queued responses,
 polled result, authenticated KIE callback, legacy image callbacks, task delivery
 lease and result/replay/refund transactions. All media/provider/bot boundaries
 are synthetic; no live message, charge or paid generation is used.
+Coverage includes empty-result and watchdog notifications and a controlled
+interleaving of two completion calls. Completion hooks run without another
+unconditional write of an earlier result URL.
 
 Local focused tests pass on SQLite. Existing native PostgreSQL durability tests
 also cover VK completion, concurrent refund/completion and terminal replay; their

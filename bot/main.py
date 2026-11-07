@@ -4862,7 +4862,8 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 logger.error(
                     f"No result URL found in {service_name} result: {webhook_data.get('resultJson', 'N/A')}"
                 )
-                if telegram_id and await can_attempt_telegram_delivery(telegram_id):
+                if (telegram_id and _extract_task_request_data(task).get("origin_platform") != "vk"
+                        and await can_attempt_telegram_delivery(telegram_id)):
                     bot_instance = request.app["bot"]
                     await bot_instance.send_message(
                         chat_id=telegram_id,
@@ -5653,6 +5654,8 @@ async def _notify_watchdog_failed_task(
         )
         return False
 
+    if _extract_task_request_data(task).get("origin_platform") == "vk":
+        return True
     telegram_id = await _resolve_task_telegram_id(
         task,
         context="watchdog_failed_notification",

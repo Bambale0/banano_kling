@@ -5961,6 +5961,12 @@ async def store_task_result_ready(task_id: str, result_url: str) -> bool:
     return bool(task and task.status == "completed" and task.result_url)
 
 
+async def _record_generation_completion(task_id: str) -> None:
+    """Run idempotent acceptance/repeat hooks without rewriting the result."""
+    await mark_generation_accepted(task_id)
+    await _credit_feed_repeat_on_webhook_completion(task_id)
+
+
 async def complete_task_in_app(task_id: str, result_url: str) -> bool:
     """Finalize a VK-origin result without inventing a messenger receipt."""
     task = await get_task_by_id(task_id)
@@ -5968,12 +5974,8 @@ async def complete_task_in_app(task_id: str, result_url: str) -> bool:
         return False
     if not await store_task_result_ready(task_id, result_url):
         return False
-    ready = await get_task_by_id(task_id)
-    if not ready or not ready.result_url:
-        return False
     # Retain the same acceptance/repeat-reward bookkeeping as messenger delivery.
-    if not await complete_video_task(task_id, ready.result_url):
-        return False
+    await _record_generation_completion(task_id)
     marked = await mark_task_delivery_status(task_id, "available_in_app")
     if marked:
         logger.info("Generation result available in Mini App: task_id=%s origin_platform=vk", task_id)
@@ -6117,8 +6119,7 @@ async def complete_video_task(task_id: str, result_url: str) -> bool:
             final_status,
         )
         if final_status == "completed":
-            await mark_generation_accepted(lookup_value)
-            await _credit_feed_repeat_on_webhook_completion(lookup_value)
+            await _record_generation_completion(lookup_value)
         return True
 
 

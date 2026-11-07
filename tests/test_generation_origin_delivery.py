@@ -1,4 +1,5 @@
 """A linked legacy Telegram identity must not choose a VK task's transport."""
+import asyncio
 import json
 import sys
 from types import SimpleNamespace
@@ -186,7 +187,74 @@ async def test_in_app_completion_replay_preserves_the_first_terminal_result():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("state", ["success", "fail"])
+async def test_interleaved_in_app_completions_cannot_replace_a_terminal_url(monkeypatch):
+    user = await database.get_or_create_user(880021)
+    await database.add_generation_task(
+        user.id, 880021, "vk-interleaved", "image", "banana_pro",
+        model="banana_pro", request_data={"origin_platform": "vk"},
+    )
+    read = database.get_task_by_id
+    ready = {name: asyncio.Event() for name in ("vk-completion-a", "vk-completion-b")}
+    release = {name: asyncio.Event() for name in ready}
+    urls = {name: f"https://example.test/{name}.png" for name in ready}
+    paused = set()
+
+    async def controlled_read(task_id):
+        task = await read(task_id)
+        name = asyncio.current_task().get_name()
+        if (name in ready and name not in paused and task and task.result_url == urls[name]
+                and json.loads(task.request_data).get("delivery_status") != "available_in_app"):
+            paused.add(name)
+            ready[name].set()
+            await release[name].wait()
+        return task
+
+    monkeypatch.setattr(database, "get_task_by_id", controlled_read)
+    tasks = []
+    try:
+        tasks.append(asyncio.create_task(database.complete_task_in_app("vk-interleaved", urls['vk-completion-a']), name='vk-completion-a'))
+        await asyncio.wait_for(ready['vk-completion-a'].wait(), 5)
+        tasks.append(asyncio.create_task(database.complete_task_in_app("vk-interleaved", urls['vk-completion-b']), name='vk-completion-b'))
+        await asyncio.wait_for(ready['vk-completion-b'].wait(), 5)
+        release['vk-completion-a'].set()
+        assert await tasks[0]
+        first_terminal = await read("vk-interleaved")
+        assert json.loads(first_terminal.request_data)["delivery_status"] == "available_in_app"
+        release['vk-completion-b'].set()
+        assert await tasks[1]
+        final = await read("vk-interleaved")
+        assert final.result_url == first_terminal.result_url
+    finally:
+        for event in release.values():
+            event.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_watchdog_vk_failure_refunds_once_without_telegram(main_module):
+    from bot.services import task_watchdog
+
+    user = await database.get_or_create_user(880021)
+    starting_balance = float(user.credits)
+    assert await database.deduct_credits(880021, 1)
+    await database.add_generation_task(
+        user.id, 880021, "vk-watchdog-image", "image", "banana_pro",
+        model="banana_pro", cost=1, request_data={"origin_platform": "vk"},
+    )
+    task = await database.get_task_by_id("vk-watchdog-image")
+    assert await task_watchdog.force_fail_task(task.id, user.id, 1)
+    bot = SimpleNamespace(send_message=AsyncMock(), get_chat=AsyncMock())
+    assert await main_module._notify_watchdog_failed_task(bot, {"task_id": task.task_id})
+    assert not await task_watchdog.force_fail_task(task.id, user.id, 1)
+    assert await main_module._notify_watchdog_failed_task(bot, {"task_id": task.task_id})
+    updated = await database.get_or_create_user(880021)
+    assert float(updated.credits) == starting_balance
+    bot.send_message.assert_not_awaited()
+    bot.get_chat.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["success", "fail", "empty"])
 async def test_vk_image_callback_keeps_settlement_without_telegram(monkeypatch, main_module, state):
     from bot.services import kie_webhook_verification
 
@@ -200,14 +268,14 @@ async def test_vk_image_callback_keeps_settlement_without_telegram(monkeypatch, 
     )
     bot = SimpleNamespace(send_photo=AsyncMock(), send_document=AsyncMock(),
                           send_message=AsyncMock(), get_chat=AsyncMock())
-    payload = {"code": 200, "data": {"taskId": "vk-callback-image", "state": state,
+    payload = {"code": 200, "data": {"taskId": "vk-callback-image", "state": "success" if state == "empty" else state,
                "failCode": "422", "failMsg": "Invalid input image",
-               "model": "nano-banana-pro", "resultJson": json.dumps({"resultUrls": ["https://example.test/result.png"]})}}
+               "model": "nano-banana-pro", "resultJson": json.dumps({"resultUrls": [] if state == "empty" else ["https://example.test/result.png"]})}}
     monkeypatch.setattr(kie_webhook_verification, "canonical_kie_callback", AsyncMock(return_value=(payload, 200)))
     monkeypatch.setattr(main_module.config, "KIE_AI_WEBHOOK_SECRET", "synthetic-webhook-secret")
     monkeypatch.setattr(main_module, "_persist_result_url_if_needed", AsyncMock(return_value="https://example.test/result.png"))
-    completed = AsyncMock(wraps=database.complete_video_task)
-    monkeypatch.setattr(database, "complete_video_task", completed)
+    accepted = AsyncMock(wraps=database.mark_generation_accepted)
+    monkeypatch.setattr(database, "mark_generation_accepted", accepted)
     app = web.Application()
     app["bot"] = bot
     app.router.add_post('/callback', main_module.handle_kie_ai_webhook)
@@ -218,14 +286,17 @@ async def test_vk_image_callback_keeps_settlement_without_telegram(monkeypatch, 
         assert repeated.status == 200
     task = await database.get_task_by_id("vk-callback-image")
     if state == "success":
-        completed.assert_awaited_once_with("vk-callback-image", "https://example.test/result.png")
+        accepted.assert_awaited_once_with("vk-callback-image")
         assert task.status == "completed"
         assert json.loads(task.request_data)["delivery_status"] == "available_in_app"
-    else:
-        completed.assert_not_awaited()
+    elif state == "fail":
+        accepted.assert_not_awaited()
         assert task.status == "failed"
+    else:
+        accepted.assert_not_awaited()
+        assert task.status == "pending"
     fresh = await database.get_or_create_user(880021)
-    assert float(fresh.credits) == starting_balance + (2 if state == "success" else 3)
+    assert float(fresh.credits) == starting_balance + (3 if state == "fail" else 2)
     bot.send_photo.assert_not_awaited()
     bot.send_document.assert_not_awaited()
     bot.send_message.assert_not_awaited()
