@@ -1,5 +1,41 @@
 # TG–VK shared accounts execution ledger
 
+## Durable Telegram legacy credit fence — 07.11.2026 (Draft only)
+
+- Baseline tanyapi@b9834c795707dc3037340ea553f41c1ea50f0f9b; isolated branch
+  feature/tanyapi-legacy-wallet-fence. Owner selected common account/balance
+  after voluntary linking; VK must remain independently usable.
+- Preflight: openings are sandbox-only; wallet/link locks and platform identities
+  exist. Direct credits SQL bypasses add/deduct helpers in recovery, payment and
+  specialized tasks. A service-only guard cannot prove writer fencing. Existing
+  PG adapter supports native DDL; public legacy database and isolated PG test
+  seams can exercise real writers. No competing wallet/importer is needed.
+- Intended slice: internal explicit freeze of one verified TG legacy wallet,
+  immutable raw snapshot/idempotency receipt, DB-level credit/identity/delete
+  rejection, crash/retry atomicity. A marker on the users row also changes its
+  version, so an older PG repeatable-read writer cannot ignore a newer fence.
+- Limits: no automatic startup/schema call, HTTP/admin/CLI activation, live
+  freeze/import, rounding, VK-repository change or public launch. Not a complete
+  cutover: pending jobs/payments/events, partner RUB, VK fencing, late-event bridge
+  and live authority routing still need their own implementations and review.
+- Plan: RED isolated real-writer/replay/ownership/race tests; minimal internal
+  fence; SQLite + PG contracts including older-snapshot writer and rollback;
+  independent review; Draft PR with no merge/deploy until the full product gates.
+- No mutable economic setting or provider/payment contract change. Runtime price
+  sources, credits and wallet balances remain untouched outside synthetic tests.
+- RED: five SQLite cases fail because fences module is absent; five native PG
+  variants skipped locally without explicit isolated DSN. No live DB fallback.
+- Implemented explicit schema preparation and atomic internal freeze. A separate
+  preparation call avoids ALTER TABLE waiting on older snapshot readers during
+  freeze. Same-named/disabled guard attestation fails closed. Raw storage values
+  and guard digest are retained without normalization; no receipt is logged.
+- Research confirmed SQLite REPLACE/unique-key and transaction-ABORT hazards.
+  Both additional regressions were RED; conflict guards and ROLLBACK make them
+  GREEN. Isolated shared-account/wallet/link/commerce matrix: 114 passed / 113
+  skipped before final additions; final focused fence matrix: 11 passed / 13
+  skipped (native PG cases await CI). Ruff passed. Real legacy payment completion
+  remains pending with unchanged credits after two rejected settlement attempts.
+
 ## Missing card after authentication failure — 07.11.2026
 
 - Baseline `tanyapi@9eda416c861f8634b28fd94c81f634a24b7de875`; branch `fix/tanyapi-account-card-auth`.
