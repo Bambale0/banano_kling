@@ -16,9 +16,15 @@ __all__ = ['account_database']
 
 
 @pytest.fixture(autouse=True)
-async def prepared_fence_schema(account_database):
+async def prepared_fence_schema(account_database, monkeypatch):
     from bot.shared_accounts.fences import ensure_fence_schema
 
+    if db_backend.is_postgres():
+        from bot import postgres_aiosqlite
+
+        # Each parametrized test owns a fresh schema. The process-global startup
+        # cache must not skip real legacy compatibility DDL for the new schema.
+        monkeypatch.setattr(postgres_aiosqlite, '_HELPERS_READY', False)
     async with db_backend.connect() as db:
         await ensure_fence_schema(db)
 
@@ -121,7 +127,7 @@ async def test_concurrent_credit_is_either_in_the_snapshot_or_rejected():
         assert isinstance(credited, (db_backend.IntegrityError, db_backend.OperationalError))
 
 
-async def test_rejected_credit_rolls_back_earlier_payment_status_even_if_error_is_caught():
+async def test_rejected_credit_rolls_back_earlier_transaction_change_even_if_error_is_caught():
     from bot.shared_accounts.fences import freeze_telegram_wallet
 
     user, account = await owner()

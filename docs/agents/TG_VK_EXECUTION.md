@@ -35,6 +35,14 @@
   skipped before final additions; final focused fence matrix: 11 passed / 13
   skipped (native PG cases await CI). Ruff passed. Real legacy payment completion
   remains pending with unchanged credits after two rejected settlement attempts.
+- Independent Standards/Spec review at 31240a8: no actionable findings. Final
+  local combined matrix including browser auth: 121 passed / 116 skipped.
+- First native PG workflow reached fence preparation but ten new cases failed
+  before freezing: the process-global compatibility-DDL cache skipped bootstrap
+  for subsequent isolated schemas, leaving telegram_chat_state absent. Reset the
+  cache only in this test fixture so each fresh schema runs real compatibility
+  preparation. No production schema/helper behavior was changed; native rerun
+  remains required and is not counted green.
 
 ## Missing card after authentication failure — 07.11.2026
 
