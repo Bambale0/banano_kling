@@ -178,15 +178,17 @@ from bot.services.photo_prompt_billing import (
 )
 from bot.services.preset_manager import preset_manager
 from bot.services.reference_storage_service import save_reference_file
-from bot.services.upload_limits import (
-    DEFAULT_UPLOAD_MAX_BYTES as MINIAPP_UPLOAD_DEFAULT_MAX_BYTES,
-)
-from bot.services.upload_limits import UPLOAD_TIMEOUT_SECONDS as MINIAPP_UPLOAD_TIMEOUT_SECONDS
 from bot.services.remix_prompt import compose_feed_remix_prompt
 from bot.services.subscription_service import (
     REQUIRED_CHANNEL_USERNAME,
     check_required_channel_subscription,
     should_block_for_subscription,
+)
+from bot.services.upload_limits import (
+    DEFAULT_UPLOAD_MAX_BYTES as MINIAPP_UPLOAD_DEFAULT_MAX_BYTES,
+)
+from bot.services.upload_limits import (
+    UPLOAD_TIMEOUT_SECONDS as MINIAPP_UPLOAD_TIMEOUT_SECONDS,
 )
 from bot.services.yookassa_service import yookassa_service
 from bot.utils.user_facing_errors import make_user_friendly_generation_error
