@@ -171,6 +171,35 @@ def test_link_builder_preserves_plain_link_without_referral_code():
     assert prompt_link("test_bot", 42, None) == "https://t.me/test_bot?startapp=prompt_42"
 
 
+def test_link_builders_keep_vk_navigation_inside_vk():
+    from bot.miniapp_links import (
+        feed_link,
+        profile_link,
+        prompt_link,
+        referral_link,
+        remix_link,
+    )
+
+    kwargs = {"platform": "vk", "vk_app_id": 54880352}
+    assert prompt_link("test_bot", 42, "abc", **kwargs) == (
+        "https://vk.com/app54880352#prompt_42_ref_ABC"
+    )
+    assert referral_link("test_bot", "abc", **kwargs) == (
+        "https://vk.com/app54880352#ref_ABC"
+    )
+    assert profile_link("test_bot", "abc", **kwargs) == (
+        "https://vk.com/app54880352#profile_ABC_ref_ABC"
+    )
+    assert feed_link("test_bot", 7, "abc", **kwargs) == (
+        "https://vk.com/app54880352#feed_7_ref_ABC"
+    )
+    assert remix_link("test_bot", 7, "abc", **kwargs) == (
+        "https://vk.com/app54880352#remix_7_ref_ABC"
+    )
+    with pytest.raises(ValueError, match="VK Mini App ID"):
+        referral_link("test_bot", "abc", platform="vk")
+
+
 @pytest.mark.asyncio
 async def test_sharer_link_attaches_without_activation_but_does_not_credit_on_click(sharing_client):
     trend = await public_trend()

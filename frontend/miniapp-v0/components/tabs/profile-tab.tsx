@@ -11,6 +11,7 @@ import { cn, isHttpUrl } from '@/lib/utils'
 import { normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { mergePendingPublication, mergePublication } from '@/lib/feed-events'
+import { platformMiniAppUrl } from '@/lib/account-platform'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
@@ -243,8 +244,11 @@ export function ProfileTab() {
   const profileShareLink =
     isOwnProfile
       ? user.profileLink ||
-        (user.botUsername && ownReferralCode
-          ? `https://t.me/${user.botUsername}?startapp=${encodeURIComponent(`profile_${ownReferralCode}_ref_${ownReferralCode}`)}`
+        (ownReferralCode
+          ? platformMiniAppUrl(
+              `profile_${ownReferralCode}_ref_${ownReferralCode}`,
+              user.botUsername,
+            )
           : '')
       : ''
   const displayChannelUrl = isOwnProfile ? ownChannelUrl : profile?.channel_url || ''

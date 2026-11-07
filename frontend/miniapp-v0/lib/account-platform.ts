@@ -10,6 +10,23 @@ export function currentAccountPlatform(): AccountPlatform {
     : 'telegram'
 }
 
+export function platformMiniAppUrl(startParam: string, telegramBotUsername = ''): string {
+  const param = String(startParam || '').trim()
+  if (!param) return ''
+  if (currentAccountPlatform() === 'vk') {
+    if (typeof window === 'undefined') return ''
+    const appId = Number(new URLSearchParams(window.location.search).get('vk_app_id') || 0)
+    return Number.isSafeInteger(appId) && appId > 0
+      ? `https://vk.com/app${appId}#${encodeURIComponent(param)}`
+      : ''
+  }
+  const username = telegramBotUsername.trim().replace(/^@/, '') || getRuntimeBotUsername()
+  return /^[A-Za-z0-9_]+$/.test(username)
+    ? `https://t.me/${username}?startapp=${encodeURIComponent(param)}`
+    : ''
+}
+
+
 export function accountLaunch(): { platform: AccountPlatform; launch_data: string } {
   if (typeof window === 'undefined') throw new Error('Откройте приложение из ТГ или ВК.')
   // Explicit VK launch wins over a previous Telegram session in this browser.

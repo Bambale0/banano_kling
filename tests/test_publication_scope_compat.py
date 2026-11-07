@@ -55,6 +55,69 @@ async def test_miniapp_share_rejects_malformed_reference_selection(monkeypatch):
     assert "Некорректный выбор референсов" in json.loads(response.text)["error"]
 
 
+@pytest.mark.asyncio
+async def test_vk_scoped_publication_returns_vk_link(monkeypatch):
+    from aiohttp import web
+
+    from bot.miniapp_links import feed_link
+
+    publication_scope = _load_publication_scope_module()
+    module = SimpleNamespace(
+        _miniapp_payload=AsyncMock(return_value={
+            "task_id": "vk-publication",
+            "publication_scope": "feed",
+        }),
+        _payload_bool=lambda value, default: default if value is None else bool(value),
+        _optional_reference_indices=lambda _body, _key: None,
+        _get_user_context=AsyncMock(return_value=(
+            123456,
+            {
+                "user": SimpleNamespace(id=7),
+                "platform": "vk",
+                "vk_app_id": 54880352,
+            },
+        )),
+        _miniapp_link_kwargs=lambda ctx: {
+            "platform": ctx["platform"],
+            "vk_app_id": ctx["vk_app_id"],
+        },
+        build_feed_link=feed_link,
+        config=SimpleNamespace(mini_app_url="https://t.me/testbot/app"),
+        web=web,
+        _miniapp_error_response=lambda error, **_kwargs: web.json_response(
+            {"ok": False, "error": str(error)},
+            status=500,
+        ),
+    )
+    monkeypatch.setattr(
+        publication_scope,
+        "share_to_feed_scoped",
+        AsyncMock(return_value={
+            "id": 42,
+            "author_referral_code": "AUTHOR",
+        }),
+    )
+    monkeypatch.setattr(
+        publication_scope,
+        "_invalidate_publication_caches",
+        lambda: None,
+    )
+    request = SimpleNamespace(app={
+        "bot": SimpleNamespace(
+            get_me=AsyncMock(return_value=SimpleNamespace(username="testbot")),
+        ),
+    })
+
+    response = await publication_scope._miniapp_generation_share_scoped(module, request)
+
+    assert response.status == 200
+    payload = json.loads(response.text)
+    assert payload["feed_item"]["publication_link"] == (
+        "https://vk.com/app54880352#feed_42_ref_AUTHOR"
+    )
+    assert "t.me" not in payload["feed_item"]["publication_link"]
+
+
 @pytest.mark.parametrize("scope", ["private", "profile", "feed"])
 def test_publication_result_uses_one_stable_publish_action(scope):
     publication_scope = _load_publication_scope_module()

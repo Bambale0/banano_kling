@@ -931,10 +931,12 @@ def _video_remix_link(payload: dict[str, Any]) -> str:
         link = str(raw or "").strip()
         if not link:
             continue
-        if "startapp=remix_" in link:
+        if "startapp=remix_" in link or "#remix_" in link:
             return link
         if "startapp=feed_" in link:
             return link.replace("startapp=feed_", "startapp=remix_", 1)
+        if "#feed_" in link:
+            return link.replace("#feed_", "#remix_", 1)
     return ""
 
 

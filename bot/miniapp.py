@@ -1426,7 +1426,16 @@ async def _get_vk_session_user_context(init_data: str) -> tuple[int, dict]:
         "platform": "vk",
         "platform_external_id": account.identity.external_id,
         "shared_account_id": account.id,
+        "vk_app_id": policy.vk_app_id,
         "vk_chat_delivery_requested": policy.vk_result_delivery_enabled,
+    }
+
+
+def _miniapp_link_kwargs(ctx: dict) -> dict[str, Any]:
+    """Return the authenticated surface used to create public Mini App links."""
+    return {
+        "platform": str(ctx.get("platform") or "telegram"),
+        "vk_app_id": ctx.get("vk_app_id"),
     }
 
 
@@ -3473,7 +3482,11 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
     try:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
-        telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
+        telegram_id, ctx = await _get_user_context(
+            request.app,
+            init_data,
+            body.get("start_param_fallback"),
+        )
         # Private request state comes only from the authenticated actor. Later
         # model metadata wrappers reuse it without a shared per-user cache.
         tariff = await creator_tariff_display.get_actor_tariff(telegram_id)
@@ -3481,14 +3494,16 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
         user = ctx["user"]
         telegram_user = ctx["payload"]["user"]
         me = await _cached_bot_me(request.app)
+        link_kwargs = _miniapp_link_kwargs(ctx)
+        can_build_platform_link = bool(me.username) or link_kwargs["platform"] == "vk"
         profile_link = (
-            build_profile_link(me.username, user.referral_code)
-            if me.username and user.referral_code
+            build_profile_link(me.username, user.referral_code, **link_kwargs)
+            if user.referral_code and can_build_platform_link
             else config.mini_app_url
         )
         referral_link = (
-            build_referral_link(me.username, user.referral_code)
-            if me.username and user.referral_code
+            build_referral_link(me.username, user.referral_code, **link_kwargs)
+            if user.referral_code and can_build_platform_link
             else config.mini_app_url
         )
         recent_tasks = await _fetch_recent_tasks(telegram_id)
@@ -4229,9 +4244,15 @@ async def miniapp_prompt_link(request: web.Request) -> web.Response:
         if not (prompt["status"] == "approved" and prompt["is_public"]) and prompt["author_id"] != user.id:
             return web.json_response({"ok": False, "error": "Промпт недоступен"}, status=403)
         me = await request.app["bot"].get_me()
+        link_kwargs = _miniapp_link_kwargs(ctx)
         link = (
-            build_prompt_link(me.username, prompt_id, user.referral_code)
-            if me.username
+            build_prompt_link(
+                me.username,
+                prompt_id,
+                user.referral_code,
+                **link_kwargs,
+            )
+            if me.username or link_kwargs["platform"] == "vk"
             else config.mini_app_url
         )
         return web.json_response({"ok": True, "prompt": prompt, "link": link})
@@ -4503,6 +4524,8 @@ def _miniapp_profile_payload(
     *,
     viewer_user_id: int | None = None,
     feed_summary: dict[str, int] | None = None,
+    platform: str = "telegram",
+    vk_app_id: int | None = None,
 ) -> dict[str, Any]:
     referral_code = str(getattr(author, "referral_code", "") or "").strip().upper()
     username = str(getattr(author, "username", "") or "").strip().lstrip("@")
@@ -4512,14 +4535,16 @@ def _miniapp_profile_payload(
     if not display_name:
         display_name = username or f"user_{getattr(author, 'telegram_id', '') or getattr(author, 'id', '')}"
 
+    link_kwargs = {"platform": platform, "vk_app_id": vk_app_id}
+    can_build_platform_link = bool(bot_username) or platform == "vk"
     profile_link = (
-        build_profile_link(bot_username, referral_code)
-        if bot_username and referral_code
+        build_profile_link(bot_username, referral_code, **link_kwargs)
+        if referral_code and can_build_platform_link
         else config.mini_app_url
     )
     referral_link = (
-        build_referral_link(bot_username, referral_code)
-        if bot_username and referral_code
+        build_referral_link(bot_username, referral_code, **link_kwargs)
+        if referral_code and can_build_platform_link
         else config.mini_app_url
     )
     summary = feed_summary or {}
@@ -4580,6 +4605,7 @@ async def miniapp_profile_feed(request: web.Request) -> web.Response:
             me.username or "",
             viewer_user_id=ctx["user"].id,
             feed_summary=feed_summary,
+            **_miniapp_link_kwargs(ctx),
         )
         return await creator_tariff_display.priced_feed_response({"ok": True, "profile": profile, "feed": feed}, telegram_id)
     except Exception as e:
@@ -4664,9 +4690,15 @@ async def miniapp_generation_share(request: web.Request) -> web.Response:
             logger.exception("Failed to invalidate feed caches after Mini App publish")
         me = await request.app["bot"].get_me()
         author_referral_code = str(card.get("author_referral_code") or "").strip().upper()
+        link_kwargs = _miniapp_link_kwargs(ctx)
         publication_link = (
-            build_feed_link(me.username, card["id"], author_referral_code)
-            if me.username
+            build_feed_link(
+                me.username,
+                card["id"],
+                author_referral_code,
+                **link_kwargs,
+            )
+            if me.username or link_kwargs["platform"] == "vk"
             else config.mini_app_url
         )
         card["publication_link"] = publication_link
@@ -4773,26 +4805,36 @@ async def miniapp_feed_share(request: web.Request) -> web.Response:
         # still identifies the original creator for repeat/royalty accounting.
         sharer_referral_code = str(getattr(ctx["user"], "referral_code", "") or "").strip().upper()
         is_image_feed_item = str(card.get("gen_type") or "").strip().lower() == "image"
-        post_link = (
-            build_feed_bot_link(me.username, card["id"], sharer_referral_code)
-            if me.username
-            else config.mini_app_url
-        )
-        repeat_link = (
-            build_remix_bot_link(me.username, card["id"], sharer_referral_code)
-            if me.username and is_image_feed_item
-            else post_link
-        )
+        link_kwargs = _miniapp_link_kwargs(ctx)
+        can_build_platform_link = bool(me.username) or link_kwargs["platform"] == "vk"
         miniapp_post_link = (
-            build_feed_link(me.username, card["id"], sharer_referral_code)
-            if me.username
+            build_feed_link(
+                me.username, card["id"], sharer_referral_code, **link_kwargs
+            )
+            if can_build_platform_link
             else config.mini_app_url
         )
         miniapp_repeat_link = (
-            build_remix_link(me.username, card["id"], sharer_referral_code)
-            if me.username and is_image_feed_item
+            build_remix_link(
+                me.username, card["id"], sharer_referral_code, **link_kwargs
+            )
+            if is_image_feed_item and can_build_platform_link
             else miniapp_post_link
         )
+        if ctx.get("platform") == "vk":
+            post_link = miniapp_post_link
+            repeat_link = miniapp_repeat_link
+        else:
+            post_link = (
+                build_feed_bot_link(me.username, card["id"], sharer_referral_code)
+                if me.username
+                else config.mini_app_url
+            )
+            repeat_link = (
+                build_remix_bot_link(me.username, card["id"], sharer_referral_code)
+                if me.username and is_image_feed_item
+                else post_link
+            )
         logger.info("Feed share link issued by %s for feed %s", telegram_id, card["id"])
         preferred_link = repeat_link if is_image_feed_item else post_link
         return await creator_tariff_display.priced_feed_response(
@@ -6119,20 +6161,29 @@ async def miniapp_partner_overview(request: web.Request) -> web.Response:
         body = await request.json()
         init_data = body.get("init_data", "")
 
-        telegram_id, _ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
+        telegram_id, ctx = await _get_user_context(
+            request.app,
+            init_data,
+            body.get("start_param_fallback"),
+        )
         stats = await get_partner_overview(telegram_id)
         user = await get_or_create_user(telegram_id)
         me = await request.app["bot"].get_me()
 
+        link_kwargs = _miniapp_link_kwargs(ctx)
         referral_link = (
-            build_referral_link(me.username, user.referral_code)
+            build_referral_link(me.username, user.referral_code, **link_kwargs)
             if user.referral_code
             else ""
         )
         referral_bot_link_str = (
-            build_referral_bot_link(me.username, user.referral_code)
-            if user.referral_code
-            else ""
+            referral_link
+            if ctx.get("platform") == "vk"
+            else (
+                build_referral_bot_link(me.username, user.referral_code)
+                if user.referral_code
+                else ""
+            )
         )
 
         return web.json_response(
