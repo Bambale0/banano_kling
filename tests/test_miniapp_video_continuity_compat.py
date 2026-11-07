@@ -90,6 +90,16 @@ def test_video_share_converts_miniapp_post_link_to_remix_link() -> None:
     )
 
 
+def test_video_share_converts_vk_post_link_to_vk_remix_link() -> None:
+    payload = {
+        "miniapp_post_link": "https://vk.com/app54880352#feed_123_ref_PARTNER",
+    }
+
+    assert _video_remix_link(payload) == (
+        "https://vk.com/app54880352#remix_123_ref_PARTNER"
+    )
+
+
 def test_regular_image_to_video_repeat_restores_private_start_frame() -> None:
     source_task = {
         "prompt": "animate this frame",

@@ -294,3 +294,40 @@ async def test_bot_callback_rejects_withdrawn_publication():
     await common.share_feed_card(callback)
     assert callback.answer.call_args.kwargs["text"] == "Пост не найден"
     callback.bot.get_me.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_vk_feed_share_keeps_every_url_variant_inside_vk(
+    sharing_client,
+    monkeypatch,
+):
+    _author, card = await published_card("image")
+    sharer = await database.get_or_create_user(82002)
+    monkeypatch.setattr(
+        miniapp,
+        "_get_user_context",
+        AsyncMock(return_value=(sharer.telegram_id, {
+            "platform": "vk",
+            "vk_app_id": 54880352,
+            "user": sharer,
+        })),
+    )
+    response = await sharing_client.post("/mini-app/api/feed/share", json={
+        "init_data": "vk_session:test", "gen_id": card["id"],
+    })
+    assert response.status == 200
+    result = await response.json()
+    post = f"https://vk.com/app54880352#feed_{card['id']}_ref_{sharer.referral_code}"
+    repeat = f"https://vk.com/app54880352#remix_{card['id']}_ref_{sharer.referral_code}"
+    assert {key: result[key] for key in (
+        "link", "bot_link", "post_link", "repeat_link",
+        "miniapp_link", "miniapp_post_link", "miniapp_repeat_link",
+    )} == {
+        "link": repeat,
+        "bot_link": post,
+        "post_link": post,
+        "repeat_link": repeat,
+        "miniapp_link": post,
+        "miniapp_post_link": post,
+        "miniapp_repeat_link": repeat,
+    }

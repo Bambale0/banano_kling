@@ -14,7 +14,8 @@ import { wan3SafeError } from '@/lib/wan3-prime-api'
 import { updateTrendPreview } from '@/lib/trend-admin-api'
 import { mediaAspectRatio, normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
 import { formatTrendRepeatPrice } from '@/lib/trend-price'
-import { isNavigableShareLink, telegramForwardLink, tryOpenTelegramShareLink } from '@/lib/share-link-navigation'
+import { isNavigableShareLink, platformForwardLink, tryOpenTelegramShareLink } from '@/lib/share-link-navigation'
+import { currentAccountPlatform } from '@/lib/account-platform'
 import { genjutsuCall, openGenjutsu, type Recipe } from '@/lib/genjutsu-api'
 import { TrendRunnerDialog } from '@/components/trend-runner-dialog'
 import { trendCardDescription } from '@/lib/trend-card-description'
@@ -1450,13 +1451,13 @@ export function TrendsTab() {
                   </a>
                 </Button>
                 <Button asChild variant="outline" className="min-h-11">
-                  <a href={telegramForwardLink(shareLink) || '#'} target="_blank" rel="noopener noreferrer"
+                  <a href={platformForwardLink(shareLink, currentAccountPlatform()) || '#'} target="_blank" rel="noopener noreferrer"
                     onClick={(event) => {
-                      const forward = telegramForwardLink(shareLink)
+                      const forward = platformForwardLink(shareLink, currentAccountPlatform())
                       if (forward && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey
                         && tryOpenTelegramShareLink(forward)) event.preventDefault()
                     }}>
-                    Поделиться в Telegram
+                    {currentAccountPlatform() === 'vk' ? 'Поделиться в ВК' : 'Поделиться в Telegram'}
                   </a>
                 </Button>
               </div>

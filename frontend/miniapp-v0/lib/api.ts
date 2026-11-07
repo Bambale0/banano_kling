@@ -2,6 +2,7 @@
 
 import { forgetPendingPublication } from './feed-events'
 import { containsAccountLink } from './account-launch-security'
+import { startParamFromLocation } from './start-params'
 import { getPendingVideoRepeat, getPendingVideoTaskIds, isVideoStatusPending, markVideoRepeatPending, reconcilePendingVideoDetail, reconcilePendingVideoRepeats } from './video-repeat-pending'
 
 import type {
@@ -244,6 +245,8 @@ export function getStartParamFallback(): string {
 
   // 5. Fallback: parse current URL hash/search params
   const launchParams = getLaunchParams()
+  const locationStart = startParamFromLocation(window.location.search, window.location.hash)
+  if (locationStart) return locationStart
   const tg = String(launchParams.get("tgWebAppStartParam") || launchParams.get("startapp") || "").trim()
   if (tg) return tg
 

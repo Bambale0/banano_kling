@@ -96,7 +96,14 @@ export function genjutsuRecipeStartParam(start: string, search: string): string 
 
 export function startParamFromLocation(search: string, hash: string): string {
   const query = new URLSearchParams(search)
-  const fragment = new URLSearchParams(hash.replace(/^#/, ''))
-  return query.get('startapp') || query.get('tgWebAppStartParam')
-    || fragment.get('startapp') || fragment.get('tgWebAppStartParam') || ''
+  const rawFragment = hash.replace(/^#/, '').trim()
+  const fragment = new URLSearchParams(rawFragment)
+  const wrapped = query.get('startapp') || query.get('tgWebAppStartParam')
+    || fragment.get('startapp') || fragment.get('tgWebAppStartParam')
+  if (wrapped) return wrapped
+
+  // VK Mini Apps preserve navigation state as a raw fragment:
+  // https://vk.com/app123#prompt_42_ref_CODE
+  const direct = rawFragment.split('&', 1)[0]
+  return /^ref_[A-Za-z0-9_-]{1,60}$/.test(direct) || parseMiniAppStartParam(direct) ? direct : ''
 }
