@@ -742,6 +742,7 @@ async def _run_image_trend(
     telegram_id: int,
     user: Any,
     trend: TrustedTrendRun,
+    origin_platform: str = "telegram",
 ) -> web.Response:
     from bot import miniapp as miniapp_module
 
@@ -788,6 +789,7 @@ async def _run_image_trend(
     launched = False
     try:
         launch_result = await miniapp_module._start_image_generation_task_lazy(
+            origin_platform=origin_platform,
             user=user,
             telegram_id=telegram_id,
             img_service=trend.model,
@@ -820,6 +822,7 @@ async def _run_image_trend(
             request.app,
             telegram_id,
             launch_result,
+            origin_platform=origin_platform,
             img_service=trend.model,
             img_ratio=trend.ratio,
             unit_cost=cost,
@@ -828,6 +831,7 @@ async def _run_image_trend(
             request.app,
             telegram_id,
             launch_result,
+            origin_platform=origin_platform,
             img_service=trend.model,
             img_ratio=trend.ratio,
             unit_cost=cost,
@@ -1369,6 +1373,7 @@ async def miniapp_run_trend(request: web.Request) -> web.Response:
                 telegram_id=telegram_id,
                 user=user,
                 trend=trend,
+                origin_platform=context.get("platform") or "telegram",
             )
 
         response_payload = _trend_response_payload(response)

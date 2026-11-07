@@ -48,7 +48,7 @@ async def delivery_postgres_schema(isolated_database, monkeypatch):
         yield
 
 
-async def create_delivery_task():
+async def create_delivery_task(*, origin_platform=None):
     async with await psycopg.AsyncConnection.connect(
         os.environ["DATABASE_URL"]
     ) as conn:
@@ -59,8 +59,8 @@ async def create_delivery_task():
         uid = (await cur.fetchone())[0]
         cur = await conn.execute(
             "INSERT INTO generation_tasks(user_id, telegram_id, task_id, cost, status, request_data) "
-            "VALUES(%s, 891001, 'durability-pg', 5, 'processing', '{}') RETURNING id",
-            (uid,),
+            "VALUES(%s, 891001, 'durability-pg', 5, 'processing', %s) RETURNING id",
+            (uid, json.dumps({"origin_platform": origin_platform} if origin_platform else {})),
         )
         tid = (await cur.fetchone())[0]
         await conn.commit()
@@ -95,11 +95,13 @@ async def test_pg_concurrent_result_storage_preserves_single_delivery_claim():
 
 
 @pytest.mark.asyncio
-async def test_pg_result_persistence_and_failure_race_are_mutually_exclusive():
-    tid, uid = await create_delivery_task()
+@pytest.mark.parametrize("origin_platform", ["telegram", "vk"])
+async def test_pg_result_persistence_and_failure_race_are_mutually_exclusive(origin_platform):
+    tid, uid = await create_delivery_task(origin_platform=origin_platform)
     url = "https://cdn.example/result.mp4"
+    complete = database.complete_task_in_app if origin_platform == "vk" else database.store_task_result_ready
     _stored, failed = await asyncio.gather(
-        database.store_task_result_ready("durability-pg", url),
+        complete("durability-pg", url),
         force_fail_task(tid, uid, 5),
     )
     task = await database.get_task_by_id("durability-pg")
@@ -112,11 +114,29 @@ async def test_pg_result_persistence_and_failure_race_are_mutually_exclusive():
         assert task.status == "failed"
         assert not task.result_url
         assert credits == 105
-        assert not await database.store_task_result_ready("durability-pg", url)
+        assert not await complete("durability-pg", url)
     else:
         assert (task.status, task.result_url) == ("completed", url)
         assert credits == 100
         assert not await force_fail_task(tid, uid, 5)
+
+
+@pytest.mark.asyncio
+async def test_pg_vk_result_never_acquires_a_telegram_lease():
+    await create_delivery_task(origin_platform="vk")
+    url = "https://cdn.example/vk-result.png"
+    assert await database.complete_task_in_app("durability-pg", url)
+    claims = await asyncio.gather(
+        *(database.claim_task_delivery("durability-pg") for _ in range(4))
+    )
+    assert claims == [False] * 4
+    assert await database.complete_task_in_app("durability-pg", "https://cdn.example/replayed.png")
+    task = await database.get_task_by_id("durability-pg")
+    assert (task.status, task.result_url) == ("completed", url)
+    metadata = json.loads(task.request_data)
+    assert metadata["delivery_status"] == "available_in_app"
+    assert metadata.get("delivery_attempts", 0) == 0
+    assert not await get_stuck_tasks(minutes=0)
 
 
 @pytest.mark.asyncio

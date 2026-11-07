@@ -73,13 +73,14 @@ unit values among 7,260 users. Shadow units are not a safe opening source.
 
 ## Decision ticket: Financial scope of the native VK release
 
-An owner question is pending: retain the required common account/balance after
-explicit linking (with prior legacy reconciliation), or explicitly stage a
-standalone VK release with separate finances and defer unification. This affects
-the actor/wallet migration contract, not merely UI copy. No choice, rounding,
-negative-balance correction, live cutover or public policy activation is inferred
-from silence. The independent reference-picker regression fix can ship while
-this decision is pending.
+Owner decision on 07 November: one common account and balance immediately after
+voluntary linking. VK entry must work independently; a separate-wallet interim
+product is not the selected scope. Existing verified identities, exact wallet
+commands and merge locking are reusable foundations, not evidence of a completed
+live migration. Legacy reconciliation and writer fencing remain release gates.
+This decision does not approve rounding, negative-balance correction, live cutover
+or public policy activation. The independent reference and delivery fixes do not
+move money.
 
 ## Implementation tickets
 
