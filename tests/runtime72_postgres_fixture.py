@@ -55,7 +55,14 @@ async def runtime_postgres_schema():
 
         for statement in REFERENCE_LIBRARY_SCHEMA:
             await connection.execute(statement)
-        await connection.execute('TRUNCATE reference_category_items, reference_categories, saved_references, generation_tasks')
+        # Completion can lazily create this task-dependent outbox. Include it
+        # explicitly when present; keep the FK and avoid broad CASCADE cleanup.
+        cursor = await connection.execute("SELECT to_regclass('vk_result_deliveries')")
+        delivery_table_exists = (await cursor.fetchone())[0] is not None
+        truncate_tables = 'reference_category_items, reference_categories, saved_references, generation_tasks'
+        if delivery_table_exists:
+            truncate_tables += ', vk_result_deliveries'
+        await connection.execute('TRUNCATE ' + truncate_tables)
         await connection.commit()
     try:
         yield

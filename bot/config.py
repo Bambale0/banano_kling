@@ -13,6 +13,9 @@ load_project_env()
 class Config:
     # Telegram
     BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
+    # Transport secret only; community/routing policy belongs to audited controls.
+    VK_GROUP_TOKEN: str = field(default_factory=lambda: os.getenv("VK_GROUP_TOKEN", ""), repr=False)
+    VK_GROUP_TOKEN_COMMUNITY_ID: str = os.getenv("VK_GROUP_TOKEN_COMMUNITY_ID", "")
     TELEGRAM_TRANSIENT_MAX_ATTEMPTS: int = int(os.getenv("TELEGRAM_TRANSIENT_MAX_ATTEMPTS", "3"))
     TELEGRAM_RETRY_AFTER_MAX_SECONDS: int = int(os.getenv("TELEGRAM_RETRY_AFTER_MAX_SECONDS", "30"))
     REDIS_OPERATION_TIMEOUT_SECONDS: float = float(os.getenv("REDIS_OPERATION_TIMEOUT_SECONDS", "3"))

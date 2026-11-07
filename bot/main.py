@@ -5498,6 +5498,9 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
     from bot.genjutsu.runtime import setup_genjutsu
 
     setup_genjutsu(app)
+    from bot.services.vk_result_delivery import setup_vk_result_delivery
+
+    setup_vk_result_delivery(app)
     setup_miniapp_routes(app)
     setup_robokassa_routes(app)
     setup_freekassa_routes(app)

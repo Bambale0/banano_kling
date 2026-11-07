@@ -66,6 +66,9 @@ jobs:
           components/__tests__/account-platform-entry.test.tsx
           components/__tests__/shared-account-link-preview.test.tsx
           components/__tests__/shared-account-preview.test.tsx
+          components/__tests__/vk-chat-delivery.test.tsx
+          lib/__tests__/vk-chat-delivery-api.test.ts
+          lib/__tests__/vk-message-permission.test.ts
           components/__tests__/shared-account-auth-recovery.test.tsx
           components/forms/image-reference-selection.test.tsx
           components/personal-reference-library.test.tsx
@@ -98,4 +101,7 @@ jobs:
 
       - name: Check VK root entry and administrator surface
         run: node --test scripts/check-vk-root-browser.mjs
+
+      - name: Check VK result chat delivery states
+        run: E2E_APP_PATH=/ node e2e/vk-chat-delivery.mjs
 

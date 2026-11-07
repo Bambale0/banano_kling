@@ -57,6 +57,8 @@ async def test_image_http_uses_verified_origin_for_notifications(monkeypatch, ma
     bot = SimpleNamespace(send_message=AsyncMock(), send_document=AsyncMock(), get_chat=AsyncMock())
     body = {"init_data": "signed-vk-session", "prompt": "Synthetic portrait",
             "img_service": "banana_pro", "img_ratio": "9:16", "img_quality": "2K",
+            "origin_vk_user_id": 666, "origin_account_id": "b" * 32,
+            "vk_chat_delivery_requested": True,
             "platform": "telegram" if origin_platform == "vk" else "vk"}
 
     class Request:
@@ -67,7 +69,7 @@ async def test_image_http_uses_verified_origin_for_notifications(monkeypatch, ma
             return body
 
     monkeypatch.setattr(miniapp, "_get_user_context", AsyncMock(return_value=(880021, {
-        "user": user, "platform": origin_platform, "platform_external_id": 2001,
+        "user": user, "platform": origin_platform, "platform_external_id": 2001, "shared_account_id": "a" * 32,
     })))
     monkeypatch.setattr(miniapp, "_resolve_actor_image_unit_cost", AsyncMock(return_value=1))
     monkeypatch.setattr(miniapp, "check_can_afford", AsyncMock(return_value=True))
@@ -83,6 +85,9 @@ async def test_image_http_uses_verified_origin_for_notifications(monkeypatch, ma
     response = await miniapp.miniapp_generate_image(Request())
     assert response.status == 200, response.text
     assert launch.await_args.kwargs["origin_platform"] == origin_platform
+    assert launch.await_args.kwargs["origin_vk_user_id"] == (2001 if origin_platform == "vk" else None)
+    assert launch.await_args.kwargs["origin_account_id"] == ("a" * 32 if origin_platform == "vk" else None)
+    assert launch.await_args.kwargs["vk_chat_delivery_requested"] is False
     assert bot.send_message.await_count == (1 if origin_platform == "telegram" else 0)
     assert bot.send_document.await_count == (1 if origin_platform == "telegram" and status == "done" else 0)
 
@@ -165,11 +170,16 @@ async def test_provider_id_replacement_retains_the_verified_vk_origin(monkeypatc
     result = await generation._start_image_generation_task(
         user=user, telegram_id=880021, img_service="banana_pro", prompt="Synthetic VK portrait",
         img_ratio="9:16", reference_images=[], unit_cost=0, img_quality="2K", origin_platform="vk",
+        origin_vk_user_id=2001, origin_account_id="a" * 32,
+        vk_chat_delivery_requested=True,
     )
     assert result["status"] == "queued"
     task = await database.get_task_by_id(result["task_id"])
     metadata = json.loads(task.request_data)
     assert metadata["origin_platform"] == "vk"
+    assert metadata["origin_vk_user_id"] == 2001
+    assert metadata["origin_account_id"] == "a" * 32
+    assert metadata["vk_chat_delivery_requested"] is True
     assert metadata["provider_task_id"] == "vk-rendergrid-provider"
 
 
