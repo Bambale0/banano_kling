@@ -394,3 +394,10 @@ Release-candidate verification: full backend **4722 passed, 223 skipped, 826 war
   this is not a production Linux reproduction. The exact-baseline production
   Linux suite passed previously; this PR still requires its own full Linux gate.
   Do not weaken the ownership tests or change backend behavior for this UI slice.
+- Final local verification: 93 Jest suites / 702 tests, focused 15 tests,
+  TypeScript, changed-file ESLint, Node syntax, workflow YAML and whitespace
+  checks passed. Both Telegram and VK production exports passed. Browser checks
+  passed Telegram + linked VK against the Telegram export and linked VK against
+  the dedicated VK-root export (three journeys). Independent Standards and Spec
+  reviews of e5e7af9 report no actionable findings. No native public activation,
+  real provider generation, live message send or financial migration is claimed.
