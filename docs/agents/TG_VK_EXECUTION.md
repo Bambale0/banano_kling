@@ -79,6 +79,11 @@
   errors, 21 passed). Fixtures now mirror that startup column and explicitly
   truncate the outbox only when present, preserving its production FK and avoiding
   broad CASCADE. Native PostgreSQL rerun remains required before release.
+- The next isolated PG run passed 270 with four fixture failures: per-case schema
+  replacement reused a process-wide startup readiness cache, and its search_path
+  excluded public JSON helpers. The fixture now reruns the actual compatibility
+  bootstrap per schema and includes public for those helpers, replacing the narrow
+  copied startup column. Production SQL/constraints and assertions are unchanged.
 
 ## Missing card after authentication failure — 07.11.2026
 

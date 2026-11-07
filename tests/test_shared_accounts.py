@@ -32,6 +32,7 @@ async def account_database(request, monkeypatch, isolated_database):
         pytest.skip('requires explicitly isolated shared-account PostgreSQL')
     import psycopg
 
+    from bot import postgres_aiosqlite
     from bot.postgres_pool import close_postgres_pool
 
     parsed = urlsplit(dsn)
@@ -39,16 +40,18 @@ async def account_database(request, monkeypatch, isolated_database):
     assert parsed.path == '/banano_shared_test'
     schema = 'shared_preview_' + uuid4().hex
     await close_postgres_pool()
+    # Each case creates a new schema: rerun the normal runtime compatibility DDL
+    # instead of reusing the previous schema's process-wide readiness cache.
+    monkeypatch.setattr(postgres_aiosqlite, '_HELPERS_READY', False)
+    monkeypatch.setattr(postgres_aiosqlite, '_HELPERS_LOCK', None)
     async with await psycopg.AsyncConnection.connect(dsn) as connection:
         await connection.execute('CREATE SCHEMA ' + schema)
         await connection.execute('SET search_path TO ' + schema)
         # Exercise the actual application bootstrap plus its compatibility layer,
         # whose startup also prepares legacy generation/credit columns.
         await connection.execute((Path(__file__).parents[1] / 'schema_postgres.sql').read_text())
-        # database.init_db adds this legacy chat-capability column at startup;
-        # the isolated HTTP fixture does not run that full application startup.
-        await connection.execute('ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_chat_state TEXT')
-    query = parse_qsl(parsed.query) + [('options', '-csearch_path=' + schema)]
+    # Runtime JSON compatibility functions intentionally live in public.
+    query = parse_qsl(parsed.query) + [('options', '-csearch_path=' + schema + ',public')]
     monkeypatch.setenv('DATABASE_URL', urlunsplit(parsed._replace(query=urlencode(query))))
     try:
         yield
