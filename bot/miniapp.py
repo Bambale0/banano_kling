@@ -24,6 +24,10 @@ from bot.creator_tariff import VideoQuote, quote_video_for_actor
 from bot.kling4_api import catalog_entry as kling4_catalog_entry
 from bot.kling4_tariff import kling4_public_enabled
 from bot.payment_platform_policy import vk_payment_provider_denied
+from bot.services.generation_origin import (
+    generation_origin_from_context,
+    generation_origin_metadata,
+)
 from bot.services.runtime_http import database_error_response
 from bot.trend_user_fields import (
     TrendUserFieldsError,
@@ -42,6 +46,7 @@ from bot.database import (
     approve_prompt,
     can_attempt_telegram_delivery,
     check_can_afford,
+    complete_task_in_app,
     complete_video_task,
     count_active_prompts_by_author,
     create_prompt,
@@ -2377,6 +2382,10 @@ async def _launch_video_generation_task(
     video_repeat_contract_version: int | None = None,
     _launch_observation: dict[str, Any] | None = None,
     billing_quote: VideoQuote | None = None,
+    origin_platform: str = "telegram",
+    origin_vk_user_id: int | None = None,
+    origin_account_id: str | None = None,
+    vk_chat_delivery_requested: bool = False,
 ) -> dict[str, Any]:
     if model in {"wan_3_prime", "wan_3"}:
         raise ValueError("Wan requires its validated quote and idempotent lifecycle; open the Wan editor")
@@ -2393,6 +2402,12 @@ async def _launch_video_generation_task(
             video_references,
         )
     cost = billing_quote.cost
+    origin_metadata = generation_origin_metadata(
+        origin_platform=origin_platform,
+        origin_vk_user_id=origin_vk_user_id,
+        origin_account_id=origin_account_id,
+        vk_chat_delivery_requested=vk_chat_delivery_requested,
+    )
     reserved_task_id = (_launch_observation or {}).get("receipt_task_id")
 
     async def persist_generation_task(*args, **kwargs):
@@ -2636,6 +2651,7 @@ async def _launch_video_generation_task(
             cost=billing_quote.charge_cost,
             request_data={
                 **({"video_repeat_contract_version": 1} if video_repeat_contract_version == 1 else {}),
+                **origin_metadata,
                 "source": "miniapp",
                 "billing_quote": billing_quote.to_dict(),
                 "charged": billing_quote.charge_cost > 0,
@@ -2723,6 +2739,7 @@ async def _launch_video_generation_task(
             cost=billing_quote.charge_cost,
             request_data={
                 **({"video_repeat_contract_version": 1} if video_repeat_contract_version == 1 else {}),
+                **origin_metadata,
                 "source": "miniapp",
                 "billing_quote": billing_quote.to_dict(),
                 "charged": billing_quote.charge_cost > 0,
@@ -2757,7 +2774,10 @@ async def _launch_video_generation_task(
             parent_generation_id=parent_generation_id,
             action_type=action_type,
         )
-        await complete_video_task(asset_id, asset_id)
+        if origin_platform == "vk":
+            await complete_task_in_app(asset_id, asset_id)
+        else:
+            await complete_video_task(asset_id, asset_id)
         return {
             "status": "done",
             "task_id": asset_id,
@@ -2779,12 +2799,13 @@ async def _launch_video_generation_task(
         prompt=prompt,
         cost=billing_quote.charge_cost,
         request_data={
-                **({"video_repeat_contract_version": 1} if video_repeat_contract_version == 1 else {}),
+            **({"video_repeat_contract_version": 1} if video_repeat_contract_version == 1 else {}),
+            **origin_metadata,
             "source": "miniapp",
-                "billing_quote": billing_quote.to_dict(),
-                "charged": billing_quote.charge_cost > 0,
-                "admin_free": billing_quote.charge_cost == 0,
-                "refund_on_failure": billing_quote.charge_cost > 0,
+            "billing_quote": billing_quote.to_dict(),
+            "charged": billing_quote.charge_cost > 0,
+            "admin_free": billing_quote.charge_cost == 0,
+            "refund_on_failure": billing_quote.charge_cost > 0,
             "v_type": generation_type,
             "v_model": model,
             "v_image_url": image_url,
@@ -2829,7 +2850,10 @@ async def _launch_video_generation_task(
 
     if result_status == "done":
         saved_url = _save_uploaded_file_lazy(bytes(result), "mp4")
-        await complete_video_task(local_task_id, saved_url)
+        if origin_platform == "vk":
+            await complete_task_in_app(local_task_id, saved_url)
+        else:
+            await complete_video_task(local_task_id, saved_url)
         return {
             "status": "done",
             "task_id": local_task_id,
@@ -5975,6 +5999,7 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
             **({"video_repeat_contract_version": 1} if getattr(request, "_video_repeat_authorization", None) else {}),
             telegram_id=telegram_id,
             user=user,
+            **generation_origin_from_context(ctx),
             model=effective_model,
             billing_quote=billing_quote,
             prompt=prompt,

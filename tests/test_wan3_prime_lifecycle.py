@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
@@ -420,3 +421,39 @@ async def test_delivery_sends_a_video_not_only_a_link_and_syncs_history():
         assert provider.creates == 1
     finally:
         output.unlink(missing_ok=True)
+
+
+
+@pytest.mark.asyncio
+async def test_wan3_vk_launch_persists_verified_destination():
+    actor = await user_actor(credits=50, telegram_id=880204)
+    actor = Wan3PrimeActor(
+        user_id=actor.user_id,
+        telegram_id=actor.telegram_id,
+        is_admin=False,
+        miniapp_context={
+            "platform": "vk",
+            "platform_external_id": 2001,
+            "shared_account_id": "a" * 32,
+            "vk_chat_delivery_requested": True,
+        },
+    )
+    lifecycle = Wan3PrimeLifecycle(
+        probe=Probe(),
+        preset_manager=Prices({"720p": 2}),
+        transport=Provider(),
+    )
+    quote = await lifecycle.quote(actor, body(duration=5, resolution="720P"))
+    result = await lifecycle.launch(
+        actor,
+        body(duration=5, resolution="720P"),
+        quote,
+        "vk-wan-launch",
+    )
+
+    task = await database.get_task_by_id(result["task_id"])
+    metadata = json.loads(task.request_data)
+    assert metadata["origin_platform"] == "vk"
+    assert metadata["origin_vk_user_id"] == 2001
+    assert metadata["origin_account_id"] == "a" * 32
+    assert metadata["vk_chat_delivery_requested"] is True

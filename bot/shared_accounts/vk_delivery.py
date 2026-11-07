@@ -31,7 +31,7 @@ async def vk_delivery(request):
     telegram_id = await linked_telegram_id(account.id)
     if not task or telegram_id is None or task.telegram_id != telegram_id:
         return response({'ok': False, 'error': 'Result unavailable'}, 404)
-    if task.type != 'image' or task.status != 'completed' or not task.result_url:
+    if task.type not in {'image', 'video'} or task.status != 'completed' or not task.result_url:
         return response({'ok': True, 'delivery': {'state': 'not_applicable', 'can_request': False, 'community_id': None}})
     metadata = json.loads(task.request_data or '{}')
     if not isinstance(metadata, dict) or metadata.get('origin_platform') != 'vk':

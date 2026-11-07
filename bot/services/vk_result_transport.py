@@ -6,6 +6,7 @@ import json
 import logging
 import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import aiohttp
 from PIL import Image
@@ -97,6 +98,17 @@ class VKResultTransport:
         from bot.services.wan3_prime_storage import fetch_public_asset
 
         self.check_community(job)
+        # VK photo upload cannot accept generated video. Deliver the durable
+        # public URL immediately instead of downloading a large MP4 only to
+        # fail Pillow decoding.
+        suffix = Path(urlsplit(str(job.get("result_url") or "")).path).suffix.lower()
+        if job.get("result_type") == "video" or suffix in {
+            ".mp4",
+            ".mov",
+            ".webm",
+            ".mkv",
+        }:
+            return None
         # Upload failure before messages.send permits one link-only payload.
         phase = 'download'
         try:

@@ -1,4 +1,4 @@
-# VK image-result chat delivery
+# VK result chat delivery
 
 This is an administrator-preview capability, disabled by default. It supplements
 the existing Mini App result and preserves the Telegram-origin delivery path.
@@ -44,7 +44,7 @@ Policy edits revoke stale preview sessions; reopen the app if prompted.
 
 ## User flow and truthful states
 
-An image launch captures the verified VK recipient, account and delivery intent
+A photo or video launch captures the verified VK recipient, account and delivery intent
 from server authentication/policy. Client JSON cannot choose these values.
 Completion makes the result available in the Mini App and idempotently enqueues
 one chat delivery. A reconciler repairs a crash before enqueue, scans past invalid
@@ -53,9 +53,11 @@ old rows and wraps for later ownership/policy corrections.
 Before sending, the server rechecks ownership, administrator policy and actual
 `messages.isMessagesFromGroupAllowed` permission. The result is downloaded with
 public-at-connect DNS/redirect checks, byte/time/pixel bounds and a unique temporary
-file. A photo is prepared through VK's upload/save protocol. A preparation failure
-may select a link-only payload before any message send; the exact payload and
-random_id are persisted. The UI distinguishes photo and link-only receipts.
+file. A photo is prepared through VK's upload/save protocol. Generated videos
+are delivered as the durable public result link; they are never downloaded and
+decoded by the photo transport. A photo preparation failure may also select a
+link-only payload before any message send; the exact payload and random_id are
+persisted. The UI distinguishes photo and link-only receipts.
 
 The result view can open the native VK permission dialog with
 `VKWebAppAllowMessagesFromGroup`. Opening this dialog does not claim permission
@@ -65,7 +67,7 @@ community chat instead. No Telegram redirect is involved.
 
 Old results without recipient/intent snapshots are never automatically replayed.
 An explicit owner action in a newly verified VK session can accept their delivery.
-Only the owner's existing completed VK-origin image is eligible. POST accepts an
+Only the owner's existing completed VK-origin photo or video is eligible. POST accepts an
 empty object, not a recipient, result URL or platform selector.
 
 The outbox has separate pending/preparing/sending/delivered/permission-required/
@@ -78,7 +80,7 @@ extra deduplication, not a guarantee of unlimited exactly-once delivery.
 New outbox IDs use negative signed integers, separate from the native bot's
 positive timestamps, with a unique constraint and bounded collision recovery.
 
-Permission denial never blocks the whole native user, refunds a completed image,
+Permission denial never blocks the whole native user, refunds a completed result,
 or routes the result to Telegram. Delivery never submits a new provider task.
 
 ## Private HTTP seam
@@ -95,8 +97,8 @@ representation, never the VK credential, attachment access key or recipient ID.
 
 ## Verification and rollback
 
-Tests cover signed recipient provenance, completion races, SQLite/PostgreSQL
-outbox/reconciliation/leases, permission denial, explicit flood retry, lost/late
+Tests cover signed recipient provenance for photos and videos, completion races,
+SQLite/PostgreSQL outbox/reconciliation/leases, permission denial, explicit flood retry, lost/late
 acknowledgements, blocked ownership, random-ID collision, old owner acceptance,
 secret redaction, actual synthetic PNG upload and browser consent/status/retry.
 Fake VK HTTP and intercepted media replace all real sends and paid generation.

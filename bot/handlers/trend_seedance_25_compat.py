@@ -18,6 +18,7 @@ from aiohttp import web
 from bot.config import config
 from bot.creator_tariff import quote_video_for_actor
 from bot.seedance_trend_recipe import REFERENCE_CONTRACT
+from bot.services.generation_origin import generation_origin_metadata
 from bot.services.seedance_reference_binding import missing_seedance_reference_tags
 
 from . import generation as generation_module
@@ -32,6 +33,10 @@ async def _run_seedance25_trend(
     user: Any,
     trend: Any,
     billing_quote: Any | None = None,
+    origin_platform: str = "telegram",
+    origin_vk_user_id: int | None = None,
+    origin_account_id: str | None = None,
+    vk_chat_delivery_requested: bool = False,
 ) -> web.Response:
     import bot.miniapp as miniapp_module
     from bot import trend_api
@@ -264,6 +269,14 @@ async def _run_seedance25_trend(
                 "prompt_actions_allowed": False,
             }
         )
+        request_data.update(
+            generation_origin_metadata(
+                origin_platform=origin_platform,
+                origin_vk_user_id=origin_vk_user_id,
+                origin_account_id=origin_account_id,
+                vk_chat_delivery_requested=vk_chat_delivery_requested,
+            )
+        )
         await generation_module.add_generation_task(
             user.id,
             telegram_id,
@@ -328,6 +341,10 @@ def install_trend_seedance_25_compat() -> None:
         user: Any,
         trend: Any,
         billing_quote: Any | None = None,
+        origin_platform: str = "telegram",
+        origin_vk_user_id: int | None = None,
+        origin_account_id: str | None = None,
+        vk_chat_delivery_requested: bool = False,
     ) -> web.Response:
         if str(trend.model or "").strip() != MODEL_KEY:
             return await current_run_video_trend(
@@ -335,12 +352,20 @@ def install_trend_seedance_25_compat() -> None:
                 user=user,
                 trend=trend,
                 billing_quote=billing_quote,
+                origin_platform=origin_platform,
+                origin_vk_user_id=origin_vk_user_id,
+                origin_account_id=origin_account_id,
+                vk_chat_delivery_requested=vk_chat_delivery_requested,
             )
         response = await _run_seedance25_trend(
             telegram_id=telegram_id,
             user=user,
             trend=trend,
             billing_quote=billing_quote,
+            origin_platform=origin_platform,
+            origin_vk_user_id=origin_vk_user_id,
+            origin_account_id=origin_account_id,
+            vk_chat_delivery_requested=vk_chat_delivery_requested,
         )
 
         # This dispatcher is installed after the generic metrics wrapper.

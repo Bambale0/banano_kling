@@ -9,6 +9,10 @@ import math
 
 from aiohttp import web
 
+from bot.services.generation_origin import (
+    generation_origin_from_context,
+    generation_origin_metadata,
+)
 from bot.services.motion_launch_receipts import (
     MotionInsufficientCredits,
     MotionLaunchConflict,
@@ -87,6 +91,17 @@ async def persist_accepted_motion(receipt: dict, quote: dict, api):
     telegram_id = int(receipt["telegram_id"])
     task_id = receipt["provider_task_id"]
     charge = float(receipt["charged_cost"])
+    raw_origin = quote.get("_generation_origin")
+    if not isinstance(raw_origin, dict):
+        raw_origin = {"origin_platform": "telegram"}
+    origin_metadata = generation_origin_metadata(
+        origin_platform=raw_origin.get("origin_platform") or "telegram",
+        origin_vk_user_id=raw_origin.get("origin_vk_user_id"),
+        origin_account_id=raw_origin.get("origin_account_id"),
+        vk_chat_delivery_requested=(
+            raw_origin.get("vk_chat_delivery_requested") is True
+        ),
+    )
     inserted = await api.add_generation_task(
         receipt["user_id"], telegram_id, task_id, "video", "miniapp_motion_control",
         model=quote["model"], duration=math.ceil(quote["output_seconds"]), aspect_ratio="1:1",
@@ -99,6 +114,7 @@ async def persist_accepted_motion(receipt: dict, quote: dict, api):
             "motion_quote": quote, "charged": charge > 0, "charged_cost": charge,
             "admin_free": quote["admin_free"], "refund_on_failure": charge > 0,
             "refund_claimed": False,
+            **origin_metadata,
         }, provider_accepted=True,
     )
     from bot import db as db_backend
@@ -201,10 +217,16 @@ async def generate_motion(request, api):
                     "error": "Цена или исходное видео изменились. Проверьте обновлённый расчёт перед запуском.",
                     "quote": quote,
                 }, status=409)
+            receipt_recipe = {
+                **quote,
+                "_generation_origin": generation_origin_from_context(ctx),
+            }
             receipt = await store.reserve(
-                user_id=user.id, telegram_id=telegram_id, request_key=request_key, recipe=quote,
+                user_id=user.id, telegram_id=telegram_id,
+                request_key=request_key, recipe=receipt_recipe,
                 cost=quote["cost"], admin_free=quote["admin_free"],
             )
+            quote = receipt_recipe
         if receipt["phase"] == "accepted" and receipt["provider_task_id"]:
             return await _bind_accepted(receipt, quote, user, telegram_id, api)
         if not receipt["created"]:

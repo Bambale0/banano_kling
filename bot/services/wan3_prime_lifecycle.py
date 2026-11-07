@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 from bot import database
 from bot import db as db_backend
 from bot.services import preset_manager as preset_module
+from bot.services.generation_origin import generation_origin_from_context
 from bot.services.wan3_billing import settlement_amounts
 from bot.services.wan3_models import wan3_model_spec, wan3_service_for_model
 from bot.services.wan3_prime_media import (
@@ -629,6 +630,7 @@ class Wan3PrimeLifecycle:
                 "wan3_prime": True, "quote": server_quote.as_response(),
                 "delivery_status": "pending", "stable_task_id": internal_task_id,
             }, accepted=False, invite_eligible=not actor.is_admin)
+            task_metadata.update(generation_origin_from_context(actor.miniapp_context))
             if recipe.repeat_context:
                 task_metadata.update(private_recipe=True, prompt_hidden=True, prompt_actions_allowed=False)
                 if recipe.repeat_context.get("trend_id"):
@@ -1039,13 +1041,44 @@ class Wan3PrimeLifecycle:
             lease = await self._claim_delivery_lease(row["internal_task_id"], seconds=delivery_timeout() * 4 + 60)
             if not lease:
                 continue
+            task = await database.get_task_by_id(
+                str(row["internal_task_id"])
+            )
             try:
-                allowed = await asyncio.wait_for(database.can_attempt_telegram_delivery(
-                    int(row["telegram_id"]), probe=getattr(bot, "get_chat", None)), timeout=15)
-            except Exception as exc:  # noqa: BLE001 - isolate transport/storage failures with durable outcome state
-                outcome = DeliveryOutcome("pending", error=f"chat_check_{type(exc).__name__}")
+                task_metadata = (
+                    json.loads(task.request_data or "{}") if task else {}
+                )
+            except (TypeError, ValueError):
+                task_metadata = {}
+            if task_metadata.get("origin_platform") == "vk":
+                if row["status"] == "completed" and row["result_url"]:
+                    await database.complete_task_in_app(
+                        str(row["internal_task_id"]), str(row["result_url"])
+                    )
+                outcome = DeliveryOutcome("delivered")
             else:
-                outcome = (await deliver_wan_result(bot, dict(row))) if allowed else DeliveryOutcome("unavailable", error="chat_not_started")
+                try:
+                    allowed = await asyncio.wait_for(
+                        database.can_attempt_telegram_delivery(
+                            int(row["telegram_id"]),
+                            probe=getattr(bot, "get_chat", None),
+                        ),
+                        timeout=15,
+                    )
+                except Exception as exc:  # noqa: BLE001 - isolate transport/storage failures with durable outcome state
+                    outcome = DeliveryOutcome(
+                        "pending",
+                        error=f"chat_check_{type(exc).__name__}",
+                    )
+                else:
+                    outcome = (
+                        await deliver_wan_result(bot, dict(row))
+                        if allowed
+                        else DeliveryOutcome(
+                            "unavailable",
+                            error="chat_not_started",
+                        )
+                    )
             if await self._finish_delivery(row, lease, outcome) and outcome.status == "delivered":
                 delivered += 1
         return delivered
