@@ -96,4 +96,9 @@ Bambale0/claw UX audit; anthropics/skills webapp-testing.
   the already-reproduced HTML fallback; additional native telemetry is unnecessary
   for this fix and is excluded from the final change.
 - Exact-SHA CI/release verification pending. Final scope remains routing,
-  regression and real-asset smoke only; no speculative frontend source change.
+  regression and real-asset smoke. The existing first-party upload normalization
+  list also lacked the VK host, preserving VK URLs on the Telegram page. A
+  targeted TG-origin test reproduced RED (1 failed/9 passed); adding this sibling
+  first-party host restores the existing same-origin behavior. VK-root cases
+  cover canonical, legacy, current and relative uploads; external signed media
+  remains unchanged. No new fallback origin or build environment is introduced.

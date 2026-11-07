@@ -1,3 +1,6 @@
+/**
+ * @jest-environment-options {"url":"https://neuromixbot.com/mini-app/"}
+ */
 import { normalizeMiniAppMediaUrl } from '@/lib/media-url'
 
 describe('Mini App domain migration', () => {
@@ -5,6 +8,7 @@ describe('Mini App domain migration', () => {
     'tanyapi.chillcreative.ru',
     'tanyapp.xn--e1aikcel5c5a.online',
     'neuromixbot.com',
+    'vk.neuromixbot.com',
   ])('serves saved media from %s through the current origin', (host) => {
     expect(normalizeMiniAppMediaUrl(`https://${host}/uploads/feed/photo.webp?v=1#preview`))
       .toBe(`${window.location.origin}/uploads/feed/photo.webp?v=1#preview`)
