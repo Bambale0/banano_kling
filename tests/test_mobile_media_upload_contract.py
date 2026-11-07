@@ -17,7 +17,10 @@ def test_mobile_media_upload_contract() -> None:
         "bot/services/photo_prompt_service.py"
     ).read_text(encoding="utf-8")
 
-    assert "MINIAPP_UPLOAD_TIMEOUT_SECONDS = 900" in miniapp
+    from bot.services.upload_limits import UPLOAD_TIMEOUT_SECONDS
+
+    assert UPLOAD_TIMEOUT_SECONDS == 900
+    assert "UPLOAD_TIMEOUT_SECONDS as MINIAPP_UPLOAD_TIMEOUT_SECONDS" in miniapp
     assert "timeout=MINIAPP_UPLOAD_TIMEOUT_SECONDS" in miniapp
     assert "_normalize_miniapp_upload_content_type" in miniapp
     assert "application/octet-stream" in miniapp
