@@ -472,3 +472,15 @@ Release-candidate verification: full backend **4722 passed, 223 skipped, 826 war
   reclaiming 4.275 GB; available root space verified at 14,882,099,200 bytes.
   Failed GitHub deploy jobs for exact b9834c7 were rerun normally; no manual deploy,
   backup deletion, volume/image/container prune or financial mutation.
+- Owner financial-scope answer on 07 November: common account/common balance
+  after voluntary linking, with independently usable VK entry. The separate-wallet
+  interim alternative is rejected. Precision exceptions, writer fencing and live
+  cutover remain explicit engineering/accounting gates; no real money was moved.
+- Both independent reviewers rechecked 193d9e1: no remaining actionable findings.
+- #422 exact merge/release b9834c795707dc3037340ea553f41c1ea50f0f9b:
+  main CI and autodeploy attempt 2 succeeded; Docker revision/healthy state,
+  Telegram and VK revision endpoints, backend health and unauthenticated 401
+  checked. Published Telegram and VK category-upload/reference HTTP browser
+  smokes passed with all API/media/provider actions intercepted. Post-release
+  12-minute log sample: zero tracebacks/preview failures; three GPT Image 2 task
+  failures observed separately, not attributed to this frontend-only change.
