@@ -98,18 +98,29 @@ async def test_installed_seedance_video_wrapper_accepts_authoritative_quote_with
 
     q = SimpleNamespace(cost=99.0, charge_cost=99.0)
     user = SimpleNamespace(id=1)
+    origin = {
+        "origin_platform": "vk",
+        "origin_vk_user_id": 2001,
+        "origin_account_id": "a" * 32,
+        "vk_chat_delivery_requested": True,
+    }
     result_generic = await trend_api._run_video_trend(
-        telegram_id=1, user=user, trend=SimpleNamespace(model="seedance_2"), billing_quote=q,
+        telegram_id=1, user=user, trend=SimpleNamespace(model="seedance_2"),
+        billing_quote=q, **origin,
     )
     result_seedance = await trend_api._run_video_trend(
-        telegram_id=1, user=user, trend=SimpleNamespace(model="seedance_2_5"), billing_quote=q,
+        telegram_id=1, user=user, trend=SimpleNamespace(model="seedance_2_5"),
+        billing_quote=q, **origin,
     )
     assert result_generic == "generic"
     assert result_seedance == "seedance"
     generic.assert_awaited_once_with(
-        telegram_id=1, user=user, trend=SimpleNamespace(model="seedance_2"), billing_quote=q,
+        telegram_id=1, user=user, trend=SimpleNamespace(model="seedance_2"),
+        billing_quote=q, **origin,
     )
     assert special.await_args.kwargs["billing_quote"] is q
+    for key, value in origin.items():
+        assert special.await_args.kwargs[key] == value
 
 
 def test_forbidden_mirrored_example_does_not_override_positive_number():

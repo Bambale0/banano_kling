@@ -40,12 +40,38 @@ async def actor(monkeypatch):
         yield client, {'Authorization': 'Bearer ' + session['session_token']}, user, session['account']['id']
 
 
-async def ready(user, account_id, task_id='vk-delivery-ready', **metadata):
-    await database.add_generation_task(user.id, user.telegram_id, task_id, 'image', 'banana_pro', model='banana_pro',
-                                       prompt='Synthetic VK portrait',
-                                       request_data={'origin_platform': 'vk', 'origin_vk_user_id': 2001,
-                                                     'origin_account_id': account_id, 'vk_chat_delivery_requested': True, **metadata})
-    await database.store_task_result_ready(task_id, 'https://example.test/result.png')
+async def ready(
+    user,
+    account_id,
+    task_id='vk-delivery-ready',
+    *,
+    task_type='image',
+    result_url=None,
+    **metadata,
+):
+    model = 'seedance_2_5' if task_type == 'video' else 'banana_pro'
+    result_url = result_url or (
+        'https://example.test/result.mp4'
+        if task_type == 'video'
+        else 'https://example.test/result.png'
+    )
+    await database.add_generation_task(
+        user.id,
+        user.telegram_id,
+        task_id,
+        task_type,
+        model,
+        model=model,
+        prompt='Synthetic VK result',
+        request_data={
+            'origin_platform': 'vk',
+            'origin_vk_user_id': 2001,
+            'origin_account_id': account_id,
+            'vk_chat_delivery_requested': True,
+            **metadata,
+        },
+    )
+    await database.store_task_result_ready(task_id, result_url)
     return await database.get_task_by_id(task_id)
 
 
@@ -75,6 +101,30 @@ async def test_callback_race_has_one_durable_job_and_one_vk_receipt(monkeypatch)
         assert -(2**31) < sent['random_id'] < 0  # Separate from native positive timestamps.
         assert (await database.get_task_by_id(task.task_id)).result_url == 'https://example.test/result.png'
         assert (await database.get_or_create_user(user.telegram_id)).credits == user.credits
+
+
+async def test_completed_vk_video_is_delivered_as_one_saved_link(monkeypatch):
+    async with actor(monkeypatch) as (_client, _headers, user, account):
+        task = await ready(
+            user,
+            account,
+            task_id='vk-video-delivery',
+            task_type='video',
+        )
+        sender = transport()
+        sender.prepare.return_value = None
+        queue = VKDeliveryQueue(sender)
+
+        assert await queue.enqueue(task.task_id)
+        await queue.tick()
+
+        assert (await rows())[0][0] == 'delivered'
+        sender.prepare.assert_awaited_once()
+        sender.send.assert_awaited_once()
+        sent = sender.send.await_args.args[0]
+        assert sent['result_url'].endswith('.mp4')
+        assert sent['result_type'] == 'video'
+        assert sent['attachment'] is None
 
 
 async def test_old_or_forged_recipient_is_not_guessed_or_queued(monkeypatch):

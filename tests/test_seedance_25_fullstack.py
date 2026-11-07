@@ -1378,3 +1378,130 @@ async def test_seedance25_ephemeral_result_persist_failure_keeps_task_retryable(
     task = await database.get_task_by_id("seedance-ephemeral-persist-fail")
     assert task.status == "pending"
     assert task.result_url is None
+
+
+
+@pytest.mark.asyncio
+async def test_seedance25_vk_launch_persists_verified_destination(monkeypatch):
+    from bot import miniapp
+    from bot.creator_tariff import VideoQuote
+    from bot.handlers import miniapp_video_continuity_compat as continuity
+
+    user = SimpleNamespace(id=701, telegram_id=880202, credits=100)
+    context = {
+        "user": user,
+        "platform": "vk",
+        "platform_external_id": 2001,
+        "shared_account_id": "a" * 32,
+        "vk_chat_delivery_requested": True,
+    }
+    monkeypatch.setattr(
+        miniapp,
+        "_get_user_context",
+        AsyncMock(return_value=(user.telegram_id, context)),
+    )
+    monkeypatch.setattr(public_release.config, "is_admin", lambda _value: True)
+    monkeypatch.setattr(public_release, "_validate_public_payload", AsyncMock())
+    monkeypatch.setattr(
+        public_release,
+        "_payload_quote",
+        AsyncMock(return_value=VideoQuote(
+            model="seedance_2_5",
+            duration=5,
+            quality="720p",
+            cost=0,
+            charge_cost=0,
+            profile="admin",
+            base_cost=0,
+            reference_multiplier=1,
+            revision="synthetic",
+        )),
+    )
+    monkeypatch.setattr(
+        public_release,
+        "_launch_provider",
+        AsyncMock(return_value={"task_id": "vk-seedance25-launch"}),
+    )
+    saved = AsyncMock(return_value=True)
+    monkeypatch.setattr(public_release.generation_module, "add_generation_task", saved)
+    monkeypatch.setattr(miniapp, "get_or_create_user", AsyncMock(return_value=user))
+    monkeypatch.setattr(
+        continuity,
+        "reserve_video_repeat_launch",
+        AsyncMock(return_value=(None, None)),
+    )
+    monkeypatch.setattr(
+        continuity,
+        "verify_video_repeat_before_charge",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(continuity, "record_video_repeat_launch", AsyncMock())
+
+    request = SimpleNamespace(app={})
+    response = await public_release._public_miniapp_generate(
+        request,
+        {
+            "init_data": "signed-vk-session",
+            "prompt": "Synthetic VK Seedance video",
+            "seedance25_scenario": "text",
+            "v_duration": 5,
+            "v_ratio": "9:16",
+            "seedance25_resolution": "720p",
+        },
+    )
+
+    assert response.status == 200, response.text
+    metadata = saved.await_args.kwargs["request_data"]
+    assert metadata["origin_platform"] == "vk"
+    assert metadata["origin_vk_user_id"] == 2001
+    assert metadata["origin_account_id"] == "a" * 32
+    assert metadata["vk_chat_delivery_requested"] is True
+
+
+@pytest.mark.asyncio
+async def test_seedance25_vk_completion_never_sends_to_linked_telegram(monkeypatch):
+    from bot import database
+
+    user = await database.get_or_create_user(880203)
+    await database.add_generation_task(
+        user.id,
+        user.telegram_id,
+        "vk-seedance25-completion",
+        "video",
+        "no_preset_video",
+        model="seedance_2_5",
+        request_data={
+            "origin_platform": "vk",
+            "origin_vk_user_id": 2001,
+            "origin_account_id": "a" * 32,
+            "vk_chat_delivery_requested": True,
+            "duration": 5,
+        },
+    )
+    bot = SimpleNamespace(
+        send_message=AsyncMock(),
+        send_video=AsyncMock(),
+        get_chat=AsyncMock(),
+    )
+
+    handled = await fullstack_module._process_seedance25_payload_original(
+        {"bot": bot},
+        {
+            "code": 200,
+            "data": {
+                "taskId": "vk-seedance25-completion",
+                "state": "success",
+                "resultJson": json.dumps(
+                    {"resultUrls": ["https://example.test/result.mp4"]}
+                ),
+            },
+        },
+    )
+
+    assert handled is True
+    task = await database.get_task_by_id("vk-seedance25-completion")
+    assert task.status == "completed"
+    metadata = json.loads(task.request_data)
+    assert metadata["delivery_status"] == "available_in_app"
+    bot.send_message.assert_not_awaited()
+    bot.send_video.assert_not_awaited()

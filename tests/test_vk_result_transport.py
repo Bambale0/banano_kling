@@ -140,6 +140,24 @@ async def test_actual_photo_upload_prepares_attachment_without_sending_a_message
     assert calls == ['photos.getMessagesUploadServer', 'photos.saveMessagesPhoto']
 
 
+async def test_video_type_uses_saved_link_even_when_cdn_url_has_no_extension(monkeypatch):
+    from bot.services import wan3_prime_storage
+
+    monkeypatch.setattr(config, 'VK_GROUP_TOKEN', 'synthetic-group-secret')
+    monkeypatch.setattr(config, 'VK_GROUP_TOKEN_COMMUNITY_ID', '456')
+    download = AsyncMock()
+    monkeypatch.setattr(wan3_prime_storage, 'fetch_public_asset', download)
+    sender = VKResultTransport()
+
+    assert await sender.prepare({
+        'community_id': 456,
+        'vk_user_id': 2001,
+        'result_type': 'video',
+        'result_url': 'https://cdn.example.test/generated/result?id=123',
+    }) is None
+    download.assert_not_awaited()
+
+
 async def test_unsafe_private_media_is_not_fetched_and_uses_only_the_saved_link(monkeypatch):
     monkeypatch.setattr(config, 'VK_GROUP_TOKEN', 'synthetic-group-secret')
     monkeypatch.setattr(config, 'VK_GROUP_TOKEN_COMMUNITY_ID', '456')

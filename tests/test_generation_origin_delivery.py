@@ -311,3 +311,83 @@ async def test_vk_image_callback_keeps_settlement_without_telegram(monkeypatch, 
     bot.send_document.assert_not_awaited()
     bot.send_message.assert_not_awaited()
     bot.get_chat.assert_not_awaited()
+
+
+from bot.creator_tariff import VideoQuote
+from bot.services.generation_origin import (
+    generation_origin_from_context,
+    generation_origin_metadata,
+)
+
+
+def admin_quote(model: str = "seedance_2") -> VideoQuote:
+    return VideoQuote(
+        model=model,
+        duration=5,
+        quality="720p",
+        cost=0,
+        charge_cost=0,
+        profile="admin",
+        base_cost=0,
+        reference_multiplier=1,
+        revision="synthetic",
+    )
+
+
+def test_generation_origin_uses_only_validated_server_context():
+    assert generation_origin_from_context({}) == {"origin_platform": "telegram"}
+    assert generation_origin_from_context({
+        "platform": "vk",
+        "platform_external_id": 2001,
+        "shared_account_id": "a" * 32,
+        "vk_chat_delivery_requested": True,
+    }) == {
+        "origin_platform": "vk",
+        "origin_vk_user_id": 2001,
+        "origin_account_id": "a" * 32,
+        "vk_chat_delivery_requested": True,
+    }
+    with pytest.raises(ValueError, match="invalid_vk_recipient"):
+        generation_origin_metadata(
+            origin_platform="vk",
+            origin_vk_user_id=None,
+            origin_account_id="a" * 32,
+        )
+
+
+@pytest.mark.asyncio
+async def test_generic_vk_video_launch_persists_destination(monkeypatch):
+    from bot.services.seedance_service import seedance_service
+
+    user = await database.get_or_create_user(880201)
+    monkeypatch.setattr(
+        seedance_service,
+        "generate_video",
+        AsyncMock(return_value={"task_id": "vk-generic-video"}),
+    )
+
+    result = await miniapp._launch_video_generation_task(
+        telegram_id=user.telegram_id,
+        user=user,
+        model="seedance_2",
+        prompt="Synthetic VK video",
+        duration=5,
+        aspect_ratio="9:16",
+        generation_type="text",
+        image_url=None,
+        image_references=[],
+        video_references=[],
+        billing_quote=admin_quote(),
+        origin_platform="vk",
+        origin_vk_user_id=2001,
+        origin_account_id="a" * 32,
+        vk_chat_delivery_requested=True,
+    )
+
+    assert result["status"] == "queued"
+    task = await database.get_task_by_id("vk-generic-video")
+    metadata = json.loads(task.request_data)
+    assert metadata["origin_platform"] == "vk"
+    assert metadata["origin_vk_user_id"] == 2001
+    assert metadata["origin_account_id"] == "a" * 32
+    assert metadata["vk_chat_delivery_requested"] is True

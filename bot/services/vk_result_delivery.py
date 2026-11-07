@@ -70,7 +70,7 @@ class VKDeliveryQueue:
         task = await get_task_by_id(lookup_id)
         policy = await load_policy()
         async with self.transaction() as db:
-            if not task or task.status != 'completed' or task.type != 'image' or not task.result_url:
+            if not task or task.status != 'completed' or task.type not in {'image', 'video'} or not task.result_url:
                 return False
             try:
                 metadata = json.loads(task.request_data or '{}')
@@ -126,7 +126,7 @@ class VKDeliveryQueue:
             rows = await (await db.execute(f'''SELECT g.id, g.task_id FROM generation_tasks g
                 LEFT JOIN vk_result_deliveries d ON d.task_id = g.id WHERE d.task_id IS NULL
                 AND g.id > ?
-                AND g.status = 'completed' AND g.type = 'image' AND COALESCE(g.result_url, '') <> ''
+                AND g.status = 'completed' AND g.type IN ('image', 'video') AND COALESCE(g.result_url, '') <> ''
                 AND CASE WHEN json_valid(g.request_data) THEN {platform} ELSE NULL END = 'vk'
                 AND CASE WHEN json_valid(g.request_data) THEN {recipient} ELSE NULL END IS NOT NULL
                 ORDER BY g.id LIMIT 50''', (self._reconcile_after,))).fetchall()
@@ -142,8 +142,12 @@ class VKDeliveryQueue:
             await db.execute("UPDATE vk_result_deliveries SET state = 'uncertain', reason = 'send_ack_unknown', updated_at_epoch = ? WHERE state = 'sending' AND lease_until_epoch <= ?", (now, now))
             await db.execute("UPDATE vk_result_deliveries SET state = 'failed', reason = 'retry_budget_exhausted', updated_at_epoch = ? WHERE state IN ('pending','preparing') AND lease_until_epoch <= ? AND attempts >= ?", (now, now, policy.vk_delivery_max_attempts))
             suffix = ' FOR UPDATE SKIP LOCKED' if db_backend.is_postgres() else ''
-            row = await (await db.execute('''SELECT * FROM vk_result_deliveries WHERE state IN ('pending','preparing')
-                AND next_attempt_epoch <= ? AND lease_until_epoch <= ? AND attempts < ? ORDER BY task_id LIMIT 1''' + suffix,
+            row = await (await db.execute('''SELECT d.*, g.type AS result_type
+                FROM vk_result_deliveries d
+                JOIN generation_tasks g ON g.id = d.task_id
+                WHERE d.state IN ('pending','preparing')
+                AND d.next_attempt_epoch <= ? AND d.lease_until_epoch <= ?
+                AND d.attempts < ? ORDER BY d.task_id LIMIT 1''' + suffix,
                 (now, now, policy.vk_delivery_max_attempts))).fetchone()
             if not row:
                 return None
