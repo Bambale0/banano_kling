@@ -1,5 +1,61 @@
 # TG–VK shared accounts execution ledger
 
+## Durable Telegram legacy credit fence — 07.11.2026 (Draft only)
+
+- Baseline tanyapi@b9834c795707dc3037340ea553f41c1ea50f0f9b; isolated branch
+  feature/tanyapi-legacy-wallet-fence. Owner selected common account/balance
+  after voluntary linking; VK must remain independently usable.
+- Preflight: openings are sandbox-only; wallet/link locks and platform identities
+  exist. Direct credits SQL bypasses add/deduct helpers in recovery, payment and
+  specialized tasks. A service-only guard cannot prove writer fencing. Existing
+  PG adapter supports native DDL; public legacy database and isolated PG test
+  seams can exercise real writers. No competing wallet/importer is needed.
+- Intended slice: internal explicit freeze of one verified TG legacy wallet,
+  immutable raw snapshot/idempotency receipt, DB-level credit/identity/delete
+  rejection, crash/retry atomicity. A marker on the users row also changes its
+  version, so an older PG repeatable-read writer cannot ignore a newer fence.
+- Limits: no automatic startup/schema call, HTTP/admin/CLI activation, live
+  freeze/import, rounding, VK-repository change or public launch. Not a complete
+  cutover: pending jobs/payments/events, partner RUB, VK fencing, late-event bridge
+  and live authority routing still need their own implementations and review.
+- Plan: RED isolated real-writer/replay/ownership/race tests; minimal internal
+  fence; SQLite + PG contracts including older-snapshot writer and rollback;
+  independent review; Draft PR with no merge/deploy until the full product gates.
+- No mutable economic setting or provider/payment contract change. Runtime price
+  sources, credits and wallet balances remain untouched outside synthetic tests.
+- RED: five SQLite cases fail because fences module is absent; five native PG
+  variants skipped locally without explicit isolated DSN. No live DB fallback.
+- Implemented explicit schema preparation and atomic internal freeze. A separate
+  preparation call avoids ALTER TABLE waiting on older snapshot readers during
+  freeze. Same-named/disabled guard attestation fails closed. Raw storage values
+  and guard digest are retained without normalization; no receipt is logged.
+- Research confirmed SQLite REPLACE/unique-key and transaction-ABORT hazards.
+  Both additional regressions were RED; conflict guards and ROLLBACK make them
+  GREEN. Isolated shared-account/wallet/link/commerce matrix: 114 passed / 113
+  skipped before final additions; final focused fence matrix: 11 passed / 13
+  skipped (native PG cases await CI). Ruff passed. Real legacy payment completion
+  remains pending with unchanged credits after two rejected settlement attempts.
+- Independent Standards/Spec review at 31240a8: no actionable findings. Final
+  local combined matrix including browser auth: 121 passed / 116 skipped.
+- First native PG workflow reached fence preparation but ten new cases failed
+  before freezing: the process-global compatibility-DDL cache skipped bootstrap
+  for subsequent isolated schemas, leaving telegram_chat_state absent. Reset the
+  cache only in this test fixture so each fresh schema runs real compatibility
+  preparation. No production schema/helper behavior was changed; native rerun
+  remains required and is not counted green.
+- Native rerun at 5d1c41acb159047431cc8d019387c03d6badbd99 passed: 234 tests /
+  3 expected skips in 104.85s, including PostgreSQL stale-snapshot fencing, real
+  credit/debit/payment writes, rollback and all shared identity/wallet/link checks
+  (workflow 42364226745). Both reviewers cleared the fixture-only follow-up.
+  Draft #424 remains unmerged with auto-merge off. Full main CI is tracked
+  separately; no production installation or complete cutover is claimed.
+- Additional guidance for the native VK counterpart: wondelai/skills
+  ddia-systems and its transactions reference; apply row-lock/atomicity/outbox
+  principles without assuming a cross-database transaction. Wider migration
+  diagnostic has evidence for relational fit, isolation and source/derived
+  separation (3/7, about 4.2/10); replication/failover, hot-key load, measured
+  retry budgets and production recovery remain unverified full-release gates.
+
 ## Missing card after authentication failure — 07.11.2026
 
 - Baseline `tanyapi@9eda416c861f8634b28fd94c81f634a24b7de875`; branch `fix/tanyapi-account-card-auth`.
