@@ -347,7 +347,7 @@ export function ImageGeneratorForm({
 
           <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
             <div className="rounded-xl bg-background/40 px-3 py-2 text-muted-foreground">
-              Режим: <span className="text-foreground">{model?.requires_reference ? 'По образцу' : 'По описанию и фото'}</span>
+              Режим: <span className="text-foreground">{model?.requires_reference ? 'По образцу' : references.length ? 'По описанию и фото' : 'Только по описанию'}</span>
             </div>
             <div className="rounded-xl bg-background/40 px-3 py-2 text-muted-foreground">
               Формат: <span className="text-foreground">{selectedRatio} • {selectedCount}x</span>

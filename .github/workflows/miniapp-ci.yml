@@ -67,6 +67,8 @@ jobs:
           components/__tests__/shared-account-link-preview.test.tsx
           components/__tests__/shared-account-preview.test.tsx
           components/__tests__/shared-account-auth-recovery.test.tsx
+          components/forms/image-reference-selection.test.tsx
+          components/personal-reference-library.test.tsx
           lib/__tests__/shared-account-api.test.ts
           components/__tests__/task-detail-publication-references.test.tsx
           __tests__/wan3-manual-trend.test.tsx

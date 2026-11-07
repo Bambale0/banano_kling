@@ -101,11 +101,17 @@ export function PersonalReferenceLibrary({ kind: forcedKind, onSelect, disabled 
               })}>Переименовать</Button>
             </div> : null}
             <label className="inline-flex min-h-10 cursor-pointer items-center rounded-lg border border-cyan/50 px-3 text-sm text-cyan">
-              Добавить файл в категорию
+              {onSelect ? 'Загрузить и выбрать' : 'Добавить файл в категорию'}
               <input type="file" accept={`${kind}/*`} disabled={busy} className="sr-only" onChange={event => {
                 const file = event.target.files?.[0]; event.target.value = ''
                 if (!file || !category) return
-                void mutate(async () => { await uploadFile(`${kind}_reference`, file, category) })
+                void mutate(async () => {
+                  const uploaded = await uploadFile(`${kind}_reference`, file, category)
+                  if (onSelect) {
+                    onSelect(uploaded)
+                    setOpen(false)
+                  }
+                })
               }} />
             </label>
             {managing ? <div className="flex flex-wrap items-center gap-2 text-xs">
