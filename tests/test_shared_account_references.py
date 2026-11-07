@@ -21,6 +21,29 @@ from tests.test_shared_accounts import (
 __all__ = ['account_database']
 
 
+async def test_real_runtime_body_guard_does_not_consume_private_multipart(monkeypatch, tmp_path):
+    from bot import miniapp
+    from bot.handlers.miniapp_regression_safety import install_miniapp_regression_safety
+
+    install_miniapp_regression_safety()
+    async with native_client(monkeypatch, tmp_path) as (client, (owner, _)):
+        original_payload = miniapp._miniapp_payload
+
+        async def forbid_legacy_json_reader(request):
+            if request.path == ROOT + '/references':
+                pytest.fail('The legacy JSON guard must never read a private photo body')
+            return await original_payload(request)
+
+        monkeypatch.setattr(miniapp, '_miniapp_payload', forbid_legacy_json_reader)
+        denied = await client.post(ROOT + '/references', data=upload_body())
+        assert denied.status == 401
+        assert not (tmp_path / 'data' / 'account_references').exists()
+        uploaded = await client.post(ROOT + '/references', headers=owner, data=upload_body())
+        assert uploaded.status == 200, await uploaded.text()
+        item = (await uploaded.json())['reference']
+        assert (await client.get(ROOT + f"/references/{item['id']}/thumbnail", headers=owner)).status == 200
+
+
 def photo_bytes(format='PNG'):
     output = io.BytesIO()
     Image.new('RGB', (3, 2), (22, 144, 200)).save(output, format=format)

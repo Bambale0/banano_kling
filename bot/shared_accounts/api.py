@@ -299,7 +299,8 @@ def setup_shared_account_routes(app: web.Application, miniapp_root: str) -> None
     app.router.add_get(root + '/me', _guard(profile))
     app.router.add_post(root + '/logout', _guard(logout))
     app.router.add_get(root + '/references', _guard(references))
-    app.router.add_post(root + '/references', _guard(references))
+    # Own auth/bounded streaming; the legacy add_post guard eagerly reads JSON.
+    app.router.add_route('POST', root + '/references', _guard(references))
     app.router.add_delete(root + '/references/{reference_id}', _guard(references))
     app.router.add_get(root + '/references/{reference_id}/{representation:content|thumbnail}', _guard(references))
     app.router.add_get(root + '/wallet', _guard(wallet))

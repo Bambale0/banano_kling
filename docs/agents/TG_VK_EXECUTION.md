@@ -71,6 +71,15 @@
   paid provider request, live financial mutation or message send. Both independent
   reviewers cleared the final backend/frontend changes. Native-PG/full Linux CI
   remain a Draft PR gate; no production merge or activation is claimed.
+- Full Linux safe suite exposed 14 photo failures while native PG/focused matrix
+  passed. Ordered reproduction with the real installed Mini App add_post guard
+  returned the same400: its legacy JSON reader consumed multipart before this
+  handler. Replaced only private-photo POST registration with add_route, matching
+  existing authenticated Genjutsu/Kling4 streaming endpoints. Added an actual
+  installed-runtime regression that forbids the legacy reader for photo bodies;
+  no global guard or permission check is disabled. Native PG and full Linux CI
+  must run again for this corrected head. First CI import-order finding was also
+  corrected; no production activation occurred.
 
 ## Origin fix #423 verified release — 07.11.2026
 
