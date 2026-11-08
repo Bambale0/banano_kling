@@ -29,7 +29,9 @@ const TrendsTab = dynamicTab(() => import('./tabs/trends-tab').then((module) => 
 const ServicesTab = dynamicTab(() => import('./tabs/services-tab').then((module) => ({ default: module.ServicesTab })))
 const ProfileTab = dynamicTab(() => import('./tabs/profile-tab').then((module) => ({ default: module.ProfileTab })))
 
-const tabComponents = [StudioTab, PhotoTab, VideoTab, MotionTab, FeedTab, TrendsTab, ServicesTab, ProfileTab]
+const AstroTab = dynamicTab(() => import('./tabs/astro-tab').then((module) => ({ default: module.AstroTab })))
+
+const tabComponents = [StudioTab, PhotoTab, VideoTab, MotionTab, FeedTab, TrendsTab, ServicesTab, ProfileTab, AstroTab]
 
 export function TabContent() {
   const { activeTab } = useApp()
