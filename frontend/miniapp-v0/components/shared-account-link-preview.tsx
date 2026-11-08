@@ -116,14 +116,22 @@ export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '', po
       void updateAccountLink(link, 'get', controller.signal).then(next => {
         if (!controller.signal.aborted) applyLink(next)
       }).catch(error => {
-        if (!controller.signal.aborted) setMessage(error instanceof Error ? error.message : 'Не удалось проверить связь.')
+        if (controller.signal.aborted) return
+        const description = error instanceof Error ? error.message : 'Не удалось проверить связь.'
+        if (description.startsWith('Ссылка истекла или отменена.')) {
+          setLink(null)
+          setUrl('')
+          setMessage('Ссылка истекла. Нажмите «Привязать» ещё раз.')
+        } else {
+          setMessage(description)
+        }
       }).finally(() => { checking = false })
     }, 4000)
     return () => { controller.abort(); window.clearInterval(timer) }
   }, [link, url, applyLink])
 
   function beginLink(target: AccountPlatform) {
-    if (busy || currentAccountPlatform() === target) return
+    if (busy || (operation.current && !operation.current.signal.aborted) || currentAccountPlatform() === target) return
     try {
       // Reject absent destination metadata before making a pending invitation.
       accountLinkUrl(target, 'a'.repeat(43), destination.vkAppId, destination.telegramBotUsername)
@@ -132,7 +140,8 @@ export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '', po
       return
     }
     // Open the window synchronously with the click to avoid popup blockers.
-    const popup = window.open('about:blank', '_blank')
+    let popup: Window | null = null
+    try { popup = window.open('about:blank', '_blank') } catch { /* Continue with same-window navigation. */ }
     if (popup) {
       try {
         popup.opener = null
