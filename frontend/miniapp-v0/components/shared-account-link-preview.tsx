@@ -139,14 +139,11 @@ export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '', po
       setMessage(error instanceof Error ? error.message : 'Не удалось открыть другую платформу.')
       return
     }
-    // VK WebViews may render t.me in their embedded mobile browser. A
-    // native tg:// link must instead be clicked directly by the user after
-    // the asynchronous invitation is created, preserving user activation.
-    // Retain popup navigation only when the target is another VK app.
+    // Reserve a window during the click: some clients accept subsequent
+    // tg:// navigation through it, unlike an ordinary https://t.me redirect.
+    // For clients that block this attempt, show a direct native link below.
     let popup: Window | null = null
-    if (target !== 'telegram') {
-      try { popup = window.open('about:blank', '_blank') } catch { /* Continue with same-window navigation. */ }
-    }
+    try { popup = window.open('about:blank', '_blank') } catch { /* Manual native link stays available. */ }
     if (popup) {
       try {
         popup.opener = null
@@ -161,16 +158,20 @@ export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '', po
         const targetUrl = accountLinkUrl(target, created.token || '', destination.vkAppId, destination.telegramBotUsername)
         setLink(created)
         setUrl(targetUrl)
-        if (target === 'telegram') {
-          // Do not auto-navigate to either t.me or tg:// after an await.
-          // The user-visible native link below keeps the required click gesture.
-          nativeTelegramMiniAppUrl(targetUrl)
-        } else if (popup && !popup.closed) {
-          popup.location.replace(targetUrl)
-        } else {
-          // Embedded clients may block popups but allow navigation to VK.
+        const launchUrl = target === 'telegram' ? nativeTelegramMiniAppUrl(targetUrl) : targetUrl
+        if (popup && !popup.closed) {
+          try { popup.location.replace(launchUrl) }
+          catch (error) {
+            if (target !== 'telegram') throw error
+            // A blocked custom scheme must not destroy the pending invitation.
+            popup.close()
+          }
+        } else if (target !== 'telegram') {
+          // VK navigation retains the existing same-window fallback.
           window.location.assign(targetUrl)
         }
+        // When a VK WebView blocks tg://, the explicit retry action below
+        // starts a new user gesture without reissuing the invitation.
       } catch (error) {
         popup?.close()
         throw error
@@ -216,7 +217,7 @@ export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '', po
 
     {!linked && !incomingToken && active && url ? <section aria-label="Ожидание привязки" className="space-y-3 rounded-xl border border-border bg-card p-4">
       <p className="text-sm text-muted-foreground">{link.target_platform === 'telegram'
-        ? 'Приглашение готово. Откройте установленный Telegram и подтвердите привязку — здесь статус обновится автоматически.'
+        ? 'Пытаемся открыть установленный Telegram. Если он не открылся, нажмите кнопку ниже и подтвердите привязку — здесь статус обновится автоматически.'
         : 'Открыли ВКонтакте. Подтвердите там свой аккаунт — здесь статус обновится автоматически.'}</p>
       {link.target_platform === 'telegram' ? <>
         <Button asChild className="w-full"><a href={nativeTelegramMiniAppUrl(url)}>Открыть приложение Telegram</a></Button>
