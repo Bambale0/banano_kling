@@ -151,6 +151,7 @@ export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '', po
     void run(async signal => {
       try {
         const created = await createAccountLink(target, signal, true)
+        if (created.source_confirmed !== true) throw new Error('Сервер привязки требует обновления. Попробуйте позже.')
         if (signal.aborted) { popup?.close(); return }
         const targetUrl = accountLinkUrl(target, created.token || '', destination.vkAppId, destination.telegramBotUsername)
         setLink(created)
