@@ -1,5 +1,5 @@
 """One-tap TG/VK linking: each authenticated platform must explicitly opt in."""
-from tests.test_shared_account_links import pair, ROOT
+from tests.test_shared_account_links import ROOT, pair
 from tests.test_shared_accounts import login, vk_launch
 
 
