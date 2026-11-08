@@ -87,7 +87,7 @@ test('VK root export gates unlinked users and opens for linked ordinary users', 
         throw error
       }
       assert.ok(logins.length >= 2)
-      for (const tab of ['Студия', 'Тренды', 'Фото', 'Видео', 'Астро', 'Лента', 'Сервисы', 'Профиль']) {
+      for (const tab of ['Студия', 'Тренды', 'Фото', 'Видео', 'Motion', 'Лента', 'Сервисы', 'Профиль']) {
         assert.equal(await page.getByRole('button', { name: tab, exact: true }).count(), 1)
       }
       assert.equal(await page.getByRole('heading', { name: 'Общие аккаунты ТГ и ВК' }).count(), 0)
