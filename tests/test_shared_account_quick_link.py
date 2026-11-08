@@ -82,3 +82,31 @@ async def test_one_tap_link_rejects_invalid_confirmation_and_still_supports_manu
         assert old_session != (await (await client.post(
             ROOT + '/session', json={'platform': 'vk', 'launch_data': vk_launch(2001)},
         )).json())['account']['id']
+
+async def test_invitation_preview_does_not_accept_and_shows_verified_source(monkeypatch):
+    async with pair(monkeypatch) as (client, source, target):
+        created = (await (await client.post(
+            ROOT + '/links', headers=source,
+            json={'target_platform': 'vk', 'confirm_source': True},
+        )).json())['link']
+        response = await client.post(
+            ROOT + '/links/preview', headers=target, json={'token': created['token']},
+        )
+        assert response.status == 200
+        preview = (await response.json())['link']
+        assert preview['source_identity']['platform'] == 'telegram'
+        assert preview['source_confirmed'] is True
+        assert preview['target_confirmed'] is False
+        assert preview['target_identity'] is None
+        state = (await (await client.get(
+            ROOT + '/links/' + created['id'], headers=source,
+        )).json())['link']
+        assert state['state'] == 'pending'
+        assert state['revision'] == 0
+        assert (await client.post(
+            ROOT + '/links/preview', json={'token': created['token']},
+        )).status == 401
+        assert (await client.post(
+            ROOT + '/links/preview', headers=target,
+            json={'token': 'x' * 43},
+        )).status == 401
