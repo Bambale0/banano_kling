@@ -2,6 +2,7 @@
 
 import { useApp } from '@/lib/app-context'
 import { cn } from '@/lib/utils'
+import { ASTRO_TAB_ID, isAstroVisible } from '@/lib/astro-access'
 import { LayoutDashboard, Image, Video, Sparkles, Grid3X3, Images, Flame, UserRound } from 'lucide-react'
 
 const tabs = [
@@ -9,21 +10,29 @@ const tabs = [
   { id: 5, label: 'Тренды', icon: Flame },
   { id: 1, label: 'Фото', icon: Image },
   { id: 2, label: 'Видео', icon: Video },
-  { id: 8, label: 'Астро', icon: Sparkles },
   { id: 4, label: 'Лента', icon: Images },
   { id: 6, label: 'Сервисы', icon: Grid3X3 },
   { id: 7, label: 'Профиль', icon: UserRound },
 ]
 
 export function TabNav() {
-  const { activeTab, setActiveTab } = useApp()
+  const { activeTab, setActiveTab, state } = useApp()
+  const previewAllowed = isAstroVisible(state)
+  // Keep Motion in the original navigation slot for ordinary users.
+  const visibleTabs = [
+    ...tabs.slice(0, 4),
+    previewAllowed
+      ? { id: ASTRO_TAB_ID, label: 'Астро', icon: Sparkles }
+      : { id: 3, label: 'Motion', icon: Sparkles },
+    ...tabs.slice(4),
+  ]
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 px-0 sm:px-3 lg:px-4">
       <div className="mx-auto w-full max-w-[900px]">
         <div className="glass-strong border-t border-border/50 safe-bottom sm:rounded-2xl sm:border">
           <div className="flex items-stretch justify-around px-2 py-1 lg:px-3 lg:py-1.5">
-            {tabs.map((tab) => {
+            {visibleTabs.map((tab) => {
               const isActive = activeTab === tab.id
               const Icon = tab.icon
 
