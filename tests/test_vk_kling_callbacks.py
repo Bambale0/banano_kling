@@ -1,5 +1,6 @@
 """Kling callback routing must use the persisted generation origin."""
 
+import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -227,5 +228,290 @@ async def test_failed_vk_task_ignores_late_success(monkeypatch, main_module, sha
         ).status == 200
     assert (await database.get_task_by_id("vk-kling")).status == "failed"
     persist.assert_not_awaited()
+    for mock in vars(bot).values():
+        mock.assert_not_awaited()
+
+
+@pytest.mark.parametrize("shape", ["code200", "legacy", "fallback", "fallback_string"])
+async def test_overlapping_vk_callbacks_download_only_once(
+    monkeypatch, main_module, shape
+):
+    user = await database.get_or_create_user(885002)
+    await database.add_generation_task(
+        user.id,
+        user.telegram_id,
+        "vk-overlap",
+        "video",
+        "no_preset",
+        model="kling",
+        request_data={"origin_platform": "vk"},
+    )
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls = []
+
+    async def persist(url, **kwargs):
+        calls.append(url)
+        if len(calls) == 1:
+            entered.set()
+            await release.wait()
+        return url.replace("provider", "durable")
+
+    monkeypatch.setattr(main_module, "_persist_result_url_if_needed", persist)
+    app = web.Application()
+    app["bot"] = fake_bot()
+    app.router.add_post("/callback", main_module.handle_kling_webhook)
+    async with TestClient(TestServer(app)) as client:
+        first = asyncio.create_task(
+            client.post(
+                "/callback",
+                json=payload_for(
+                    shape, "vk-overlap", "https://example.test/provider-first.mp4"
+                ),
+            )
+        )
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            second = await client.post(
+                "/callback",
+                json=payload_for(
+                    shape, "vk-overlap", "https://example.test/provider-second.mp4"
+                ),
+            )
+            assert second.status == 503
+            assert len(calls) == 1
+        finally:
+            release.set()
+            assert (await first).status == 200
+        assert (
+            await client.post(
+                "/callback",
+                json=payload_for(
+                    shape, "vk-overlap", "https://example.test/provider-second.mp4"
+                ),
+            )
+        ).status == 200
+    assert len(calls) == 1
+    assert (
+        await database.get_task_by_id("vk-overlap")
+    ).result_url == "https://example.test/durable-first.mp4"
+
+
+@pytest.mark.parametrize("shape", ["code200", "legacy", "fallback", "fallback_string"])
+@pytest.mark.parametrize("failure", [RuntimeError("download failed"), TimeoutError()])
+async def test_vk_download_failure_releases_claim_for_retry(
+    monkeypatch, main_module, shape, failure
+):
+    user = await database.get_or_create_user(885002)
+    await database.add_generation_task(
+        user.id,
+        user.telegram_id,
+        "vk-retry",
+        "video",
+        "no_preset",
+        model="kling",
+        request_data={"origin_platform": "vk"},
+    )
+    persist = AsyncMock(side_effect=[failure, "https://example.test/durable.mp4"])
+    monkeypatch.setattr(main_module, "_persist_result_url_if_needed", persist)
+    app = web.Application()
+    app["bot"] = fake_bot()
+    app.router.add_post("/callback", main_module.handle_kling_webhook)
+    async with TestClient(TestServer(app)) as client:
+        payload = payload_for(shape, "vk-retry")
+        assert (await client.post("/callback", json=payload)).status == 503
+        task = await database.get_task_by_id("vk-retry")
+        assert task.status == "pending"
+        assert "vk_result_persistence" not in json.loads(task.request_data)
+        assert (await client.post("/callback", json=payload)).status == 200
+    assert persist.await_count == 2
+    assert (
+        await database.get_task_by_id("vk-retry")
+    ).result_url == "https://example.test/durable.mp4"
+
+
+async def test_vk_expired_owner_cannot_commit_or_release_new_claim(monkeypatch):
+    from datetime import datetime, timedelta
+
+    user = await database.get_or_create_user(885002)
+    await database.add_generation_task(
+        user.id,
+        user.telegram_id,
+        "vk-lease",
+        "video",
+        "no_preset",
+        model="kling",
+        request_data={"origin_platform": "vk"},
+    )
+    first = await database.claim_vk_result_persistence("vk-lease", lease_seconds=30)
+    assert first
+    assert (
+        await database.claim_vk_result_persistence("vk-lease", lease_seconds=30) is None
+    )
+
+    class Later(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.now(tz) + timedelta(seconds=31)
+
+    monkeypatch.setattr(database, "datetime", Later)
+    assert not await database.store_task_result_ready(
+        "vk-lease", "https://example.test/stale.mp4", persistence_token=first
+    )
+    replacement = await database.claim_vk_result_persistence(
+        "vk-lease", lease_seconds=30
+    )
+    assert replacement and replacement != first
+    assert not await database.release_vk_result_persistence("vk-lease", first)
+    assert not await database.store_task_result_ready(
+        "vk-lease", "https://example.test/stale.mp4", persistence_token=first
+    )
+    assert await database.store_task_result_ready(
+        "vk-lease", "https://example.test/canonical.mp4", persistence_token=replacement
+    )
+    assert not await database.release_vk_result_persistence("vk-lease", first)
+    assert not await database.store_task_result_ready(
+        "vk-lease", "https://example.test/stale.mp4", persistence_token=first
+    )
+    assert await database.store_task_result_ready(
+        "vk-lease", "https://example.test/other.mp4"
+    )
+    assert (
+        await database.get_task_by_id("vk-lease")
+    ).result_url == "https://example.test/canonical.mp4"
+
+
+async def test_vk_result_ready_is_first_writer_wins_before_delivery_terminal():
+    user = await database.get_or_create_user(885002)
+    await database.add_generation_task(
+        user.id,
+        user.telegram_id,
+        "vk-ready",
+        "video",
+        "no_preset",
+        model="kling",
+        request_data={"origin_platform": "vk"},
+    )
+    assert await database.store_task_result_ready(
+        "vk-ready", "https://example.test/first.mp4"
+    )
+    task = await database.get_task_by_id("vk-ready")
+    assert json.loads(task.request_data)["delivery_status"] == "result_ready"
+    assert await database.store_task_result_ready(
+        "vk-ready", "https://example.test/second.mp4"
+    )
+    assert await database.complete_task_in_app(
+        "vk-ready", "https://example.test/third.mp4"
+    )
+    assert (
+        await database.get_task_by_id("vk-ready")
+    ).result_url == "https://example.test/first.mp4"
+
+
+async def test_vk_preparation_timeout_cancels_download_and_releases_lease(
+    monkeypatch, main_module
+):
+    user = await database.get_or_create_user(885002)
+    await database.add_generation_task(
+        user.id,
+        user.telegram_id,
+        "vk-timeout",
+        "video",
+        "no_preset",
+        model="kling",
+        request_data={"origin_platform": "vk"},
+    )
+    cancelled = asyncio.Event()
+
+    async def blocked_download(*args, **kwargs):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    monkeypatch.setattr(main_module, "_persist_result_url_if_needed", blocked_download)
+    # A short synthetic budget exercises the real wait_for cancellation path.
+    monkeypatch.setattr(main_module, "KIE_DELIVERY_LEASE_SECONDS", 10.2)
+    app = web.Application()
+    app["bot"] = fake_bot()
+    app.router.add_post("/callback", main_module.handle_kling_webhook)
+    async with TestClient(TestServer(app)) as client:
+        assert (
+            await client.post("/callback", json=payload_for("legacy", "vk-timeout"))
+        ).status == 503
+    assert cancelled.is_set()
+    task = await database.get_task_by_id("vk-timeout")
+    assert task.status == "pending"
+    assert "vk_result_persistence" not in json.loads(task.request_data)
+    assert await database.claim_vk_result_persistence("vk-timeout")
+
+
+@pytest.mark.parametrize("model", ["v3_std", "v3_pro"])
+@pytest.mark.parametrize("routes", [("kling", "kie"), ("kie", "kling")])
+@pytest.mark.parametrize("shape", ["code200", "legacy", "fallback", "fallback_string"])
+async def test_vk_kling_watchdog_cross_route_overlap(
+    monkeypatch, main_module, model, routes, shape
+):
+    from bot.services import kie_webhook_verification
+
+    user = await database.get_or_create_user(885002)
+    await database.add_generation_task(
+        user.id,
+        user.telegram_id,
+        "vk-cross-route",
+        "video",
+        "no_preset",
+        model=model,
+        request_data={"origin_platform": "vk"},
+    )
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls = []
+
+    async def persist(url, **kwargs):
+        calls.append(url)
+        if len(calls) == 1:
+            entered.set()
+            await release.wait()
+        return url.replace("provider", "durable")
+
+    monkeypatch.setattr(main_module, "_persist_result_url_if_needed", persist)
+    monkeypatch.setattr(
+        kie_webhook_verification,
+        "canonical_kie_callback",
+        AsyncMock(side_effect=lambda payload: (payload, 200)),
+    )
+    monkeypatch.setattr(main_module.config, "KIE_AI_WEBHOOK_SECRET", "synthetic")
+    app = web.Application()
+    bot = fake_bot()
+    app["bot"] = bot
+    app.router.add_post("/kling", main_module.handle_kling_webhook)
+    app.router.add_post("/kie", main_module.handle_kie_ai_webhook)
+
+    def payload(route, suffix):
+        return payload_for(
+            "legacy" if route == "kie" else shape,
+            "vk-cross-route",
+            f"https://example.test/provider-{suffix}.mp4",
+        )
+
+    async with TestClient(TestServer(app)) as client:
+        first = asyncio.create_task(
+            client.post(
+                f"/{routes[0]}?secret=synthetic", json=payload(routes[0], "first")
+            )
+        )
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            second = await client.post(
+                f"/{routes[1]}?secret=synthetic", json=payload(routes[1], "second")
+            )
+            assert second.status == 503
+            assert len(calls) == 1
+        finally:
+            release.set()
+            assert (await first).status == 200
+    assert len(calls) == 1
+    assert (
+        await database.get_task_by_id("vk-cross-route")
+    ).result_url == "https://example.test/durable-first.mp4"
     for mock in vars(bot).values():
         mock.assert_not_awaited()

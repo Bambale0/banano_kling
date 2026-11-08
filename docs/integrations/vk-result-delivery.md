@@ -93,6 +93,14 @@ availability as `available_in_app`; actual VK chat delivery is still represented
 only by the outbox receipt. Reconciliation after a worker restart uses persisted
 origin and recipient metadata, not a reconstructed actor's Telegram identity.
 
+Concurrent Kling success callbacks reserve result preparation through a durable
+owner/expiry claim before downloading. A busy callback receives a retryable
+response without another download. Preparation is bounded by the lease budget;
+only the current owner may commit, and expired/stale workers cannot replace the
+canonical result or clear a successor's claim. A completed VK result is immutable
+from the first saved URL, before chat availability is finalized. A crashed claim
+can expire and be retried; this never creates a Telegram delivery lease.
+
 ## Private HTTP seam
 
 Under `/mini-app/api/account-preview`:

@@ -626,3 +626,24 @@ Release-candidate verification: full backend **4722 passed, 223 skipped, 826 war
 - Final focused follow-up: 78 passed; one persistence call and the original
   durable URL are asserted with a changed URL on the duplicate callback. PR was
   returned to draft before this change; final-head CI and release remain pending.
+
+- Concurrent-callback follow-up: four RED overlapping HTTP cases proved that
+  sequential replay protection did not fence simultaneous pending callbacks.
+  Added a durable metadata owner/expiry CAS claim before VK Kling persistence,
+  bounded the download by the claim budget, fenced commit/release by token, and
+  made completed VK URLs first-writer-wins even in `result_ready`. All callback
+  shapes share the helper; busy calls return retryable503 without downloading.
+- Focused concurrency/refund/image/webhook matrix:131 passed. Isolated native
+  PostgreSQL runtime matrix:39 passed, including eight-way claims, stale-owner
+  fencing, first-result immutability and failed-task protection. No schema change.
+- A pre-existing PG fixture failed alone on unchanged ade4d261: it used a default
+  video row for an image-reference grant. The one image-grant test now explicitly
+  seeds type=image; its assertion is unchanged. Full durability file:10 passed.
+- A cross-route review found Kling3 watchdog recovery enters the generic KIE
+  callback rather than the original Kling route. Both now use the same claim
+  for stored VK Kling models, selected from existing service model mappings.
+  Sixteen RED cases covered both route arrival orders, two Kling3 models and
+  four original callback shapes. Final focused matrix:147 passed; independent
+  review reran49 callback tests and found no remaining release blocker.
+- Final Python compile and whitespace checks passed. Full local safe regression
+  and final-head CI remain pending; no corrective production deployment yet.

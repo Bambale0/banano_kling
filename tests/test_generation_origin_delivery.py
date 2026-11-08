@@ -212,7 +212,7 @@ async def test_interleaved_in_app_completions_cannot_replace_a_terminal_url(monk
     async def controlled_read(task_id):
         task = await read(task_id)
         name = asyncio.current_task().get_name()
-        if (name in ready and name not in paused and task and task.result_url == urls[name]
+        if (name in ready and name not in paused and task and task.result_url == urls["vk-completion-a"]
                 and json.loads(task.request_data).get("delivery_status") != "available_in_app"):
             paused.add(name)
             ready[name].set()
