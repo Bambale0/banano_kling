@@ -82,7 +82,9 @@ export function SharedAccountPreview({ isAdmin, telegramBotUsername = '' }: { is
     }
   }
 
-  if (!isAdmin) return null
+  if (!isAdmin) {
+    return <SharedAccountLinkPreview vkAppId={null} telegramBotUsername={telegramBotUsername} />
+  }
 
   function identifier(raw: string): number {
     const value = Number(raw)
@@ -96,11 +98,11 @@ export function SharedAccountPreview({ isAdmin, telegramBotUsername = '' }: { is
       <summary className="cursor-pointer p-4 text-sm font-medium">Настройки общих аккаунтов</summary>
     <section aria-label="Проверка общих аккаунтов" className="space-y-3 rounded-xl border border-border bg-card p-4">
       <h3 className="font-semibold">Общие аккаунты ТГ и ВК</h3>
-      <p className="text-sm text-muted-foreground">Проверка входа, связи аккаунтов и тестового баланса для администраторов.</p>
+      <p className="text-sm text-muted-foreground">Вход и привязка аккаунтов доступны всем. Настройки и тестовые инструменты доступны только администраторам.</p>
       {policy ? <>
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} disabled={busy} />
-          Доступ администраторам
+          Публичный вход и привязка аккаунтов
         </label>
         <label className="block text-sm">ID приложения ВК
           <input className="mt-1 w-full rounded border border-border bg-background p-2" inputMode="numeric" value={appId} onChange={(event) => setAppId(event.target.value)} disabled={busy} />

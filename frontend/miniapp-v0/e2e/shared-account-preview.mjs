@@ -124,7 +124,9 @@ try {
         }
         if (path.includes('/account-preview/')) {
           previewRequests.push({ path, method: request.method() })
-          if (!admin) {
+          if (!admin && (
+            path.endsWith('/settings') || path.endsWith('/wallet') || path.includes('/commerce')
+          )) {
             await route.fulfill({ status: 403, json: { ok: false } })
             return
           }
@@ -168,7 +170,7 @@ try {
       if (admin) {
         await page.getByText('Настройки общих аккаунтов', { exact: true }).click()
         try {
-          await page.getByLabel('Доступ администраторам').check()
+          await page.getByLabel('Публичный вход и привязка аккаунтов').check()
         } catch (error) {
           console.error('Preview diagnostic', { apiRequests, previewRequests, body: (await page.locator('body').innerText()).slice(0, 4000) })
           throw error
@@ -200,9 +202,22 @@ try {
         await page.getByRole('button', { name: 'Отменить ссылку', exact: true }).click()
         await page.getByText('Ссылка отменена.', { exact: true }).waitFor()
       } else {
-        assert.equal(await page.getByRole('region', { name: 'Связанные аккаунты', exact: true }).count(), 0)
-        assert.equal(await page.getByLabel('Доступ администраторам').count(), 0)
-        assert.equal(previewRequests.length, 0)
+        const accounts = page.getByRole('region', { name: 'Связанные аккаунты', exact: true })
+        await accounts.getByLabel('Telegram привязан', { exact: true }).waitFor()
+        const connect = accounts.getByRole('button', { name: 'Привязать ВКонтакте', exact: true })
+        await connect.waitFor()
+        assert.equal(await page.getByText('Настройки общих аккаунтов', { exact: true }).count(), 0)
+        assert.equal(await page.getByLabel('Публичный вход и привязка аккаунтов').count(), 0)
+        assert(previewRequests.some(request => request.path.endsWith('/session')))
+        assert(previewRequests.some(request => request.path.endsWith('/me')))
+        assert.equal(previewRequests.some(request => request.path.endsWith('/settings')), false)
+        assert.equal(previewRequests.some(request => request.path.endsWith('/wallet')), false)
+        assert.equal(previewRequests.some(request => request.path.includes('/commerce')), false)
+        await connect.click()
+        await page.getByRole('button', { name: 'Создать ссылку', exact: true }).click()
+        assert.equal(await page.getByLabel('Ссылка для другого аккаунта', { exact: true }).inputValue(), 'https://vk.com/app123#link_' + 'c'.repeat(43))
+        await page.getByRole('button', { name: 'Отменить ссылку', exact: true }).click()
+        await page.getByText('Ссылка отменена.', { exact: true }).waitFor()
       }
       assert.equal(await page.evaluate(() => Object.values(sessionStorage).some(value => /link_[A-Za-z0-9_-]{43}/.test(value))), false, 'Invitation credentials must stay out of browser storage')
       assert.deepEqual(clientErrors, [])
@@ -273,8 +288,9 @@ try {
       const request = route.request()
       const path = new URL(request.url()).pathname
       requests.push(path)
-      if (!admin) {
-        assert(!path.endsWith('/bootstrap'), 'Denied VK entry must not initialize the shared app')
+      if (!admin && (
+        path.endsWith('/settings') || path.endsWith('/wallet') || path.includes('/commerce')
+      )) {
         return route.fulfill({ status: 403, json: { ok: false } })
       }
       const commercePayload = commercial.reply(path, request)
@@ -291,8 +307,8 @@ try {
             revision: 1,
             vk_app_id: 123,
             telegram_bot_username: 'test_bot',
-            telegram_linked: true,
-            linked_platforms: ['telegram', 'vk'],
+            telegram_linked: admin,
+            linked_platforms: admin ? ['telegram', 'vk'] : ['vk'],
           },
         }
       } else if (path.endsWith('/bootstrap')) {
@@ -311,7 +327,7 @@ try {
           last_name: 'Admin',
           telegram_username: 'linked_admin',
           credits: 301,
-          is_admin: true,
+          is_admin: admin,
           bot_username: 'test_bot',
           referral_code: 'VKADMIN',
           telegram_chat_available: false,
@@ -370,8 +386,12 @@ try {
         throw error
       }
     } else {
-      await page.getByText('Требуется доступ администратора.', { exact: true }).waitFor()
-      assert.equal(await page.getByLabel('Код из ссылки').count(), 0)
+      await page.getByRole('heading', { name: 'Свяжите аккаунты ТГ и ВК', exact: true }).waitFor()
+      assert.equal(await page.getByLabel('Код из ссылки').inputValue(), token)
+      await page.getByLabel('ВКонтакте привязан', { exact: true }).waitFor()
+      assert.equal(await page.getByText('Настройки общих аккаунтов', { exact: true }).count(), 0)
+      assert.ok(requests.some(path => path.endsWith('/session')))
+      assert.ok(requests.some(path => path.endsWith('/me')))
       assert.equal(requests.filter(path => path.includes('/links') || path.endsWith('/bootstrap')).length, 0)
     }
     assert.equal(await page.evaluate(() => Object.values(sessionStorage).some(value => /link_[A-Za-z0-9_-]{43}/.test(value))), false, 'VK invitation must stay out of browser storage')

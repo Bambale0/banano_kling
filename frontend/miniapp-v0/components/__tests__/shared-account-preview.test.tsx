@@ -19,17 +19,18 @@ beforeEach(() => {
   jest.mocked(fetchAccountPreviewSettings).mockResolvedValue(policy)
 })
 
-test('ordinary user sees no preview controls and makes no preview request', () => {
-  const { container } = render(<SharedAccountPreview isAdmin={false} />)
-  expect(container).toBeEmptyDOMElement()
+test('ordinary user sees linked accounts without administrator controls', () => {
+  render(<SharedAccountPreview isAdmin={false} />)
+  expect(screen.getByRole('region', { name: 'Связанные аккаунты' })).toBeInTheDocument()
+  expect(screen.queryByText('Настройки общих аккаунтов')).not.toBeInTheDocument()
   expect(fetchAccountPreviewSettings).not.toHaveBeenCalled()
 })
 
-test('administrator can enable access only for administrators', async () => {
+test('administrator can enable public account access without exposing admin tools', async () => {
   jest.mocked(saveAccountPreviewSettings).mockResolvedValue({ ...policy, enabled: true, revision: 1 })
   render(<SharedAccountPreview isAdmin />)
   fireEvent.click(screen.getByText('Настройки общих аккаунтов'))
-  const toggle = await screen.findByLabelText('Доступ администраторам')
+  const toggle = await screen.findByLabelText('Публичный вход и привязка аккаунтов')
   fireEvent.click(toggle)
   fireEvent.click(screen.getByRole('button', { name: 'Сохранить доступ' }))
   await waitFor(() => expect(saveAccountPreviewSettings).toHaveBeenCalledWith(expect.objectContaining({ enabled: true }), 0, expect.any(AbortSignal)))
@@ -65,7 +66,7 @@ test('a stale configuration asks the administrator to reload', async () => {
   jest.mocked(saveAccountPreviewSettings).mockRejectedValue(new Error('Настройки изменились. Обновите страницу.'))
   render(<SharedAccountPreview isAdmin />)
   fireEvent.click(screen.getByText('Настройки общих аккаунтов'))
-  await screen.findByLabelText('Доступ администраторам')
+  await screen.findByLabelText('Публичный вход и привязка аккаунтов')
   fireEvent.click(screen.getByRole('button', { name: 'Сохранить доступ' }))
   expect(await screen.findByText('Настройки изменились. Обновите страницу.')).toBeInTheDocument()
 })
@@ -85,7 +86,7 @@ test('settings can be retried after authorization becomes available', async () =
   render(<SharedAccountPreview isAdmin />)
   fireEvent.click(screen.getByText('Настройки общих аккаунтов'))
   fireEvent.click(await screen.findByRole('button', { name: 'Повторить загрузку настроек' }))
-  expect(await screen.findByLabelText('Доступ администраторам')).toBeInTheDocument()
+  expect(await screen.findByLabelText('Публичный вход и привязка аккаунтов')).toBeInTheDocument()
   expect(screen.queryByText('Вход не подтверждён.')).not.toBeInTheDocument()
 })
 

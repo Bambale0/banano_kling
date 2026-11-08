@@ -78,8 +78,10 @@ class PreviewPolicy:
             raise ValueError('VK community is required for result delivery')
         return cls(**data)
 
-    def allows(self, identity: VerifiedIdentity) -> bool:
-        # This is a hard administrator ceiling, not a public rollout switch.
+    def allows_public(self, identity: VerifiedIdentity) -> bool:
+        return self.enabled and identity.platform in {'telegram', 'vk'}
+
+    def allows_admin(self, identity: VerifiedIdentity) -> bool:
         if not self.enabled:
             return False
         if identity.platform == 'telegram':
@@ -106,8 +108,9 @@ def _read_policy(auth_raw: str, vk_raw: str) -> PreviewPolicy:
 
 
 async def load_policy() -> PreviewPolicy:
-    # No process cache: disabling preview or removing a VK administrator revokes
-    # access on the next request, even for an otherwise unexpired session.
+    # No process cache: the public kill switch and source-scoped administrator
+    # membership are evaluated on every request. Every saved change also bumps
+    # the revision, invalidating sessions issued under older policy.
     async with db_backend.connect() as db:
         rows = await (await db.execute('SELECT key, value FROM bot_settings WHERE key IN (?, ?)', (POLICY_KEY, VK_DELIVERY_KEY))).fetchall()
     saved = {row[0]: row[1] for row in rows}

@@ -1,4 +1,4 @@
-"""Transactional identities and hashed, revocable administrator sessions."""
+"""Transactional identities and hashed, revocable signed-user sessions."""
 from __future__ import annotations
 
 import hashlib
@@ -39,6 +39,12 @@ async def create_session(identity: VerifiedIdentity, ttl_seconds: int, policy_re
         if not db_backend.is_postgres():
             await db.execute('BEGIN IMMEDIATE')
         try:
+            # Public sign-in creates short-lived rows. Keep the indexed session
+            # table bounded without touching active or unexpired revoked tokens.
+            await db.execute(
+                'DELETE FROM shared_account_sessions WHERE expires_at_epoch <= ?',
+                (now,),
+            )
             row = await (await db.execute(
                 'SELECT account_id FROM shared_account_identities WHERE platform = ? AND external_id = ?',
                 (identity.platform, identity.external_id),

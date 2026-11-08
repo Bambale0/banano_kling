@@ -83,7 +83,7 @@ class VKDeliveryQueue:
                     or type(vk_user) is not int or vk_user <= 0
                     or not isinstance(account, str) or not re.fullmatch('[0-9a-f]{32}', account)):
                 return False
-            if not policy.vk_result_delivery_enabled or not policy.vk_community_id or not policy.allows(VerifiedIdentity('vk', vk_user)):
+            if not policy.vk_result_delivery_enabled or not policy.vk_community_id or not policy.allows_public(VerifiedIdentity('vk', vk_user)):
                 return False
             try:
                 canonical = await canonical_account(db, account)
@@ -192,7 +192,7 @@ class VKDeliveryQueue:
             if policy.vk_community_id != job['community_id']:
                 await self.finish(job, 'configuration_required', reason='community_changed')
                 return
-            if not policy.allows(VerifiedIdentity('vk', job['vk_user_id'])):
+            if not policy.allows_public(VerifiedIdentity('vk', job['vk_user_id'])):
                 await self.finish(job, 'access_revoked', reason='preview_access_revoked')
                 return
             if not await self.authorized(job):
@@ -202,10 +202,10 @@ class VKDeliveryQueue:
                 await self.finish(job, 'permission_required', reason='messages_not_allowed')
                 return
             attachment = job['attachment'] if job['prepared'] else await self.sender.prepare(job)
-            # Recheck the kill switch and administrator ceiling after media I/O.
+            # Recheck the public kill switch and verified VK access after media I/O.
             latest = await load_policy()
             if (not latest.vk_result_delivery_enabled or latest.vk_community_id != job['community_id']
-                    or not latest.allows(VerifiedIdentity('vk', job['vk_user_id']))):
+                    or not latest.allows_public(VerifiedIdentity('vk', job['vk_user_id']))):
                 await self.finish(job, 'access_revoked', reason='delivery_policy_changed')
                 return
             if not await self.authorized(job):

@@ -1,6 +1,7 @@
 """Authenticated two-sided account linking with atomic wallet preservation."""
 from __future__ import annotations
 
+import hashlib
 import hmac
 import secrets
 import time
@@ -35,6 +36,8 @@ LINK_SCHEMA = '''CREATE TABLE IF NOT EXISTS shared_account_links (
     state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending', 'awaiting_confirmation', 'committed', 'cancelled')),
     result_account_id TEXT REFERENCES shared_accounts(id),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)'''
+LINK_EXPIRY_INDEX = '''CREATE INDEX IF NOT EXISTS idx_shared_account_links_source_state_expiry
+    ON shared_account_links(source_account_id, state, expires_at_epoch)'''
 COLUMNS = ('id', 'token_hash', 'source_account_id', 'source_platform', 'source_external_id', 'target_platform',
            'target_account_id', 'target_external_id', 'policy_revision', 'expires_at_epoch',
            'source_confirmed', 'target_confirmed', 'revision', 'state', 'result_account_id')
@@ -42,6 +45,16 @@ COLUMNS = ('id', 'token_hash', 'source_account_id', 'source_platform', 'source_e
 
 class LinkExpired(ValueError):
     """The pending consent invitation is no longer valid."""
+
+
+def _source_lock_key(account_id: str) -> int:
+    digest = hashlib.sha256(('shared-account-link:' + account_id).encode()).digest()
+    return int.from_bytes(digest[:8], 'big', signed=True)
+
+
+async def _lock_source(db, account_id: str) -> None:
+    if db_backend.is_postgres():
+        await db.execute('SELECT pg_advisory_xact_lock(?)', (_source_lock_key(account_id),))
 
 
 def _party(link: dict, actor: Account) -> str | None:
@@ -73,7 +86,9 @@ async def ensure_link_schema(db) -> None:
     else:
         await db.execute('BEGIN IMMEDIATE')
     try:
-        await getattr(db, 'execute_native_ddl', db.execute)(LINK_SCHEMA)
+        execute_ddl = getattr(db, 'execute_native_ddl', db.execute)
+        await execute_ddl(LINK_SCHEMA)
+        await execute_ddl(LINK_EXPIRY_INDEX)
         await db.commit()
     except Exception:
         await db.rollback()
@@ -93,9 +108,22 @@ class LinkService:
             try:
                 link = None
                 if link_id is not None:
+                    source = await (await db.execute(
+                        'SELECT source_account_id FROM shared_account_links WHERE id = ?',
+                        (link_id,),
+                    )).fetchone()
+                    if not source:
+                        raise AuthenticationError('Invitation unavailable')
+                    # All mutations for one source use advisory -> link -> account
+                    # order, including the final merge, so create/confirm cannot
+                    # deadlock through inverse row locks on PostgreSQL.
+                    await _lock_source(db, source[0])
                     suffix = ' FOR UPDATE' if db_backend.is_postgres() else ''
-                    row = await (await db.execute('SELECT ' + ', '.join(COLUMNS) + ' FROM shared_account_links WHERE id = ?' + suffix,
-                                                 (link_id,))).fetchone()
+                    row = await (await db.execute(
+                        'SELECT ' + ', '.join(COLUMNS)
+                        + ' FROM shared_account_links WHERE id = ?' + suffix,
+                        (link_id,),
+                    )).fetchone()
                     if not row:
                         raise AuthenticationError('Invitation unavailable')
                     link = {column: row[index] for index, column in enumerate(COLUMNS)}
@@ -124,6 +152,21 @@ class LinkService:
         token = secrets.token_urlsafe(32)
         link_id, expires = uuid4().hex, int(time.time()) + self.policy.link_ttl_seconds
         async with self._transaction() as (db, _):
+            # Serialize by the authenticated source account. Replacing an
+            # invitation removes only that account's ephemeral, uncommitted
+            # consent state; committed merge receipts remain immutable.
+            await _lock_source(db, actor.id)
+            suffix = ' FOR UPDATE' if db_backend.is_postgres() else ''
+            owner = await (await db.execute(
+                'SELECT status FROM shared_accounts WHERE id = ?' + suffix,
+                (actor.id,),
+            )).fetchone()
+            if not owner or owner[0] != 'active':
+                raise PreviewConflict('Account changed; reopen the application')
+            await db.execute(
+                "DELETE FROM shared_account_links WHERE source_account_id = ? AND state != 'committed'",
+                (actor.id,),
+            )
             await db.execute('''INSERT INTO shared_account_links
                 (id, token_hash, source_account_id, source_platform, source_external_id, target_platform, policy_revision, expires_at_epoch)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',

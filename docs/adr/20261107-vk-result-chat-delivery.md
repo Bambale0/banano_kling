@@ -15,8 +15,8 @@ outbox. This avoids a second cross-service queue/receipt protocol and networking
 exposure while keeping all Mini App task delivery state together. It requires
 explicitly configuring the existing community credential in this deployment;
 never copy it into source, logs, frontend or API responses. Native VK generation
-and financial tables remain untouched. No production activation is authorized
-by merely committing this implementation; the existing release hold applies.
+and financial tables remain untouched. Production activation still requires the audited delivery switch, protected
+release gates and exact deployed-revision verification.
 
 Persist the verified VK external ID and shared account ID at launch. Client JSON
 cannot select a recipient. Completion/reconciliation creates one outbox row per
@@ -27,7 +27,7 @@ a fresh acceptance with an audit record.
 
 The existing audited typed preview policy manages community ID, delivery enable,
 message template and bounded retry policy. Default delivery is disabled; existing
-administrator-only launch and server permission ceilings stay in force. The group
+the signed public-account gate and server ownership ceilings stay in force. The group
 token is a secret configuration value. Accepted jobs snapshot recipient, community,
 result, message and random_id; later edits never rewrite accepted messages.
 The credential also has server-only bound community metadata. Enabling routing

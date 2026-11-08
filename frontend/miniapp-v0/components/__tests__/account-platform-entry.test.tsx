@@ -50,12 +50,17 @@ test('unlinked VK account sees only the mandatory link gate', async () => {
   expect(screen.queryByText('Общая студия')).not.toBeInTheDocument()
 })
 
-test('ordinary VK user is denied and sees no application controls', async () => {
+test('ordinary unlinked VK user is admitted to the mandatory link gate', async () => {
   window.history.replaceState({}, '', '/?vk_app_id=123&vk_user_id=3001&sign=example')
-  jest.mocked(startAccountAppSession).mockRejectedValue(new Error('Требуется доступ администратора.'))
+  jest.mocked(startAccountAppSession).mockResolvedValue({
+    revision: 1,
+    vk_app_id: 123,
+    telegram_bot_username: 'Neuromixx_bot',
+    telegram_linked: false,
+  })
   render(<AccountPlatformEntry><p>Общая студия</p></AccountPlatformEntry>)
-  expect(await screen.findByText('Требуется доступ администратора.')).toBeInTheDocument()
-  expect(screen.queryByText(/Связать аккаунты/)).not.toBeInTheDocument()
+  expect(await screen.findByText('Связать аккаунты Neuromixx_bot')).toBeInTheDocument()
+  expect(screen.getByRole('heading', { name: 'Свяжите аккаунты ТГ и ВК' })).toBeInTheDocument()
   expect(screen.queryByText('Общая студия')).not.toBeInTheDocument()
 })
 

@@ -139,10 +139,22 @@ async def test_admin_can_login_and_reuse_a_platform_neutral_account(monkeypatch)
         assert (await client.get(ROOT + '/me', headers=headers)).status == 401
 
 
-async def test_enabled_preview_still_rejects_ordinary_telegram_user():
+async def test_enabled_preview_allows_ordinary_telegram_linking_but_not_admin_surfaces():
     async with preview_client() as client:
         await enable(client)
-        assert (await login(client, 1001)).status == 403
+        session = await login(client, 1001)
+        assert session.status == 200
+        token = (await session.json())['session_token']
+        headers = {'Authorization': 'Bearer ' + token}
+        profile = await client.get(ROOT + '/me', headers=headers)
+        assert profile.status == 200
+        assert (await profile.json())['preview']['linked_platforms'] == ['telegram']
+        assert (await client.post(ROOT + '/links', headers=headers, json={'target_platform': 'vk'})).status == 200
+        assert (await client.get(
+            ROOT + '/settings', headers={'X-Telegram-Init-Data': telegram_launch(1001)}
+        )).status == 403
+        assert (await client.get(ROOT + '/wallet', headers=headers)).status == 403
+        assert (await client.get(ROOT + '/commerce', headers=headers)).status == 403
 
 
 async def test_expired_telegram_launch_is_rejected_with_safe_diagnostics(caplog):
@@ -188,19 +200,30 @@ def vk_launch(user_id, app_id=123, timestamp=None):
     return urlencode(fields)
 
 
-async def test_vk_administrator_needs_own_platform_allowlist(monkeypatch):
+async def test_vk_user_does_not_need_the_administrator_allowlist(monkeypatch):
     monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
     async with preview_client() as client:
         await enable(client, vk_app_id=123, vk_admin_ids=[2001])
-        response = await client.post(ROOT + '/session', json={'platform': 'vk', 'launch_data': vk_launch(2001)})
-        assert response.status == 200
-        data = await response.json()
-        assert data['account']['identity'] == {'platform': 'vk', 'external_id': 2001}
-        # A VK number equal to a Telegram administrator is not a VK administrator.
-        denied = await client.post(ROOT + '/session', json={'platform': 'vk', 'launch_data': vk_launch(ADMIN)})
-        assert denied.status == 403
+        administrator = await client.post(
+            ROOT + '/session', json={'platform': 'vk', 'launch_data': vk_launch(2001)}
+        )
+        assert administrator.status == 200
+        administrator_data = await administrator.json()
+        assert administrator_data['account']['identity'] == {'platform': 'vk', 'external_id': 2001}
+
+        ordinary = await client.post(
+            ROOT + '/session', json={'platform': 'vk', 'launch_data': vk_launch(ADMIN)}
+        )
+        assert ordinary.status == 200
+        ordinary_data = await ordinary.json()
+        ordinary_headers = {'Authorization': 'Bearer ' + ordinary_data['session_token']}
+        assert (await client.get(ROOT + '/me', headers=ordinary_headers)).status == 200
+        assert (await client.get(ROOT + '/wallet', headers=ordinary_headers)).status == 403
+        assert (await client.get(ROOT + '/commerce', headers=ordinary_headers)).status == 403
+
         telegram = await (await login(client)).json()
-        assert telegram['account']['id'] != data['account']['id']
+        assert telegram['account']['id'] != administrator_data['account']['id']
+        assert telegram['account']['id'] != ordinary_data['account']['id']
 
 
 async def test_vk_signature_wrong_app_tamper_and_expiry_are_rejected(monkeypatch):
@@ -233,14 +256,27 @@ async def test_tokens_are_hashed_at_rest_and_not_accepted_in_query_string():
         assert (await client.get(ROOT + '/me?session_token=' + token)).status == 401
 
 
-async def test_vk_removal_revokes_access_without_waiting_for_expiry(monkeypatch):
+async def test_vk_administrator_removal_keeps_public_access_after_revision_refresh(monkeypatch):
     monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
     async with preview_client() as client:
         await enable(client, vk_app_id=123, vk_admin_ids=[2001])
-        data = await (await client.post(ROOT + '/session', json={'platform': 'vk', 'launch_data': vk_launch(2001)})).json()
-        headers = {'Authorization': 'Bearer ' + data['session_token']}
-        await client.put(ROOT + '/settings', json={'init_data': telegram_launch(), 'expected_revision': 1, 'settings': {'vk_admin_ids': []}})
-        assert (await client.get(ROOT + '/me', headers=headers)).status == 401
+        old = await (await client.post(
+            ROOT + '/session', json={'platform': 'vk', 'launch_data': vk_launch(2001)}
+        )).json()
+        old_headers = {'Authorization': 'Bearer ' + old['session_token']}
+        changed = await client.put(ROOT + '/settings', json={
+            'init_data': telegram_launch(), 'expected_revision': 1, 'settings': {'vk_admin_ids': []},
+        })
+        assert changed.status == 200
+        assert (await client.get(ROOT + '/me', headers=old_headers)).status == 401
+
+        fresh = await client.post(
+            ROOT + '/session', json={'platform': 'vk', 'launch_data': vk_launch(2001)}
+        )
+        assert fresh.status == 200
+        fresh_headers = {'Authorization': 'Bearer ' + (await fresh.json())['session_token']}
+        assert (await client.get(ROOT + '/me', headers=fresh_headers)).status == 200
+        assert (await client.get(ROOT + '/wallet', headers=fresh_headers)).status == 403
 
 
 async def test_expired_session_is_rejected(monkeypatch):
@@ -250,6 +286,32 @@ async def test_expired_session_is_rejected(monkeypatch):
         now = time.time()
         monkeypatch.setattr('bot.shared_accounts.store.time.time', lambda: now + 3601)
         assert (await client.get(ROOT + '/me', headers={'Authorization': 'Bearer ' + token})).status == 401
+
+
+async def test_new_login_prunes_only_expired_sessions(monkeypatch):
+    async with preview_client() as client:
+        await enable(client)
+        first = await (await login(client)).json()
+        second = await (await login(client)).json()
+        await client.post(
+            ROOT + '/logout', headers={'Authorization': 'Bearer ' + second['session_token']}
+        )
+        now = time.time()
+        async with db_backend.connect() as db:
+            await db.execute(
+                'UPDATE shared_account_sessions SET expires_at_epoch = ? WHERE token_hash = ?',
+                (int(now) - 1, hashlib.sha256(first['session_token'].encode()).hexdigest()),
+            )
+            await db.commit()
+        monkeypatch.setattr('bot.shared_accounts.store.time.time', lambda: now)
+        assert (await login(client)).status == 200
+        async with db_backend.connect() as db:
+            rows = await (await db.execute(
+                'SELECT token_hash, revoked_at_epoch FROM shared_account_sessions ORDER BY created_at_epoch'
+            )).fetchall()
+        assert len(rows) == 2
+        assert hashlib.sha256(first['session_token'].encode()).hexdigest() not in {row[0] for row in rows}
+        assert hashlib.sha256(second['session_token'].encode()).hexdigest() in {row[0] for row in rows}
 
 
 @pytest.mark.parametrize('change', [
