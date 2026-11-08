@@ -1,14 +1,17 @@
 jest.mock('../shared-commercial-preview', () => ({ SharedCommercialPreview: () => null }))
 import '@testing-library/jest-dom'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { AccountPlatformEntry } from '../account-platform-entry'
 import { startAccountAppSession, stopAccountAppSession } from '@/lib/shared-account-api'
+import { incomingAccountLink } from '@/lib/account-platform'
 
 jest.mock('@/lib/shared-account-api', () => ({
   startAccountAppSession: jest.fn(),
   stopAccountAppSession: jest.fn(),
 }))
-jest.mock('../shared-account-link-preview', () => ({ SharedAccountLinkPreview: ({ telegramBotUsername }: { telegramBotUsername: string }) => <p>Связать аккаунты {telegramBotUsername}</p> }))
+jest.mock('@/lib/account-platform', () => ({ incomingAccountLink: jest.fn(() => '') }))
+jest.mock('../shared-account-link-preview', () => ({ SharedAccountLinkPreview: ({ telegramBotUsername, onCommitted }: { telegramBotUsername: string; onCommitted?: () => void }) =>
+  <><p>Связать аккаунты {telegramBotUsername}</p>{onCommitted ? <button onClick={onCommitted}>Привязка подтверждена</button> : null}</> }))
 
 afterEach(() => {
   window.history.replaceState({}, '', '/')
@@ -69,4 +72,14 @@ test('Telegram entry retains the existing application', () => {
   expect(screen.getByText('Общая студия')).toBeInTheDocument()
   expect(startAccountAppSession).not.toHaveBeenCalled()
   expect(stopAccountAppSession).not.toHaveBeenCalled()
+})
+
+test('Telegram direct Mini App startapp invitation enters confirmation instead of the studio', async () => {
+  jest.mocked(incomingAccountLink).mockReturnValue('a'.repeat(43))
+  render(<AccountPlatformEntry><p>Общая студия</p></AccountPlatformEntry>)
+  expect(await screen.findByRole('heading', { name: 'Привязка Telegram и ВКонтакте' })).toBeInTheDocument()
+  expect(screen.queryByText('Общая студия')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Привязка подтверждена' }))
+  expect(screen.getByText('Общая студия')).toBeInTheDocument()
+  expect(startAccountAppSession).not.toHaveBeenCalled()
 })
