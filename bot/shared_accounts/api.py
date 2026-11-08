@@ -150,9 +150,15 @@ async def links(request: web.Request) -> web.Response:
     body = await _body(request) if request.method == 'POST' else {}
     link_id = request.match_info.get('link_id')
     if request.path.endswith('/links/accept'):
-        result = await service.accept_token(account, body.get('token'))
+        confirm = body.get('confirm', False)
+        if type(confirm) is not bool:
+            raise ValueError('Invalid recipient confirmation')
+        result = await service.accept_token(account, body.get('token'), confirm=confirm)
     elif link_id is None:
-        result = await service.create(account, body.get('target_platform'))
+        confirm_source = body.get('confirm_source', False)
+        if type(confirm_source) is not bool:
+            raise ValueError('Invalid source confirmation')
+        result = await service.create(account, body.get('target_platform'), confirm_source=confirm_source)
     else:
         result = await service.operate(account, link_id, request.match_info.get('action', 'get'), body)
     return response({'ok': True, 'link': result})
