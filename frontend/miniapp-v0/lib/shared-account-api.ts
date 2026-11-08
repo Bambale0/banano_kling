@@ -42,7 +42,9 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
   if (response.status === 409) throw new Error(path.startsWith('links') ? 'Состояние связи или индивидуальные условия изменились. Обновите статус и проверьте настройки аккаунтов.' : path === 'wallet' ? 'Операция уже обработана с другими параметрами или резерв закрыт.' : 'Настройки изменились. Обновите страницу.')
   if (response.status === 410) throw new Error('Ссылка истекла или отменена. Создайте новую.')
   if (response.status === 401) throw new Error('Откройте приложение заново для подтверждения входа.')
-  if (response.status === 403) throw new Error('Требуется доступ администратора.')
+  if (response.status === 403) throw new Error(path.startsWith('links')
+    ? 'Это приглашение предназначено другому аккаунту или платформе.'
+    : 'Требуется доступ администратора.')
   if (response.status === 402) throw new Error('Недостаточно доступных тестовых средств.')
   if (response.status === 404) throw new Error(path.startsWith('vk-deliveries/')
     ? 'Результат или доставка сейчас недоступны. Обновите список задач.' : 'Проверка аккаунтов пока выключена.')
@@ -186,14 +188,20 @@ export interface AccountLink {
   target_identity?: { platform: 'telegram' | 'vk'; external_id: string } | null
 }
 
-export async function createAccountLink(targetPlatform: 'telegram' | 'vk', signal?: AbortSignal): Promise<AccountLink> {
+export async function createAccountLink(targetPlatform: 'telegram' | 'vk', signal?: AbortSignal, confirmSource = false): Promise<AccountLink> {
   return withPreviewSession(async headers => (await request<{ link: AccountLink }>('links', {
-    method: 'POST', headers, signal, body: JSON.stringify({ target_platform: targetPlatform }),
+    method: 'POST', headers, signal, body: JSON.stringify({ target_platform: targetPlatform, confirm_source: confirmSource }),
   })).link, signal)
 }
 
-export async function acceptAccountLink(token: string, signal?: AbortSignal): Promise<AccountLink> {
+export async function acceptAccountLink(token: string, signal?: AbortSignal, confirm = false): Promise<AccountLink> {
   return withPreviewSession(async headers => (await request<{ link: AccountLink }>('links/accept', {
+    method: 'POST', headers, signal, body: JSON.stringify({ token, confirm }),
+  })).link, signal)
+}
+
+export async function previewAccountLink(token: string, signal?: AbortSignal): Promise<AccountLink> {
+  return withPreviewSession(async headers => (await request<{ link: AccountLink }>('links/preview', {
     method: 'POST', headers, signal, body: JSON.stringify({ token }),
   })).link, signal)
 }
