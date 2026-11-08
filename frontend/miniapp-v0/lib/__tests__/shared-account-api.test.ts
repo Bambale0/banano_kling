@@ -1,4 +1,4 @@
-import { checkAccountPreviewLogin, saveAccountPreviewSettings, startAccountAppSession, stopAccountAppSession } from '../shared-account-api'
+import { acceptAccountLink, checkAccountPreviewLogin, createAccountLink, previewAccountLink, saveAccountPreviewSettings, startAccountAppSession, stopAccountAppSession } from '../shared-account-api'
 import { setPlatformSessionToken } from '../api'
 
 jest.mock('../api', () => ({
@@ -125,4 +125,53 @@ test('unlinked VK account does not retain an application credential', async () =
   expect(access.telegram_linked).toBe(false)
   expect(setPlatformSessionToken).not.toHaveBeenCalled()
   expect(fetch.mock.calls[2][0]).toBe('/mini-app/api/account-preview/logout')
+})
+
+test('quick invitation submits signed source consent only with the connect click', async () => {
+  const fetch = jest.mocked(global.fetch)
+  fetch.mockResolvedValueOnce(reply(200, { session_token: 'session-token', account: { id: 'source' } }))
+    .mockResolvedValueOnce(reply(200, { link: { id: 'pending', token: 'a'.repeat(43) } }))
+    .mockResolvedValueOnce(reply(200))
+  await createAccountLink('vk', undefined, true)
+  expect(fetch.mock.calls[1][0]).toBe('/mini-app/api/account-preview/links')
+  expect(JSON.parse(String(fetch.mock.calls[1][1]?.body))).toEqual({
+    target_platform: 'vk', confirm_source: true,
+  })
+  expect(fetch.mock.calls[1][1]?.headers).toEqual(expect.objectContaining({ Authorization: 'Bearer session-token' }))
+  expect(fetch.mock.calls[2][0]).toBe('/mini-app/api/account-preview/logout')
+})
+
+test('opening a signed invitation previews identity without accepting it', async () => {
+  const fetch = jest.mocked(global.fetch)
+  const token = 'x'.repeat(43)
+  fetch.mockResolvedValueOnce(reply(200, { session_token: 'session-token', account: { id: 'target' } }))
+    .mockResolvedValueOnce(reply(200, { link: { id: 'pending', source_identity: { platform: 'vk', external_id: '456' } } }))
+    .mockResolvedValueOnce(reply(200))
+  const invitation = await previewAccountLink(token)
+  expect(invitation.source_identity?.external_id).toBe('456')
+  expect(fetch.mock.calls[1][0]).toBe('/mini-app/api/account-preview/links/preview')
+  expect(JSON.parse(String(fetch.mock.calls[1][1]?.body))).toEqual({ token })
+  expect(fetch.mock.calls.map(([url]) => String(url)).join(' ')).not.toContain(token)
+})
+
+test('recipient confirmation is one authenticated accept request and session is revoked', async () => {
+  const fetch = jest.mocked(global.fetch)
+  const token = 'x'.repeat(43)
+  fetch.mockResolvedValueOnce(reply(200, { session_token: 'session-token', account: { id: 'target' } }))
+    .mockResolvedValueOnce(reply(200, { link: { id: 'done', state: 'committed' } }))
+    .mockResolvedValueOnce(reply(200))
+  const link = await acceptAccountLink(token, undefined, true)
+  expect(link.state).toBe('committed')
+  expect(fetch.mock.calls[1][0]).toBe('/mini-app/api/account-preview/links/accept')
+  expect(JSON.parse(String(fetch.mock.calls[1][1]?.body))).toEqual({ token, confirm: true })
+  expect(fetch.mock.calls[2][0]).toBe('/mini-app/api/account-preview/logout')
+})
+
+test('wrong-platform invitation is not mistaken for missing admin permission', async () => {
+  const fetch = jest.mocked(global.fetch)
+  fetch.mockResolvedValueOnce(reply(200, { session_token: 'session-token', account: { id: 'target' } }))
+    .mockResolvedValueOnce(reply(403)).mockResolvedValueOnce(reply(200))
+  await expect(previewAccountLink('x'.repeat(43))).rejects.toThrow(
+    'Это приглашение предназначено другому аккаунту или платформе.',
+  )
 })
