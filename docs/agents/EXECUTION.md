@@ -2937,3 +2937,26 @@ See [TG_VK_EXECUTION.md](TG_VK_EXECUTION.md) for the live ledger. Isolated Draft
 # 2026-11-07 — Preview delivery recovery
 
 Live ledger: [PREVIEW_RECOVERY_EXECUTION.md](PREVIEW_RECOVERY_EXECUTION.md).
+
+
+## 2026-11-07 — VK-local deep links and sharing
+
+- Baseline: `tanyapi@71e18a73b32f0a777def4f10e2b0550a42bd0083`; isolated branch `fix/vk-platform-deeplinks-20261107`.
+- Root cause: Mini App HTTP endpoints used Telegram-only URL builders despite authenticated `ctx.platform=vk`; the frontend forward button independently wrapped every link in `t.me/share`; raw VK route fragments were not parsed on launch.
+- Scope: platform-aware links for bootstrap/profile, trend copy, publication, feed/remix copy and partner overview; VK Share UI; raw-hash launch parsing. Telegram bot flows, account-link confirmation, write-access gate, payment routing, prices, balances and the public offer are unchanged.
+- Configuration: VK app ID comes from the revisioned shared-account policy and is carried in the authenticated VK context. Missing VK app ID fails closed instead of falling back to Telegram.
+- TDD: backend builder and trend HTTP regression, frontend route/share/profile fallback regression. Initial failures reproduced missing platform parameters, empty raw hash and missing VK share helper.
+- Local verification: backend focused/publication suites 59 passed; video-continuity/feed suites 108 passed (overlapping suites, not an aggregate); missing-App-ID fail-closed regression passed. Frontend 97 suites / 722 tests passed, including the exact VK trend-share UI; ESLint completed with 0 errors and one pre-existing kling4-form.tsx hook warning; Telegram and VK production exports compiled successfully; Python compile and diff whitespace passed.
+- Release state at commit time: protected PR, branch CI, squash merge, automatic deployment and exact-SHA production smoke remain the next gated steps.
+- Rollback: revert the protected PR; no migration, data repair or configuration change is required.
+
+
+## 2026-11-08 — VK-origin video result routing
+
+- Baseline: tanyapi@7f4806a8d8453080d064107f30d776d56ad526d3; isolated branch fix/vk-video-result-routing-20261108.
+- Production evidence: completed repeat 367881 (seedance_2_5, source 367835) belongs to a linked VK account, but its task snapshot has no origin_platform/VK recipient and delivery_status=delivered; the generic and Seedance 2.5 Mini App video writers did not persist verified platform context.
+- Root cause: image launch persisted the authenticated VK origin, while generic video, Seedance 2.5, video-trend, Motion Control and WAN writers retained only the linked Telegram identity. Their completion paths therefore selected Telegram.
+- Fix contract: derive origin only from authenticated server context; persist it on every Mini App video task; VK completion is available in-app and enters the existing durable VK outbox. Photos retain native photo upload; video tasks use the saved public link (including extensionless CDN URLs) and never enter the photo decoder. Telegram-origin behavior is unchanged.
+- Safety: no provider generation, balance mutation, historical task rewrite, token change, payment change or text-bot behavior change. Invalid VK recipients/accounts fail before persistence. Existing outbox leases, permission checks, retry/uncertain rules and account ownership validation remain authoritative.
+- TDD: verified-origin helper, generic video/repeat and video-trend writers, Seedance 2.5 launch/completion, Motion durable receipt, WAN writer, VK video outbox and link-only transport regressions. Focused production-runtime-image result: 276 passed, 25 skipped (PostgreSQL variants remain required in CI). Python compile and diff whitespace checks pass.
+- Release gate: protected PR to tanyapi, required CI, squash auto-merge, automatic deploy and exact-SHA health/revision verification. No paid live generation is part of acceptance.

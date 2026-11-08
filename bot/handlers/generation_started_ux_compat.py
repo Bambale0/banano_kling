@@ -219,7 +219,10 @@ def _install_miniapp_started_notifier() -> None:
         img_service: str,
         img_ratio: str,
         unit_cost: float,
+        origin_platform: str = "telegram",
     ) -> None:
+        if origin_platform == "vk":
+            return
         status = str(launch_result.get("status") or "").strip().lower()
         provider_task_id = str(launch_result.get("task_id") or "").strip()
         local_task_id = str(launch_result.get("local_task_id") or "").strip()

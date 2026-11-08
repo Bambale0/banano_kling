@@ -13,7 +13,8 @@ import {
   videoPreviewFrameUrl,
 } from '@/lib/media-url'
 import { copyTextToClipboard } from '@/lib/clipboard'
-import { isNavigableShareLink, telegramForwardLink, tryOpenTelegramShareLink } from '@/lib/share-link-navigation'
+import { isNavigableShareLink, platformForwardLink, tryOpenTelegramShareLink } from '@/lib/share-link-navigation'
+import { currentAccountPlatform } from '@/lib/account-platform'
 import { mergePendingPublication } from '@/lib/feed-events'
 import { Button } from '@/components/ui/button'
 import {
@@ -688,18 +689,18 @@ export function FeedTab() {
                 </a>
               </Button>
             )}
-            {telegramForwardLink(shareLink) && (
+            {platformForwardLink(shareLink, currentAccountPlatform()) && (
               <Button asChild variant="outline" className="min-h-11 w-full sm:w-auto">
                 <a
-                  href={telegramForwardLink(shareLink)!}
+                  href={platformForwardLink(shareLink, currentAccountPlatform())!}
                   target="_blank"
                   rel="noopener noreferrer"
                   onClick={(event) => {
                     if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey
-                      && tryOpenTelegramShareLink(telegramForwardLink(shareLink)!)) event.preventDefault()
+                      && tryOpenTelegramShareLink(platformForwardLink(shareLink, currentAccountPlatform())!)) event.preventDefault()
                   }}
                 >
-                  Поделиться в Telegram
+                  {currentAccountPlatform() === 'vk' ? 'Поделиться в ВК' : 'Поделиться в Telegram'}
                 </a>
               </Button>
             )}

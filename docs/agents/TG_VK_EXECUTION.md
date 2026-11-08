@@ -1,5 +1,38 @@
 # TG–VK shared accounts execution ledger
 
+## Legacy fence integration refresh — 08.11.2026 (local validation)
+
+- Continued Draft #424 at 37a589247e2ea735dc5f1b1aa0a52ed87a8dcd39 and
+  merged exact tanyapi e3841e88ecdd1ad1c7dce55639878dec2035d060, without rebase.
+  Common ancestor b9834c795707dc3037340ea553f41c1ea50f0f9b. Conflicts were
+  limited to this ledger and the shared-preview CI command lists; both fence and
+  VK transport/delivery coverage and both histories are preserved.
+- Rechecked current database, Kling4/Wan3, admin, partner, Genjutsu, motion and
+  watchdog credit-write seams. Their authority remains users.credits, protected
+  by the existing row trigger when explicitly frozen. Upstream changes add VK
+  delivery/result metadata, not a new financial authority or trigger bypass.
+  Fence preparation/freezing still has no startup or public production caller.
+  No fence implementation, activation, price, credential or live balance changed.
+- Combined shared-account, audit, wallet/opening/fence/link/commerce, VK delivery/
+  transport and browser-auth pytest matrix: 160 passed, 141 skipped, 6 existing
+  datetime deprecation warnings (15.86s). Skips include unavailable isolated
+  PostgreSQL and engine-specific cases; native PG on this exact merge is pending.
+  Matching shared-preview Ruff command and git diff whitespace checks passed.
+- Adjacent credit-precondition, Genjutsu, partner-policy/debit-guard, watchdog and
+  Wan3 lifecycle matrix: 99 passed, 7 setup errors (7.99s). All seven errors are
+  credit-precondition tests requiring the unavailable pytest-mock `mocker` fixture.
+  Installed pytest-mock 3.17.0 into the isolated test venv from the official
+  registry and reran the entire adjacent matrix: 106 passed in 7.00s. No runtime
+  dependency or repository requirements change was needed.
+- Guidance read: Bambale0/skills diagnosing-bugs, Bambale0/claw backend-integration,
+  anthropics/skills webapp-testing, repository AGENTS/README and opening/fence ADRs.
+  No frontend change in this slice, so browser verification is not applicable.
+- Remaining release gates are unchanged: native PG/exact-head main CI, VK writer
+  fencing, job/payment drain and late settlement bridge, approved opening amounts,
+  authority routing and reconciliation. This merge does not open VK publicly or
+  make the common wallet live. No push, PR mutation, migration or deploy occurred
+  during this local integration step.
+
 ## Durable Telegram legacy credit fence — 07.11.2026 (Draft only)
 
 - Baseline tanyapi@b9834c795707dc3037340ea553f41c1ea50f0f9b; isolated branch
@@ -55,6 +88,91 @@
   diagnostic has evidence for relational fit, isolation and source/derived
   separation (3/7, about 4.2/10); replication/failover, hot-key load, measured
   retry budgets and production recovery remain unverified full-release gates.
+
+## VK result absent from community chat — 07.11.2026
+
+- Baseline 4f6387d65135b04a17c2d448ebeef793c5b08482; dedicated branch
+  fix/tanyapi-vk-chat-delivery. Latest administrator task at 16:07 Moscow has one
+  source/provider reference and a completed durable result, available_in_app.
+  No VK send occurred: PR423 removed wrong TG delivery but added no VK sender.
+- Audit: verified request context already exposes VK external/shared account IDs;
+  task snapshot retains only origin_platform. Existing TG lease must keep rejecting
+  VK. Native VK sender couples task/refund/block state and has unbounded download;
+  native read-only HMAC cannot authorize a POST unchanged. Common deployment has
+  launch secret but no community sender credential. No secret values were read out.
+- Reuse common durable tasks, canonical identities/legacy links, audited preview
+  policy and safe public-at-connect media downloader. Implement transport-only
+  direct VK adapter/common outbox, avoiding two queues or new internal networking.
+  Community credential must be configured securely before activation. No native
+  task/user/financial mutations or public rollout are part of this slice.
+- Plan: (1) RED signed launch/recipient and completion/outbox tests; (2) persist
+  verified recipient, typed administrative delivery policy and durable CAS outbox;
+  (3) bounded VK media/send adapter, permission and uncertainty handling;
+  (4) authenticated status/explicit owner retry, client guidance/consent;
+  (5) SQLite/PG/provider-contract/browser/regression/review/Draft CI evidence.
+- Acceptance: new VK image completion reaches its verified user's community chat
+  once under callback/poller races, keeps Mini App result available, never sends
+  to TG, never charges/refunds again; denied permission and uncertain sends are
+  visible and not silently retried. Old missing-recipient tasks require explicit
+  fresh owner acceptance. Additive schema, default-disabled audited policy,
+  secret-only transport configuration, no migration of wallets. Rollout hold stays.
+- Applied existing diagnosing-bugs/wayfinder Research/implement/TDD/code-review,
+  Claw backend integration and DDIA durable transaction guidance. Official VK
+  schema was inspected; dev.vk.com was unavailable. No live send/provider call.
+- Implemented recipient/account/intent snapshots for image/remix/image-trend
+  launches; client-supplied identities/intent do not select the destination.
+  Added a completion hook, fair recovery scan and durable per-task outbox with
+  CAS leases, frozen copy/attachment and separate VK receipts. Signed negative
+  random IDs avoid the native sender's positive timestamps; uniqueness and
+  bounded collision recovery are tested. No native DB or financial code is used.
+- The authenticated result view reports actual photo/link receipt, opens native
+  VK consent without claiming permission, and supports explicit old-owner
+  acceptance/retry. Unknown sends cannot be resent. New audited settings expose
+  community/enable/retry/copy; enabling rejects an unbound credential. Default is
+  disabled, and pre-enable launches do not silently become a message backlog.
+- Independent Standards review found scan starvation and escaped result fields;
+  both reproduced RED then passed GREEN. Same-lease late positive receipt was
+  also reproduced RED and repaired without enabling another send. Spec review
+  caught a task404 falsely labelled preview-disabled; neutral recovery regression
+  passed. Both final reviewers report no remaining actionable findings.
+- Local broad backend HTTP/auth/link/commerce/VK-origin/transport matrix passed
+  104 tests, 70 isolated-PG cases skipped, with existing AppKey warnings. Final
+  focused transport/outbox/HTTP additions are rerun separately. Full frontend
+  96 suites / 717 tests passed before the isolated404 mapping; its final focused
+  recovery matrix passed 19. TypeScript, changed ESLint and new-source Ruff pass.
+- Telegram-path and dedicated VK-root production exports passed. Actual exported
+  VK result browser scenarios passed at 320/430px on both (16 runs): permission
+  dialog + explicit acceptance, old-result send, uncertain receipt/no resend and
+  link-only receipt. API/provider/media were intercepted; no real message or paid
+  generation was sent. Final source CI/native PG is still pending, not assumed.
+- Read-only operational readiness: current task owner resolves uniquely through
+  persisted legacy→shared→verified VK identity plus a committed two-sided link
+  receipt. Existing native credential's token-default community matches its
+  configuration; actual messages permission is true. photos.getMessagesUploadServer
+  returned a valid HTTPS/public-IP upload endpoint without any upload/save/send.
+  No credential, response URL or private user ID was output. Common-backend
+  credential setup, activation and actual chat receipt remain release steps.
+- Separate private-photo Draft425 final a0a7c4e0d985c6f39d4c62e961f7adb32207c883
+  has all four main CI gates and native PG green (Linux safe 4779 passed,
+  250 skipped, 76 subtests); Draft/auto-merge-off verified. It is not merged or
+  deployed and is not a dependency for this chat-delivery slice.
+- Rollback preflight reproduced RED: old authentication policy readers reject
+  additive delivery JSON keys. Delivery now uses its own existing bot_settings
+  row, with one shared revision/atomic audit transaction. The old auth JSON stays
+  readable, and old-client updates preserve delivery controls. Credential storage
+  remains separate. No manual SQL or production configuration change was made.
+- Final local backend matrix: 169 passed, 127 native-PG cases skipped, 13 existing
+  warnings. First source CI exposed isolated PostgreSQL fixture omissions: the
+  shared schema lacked the startup chat-state column (23 failures, 251 passed),
+  and runtime cleanup omitted the newly created FK outbox (2 failures/10 setup
+  errors, 21 passed). Fixtures now mirror that startup column and explicitly
+  truncate the outbox only when present, preserving its production FK and avoiding
+  broad CASCADE. Native PostgreSQL rerun remains required before release.
+- The next isolated PG run passed 270 with four fixture failures: per-case schema
+  replacement reused a process-wide startup readiness cache, and its search_path
+  excluded public JSON helpers. The fixture now reruns the actual compatibility
+  bootstrap per schema and includes public for those helpers, replacing the narrow
+  copied startup column. Production SQL/constraints and assertions are unchanged.
 
 ## Missing card after authentication failure — 07.11.2026
 
@@ -396,6 +514,7 @@ Release additions after exact-head review: magic-link launch data is removed fro
   administrator acceptance. Public rollout remains a separate decision.
 
 Release-candidate verification: full backend **4722 passed, 223 skipped, 826 warnings, 76 subtests passed** in 405.51s. Deployment-contract matrix **27 passed, 6 subtests passed**. A first frontend rerun reused stale Jest compilation for two unrelated reference suites; the clean `--no-cache` regression rerun passed **90/90 suites, 682/682 tests** in 56.351s. ESLint completed with only the pre-existing Kling 4 hooks warning. Telegram and VK production exports and the VK Chromium root smoke (430px/1280px) passed. The production deploy now builds and publishes both origins from the exact same expected SHA, writes and verifies both `revision.txt` files, retains prior VK releases and atomically replaces only the VK `current` symlink.
+
 ## Native VK journey and missing reference — 07.11.2026
 
 - Baseline `00b40366c40b4684e23d8dfde0c3fc2c188bfbfb`; dedicated task branch
@@ -457,3 +576,163 @@ Release-candidate verification: full backend **4722 passed, 223 skipped, 826 war
   the dedicated VK-root export (three journeys). Independent Standards and Spec
   reviews of e5e7af9 report no actionable findings. No native public activation,
   real provider generation, live message send or financial migration is claimed.
+
+## Image generation origin and cross-platform delivery — 07.11.2026
+
+- Baseline `tanyapi@00b40366c40b4684e23d8dfde0c3fc2c188bfbfb`; independent
+  branch `fix/tanyapi-vk-result-origin`. Reference-picker fix is tracked by #422.
+- Intended result: an ordinary image launched through a verified VK session stays
+  available in that Mini App and is not silently sent to the linked Telegram chat.
+  Native VK messaging/public onboarding remains a separate pending product slice.
+- Current audit: VK launch context already has a verified platform; ordinary image,
+  remix and image-trend launch paths discard it. Persisted tasks retain the linked
+  legacy Telegram ownership ID; direct and queued notifications and provider
+  callback/poller deliveries therefore assume Telegram. Existing request metadata,
+  atomic completion and delivery leases can be reused; no financial prefactor.
+- Plan: (1) RED public completion/lease and launch-origin tests; (2) persist server-
+  derived origin at image creation; (3) gate direct/queued/callback/poller Telegram
+  delivery while keeping result completion/repeat rewards intact; (4) API/ownership,
+  DB/lease/retry/legacy regressions, review, protected PR/exact-SHA release checks.
+- Technical contract: optional additive origin metadata and a terminal in-app
+  availability state; old tasks and Telegram launches keep existing behavior.
+  Client-supplied platform cannot select a destination. No new external messaging
+  API, secret, price, mutable business setting, schema or balance migration.
+- Risks/seams: direct and asynchronous provider paths, duplicate callbacks, task ID
+  aliases and completion rewards; verify the owner can read the completed result
+  and no Telegram send/lease is performed for persisted VK origin. Existing signed
+  auth/admin limits stay enforced. Native VK delivery capability is not fabricated.
+- Rollout: first let #422 finish normal CI/autodeploy; rebase this branch onto the
+  then-current tanyapi, run required checks and use native squash auto-merge. No
+  production result replay, live chat send or paid generation is authorized by tests.
+- RED/GREEN: VK completion originally acquired a Telegram lease; the Mini App
+  HTTP path dropped the verified origin; real queued/direct notification helpers
+  sent to Telegram; poll completion returned failure for an app-only result.
+  Added the saved origin, non-Telegram lease guard and an in-app completion path.
+- Public callback regression covers success/failure plus a repeated callback,
+  retaining normal completion bookkeeping and a single refund while sending no
+  Telegram message. Replayed in-app completion initially replaced a terminal URL;
+  fixed by using the durable saved URL. Provider-ID replacement preserves origin.
+  Current focused matrix: 8 passed on SQLite; unrelated Linux resource diagnostics
+  are isolated in the Windows test fixture. Native PostgreSQL and larger regression
+  verification, legacy callback variants, image-trend propagation and review remain
+  in progress. No source from this branch is deployed.
+- Rebased onto #422 merge `b9834c795707dc3037340ea553f41c1ea50f0f9b`;
+  both ledger sections were preserved. Broader collection revealed the installed
+  generation-start UX replacement also needed the new origin argument/guard.
+  Added that real runtime installer to the regression fixture and fixed the
+  notifier. The callback fixture now binds watchdog storage to its isolated DB.
+- Expanded SQLite matrix: 139 passed (HTTP, result polling, KIE verification,
+  provider IDs, creator pricing/debit guards and image trends). Final focused
+  origin matrix: 14 passed, including Telegram/default compatibility and both
+  legacy image callbacks. An earlier wider run also exposed two unchanged Windows
+  POSIX-path ownership failures; those are not weakened or fixed by this slice.
+- Ruff changed-line gate passed in UTF-8 mode (0 relevant findings, 407 legacy
+  findings ignored by the repository's existing gate); full new-test/delivery-
+  state Ruff and syntax checks passed. Added native PG durability cases to the
+  existing Runtime PostgreSQL workflow's test module; native execution is pending
+  CI, not claimed locally. Design/rollback: ADR 20261107-image-launch-platform.
+- Independent review found missed no-result and watchdog failure notifications,
+  plus a stale-URL rewrite race in the first in-app completion helper. Reproduced
+  all three RED: empty-result callback sent twice to Telegram, watchdog failure
+  sent twice despite a one-time refund, and controlled interleaving overwrote an
+  already-terminal URL. Guards now cover both notifications. Completion runs the
+  existing shared acceptance/repeat hooks without another unconditional result
+  rewrite; the controlled race is GREEN. Final focused origin matrix: 17 passed;
+  the expanded callback/poller/pricing/refund matrix passed 148 tests.
+- #422 release recovery: first autodeploy attempt stopped at the backup free-space
+  gate (about 35 MiB below its 10-GiB reserve); running release stayed healthy at
+  00b40366. Read-only Docker disk audit identified unused builder cache. Pruned
+  only cache older than 24 hours with explicit retained-cache/free-space bounds,
+  reclaiming 4.275 GB; available root space verified at 14,882,099,200 bytes.
+  Failed GitHub deploy jobs for exact b9834c7 were rerun normally; no manual deploy,
+  backup deletion, volume/image/container prune or financial mutation.
+- Owner financial-scope answer on 07 November: common account/common balance
+  after voluntary linking, with independently usable VK entry. The separate-wallet
+  interim alternative is rejected. Precision exceptions, writer fencing and live
+  cutover remain explicit engineering/accounting gates; no real money was moved.
+- Both independent reviewers rechecked 193d9e1: no remaining actionable findings.
+- #422 exact merge/release b9834c795707dc3037340ea553f41c1ea50f0f9b:
+  main CI and autodeploy attempt 2 succeeded; Docker revision/healthy state,
+  Telegram and VK revision endpoints, backend health and unauthenticated 401
+  checked. Published Telegram and VK category-upload/reference HTTP browser
+  smokes passed with all API/media/provider actions intercepted. Post-release
+  12-minute log sample: zero tracebacks/preview failures; three GPT Image 2 task
+  failures observed separately, not attributed to this frontend-only change.
+
+## Kling VK delivery release completion — 08.11.2026
+
+- Scope: finish the VK video routing release explicitly requested by Igor after
+  the four post-merge findings on #428. Baseline `tanyapi@568a734a5009e8c1dffd04420d3be625e3174aae`.
+  That baseline has passed CI/autodeploy and is the healthy production image.
+- Audit: legacy Kling success paths skipped completion bookkeeping when the VK
+  Telegram-lease guard returned false; legacy/fallback failure paths and the
+  PiAPI/Replicate completion shape could notify Telegram; Kling 4 launch/delivery
+  lacked the durable origin contract. Existing `complete_task_in_app` and the VK
+  outbox already provide idempotent completion and destination enforcement.
+- Plan: (1) reproduce callback and lifecycle routes at HTTP/service seams;
+  (2) retain server-verified origin and call in-app completion before Telegram
+  delivery; (3) prove acceptance/repeat reward and refund idempotency;
+  (4) run SQLite/native PostgreSQL, existing VK/image/TG regression suites,
+  lint/syntax, independent review, protected PR and exact-SHA CI/autodeploy.
+- No schema, price, provider selection, shared-account admission or delivery
+  configuration changes are planned. No public VK-only activation, historical
+  replay/financial repair, real chat send or paid generation is part of validation.
+- Risks: duplicated callbacks, persisted-origin routing after a restart, terminal
+  failure/result races, completion hooks, default/Telegram compatibility. New
+  tests use synthetic identities/providers and isolated databases. Baseline
+  image-origin matrix: 19 passed. Native PG uses a disposable loopback-only
+  PostgreSQL 17 container, separate from every production database.
+- Existing broad VK/common-wallet release holds remain unchanged. Rollback keeps
+  durable generation/outbox state; never fall back to Telegram for VK tasks.
+- Implemented callback completion before the Telegram lease path for all supported
+  Kling shapes, including direct-string fallback output. VK callbacks retain
+  actual author/inviter credit idempotency, recover a missed first reward on
+  replay, preserve the original result, and atomically refund confirmed failures
+  once without Telegram notification. Empty legacy resultUrls no longer raises.
+- Kling 4 launch persists verified origin. Delivery after restart uses only that
+  durable snapshot, calls in-app completion, and marks `available_in_app`; claim,
+  tick and retention filters include that terminal state. Telegram is unchanged.
+- Final local safe Linux suite: 4831 passed, 253 expected skips, 76 subtests passed
+  (385.08 seconds). Native isolated PostgreSQL runtime matrix: 35 passed, including
+  TG/VK success/failure and restarted-worker replay. Temporary PG container was
+  removed after validation. New callback/lifecycle matrix: 25 passed.
+- Python compile, Ruff changed-line gate (0 findings) and whitespace checks passed.
+  Independent source and final status-transition review found no blockers.
+  Primary diagnosing-bugs/TDD/code-review, Claw backend/release guidance and
+  relevant Anthropic testing guidance were inspected. No new UI was introduced;
+  existing HTTP/service/outbox behavior is covered and required browser CI remains.
+- Source implementation is local commit `0af8e799`; no corrective PR, remote branch,
+  production CI or production deployment has completed. Publication is pending;
+  exact remote head, protected gates, deploy SHA, health and post-release telemetry
+  must still be verified before calling this correcting release deployed.
+
+- PR #429 follow-up: automatic review found repeated VK completion could download
+  an already durable video again before the immutable-result guard. Reproduced
+  eight RED HTTP cases across code200, legacy, dictionary fallback and direct-
+  string fallback payloads. All three handlers now reuse the stored result URL
+  for completed VK tasks before persistence, while still retrying completion
+  rewards. Initial/missing-result and Telegram paths remain unchanged.
+- Final focused follow-up: 78 passed; one persistence call and the original
+  durable URL are asserted with a changed URL on the duplicate callback. PR was
+  returned to draft before this change; final-head CI and release remain pending.
+
+- Concurrent-callback follow-up: four RED overlapping HTTP cases proved that
+  sequential replay protection did not fence simultaneous pending callbacks.
+  Added a durable metadata owner/expiry CAS claim before VK Kling persistence,
+  bounded the download by the claim budget, fenced commit/release by token, and
+  made completed VK URLs first-writer-wins even in `result_ready`. All callback
+  shapes share the helper; busy calls return retryable503 without downloading.
+- Focused concurrency/refund/image/webhook matrix:131 passed. Isolated native
+  PostgreSQL runtime matrix:39 passed, including eight-way claims, stale-owner
+  fencing, first-result immutability and failed-task protection. No schema change.
+- A pre-existing PG fixture failed alone on unchanged ade4d261: it used a default
+  video row for an image-reference grant. The one image-grant test now explicitly
+  seeds type=image; its assertion is unchanged. Full durability file:10 passed.
+- A cross-route review found Kling3 watchdog recovery enters the generic KIE
+  callback rather than the original Kling route. Both now use the same claim
+  for stored VK Kling models, selected from existing service model mappings.
+  Sixteen RED cases covered both route arrival orders, two Kling3 models and
+  four original callback shapes. Final focused matrix:147 passed; independent
+  review reran49 callback tests and found no remaining release blocker.
+- Final Python compile and whitespace checks passed. Full local safe regression
+  and final-head CI remain pending; no corrective production deployment yet.

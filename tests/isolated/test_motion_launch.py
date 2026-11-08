@@ -26,6 +26,7 @@ def load_file(name, filename):
 
 receipts = load_file("receipts_under_test", "bot/services/motion_launch_receipts.py")
 quotes = load_file("quotes_under_test", "bot/services/motion_quote.py")
+origins = load_file("origins_under_test", "bot/services/generation_origin.py")
 
 
 def functions(namespace):
@@ -67,6 +68,8 @@ class MotionTests(unittest.IsolatedAsyncioTestCase):
             "MotionLaunchConflict": receipts.MotionLaunchConflict,
             "MotionInsufficientCredits": receipts.MotionInsufficientCredits,
             "definitely_rejected_motion_result": receipts.definitely_rejected_motion_result,
+            "generation_origin_from_context": origins.generation_origin_from_context,
+            "generation_origin_metadata": origins.generation_origin_metadata,
             "_validated_quote": AsyncMock(side_effect=lambda *_: dict(self.quote))}
         functions(self.ns)
 
@@ -88,6 +91,29 @@ class MotionTests(unittest.IsolatedAsyncioTestCase):
         body.update(overrides)
         request = types.SimpleNamespace(app={}, json=AsyncMock(return_value=body))
         return await self.ns["generate_motion"](request, self.api)
+
+    async def test_vk_origin_is_durable_and_bound_to_the_canonical_task(self):
+        self.api._get_user_context.return_value = (101, {
+            "user": types.SimpleNamespace(id=1),
+            "platform": "vk",
+            "platform_external_id": 2001,
+            "shared_account_id": "a" * 32,
+            "vk_chat_delivery_requested": True,
+        })
+        response = await self.launch()
+        self.assertEqual(response.status, 200)
+        metadata = self.api.add_generation_task.call_args.kwargs["request_data"]
+        self.assertEqual(metadata["origin_platform"], "vk")
+        self.assertEqual(metadata["origin_vk_user_id"], 2001)
+        self.assertEqual(metadata["origin_account_id"], "a" * 32)
+        self.assertTrue(metadata["vk_chat_delivery_requested"])
+        async with aiosqlite.connect(self.path) as db:
+            recipe_json = (await (await db.execute(
+                "SELECT recipe_json FROM motion_launch_receipts"
+            )).fetchone())[0]
+        recipe = json.loads(recipe_json)
+        self.assertEqual(recipe["_generation_origin"]["origin_platform"], "vk")
+        self.assertEqual(recipe["_generation_origin"]["origin_vk_user_id"], 2001)
 
     async def test_accepted_persistence_failure_never_refunds_and_replay_recovers(self):
         self.api.add_generation_task.side_effect = RuntimeError("synthetic persistence fault")

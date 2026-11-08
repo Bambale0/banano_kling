@@ -68,6 +68,10 @@ async def test_seedance25_video_trend_uses_dedicated_provider_runtime(monkeypatc
         telegram_id=123456,
         user=user,
         trend=trend,
+        origin_platform="vk",
+        origin_vk_user_id=2001,
+        origin_account_id="a" * 32,
+        vk_chat_delivery_requested=True,
     )
     payload = json.loads(response.text)
 
@@ -81,6 +85,11 @@ async def test_seedance25_video_trend_uses_dedicated_provider_runtime(monkeypatc
     assert launched_payload["scenario"] == "first_frame"
     assert launched_payload["first_frame"] == "https://example.test/source.jpg"
     add_task.assert_awaited_once()
+    request_data = add_task.await_args.kwargs["request_data"]
+    assert request_data["origin_platform"] == "vk"
+    assert request_data["origin_vk_user_id"] == 2001
+    assert request_data["origin_account_id"] == "a" * 32
+    assert request_data["vk_chat_delivery_requested"] is True
 
 
 @pytest.mark.asyncio

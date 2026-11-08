@@ -5823,7 +5823,7 @@ async def mark_task_delivery_status(
         effective_status = normalized_status
         # Historical count increments on claims as well as status transitions.
         attempts = int(request_data.get("delivery_attempts") or 0)
-        if normalized_status != "result_ready":
+        if normalized_status not in {"result_ready", "available_in_app"}:
             attempts += 1
         has_link = bool(request_data.get("delivery_link_sent"))
         if normalized_status == "pending" and (
@@ -5905,7 +5905,77 @@ async def mark_task_delivery_status(
     logger.warning("Telegram delivery status CAS contention exhausted: task_id=%s", task_id)
     return False
 
-async def store_task_result_ready(task_id: str, result_url: str) -> bool:
+def _vk_result_lease_active(lease: dict, now: datetime) -> bool:
+    try:
+        expiry = datetime.fromisoformat(str(lease.get("expires_at") or ""))
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=UTC)
+        return expiry > now
+    except (TypeError, ValueError):
+        return False
+
+
+async def claim_vk_result_persistence(task_id: str, *, lease_seconds: int = 600) -> str | None:
+    """Fence costly VK result preparation across processes; expired owners may be replaced."""
+    from uuid import uuid4
+
+    token = uuid4().hex
+    for _ in range(4):
+        task = await get_task_by_id(task_id)
+        if not task or task.status == "failed" or (task.status == "completed" and task.result_url):
+            return None
+        old_json = task.request_data or "{}"
+        metadata = _parse_json_dict(old_json)
+        if metadata.get("origin_platform") != "vk":
+            return None
+        now = datetime.now(UTC)
+        lease = metadata.get("vk_result_persistence") or {}
+        if _vk_result_lease_active(lease, now):
+            return None
+        metadata["vk_result_persistence"] = {
+            "token": token,
+            "expires_at": (now + timedelta(seconds=max(30, int(lease_seconds)))).isoformat(),
+        }
+        async with db_backend.connect(DATABASE_PATH) as db:
+            cursor = await db.execute(
+                """UPDATE generation_tasks SET request_data = ?, updated_at = CURRENT_TIMESTAMP
+                   WHERE id = ? AND COALESCE(request_data, '{}') = ?
+                     AND status IN ('pending', 'processing', 'completed')
+                     AND (result_url IS NULL OR result_url = '')""",
+                (json.dumps(metadata, ensure_ascii=False), int(task.id), old_json),
+            )
+            await db.commit()
+            if cursor.rowcount == 1:
+                return token
+    return None
+
+
+async def release_vk_result_persistence(task_id: str, token: str) -> bool:
+    """Release only this owner, never a replacement claim."""
+    for _ in range(4):
+        task = await get_task_by_id(task_id)
+        if not task:
+            return False
+        old_json = task.request_data or "{}"
+        metadata = _parse_json_dict(old_json)
+        if (metadata.get("vk_result_persistence") or {}).get("token") != token:
+            return False
+        metadata.pop("vk_result_persistence", None)
+        async with db_backend.connect(DATABASE_PATH) as db:
+            cursor = await db.execute(
+                """UPDATE generation_tasks SET request_data = ?, updated_at = CURRENT_TIMESTAMP
+                   WHERE id = ? AND COALESCE(request_data, '{}') = ?""",
+                (json.dumps(metadata, ensure_ascii=False), int(task.id), old_json),
+            )
+            await db.commit()
+            if cursor.rowcount == 1:
+                return True
+    return False
+
+
+async def store_task_result_ready(
+    task_id: str, result_url: str, *, persistence_token: str | None = None,
+) -> bool:
     """Commit provider completion independently of Telegram delivery.
 
     The result, completed status and recovery marker commit atomically. A live
@@ -5924,10 +5994,19 @@ async def store_task_result_ready(task_id: str, result_url: str) -> bool:
         old_json = task.request_data or "{}"
         request_data = _parse_json_dict(old_json)
         current_status = str(request_data.get("delivery_status") or "").strip().lower()
+        if persistence_token is not None:
+            lease = request_data.get("vk_result_persistence") or {}
+            if (request_data.get("origin_platform") != "vk"
+                    or lease.get("token") != persistence_token
+                    or not _vk_result_lease_active(lease, datetime.now(UTC))):
+                return False
         if task.status == "failed":
             # Never resurrect an already failed/refunded generation.
             return False
-        if task.status == "completed" and current_status in {"delivered", "failed", "link_only", "uncertain"}:
+        if (request_data.get("origin_platform") == "vk"
+                and task.status == "completed" and task.result_url):
+            return True
+        if task.status == "completed" and current_status in {"delivered", "failed", "link_only", "uncertain", "available_in_app"}:
             return bool(task.result_url)
         if task.status == "completed" and current_status == "unavailable":
             return bool(task.result_url)
@@ -5938,6 +6017,8 @@ async def store_task_result_ready(task_id: str, result_url: str) -> bool:
             request_data["delivery_status"] = "result_ready"
         request_data.setdefault("result_ready_at", now.isoformat())
         request_data["delivery_updated_at"] = now.isoformat()
+        if persistence_token is not None:
+            request_data.pop("vk_result_persistence", None)
         new_json = json.dumps(request_data, ensure_ascii=False)
 
         async with db_backend.connect(DATABASE_PATH) as db:
@@ -5949,16 +6030,46 @@ async def store_task_result_ready(task_id: str, result_url: str) -> bool:
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ? AND COALESCE(request_data, '{}') = ?
                   AND status IN ('pending', 'processing', 'completed')
+                  AND COALESCE(result_url, '') = ?
                 """,
-                (canonical_url, new_json, int(task.id), old_json),
+                (canonical_url, new_json, int(task.id), old_json, task.result_url or ""),
             )
             await db.commit()
             if int(getattr(cursor, "rowcount", 0) or 0) == 1:
                 return True
 
     # Another callback may have completed while the final CAS was waiting.
+    if persistence_token is not None:
+        return False
     task = await get_task_by_id(task_id)
     return bool(task and task.status == "completed" and task.result_url)
+
+
+async def _record_generation_completion(task_id: str) -> None:
+    """Run idempotent acceptance/repeat hooks without rewriting the result."""
+    await mark_generation_accepted(task_id)
+    await _credit_feed_repeat_on_webhook_completion(task_id)
+
+
+async def complete_task_in_app(task_id: str, result_url: str) -> bool:
+    """Finalize a VK-origin result without inventing a messenger receipt."""
+    task = await get_task_by_id(task_id)
+    if not task or _parse_json_dict(task.request_data).get("origin_platform") != "vk":
+        return False
+    if not await store_task_result_ready(task_id, result_url):
+        return False
+    # Retain the same acceptance/repeat-reward bookkeeping as messenger delivery.
+    await _record_generation_completion(task_id)
+    marked = await mark_task_delivery_status(task_id, "available_in_app")
+    if marked:
+        logger.info("Generation result available in Mini App: task_id=%s origin_platform=vk", task_id)
+        try:
+            from bot.services.vk_result_delivery import enqueue_vk_result
+
+            await enqueue_vk_result(task_id)
+        except Exception as exc:  # noqa: BLE001 - reconciliation repairs a missed enqueue.
+            logger.error("vk_result_enqueue_failed task_id=%s error_type=%s", task_id, type(exc).__name__)
+    return marked
 
 
 async def claim_task_delivery(task_id: str, *, lease_seconds: int = 300) -> bool:
@@ -5973,6 +6084,10 @@ async def claim_task_delivery(task_id: str, *, lease_seconds: int = 300) -> bool
 
     old_json = task.request_data or "{}"
     request_data = _parse_json_dict(old_json)
+    if request_data.get("origin_platform") == "vk":
+        if task.status == "completed" and task.result_url:
+            await mark_task_delivery_status(task_id, "available_in_app")
+        return False
     current_status = str(request_data.get("delivery_status") or "").strip().lower()
     if current_status in TERMINAL_TASK_DELIVERY_STATUSES:
         return False
@@ -6094,8 +6209,7 @@ async def complete_video_task(task_id: str, result_url: str) -> bool:
             final_status,
         )
         if final_status == "completed":
-            await mark_generation_accepted(lookup_value)
-            await _credit_feed_repeat_on_webhook_completion(lookup_value)
+            await _record_generation_completion(lookup_value)
         return True
 
 

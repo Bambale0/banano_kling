@@ -41,6 +41,7 @@ from bot.services.delivery_state import (
     is_terminal_telegram_delivery_error,
     terminal_telegram_delivery_reason,
 )
+from bot.services.generation_origin import generation_origin_from_context
 from bot.services.preset_manager import preset_manager
 from bot.services.seedance25_identity import (
     IDENTITY_ROLE_VERSION,
@@ -879,6 +880,7 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
             source="miniapp",
             billing_quote=billing_quote,
         )
+        request_data.update(generation_origin_from_context(ctx))
         if getattr(request, "_video_repeat_authorization", None):
             request_data["video_repeat_contract_version"] = 1
         if source_feed_gen_id:

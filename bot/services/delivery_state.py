@@ -14,10 +14,11 @@ TASK_DELIVERY_STATUSES = frozenset(
         "link_only",
         "unavailable",
         "uncertain",
+        "available_in_app",
     }
 )
 TERMINAL_TASK_DELIVERY_STATUSES = frozenset(
-    {"delivered", "failed", "unavailable", "uncertain", "link_only"}
+    {"delivered", "failed", "unavailable", "uncertain", "link_only", "available_in_app"}
 )
 
 _TERMINAL_TELEGRAM_DELIVERY_REASONS = (
