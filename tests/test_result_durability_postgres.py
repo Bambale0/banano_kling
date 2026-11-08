@@ -162,7 +162,7 @@ async def test_pg_startup_adds_private_repeat_grants_without_backfill(monkeypatc
             "ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS feed_references_visible BOOLEAN DEFAULT FALSE"
         )
         await conn.execute(
-            "UPDATE generation_tasks SET is_public_feed = TRUE, "
+            "UPDATE generation_tasks SET type = 'image', is_public_feed = TRUE, "
             "feed_references_visible = TRUE, feed_reference_selection = %s WHERE id = %s",
             (legacy_selection, tid),
         )
@@ -243,3 +243,112 @@ async def test_pg_telegram_oversized_video_delivery_is_terminal_link_only():
     assert await database.store_task_result_ready(task_id, result_url)
     assert json.loads((await database.get_task_by_id(task_id)).request_data) == metadata
     assert not await get_stuck_tasks(minutes=0)
+
+
+@pytest.mark.asyncio
+async def test_pg_vk_result_persistence_has_one_owner_and_retries_after_release():
+    await create_delivery_task(origin_platform="vk")
+    claims = await asyncio.gather(
+        *(database.claim_vk_result_persistence("durability-pg") for _ in range(8))
+    )
+    owners = [token for token in claims if token is not None]
+    assert len(owners) == 1
+    token = owners[0]
+    assert not await database.claim_vk_result_persistence("durability-pg")
+    assert not await database.release_vk_result_persistence("durability-pg", "not-owner")
+    # A timed-out download releases its claim; another worker may retry.
+    assert await database.release_vk_result_persistence("durability-pg", token)
+    successor = await database.claim_vk_result_persistence("durability-pg")
+    assert successor and successor != token
+    assert not await database.release_vk_result_persistence("durability-pg", token)
+    assert await database.store_task_result_ready(
+        "durability-pg", "https://cdn.example/retry.mp4", persistence_token=successor,
+    )
+    task = await database.get_task_by_id("durability-pg")
+    assert task.result_url == "https://cdn.example/retry.mp4"
+    metadata = json.loads(task.request_data)
+    assert metadata["delivery_status"] == "result_ready"
+    assert "vk_result_persistence" not in metadata
+    assert not await database.claim_vk_result_persistence("durability-pg")
+    assert not await database.claim_task_delivery("durability-pg")
+
+
+@pytest.mark.asyncio
+async def test_pg_vk_expired_owner_cannot_store_or_release_successor():
+    await create_delivery_task(origin_platform="vk")
+    stale = await database.claim_vk_result_persistence("durability-pg")
+    assert stale
+    # Advance the persisted lease deadline without wall-clock sleeps. This also
+    # models a crashed worker whose local process outlives its database lease.
+    async with await psycopg.AsyncConnection.connect(os.environ["DATABASE_URL"]) as conn:
+        await conn.execute(
+            """UPDATE generation_tasks SET request_data =
+                   jsonb_set(request_data::jsonb,
+                       '{vk_result_persistence,expires_at}',
+                       '"2000-01-01T00:00:00+00:00"'::jsonb)::text
+               WHERE task_id = 'durability-pg'"""
+        )
+        await conn.commit()
+    assert not await database.store_task_result_ready(
+        "durability-pg", "https://cdn.example/expired.mp4", persistence_token=stale,
+    )
+    successor = await database.claim_vk_result_persistence("durability-pg")
+    assert successor and successor != stale
+    assert not await database.store_task_result_ready(
+        "durability-pg", "https://cdn.example/stale.mp4", persistence_token=stale,
+    )
+    assert not await database.release_vk_result_persistence("durability-pg", stale)
+    task = await database.get_task_by_id("durability-pg")
+    assert task.status == "processing" and not task.result_url
+    assert json.loads(task.request_data)["vk_result_persistence"]["token"] == successor
+    assert await database.store_task_result_ready(
+        "durability-pg", "https://cdn.example/successor.mp4", persistence_token=successor,
+    )
+    assert not await database.store_task_result_ready(
+        "durability-pg", "https://cdn.example/stale.mp4", persistence_token=stale,
+    )
+    assert (await database.get_task_by_id("durability-pg")).result_url == (
+        "https://cdn.example/successor.mp4"
+    )
+
+
+@pytest.mark.asyncio
+async def test_pg_vk_first_ready_result_is_immutable_before_app_completion():
+    await create_delivery_task(origin_platform="vk")
+    urls = [f"https://cdn.example/worker-{index}.mp4" for index in range(8)]
+    assert all(await asyncio.gather(
+        *(database.store_task_result_ready("durability-pg", url) for url in urls)
+    ))
+    task = await database.get_task_by_id("durability-pg")
+    first = task.result_url
+    assert first in urls and task.status == "completed"
+    assert json.loads(task.request_data)["delivery_status"] == "result_ready"
+    # Not yet available_in_app: a late callback must still retain the first URL.
+    assert await database.store_task_result_ready(
+        "durability-pg", "https://cdn.example/late-different.mp4",
+    )
+    assert (await database.get_task_by_id("durability-pg")).result_url == first
+    assert await database.complete_task_in_app(
+        "durability-pg", "https://cdn.example/another-different.mp4",
+    )
+    assert (await database.get_task_by_id("durability-pg")).result_url == first
+
+
+@pytest.mark.asyncio
+async def test_pg_vk_persistence_owner_cannot_resurrect_failed_refunded_task():
+    tid, uid = await create_delivery_task(origin_platform="vk")
+    token = await database.claim_vk_result_persistence("durability-pg")
+    assert token
+    assert await force_fail_task(tid, uid, 5)
+    assert not await database.store_task_result_ready(
+        "durability-pg", "https://cdn.example/too-late.mp4", persistence_token=token,
+    )
+    assert not await database.store_task_result_ready(
+        "durability-pg", "https://cdn.example/also-too-late.mp4",
+    )
+    assert not await database.claim_vk_result_persistence("durability-pg")
+    task = await database.get_task_by_id("durability-pg")
+    assert task.status == "failed" and not task.result_url
+    async with await psycopg.AsyncConnection.connect(os.environ["DATABASE_URL"]) as conn:
+        cursor = await conn.execute("SELECT credits FROM users WHERE id = %s", (uid,))
+        assert (await cursor.fetchone())[0] == 105

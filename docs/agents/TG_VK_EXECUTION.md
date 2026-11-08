@@ -569,3 +569,81 @@ Release-candidate verification: full backend **4722 passed, 223 skipped, 826 war
   smokes passed with all API/media/provider actions intercepted. Post-release
   12-minute log sample: zero tracebacks/preview failures; three GPT Image 2 task
   failures observed separately, not attributed to this frontend-only change.
+
+## Kling VK delivery release completion — 08.11.2026
+
+- Scope: finish the VK video routing release explicitly requested by Igor after
+  the four post-merge findings on #428. Baseline `tanyapi@568a734a5009e8c1dffd04420d3be625e3174aae`.
+  That baseline has passed CI/autodeploy and is the healthy production image.
+- Audit: legacy Kling success paths skipped completion bookkeeping when the VK
+  Telegram-lease guard returned false; legacy/fallback failure paths and the
+  PiAPI/Replicate completion shape could notify Telegram; Kling 4 launch/delivery
+  lacked the durable origin contract. Existing `complete_task_in_app` and the VK
+  outbox already provide idempotent completion and destination enforcement.
+- Plan: (1) reproduce callback and lifecycle routes at HTTP/service seams;
+  (2) retain server-verified origin and call in-app completion before Telegram
+  delivery; (3) prove acceptance/repeat reward and refund idempotency;
+  (4) run SQLite/native PostgreSQL, existing VK/image/TG regression suites,
+  lint/syntax, independent review, protected PR and exact-SHA CI/autodeploy.
+- No schema, price, provider selection, shared-account admission or delivery
+  configuration changes are planned. No public VK-only activation, historical
+  replay/financial repair, real chat send or paid generation is part of validation.
+- Risks: duplicated callbacks, persisted-origin routing after a restart, terminal
+  failure/result races, completion hooks, default/Telegram compatibility. New
+  tests use synthetic identities/providers and isolated databases. Baseline
+  image-origin matrix: 19 passed. Native PG uses a disposable loopback-only
+  PostgreSQL 17 container, separate from every production database.
+- Existing broad VK/common-wallet release holds remain unchanged. Rollback keeps
+  durable generation/outbox state; never fall back to Telegram for VK tasks.
+- Implemented callback completion before the Telegram lease path for all supported
+  Kling shapes, including direct-string fallback output. VK callbacks retain
+  actual author/inviter credit idempotency, recover a missed first reward on
+  replay, preserve the original result, and atomically refund confirmed failures
+  once without Telegram notification. Empty legacy resultUrls no longer raises.
+- Kling 4 launch persists verified origin. Delivery after restart uses only that
+  durable snapshot, calls in-app completion, and marks `available_in_app`; claim,
+  tick and retention filters include that terminal state. Telegram is unchanged.
+- Final local safe Linux suite: 4831 passed, 253 expected skips, 76 subtests passed
+  (385.08 seconds). Native isolated PostgreSQL runtime matrix: 35 passed, including
+  TG/VK success/failure and restarted-worker replay. Temporary PG container was
+  removed after validation. New callback/lifecycle matrix: 25 passed.
+- Python compile, Ruff changed-line gate (0 findings) and whitespace checks passed.
+  Independent source and final status-transition review found no blockers.
+  Primary diagnosing-bugs/TDD/code-review, Claw backend/release guidance and
+  relevant Anthropic testing guidance were inspected. No new UI was introduced;
+  existing HTTP/service/outbox behavior is covered and required browser CI remains.
+- Source implementation is local commit `0af8e799`; no corrective PR, remote branch,
+  production CI or production deployment has completed. Publication is pending;
+  exact remote head, protected gates, deploy SHA, health and post-release telemetry
+  must still be verified before calling this correcting release deployed.
+
+- PR #429 follow-up: automatic review found repeated VK completion could download
+  an already durable video again before the immutable-result guard. Reproduced
+  eight RED HTTP cases across code200, legacy, dictionary fallback and direct-
+  string fallback payloads. All three handlers now reuse the stored result URL
+  for completed VK tasks before persistence, while still retrying completion
+  rewards. Initial/missing-result and Telegram paths remain unchanged.
+- Final focused follow-up: 78 passed; one persistence call and the original
+  durable URL are asserted with a changed URL on the duplicate callback. PR was
+  returned to draft before this change; final-head CI and release remain pending.
+
+- Concurrent-callback follow-up: four RED overlapping HTTP cases proved that
+  sequential replay protection did not fence simultaneous pending callbacks.
+  Added a durable metadata owner/expiry CAS claim before VK Kling persistence,
+  bounded the download by the claim budget, fenced commit/release by token, and
+  made completed VK URLs first-writer-wins even in `result_ready`. All callback
+  shapes share the helper; busy calls return retryable503 without downloading.
+- Focused concurrency/refund/image/webhook matrix:131 passed. Isolated native
+  PostgreSQL runtime matrix:39 passed, including eight-way claims, stale-owner
+  fencing, first-result immutability and failed-task protection. No schema change.
+- A pre-existing PG fixture failed alone on unchanged ade4d261: it used a default
+  video row for an image-reference grant. The one image-grant test now explicitly
+  seeds type=image; its assertion is unchanged. Full durability file:10 passed.
+- A cross-route review found Kling3 watchdog recovery enters the generic KIE
+  callback rather than the original Kling route. Both now use the same claim
+  for stored VK Kling models, selected from existing service model mappings.
+  Sixteen RED cases covered both route arrival orders, two Kling3 models and
+  four original callback shapes. Final focused matrix:147 passed; independent
+  review reran49 callback tests and found no remaining release blocker.
+- Final Python compile and whitespace checks passed. Full local safe regression
+  and final-head CI remain pending; no corrective production deployment yet.

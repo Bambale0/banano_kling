@@ -83,6 +83,24 @@ positive timestamps, with a unique constraint and bounded collision recovery.
 Permission denial never blocks the whole native user, refunds a completed result,
 or routes the result to Telegram. Delivery never submits a new provider task.
 
+Kling callback variants and the dedicated Kling 4 lifecycle use the saved origin
+snapshot before considering Telegram delivery. Successful VK completion runs the
+normal idempotent acceptance and feed-author reward hooks; a repeated callback
+can retry a missed reward without replacing the first durable result. Provider
+failure retains the existing one-time refund semantics and stays in task history,
+without notifying the linked Telegram account. Kling 4 marks its lifecycle
+availability as `available_in_app`; actual VK chat delivery is still represented
+only by the outbox receipt. Reconciliation after a worker restart uses persisted
+origin and recipient metadata, not a reconstructed actor's Telegram identity.
+
+Concurrent Kling success callbacks reserve result preparation through a durable
+owner/expiry claim before downloading. A busy callback receives a retryable
+response without another download. Preparation is bounded by the lease budget;
+only the current owner may commit, and expired/stale workers cannot replace the
+canonical result or clear a successor's claim. A completed VK result is immutable
+from the first saved URL, before chat availability is finalized. A crashed claim
+can expire and be retried; this never creates a Telegram delivery lease.
+
 ## Private HTTP seam
 
 Under `/mini-app/api/account-preview`:
