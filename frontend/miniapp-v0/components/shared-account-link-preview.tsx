@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { LinkedAccountsCard } from '@/components/linked-accounts-card'
 import { buildTelegramMiniAppUrl } from '@/lib/api'
-import { accountLinkUrl, currentAccountPlatform, incomingAccountLink, type AccountPlatform } from '@/lib/account-platform'
+import { accountLinkUrl, currentAccountPlatform, incomingAccountLink, nativeTelegramMiniAppUrl, type AccountPlatform } from '@/lib/account-platform'
 import {
   acceptAccountLink, createAccountLink, fetchAccountPreviewAccess, previewAccountLink,
   updateAccountLink, type AccountLink,
@@ -139,9 +139,14 @@ export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '', po
       setMessage(error instanceof Error ? error.message : 'Не удалось открыть другую платформу.')
       return
     }
-    // Open the window synchronously with the click to avoid popup blockers.
+    // VK WebViews may render t.me in their embedded mobile browser. A
+    // native tg:// link must instead be clicked directly by the user after
+    // the asynchronous invitation is created, preserving user activation.
+    // Retain popup navigation only when the target is another VK app.
     let popup: Window | null = null
-    try { popup = window.open('about:blank', '_blank') } catch { /* Continue with same-window navigation. */ }
+    if (target !== 'telegram') {
+      try { popup = window.open('about:blank', '_blank') } catch { /* Continue with same-window navigation. */ }
+    }
     if (popup) {
       try {
         popup.opener = null
@@ -156,10 +161,14 @@ export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '', po
         const targetUrl = accountLinkUrl(target, created.token || '', destination.vkAppId, destination.telegramBotUsername)
         setLink(created)
         setUrl(targetUrl)
-        if (popup && !popup.closed) {
+        if (target === 'telegram') {
+          // Do not auto-navigate to either t.me or tg:// after an await.
+          // The user-visible native link below keeps the required click gesture.
+          nativeTelegramMiniAppUrl(targetUrl)
+        } else if (popup && !popup.closed) {
           popup.location.replace(targetUrl)
         } else {
-          // Embedded VK/Telegram clients may block popups but allow navigation.
+          // Embedded clients may block popups but allow navigation to VK.
           window.location.assign(targetUrl)
         }
       } catch (error) {
@@ -206,8 +215,13 @@ export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '', po
     </section> : null}
 
     {!linked && !incomingToken && active && url ? <section aria-label="Ожидание привязки" className="space-y-3 rounded-xl border border-border bg-card p-4">
-      <p className="text-sm text-muted-foreground">Открыли {platformLabel(link.target_platform!)}. Подтвердите там свой аккаунт — здесь статус обновится автоматически.</p>
-      <Button variant="outline" asChild><a href={url} target="_blank" rel="noopener noreferrer">Открыть {platformLabel(link.target_platform!)} ещё раз</a></Button>
+      <p className="text-sm text-muted-foreground">{link.target_platform === 'telegram'
+        ? 'Приглашение готово. Откройте установленный Telegram и подтвердите привязку — здесь статус обновится автоматически.'
+        : 'Открыли ВКонтакте. Подтвердите там свой аккаунт — здесь статус обновится автоматически.'}</p>
+      {link.target_platform === 'telegram' ? <>
+        <Button asChild className="w-full"><a href={nativeTelegramMiniAppUrl(url)}>Открыть приложение Telegram</a></Button>
+        <Button variant="outline" asChild><a href={url} target="_blank" rel="noopener noreferrer">Открыть через браузер</a></Button>
+      </> : <Button variant="outline" asChild><a href={url} target="_blank" rel="noopener noreferrer">Открыть ВКонтакте ещё раз</a></Button>}
       <Button variant="ghost" disabled={busy} onClick={() => void run(async signal => {
         applyLink(await updateAccountLink(link, 'cancel', signal))
         setUrl('')
