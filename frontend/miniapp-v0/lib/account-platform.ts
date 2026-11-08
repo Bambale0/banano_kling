@@ -1,4 +1,4 @@
-import { getInitData, getRuntimeBotUsername } from './api'
+import { getInitData, getRuntimeBotUsername, getStartParamFallback } from './api'
 
 export type AccountPlatform = 'telegram' | 'vk'
 
@@ -56,7 +56,7 @@ export function incomingAccountLink(): string {
   const hash = window.location.hash.slice(1)
   const params = new URLSearchParams(window.location.search)
   const vk = process.env.NEXT_PUBLIC_MINIAPP_PLATFORM === 'vk' || params.has('vk_app_id') || params.has('vk_user_id')
-  const start = vk ? '' : new URLSearchParams(getInitData()).get('start_param') || ''
+  const start = vk ? '' : (new URLSearchParams(getInitData()).get('start_param') || getStartParamFallback())
   const initialHash = (window.__BANANO_INITIAL_LAUNCH__?.hash || '').replace(/^#/, '')
   const candidate = [hash, initialHash, start].find(value => /^link_[A-Za-z0-9_-]{43}$/.test(value)) || ''
   return candidate.slice(5)
