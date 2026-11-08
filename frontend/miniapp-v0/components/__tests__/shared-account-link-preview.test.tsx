@@ -14,6 +14,7 @@ jest.mock('@/lib/shared-account-api', () => ({
   fetchAccountPreviewAccess: jest.fn(),
 }))
 jest.mock('@/lib/account-platform', () => ({
+  ...jest.requireActual('@/lib/account-platform'),
   currentAccountPlatform: jest.fn(), accountLinkUrl: jest.fn(), incomingAccountLink: jest.fn(),
 }))
 
@@ -57,14 +58,14 @@ afterEach(() => {
   jest.useRealTimers()
 })
 
-test('one connect click creates an opt-in invitation and opens Telegram without a code field', async () => {
+test('VK connect creates a consented invitation and shows a native Telegram app link', async () => {
   jest.mocked(createAccountLink).mockResolvedValue(pending)
   render(<SharedAccountLinkPreview vkAppId={null} />)
   fireEvent.click(await screen.findByRole('button', { name: 'Привязать Telegram' }))
   await waitFor(() => expect(createAccountLink).toHaveBeenCalledWith('telegram', expect.any(AbortSignal), true))
-  await waitFor(() => expect(popup.location.replace).toHaveBeenCalledWith('https://t.me/test_bot?startapp=link_' + inviteToken))
-  expect(window.open).toHaveBeenCalledWith('about:blank', '_blank')
-  expect(popup.opener).toBeNull()
+  expect(await screen.findByRole('link', { name: 'Открыть приложение Telegram' })).toHaveAttribute('href', 'tg://resolve?domain=test_bot&startapp=link_' + inviteToken)
+  expect(screen.getByRole('link', { name: 'Открыть через браузер' })).toHaveAttribute('href', 'https://t.me/test_bot?startapp=link_' + inviteToken)
+  expect(window.open).not.toHaveBeenCalled()
   expect(accountLinkUrl).toHaveBeenLastCalledWith('telegram', inviteToken, 123, 'test_bot')
   expect(screen.getByRole('region', { name: 'Ожидание привязки' })).toBeInTheDocument()
   expect(screen.queryByLabelText('Код из ссылки')).not.toBeInTheDocument()
@@ -194,17 +195,17 @@ test('stalled account status has a deadline and retry without silently linking',
   expect(createAccountLink).not.toHaveBeenCalled()
 })
 
-test('two immediate clicks cannot create multiple invitations or orphan popups', async () => {
+test('two immediate VK clicks cannot create duplicate invitations or popup windows', async () => {
   let resolveInvitation!: (value: typeof pending) => void
   jest.mocked(createAccountLink).mockReturnValue(new Promise(resolve => { resolveInvitation = resolve }))
   render(<SharedAccountLinkPreview vkAppId={123} />)
   const connect = await screen.findByRole('button', { name: 'Привязать Telegram' })
   fireEvent.click(connect)
   fireEvent.click(connect)
-  expect(window.open).toHaveBeenCalledTimes(1)
+  expect(window.open).not.toHaveBeenCalled()
   expect(createAccountLink).toHaveBeenCalledTimes(1)
   await act(async () => resolveInvitation(pending))
-  expect(popup.location.replace).toHaveBeenCalledTimes(1)
+  expect(screen.getAllByRole('link', { name: 'Открыть приложение Telegram' })).toHaveLength(1)
 })
 
 test('expired pending invitation restores the connect button instead of trapping the user', async () => {
@@ -227,7 +228,7 @@ test('backend without source-consent support fails closed instead of creating a 
   render(<SharedAccountLinkPreview vkAppId={123} />)
   fireEvent.click(await screen.findByRole('button', { name: 'Привязать Telegram' }))
   expect(await screen.findByText('Сервер привязки требует обновления. Попробуйте позже.')).toBeInTheDocument()
-  expect(popup.close).toHaveBeenCalled()
-  expect(popup.location.replace).not.toHaveBeenCalled()
+  expect(window.open).not.toHaveBeenCalled()
+  expect(screen.queryByRole('link', { name: 'Открыть приложение Telegram' })).not.toBeInTheDocument()
   expect(screen.queryByRole('region', { name: 'Ожидание привязки' })).not.toBeInTheDocument()
 })
