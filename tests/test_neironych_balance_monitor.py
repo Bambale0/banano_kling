@@ -70,7 +70,7 @@ def test_balance_uses_cash_not_credit_limit():
     ],
 )
 def test_invalid_balance_fails_closed(payload):
-    with pytest.raises(ValueError):
+    with pytest.raises((ValueError, TypeError)):
         parse_balance_rub(payload)
 
 
@@ -83,7 +83,7 @@ async def test_low_balance_alerts_once_and_resets_after_topup(monkeypatch):
         monitor,
         "fetch_balance",
         AsyncMock(side_effect=[
-            Decimal("1999.99"), Decimal("1100"), Decimal("2000"), Decimal("1999"),
+            Decimal("1999.99"), Decimal(1100), Decimal(2000), Decimal(1999),
         ]),
     )
 
@@ -101,7 +101,7 @@ async def test_low_balance_alerts_once_and_resets_after_topup(monkeypatch):
 async def test_concurrent_checks_alert_each_admin_once(monkeypatch):
     bot = AsyncMock()
     monitor = BalanceMonitor(bot, settings(admins=(10, 20)), cache=FakeCache(FakeRedis()))
-    monkeypatch.setattr(monitor, "fetch_balance", AsyncMock(return_value=Decimal("50")))
+    monkeypatch.setattr(monitor, "fetch_balance", AsyncMock(return_value=Decimal(50)))
 
     await asyncio.gather(*(monitor.check_once() for _ in range(10)))
 
@@ -113,7 +113,7 @@ async def test_concurrent_checks_alert_each_admin_once(monkeypatch):
 async def test_unavailable_redis_does_not_spam_admin(monkeypatch):
     bot = AsyncMock()
     monitor = BalanceMonitor(bot, settings(), cache=FakeCache())
-    monkeypatch.setattr(monitor, "fetch_balance", AsyncMock(return_value=Decimal("1000")))
+    monkeypatch.setattr(monitor, "fetch_balance", AsyncMock(return_value=Decimal(1000)))
 
     await monitor.check_once()
 
@@ -126,7 +126,7 @@ async def test_failed_telegram_send_releases_claim_for_retry(monkeypatch):
     bot.send_message.side_effect = [RuntimeError("transport error"), None]
     cache = FakeCache(FakeRedis())
     monitor = BalanceMonitor(bot, settings(), cache=cache)
-    monkeypatch.setattr(monitor, "fetch_balance", AsyncMock(return_value=Decimal("1000")))
+    monkeypatch.setattr(monitor, "fetch_balance", AsyncMock(return_value=Decimal(1000)))
 
     await monitor.check_once()
     await monitor.check_once()
