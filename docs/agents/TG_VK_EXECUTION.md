@@ -1,5 +1,32 @@
 # TG–VK shared accounts execution ledger
 
+## Private-photo PostgreSQL publication integration fix — 08.11.2026
+
+- Exact published baseline: fd2def0bd232a581822f7fbdbdaf33f9353b38a4.
+  Shared accounts CI run 42482508150, job 128737307718: exactly two failures
+  (VK delivery privacy, PostgreSQL feed/profile), 323 passed. Both failed in
+  the installed publication handler's schema UPDATE, not photo metadata SQL.
+- The photo runtime-body-guard regression imports handlers while SQLite is
+  selected. This installs scoped publication but skips the PostgreSQL-only
+  startup installer. Later PostgreSQL publication executes ALTER TABLE through
+  the SQLite compatibility adapter, which deliberately skips those statements;
+  profile_published_at is absent when the backfill UPDATE executes. The former
+  passing delivery-only suite could exercise the unpatched database helper.
+- Fixed the runtime initializer to use existing native PostgreSQL DDL with
+  ADD COLUMN IF NOT EXISTS, separating its readiness cache by backend. Native
+  migration/index failures propagate rather than being mistaken for existing
+  columns. SQLite migration behavior and publication privacy remain unchanged.
+- RED/GREEN: regression uses the actual PostgresConnection translator with a
+  synthetic raw cursor. Before fix, exact UndefinedColumn/OperationalError;
+  after fix, both normal initialization and denied-DDL rollback/retry pass.
+  The delivery privacy test explicitly installs the real publication handler;
+  shared-account CI now includes the publication regressions and path triggers.
+- Final workflow-equivalent local matrix: 187 passed, 152 PostgreSQL skipped.
+  Test-file Ruff, workflow YAML parsing and diff whitespace passed. Handler Ruff
+  reports only the same two pre-existing RUF059 findings as exact baseline.
+  Native PostgreSQL is unavailable locally; native CI must verify this head.
+  No production schema/config/data changes, provider calls, publication or deploy.
+
 ## Private-photo branch integration — 08.11.2026
 
 - Refreshed Draft PR #425 locally from a0a7c4e0d985c6f39d4c62e961f7adb32207c883

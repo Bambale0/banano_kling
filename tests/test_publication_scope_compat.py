@@ -432,3 +432,65 @@ async def test_miniapp_feed_remix_falls_back_to_profile_only_source(monkeypatch)
         viewer_user_id=7,
         include_unavailable=True,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_first_ddl", [False, True])
+async def test_postgres_publication_migrations_bypass_sqlite_ddl_filter(monkeypatch, fail_first_ddl):
+    """A handler loaded under SQLite must still initialize a later PG schema."""
+    from contextlib import asynccontextmanager
+
+    import psycopg
+
+    from bot.postgres_aiosqlite import PostgresConnection
+
+    publication_scope = _load_publication_scope_module()
+    statements = []
+    columns = set()
+    # A SQLite initialization must not suppress PostgreSQL migrations at the
+    # same configured path when the selected backend changes.
+    publication_scope._SCHEMA_READY_PATHS.add(('sqlite', str(database.DATABASE_PATH)))
+
+    class Cursor:
+        description = None
+        rowcount = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def execute(self, sql, _params=None):
+            nonlocal fail_first_ddl
+            statements.append(sql)
+            if sql.startswith('ALTER TABLE'):
+                if fail_first_ddl:
+                    fail_first_ddl = False
+                    raise psycopg.errors.InsufficientPrivilege('test migration denied')
+                assert 'ADD COLUMN IF NOT EXISTS' in sql
+                columns.add(sql.split('ADD COLUMN IF NOT EXISTS ')[1].split()[0])
+            if sql.lstrip().startswith('UPDATE') and 'profile_published_at' not in columns:
+                raise psycopg.errors.UndefinedColumn('column "profile_published_at" does not exist')
+
+    raw = SimpleNamespace(cursor=Cursor, rollback=AsyncMock(), commit=AsyncMock())
+    connection = PostgresConnection(raw)
+
+    @asynccontextmanager
+    async def connect(*_args, **_kwargs):
+        yield connection
+
+    monkeypatch.setattr(db_backend, 'connect', connect)
+    monkeypatch.setattr(db_backend, 'is_postgres', lambda: True)
+    if fail_first_ddl:
+        with pytest.raises(db_backend.OperationalError, match='test migration denied'):
+            await publication_scope._ensure_publication_scope_schema()
+        assert ('postgres', str(database.DATABASE_PATH)) not in publication_scope._SCHEMA_READY_PATHS
+        raw.rollback.assert_awaited_once()
+        raw.rollback.reset_mock()
+    await publication_scope._ensure_publication_scope_schema()
+    assert columns == {'is_profile_visible', 'profile_published_at',
+                       'feed_reference_selection', 'feed_repeat_reference_selection'}
+    assert any(sql.startswith('CREATE INDEX') for sql in statements)
+    raw.commit.assert_awaited_once()
+    raw.rollback.assert_not_awaited()
