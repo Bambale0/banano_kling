@@ -32,6 +32,7 @@ export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '', po
   const [destination, setDestination] = useState({ vkAppId, telegramBotUsername })
   const operation = useRef<AbortController | null>(null)
   const statusOperation = useRef<AbortController | null>(null)
+  const linked = Boolean(linkedPlatforms?.includes('telegram') && linkedPlatforms?.includes('vk'))
 
   useEffect(() => {
     // Deep links carry a bearer invitation. Reading it never grants consent.
@@ -64,7 +65,7 @@ export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '', po
   }, [statusRetry, policyRevision])
 
   useEffect(() => {
-    if (!incomingToken || linkedPlatforms?.includes('telegram') && linkedPlatforms?.includes('vk')) return
+    if (!incomingToken || linked) return
     const controller = new AbortController()
     setIncomingError('')
     setIncomingPreview(null)
@@ -74,7 +75,7 @@ export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '', po
       if (!controller.signal.aborted) setIncomingError(error instanceof Error ? error.message : 'Не удалось проверить приглашение.')
     })
     return () => controller.abort()
-  }, [incomingToken, incomingRetry, linkedPlatforms?.join(',')])
+  }, [incomingToken, incomingRetry, linked])
 
   async function run(action: (signal: AbortSignal) => Promise<void>) {
     if (operation.current && !operation.current.signal.aborted) return
@@ -158,7 +159,6 @@ export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '', po
     })
   }
 
-  const linked = linkedPlatforms?.includes('telegram') && linkedPlatforms?.includes('vk')
   const active = link && link.state !== 'committed' && link.state !== 'cancelled'
   const botUsername = destination.telegramBotUsername.trim().replace(/^@/, '')
   const reopenUrl = statusError && currentAccountPlatform() === 'telegram'
