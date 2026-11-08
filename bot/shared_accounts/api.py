@@ -149,7 +149,9 @@ async def links(request: web.Request) -> web.Response:
     service = LinkService(policy)
     body = await _body(request) if request.method == 'POST' else {}
     link_id = request.match_info.get('link_id')
-    if request.path.endswith('/links/accept'):
+    if request.path.endswith('/links/preview'):
+        result = await service.preview_token(account, body.get('token'))
+    elif request.path.endswith('/links/accept'):
         confirm = body.get('confirm', False)
         if type(confirm) is not bool:
             raise ValueError('Invalid recipient confirmation')
@@ -257,6 +259,7 @@ def setup_shared_account_routes(app: web.Application, miniapp_root: str) -> None
     app.router.add_get(root + '/wallet/reconcile', _guard(wallet))
     app.router.add_post(root + '/links', _guard(links))
     app.router.add_post(root + '/links/accept', _guard(links))
+    app.router.add_post(root + '/links/preview', _guard(links))
     app.router.add_get(root + '/links/{link_id}', _guard(links))
     app.router.add_post(root + '/links/{link_id}/{action:accept|confirm|cancel}', _guard(links))
     app.router.add_get(root + '/commerce', _guard(commerce))
