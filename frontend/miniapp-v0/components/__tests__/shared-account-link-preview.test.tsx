@@ -221,3 +221,13 @@ test('expired pending invitation restores the connect button instead of trapping
   expect(screen.queryByRole('region', { name: 'Ожидание привязки' })).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Привязать Telegram' })).toBeEnabled()
 })
+
+test('backend without source-consent support fails closed instead of creating a stalled link', async () => {
+  jest.mocked(createAccountLink).mockResolvedValue({ ...pending, source_confirmed: false })
+  render(<SharedAccountLinkPreview vkAppId={123} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Привязать Telegram' }))
+  expect(await screen.findByText('Сервер привязки требует обновления. Попробуйте позже.')).toBeInTheDocument()
+  expect(popup.close).toHaveBeenCalled()
+  expect(popup.location.replace).not.toHaveBeenCalled()
+  expect(screen.queryByRole('region', { name: 'Ожидание привязки' })).not.toBeInTheDocument()
+})
