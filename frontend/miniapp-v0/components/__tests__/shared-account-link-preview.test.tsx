@@ -4,7 +4,7 @@ import { SharedAccountLinkPreview } from '../shared-account-link-preview'
 import {
   acceptAccountLink, createAccountLink, fetchAccountPreviewAccess, previewAccountLink, updateAccountLink,
 } from '@/lib/shared-account-api'
-import { accountLinkUrl, currentAccountPlatform, incomingAccountLink } from '@/lib/account-platform'
+import { accountLinkUrl, currentAccountPlatform, incomingAccountLink, nativeTelegramMiniAppUrl } from '@/lib/account-platform'
 import { buildTelegramMiniAppUrl } from '@/lib/api'
 
 jest.mock('@/lib/api', () => ({ buildTelegramMiniAppUrl: jest.fn(() => 'https://t.me/configured_bot?startapp') }))
@@ -56,6 +56,22 @@ beforeEach(() => {
 afterEach(() => {
   jest.restoreAllMocks()
   jest.useRealTimers()
+})
+
+test('Telegram invitation uses the native Mini App URI supported by installed clients', () => {
+  expect(nativeTelegramMiniAppUrl(`https://t.me/Neuromixx_bot?startapp=link_${inviteToken}`))
+    .toBe(`tg://resolve?domain=Neuromixx_bot&startapp=link_${inviteToken}`)
+})
+
+test.each([
+  `https://t.me.evil.example/Neuromixx_bot?startapp=link_${inviteToken}`,
+  `https://evil.example/Neuromixx_bot?startapp=link_${inviteToken}`,
+  `http://t.me/Neuromixx_bot?startapp=link_${inviteToken}`,
+  'https://t.me/Neuromixx_bot?startapp=link_bad',
+  `https://t.me/Neuromixx_bot?startapp=link_${inviteToken}&extra=1`,
+  `https://t.me/Neuromixx_bot/extra?startapp=link_${inviteToken}`,
+])('native Telegram navigation rejects unsafe or malformed invitations: %s', url => {
+  expect(() => nativeTelegramMiniAppUrl(url)).toThrow('Некорректная ссылка.')
 })
 
 test('VK connect attempts native Telegram on first click and offers a retry link', async () => {
