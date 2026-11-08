@@ -31,7 +31,7 @@ const zodiac = ['♈', '♉', '♊', '♋', '♌', '♍', '♎', '♏', '♐', '
 /** Decorative zodiac wheel: real planetary coordinates must come from an ephemeris API. */
 function ZodiacWheel({ small = false }: { small?: boolean }) {
   return (
-    <svg className="astro-zodiac-wheel" viewBox="0 0 400 400" role="img" aria-label="Декоративный зодиакальный круг с Солнцем">
+    <svg className="astro-zodiac-wheel" viewBox="0 0 400 400" role={small ? undefined : "img"} aria-hidden={small} aria-label={small ? undefined : "Декоративный зодиакальный круг с Солнцем"}>
       <defs>
         <radialGradient id="astro-sun-glow">
           <stop stopColor="#fff5b8" />
@@ -78,7 +78,7 @@ function ZodiacWheel({ small = false }: { small?: boolean }) {
 function AstroArtwork({ kind }: { kind: AstroKind }) {
   if (kind === 'natal') return <ZodiacWheel small />
   return (
-    <svg viewBox="0 0 100 78" className="astro-service-art" role="img" aria-label="">
+    <svg viewBox="0 0 100 78" className="astro-service-art" aria-hidden="true">
       <g stroke="#ffbd52" strokeWidth="2.2" fill="none" strokeLinecap="round" strokeLinejoin="round">
         {kind === 'compatibility' && (
           <>
