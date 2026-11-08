@@ -5,11 +5,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from bot import database, db as db_backend, miniapp
-from bot.handlers import payments, miniapp_regression_safety
-from bot.handlers.miniapp_lava_payment_methods_compat import install_miniapp_lava_payment_methods
+from bot import database, miniapp
+from bot import db as db_backend
+from bot.handlers import miniapp_regression_safety, payments
+from bot.handlers.miniapp_lava_payment_methods_compat import (
+    install_miniapp_lava_payment_methods,
+)
 from bot.partner_commission_settings import set_partner_commission_percent
-from bot.services import lava_payment_safety, lava_invoice_compat
+from bot.services import lava_invoice_compat, lava_payment_safety
 from bot.shared_accounts.auth import VerifiedIdentity
 from bot.shared_accounts.policy import save_policy
 from bot.shared_accounts.store import create_session
