@@ -145,6 +145,78 @@ async def test_enabled_preview_still_rejects_ordinary_telegram_user():
         assert (await login(client, 1001)).status == 403
 
 
+@pytest.mark.parametrize('platform,user_id', [('telegram', 1001), ('vk', 2002), ('vk', ADMIN)])
+@pytest.mark.parametrize('method,path,body', [
+    ('GET', '/wallet', None),
+    ('POST', '/wallet', {'action': 'credit', 'amount': '10', 'idempotency_key': 'forged-credit'}),
+    ('GET', '/wallet/reconcile', None),
+    ('GET', '/commerce', None),
+    ('PUT', '/commerce', {'expected_revision': 0, 'settings': {}}),
+    ('GET', '/commerce/accounts?platform=telegram&external_id=999999999', None),
+    ('GET', '/commerce/accounts/{target}', None),
+    ('PUT', '/commerce/accounts/{target}', {'expected_revision': 0, 'settings': {'first_level_percent': '40'}}),
+    ('POST', '/commerce/quote', {'price_key': 'photo:test', 'quantity': 1}),
+    ('GET', '/commerce/quotes/unknown', None),
+])
+async def test_session_admission_never_grants_preview_administration(monkeypatch, platform, user_id, method, path, body):
+    """Future public admission must not inherit the preview's money/admin API."""
+    from bot.shared_accounts.policy import PreviewPolicy
+
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123, vk_admin_ids=[2001])
+        target = (await (await login(client)).json())['account']['id']
+        # Isolate the future admission change at its existing domain seam; the
+        # actual signed HTTP login/session/route ownership checks still execute.
+        monkeypatch.setattr(PreviewPolicy, 'allows', lambda self, identity: self.enabled)
+        launch = telegram_launch(user_id) if platform == 'telegram' else vk_launch(user_id)
+        admitted = await client.post(ROOT + '/session', json={'platform': platform, 'launch_data': launch})
+        assert admitted.status == 200
+        headers = {'Authorization': 'Bearer ' + (await admitted.json())['session_token']}
+        assert (await client.get(ROOT + '/me', headers=headers)).status == 200
+        result = await client.request(method, ROOT + path.format(target=target), headers=headers, json=body)
+        assert result.status == 403
+        assert (await result.json())['error'] == 'Administrator access required'
+
+
+@pytest.mark.parametrize('admin_platform', ['telegram', 'vk'])
+async def test_linking_to_an_administrator_does_not_grant_the_other_identity_admin_access(monkeypatch, admin_platform):
+    from bot.shared_accounts.policy import PreviewPolicy
+    from tests.test_shared_account_links import commit_link
+
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123, vk_admin_ids=[2001])
+        monkeypatch.setattr(PreviewPolicy, 'allows', lambda self, identity: self.enabled)
+        telegram_id = ADMIN if admin_platform == 'telegram' else 1001
+        vk_id = 2001 if admin_platform == 'vk' else 2002
+
+        async def sessions():
+            telegram = await (await login(client, telegram_id)).json()
+            vk = await (await client.post(ROOT + '/session', json={'platform': 'vk', 'launch_data': vk_launch(vk_id)})).json()
+            return telegram, vk
+
+        telegram, vk = await sessions()
+        def headers(data):
+            return {'Authorization': 'Bearer ' + data['session_token']}
+
+        merged, _ = await commit_link(client, headers(telegram), headers(vk))
+        assert merged.status == 200
+        telegram, vk = await sessions()
+        assert telegram['account']['id'] == vk['account']['id']
+        admin, ordinary = (telegram, vk) if admin_platform == 'telegram' else (vk, telegram)
+        assert (await client.get(ROOT + '/commerce', headers=headers(admin))).status == 200
+        assert (await client.get(ROOT + '/me', headers=headers(ordinary))).status == 200
+        for path, body in [
+            ('/wallet', {'action': 'credit', 'amount': '10', 'idempotency_key': 'linked-forged-credit'}),
+            ('/commerce', {'expected_revision': 0, 'settings': {}}),
+        ]:
+            method = 'POST' if path == '/wallet' else 'PUT'
+            denied = await client.request(method, ROOT + path, headers=headers(ordinary), json=body)
+            assert denied.status == 403
+            assert (await denied.json())['error'] == 'Administrator access required'
+
+
 async def test_expired_telegram_launch_is_rejected_with_safe_diagnostics(caplog):
     async with preview_client() as client:
         await enable(client)

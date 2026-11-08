@@ -124,6 +124,8 @@ async def wallet(request: web.Request) -> web.Response:
     account = await get_session(_bearer(request), policy.revision)
     if not policy.allows(account.identity):
         raise PermissionError('Administrator preview only')
+    if not policy.is_administrator(account.identity):
+        raise PermissionError('Administrator access required')
     # No client field can select the live wallet or another account.
     service = WalletService('sandbox')
     if request.path.endswith('/wallet/reconcile'):
@@ -165,6 +167,8 @@ async def commerce(request: web.Request) -> web.Response:
     account = await get_session(_bearer(request), policy.revision)
     if not policy.allows(account.identity):
         raise PermissionError('Administrator preview only')
+    if not policy.is_administrator(account.identity):
+        raise PermissionError('Administrator access required')
     service = CommercialStore()
     if request.path.endswith('/commerce/quote'):
         body = await _body(request)

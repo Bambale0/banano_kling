@@ -1,5 +1,51 @@
 # TG–VK shared accounts execution ledger
 
+## Public VK preparation: administrative authorization boundary — 08.11.2026
+
+- Request: open the full product to ordinary VK users with optional Telegram
+  linking. Baseline `tanyapi@e3841e88ecdd1ad1c7dce55639878dec2035d060`;
+  isolated branch `feature/vk-public-auth-boundaries`. No restricted linked-only
+  release is accepted as completion. Existing #408 remains the parent plan.
+- Fresh read-only runtime check: backend healthy and backend/VK frontend revisions
+  match the baseline; VK root returns200 and account profile without a session
+  returns401. Stored preview revision4 admits two VK administrators. VK sender
+  configuration is present and matches the configured community. No secrets or
+  customer rows were emitted, and no production state was changed.
+- Current independent VK entry is still blocked by frontend/API Telegram-owner
+  requirements. Payments, generation ownership and delivery use that legacy
+  owner. Public admission alone cannot fix this. Shared-wallet opening claims
+  remain absent; existing live-scope rows alone are not financial-cutover proof.
+- Security preflight found that session admission also protects administrative
+  preview wallet/commerce routes. Widening admission without a separate role
+  check would expose sandbox mutation and cross-account commercial controls.
+  This first slice separates those checks without changing the admission policy,
+  prices, balances, schema, secrets, or production configuration.
+- Reuse Draft #424 and tanyavk#67 for legacy writer fencing and #425 for private
+  account-owned photos; do not duplicate them. Remaining release gates include
+  standalone actor/ownership, live wallet writers and legacy settlement bridge,
+  optional balance-preserving merge, payments/delivery, platform acceptance and
+  verified key rotation. Historical balance normalization is not authorized.
+- Plan: (1) RED HTTP regressions with independently widened session admission;
+  (2) separate platform-scoped administrative authorization for wallet/commerce;
+  (3) SQLite/isolated PostgreSQL and neighboring auth/link/wallet/commerce checks;
+  (4) independent review and Draft publication, with public activation disabled.
+- Guidance: Bambale0/skills diagnosing-bugs (HTTP pass/fail seam), Bambale0/claw
+  backend-integration (auth/domain boundaries), anthropics/skills webapp-testing
+  (future UI acceptance). This source-only boundary has no changed browser UI.
+- RED: all30 synthetic signed-HTTP cases failed when session admission alone was
+  widened (ordinary Telegram/VK and a VK ID equal to a Telegram administrator).
+  GREEN: separate administrator checks preserve source-platform roles and block
+  all10 preview wallet/commerce routes before service calls. Independent static
+  review found no blockers and requested direct linked-role coverage; both
+  directions now prove that linking an ordinary identity to an administrator
+  preserves the ordinary identity's denial and the administrator's access.
+- Final auth/wallet/opening/link/commerce/audit/browser-auth/VK-delivery/API matrix:
+  188 passed, 160 PostgreSQL cases skipped locally because no isolated PostgreSQL
+  runtime is available. Existing ten warnings remain. Changed Python Ruff and
+  whitespace checks passed after replacing an unnecessary test lint suppression.
+  No public policy flag was added or enabled. Broader legacy Mini App admin checks
+  still need the future source-platform actor; this slice guards preview routes.
+
 ## VK result absent from community chat — 07.11.2026
 
 - Baseline 4f6387d65135b04a17c2d448ebeef793c5b08482; dedicated branch
