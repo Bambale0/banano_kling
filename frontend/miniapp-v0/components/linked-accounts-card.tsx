@@ -18,7 +18,7 @@ export function LinkedAccountsCard({ linkedPlatforms, busy, failed, onLink, onRe
   linkedPlatforms: AccountPlatform[] | null
   busy: boolean
   failed: boolean
-  onLink: () => void
+  onLink: (platform: AccountPlatform) => void
   onRetry: () => void
 }) {
   return <section aria-label="Связанные аккаунты" className="rounded-[20px] border border-border bg-card px-[19px] pb-2 pt-[19px]">
@@ -35,7 +35,7 @@ export function LinkedAccountsCard({ linkedPlatforms, busy, failed, onLink, onRe
           </div>
           {linked ? <span aria-label={`${name} привязан`} className="flex size-8 shrink-0 items-center justify-center rounded-full bg-success/15 text-success">
             <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m6 12 4 4 8-10" /></svg>
-          </span> : linkedPlatforms ? <Button variant="outline" aria-label={`Привязать ${name}`} disabled={busy} onClick={onLink} className="h-[42px] rounded-full border-border bg-foreground/[0.03] px-3 text-sm font-semibold min-[360px]:px-5">Привязать</Button> : null}
+          </span> : linkedPlatforms ? <Button variant="outline" aria-label={`Привязать ${name}`} disabled={busy} onClick={() => onLink(platform)} className="h-[42px] rounded-full border-border bg-foreground/[0.03] px-3 text-sm font-semibold min-[360px]:px-5">Привязать</Button> : null}
         </li>
       })}
     </ul>
