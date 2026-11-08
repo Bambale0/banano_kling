@@ -1,4 +1,5 @@
 """VK Lava: linked public checkout settles the intended partner exactly once."""
+import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -209,3 +210,37 @@ async def test_two_vk_lava_checkout_requests_same_millisecond_create_distinct_or
             ("invoice-A", "invoice-B")
         )).fetchall()
         assert len(rows) == 2
+
+@pytest.mark.asyncio
+async def test_lava_binding_schema_cache_is_scoped_to_the_current_database(
+    monkeypatch,
+):
+    """A newly selected DB must create its own contract/invoice binding table."""
+    from bot.services import lava_binding_schema_compat as compat
+
+    calls = []
+    active_database = ["sqlite:database-one"]
+
+    async def fake_ddl(sql):
+        calls.append(("ddl", sql.split()[0]))
+
+    async def fake_verify():
+        calls.append(("verify", active_database[0]))
+
+    monkeypatch.setattr(compat, "_BINDINGS_SCHEMA_READY", False)
+    monkeypatch.setattr(compat, "_BINDINGS_SCHEMA_READY_FOR", None)
+    monkeypatch.setattr(compat, "_BINDINGS_SCHEMA_LOCK", asyncio.Lock())
+    monkeypatch.setattr(
+        compat, "_binding_database_key", lambda: active_database[0], raising=False
+    )
+    monkeypatch.setattr(compat, "_execute_schema_ddl", fake_ddl)
+    monkeypatch.setattr(compat, "_verify_bindings_table", fake_verify)
+
+    await compat._ensure_bindings_table_postgres_safe()
+    await compat._ensure_bindings_table_postgres_safe()
+    assert len(calls) == 3
+
+    active_database[0] = "sqlite:database-two"
+    await compat._ensure_bindings_table_postgres_safe()
+    assert len(calls) == 6
+    assert calls[-1] == ("verify", "sqlite:database-two")
