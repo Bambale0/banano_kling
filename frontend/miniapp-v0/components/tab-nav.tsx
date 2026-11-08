@@ -9,7 +9,7 @@ const tabs = [
   { id: 5, label: 'Тренды', icon: Flame },
   { id: 1, label: 'Фото', icon: Image },
   { id: 2, label: 'Видео', icon: Video },
-  { id: 3, label: 'Motion', icon: Sparkles },
+  { id: 8, label: 'Астро', icon: Sparkles },
   { id: 4, label: 'Лента', icon: Images },
   { id: 6, label: 'Сервисы', icon: Grid3X3 },
   { id: 7, label: 'Профиль', icon: UserRound },
