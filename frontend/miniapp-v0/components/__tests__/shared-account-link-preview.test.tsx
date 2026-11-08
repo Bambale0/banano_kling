@@ -210,11 +210,13 @@ test('two immediate clicks cannot create multiple invitations or orphan popups',
 test('expired pending invitation restores the connect button instead of trapping the user', async () => {
   jest.mocked(createAccountLink).mockResolvedValue(pending)
   jest.mocked(updateAccountLink).mockRejectedValue(new Error('Ссылка истекла или отменена. Создайте новую.'))
+  const intervals = jest.spyOn(window, 'setInterval')
   render(<SharedAccountLinkPreview vkAppId={123} />)
   fireEvent.click(await screen.findByRole('button', { name: 'Привязать Telegram' }))
   expect(await screen.findByRole('region', { name: 'Ожидание привязки' })).toBeInTheDocument()
-  jest.useFakeTimers()
-  await act(async () => { jest.advanceTimersByTime(4000); await Promise.resolve(); await Promise.resolve() })
+  const poll = intervals.mock.calls.find(([, ms]) => ms === 4000)?.[0]
+  expect(poll).toBeDefined()
+  await act(async () => { (poll as () => void)(); await Promise.resolve(); await Promise.resolve() })
   expect(screen.getByText('Ссылка истекла. Нажмите «Привязать» ещё раз.')).toBeInTheDocument()
   expect(screen.queryByRole('region', { name: 'Ожидание привязки' })).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Привязать Telegram' })).toBeEnabled()
