@@ -1,5 +1,67 @@
 # TG–VK shared accounts execution ledger
 
+## Public VK preparation: verified product actor — 08.11.2026
+
+- Baseline `09b1402ef1ee51c00365f2985b153f0288d8b623` (Draft #430), isolated
+  `feature/vk-account-actor`. This is a preparatory slice of #408, not standalone
+  VK launch. No public admission, policy, generation/payment or balance switch.
+- Preflight: shared_accounts owns verified identities/sessions and shared ledger;
+  users.id owns several product resources, but generation_tasks detail/history
+  still query telegram_id (including aliases). A read-only history conversion
+  would require a real ownership contract, so it is explicitly deferred.
+- Reuse the existing source=telegram legacy mapping, whose primary key already
+  prevents one legacy owner binding to two accounts. Validate the mapping against
+  users and the persisted Telegram identity, reject ambiguity/dangling/mismatch,
+  and serialize new session bindings with the shared account lock. No competing
+  owner table, nullable users migration, synthetic Telegram ID or standalone
+  owner creation. source=vk IDs remain foreign-database IDs, never local users.id.
+- Added immutable ProductActor with account_id, optional owner_user_id,
+  source VerifiedIdentity and optional telegram_id. Unowned VK actors can be
+  represented internally; require_telegram_owner is an explicit compatibility
+  guard and does not admit them to production generation/payment routes.
+  Administrator evaluation uses only the verified source identity. The VK legacy
+  adapter retains that actor; broader Mini App config.is_admin(telegram_id)
+  callsites are NOT converted and remain a public-release blocker.
+- LinkService validates owner provenance while holding the existing sorted
+  account locks, before commercial/wallet/identity mutations. Conflicting owners
+  require reconciliation, never arbitrary owner selection or data transfer.
+  Existing legacy-link movement preserves the single validated owner atomically.
+- Steps: (1) inspect #408, ledger and ownership seams; (2) RED actor/provenance,
+  signed-link and session-binding regressions; (3) implement guarded actor and
+  reuse validation in legacy lookup; (4) focused regression/lint and independent
+  review before any publication. #424/tanyavk#67 writer fences and #425 private
+  photos remain separate dependencies; no duplication here.
+- RED evidence: six actor cases failed before the module existed; authenticated
+  two-sided merge accepted conflicting product owners (HTTP200 instead of409);
+  Telegram session creation silently accepted an owner bound elsewhere. GREEN
+  verifies these refusals, unchanged mappings/no merged accounts/no session on
+  failure, owner preservation on a valid link and no inherited Telegram admin
+  role. Shared wallet idempotency/reservations remain under existing tests.
+- No new schema/config/UI/admin surface or provider calls. Errors use existing
+  authentication/conflict response paths without secrets or personal payload logs.
+  Primary diagnosing-bugs, Claw backend-integration and Anthropic webapp-testing
+  guidance were fetched and inspected; local HTTP/database tests are the relevant
+  seam, with no changed UI requiring a new browser journey for this slice.
+- Final focused actor/auth/link/wallet/opening/commerce/audit/VK delivery/browser-auth
+  matrix: 199 passed, 171 skipped, ten existing warnings. Changed actor/store/link
+  and test files pass Ruff; Python compilation and git diff --check pass.
+- Independent-review follow-up distinguishes two valid different product owners
+  from malformed provenance and asserts the exact refusal plus unchanged account,
+  identity, legacy-link, wallet, ledger and reservation snapshots. A separate RED
+  duplicate-platform case proved commercial merge was invoked before rejection;
+  its conflict check now precedes commercial mutation and the spy stays untouched.
+- CI follow-up: added test_shared_account_actor.py to both explicit Ruff and
+  pytest lists in shared-accounts-preview.yml, so its PostgreSQL parametrizations
+  are selected by the native PostgreSQL17 job. System PyYAML parsing, command-list
+  membership and retained service/DSN assertions passed. The full workflow Ruff
+  command passed; its exact pytest list locally passed192/skipped171 with six
+  existing warnings. This is local SQLite evidence, not a native PostgreSQL pass.
+- PostgreSQL concurrency and production smoke are unverified locally: no isolated
+  PostgreSQL binary/runtime is available. Native PostgreSQL CI is required; skips
+  are not passes. Full public VK acceptance, actor conversion of resource/admin
+  seams, live writer/settlement bridges and financial cutover remain open. No
+  production DB, real balance, paid provider, external message, push or deploy.
+
 ## Public VK preparation: administrative authorization boundary — 08.11.2026
 
 - Request: open the full product to ordinary VK users with optional Telegram

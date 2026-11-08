@@ -63,7 +63,8 @@ async def create_session(identity: VerifiedIdentity, ttl_seconds: int, policy_re
                         (identity.platform, identity.external_id),
                     )).fetchone()
                     account_id = row[0]
-            row = await (await db.execute('SELECT status FROM shared_accounts WHERE id = ?', (account_id,))).fetchone()
+            suffix = ' FOR UPDATE' if db_backend.is_postgres() else ''
+            row = await (await db.execute('SELECT status FROM shared_accounts WHERE id = ?' + suffix, (account_id,))).fetchone()
             if not row or row[0] != 'active':
                 raise PermissionError('Account is not available')
             if identity.platform == 'telegram':
@@ -73,6 +74,15 @@ async def create_session(identity: VerifiedIdentity, ttl_seconds: int, policy_re
                         'INSERT INTO shared_account_legacy_links(source, legacy_user_id, account_id) VALUES (?, ?, ?) '
                         'ON CONFLICT(source, legacy_user_id) DO NOTHING', ('telegram', legacy[0], account_id),
                     )
+                    binding = await (await db.execute(
+                        'SELECT account_id FROM shared_account_legacy_links WHERE source = ? AND legacy_user_id = ?',
+                        ('telegram', legacy[0]),
+                    )).fetchone()
+                    if not binding or binding[0] != account_id:
+                        raise AuthenticationError('Product owner is already bound to another account')
+                    # Same transaction and account lock as identity/session creation.
+                    from .actor import legacy_product_owner
+                    await legacy_product_owner(db, account_id)
             await db.execute(
                 'INSERT INTO shared_account_sessions '
                 '(token_hash, account_id, platform, external_id, created_at_epoch, expires_at_epoch, policy_revision) VALUES (?, ?, ?, ?, ?, ?, ?)',
@@ -115,18 +125,11 @@ async def linked_telegram_id(account_id: str) -> int | None:
     """Resolve the single legacy Telegram identity owned by a shared account."""
     if not isinstance(account_id, str) or not re.fullmatch(r'[0-9a-f]{32}', account_id):
         raise AuthenticationError('Invalid account')
+    from .actor import legacy_product_owner
+
     async with db_backend.connect() as db:
-        rows = await (await db.execute(
-            '''SELECT users.telegram_id
-               FROM shared_account_legacy_links legacy
-               JOIN users ON users.id = legacy.legacy_user_id
-               WHERE legacy.source = ? AND legacy.account_id = ?
-               ORDER BY users.id LIMIT 2''',
-            ('telegram', account_id),
-        )).fetchall()
-    if len(rows) > 1:
-        raise AuthenticationError('Ambiguous linked account')
-    return int(rows[0][0]) if rows else None
+        owner = await legacy_product_owner(db, account_id)
+    return owner[1] if owner else None
 
 
 async def linked_platforms(account_id: str) -> list[str]:

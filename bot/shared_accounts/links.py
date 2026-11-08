@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from bot import db as db_backend
 
+from .actor import legacy_product_owner
 from .commercial_store import (
     ensure_commercial_schema,
     lock_catalog,
@@ -198,14 +199,23 @@ class LinkService:
                                          (platform, external))).fetchone()
             if not row or row[0] != await canonical_account(db, original):
                 raise PreviewConflict('Identity ownership changed')
+        # Check product provenance before any commercial, wallet or identity mutation.
+        # Existing Telegram legacy links are the sole product-owner mapping.
+        try:
+            owners = {owner[0] for account_id in accounts
+                      if (owner := await legacy_product_owner(db, account_id)) is not None}
+        except AuthenticationError as exc:
+            raise PreviewConflict('Product ownership requires reconciliation') from exc
+        if len(owners) > 1:
+            raise PreviewConflict('Different product owners require reconciliation')
         if len(accounts) == 1:
             return canonical
         other = accounts[1]
-        await merge_commercial_terms(db, canonical, other, link['id'])
         conflict = await (await db.execute('''SELECT platform FROM shared_account_identities WHERE account_id IN (?, ?)
             GROUP BY platform HAVING COUNT(*) > 1''', (canonical, other))).fetchone()
         if conflict:
             raise PreviewConflict('An account already has a different identity on this platform')
+        await merge_commercial_terms(db, canonical, other, link['id'])
         for scope in ('sandbox', 'live'):
             service = WalletService(scope)
             balances = {}

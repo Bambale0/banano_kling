@@ -71,6 +71,9 @@ async def test_vk_session_reuses_linked_user_balance_and_identity(isolated_datab
 
     assert telegram_id == ADMIN
     assert context["platform"] == "vk"
+    assert context["actor"].identity == VerifiedIdentity("vk", VK_ADMIN)
+    assert context["actor"].owner_user_id == context["user"].id
+    assert context["actor"].telegram_id == ADMIN
     assert context["platform_external_id"] == VK_ADMIN
     assert context["vk_app_id"] == 123
     assert context["payload"]["user"] == {

@@ -1393,9 +1393,10 @@ async def _activate_start_param_referral(
 
 async def _get_vk_session_user_context(init_data: str) -> tuple[int, dict]:
     """Map an authenticated VK session to the already-linked legacy user."""
+    from bot.shared_accounts.actor import resolve_actor
     from bot.shared_accounts.errors import AuthenticationError
     from bot.shared_accounts.policy import load_policy
-    from bot.shared_accounts.store import get_session, linked_telegram_id
+    from bot.shared_accounts.store import get_session
 
     prefix = "vk_session:"
     token = init_data[len(prefix):] if init_data.startswith(prefix) else ""
@@ -1406,11 +1407,13 @@ async def _get_vk_session_user_context(init_data: str) -> tuple[int, dict]:
         account = await get_session(token, policy.revision)
         if account.identity.platform != "vk" or not policy.allows(account.identity):
             raise AuthenticationError("VK Mini App access denied")
-        telegram_id = await linked_telegram_id(account.id)
+        actor = await resolve_actor(account)
+        telegram_id = actor.telegram_id
     except (AuthenticationError, PermissionError) as exc:
         raise ValueError("Откройте приложение заново из ВКонтакте.") from exc
     if telegram_id is None:
         raise ValueError("Сначала свяжите аккаунты ТГ и ВК.")
+    telegram_id = actor.require_telegram_owner()
     # A legacy link is created only for an existing Telegram user. Reusing it
     # keeps balance, tasks, history and generation ownership in one source.
     user = await get_or_create_user(telegram_id)
@@ -1431,6 +1434,7 @@ async def _get_vk_session_user_context(init_data: str) -> tuple[int, dict]:
         "platform": "vk",
         "platform_external_id": account.identity.external_id,
         "shared_account_id": account.id,
+        "actor": actor,
         "vk_app_id": policy.vk_app_id,
         "vk_chat_delivery_requested": policy.vk_result_delivery_enabled,
     }
@@ -1445,6 +1449,7 @@ def _miniapp_link_kwargs(ctx: dict) -> dict[str, Any]:
 
 
 async def _get_user_context(app: web.Application, init_data: str, start_param_fallback: Any = None) -> tuple[int, dict]:
+    """Guarded legacy Telegram adapter; not a platform-neutral role boundary."""
     if isinstance(init_data, str) and init_data.startswith("vk_session:"):
         return await _get_vk_session_user_context(init_data)
     payload = _validate_init_data(init_data, config.BOT_TOKEN)
