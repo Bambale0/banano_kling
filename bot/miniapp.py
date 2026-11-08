@@ -8,11 +8,11 @@ import logging
 import mimetypes
 import re
 import time
-from uuid import uuid4
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from urllib.parse import parse_qsl, urlparse
+from uuid import uuid4
 
 import aiohttp
 from aiogram.types import BufferedInputFile, LabeledPrice
