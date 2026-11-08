@@ -78,13 +78,19 @@ class PreviewPolicy:
             raise ValueError('VK community is required for result delivery')
         return cls(**data)
 
-    def allows(self, identity: VerifiedIdentity) -> bool:
-        # This is a hard administrator ceiling, not a public rollout switch.
-        if not self.enabled:
-            return False
+    def is_administrator(self, identity: VerifiedIdentity) -> bool:
+        """Platform-scoped role, independent of user-session admission.
+
+        Linking accounts or admitting a broader audience must never grant the
+        signed-in identity access to preview financial/commerce administration.
+        """
         if identity.platform == 'telegram':
             return config.is_admin(identity.external_id)
         return identity.platform == 'vk' and identity.external_id in self.vk_admin_ids
+
+    def allows(self, identity: VerifiedIdentity) -> bool:
+        # Admission remains administrator-only until the full public release.
+        return self.enabled and self.is_administrator(identity)
 
     def payload(self) -> dict:
         return asdict(self)
