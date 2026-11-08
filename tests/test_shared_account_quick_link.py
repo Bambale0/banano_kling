@@ -1,5 +1,4 @@
 """One-tap TG/VK linking: each authenticated platform must explicitly opt in."""
-from bot.shared_accounts.store import linked_telegram_id
 from tests.test_shared_account_links import pair, ROOT
 from tests.test_shared_accounts import login, vk_launch
 
@@ -34,10 +33,18 @@ async def test_one_tap_link_only_commits_after_verified_recipient_click(monkeypa
         link = (await confirmed.json())['link']
         assert link['state'] == 'committed'
         assert link['source_confirmed'] is True and link['target_confirmed'] is True
-        assert (await client.post(
-            ROOT + '/links/accept', headers=target,
+        # Merging may retire the target's old account/session. A fresh signed
+        # login must work, and replay must not transfer funds a second time.
+        fresh_vk = (await (await client.post(
+            ROOT + '/session',
+            json={'platform': 'vk', 'launch_data': vk_launch(2001)},
+        )).json())
+        replay = await client.post(
+            ROOT + '/links/accept',
+            headers={'Authorization': 'Bearer ' + fresh_vk['session_token']},
             json={'token': invitation['token'], 'confirm': True},
-        )).status == 200
+        )
+        assert replay.status == 200
         telegram_session = (await (await login(client)).json())['account']
         vk_session = (await (await client.post(
             ROOT + '/session',
