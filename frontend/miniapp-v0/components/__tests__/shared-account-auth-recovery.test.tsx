@@ -16,7 +16,7 @@ test('late administrator settings cannot reset an invitation already created thr
   let resolveSettings!: (value: AccountPreviewSettings) => void
   jest.mocked(fetchAccountPreviewSettings).mockReturnValue(new Promise(resolve => { resolveSettings = resolve }))
   jest.mocked(fetchAccountPreviewAccess).mockResolvedValue({ revision: 1, vk_app_id: 123, telegram_bot_username: 'test_bot', telegram_linked: true, linked_platforms: ['telegram'] })
-  jest.mocked(createAccountLink).mockResolvedValue({ id: 'pending-invite', state: 'pending', revision: 0, expires_at_epoch: 9999999999, token: 'a'.repeat(43) })
+  jest.mocked(createAccountLink).mockResolvedValue({ id: 'pending-invite', state: 'pending', revision: 0, expires_at_epoch: 9999999999, source_confirmed: true, token: 'a'.repeat(43) })
 
   const popup = {
     opener: window, closed: false, document: { title: '' },
