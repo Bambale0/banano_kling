@@ -1,4 +1,4 @@
-"""Exact administrator-preview routes, registered before the Mini App catch-all."""
+"""Public shared-account routes plus administrator-only control routes."""
 from __future__ import annotations
 
 import json
@@ -80,8 +80,8 @@ async def session(request: web.Request) -> web.Response:
         identity = verify_vk(body.get('launch_data', ''), policy.vk_app_id, os.getenv('VK_MINI_APP_SECRET', ''), max_age=policy.launch_max_age_seconds)
     else:
         raise ValueError('Unknown platform')
-    if not policy.allows(identity):
-        raise PermissionError('Administrator preview only')
+    if not policy.allows_public(identity):
+        raise PermissionError('Account access unavailable')
     account, token, expires = await create_session(identity, policy.session_ttl_seconds, policy.revision)
     logger.info('shared_account_session_created account_id=%s platform=%s', account.id, identity.platform)
     return response({'ok': True, 'account': account.payload(), 'session_token': token, 'expires_at': expires})
@@ -99,8 +99,8 @@ async def profile(request: web.Request) -> web.Response:
     if not policy.enabled:
         return response({'ok': False, 'error': 'Preview unavailable'}, 404)
     account = await get_session(_bearer(request), policy.revision)
-    if not policy.allows(account.identity):
-        raise PermissionError('Administrator preview only')
+    if not policy.allows_public(account.identity):
+        raise PermissionError('Account access unavailable')
     return response({'ok': True, 'account': account.payload(), 'preview': {
         'revision': policy.revision, 'vk_app_id': policy.vk_app_id,
         'telegram_bot_username': os.getenv('TELEGRAM_BOT_USERNAME', '').strip().lstrip('@'),
@@ -122,8 +122,8 @@ async def wallet(request: web.Request) -> web.Response:
     if not policy.enabled:
         return response({'ok': False, 'error': 'Preview unavailable'}, 404)
     account = await get_session(_bearer(request), policy.revision)
-    if not policy.allows(account.identity):
-        raise PermissionError('Administrator preview only')
+    if not policy.allows_admin(account.identity):
+        raise PermissionError('Administrator access required')
     # No client field can select the live wallet or another account.
     service = WalletService('sandbox')
     if request.path.endswith('/wallet/reconcile'):
@@ -144,8 +144,8 @@ async def links(request: web.Request) -> web.Response:
     if not policy.enabled:
         return response({'ok': False, 'error': 'Preview unavailable'}, 404)
     account = await get_session(_bearer(request), policy.revision)
-    if not policy.allows(account.identity):
-        raise PermissionError('Administrator preview only')
+    if not policy.allows_public(account.identity):
+        raise PermissionError('Account access unavailable')
     service = LinkService(policy)
     body = await _body(request) if request.method == 'POST' else {}
     link_id = request.match_info.get('link_id')
@@ -163,8 +163,8 @@ async def commerce(request: web.Request) -> web.Response:
     if not policy.enabled:
         return response({'ok': False, 'error': 'Preview unavailable'}, 404)
     account = await get_session(_bearer(request), policy.revision)
-    if not policy.allows(account.identity):
-        raise PermissionError('Administrator preview only')
+    if not policy.allows_admin(account.identity):
+        raise PermissionError('Administrator access required')
     service = CommercialStore()
     if request.path.endswith('/commerce/quote'):
         body = await _body(request)

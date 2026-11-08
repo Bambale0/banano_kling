@@ -22,8 +22,8 @@ async def vk_delivery(request):
     if not policy.enabled:
         return response({'ok': False, 'error': 'Preview unavailable'}, 404)
     account = await get_session(_bearer(request), policy.revision)
-    if account.identity.platform != 'vk' or not policy.allows(account.identity):
-        raise PermissionError('VK administrator session required')
+    if account.identity.platform != 'vk' or not policy.allows_public(account.identity):
+        raise PermissionError('VK account session required')
     lookup = request.match_info['task_id']
     if len(lookup) > 200:
         return response({'ok': False, 'error': 'Result unavailable'}, 404)
@@ -60,7 +60,7 @@ async def vk_delivery(request):
             return response({'ok': False, 'error_code': 'invalid_request'}, 400)
         fresh_policy = await load_policy()
         fresh = await get_session(_bearer(request), fresh_policy.revision)
-        if fresh != account or not fresh_policy.allows(fresh.identity):
+        if fresh != account or not fresh_policy.allows_public(fresh.identity):
             raise AuthenticationError('Session changed; reopen the application')
         if job and job['state'] == 'uncertain':
             return response({'ok': False, 'error_code': 'vk_delivery_uncertain'}, 409)

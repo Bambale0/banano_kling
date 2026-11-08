@@ -1,5 +1,17 @@
 # TG–VK shared accounts execution ledger
 
+## Current public rollout contract — 08.11.2026
+
+The owner authorized public signed Telegram/VK session, own-profile and two-sided
+link routes. Unlinked VK identities stop at the mandatory link gate; linked VK
+uses the existing Telegram legacy owner for balance, history, referrals,
+generation tasks and result delivery. Settings, sandbox wallet and commercial
+administration remain admin-only. The prior admin-only/no-public statements below
+are historical checkpoints and are superseded by this section. Release remains
+blocked until the exposed VK Mini App HMAC secret is rotated, the policy revision
+invalidates old sessions, protected CI passes and a real signed VK launch is
+accepted.
+
 ## VK result absent from community chat — 07.11.2026
 
 - Baseline 4f6387d65135b04a17c2d448ebeef793c5b08482; dedicated branch

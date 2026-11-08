@@ -1404,7 +1404,7 @@ async def _get_vk_session_user_context(init_data: str) -> tuple[int, dict]:
         if not policy.enabled:
             raise AuthenticationError("VK Mini App is unavailable")
         account = await get_session(token, policy.revision)
-        if account.identity.platform != "vk" or not policy.allows(account.identity):
+        if account.identity.platform != "vk" or not policy.allows_public(account.identity):
             raise AuthenticationError("VK Mini App access denied")
         telegram_id = await linked_telegram_id(account.id)
     except (AuthenticationError, PermissionError) as exc:

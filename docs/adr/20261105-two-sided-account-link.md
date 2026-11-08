@@ -1,7 +1,7 @@
-# Two-sided account linking in the administrator preview
+# Public two-sided Telegram/VK account linking
 
-Status: implemented in the isolated development branch; no production release.
-Plan: #408, E1 #409, wallet E2 #410, link E4 #411. Draft PR #415.
+Status: public signed-account rollout authorized on 2026-11-08.
+Plan lineage: #408, E1 #409, wallet E2 #410, link E4 #411, initial PR #415.
 
 ## Consent and authentication
 
@@ -21,8 +21,8 @@ Expired or cancelled invitations cannot be committed; the UI can start again.
 
 ### Linked accounts card
 
-The administrator profile and the VK linking gate share a compact «Связанные
-аккаунты» card. Telegram and VKontakte each show their persisted connection
+Every user's own profile and the mandatory VK linking gate share a compact
+«Связанные аккаунты» card. Telegram and VKontakte each show their persisted connection
 status and a check mark or «Привязать» action. The authenticated `/me` preview
 metadata includes `linked_platforms`, read from `shared_account_identities`;
 the existing `telegram_linked` legacy application-access check is unchanged.
@@ -43,11 +43,12 @@ freshness policy. Policy revisions refresh metadata without remounting an
 in-progress invitation or discarding its consent state. Authentication rejection
 logs include only the request path and constant failure reason, never credentials.
 
-Only Telegram administrators and explicitly configured VK administrators may
-use this preview. The VK entry verifies a VK launch directly and never mounts
-the Telegram bootstrap. Settings management remains restricted to Telegram
-administrators; authenticated VK preview receives only public preview metadata.
-All new routes are exact `/mini-app/api/account-preview/...` routes.
+Every valid signed Telegram or VK identity may use session, own-profile and link
+routes. The VK entry verifies a VK launch directly and does not mount the shared
+studio until an existing Telegram account is linked. Settings management remains
+restricted to Telegram administrators; wallet and commercial preview tools also
+require source-scoped administrator authorization. All account routes are exact
+`/mini-app/api/account-preview/...` routes.
 
 Session and invitation credentials stay out of logs, storage and analytics.
 Session tokens exist only for one API operation and are revoked in finally.
@@ -77,7 +78,7 @@ aliases while the immutable request hash binds kind, amount and reference.
 Refund totals include historical pre-merge refunds, so a merge cannot reopen a
 previously refunded capture. Wallet history includes all merged account aliases.
 
-## Validation and release hold
+## Validation and release
 
 Tests run on isolated SQLite and disposable localhost PostgreSQL, including
 reverse VK→TG linking, both confirmations, third-party rejection, wrong tokens,
@@ -85,9 +86,26 @@ expiry, cancellation, old callbacks, reservations, partial refunds, internal key
 collisions, conflicting identities, and concurrent merge with wallet mutations.
 Browser checks cover administrator/ordinary Telegram users and VK users.
 
-This slice is not full parity: production TG/VK financial writers have not yet
-been switched, live legacy balances have not been imported, and VK generation,
-payments, delivery and referrals still need their adapters and acceptance tests.
-The VK cabinet's actual app configuration and production frame policy are also
-not changed. No production migration, merge or deployment is authorized by this
-ADR. Release acceptance is the entire #408 plan, not this preview alone.
+Public linking does not create a second financial authority. Linked VK requests
+reuse the existing Telegram legacy owner for live balance, history, referrals,
+generation tasks and result delivery; VK-only financial import remains out of
+scope. Production rollout is authorized after protected CI, exact-SHA deployment,
+rotation of the previously exposed VK Mini App HMAC secret, policy-revision
+invalidation and real signed VK acceptance.
+
+
+## Public two-sided linking — 08.11.2026
+
+The owner authorized this flow for every user with a valid Telegram or VK launch
+signature. The cryptographic token, explicit recipient acceptance, confirmation
+by both authenticated identities, expiry, policy revision, conflict checks and
+atomic merge rules above are unchanged. Administrator membership is no longer a
+precondition for session/profile/link operations.
+
+The card is shown in every user's own profile. An unlinked VK identity sees the
+mandatory link gate and cannot enter the studio until an existing Telegram
+account completes both-sided consent. After commit, VK requests resolve the
+linked legacy Telegram user for live balance, history, referrals, generation
+ownership and result delivery. Administrative settings, sandbox wallet and
+commercial editors remain administrator-only. No VK-only financial authority,
+automatic ID matching or one-sided account merge is introduced.

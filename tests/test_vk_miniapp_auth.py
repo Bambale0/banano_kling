@@ -19,10 +19,14 @@ ADMIN = 999999999
 VK_ADMIN = 2001
 
 
-async def _policy():
+async def _policy(vk_admin_ids=None):
     return await save_policy(
         ADMIN,
-        {"enabled": True, "vk_app_id": 123, "vk_admin_ids": [VK_ADMIN]},
+        {
+            "enabled": True,
+            "vk_app_id": 123,
+            "vk_admin_ids": [VK_ADMIN] if vk_admin_ids is None else vk_admin_ids,
+        },
         0,
     )
 
@@ -37,17 +41,17 @@ async def _insert_legacy_user(telegram_id=ADMIN, credits=42.5):
         await db.commit()
 
 
-async def _link_vk_to_telegram(policy):
+async def _link_vk_to_telegram(policy, telegram_id=ADMIN, vk_id=VK_ADMIN):
     telegram, _, _ = await create_session(
-        VerifiedIdentity("telegram", ADMIN), 3600, policy.revision
+        VerifiedIdentity("telegram", telegram_id), 3600, policy.revision
     )
     vk, _, _ = await create_session(
-        VerifiedIdentity("vk", VK_ADMIN), 3600, policy.revision
+        VerifiedIdentity("vk", vk_id), 3600, policy.revision
     )
     async with db_backend.connect() as db:
         await db.execute(
             "UPDATE shared_account_identities SET account_id = ? WHERE platform = ? AND external_id = ?",
-            (telegram.id, "vk", VK_ADMIN),
+            (telegram.id, "vk", vk_id),
         )
         await db.execute(
             "UPDATE shared_accounts SET status = ?, merged_into = ? WHERE id = ?",
@@ -55,7 +59,7 @@ async def _link_vk_to_telegram(policy):
         )
         await db.commit()
     _, token, _ = await create_session(
-        VerifiedIdentity("vk", VK_ADMIN), 3600, policy.revision
+        VerifiedIdentity("vk", vk_id), 3600, policy.revision
     )
     return token
 
@@ -79,6 +83,24 @@ async def test_vk_session_reuses_linked_user_balance_and_identity(isolated_datab
     }
     assert context["user"].telegram_id == ADMIN
     assert float(context["user"].credits) == 42.5
+
+
+async def test_ordinary_linked_vk_session_reuses_its_telegram_identity(isolated_database):
+    telegram_id = 1001
+    vk_id = 3001
+    await _insert_legacy_user(telegram_id=telegram_id, credits=12.75)
+    policy = await _policy(vk_admin_ids=[])
+    token = await _link_vk_to_telegram(policy, telegram_id=telegram_id, vk_id=vk_id)
+
+    resolved_telegram_id, context = await _get_user_context(
+        web.Application(), "vk_session:" + token
+    )
+
+    assert resolved_telegram_id == telegram_id
+    assert context["platform"] == "vk"
+    assert context["platform_external_id"] == vk_id
+    assert context["user"].telegram_id == telegram_id
+    assert float(context["user"].credits) == 12.75
 
 
 async def test_unlinked_vk_session_cannot_create_a_shadow_telegram_user(isolated_database):

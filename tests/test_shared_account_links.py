@@ -1,6 +1,7 @@
 """Two-sided consent and money preservation at the authenticated link boundary."""
 from contextlib import asynccontextmanager
 
+from bot import db as db_backend
 from tests.test_shared_accounts import (
     ROOT,
     account_database,
@@ -145,6 +146,116 @@ async def test_expired_invitation_is_read_only_and_hash_is_the_only_stored_secre
         assert (await client.get(path, headers=source)).status == 410
 
 
+async def test_new_invitation_replaces_only_previous_ephemeral_link(monkeypatch):
+    async with pair(monkeypatch) as (client, source, _target):
+        first = await client.post(
+            ROOT + '/links', headers=source, json={'target_platform': 'vk'}
+        )
+        second = await client.post(
+            ROOT + '/links', headers=source, json={'target_platform': 'vk'}
+        )
+        assert first.status == second.status == 200
+        first_link = (await first.json())['link']
+        second_link = (await second.json())['link']
+        assert first_link['id'] != second_link['id']
+        assert first_link['token'] != second_link['token']
+        assert (await client.get(
+            ROOT + '/links/' + first_link['id'], headers=source
+        )).status == 401
+        assert (await client.get(
+            ROOT + '/links/' + second_link['id'], headers=source
+        )).status == 200
+        async with db_backend.connect() as db:
+            rows = await (await db.execute(
+                "SELECT state FROM shared_account_links WHERE state != 'committed'"
+            )).fetchall()
+        assert [row[0] for row in rows] == ['pending']
+
+
+async def test_concurrent_invitation_replacement_stays_account_bounded(monkeypatch):
+    import asyncio
+
+    async with pair(monkeypatch) as (client, source, _target):
+        responses = await asyncio.gather(*[
+            client.post(ROOT + '/links', headers=source, json={'target_platform': 'vk'})
+            for _ in range(4)
+        ])
+        assert all(response.status == 200 for response in responses)
+        ids = [(await response.json())['link']['id'] for response in responses]
+        assert len(set(ids)) == 4
+        async with db_backend.connect() as db:
+            rows = await (await db.execute(
+                "SELECT id FROM shared_account_links WHERE state != 'committed'"
+            )).fetchall()
+        assert len(rows) == 1
+        assert rows[0][0] in ids
+
+
+async def test_create_during_final_confirmation_has_one_lock_order(monkeypatch):
+    import asyncio
+
+    import pytest
+
+    from bot.shared_accounts import links as link_module
+
+    if not db_backend.is_postgres():
+        pytest.skip('PostgreSQL row/advisory lock ordering regression')
+
+    async with pair(monkeypatch) as (client, source, target):
+        created = await (await client.post(
+            ROOT + '/links', headers=source, json={'target_platform': 'vk'}
+        )).json()
+        link = created['link']
+        path = ROOT + '/links/' + link['id']
+        accepted = await (await client.post(
+            path + '/accept', headers=target, json={'token': link['token']}
+        )).json()
+        first = await (await client.post(
+            path + '/confirm',
+            headers=source,
+            json={'expected_revision': accepted['link']['revision']},
+        )).json()
+
+        merge_entered = asyncio.Event()
+        replacement_lock_attempted = asyncio.Event()
+        allow_merge = asyncio.Event()
+        original_merge = link_module.LinkService._merge
+        original_lock = link_module._lock_source
+
+        async def paused_merge(service, db, pending):
+            merge_entered.set()
+            await allow_merge.wait()
+            return await original_merge(service, db, pending)
+
+        async def observed_lock(db, account_id):
+            if merge_entered.is_set():
+                replacement_lock_attempted.set()
+            await original_lock(db, account_id)
+
+        monkeypatch.setattr(link_module.LinkService, '_merge', paused_merge)
+        monkeypatch.setattr(link_module, '_lock_source', observed_lock)
+
+        final_confirmation = asyncio.create_task(client.post(
+            path + '/confirm',
+            headers=target,
+            json={'expected_revision': first['link']['revision']},
+        ))
+        await asyncio.wait_for(merge_entered.wait(), 2)
+        replacement = asyncio.create_task(client.post(
+            ROOT + '/links', headers=source, json={'target_platform': 'vk'}
+        ))
+        await asyncio.wait_for(replacement_lock_attempted.wait(), 2)
+        allow_merge.set()
+        confirmed, replaced = await asyncio.wait_for(
+            asyncio.gather(final_confirmation, replacement),
+            5,
+        )
+        assert confirmed.status == 200
+        # If the source became the merged alias, its already authenticated
+        # create is rejected cleanly; otherwise the replacement succeeds.
+        assert replaced.status in {200, 409}
+
+
 async def test_internal_transfer_keys_cannot_be_claimed_by_clients(monkeypatch):
     async with pair(monkeypatch) as (client, source, target):
         link = (await (await client.post(ROOT + '/links', headers=source, json={'target_platform': 'vk'})).json())['link']
@@ -166,6 +277,52 @@ async def test_reverse_vk_to_telegram_link(monkeypatch):
         first = await (await client.post(path + '/confirm', headers=telegram, json={'expected_revision': accepted['link']['revision']})).json()
         result = await client.post(path + '/confirm', headers=vk, json={'expected_revision': first['link']['revision']})
         assert result.status == 200 and (await result.json())['link']['state'] == 'committed'
+
+
+async def test_ordinary_accounts_complete_two_sided_link_without_admin_access(monkeypatch):
+    from bot import database
+
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    await database.get_or_create_user(1001)
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123, vk_admin_ids=[])
+        telegram = await (await login(client, 1001)).json()
+        vk = await (await client.post(
+            ROOT + '/session', json={'platform': 'vk', 'launch_data': vk_launch(3001)}
+        )).json()
+        telegram_headers = {'Authorization': 'Bearer ' + telegram['session_token']}
+        vk_headers = {'Authorization': 'Bearer ' + vk['session_token']}
+
+        created = await (await client.post(
+            ROOT + '/links', headers=vk_headers, json={'target_platform': 'telegram'}
+        )).json()
+        path = ROOT + '/links/' + created['link']['id']
+        accepted = await (await client.post(
+            ROOT + '/links/accept',
+            headers=telegram_headers,
+            json={'token': created['link']['token']},
+        )).json()
+        telegram_confirmation = await (await client.post(
+            path + '/confirm',
+            headers=telegram_headers,
+            json={'expected_revision': accepted['link']['revision']},
+        )).json()
+        committed = await client.post(
+            path + '/confirm',
+            headers=vk_headers,
+            json={'expected_revision': telegram_confirmation['link']['revision']},
+        )
+        assert committed.status == 200
+        assert (await committed.json())['link']['state'] == 'committed'
+
+        fresh_vk = await (await client.post(
+            ROOT + '/session', json={'platform': 'vk', 'launch_data': vk_launch(3001)}
+        )).json()
+        fresh_headers = {'Authorization': 'Bearer ' + fresh_vk['session_token']}
+        profile = await (await client.get(ROOT + '/me', headers=fresh_headers)).json()
+        assert profile['preview']['linked_platforms'] == ['telegram', 'vk']
+        assert profile['preview']['telegram_linked'] is True
+        assert (await client.get(ROOT + '/wallet', headers=fresh_headers)).status == 403
 
 
 async def test_merge_racing_late_callbacks_conserves_balance(monkeypatch):
