@@ -48,7 +48,9 @@ async def legacy_product_owner(db, account_id: str) -> tuple[int, int] | None:
         return None
     if len(rows) != 1:
         raise AuthenticationError('Ambiguous product owner')
-    owner, telegram, verified = rows[0]
+    # PostgresRow iterates column names; both adapters support positional values.
+    row = rows[0]
+    owner, telegram, verified = row[0], row[1], row[2]
     if telegram is None or verified is None or int(telegram) <= 0 or int(telegram) != int(verified):
         raise AuthenticationError('Product owner does not match verified identity')
     return int(owner), int(telegram)

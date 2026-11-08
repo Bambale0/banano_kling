@@ -136,7 +136,7 @@ async def ownership_snapshot():
     tables = ('shared_accounts', 'shared_account_identities', 'shared_account_legacy_links',
               'shared_wallets', 'shared_wallet_entries', 'shared_wallet_reservations')
     async with db_backend.connect() as db:
-        return {table: sorted([tuple(row) for row in await (await db.execute('SELECT * FROM ' + table)).fetchall()], key=repr)
+        return {table: sorted([tuple(row[index] for index in range(len(row))) for row in await (await db.execute('SELECT * FROM ' + table)).fetchall()], key=repr)
                 for table in tables}
 
 
@@ -161,3 +161,55 @@ async def test_duplicate_platform_rejected_before_commercial_mutation(monkeypatc
         assert (await response.json())['error'] == 'An account already has a different identity on this platform'
         commercial.assert_not_awaited()
         assert await ownership_snapshot() == before
+
+
+@pytest.mark.parametrize('row_kind', ['sqlite', 'postgres'])
+@pytest.mark.parametrize('values', [(7, 1001, 1001), (7, None, 1001), (7, 1001, None), (7, 1001, 1002)])
+async def test_owner_reads_values_with_both_database_row_adapters(row_kind, values):
+    import sqlite3
+    from unittest.mock import AsyncMock
+
+    from bot.postgres_aiosqlite import PostgresCursor
+    from bot.shared_accounts.actor import legacy_product_owner
+
+    columns = ['legacy_user_id', 'telegram_id', 'external_id']
+    if row_kind == 'postgres':
+        cursor = PostgresCursor(rows=[values], columns=columns)
+    else:
+        with sqlite3.connect(':memory:') as connection:
+            connection.row_factory = sqlite3.Row
+            row = connection.execute('SELECT ? AS legacy_user_id, ? AS telegram_id, ? AS external_id', values).fetchone()
+        cursor = AsyncMock()
+        cursor.fetchall.return_value = [row]
+    db = AsyncMock()
+    db.execute.return_value = cursor
+    if values == (7, 1001, 1001):
+        assert await legacy_product_owner(db, 'a' * 32) == (7, 1001)
+    else:
+        with pytest.raises(AuthenticationError):
+            await legacy_product_owner(db, 'a' * 32)
+
+
+async def test_snapshot_detects_postgres_row_value_changes(monkeypatch):
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock
+
+    from bot.postgres_aiosqlite import PostgresCursor
+
+    current_value = 10
+    db = AsyncMock()
+
+    async def execute(_query):
+        return PostgresCursor(rows=[('account', current_value)], columns=['id', 'value'])
+
+    db.execute.side_effect = execute
+
+    @asynccontextmanager
+    async def connect():
+        yield db
+
+    monkeypatch.setattr(db_backend, 'connect', connect)
+    before = await ownership_snapshot()
+    assert before['shared_wallets'] == [('account', 10)]
+    current_value = 11
+    assert await ownership_snapshot() != before

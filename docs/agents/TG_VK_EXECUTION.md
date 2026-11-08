@@ -56,6 +56,22 @@
   membership and retained service/DSN assertions passed. The full workflow Ruff
   command passed; its exact pytest list locally passed192/skipped171 with six
   existing warnings. This is local SQLite evidence, not a native PostgreSQL pass.
+- Native CI correction: published Draft #430 head
+  `0f8c7079bdcdd9b5f4b49f7451b6558021d9c25f` failed the PostgreSQL17 job
+  (run42482718608/job128737963451): 33 failures/330 passes. Five direct actor
+  failures converted the column name telegram_id, 27 failures cascaded from
+  missing session_token (24 delivery, three linking), and one legacy-preview
+  assertion received400. PostgresRow iterates column names, unlike SQLite values.
+  Read owner values by positional indexing; also correct rollback snapshots,
+  whose tuple(row) had silently captured PostgreSQL column names rather than data.
+- Regression evidence: actual PostgresCursor rows reproduced four owner failures
+  and one snapshot failure locally before the fix (five RED). After correction,
+  nine adapter cases pass, including mismatched/missing provenance and snapshot
+  value-change detection. This exercises real adapter objects, not a native DB.
+  Exact workflow list now passes201/skips180 locally with six existing warnings;
+  full workflow Ruff passes. Native PostgreSQL rerun remains required. Local
+  baseline17ee3e7b and published0f8c7079 were verified to have identical tree
+  dd0049f9bc99cc26b4898cd56407b0f3259c1f74 before this correction.
 - PostgreSQL concurrency and production smoke are unverified locally: no isolated
   PostgreSQL binary/runtime is available. Native PostgreSQL CI is required; skips
   are not passes. Full public VK acceptance, actor conversion of resource/admin
