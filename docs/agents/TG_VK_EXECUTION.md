@@ -595,5 +595,24 @@ Release-candidate verification: full backend **4722 passed, 223 skipped, 826 war
   PostgreSQL 17 container, separate from every production database.
 - Existing broad VK/common-wallet release holds remain unchanged. Rollback keeps
   durable generation/outbox state; never fall back to Telegram for VK tasks.
-- Implementation and final verification are in progress; this section does not
-  claim the correcting release is deployed.
+- Implemented callback completion before the Telegram lease path for all supported
+  Kling shapes, including direct-string fallback output. VK callbacks retain
+  actual author/inviter credit idempotency, recover a missed first reward on
+  replay, preserve the original result, and atomically refund confirmed failures
+  once without Telegram notification. Empty legacy resultUrls no longer raises.
+- Kling 4 launch persists verified origin. Delivery after restart uses only that
+  durable snapshot, calls in-app completion, and marks `available_in_app`; claim,
+  tick and retention filters include that terminal state. Telegram is unchanged.
+- Final local safe Linux suite: 4831 passed, 253 expected skips, 76 subtests passed
+  (385.08 seconds). Native isolated PostgreSQL runtime matrix: 35 passed, including
+  TG/VK success/failure and restarted-worker replay. Temporary PG container was
+  removed after validation. New callback/lifecycle matrix: 25 passed.
+- Python compile, Ruff changed-line gate (0 findings) and whitespace checks passed.
+  Independent source and final status-transition review found no blockers.
+  Primary diagnosing-bugs/TDD/code-review, Claw backend/release guidance and
+  relevant Anthropic testing guidance were inspected. No new UI was introduced;
+  existing HTTP/service/outbox behavior is covered and required browser CI remains.
+- Source implementation is local commit `0af8e799`; no corrective PR, remote branch,
+  production CI or production deployment has completed. Publication is pending;
+  exact remote head, protected gates, deploy SHA, health and post-release telemetry
+  must still be verified before calling this correcting release deployed.
