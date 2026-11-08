@@ -153,7 +153,7 @@ function BirthFields({ prefix, heading }: { prefix: string; heading?: string }) 
   return (
     <div className="astro-birth-fields">
       {heading && <h3 className="astro-form-heading">{heading}</h3>}
-      <label className="astro-field">
+      <div className="astro-field">
         <CalendarDays className="astro-field-icon" aria-hidden="true" />
         <span className="astro-field-body">
           <span className="astro-field-label">Дата рождения</span>
@@ -166,7 +166,7 @@ function BirthFields({ prefix, heading }: { prefix: string; heading?: string }) 
           <input tabIndex={-1} aria-hidden="true" type="date" className="astro-native-picker"
             onChange={(event) => setDate(dateFromPicker(event.target.value))} />
         </span>
-      </label>
+      </div>
       <label className="astro-field">
         <Clock3 className="astro-field-icon" aria-hidden="true" />
         <span className="astro-field-body">
@@ -195,6 +195,10 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
+    if (['lunar', 'year', 'month', 'solar'].includes(service.id) && !period) {
+      setMessage('Выберите период для расчёта.')
+      return
+    }
     // Never imitate an astronomical calculation or send sensitive birth data to a nonexistent API.
     if (service.id !== 'lunar') {
       const dates = service.id === 'compatibility' ? ['person-date', 'partner-date'] : ['person-date']
