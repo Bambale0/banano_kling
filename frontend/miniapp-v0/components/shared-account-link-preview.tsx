@@ -120,7 +120,7 @@ export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '', po
       }).finally(() => { checking = false })
     }, 4000)
     return () => { controller.abort(); window.clearInterval(timer) }
-  }, [link?.id, link?.state, url, applyLink])
+  }, [link, url, applyLink])
 
   function beginLink(target: AccountPlatform) {
     if (busy || currentAccountPlatform() === target) return
