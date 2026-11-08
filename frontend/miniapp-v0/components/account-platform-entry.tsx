@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react'
 import { SharedAccountLinkPreview } from '@/components/shared-account-link-preview'
+import { incomingAccountLink } from '@/lib/account-platform'
 import {
   startAccountAppSession,
   stopAccountAppSession,
@@ -53,15 +54,26 @@ function VkAccountGate({ children }: { children: ReactNode }) {
 
 export function AccountPlatformEntry({ children }: { children: ReactNode }) {
   const [platform, setPlatform] = useState<'telegram' | 'vk' | 'vk-launch-required' | null>(null)
+  const [telegramInvitation, setTelegramInvitation] = useState(false)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
-    setPlatform(params.has('vk_app_id') || params.has('vk_user_id') ? 'vk'
+    const vkSigned = params.has('vk_app_id') || params.has('vk_user_id')
+    setPlatform(vkSigned ? 'vk'
       : process.env.NEXT_PUBLIC_MINIAPP_PLATFORM === 'vk' ? 'vk-launch-required' : 'telegram')
+    if (!vkSigned && process.env.NEXT_PUBLIC_MINIAPP_PLATFORM !== 'vk') {
+      setTelegramInvitation(Boolean(incomingAccountLink()))
+    }
   }, [])
   // Do not mount the shared application store before VK authentication finishes.
   if (platform === null) return null
   if (platform === 'vk-launch-required') {
     return <main className="mx-auto min-h-dvh w-full max-w-lg p-6"><p role="status">Откройте приложение из ВКонтакте.</p></main>
+  }
+  if (platform === 'telegram' && telegramInvitation) {
+    return <main className="mx-auto min-h-dvh w-full max-w-lg space-y-4 p-4" aria-label="Подтверждение Telegram">
+      <h1 className="text-xl font-semibold">Привязка Telegram и ВКонтакте</h1>
+      <SharedAccountLinkPreview vkAppId={null} onCommitted={() => setTelegramInvitation(false)} />
+    </main>
   }
   return platform === 'vk' ? <VkAccountGate>{children}</VkAccountGate> : children
 }
