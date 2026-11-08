@@ -560,6 +560,10 @@ async def test_seedance20_private_trend_launches_typed_hidden_references(monkeyp
         telegram_id=123,
         user=SimpleNamespace(id=9, credits=100),
         trend=run,
+        origin_platform="vk",
+        origin_vk_user_id=2001,
+        origin_account_id="a" * 32,
+        vk_chat_delivery_requested=True,
     )
 
     assert response.status == 200
@@ -576,6 +580,10 @@ async def test_seedance20_private_trend_launches_typed_hidden_references(monkeyp
         "video": 1,
         "audio": 0,
     }
+    assert kwargs["origin_platform"] == "vk"
+    assert kwargs["origin_vk_user_id"] == 2001
+    assert kwargs["origin_account_id"] == "a" * 32
+    assert kwargs["vk_chat_delivery_requested"] is True
 
 
 def test_trend_run_request_accepts_bounded_client_request_id():
@@ -1124,7 +1132,13 @@ async def test_video_trend_quote_is_read_only_and_requires_exact_price_approval(
         reference_video_seconds=8.0,
     )
     monkeypatch.setattr(miniapp_module, "_get_user_context", AsyncMock(
-        return_value=(123, {"user": SimpleNamespace(id=9, credits=100)}),
+        return_value=(123, {
+            "user": SimpleNamespace(id=9, credits=100),
+            "platform": "vk",
+            "platform_external_id": 2001,
+            "shared_account_id": "a" * 32,
+            "vk_chat_delivery_requested": True,
+        }),
     ))
     monkeypatch.setattr(service, "get_prompt_by_id", AsyncMock(
         return_value={"id": 71, "model": "seedance_2", "generation_settings": {}},
@@ -1177,3 +1191,7 @@ async def test_video_trend_quote_is_read_only_and_requires_exact_price_approval(
     assert approved.status == 200
     launch.assert_awaited_once()
     assert launch.await_args.kwargs["billing_quote"] == measured
+    assert launch.await_args.kwargs["origin_platform"] == "vk"
+    assert launch.await_args.kwargs["origin_vk_user_id"] == 2001
+    assert launch.await_args.kwargs["origin_account_id"] == "a" * 32
+    assert launch.await_args.kwargs["vk_chat_delivery_requested"] is True

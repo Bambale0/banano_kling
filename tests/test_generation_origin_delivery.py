@@ -57,6 +57,8 @@ async def test_image_http_uses_verified_origin_for_notifications(monkeypatch, ma
     bot = SimpleNamespace(send_message=AsyncMock(), send_document=AsyncMock(), get_chat=AsyncMock())
     body = {"init_data": "signed-vk-session", "prompt": "Synthetic portrait",
             "img_service": "banana_pro", "img_ratio": "9:16", "img_quality": "2K",
+            "origin_vk_user_id": 666, "origin_account_id": "b" * 32,
+            "vk_chat_delivery_requested": True,
             "platform": "telegram" if origin_platform == "vk" else "vk"}
 
     class Request:
@@ -67,7 +69,7 @@ async def test_image_http_uses_verified_origin_for_notifications(monkeypatch, ma
             return body
 
     monkeypatch.setattr(miniapp, "_get_user_context", AsyncMock(return_value=(880021, {
-        "user": user, "platform": origin_platform, "platform_external_id": 2001,
+        "user": user, "platform": origin_platform, "platform_external_id": 2001, "shared_account_id": "a" * 32,
     })))
     monkeypatch.setattr(miniapp, "_resolve_actor_image_unit_cost", AsyncMock(return_value=1))
     monkeypatch.setattr(miniapp, "check_can_afford", AsyncMock(return_value=True))
@@ -83,6 +85,9 @@ async def test_image_http_uses_verified_origin_for_notifications(monkeypatch, ma
     response = await miniapp.miniapp_generate_image(Request())
     assert response.status == 200, response.text
     assert launch.await_args.kwargs["origin_platform"] == origin_platform
+    assert launch.await_args.kwargs["origin_vk_user_id"] == (2001 if origin_platform == "vk" else None)
+    assert launch.await_args.kwargs["origin_account_id"] == ("a" * 32 if origin_platform == "vk" else None)
+    assert launch.await_args.kwargs["vk_chat_delivery_requested"] is False
     assert bot.send_message.await_count == (1 if origin_platform == "telegram" else 0)
     assert bot.send_document.await_count == (1 if origin_platform == "telegram" and status == "done" else 0)
 
@@ -165,11 +170,16 @@ async def test_provider_id_replacement_retains_the_verified_vk_origin(monkeypatc
     result = await generation._start_image_generation_task(
         user=user, telegram_id=880021, img_service="banana_pro", prompt="Synthetic VK portrait",
         img_ratio="9:16", reference_images=[], unit_cost=0, img_quality="2K", origin_platform="vk",
+        origin_vk_user_id=2001, origin_account_id="a" * 32,
+        vk_chat_delivery_requested=True,
     )
     assert result["status"] == "queued"
     task = await database.get_task_by_id(result["task_id"])
     metadata = json.loads(task.request_data)
     assert metadata["origin_platform"] == "vk"
+    assert metadata["origin_vk_user_id"] == 2001
+    assert metadata["origin_account_id"] == "a" * 32
+    assert metadata["vk_chat_delivery_requested"] is True
     assert metadata["provider_task_id"] == "vk-rendergrid-provider"
 
 
@@ -202,7 +212,7 @@ async def test_interleaved_in_app_completions_cannot_replace_a_terminal_url(monk
     async def controlled_read(task_id):
         task = await read(task_id)
         name = asyncio.current_task().get_name()
-        if (name in ready and name not in paused and task and task.result_url == urls[name]
+        if (name in ready and name not in paused and task and task.result_url == urls["vk-completion-a"]
                 and json.loads(task.request_data).get("delivery_status") != "available_in_app"):
             paused.add(name)
             ready[name].set()
@@ -301,3 +311,83 @@ async def test_vk_image_callback_keeps_settlement_without_telegram(monkeypatch, 
     bot.send_document.assert_not_awaited()
     bot.send_message.assert_not_awaited()
     bot.get_chat.assert_not_awaited()
+
+
+from bot.creator_tariff import VideoQuote
+from bot.services.generation_origin import (
+    generation_origin_from_context,
+    generation_origin_metadata,
+)
+
+
+def admin_quote(model: str = "seedance_2") -> VideoQuote:
+    return VideoQuote(
+        model=model,
+        duration=5,
+        quality="720p",
+        cost=0,
+        charge_cost=0,
+        profile="admin",
+        base_cost=0,
+        reference_multiplier=1,
+        revision="synthetic",
+    )
+
+
+def test_generation_origin_uses_only_validated_server_context():
+    assert generation_origin_from_context({}) == {"origin_platform": "telegram"}
+    assert generation_origin_from_context({
+        "platform": "vk",
+        "platform_external_id": 2001,
+        "shared_account_id": "a" * 32,
+        "vk_chat_delivery_requested": True,
+    }) == {
+        "origin_platform": "vk",
+        "origin_vk_user_id": 2001,
+        "origin_account_id": "a" * 32,
+        "vk_chat_delivery_requested": True,
+    }
+    with pytest.raises(ValueError, match="invalid_vk_recipient"):
+        generation_origin_metadata(
+            origin_platform="vk",
+            origin_vk_user_id=None,
+            origin_account_id="a" * 32,
+        )
+
+
+@pytest.mark.asyncio
+async def test_generic_vk_video_launch_persists_destination(monkeypatch):
+    from bot.services.seedance_service import seedance_service
+
+    user = await database.get_or_create_user(880201)
+    monkeypatch.setattr(
+        seedance_service,
+        "generate_video",
+        AsyncMock(return_value={"task_id": "vk-generic-video"}),
+    )
+
+    result = await miniapp._launch_video_generation_task(
+        telegram_id=user.telegram_id,
+        user=user,
+        model="seedance_2",
+        prompt="Synthetic VK video",
+        duration=5,
+        aspect_ratio="9:16",
+        generation_type="text",
+        image_url=None,
+        image_references=[],
+        video_references=[],
+        billing_quote=admin_quote(),
+        origin_platform="vk",
+        origin_vk_user_id=2001,
+        origin_account_id="a" * 32,
+        vk_chat_delivery_requested=True,
+    )
+
+    assert result["status"] == "queued"
+    task = await database.get_task_by_id("vk-generic-video")
+    metadata = json.loads(task.request_data)
+    assert metadata["origin_platform"] == "vk"
+    assert metadata["origin_vk_user_id"] == 2001
+    assert metadata["origin_account_id"] == "a" * 32
+    assert metadata["vk_chat_delivery_requested"] is True

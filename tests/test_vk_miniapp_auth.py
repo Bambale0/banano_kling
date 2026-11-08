@@ -1,9 +1,13 @@
 """VK Mini App sessions reuse the linked Telegram application identity."""
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from bot import db as db_backend
+from bot import miniapp
 from bot.browser_auth import trend_prompt_privacy_middleware
 from bot.miniapp import _get_user_context
 from bot.shared_accounts.auth import VerifiedIdentity
@@ -68,6 +72,7 @@ async def test_vk_session_reuses_linked_user_balance_and_identity(isolated_datab
     assert telegram_id == ADMIN
     assert context["platform"] == "vk"
     assert context["platform_external_id"] == VK_ADMIN
+    assert context["vk_app_id"] == 123
     assert context["payload"]["user"] == {
         "id": ADMIN, "username": "linked_admin", "first_name": "Таня",
         "last_name": "Admin", "photo_url": "https://example.test/avatar.jpg",
@@ -143,3 +148,82 @@ async def test_vk_linked_admin_keeps_admin_trend_response(isolated_database):
         prompt = (await response.json())["prompts"][0]
         assert prompt["successful_runs_count"] == 7
         assert prompt["uses_count"] == 7
+
+
+async def test_vk_copy_trend_link_stays_inside_vk(monkeypatch):
+    actor = SimpleNamespace(id=1, referral_code="VKCODE")
+    monkeypatch.setattr(
+        miniapp,
+        "_get_user_context",
+        AsyncMock(return_value=(ADMIN, {
+            "platform": "vk",
+            "vk_app_id": 54880352,
+            "user": actor,
+        })),
+    )
+    monkeypatch.setattr(
+        miniapp,
+        "get_prompt_by_id",
+        AsyncMock(return_value={
+            "id": 42,
+            "status": "approved",
+            "is_public": True,
+            "author_id": 2,
+            "prompt_text": "",
+        }),
+    )
+    app = web.Application()
+    app["bot"] = SimpleNamespace(
+        get_me=AsyncMock(return_value=SimpleNamespace(username="fixture_bot"))
+    )
+    app.router.add_post("/mini-app/api/prompts/link", miniapp.miniapp_prompt_link)
+    async with TestClient(TestServer(app)) as client:
+        response = await client.post(
+            "/mini-app/api/prompts/link",
+            json={"init_data": "vk_session:test", "prompt_id": 42},
+        )
+        assert response.status == 200
+        payload = await response.json()
+    assert payload["link"] == (
+        "https://vk.com/app54880352#prompt_42_ref_VKCODE"
+    )
+
+
+async def test_vk_partner_links_stay_inside_vk(monkeypatch):
+    actor = SimpleNamespace(referral_code="VKCODE", channel_url="")
+    monkeypatch.setattr(
+        miniapp,
+        "_get_user_context",
+        AsyncMock(return_value=(ADMIN, {
+            "platform": "vk",
+            "vk_app_id": 54880352,
+            "user": actor,
+        })),
+    )
+    monkeypatch.setattr(miniapp, "get_or_create_user", AsyncMock(return_value=actor))
+    monkeypatch.setattr(
+        miniapp,
+        "get_partner_overview",
+        AsyncMock(return_value={
+            "is_partner": True,
+            "percent": 40,
+            "level2_percent": 0,
+            "referrals_count": 2,
+            "balance_rub": 0,
+        }),
+    )
+    app = web.Application()
+    app["bot"] = SimpleNamespace(
+        get_me=AsyncMock(return_value=SimpleNamespace(username="fixture_bot"))
+    )
+    app.router.add_post("/mini-app/api/partner", miniapp.miniapp_partner_overview)
+    async with TestClient(TestServer(app)) as client:
+        response = await client.post(
+            "/mini-app/api/partner",
+            json={"init_data": "vk_session:test"},
+        )
+        assert response.status == 200
+        payload = await response.json()
+    expected = "https://vk.com/app54880352#ref_VKCODE"
+    assert payload["referral_link"] == expected
+    assert payload["referral_bot_link"] == expected

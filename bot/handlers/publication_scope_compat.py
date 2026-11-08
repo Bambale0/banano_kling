@@ -1008,9 +1008,15 @@ async def _miniapp_generation_share_scoped(module, request):
         async def with_publication_link(card):
             me = await request.app["bot"].get_me()
             referral_code = str(card.get("author_referral_code") or "").strip().upper()
+            link_kwargs = module._miniapp_link_kwargs(ctx)
             card["publication_link"] = (
-                module.build_feed_link(me.username, card["id"], referral_code)
-                if me.username
+                module.build_feed_link(
+                    me.username,
+                    card["id"],
+                    referral_code,
+                    **link_kwargs,
+                )
+                if me.username or link_kwargs.get("platform") == "vk"
                 else module.config.mini_app_url
             )
             return card

@@ -15,6 +15,7 @@ from pathlib import Path
 import aiohttp
 
 from bot import database, db
+from bot.services.generation_origin import generation_origin_from_context
 from bot.services.kling4_contract import (
     DEFAULT_SETTINGS,
     Kling4Error,
@@ -389,6 +390,9 @@ class Kling4Lifecycle:
                 },
                 accepted=False,
                 invite_eligible=not actor.is_admin,
+            )
+            metadata.update(
+                generation_origin_from_context(getattr(actor, "miniapp_context", None))
             )
             charge_cost = float(quote["charge_cost"])
             if charge_cost > 0:
@@ -766,14 +770,23 @@ class Kling4Lifecycle:
                 await conn.commit()
 
     async def deliver(self, task_id):
-        if not self.telegram_bot:
-            return
         row = await self._row(task_id)
         if not row:
             return
+        # A restarted worker has no launch actor. Route only from the durable,
+        # server-verified snapshot, never from the linked Telegram identity.
+        task = await database.get_task_by_id(task_id)
+        if not task:
+            return
+        metadata = json.loads(task.request_data or "{}")
+        if not isinstance(metadata, dict):
+            raise TypeError("Invalid Kling4 task metadata")
+        vk_origin = metadata.get("origin_platform") == "vk"
+        if not vk_origin and not self.telegram_bot:
+            return
         async with db.connect(database.DATABASE_PATH) as conn:
             claimed = await conn.execute(
-                "UPDATE kling4_intents SET delivery_status='sending',lease_until=? WHERE task_id=? AND status IN ('done','failed') AND delivery_status<>'delivered' AND lease_until<?",
+                "UPDATE kling4_intents SET delivery_status='sending',lease_until=? WHERE task_id=? AND status IN ('done','failed') AND delivery_status NOT IN ('delivered','available_in_app') AND lease_until<?",
                 (time.time() + 120, task_id, time.time()),
             )
             await conn.commit()
@@ -781,6 +794,17 @@ class Kling4Lifecycle:
             return
         delivered = False
         try:
+            if vk_origin:
+                if row["status"] == "done" and (
+                    not row["result_url"] or not await database.complete_task_in_app(
+                        task_id, str(row["result_url"])
+                    )
+                ):
+                    raise RuntimeError("Kling4 in-app completion deferred")
+                # Failures/refunds already live in history. Do not notify the
+                # linked Telegram chat or enqueue a successful VK result.
+                delivered = True
+                return
             if row["status"] == "failed":
                 refund = float(row.get("refunded_credits") or 0)
                 billing = (
@@ -820,7 +844,11 @@ class Kling4Lifecycle:
             async with db.connect(database.DATABASE_PATH) as conn:
                 await conn.execute(
                     "UPDATE kling4_intents SET delivery_status=?,delivery_attempts=delivery_attempts+1,lease_until=0 WHERE task_id=?",
-                    ("delivered" if delivered else "retry", task_id),
+                    (
+                        ("available_in_app" if vk_origin else "delivered")
+                        if delivered else "retry",
+                        task_id,
+                    ),
                 )
                 await conn.commit()
 
@@ -832,7 +860,7 @@ class Kling4Lifecycle:
             )
             rows = await (
                 await conn.execute(
-                    "SELECT task_id,status FROM kling4_intents WHERE status='pending' OR (status IN ('done','failed') AND delivery_status<>'delivered' AND delivery_attempts<5) LIMIT 30"
+                    "SELECT task_id,status FROM kling4_intents WHERE status='pending' OR (status IN ('done','failed') AND delivery_status NOT IN ('delivered','available_in_app') AND delivery_attempts<5) LIMIT 30"
                 )
             ).fetchall()
             await conn.commit()
@@ -860,7 +888,7 @@ class Kling4Lifecycle:
             conn.row_factory = db.Row
             rows = await (
                 await conn.execute(
-                    "SELECT task_id,result_path FROM kling4_intents WHERE status='done' AND delivery_status='delivered' AND result_path IS NOT NULL AND created_epoch<? AND NOT EXISTS (SELECT 1 FROM generation_tasks g WHERE g.task_id=kling4_intents.task_id AND (COALESCE(g.is_public_feed,FALSE) OR COALESCE(g.is_profile_visible,FALSE))) ORDER BY created_epoch LIMIT 20",
+                    "SELECT task_id,result_path FROM kling4_intents WHERE status='done' AND delivery_status IN ('delivered','available_in_app') AND result_path IS NOT NULL AND created_epoch<? AND NOT EXISTS (SELECT 1 FROM generation_tasks g WHERE g.task_id=kling4_intents.task_id AND (COALESCE(g.is_public_feed,FALSE) OR COALESCE(g.is_profile_visible,FALSE))) ORDER BY created_epoch LIMIT 20",
                     (cutoff,),
                 )
             ).fetchall()

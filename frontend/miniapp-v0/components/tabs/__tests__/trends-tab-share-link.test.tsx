@@ -26,6 +26,7 @@ const openTelegramLink = jest.fn()
 
 beforeEach(() => {
   jest.clearAllMocks()
+  window.history.replaceState({}, '', '/')
   ;(useApp as jest.Mock).mockReturnValue({
     state: { mode: 'live', user: { isAdmin: false }, imageModels: [
       { id: 'banana_pro', label: 'Nano Banana Pro', description: '', cost: 2, ratios: ['1:1'], max_references: 8 },
@@ -149,4 +150,20 @@ it('discards a late response after dismissing the share dialog', async () => {
   await within(fresh).findByRole('textbox', { name: 'Ссылка на тренд' })
   expect(within(fresh).getByRole('textbox', { name: 'Ссылка на тренд' })).toHaveValue(link)
   expect(fetchPromptLink).toHaveBeenCalledTimes(2)
+})
+
+
+it('keeps a VK trend link and forwarding action inside VK', async () => {
+  const vkLink = 'https://vk.com/app54880352#prompt_1606_ref_VKCODE'
+  window.history.replaceState({}, '', '/?vk_app_id=54880352#prompt_1606_ref_VKCODE')
+  ;(fetchPromptLink as jest.Mock).mockResolvedValueOnce(vkLink)
+  const dialog = await openShare()
+  expect(within(dialog).getByRole('textbox', { name: 'Ссылка на тренд' })).toHaveValue(vkLink)
+  const forward = within(dialog).getByRole('link', { name: 'Поделиться в ВК' })
+  expect(forward).toHaveAttribute(
+    'href',
+    'https://vk.com/share.php?url=' + encodeURIComponent(vkLink),
+  )
+  expect(within(dialog).queryByRole('link', { name: 'Поделиться в Telegram' }))
+    .not.toBeInTheDocument()
 })

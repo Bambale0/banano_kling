@@ -26,8 +26,16 @@ export function tryOpenTelegramShareLink(value: string): boolean {
   }
 }
 
-/** Construct a Telegram share-sheet link without changing the signed remix URL. */
-export function telegramForwardLink(value: string): string | null {
+/** Construct the current platform's share-sheet link without changing the deep link. */
+export function platformForwardLink(value: string, platform: 'telegram' | 'vk'): string | null {
   if (!isNavigableShareLink(value)) return null
-  return `https://t.me/share/url?url=${encodeURIComponent(value)}`
+  const encoded = encodeURIComponent(value)
+  return platform === 'vk'
+    ? `https://vk.com/share.php?url=${encoded}`
+    : `https://t.me/share/url?url=${encoded}`
+}
+
+/** Backward-compatible Telegram helper for callers outside the shared Mini App UI. */
+export function telegramForwardLink(value: string): string | null {
+  return platformForwardLink(value, 'telegram')
 }

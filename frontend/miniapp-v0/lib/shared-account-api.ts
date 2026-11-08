@@ -9,6 +9,11 @@ export interface AccountPreviewSettings {
   session_ttl_seconds: number
   launch_max_age_seconds: number
   link_ttl_seconds?: number
+  vk_community_id?: number | null
+  vk_result_delivery_enabled?: boolean
+  vk_delivery_max_attempts?: number
+  vk_delivery_retry_seconds?: number
+  vk_result_message_template?: string
 }
 
 async function request<T>(path: string, init: RequestInit): Promise<T> {
@@ -22,12 +27,25 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
     const result = await response.json().catch(() => ({}))
     throw new Error(result.error_code === 'commerce_invalid' ? result.error : 'Проверьте значения настроек.')
   }
+  if (response.status === 400 && path === 'settings') {
+    const result = await response.json().catch(() => ({}))
+    throw new Error(result.error_code === 'vk_sender_unconfigured'
+      ? 'Сначала подключите отправителя выбранного сообщества ВК на сервере.'
+      : 'Проверьте значения настроек и текст сообщения ВК.')
+  }
+  if (response.status === 409 && path.startsWith('vk-deliveries/')) {
+    const result = await response.json().catch(() => ({}))
+    throw new Error(result.error_code === 'vk_delivery_uncertain'
+      ? 'ВК не подтвердил отправку. Проверьте чат перед повторными действиями.'
+      : 'Доставка пока недоступна или её статус изменился. Обновите статус.')
+  }
   if (response.status === 409) throw new Error(path.startsWith('links') ? 'Состояние связи или индивидуальные условия изменились. Обновите статус и проверьте настройки аккаунтов.' : path === 'wallet' ? 'Операция уже обработана с другими параметрами или резерв закрыт.' : 'Настройки изменились. Обновите страницу.')
   if (response.status === 410) throw new Error('Ссылка истекла или отменена. Создайте новую.')
   if (response.status === 401) throw new Error('Откройте приложение заново для подтверждения входа.')
   if (response.status === 403) throw new Error('Требуется доступ администратора.')
   if (response.status === 402) throw new Error('Недостаточно доступных тестовых средств.')
-  if (response.status === 404) throw new Error('Проверка аккаунтов пока выключена.')
+  if (response.status === 404) throw new Error(path.startsWith('vk-deliveries/')
+    ? 'Результат или доставка сейчас недоступны. Обновите список задач.' : 'Проверка аккаунтов пока выключена.')
   if (!response.ok) throw new Error('Не удалось выполнить запрос. Попробуйте ещё раз.')
   const result = await response.json()
   if (!result.ok) throw new Error('Не удалось выполнить запрос. Попробуйте ещё раз.')
@@ -232,6 +250,42 @@ export async function removeAccountReferencePhoto(id: string, signal?: AbortSign
     await photoJSON(await photoRequest(`/${id}`, headers, { method: 'DELETE', signal }))
   }, signal)
 }
+
+export type VkChatDeliveryState = 'not_applicable' | 'not_requested' | 'pending' | 'preparing' | 'sending'
+  | 'delivered' | 'permission_required' | 'uncertain' | 'failed' | 'access_revoked' | 'configuration_required' | 'disabled'
+export interface VkChatDeliveryStatus {
+  state: VkChatDeliveryState
+  community_id: number | null
+  can_request: boolean
+  representation?: 'photo' | 'link' | null
+}
+
+async function vkChatDelivery(taskId: string, post: boolean, signal?: AbortSignal): Promise<VkChatDeliveryStatus> {
+  if (!taskId || taskId.length > 200) throw new Error('Откройте результат заново.')
+  try {
+    return await withPreviewSession(async headers => {
+      const payload = await request<{ delivery: VkChatDeliveryStatus }>(`vk-deliveries/${encodeURIComponent(taskId)}`, {
+        method: post ? 'POST' : 'GET', headers, signal, ...(post ? { body: '{}' } : {}),
+      })
+      const delivery = payload.delivery
+      const states: VkChatDeliveryState[] = ['not_applicable', 'not_requested', 'pending', 'preparing', 'sending', 'delivered',
+        'permission_required', 'uncertain', 'failed', 'access_revoked', 'configuration_required', 'disabled']
+      if (!delivery || !states.includes(delivery.state) || typeof delivery.can_request !== 'boolean'
+        || (delivery.community_id !== null && (!Number.isSafeInteger(delivery.community_id) || delivery.community_id <= 0))
+        || (delivery.representation != null && !['photo', 'link'].includes(delivery.representation))) {
+        throw new Error('Не удалось прочитать статус доставки. Обновите его.')
+      }
+      return { state: delivery.state, community_id: delivery.community_id, can_request: delivery.can_request,
+        representation: delivery.representation ?? null }
+    }, signal)
+  } catch (failure) {
+    if (failure instanceof TypeError || failure instanceof SyntaxError) throw new Error('Не удалось проверить доставку. Попробуйте ещё раз.')
+    throw failure
+  }
+}
+
+export const fetchVkChatDelivery = (taskId: string, signal?: AbortSignal) => vkChatDelivery(taskId, false, signal)
+export const requestVkChatDelivery = (taskId: string, signal?: AbortSignal) => vkChatDelivery(taskId, true, signal)
 
 export interface PreviewWalletReceipt {
   operation_key: string

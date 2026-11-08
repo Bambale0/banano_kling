@@ -1303,6 +1303,9 @@ async def _start_image_generation_task(
     prompt_source_id: Optional[int] = None,
     private_recipe: bool = False,
     origin_platform: str = "telegram",
+    origin_vk_user_id: int | None = None,
+    origin_account_id: str | None = None,
+    vk_chat_delivery_requested: bool = False,
     on_task_created=None,
 ):
     """Launch one image generation task and persist enough data for repeats."""
@@ -1310,6 +1313,12 @@ async def _start_image_generation_task(
     if origin_platform not in {"telegram", "vk"}:
         return {"status": "failed", "task_id": None,
                 "runtime_img_service": runtime_img_service, "error": "invalid_origin_platform"}
+    if origin_platform == "vk" and (
+        type(origin_vk_user_id) is not int or origin_vk_user_id <= 0
+        or not isinstance(origin_account_id, str) or not re.fullmatch(r"[0-9a-f]{32}", origin_account_id)
+    ):
+        return {"status": "failed", "task_id": None,
+                "runtime_img_service": runtime_img_service, "error": "invalid_vk_recipient"}
     private_refs = _snapshot_reference_images(private_repeat_reference_images or [])
     try:
         if source_feed_gen_id and private_repeat_reference_images is None:
@@ -1395,6 +1404,9 @@ async def _start_image_generation_task(
     request_snapshot = {
         "img_service": img_service,
         "origin_platform": origin_platform,
+        **({"origin_vk_user_id": origin_vk_user_id, "origin_account_id": origin_account_id,
+            "vk_chat_delivery_requested": vk_chat_delivery_requested is True}
+           if origin_platform == "vk" else {}),
         "prompt": prompt,
         "img_ratio": img_ratio,
         "reference_images": reference_images,

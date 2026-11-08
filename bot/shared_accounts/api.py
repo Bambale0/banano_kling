@@ -14,7 +14,7 @@ from .commercial import CommercialValidation
 from .commercial_store import CommercialStore
 from .errors import AuthenticationError, PreviewConflict
 from .links import LinkExpired, LinkService
-from .policy import load_policy, save_policy
+from .policy import VKDeliveryConfigurationError, load_policy, save_policy
 from .references import AccountReferenceError, AccountReferenceStore
 from .store import (
     create_session,
@@ -281,6 +281,8 @@ def _guard(handler):
             return response({'ok': False, 'error': 'Insufficient available balance'}, 402)
         except CommercialValidation as exc:
             return response({'ok': False, 'error': str(exc), 'error_code': 'commerce_invalid'}, 400)
+        except VKDeliveryConfigurationError:
+            return response({'ok': False, 'error_code': 'vk_sender_unconfigured'}, 400)
         except (ValueError, TypeError):
             return response({'ok': False, 'error': 'Invalid request'}, 400)
         except Exception as exc:  # noqa: BLE001 - HTTP boundary returns a stable, redacted failure.
@@ -291,8 +293,14 @@ def _guard(handler):
 
 
 def setup_shared_account_routes(app: web.Application, miniapp_root: str) -> None:
+    from .vk_delivery import vk_delivery
+
     root = miniapp_root + '/api/account-preview'
     app[REFERENCE_STORE] = AccountReferenceStore()
+
+    app.router.add_get(root + '/vk-deliveries/{task_id}', _guard(vk_delivery))
+    # Auth and bounded JSON belong to this route, not the legacy body guard.
+    app.router.add_route('POST', root + '/vk-deliveries/{task_id}', _guard(vk_delivery))
     app.router.add_get(root + '/settings', _guard(settings))
     app.router.add_put(root + '/settings', _guard(settings))
     app.router.add_post(root + '/session', _guard(session))

@@ -34,6 +34,7 @@ from PIL import Image
 
 from bot import db as db_backend
 from bot.config import config
+from bot.services.generation_origin import generation_origin_from_context
 from bot.services.kie_market_service import kie_market_service
 from bot.services.kie_webhook_verification import serialize_kie_callback
 from bot.services.delivery_state import (
@@ -514,6 +515,7 @@ async def _miniapp_seedance25_generate(request: web.Request, body: dict[str, Any
         prompt=prompt,
         cost=0.0,
         request_data={
+            **generation_origin_from_context(ctx),
             "source": "miniapp",
             "preview": "seedance_2_5_admin",
             "v_model": MODEL_KEY,
@@ -1520,6 +1522,11 @@ async def _process_seedance25_payload(app: web.Application, payload: dict[str, A
     if row_status == "failed":
         return True
     if row_status == "completed":
+        if request_data.get("origin_platform") == "vk":
+            from bot.database import complete_task_in_app
+
+            result_url = str(row["result_url"] or "")
+            return bool(result_url and await complete_task_in_app(task_id, result_url))
         delivery_status = str(request_data.get("delivery_status") or "").lower()
         if not delivery_status or delivery_status in TERMINAL_TASK_DELIVERY_STATUSES:
             return True
@@ -1552,6 +1559,8 @@ async def _process_seedance25_payload(app: web.Application, payload: dict[str, A
                 )
                 return False
         await _store_task_result(task_id, None, [], success=False)
+        if request_data.get("origin_platform") == "vk":
+            return True
         from bot.database import can_attempt_telegram_delivery
 
         if not await can_attempt_telegram_delivery(telegram_id):
@@ -1606,6 +1615,11 @@ async def _process_seedance25_payload(app: web.Application, payload: dict[str, A
         return False
 
     await _store_task_result(task_id, video_url, urls, success=True)
+
+    if request_data.get("origin_platform") == "vk":
+        from bot.database import complete_task_in_app
+
+        return await complete_task_in_app(task_id, video_url)
 
     if not await _can_attempt_seedance25_result_delivery(app, telegram_id):
         await _mark_seedance25_delivery(

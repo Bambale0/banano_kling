@@ -37,6 +37,21 @@ test('administrator can enable access only for administrators', async () => {
   expect(await screen.findByText('Настройки сохранены.')).toBeInTheDocument()
 })
 
+test('administrator edits VK delivery policy and copy through the audited settings API', async () => {
+  const deliveryPolicy = { ...policy, vk_community_id: 456, vk_result_delivery_enabled: false,
+    vk_delivery_max_attempts: 3, vk_delivery_retry_seconds: 30, vk_result_message_template: 'Ready {result_url}' }
+  jest.mocked(fetchAccountPreviewSettings).mockResolvedValue(deliveryPolicy)
+  jest.mocked(saveAccountPreviewSettings).mockResolvedValue({ ...deliveryPolicy, vk_result_delivery_enabled: true, revision: 1 })
+  render(<SharedAccountPreview isAdmin />)
+  fireEvent.click(screen.getByText('Настройки общих аккаунтов'))
+  fireEvent.click(await screen.findByLabelText('Отправлять готовые фото в ВК'))
+  fireEvent.change(screen.getByLabelText('Текст сообщения ВК'), { target: { value: 'Your result: {result_url}' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Сохранить доступ' }))
+  await waitFor(() => expect(saveAccountPreviewSettings).toHaveBeenCalledWith(expect.objectContaining({
+    vk_community_id: 456, vk_result_delivery_enabled: true, vk_result_message_template: 'Your result: {result_url}',
+  }), 0, expect.any(AbortSignal)))
+})
+
 test('administrator can check login without exposing session credentials', async () => {
   jest.mocked(fetchAccountPreviewSettings).mockResolvedValue({ ...policy, enabled: true })
   jest.mocked(checkAccountPreviewLogin).mockResolvedValue(undefined)

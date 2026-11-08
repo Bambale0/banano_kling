@@ -19,6 +19,11 @@ export function SharedAccountPreview({ isAdmin, telegramBotUsername = '' }: { is
   const [sessionTtl, setSessionTtl] = useState(3600)
   const [launchAge, setLaunchAge] = useState(600)
   const [linkTtl, setLinkTtl] = useState(600)
+  const [communityId, setCommunityId] = useState('')
+  const [vkDeliveryEnabled, setVkDeliveryEnabled] = useState(false)
+  const [vkAttempts, setVkAttempts] = useState(3)
+  const [vkRetrySeconds, setVkRetrySeconds] = useState(30)
+  const [vkMessage, setVkMessage] = useState('')
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(true)
@@ -33,6 +38,11 @@ export function SharedAccountPreview({ isAdmin, telegramBotUsername = '' }: { is
     setSessionTtl(value.session_ttl_seconds)
     setLaunchAge(value.launch_max_age_seconds)
     setLinkTtl(value.link_ttl_seconds ?? 600)
+    setCommunityId(value.vk_community_id ? String(value.vk_community_id) : '')
+    setVkDeliveryEnabled(value.vk_result_delivery_enabled ?? false)
+    setVkAttempts(value.vk_delivery_max_attempts ?? 3)
+    setVkRetrySeconds(value.vk_delivery_retry_seconds ?? 30)
+    setVkMessage(value.vk_result_message_template ?? '')
   }
 
   useEffect(() => {
@@ -112,11 +122,32 @@ export function SharedAccountPreview({ isAdmin, telegramBotUsername = '' }: { is
           <input type="number" min={60} max={86400} className="mt-1 w-full rounded border border-border bg-background p-2" value={linkTtl} onChange={(event) => setLinkTtl(Number(event.target.value))} disabled={busy} />
         </label>
         <div className="flex flex-wrap gap-2">
+          {policy.vk_result_message_template !== undefined ? <fieldset className="w-full space-y-3 rounded-lg border border-border p-3" disabled={busy}>
+            <legend className="px-1 text-sm font-medium">Доставка результатов в чат ВК</legend>
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={vkDeliveryEnabled}
+              onChange={event => setVkDeliveryEnabled(event.target.checked)} />Отправлять готовые фото в ВК</label>
+            <label className="block text-sm">ID сообщества ВК<input inputMode="numeric" value={communityId}
+              onChange={event => setCommunityId(event.target.value)} className="mt-1 w-full rounded border border-border bg-background p-2" /></label>
+            <label className="block text-sm">Автоматических попыток<input type="number" min={1} max={10} value={vkAttempts}
+              onChange={event => setVkAttempts(Number(event.target.value))} className="mt-1 w-full rounded border border-border bg-background p-2" /></label>
+            <label className="block text-sm">Пауза между попытками, секунд<input type="number" min={1} max={3600} value={vkRetrySeconds}
+              onChange={event => setVkRetrySeconds(Number(event.target.value))} className="mt-1 w-full rounded border border-border bg-background p-2" /></label>
+            <label className="block text-sm">Текст сообщения ВК<textarea value={vkMessage} maxLength={1024}
+              onChange={event => setVkMessage(event.target.value)} className="mt-1 w-full rounded border border-border bg-background p-2" /></label>
+            <p className="text-xs text-muted-foreground">Доступны поля {'{result_url}'} и {'{task_id}'}. Ссылка на результат обязательна.
+              Изменение текста не переписывает уже принятые сообщения.</p>
+          </fieldset> : null}
           <Button disabled={busy} onClick={() => void run(async (signal) => {
             const next = await saveAccountPreviewSettings({
               enabled, vk_app_id: appId.trim() ? identifier(appId.trim()) : null,
               vk_admin_ids: admins.trim() ? admins.trim().split(/[,;\s]+/).map(identifier) : [],
               session_ttl_seconds: sessionTtl, launch_max_age_seconds: launchAge, link_ttl_seconds: linkTtl,
+              ...(policy.vk_result_message_template !== undefined ? {
+                vk_community_id: communityId.trim() ? identifier(communityId.trim()) : null,
+                vk_result_delivery_enabled: vkDeliveryEnabled,
+                vk_delivery_max_attempts: vkAttempts, vk_delivery_retry_seconds: vkRetrySeconds,
+                vk_result_message_template: vkMessage,
+              } : {}),
             }, policy.revision, signal)
             apply(next)
             setMessage('Настройки сохранены.')

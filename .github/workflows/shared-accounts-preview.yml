@@ -10,6 +10,9 @@ on:
       - 'bot/postgres*.py'
       - 'bot/services/image_normalization.py'
       - 'bot/services/upload_limits.py'
+      - 'bot/services/vk_result_delivery.py'
+      - 'bot/services/vk_result_transport.py'
+      - 'tests/test_vk_result_*.py'
       - 'tests/test_shared_*.py'
       - 'scripts/audit_shared_account_migration.py'
       - '.github/workflows/shared-accounts-preview.yml'
@@ -48,9 +51,9 @@ jobs:
         run: python -m pip install -r requirements.txt pytest pytest-asyncio pytest-subtests ruff
       - name: Check preview sources
         run: >-
-          ruff check bot/shared_accounts bot/services/image_normalization.py bot/services/upload_limits.py tests/test_shared_account_references.py tests/test_shared_accounts.py
+          ruff check bot/shared_accounts bot/services/image_normalization.py bot/services/upload_limits.py tests/test_shared_account_references.py bot/services/vk_result_delivery.py bot/services/vk_result_transport.py tests/test_vk_result_delivery.py tests/test_vk_result_transport.py tests/test_shared_accounts.py
           tests/test_shared_account_audit.py tests/test_shared_wallet.py tests/test_shared_wallet_openings.py tests/test_shared_account_links.py tests/test_shared_commerce.py scripts/audit_shared_account_migration.py
       - name: SQLite and PostgreSQL HTTP, security and concurrency contracts
         run: >-
-          python -m pytest tests/test_shared_accounts.py tests/test_shared_account_references.py
+          python -m pytest tests/test_shared_accounts.py tests/test_shared_account_references.py tests/test_vk_result_delivery.py tests/test_vk_result_transport.py
           tests/test_shared_account_audit.py tests/test_shared_wallet.py tests/test_shared_wallet_openings.py tests/test_shared_account_links.py tests/test_shared_commerce.py tests/test_browser_auth.py -q

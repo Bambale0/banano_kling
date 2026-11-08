@@ -2,6 +2,7 @@
 
 import { personalizationError } from '@/lib/personalization-errors'
 import { GenjutsuButton } from './genjutsu-entry'
+import { VkChatDelivery } from './vk-chat-delivery'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useApp } from '@/lib/app-context'
@@ -495,6 +496,8 @@ export function TaskDetailPanel() {
               )}
 
               {/* Info grid */}
+              {taskDetail.type === 'image' && taskDetail.status === 'completed' && taskDetail.result_url
+                ? <VkChatDelivery key={taskDetail.task_id} taskId={taskDetail.task_id} /> : null}
               {taskDetail.type === 'video' && taskDetail.status === 'completed' && (
                 <GenjutsuButton taskId={taskDetail.task_id} compact />
               )}

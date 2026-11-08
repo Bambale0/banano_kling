@@ -3086,6 +3086,49 @@ async def handle_telegram_webhook(
         # Возвращаем 200 даже при ошибках, чтобы Telegram не спамил
         return web.Response(text="OK", status=200)
 
+async def _complete_vk_kling_result(task_id: str, provider_url: str) -> web.Response:
+    """Prepare one durable result under a cross-process lease, then retry bookkeeping."""
+    from bot.database import (
+        claim_vk_result_persistence,
+        complete_task_in_app,
+        get_task_by_id,
+        release_vk_result_persistence,
+        store_task_result_ready,
+    )
+
+    started = time.monotonic()
+    token = await claim_vk_result_persistence(
+        task_id, lease_seconds=KIE_DELIVERY_LEASE_SECONDS,
+    )
+    task = await get_task_by_id(task_id)
+    if not task or task.status == "failed":
+        if token:
+            await release_vk_result_persistence(task_id, token)
+        return web.Response(status=200)
+    if token:
+        try:
+            # Include claim/read latency so preparation cannot outlive its lease.
+            remaining = KIE_DELIVERY_LEASE_SECONDS - 10 - (time.monotonic() - started)
+            if remaining <= 0:
+                raise TimeoutError("VK result preparation lease budget exhausted")
+            result_url = await asyncio.wait_for(
+                _persist_result_url_if_needed(provider_url, task_type=task.type),
+                timeout=remaining,
+            )
+            if not await store_task_result_ready(
+                task_id, result_url, persistence_token=token,
+            ):
+                return web.Response(status=503)
+        finally:
+            await release_vk_result_persistence(task_id, token)
+        task = await get_task_by_id(task_id)
+    if not task or task.status != "completed" or not task.result_url:
+        return web.Response(status=503)
+    if not await complete_task_in_app(task_id, task.result_url):
+        return await _result_storage_failure_response(task_id)
+    return web.Response(status=200)
+
+
 async def handle_kling_webhook(request: web.Request) -> web.Response:
     """Обработчик уведомлений от Kling/PiAPI/Replicate/Kie.ai"""
     try:
@@ -3184,8 +3227,11 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 from bot.keyboards import get_video_result_keyboard
 
                 task = await get_task_by_id(task_id)
-                # P1-04: Idempotency — skip if already completed
-                if task and (task.status == "failed" or (task.status == "completed" and not has_retryable_result(task))):
+                # VK completion replays retry idempotent reward hooks; stored terminal URLs stay immutable.
+                if task and (task.status == "failed" or (
+                    task.status == "completed" and not has_retryable_result(task)
+                    and _extract_task_request_data(task).get("origin_platform") != "vk"
+                )):
                     logger.info(f"Webhook: task {task_id} already completed, skipping")
                     return web.Response(status=200)
                 model_display = task.model if task and task.model else "Kling"
@@ -3197,11 +3243,11 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                     f"{model_display} success webhook: task {task_id}, video {video_url[:50]}..."
                 )
                 if task:
-                    # Persist provider success even when Telegram delivery is unavailable
-                    # or another worker owns the delivery lease.
+                    if _extract_task_request_data(task).get("origin_platform") == "vk":
+                        return await _complete_vk_kling_result(task_id, video_url)
+                    # Persist provider success independently of Telegram delivery.
                     video_url = await _persist_result_url_if_needed(
-                        video_url,
-                        task_type=task.type if task else "video",
+                        video_url, task_type=task.type,
                     )
                     if not await store_task_result_ready(task_id, video_url):
                         logger.warning(
@@ -3369,7 +3415,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             fail_msg = str(sanitize_provider_log_payload(kie_data.get("failMsg", "")))
             try:
                 result_json = json.loads(result_json_str)
-                video_url = result_json.get("resultUrls", [None])[0]
+                video_url = (result_json.get("resultUrls") or [None])[0]
             except (json.JSONDecodeError, KeyError):
                 video_url = None
 
@@ -3384,11 +3430,14 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 )
 
                 task = await get_task_by_id(task_id)
-                # P1-04: Idempotency — skip if already completed
+                # VK completion replays retry idempotent reward hooks; stored terminal URLs stay immutable.
                 if task and (
                     task.status == "failed"
                     or (task.status == "completed" and (
-                        status not in {"success", "completed"} or not has_retryable_result(task)
+                        status not in {"success", "completed"} or (
+                            not has_retryable_result(task)
+                            and _extract_task_request_data(task).get("origin_platform") != "vk"
+                        )
                     ))
                 ):
                     logger.info(f"Webhook: task {task_id} already completed, skipping")
@@ -3404,11 +3453,11 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 )
                 if task:
                     if status in {"success", "completed"} and video_url:
-                        # Persist provider success even when Telegram delivery is unavailable
-                        # or another worker owns the delivery lease.
+                        if _extract_task_request_data(task).get("origin_platform") == "vk":
+                            return await _complete_vk_kling_result(task_id, video_url)
+                        # Persist provider success independently of Telegram delivery.
                         video_url = await _persist_result_url_if_needed(
-                            video_url,
-                            task_type=task.type if task else "video",
+                            video_url, task_type=task.type,
                         )
                         if not await store_task_result_ready(task_id, video_url):
                             logger.warning(
@@ -3416,6 +3465,17 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                 task_id,
                             )
                             return await _result_storage_failure_response(task_id)
+
+                    if _extract_task_request_data(task).get("origin_platform") == "vk":
+                        if status in {"fail", "failed", "error", "rejected"}:
+                            from bot.services.task_watchdog import force_fail_task
+
+                            await force_fail_task(
+                                task.id, task.user_id, task.cost or 0,
+                                expected_provider_task_id=task_id,
+                                provider_confirmed_failed=True,
+                            )
+                        return web.Response(status=200)
 
                     reference_preview_urls = _extract_reference_image_urls(task, kie_data)
                     telegram_id = await _resolve_task_telegram_id(
@@ -3763,8 +3823,11 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             )
 
             task = await get_task_by_id(task_id)
-            # P1-04: Idempotency — skip if already completed
-            if task and task.status in {"completed", "failed"}:
+            # VK completion replays retry idempotent reward hooks; stored terminal URLs stay immutable.
+            if task and (task.status == "failed" or (
+                task.status == "completed"
+                and _extract_task_request_data(task).get("origin_platform") != "vk"
+            )):
                 logger.info(f"Webhook: task {task_id} already completed, skipping")
                 return web.Response(status=200)
 
@@ -3774,6 +3837,9 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                     task_id,
                 )
                 return web.Response(status=200)
+
+            if _extract_task_request_data(task).get("origin_platform") == "vk":
+                return await _complete_vk_kling_result(task_id, video_url)
 
             telegram_id = await _resolve_task_telegram_id(
                 task, context="kling_fallback_success"
@@ -3947,6 +4013,16 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             # P1-04: Idempotency — skip if already completed
             if task and task.status in {"completed", "failed"}:
                 logger.info(f"Webhook: task {task_id} already completed, skipping")
+                return web.Response(status=200)
+            if task and _extract_task_request_data(task).get("origin_platform") == "vk":
+                if normalized_status in {"fail", "failed", "error", "rejected", "canceled", "cancelled"}:
+                    from bot.services.task_watchdog import force_fail_task
+
+                    await force_fail_task(
+                        task.id, task.user_id, task.cost or 0,
+                        expected_provider_task_id=task_id,
+                        provider_confirmed_failed=True,
+                    )
                 return web.Response(status=200)
             if task and task.cost:
                 telegram_id = await _resolve_task_telegram_id(
@@ -4881,6 +4957,19 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             if not task:
                 logger.info(f"Ignoring orphan webhook for {service_name} task {task_id}: task not found in database")
                 return web.Response(status=200)
+            # Watchdog recovery for Kling also enters this KIE callback route.
+            # Use the same durable claim as /webhook/kling before downloading.
+            if _extract_task_request_data(task).get("origin_platform") == "vk":
+                from bot.services.kling_service import KlingService
+
+                stored_model = str(task.model or "").strip().lower()
+                if (stored_model in KlingService.KLING_3_MODE_BY_KEY
+                        or stored_model in KlingService.KLING_25_MODELS
+                        or stored_model in KlingService.AVATAR_MODELS
+                        or stored_model in KlingService.GLOW_MODELS
+                        or stored_model in KlingService.MOTION_MODELS_BY_KEY):
+                    return await _complete_vk_kling_result(task_id, result_url)
+
             # Persist provider success even when Telegram delivery is unavailable
             # or another worker owns the delivery lease.
             result_url = await _persist_result_url_if_needed(
@@ -5498,6 +5587,9 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
     from bot.genjutsu.runtime import setup_genjutsu
 
     setup_genjutsu(app)
+    from bot.services.vk_result_delivery import setup_vk_result_delivery
+
+    setup_vk_result_delivery(app)
     setup_miniapp_routes(app)
     setup_robokassa_routes(app)
     setup_freekassa_routes(app)
