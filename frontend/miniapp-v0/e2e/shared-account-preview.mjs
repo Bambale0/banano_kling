@@ -393,7 +393,7 @@ try {
     await page.goto(base + '?vk_app_id=123&vk_user_id=2001&sign=browser-fixture#link_' + token)
     if (admin) {
       await page.getByRole('button', { name: 'Профиль', exact: true }).waitFor()
-      for (const tab of ['Студия', 'Тренды', 'Фото', 'Видео', 'Motion', 'Лента', 'Сервисы', 'Профиль']) {
+      for (const tab of ['Студия', 'Тренды', 'Фото', 'Видео', 'Астро', 'Лента', 'Сервисы', 'Профиль']) {
         assert.equal(await page.getByRole('button', { name: tab, exact: true }).count(), 1)
       }
       assert.equal(requests.filter(path => path.includes('/links')).length, 0, 'Linked opening must not accept or confirm')
