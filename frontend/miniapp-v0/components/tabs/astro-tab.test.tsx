@@ -48,4 +48,12 @@ describe('Astro concept screens', () => {
     expect(screen.getByLabelText('Месяц календаря')).toHaveAttribute('type', 'month')
     expect(screen.queryByText('Дата рождения')).not.toBeInTheDocument()
   })
+  it('requests the solar-return location separately from birthplace', () => {
+    render(<AstroTab />)
+    fireEvent.click(screen.getByText('Соляр'))
+    expect(screen.getByLabelText('person: место рождения')).toBeInTheDocument()
+    expect(screen.getByLabelText('Место встречи соляра')).toBeInTheDocument()
+    expect(screen.getByLabelText('Период прогноза')).toHaveAttribute('type', 'number')
+  })
+
 })
