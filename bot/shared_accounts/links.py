@@ -196,7 +196,8 @@ class LinkService:
                              (link_id, _token_hash(token), actor.id, actor.identity.platform, actor.identity.external_id,
                               target_platform, self.policy.revision, expires, int(confirm_source)))
         return {'id': link_id, 'token': token, 'expires_at_epoch': expires,
-                'state': 'pending', 'revision': 0, 'source_confirmed': confirm_source, 'target_confirmed': False}
+                'state': 'pending', 'revision': 0, 'source_platform': actor.identity.platform,
+                'target_platform': target_platform, 'source_confirmed': confirm_source, 'target_confirmed': False}
 
     async def operate(self, actor: Account, link_id: str, action: str, body: dict) -> dict:
         async with self._transaction(link_id) as (db, link):
