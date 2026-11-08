@@ -1023,6 +1023,17 @@ try {
   await page.getByRole('button', { name: 'Закрыть студию' }).click()
   await page.getByRole('dialog').waitFor({ state: 'hidden' })
 
+  // Ordinary users should retain Motion in this slot, without an Astro entry.
+  bootstrapPayload.is_admin = false
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await page.getByRole('button', { name: 'Motion', exact: true }).waitFor()
+  assert.equal(await page.getByRole('button', { name: 'Астро', exact: true }).count(), 0)
+  assert.equal(await page.locator('.astro-shell').count(), 0)
+  // The same real bootstrap contract enables preview for authorized admins.
+  bootstrapPayload.is_admin = true
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await page.getByRole('button', { name: 'Астро', exact: true }).waitFor()
+
   // Astro is an isolated UI preview: it must not submit to API or debit the wallet.
   await page.setViewportSize({ width: 414, height: 896 })
   await page.getByRole('button', { name: 'Астро', exact: true }).click()
