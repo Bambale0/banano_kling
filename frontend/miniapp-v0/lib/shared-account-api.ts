@@ -186,14 +186,20 @@ export interface AccountLink {
   target_identity?: { platform: 'telegram' | 'vk'; external_id: string } | null
 }
 
-export async function createAccountLink(targetPlatform: 'telegram' | 'vk', signal?: AbortSignal): Promise<AccountLink> {
+export async function createAccountLink(targetPlatform: 'telegram' | 'vk', signal?: AbortSignal, confirmSource = false): Promise<AccountLink> {
   return withPreviewSession(async headers => (await request<{ link: AccountLink }>('links', {
-    method: 'POST', headers, signal, body: JSON.stringify({ target_platform: targetPlatform }),
+    method: 'POST', headers, signal, body: JSON.stringify({ target_platform: targetPlatform, confirm_source: confirmSource }),
   })).link, signal)
 }
 
-export async function acceptAccountLink(token: string, signal?: AbortSignal): Promise<AccountLink> {
+export async function acceptAccountLink(token: string, signal?: AbortSignal, confirm = false): Promise<AccountLink> {
   return withPreviewSession(async headers => (await request<{ link: AccountLink }>('links/accept', {
+    method: 'POST', headers, signal, body: JSON.stringify({ token, confirm }),
+  })).link, signal)
+}
+
+export async function previewAccountLink(token: string, signal?: AbortSignal): Promise<AccountLink> {
+  return withPreviewSession(async headers => (await request<{ link: AccountLink }>('links/preview', {
     method: 'POST', headers, signal, body: JSON.stringify({ token }),
   })).link, signal)
 }
