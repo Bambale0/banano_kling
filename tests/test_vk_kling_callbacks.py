@@ -98,11 +98,9 @@ async def test_vk_kling_success_records_author_reward_once(
 
         monkeypatch.setattr(database, "credit_feed_prompt_repeat", transient_credit)
     bot = fake_bot()
-    monkeypatch.setattr(
-        main_module,
-        "_persist_result_url_if_needed",
-        AsyncMock(side_effect=lambda url, **kwargs: url),
-    )
+    persisted_url = "https://example.test/durable-result.mp4"
+    persist = AsyncMock(return_value=persisted_url)
+    monkeypatch.setattr(main_module, "_persist_result_url_if_needed", persist)
     app = web.Application()
     app["bot"] = bot
     app.router.add_post("/callback", main_module.handle_kling_webhook)
@@ -117,7 +115,10 @@ async def test_vk_kling_success_records_author_reward_once(
             assert response.status == 200
     task = await database.get_task_by_id("vk-kling")
     assert task.status == "completed"
-    assert task.result_url == "https://example.test/result.mp4"
+    assert task.result_url == persisted_url
+    persist.assert_awaited_once_with(
+        "https://example.test/result.mp4", task_type="video"
+    )
     metadata = json.loads(task.request_data)
     assert metadata["delivery_status"] == "available_in_app"
     overview = await database.get_partner_overview(author.telegram_id)

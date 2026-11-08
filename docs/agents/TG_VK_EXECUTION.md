@@ -616,3 +616,13 @@ Release-candidate verification: full backend **4722 passed, 223 skipped, 826 war
   production CI or production deployment has completed. Publication is pending;
   exact remote head, protected gates, deploy SHA, health and post-release telemetry
   must still be verified before calling this correcting release deployed.
+
+- PR #429 follow-up: automatic review found repeated VK completion could download
+  an already durable video again before the immutable-result guard. Reproduced
+  eight RED HTTP cases across code200, legacy, dictionary fallback and direct-
+  string fallback payloads. All three handlers now reuse the stored result URL
+  for completed VK tasks before persistence, while still retrying completion
+  rewards. Initial/missing-result and Telegram paths remain unchanged.
+- Final focused follow-up: 78 passed; one persistence call and the original
+  durable URL are asserted with a changed URL on the duplicate callback. PR was
+  returned to draft before this change; final-head CI and release remain pending.

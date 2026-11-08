@@ -3203,10 +3203,15 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 if task:
                     # Persist provider success even when Telegram delivery is unavailable
                     # or another worker owns the delivery lease.
-                    video_url = await _persist_result_url_if_needed(
-                        video_url,
-                        task_type=task.type if task else "video",
-                    )
+                    # Replays retry bookkeeping against the saved bytes, not the provider URL.
+                    if (task.status == "completed" and task.result_url
+                            and _extract_task_request_data(task).get("origin_platform") == "vk"):
+                        video_url = task.result_url
+                    else:
+                        video_url = await _persist_result_url_if_needed(
+                            video_url,
+                            task_type=task.type if task else "video",
+                        )
                     if not await store_task_result_ready(task_id, video_url):
                         logger.warning(
                             "Kie.ai Kling result persistence failed; requesting retry: task=%s",
@@ -3419,10 +3424,15 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                     if status in {"success", "completed"} and video_url:
                         # Persist provider success even when Telegram delivery is unavailable
                         # or another worker owns the delivery lease.
-                        video_url = await _persist_result_url_if_needed(
-                            video_url,
-                            task_type=task.type if task else "video",
-                        )
+                        # Replays retry bookkeeping against the saved bytes, not the provider URL.
+                        if (task.status == "completed" and task.result_url
+                                and _extract_task_request_data(task).get("origin_platform") == "vk"):
+                            video_url = task.result_url
+                        else:
+                            video_url = await _persist_result_url_if_needed(
+                                video_url,
+                                task_type=task.type if task else "video",
+                            )
                         if not await store_task_result_ready(task_id, video_url):
                             logger.warning(
                                 "Kie.ai legacy result persistence failed; requesting retry: task=%s",
@@ -3808,9 +3818,12 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             if _extract_task_request_data(task).get("origin_platform") == "vk":
                 from bot.database import complete_task_in_app
 
-                video_url = await _persist_result_url_if_needed(
-                    video_url, task_type=task.type,
-                )
+                if task.status == "completed" and task.result_url:
+                    video_url = task.result_url
+                else:
+                    video_url = await _persist_result_url_if_needed(
+                        video_url, task_type=task.type,
+                    )
                 if not await complete_task_in_app(task_id, video_url):
                     return await _result_storage_failure_response(task_id)
                 return web.Response(status=200)
