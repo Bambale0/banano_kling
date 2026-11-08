@@ -35,7 +35,7 @@ _MONITOR_TASK: asyncio.Task[None] | None = None
 def parse_balance_rub(payload: Any) -> Decimal:
     """Accept only an unambiguous finite RUB string, never a credit balance."""
     if not isinstance(payload, dict):
-        raise ValueError("Neironych balance response must be a JSON object")
+        raise TypeError("Neironych balance response must be a JSON object")
     raw = payload.get("balance_rub")
     if not isinstance(raw, str) or not raw.strip():
         raise ValueError("Neironych balance_rub must be a non-empty decimal string")
@@ -138,7 +138,7 @@ class BalanceMonitor:
                                 f"Neironych balance endpoint returned HTTP {response.status}"
                             )
                         return parse_balance_rub(await response.json())
-                except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                except (aiohttp.ClientError, TimeoutError) as exc:
                     if attempt:
                         raise RuntimeError(
                             "Neironych balance endpoint unavailable"
@@ -191,7 +191,7 @@ class BalanceMonitor:
                 )
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - Telegram transport boundary
                 logger.warning(
                     "event=neironych_balance_alert_send_failed admin_id=%s error_type=%s",
                     admin_id, type(exc).__name__,
