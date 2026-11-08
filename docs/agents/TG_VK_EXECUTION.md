@@ -569,3 +569,31 @@ Release-candidate verification: full backend **4722 passed, 223 skipped, 826 war
   smokes passed with all API/media/provider actions intercepted. Post-release
   12-minute log sample: zero tracebacks/preview failures; three GPT Image 2 task
   failures observed separately, not attributed to this frontend-only change.
+
+## Kling VK delivery release completion — 08.11.2026
+
+- Scope: finish the VK video routing release explicitly requested by Igor after
+  the four post-merge findings on #428. Baseline `tanyapi@568a734a5009e8c1dffd04420d3be625e3174aae`.
+  That baseline has passed CI/autodeploy and is the healthy production image.
+- Audit: legacy Kling success paths skipped completion bookkeeping when the VK
+  Telegram-lease guard returned false; legacy/fallback failure paths and the
+  PiAPI/Replicate completion shape could notify Telegram; Kling 4 launch/delivery
+  lacked the durable origin contract. Existing `complete_task_in_app` and the VK
+  outbox already provide idempotent completion and destination enforcement.
+- Plan: (1) reproduce callback and lifecycle routes at HTTP/service seams;
+  (2) retain server-verified origin and call in-app completion before Telegram
+  delivery; (3) prove acceptance/repeat reward and refund idempotency;
+  (4) run SQLite/native PostgreSQL, existing VK/image/TG regression suites,
+  lint/syntax, independent review, protected PR and exact-SHA CI/autodeploy.
+- No schema, price, provider selection, shared-account admission or delivery
+  configuration changes are planned. No public VK-only activation, historical
+  replay/financial repair, real chat send or paid generation is part of validation.
+- Risks: duplicated callbacks, persisted-origin routing after a restart, terminal
+  failure/result races, completion hooks, default/Telegram compatibility. New
+  tests use synthetic identities/providers and isolated databases. Baseline
+  image-origin matrix: 19 passed. Native PG uses a disposable loopback-only
+  PostgreSQL 17 container, separate from every production database.
+- Existing broad VK/common-wallet release holds remain unchanged. Rollback keeps
+  durable generation/outbox state; never fall back to Telegram for VK tasks.
+- Implementation and final verification are in progress; this section does not
+  claim the correcting release is deployed.

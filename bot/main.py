@@ -3176,6 +3176,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 from bot.database import (
                     can_attempt_telegram_delivery,
                     claim_task_delivery,
+                    complete_task_in_app,
                     complete_video_task,
                     get_task_by_id,
                     mark_task_delivery_status,
@@ -3184,8 +3185,11 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 from bot.keyboards import get_video_result_keyboard
 
                 task = await get_task_by_id(task_id)
-                # P1-04: Idempotency — skip if already completed
-                if task and (task.status == "failed" or (task.status == "completed" and not has_retryable_result(task))):
+                # VK completion replays retry idempotent reward hooks; stored terminal URLs stay immutable.
+                if task and (task.status == "failed" or (
+                    task.status == "completed" and not has_retryable_result(task)
+                    and _extract_task_request_data(task).get("origin_platform") != "vk"
+                )):
                     logger.info(f"Webhook: task {task_id} already completed, skipping")
                     return web.Response(status=200)
                 model_display = task.model if task and task.model else "Kling"
@@ -3209,6 +3213,11 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                             task_id,
                         )
                         return await _result_storage_failure_response(task_id)
+
+                    if _extract_task_request_data(task).get("origin_platform") == "vk":
+                        if not await complete_task_in_app(task_id, video_url):
+                            return await _result_storage_failure_response(task_id)
+                        return web.Response(status=200)
 
                     reference_preview_urls = _extract_reference_image_urls(task, data.get("data"))
                     telegram_id = await _resolve_task_telegram_id(
@@ -3369,7 +3378,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             fail_msg = str(sanitize_provider_log_payload(kie_data.get("failMsg", "")))
             try:
                 result_json = json.loads(result_json_str)
-                video_url = result_json.get("resultUrls", [None])[0]
+                video_url = (result_json.get("resultUrls") or [None])[0]
             except (json.JSONDecodeError, KeyError):
                 video_url = None
 
@@ -3377,6 +3386,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 from bot.database import (
                     can_attempt_telegram_delivery,
                     claim_task_delivery,
+                    complete_task_in_app,
                     complete_video_task,
                     get_task_by_id,
                     mark_task_delivery_status,
@@ -3384,11 +3394,14 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 )
 
                 task = await get_task_by_id(task_id)
-                # P1-04: Idempotency — skip if already completed
+                # VK completion replays retry idempotent reward hooks; stored terminal URLs stay immutable.
                 if task and (
                     task.status == "failed"
                     or (task.status == "completed" and (
-                        status not in {"success", "completed"} or not has_retryable_result(task)
+                        status not in {"success", "completed"} or (
+                            not has_retryable_result(task)
+                            and _extract_task_request_data(task).get("origin_platform") != "vk"
+                        )
                     ))
                 ):
                     logger.info(f"Webhook: task {task_id} already completed, skipping")
@@ -3416,6 +3429,20 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                 task_id,
                             )
                             return await _result_storage_failure_response(task_id)
+
+                    if _extract_task_request_data(task).get("origin_platform") == "vk":
+                        if status in {"success", "completed"} and video_url:
+                            if not await complete_task_in_app(task_id, video_url):
+                                return await _result_storage_failure_response(task_id)
+                        elif status in {"fail", "failed", "error", "rejected"}:
+                            from bot.services.task_watchdog import force_fail_task
+
+                            await force_fail_task(
+                                task.id, task.user_id, task.cost or 0,
+                                expected_provider_task_id=task_id,
+                                provider_confirmed_failed=True,
+                            )
+                        return web.Response(status=200)
 
                     reference_preview_urls = _extract_reference_image_urls(task, kie_data)
                     telegram_id = await _resolve_task_telegram_id(
@@ -3763,8 +3790,11 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             )
 
             task = await get_task_by_id(task_id)
-            # P1-04: Idempotency — skip if already completed
-            if task and task.status in {"completed", "failed"}:
+            # VK completion replays retry idempotent reward hooks; stored terminal URLs stay immutable.
+            if task and (task.status == "failed" or (
+                task.status == "completed"
+                and _extract_task_request_data(task).get("origin_platform") != "vk"
+            )):
                 logger.info(f"Webhook: task {task_id} already completed, skipping")
                 return web.Response(status=200)
 
@@ -3773,6 +3803,16 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                     "Ignoring orphan webhook for Kling task %s: task not found in database",
                     task_id,
                 )
+                return web.Response(status=200)
+
+            if _extract_task_request_data(task).get("origin_platform") == "vk":
+                from bot.database import complete_task_in_app
+
+                video_url = await _persist_result_url_if_needed(
+                    video_url, task_type=task.type,
+                )
+                if not await complete_task_in_app(task_id, video_url):
+                    return await _result_storage_failure_response(task_id)
                 return web.Response(status=200)
 
             telegram_id = await _resolve_task_telegram_id(
@@ -3947,6 +3987,16 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             # P1-04: Idempotency — skip if already completed
             if task and task.status in {"completed", "failed"}:
                 logger.info(f"Webhook: task {task_id} already completed, skipping")
+                return web.Response(status=200)
+            if task and _extract_task_request_data(task).get("origin_platform") == "vk":
+                if normalized_status in {"fail", "failed", "error", "rejected", "canceled", "cancelled"}:
+                    from bot.services.task_watchdog import force_fail_task
+
+                    await force_fail_task(
+                        task.id, task.user_id, task.cost or 0,
+                        expected_provider_task_id=task_id,
+                        provider_confirmed_failed=True,
+                    )
                 return web.Response(status=200)
             if task and task.cost:
                 telegram_id = await _resolve_task_telegram_id(

@@ -25,8 +25,9 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("provider_state", ["fail", "success"])
+@pytest.mark.parametrize("origin_platform", ["telegram", "vk"])
 async def test_pg_kling4_idempotency_settings_failure_and_ambiguous_restart(
-    delivery_postgres_schema, monkeypatch, tmp_path, provider_state
+    delivery_postgres_schema, monkeypatch, tmp_path, provider_state, origin_platform
 ):
     class Provider:
         calls = 0
@@ -106,7 +107,13 @@ async def test_pg_kling4_idempotency_settings_failure_and_ambiguous_restart(
             )
         ).fetchone()
         await conn.commit()
-    actor = SimpleNamespace(user_id=row[0], telegram_id=999999999, is_admin=True)
+    actor = SimpleNamespace(
+        user_id=row[0], telegram_id=999999999, is_admin=True,
+        miniapp_context={
+            "platform": origin_platform, "platform_external_id": 2001,
+            "shared_account_id": "a" * 32, "vk_chat_delivery_requested": True,
+        },
+    )
     request = {
         "mode": "reference",
         "input": {"prompt": "Kling4 PostgreSQL regression", "duration": 3},
@@ -126,11 +133,25 @@ async def test_pg_kling4_idempotency_settings_failure_and_ambiguous_restart(
     if expected == "done":
         assert terminal["actual_credits"] == "85.5"
         assert "/uploads/kling4/results/" in terminal["result_url"]
-    await engine.tick()
+    # Delivery runs after restart with no actor context to reconstruct.
+    actor.miniapp_context = None
+    restarted = Kling4Lifecycle(transport=provider)
+    restarted.telegram_bot = engine.telegram_bot
+    await restarted.tick()
+    await restarted.tick()
+    task = await database.get_task_by_id(results[0]["task_id"])
+    metadata = json.loads(task.request_data)
+    assert metadata["origin_platform"] == origin_platform
+    if origin_platform == "vk":
+        assert metadata["origin_vk_user_id"] == 2001
+        assert metadata["origin_account_id"] == "a" * 32
+        if provider_state == "success":
+            assert metadata["delivery_status"] == "available_in_app"
     assert (await engine.status(actor, results[0]["task_id"]))[
         "delivery_status"
-    ] == "delivered"
-    assert engine.telegram_bot.sent == 1 and provider.calls == 1
+    ] == ("available_in_app" if origin_platform == "vk" else "delivered")
+    assert engine.telegram_bot.sent == (0 if origin_platform == "vk" else 1)
+    assert provider.calls == 1
     settings, revision = await engine.settings()
     settings["max_active"] = 4
     await engine.update_settings(actor, settings, revision)
