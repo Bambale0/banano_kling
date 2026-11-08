@@ -474,6 +474,10 @@ async def test_delivery_settings_keep_the_previous_release_auth_policy_readable(
 
 @pytest.mark.parametrize('scope', ['feed', 'profile'])
 async def test_publication_does_not_expose_private_delivery_identity_metadata(monkeypatch, scope):
+    # Exercise installed runtime publication, including SQLite-first import order.
+    from bot.handlers.publication_scope_compat import install_publication_scope_compat
+
+    install_publication_scope_compat()
     async with actor(monkeypatch) as (_client, _headers, user, account):
         task = await ready(user, account)
         published = await database.share_to_feed(task.task_id, user.id, prompt_visible=True, publication_scope=scope)

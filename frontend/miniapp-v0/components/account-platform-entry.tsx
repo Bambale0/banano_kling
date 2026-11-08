@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react'
 import { SharedAccountLinkPreview } from '@/components/shared-account-link-preview'
+import { AccountReferencePreview } from '@/components/account-reference-preview'
 import {
   startAccountAppSession,
   stopAccountAppSession,
@@ -48,6 +49,7 @@ function VkAccountGate({ children }: { children: ReactNode }) {
         setRetry(value => value + 1)
       }}
     />
+    <AccountReferencePreview />
   </main>
 }
 

@@ -22,7 +22,8 @@ from urllib.parse import urlencode, urljoin, urlsplit
 from uuid import uuid4
 
 import aiohttp
-from PIL import Image, ImageOps, UnidentifiedImageError
+
+from bot.services.image_normalization import ImageNormalizationError, normalize_image
 
 from .contract import PipelineError, integer
 from .provider import ProviderFailure, https_url
@@ -195,17 +196,9 @@ class MediaStore:
     @staticmethod
     def normalize_image(source: Path, destination: Path) -> dict:
         try:
-            with Image.open(source) as image:
-                if image.format not in {'PNG', 'JPEG', 'WEBP', 'HEIF', 'HEIC'}:
-                    raise PipelineError('image_format_not_supported')
-                if image.width * image.height > 25000000:
-                    raise PipelineError('media_dimensions_limit')
-                image = ImageOps.exif_transpose(image)
-                image = image.convert('RGBA' if 'A' in image.getbands() else 'RGB')
-                image.save(destination, format='PNG')
-                return {'width': image.width, 'height': image.height, 'mime': 'image/png'}
-        except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
-            raise PipelineError('media_decode_failed') from exc
+            return normalize_image(source, destination)
+        except ImageNormalizationError as exc:
+            raise PipelineError(exc.code) from exc
 
     async def ingest(self, chunks, kind: str, settings: dict) -> dict:
         if kind not in {'image', 'video', 'audio'}:

@@ -1,5 +1,168 @@
 # TG–VK shared accounts execution ledger
 
+## Private-photo PostgreSQL publication integration fix — 08.11.2026
+
+- Exact published baseline: fd2def0bd232a581822f7fbdbdaf33f9353b38a4.
+  Shared accounts CI run 42482508150, job 128737307718: exactly two failures
+  (VK delivery privacy, PostgreSQL feed/profile), 323 passed. Both failed in
+  the installed publication handler's schema UPDATE, not photo metadata SQL.
+- The photo runtime-body-guard regression imports handlers while SQLite is
+  selected. This installs scoped publication but skips the PostgreSQL-only
+  startup installer. Later PostgreSQL publication executes ALTER TABLE through
+  the SQLite compatibility adapter, which deliberately skips those statements;
+  profile_published_at is absent when the backfill UPDATE executes. The former
+  passing delivery-only suite could exercise the unpatched database helper.
+- Fixed the runtime initializer to use existing native PostgreSQL DDL with
+  ADD COLUMN IF NOT EXISTS, separating its readiness cache by backend. Native
+  migration/index failures propagate rather than being mistaken for existing
+  columns. SQLite migration behavior and publication privacy remain unchanged.
+- RED/GREEN: regression uses the actual PostgresConnection translator with a
+  synthetic raw cursor. Before fix, exact UndefinedColumn/OperationalError;
+  after fix, both normal initialization and denied-DDL rollback/retry pass.
+  The delivery privacy test explicitly installs the real publication handler;
+  shared-account CI now includes the publication regressions and path triggers.
+- Final workflow-equivalent local matrix: 187 passed, 152 PostgreSQL skipped.
+  Test-file Ruff, workflow YAML parsing and diff whitespace passed. Handler Ruff
+  reports only the same two pre-existing RUF059 findings as exact baseline.
+  Native PostgreSQL is unavailable locally; native CI must verify this head.
+  No production schema/config/data changes, provider calls, publication or deploy.
+
+## Private-photo branch integration — 08.11.2026
+
+- Refreshed Draft PR #425 locally from a0a7c4e0d985c6f39d4c62e961f7adb32207c883
+  by merging exact tanyapi e3841e88ecdd1ad1c7dce55639878dec2035d060, not rebasing.
+  Resolved six conflicts by preserving both private-photo and VK-delivery API,
+  frontend helpers, CI coverage and historical execution notes.
+- Backend integration: signed photo/auth/link/VK delivery/transport matrix 104
+  passed, 89 isolated-PostgreSQL cases skipped; unchanged Genjutsu plus shared
+  audit/wallet/openings/commerce/browser-auth matrix 87 passed, 63 PostgreSQL
+  cases skipped. Focused Ruff passed. Only existing aiohttp AppKey and datetime
+  deprecation warnings. Tests used synthetic data, no live provider requests.
+- Public activation is still blocked: no configurable account count/byte quota
+  or concurrent-upload reservation; deletion only tombstones metadata, without
+  a retention/purge policy; uncertain commits intentionally retain files and
+  need safe orphan reconciliation. No quota/retention values were invented.
+- The gallery remains separate from generator inputs. Native generation must
+  accept owned opaque reference IDs, resolve server-side after authorization,
+  preserve immutable historical inputs and never pass browser Blob URLs to a
+  provider. Existing administrator preview gates remain intact. No new schema,
+  finance authority, production configuration or deployment changes in refresh.
+- Locked frontend dependencies installed using a writable temporary npm cache
+  after the default home cache was unavailable; package/lock manifests unchanged.
+  Focused Jest: 7 suites / 41 tests. Full Jest: 99 suites / 735 tests, all passed.
+  TypeScript --noEmit, affected component/API ESLint and E2E script syntax passed.
+  All three conflicted workflows parsed; the folded frontend test command was
+  checked to retain both photo and delivery suites in one shell invocation.
+- Targeted shared-account/services/tests Ruff passed. Broader miniapp/media/test
+  Ruff reported 50 existing miniapp diagnostics; comparison with exact tanyapi
+  baseline found the same code/message multiset and no added diagnostics.
+- Local PostgreSQL is unavailable. Production exports and browser journeys were
+  not rerun in this integration refresh; exact-head CI, those verification layers
+  and independent review remain publication/release evidence requirements.
+
+## Account-owned private photos — 07.11.2026 (Draft preparation)
+
+- Baseline tanyapi@4f6387d65135b04a17c2d448ebeef793c5b08482; isolated branch
+  feature/tanyapi-account-reference-storage. Owner chose common account/common
+  balance after voluntary linking and independent VK entry. No public/live-wallet
+  activation is part of this reference-storage slice.
+- Fresh preflight: current shared signed sessions already support real VK-only
+  accounts. Legacy saved references/categories and storage require users.id and
+  call get_or_create_user(telegram_id); extending them in place would require a
+  broad ownership/schema migration. Existing public uploads cannot provide the
+  new account-private storage boundary. Reuse the verified preview gate/session,
+  canonical-account locks/aliases, existing Input/Button components and real image decoding.
+- Research recommends one small metadata table and private data subdirectory,
+  no second categories subsystem or migration of legacy personal libraries.
+  Existing compose data volume persists private files; public uploads cleanup
+  must not see them. Extract only the pure Genjutsu image normalization core,
+  preserving that pipeline's behavior and limits.
+- Intended result: signed VK-only administrator uploads, lists, views and removes
+  personal photos without creating a legacy Telegram user. Private media GET
+  rechecks ownership; the browser uses authorized Blob/object URLs, never a token
+  in an image URL. Original owner provenance survives confirmed account merges.
+- Risks/seams: authentication before body read and after long normalization;
+  bounded multipart/decode, forged MIME/pixel bombs; canonical/alias merge races;
+  FS/DB cancellation and ambiguous commit; Blob cleanup; no legacy-library API
+  calls from the native preview. Never delete a final file after uncertain commit.
+  Public quota/retention and legacy-library unification remain release gates.
+- Plan: (1) real signed HTTP RED VK-only storage/ownership/media tests; (2) minimal
+  metadata/private storage and shared pure normalization; (3) small upload/gallery
+  preview using existing design components; (4) SQLite/PG, browser/decode/auth/merge/
+  cancellation and unchanged Genjutsu checks; (5) independent review and Draft PR,
+  no production merge/deploy until the complete native journey is ready.
+- Implemented private metadata/files/thumbnail routes and canonical alias ownership,
+  with no legacy users row on signed VK-only uploads. Extracted pure Genjutsu
+  normalization and existing upload limits; kept its default metadata behavior.
+  Frontend keeps operation-local tokens in headers and revokes Blob URLs.
+- Private HTTP + mobile transport contract: 24 passed, 23 native-PG cases skipped
+  locally (no isolated DSN). Unchanged Genjutsu runtime/provider/contracts: 17
+  passed, one existing aiohttp AppKey warning. Focused frontend final matrix:
+  25 passed. TypeScript and changed Python Ruff passed. Full frontend/backend,
+  native PostgreSQL and actual export browser verification remain in progress.
+- Independent review found three backend gaps: cancelled decoders released permits
+  too early, initial multipart parsing was outside the deadline, and an old source
+  assertion expected the extracted timeout literal. Controlled cancellation and
+  stalled-header regressions reproduced both runtime bugs RED then passed GREEN;
+  permit lifetime now follows the actual worker, parsing is under the same timeout,
+  and the transport contract verifies the shared 900-second bound. Standards
+  re-review cleared all three. The ignored new HTTP test must be force-added.
+- Spec review caught the linked-VK gallery hidden behind Telegram-only settings.
+  Real parent/child test reproduced missing control on settings401, then passed
+  after mounting the gallery independently of that settings read. Existing
+  administrator outer guard and every server permission check remain enforced.
+  The first real-export browser run also reproduced the missing linked-profile
+  control against the preceding build; final rebuilt verification is pending.
+- New user steering: result is visible in the Mini App but absent in VK chat.
+  PR423 intentionally implemented app-only availability/no erroneous TG delivery;
+  verified VK chat delivery is now a required follow-up. Research is examining
+  native VK sender/permissions/idempotency; no chat send or provider charge has
+  been performed by this storage slice.
+- Final local verification: 95 Jest suites / 715 tests passed; broader signed
+  HTTP/auth/link/commerce/private-photo/Genjutsu matrix 96 passed, 74 isolated-PG
+  cases skipped, one unchanged AppKey warning. Changed-file ESLint and Python
+  Ruff, frontend types and both production static exports passed. The first final
+  build caught an unsupported RTL `exact` option in the added test; removed that
+  test-only option, then both exports type-checked successfully.
+- Actual exported-browser journeys passed at 320/430px on both Telegram-path and
+  dedicated VK-root builds (four runs): VK-only upload/private PNG decode/reload,
+  HTML thumbnail fallback/retry, removal and linked VK profile with settings401.
+  All APIs/media were synthetic/intercepted; no legacy API before linking, no
+  paid provider request, live financial mutation or message send. Both independent
+  reviewers cleared the final backend/frontend changes. Native-PG/full Linux CI
+  remain a Draft PR gate; no production merge or activation is claimed.
+- Full Linux safe suite exposed 14 photo failures while native PG/focused matrix
+  passed. Ordered reproduction with the real installed Mini App add_post guard
+  returned the same400: its legacy JSON reader consumed multipart before this
+  handler. Replaced only private-photo POST registration with add_route, matching
+  existing authenticated Genjutsu/Kling4 streaming endpoints. Added an actual
+  installed-runtime regression that forbids the legacy reader for photo bodies;
+  no global guard or permission check is disabled. Native PG and full Linux CI
+  must run again for this corrected head. First CI import-order finding was also
+  corrected; no production activation occurred.
+
+## Origin fix #423 verified release — 07.11.2026
+
+- Exact merge SHA 4f6387d65135b04a17c2d448ebeef793c5b08482; strict required
+  PR gates and exact merge-SHA main CI passed. Source PR safe suite: 4755 passed,
+  226 skipped, 76 subtests passed. Local origin matrix 17 passed, broader 148;
+  native runtime PostgreSQL workflow passed independently.
+- First autodeploy stopped safely at the backup free-space gate before switching
+  b9834c7: available 9,864,626,176 vs required 10,737,418,240 bytes. Re-audited
+  disk/cache; pruned only unused build cache older than one hour with explicit
+  retained-cache/free-space bounds, reclaiming 6.972 GB. Root available then
+  16,952,668,160 bytes. No backups, customer data, images, containers or volumes
+  were pruned. Reran exact failed GitHub deploy; attempt 2 succeeded normally.
+- Verified running image revision 4f6387d/healthy, both public frontend revisions
+  exact/200, backend health 200 and unauthenticated profile 401. Published actual
+  Telegram and VK JS category-upload/generation HTTP smokes passed with all API/
+  media/provider actions intercepted. Operational helper removed afterwards.
+- Isolated smoke of the exact production image used network=none, a temporary
+  synthetic SQLite DB and no mounted production data: VK result available in app,
+  no Telegram lease/attempt, stable replay URL and Telegram default compatibility
+  all passed. Five-minute running-container log sample had zero errors, tracebacks
+  or shared-account preview failures. No real paid task or message was submitted.
+
 ## VK result absent from community chat — 07.11.2026
 
 - Baseline 4f6387d65135b04a17c2d448ebeef793c5b08482; dedicated branch

@@ -104,6 +104,153 @@ export async function checkAccountPreviewLogin(signal?: AbortSignal): Promise<vo
   }, signal)
 }
 
+export interface AccountReferencePhoto {
+  id: string
+  mime: 'image/png'
+  width: number
+  height: number
+  size_bytes: number
+  created_at_epoch: number
+}
+
+export interface AccountReferencePage {
+  references: Array<AccountReferencePhoto & { thumbnail: Blob | null }>
+  next_offset: number | null
+}
+
+function ownedPhotoId(id: string): string {
+  if (!/^[a-f0-9]{32}$/.test(id)) throw new Error('Фото недоступно. Обновите список.')
+  return id
+}
+
+function photoMetadata(value: unknown): AccountReferencePhoto {
+  if (!value || typeof value !== 'object') throw new Error('Не удалось прочитать данные фото. Обновите список.')
+  const photo = value as AccountReferencePhoto
+  ownedPhotoId(photo.id)
+  if (photo.mime !== 'image/png' || !Number.isSafeInteger(photo.width) || photo.width <= 0
+    || !Number.isSafeInteger(photo.height) || photo.height <= 0 || !Number.isSafeInteger(photo.size_bytes)
+    || photo.size_bytes <= 0 || !Number.isSafeInteger(photo.created_at_epoch)) {
+    throw new Error('Не удалось прочитать данные фото. Обновите список.')
+  }
+  const { id, mime, width, height, size_bytes, created_at_epoch } = photo
+  return { id, mime, width, height, size_bytes, created_at_epoch }
+}
+
+async function photoJSON(response: Response): Promise<Record<string, unknown>> {
+  const result: unknown = await response.json().catch(() => null)
+  if (!result || typeof result !== 'object' || (result as Record<string, unknown>).ok !== true) {
+    throw new Error('Не удалось прочитать ответ. Обновите список фото.')
+  }
+  return result as Record<string, unknown>
+}
+
+function checkPhotoAbort(signal?: AbortSignal | null): void {
+  if (signal?.aborted) throw new DOMException('Request aborted', 'AbortError')
+}
+
+async function photoRequest(path: string, headers: Record<string, string>, init: RequestInit): Promise<Response> {
+  checkPhotoAbort(init.signal)
+  const result = await fetch(`${getApiBasePath()}/account-preview/references${path}`, {
+    ...init, headers, credentials: 'same-origin', cache: 'no-store',
+  })
+  checkPhotoAbort(init.signal)
+  if (result.ok) return result
+  if (result.status === 401) throw new Error('Откройте приложение заново для подтверждения входа.')
+  if (result.status === 403) throw new Error('Требуется доступ администратора.')
+  const body = await result.json().catch(() => ({}))
+  const messages: Record<string, string> = {
+    media_decode_failed: 'Не удалось прочитать фото. Выберите другой файл.',
+    image_format_not_supported: 'Этот формат фото не поддерживается. Используйте JPG, PNG или WEBP.',
+    media_dimensions_limit: 'У фото слишком большое разрешение. Уменьшите его размер.',
+    media_too_large: 'Файл слишком большой. Выберите фото меньшего размера.',
+    empty_file: 'Файл пустой. Выберите другое фото.',
+    upload_one_photo: 'Выберите одно фото для загрузки.',
+    upload_timeout: 'Загрузка заняла слишком много времени. Повторите попытку.',
+    reference_unavailable: 'Фото недоступно. Обновите список.',
+    preview_unavailable: 'Проверка аккаунтов пока выключена.',
+  }
+  throw new Error(messages[body.error_code] || 'Не удалось выполнить запрос фото. Попробуйте ещё раз.')
+}
+
+async function withPhotoSession<T>(
+  operation: (headers: Record<string, string>, signal: AbortSignal) => Promise<T>,
+  signal?: AbortSignal, timeoutMs = 60_000,
+): Promise<T> {
+  checkPhotoAbort(signal)
+  const controller = new AbortController()
+  let stop!: (reason: Error) => void
+  const interrupted = new Promise<never>((_resolve, reject) => { stop = reject })
+  const cancel = () => {
+    stop(new DOMException('Request aborted', 'AbortError'))
+    controller.abort()
+  }
+  signal?.addEventListener('abort', cancel, { once: true })
+  const timer = setTimeout(() => {
+    stop(new Error('Запрос занял слишком много времени. Обновите список фото.'))
+    controller.abort()
+  }, timeoutMs)
+  try {
+    return await Promise.race([
+      withPreviewSession(headers => {
+        checkPhotoAbort(controller.signal)
+        return operation(headers, controller.signal)
+      }, controller.signal),
+      interrupted,
+    ])
+  } catch (failure) {
+    if (failure instanceof TypeError || failure instanceof SyntaxError) {
+      throw new Error('Не удалось связаться с сервером. Обновите список фото.')
+    }
+    throw failure
+  } finally {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', cancel)
+  }
+}
+
+export async function saveAccountReferencePhoto(file: File, signal?: AbortSignal): Promise<AccountReferencePhoto> {
+  return withPhotoSession(async (headers, signal) => {
+    const body = new FormData()
+    body.append('file', file)
+    const response = await photoRequest('', headers, { method: 'POST', body, signal })
+    return photoMetadata((await photoJSON(response)).reference)
+  }, signal, 900_000)
+}
+
+export async function fetchAccountReferencePhotos(offset = 0, signal?: AbortSignal): Promise<AccountReferencePage> {
+  if (!Number.isSafeInteger(offset) || offset < 0) throw new Error('Обновите список фото.')
+  return withPhotoSession(async (headers, signal) => {
+    const response = await photoRequest(`?offset=${offset}`, headers, { signal })
+    const data = await photoJSON(response)
+    const next = data.next_offset
+    if (!Array.isArray(data.references) || data.references.length > 24
+      || (next !== null && (typeof next !== 'number' || !Number.isSafeInteger(next) || next <= offset))) {
+      throw new Error('Не удалось прочитать список фото.')
+    }
+    const metadata = data.references.map(photoMetadata)
+    const references = await Promise.all(metadata.map(async (photo: AccountReferencePhoto) => {
+      try {
+        const media = await photoRequest(`/${photo.id}/thumbnail`, headers, { signal })
+        if (media.headers.get('Content-Type')?.split(';')[0].toLowerCase() !== 'image/png') throw new Error('Invalid image response')
+        const thumbnail = await media.blob()
+        if (thumbnail.type.split(';')[0].toLowerCase() !== 'image/png') throw new Error('Invalid image response')
+        return { ...photo, thumbnail }
+      } catch (error) {
+        if (signal?.aborted) throw error
+        return { ...photo, thumbnail: null }
+      }
+    }))
+    return { references, next_offset: next as number | null }
+  }, signal)
+}
+
+export async function removeAccountReferencePhoto(id: string, signal?: AbortSignal): Promise<void> {
+  ownedPhotoId(id)
+  await withPhotoSession(async (headers, signal) => {
+    await photoJSON(await photoRequest(`/${id}`, headers, { method: 'DELETE', signal }))
+  }, signal)
+}
+
 export type VkChatDeliveryState = 'not_applicable' | 'not_requested' | 'pending' | 'preparing' | 'sending'
   | 'delivered' | 'permission_required' | 'uncertain' | 'failed' | 'access_revoked' | 'configuration_required' | 'disabled'
 export interface VkChatDeliveryStatus {

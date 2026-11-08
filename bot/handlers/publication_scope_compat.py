@@ -19,7 +19,7 @@ from bot import db as db_backend
 logger = logging.getLogger(__name__)
 router = Router(name="publication_scope_compat")
 
-_SCHEMA_READY_PATHS: set[str] = set()
+_SCHEMA_READY_PATHS: set[tuple[str, str]] = set()
 _INSTALLED = False
 _MINIAPP_HOOK_INSTALLED = False
 _COMMON_PATCHED = False
@@ -66,7 +66,7 @@ def _generation_row_to_card_scoped(*args, **kwargs):
 
 
 async def _ensure_publication_scope_schema() -> None:
-    database_path = str(database.DATABASE_PATH)
+    database_path = (db_backend.backend_name(), str(database.DATABASE_PATH))
     if database_path in _SCHEMA_READY_PATHS:
         return
 
@@ -77,7 +77,13 @@ async def _ensure_publication_scope_schema() -> None:
             "ALTER TABLE generation_tasks ADD COLUMN feed_reference_selection TEXT",
             "ALTER TABLE generation_tasks ADD COLUMN feed_repeat_reference_selection TEXT",
         )
+        native_ddl = db.execute_native_ddl if db_backend.is_postgres() else None
         for statement in migrations:
+            if native_ddl is not None:
+                # PG's SQLite-compatible execute silently skips ALTER TABLE.
+                # Initialize here even when handlers were imported under SQLite.
+                await native_ddl(statement.replace("ADD COLUMN ", "ADD COLUMN IF NOT EXISTS "))
+                continue
             try:
                 await db.execute(statement)
             except db_backend.OperationalError:
@@ -94,11 +100,13 @@ async def _ensure_publication_scope_schema() -> None:
             """
         )
         try:
-            await db.execute(
+            await (native_ddl or db.execute)(
                 "CREATE INDEX IF NOT EXISTS idx_generation_tasks_profile "
                 "ON generation_tasks(is_profile_visible, user_id, profile_published_at DESC, created_at DESC)"
             )
         except db_backend.OperationalError:
+            if native_ddl is not None:
+                raise
             logger.debug("Could not create publication profile index", exc_info=True)
         await db.commit()
 

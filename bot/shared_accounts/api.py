@@ -15,6 +15,7 @@ from .commercial_store import CommercialStore
 from .errors import AuthenticationError, PreviewConflict
 from .links import LinkExpired, LinkService
 from .policy import VKDeliveryConfigurationError, load_policy, save_policy
+from .references import AccountReferenceError, AccountReferenceStore
 from .store import (
     create_session,
     get_session,
@@ -25,6 +26,7 @@ from .store import (
 from .wallet import InsufficientFunds, WalletService
 
 logger = logging.getLogger(__name__)
+REFERENCE_STORE = web.AppKey('account_reference_store', AccountReferenceStore)
 
 
 def response(data: dict, status: int = 200) -> web.Response:
@@ -115,6 +117,60 @@ async def logout(request: web.Request) -> web.Response:
     # preview shutdown. It grants no access and is intentionally idempotent.
     await revoke_session(_bearer(request))
     return response({'ok': True})
+
+
+async def _reference_account(request: web.Request):
+    policy = await load_policy()
+    if not policy.enabled:
+        raise AccountReferenceError('preview_unavailable', status=404)
+    account = await get_session(_bearer(request), policy.revision)
+    if not policy.allows(account.identity):
+        raise PermissionError('Administrator preview only')
+    return account
+
+
+async def references(request: web.Request) -> web.Response:
+    # Authenticate before parsing/reading any image body. Telegram membership is
+    # deliberately irrelevant to this shared-account ownership boundary.
+    account = await _reference_account(request)
+    store = request.app[REFERENCE_STORE]
+    item_id = request.match_info.get('reference_id')
+    if request.method == 'DELETE':
+        await store.remove(account.id, item_id)
+        return response({'ok': True})
+    if item_id is not None:
+        raw = await store.read(account.id, item_id, thumbnail=request.match_info.get('representation') == 'thumbnail')
+        return web.Response(body=raw, content_type='image/png', headers={
+            'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer', 'X-Content-Type-Options': 'nosniff',
+        })
+    if request.method == 'GET':
+        offset = request.query.get('offset', '0')
+        if not offset.isascii() or not offset.isdecimal() or len(offset) > 10:
+            raise AccountReferenceError('invalid_page')
+        return response({'ok': True, **await store.list(account.id, int(offset))})
+    if request.content_type != 'multipart/form-data':
+        raise AccountReferenceError('upload_one_photo')
+    async def chunks():
+        # Parse the initial boundary/part under the store's upload deadline too.
+        reader = await request.multipart()
+        part = await reader.next()
+        if part is None or part.name != 'file' or part.filename is None:
+            raise AccountReferenceError('upload_one_photo')
+        while True:
+            chunk = await part.read_chunk(65536)
+            if not chunk:
+                break
+            yield chunk
+        if await reader.next() is not None:
+            raise AccountReferenceError('upload_one_photo')
+
+    async def reauthorize():
+        current = await _reference_account(request)
+        if current != account:
+            raise AuthenticationError('Session changed; reopen the application')
+
+    item = await store.save(account.id, chunks(), reauthorize=reauthorize)
+    return response({'ok': True, 'reference': item})
 
 
 async def wallet(request: web.Request) -> web.Response:
@@ -213,6 +269,8 @@ def _guard(handler):
         except AuthenticationError as exc:
             logger.info('shared_account_authentication_rejected path=%s reason=%s', request.path, str(exc))
             return response({'ok': False, 'error': str(exc)}, 401)
+        except AccountReferenceError as exc:
+            return response({'ok': False, 'error_code': exc.code, 'error': 'Photo request could not be completed'}, exc.status)
         except PermissionError as exc:
             return response({'ok': False, 'error': str(exc)}, 403)
         except PreviewConflict as exc:
@@ -238,6 +296,8 @@ def setup_shared_account_routes(app: web.Application, miniapp_root: str) -> None
     from .vk_delivery import vk_delivery
 
     root = miniapp_root + '/api/account-preview'
+    app[REFERENCE_STORE] = AccountReferenceStore()
+
     app.router.add_get(root + '/vk-deliveries/{task_id}', _guard(vk_delivery))
     # Auth and bounded JSON belong to this route, not the legacy body guard.
     app.router.add_route('POST', root + '/vk-deliveries/{task_id}', _guard(vk_delivery))
@@ -246,6 +306,11 @@ def setup_shared_account_routes(app: web.Application, miniapp_root: str) -> None
     app.router.add_post(root + '/session', _guard(session))
     app.router.add_get(root + '/me', _guard(profile))
     app.router.add_post(root + '/logout', _guard(logout))
+    app.router.add_get(root + '/references', _guard(references))
+    # Own auth/bounded streaming; the legacy add_post guard eagerly reads JSON.
+    app.router.add_route('POST', root + '/references', _guard(references))
+    app.router.add_delete(root + '/references/{reference_id}', _guard(references))
+    app.router.add_get(root + '/references/{reference_id}/{representation:content|thumbnail}', _guard(references))
     app.router.add_get(root + '/wallet', _guard(wallet))
     app.router.add_post(root + '/wallet', _guard(wallet))
     app.router.add_get(root + '/wallet/reconcile', _guard(wallet))
