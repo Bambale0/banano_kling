@@ -212,6 +212,10 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
         return
       }
     }
+    if (service.id === 'solar' && !String(form.get('solar-place') || '').trim()) {
+      setMessage('Укажите место, где вы встретите день рождения в выбранном году.')
+      return
+    }
     setMessage('Интерфейс подготовлен. Для расчёта требуется подключение астрономического API — данные не отправлены, баланс не списан.')
   }
 
@@ -243,6 +247,17 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
           <>
             <BirthFields key={service.id + '-person'} prefix="person" heading={service.id === 'compatibility' ? 'Первый человек' : undefined} />
             {service.id === 'compatibility' && <BirthFields prefix="partner" heading="Второй человек" />}
+            {service.id === 'solar' && (
+              <label className="astro-field">
+                <MapPin className="astro-field-icon" aria-hidden="true" />
+                <span className="astro-field-body">
+                  <span className="astro-field-label">Место встречи соляра</span>
+                  <input aria-label="Место встречи соляра" name="solar-place"
+                    autoComplete="off" placeholder="Город, страна" maxLength={160} />
+                </span>
+                <Search className="astro-field-trailing" aria-hidden="true" />
+              </label>
+            )}
             {['year', 'month', 'solar'].includes(service.id) && (
               <label className="astro-field">
                 <CalendarDays className="astro-field-icon" aria-hidden="true" />
@@ -250,8 +265,6 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
                   <span className="astro-field-label">{service.id === 'month' ? 'Месяц прогноза' : 'Год прогноза'}</span>
                   <input aria-label="Период прогноза" name="period" required
                     type={service.id === 'month' ? 'month' : 'number'}
-                    min={service.id === 'month' ? undefined : 1900}
-                    max={service.id === 'month' ? undefined : 2200}
                     value={period} onChange={(event) => setPeriod(event.target.value)}
                     placeholder={service.id === 'month' ? undefined : 'ГГГГ'} />
                 </span>
