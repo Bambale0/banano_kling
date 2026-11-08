@@ -137,6 +137,29 @@ class LinkService:
         if link['state'] == 'cancelled' or link['expires_at_epoch'] <= int(time.time()) or link['policy_revision'] != self.policy.revision:
             raise LinkExpired('Invitation expired or cancelled')
 
+    async def preview_token(self, actor: Account, token: str) -> dict:
+        """Read-only invitation identity check; visiting a link is never consent."""
+        digest = _token_hash(token)
+        async with db_backend.connect() as db:
+            row = await (await db.execute(
+                'SELECT ' + ', '.join(COLUMNS)
+                + ' FROM shared_account_links WHERE token_hash = ?',
+                (digest,),
+            )).fetchone()
+        if not row:
+            raise AuthenticationError('Invitation unavailable')
+        link = {column: row[index] for index, column in enumerate(COLUMNS)}
+        if actor.identity.platform != link['target_platform']:
+            raise PermissionError('Invitation requires the other platform')
+        if (link['target_external_id'] is not None
+                and actor.identity.external_id != link['target_external_id']):
+            raise PreviewConflict('Invitation already has a recipient')
+        if (link['state'] in {'cancelled', 'committed'}
+                or link['expires_at_epoch'] <= int(time.time())
+                or link['policy_revision'] != self.policy.revision):
+            raise LinkExpired('Invitation expired or cancelled')
+        return _payload(link)
+
     async def accept_token(self, actor: Account, token: str, *, confirm: bool = False) -> dict:
         digest = _token_hash(token)
         async with db_backend.connect() as db:
