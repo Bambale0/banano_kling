@@ -81,6 +81,8 @@
   background: linear-gradient(90deg, transparent, #ffbc53 20%, #ffbc53 80%, transparent);
   box-shadow: 0 0 7px #f4b350;
 }
+.astro-menu { padding-top: 7px; }
+.astro-menu .astro-kicker { margin-bottom: 15px; }
 .astro-menu-list { display: grid; gap: 9px; }
 .astro-menu-card {
   display: flex;
@@ -176,7 +178,7 @@
   line-height: 1.45;
 }
 .astro-wheel-scene {
-  height: 222px;
+  height: 195px;
   display: grid;
   justify-items: center;
   position: relative;
@@ -292,7 +294,7 @@
   .astro-card-visual { flex-basis: 99px; height: 66px; }
   .astro-card-visual svg { width: 94px; height: 65px; }
   .astro-card-label { font-size: 25px; }
-  .astro-wheel-scene { height: 277px; }
+  .astro-wheel-scene { height: 233px; }
   .astro-wheel-scene .astro-zodiac-wheel { width: 445px; }
   .astro-form-panel { max-width: 530px; margin-inline: auto; }
 }
