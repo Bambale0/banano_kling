@@ -1023,6 +1023,44 @@ try {
   await page.getByRole('button', { name: 'Закрыть студию' }).click()
   await page.getByRole('dialog').waitFor({ state: 'hidden' })
 
+  // Ordinary users should retain Motion in this slot, without an Astro entry.
+  bootstrapPayload.is_admin = false
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await page.getByRole('button', { name: 'Motion', exact: true }).waitFor()
+  assert.equal(await page.getByRole('button', { name: 'Астро', exact: true }).count(), 0)
+  assert.equal(await page.locator('.astro-shell').count(), 0)
+  // The same real bootstrap contract enables preview for authorized admins.
+  bootstrapPayload.is_admin = true
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await page.getByRole('button', { name: 'Астро', exact: true }).waitFor()
+
+  // Astro is an isolated UI preview: it must not submit to API or debit the wallet.
+  await page.setViewportSize({ width: 414, height: 896 })
+  await page.getByRole('button', { name: 'Астро', exact: true }).click()
+  await page.getByRole('button', { name: 'Натальная карта', exact: true }).waitFor()
+  assert.equal(await page.locator('.astro-menu-card').count(), 7)
+  assert.equal(await page.locator('.astro-shell').evaluate(el => el.scrollWidth <= el.clientWidth + 1), true)
+  if (process.env.ASTRO_QA_SCREENSHOTS) {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.screenshot({ path: process.env.ASTRO_QA_SCREENSHOTS + '/astro-menu-390.png' })
+    await page.setViewportSize({ width: 414, height: 896 })
+    await page.screenshot({ path: process.env.ASTRO_QA_SCREENSHOTS + '/astro-menu-414.png' })
+  }
+  await page.getByRole('button', { name: 'Натальная карта', exact: true }).click()
+  await page.getByLabel('person: дата рождения').fill('29.02.2000')
+  await page.getByLabel('person: место рождения').fill('Москва, Россия')
+  if (process.env.ASTRO_QA_SCREENSHOTS) {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.screenshot({ path: process.env.ASTRO_QA_SCREENSHOTS + '/astro-natal-390.png' })
+    await page.setViewportSize({ width: 414, height: 896 })
+    await page.screenshot({ path: process.env.ASTRO_QA_SCREENSHOTS + '/astro-natal-414.png' })
+  }
+  await page.getByRole('button', { name: 'Построить натальную карту' }).click()
+  await page.locator('.astro-form-message').getByText(/данные не отправлены, баланс не списан/).waitFor()
+  await page.getByRole('button', { name: /Все разделы/ }).click()
+  await page.getByRole('button', { name: 'Совместимость', exact: true }).click()
+  await page.getByLabel('partner: дата рождения').waitFor()
+
   console.log('Mini App critical browser E2E passed')
 } finally {
   await browser?.close()

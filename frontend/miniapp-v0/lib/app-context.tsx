@@ -8,6 +8,7 @@ import { genjutsuRecipeStartParam, parseMiniAppStartParam, startParamFromLocatio
 import { isVideoTrendItem, isWanTrendItem, resolveTrendSettings } from './trend-settings'
 import { genjutsuCall, openGenjutsu } from './genjutsu-api'
 import { hydrateSeedance25IdentityPreset } from './seedance25-repeat'
+import { ASTRO_TAB_ID, isAstroVisible } from './astro-access'
 
 export interface BalanceRequest {
   packageId?: string
@@ -221,6 +222,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const applyBootstrap = useCallback((data: BootstrapResponse, accessRevision: number) => {
+    if (data.is_admin !== true) {
+      setActiveTabState(current => current === ASTRO_TAB_ID ? 0 : current)
+    }
     setSelectedTask((current) => {
       if (!current) return current
       const fresh = data.recent_tasks.find((task) => task.task_id === current.task_id)
@@ -355,13 +359,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const setActiveTab = useCallback((tab: number) => {
+    if (tab === ASTRO_TAB_ID && !isAstroVisible(state)) return
     cancelStartNavigation()
     setFeedDeepLink(null)
     if (tab === 7) {
       setViewedProfileCode(null)
     }
     setActiveTabState(tab)
-  }, [cancelStartNavigation])
+  }, [cancelStartNavigation, state.mode, state.user.isAdmin])
 
   const openProfile = useCallback((referralCode?: string | null) => {
     cancelStartNavigation()

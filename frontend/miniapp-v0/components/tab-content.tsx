@@ -3,6 +3,7 @@
 import dynamic from 'next/dynamic'
 import { useEffect, type ComponentType } from 'react'
 import { useApp } from '@/lib/app-context'
+import { effectiveTabId } from '@/lib/astro-access'
 import { AnimatePresence, motion } from 'framer-motion'
 import { StudioTab } from './tabs/studio-tab'
 
@@ -29,11 +30,14 @@ const TrendsTab = dynamicTab(() => import('./tabs/trends-tab').then((module) => 
 const ServicesTab = dynamicTab(() => import('./tabs/services-tab').then((module) => ({ default: module.ServicesTab })))
 const ProfileTab = dynamicTab(() => import('./tabs/profile-tab').then((module) => ({ default: module.ProfileTab })))
 
-const tabComponents = [StudioTab, PhotoTab, VideoTab, MotionTab, FeedTab, TrendsTab, ServicesTab, ProfileTab]
+const AstroTab = dynamicTab(() => import('./tabs/astro-tab').then((module) => ({ default: module.AstroTab })))
+
+const tabComponents = [StudioTab, PhotoTab, VideoTab, MotionTab, FeedTab, TrendsTab, ServicesTab, ProfileTab, AstroTab]
 
 export function TabContent() {
-  const { activeTab } = useApp()
-  const ActiveComponent = tabComponents[activeTab] || StudioTab
+  const { activeTab, state } = useApp()
+  const visibleTab = effectiveTabId(activeTab, state)
+  const ActiveComponent = tabComponents[visibleTab] || StudioTab
 
   useEffect(() => {
     const prefetchTimer = window.setTimeout(() => {
@@ -46,7 +50,7 @@ export function TabContent() {
     <div className="relative">
       <AnimatePresence mode="wait">
         <motion.div
-          key={activeTab}
+          key={visibleTab}
           initial={false}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -8 }}
