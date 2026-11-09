@@ -327,6 +327,12 @@ try {
             linked_platforms: admin ? ['telegram', 'vk'] : ['vk'],
           },
         }
+      } else if (path.endsWith('/trends')) {
+        payload = { ok: true, can_generate_in_app: false, categories: [{
+          id: 1, title: 'Портреты', emoji: '🎨', total: 1,
+          items: [{ id: 100, title: 'VK тест тренда', description: '',
+            preview_url: null, preview_poster_url: null, generation_type: 'image' }],
+        }] }
       } else if (path.endsWith('/links/preview')) {
         // Source identity is authenticated by the backend; reading the link
         // never accepts it or changes money/account ownership.
@@ -413,6 +419,7 @@ try {
       }
     } else {
       await page.getByRole('heading', { name: 'Создавайте в ВКонтакте', exact: true }).waitFor()
+      await page.getByText('VK тест тренда', { exact: true }).waitFor()
       assert.equal(await page.getByRole('link', { name: 'Генерировать в боте ВКонтакте' }).getAttribute('href'),
         'https://vk.com/im?sel=-239915802')
       assert.equal(await page.getByText('Связать Telegram (необязательно)', { exact: true }).locator('..').evaluate(el => el.open), true,
