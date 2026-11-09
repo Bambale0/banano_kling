@@ -64,6 +64,8 @@ jobs:
         run: >-
           npm test -- --runInBand
           components/__tests__/account-platform-entry.test.tsx
+          components/__tests__/astro-admin-access.test.tsx
+          components/tabs/astro-tab.test.tsx
           components/__tests__/shared-account-link-preview.test.tsx
           components/__tests__/shared-account-preview.test.tsx
           components/__tests__/vk-chat-delivery.test.tsx
