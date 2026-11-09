@@ -69,7 +69,8 @@ from bot.keyboards import (
     get_edit_hub_keyboard,
     get_main_menu_keyboard,
     get_more_menu_keyboard,
-    get_partner_consent_keyboard,
+    get_legal_documents_keyboard,
+    get_legal_document_view_keyboard,
     get_partner_program_keyboard,
     get_required_subscription_keyboard,
 )
@@ -94,6 +95,7 @@ from bot.miniapp_links import (
 from bot.miniapp_links import (
     remix_start_param as build_remix_start_param,
 )
+from bot.legal_documents import document_text, https_document_url, telegram_text_parts
 from bot.services.preset_manager import preset_manager
 from bot.services.subscription_service import (
     REQUIRED_CHANNEL_USERNAME,
@@ -3372,7 +3374,7 @@ async def show_more_menu(callback: types.CallbackQuery, state: FSMContext):
     text = (
         "⋯ <b>Ещё</b>\n"
         f"🍌 Баланс: <code>{user.credits}</code> бананов\n\n"
-        "Здесь находятся баланс, помощь, поддержка и публичная оферта."
+        "Здесь находятся баланс, помощь, поддержка и юридические документы."
     )
     await _safe_show_text(
         callback.message, text, reply_markup=get_more_menu_keyboard(), parse_mode="HTML"
@@ -4195,86 +4197,92 @@ async def show_partner(callback: types.CallbackQuery, state: FSMContext):
     await render_partner_program(callback.message, user_id=callback.from_user.id)
 
 
-@router.callback_query(F.data == "partner_offer")
-async def show_partner_offer(callback: types.CallbackQuery):
-    """Показывает текст публичной оферты из static/ofert.md (локально)."""
-    import os
+@router.callback_query(F.data == "legal_documents")
+async def show_legal_documents(callback: types.CallbackQuery):
+    """One legal documents entry point for the bot, top-up, and partners."""
+    await _safe_show_text(
+        callback.message,
+        "📄 <b>Юридические документы</b>\n\n"
+        "Ознакомьтесь с условиями сервиса и обработкой персональных данных:",
+        reply_markup=get_legal_documents_keyboard(),
+        parse_mode="HTML",
+    )
+    await _safe_callback_answer(callback)
+
+
+async def _show_legal_document(
+    callback: types.CallbackQuery, *, kind: str, title: str, configured_url: str
+) -> None:
+    url = https_document_url(configured_url)
+    if configured_url and not url:
+        logger.warning("Legal document HTTPS URL rejected: kind=%s", kind)
+
+    if url:
+        reply_markup = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🔗 Открыть документ", url=url)],
+                [InlineKeyboardButton(text="📄 Все документы", callback_data="legal_documents")],
+                [InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_main")],
+            ]
+        )
+        await callback.message.answer(
+            f"{title}\n\nАктуальная редакция доступна по ссылке.",
+            reply_markup=reply_markup,
+            parse_mode=None,
+        )
+        await _safe_callback_answer(callback)
+        return
 
     try:
-        ofert_path = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "static", "ofert.md")
+        parts = telegram_text_parts(document_text(kind))
+    except (OSError, ValueError) as exc:
+        logger.warning("Legal document unavailable: kind=%s type=%s", kind, type(exc).__name__)
+        await callback.answer(
+            "Документ пока не опубликован. Обратитесь в поддержку.",
+            show_alert=True,
+        )
+        return
+
+    await _safe_callback_answer(callback)
+    try:
+        for index, part in enumerate(parts):
+            await callback.message.answer(
+                part,
+                reply_markup=(
+                    get_legal_document_view_keyboard()
+                    if index == len(parts) - 1
+                    else None
+                ),
+                parse_mode=None,
+            )
+    except Exception:
+        logger.exception("Failed to send legal document text: kind=%s", kind)
+        await callback.message.answer(
+            "Не удалось показать весь документ. Повторите попытку позже.",
+            reply_markup=get_legal_document_view_keyboard(),
         )
 
-        # Попробуем сначала отправить файл как документ — это самый надёжный способ
-        try:
-            # Try to send the local file path directly. Avoid using InputFile
-            # class instantiation which may not be compatible with this aiogram
-            # version (causes "Can't instantiate abstract class InputFile").
-            await callback.message.answer_document(
-                document=ofert_path,
-                caption="📜 Публичная оферта",
-                reply_markup=get_partner_consent_keyboard(),
-            )
-            await callback.answer()
-            return
-        except Exception as e_doc:
-            logger.info(
-                "Sending offer as document failed, falling back to text: %s", e_doc
-            )
 
-        # Если отправка документа не удалась, попытаемся отправить текст по частям
-        with open(ofert_path, "r", encoding="utf-8") as f:
-            ofert_text = f.read()
+@router.callback_query(F.data.in_({"partner_offer", "more_public_offer"}))
+async def show_partner_offer(callback: types.CallbackQuery):
+    """Expose the public offer as HTTPS link or Telegram plain text, never a file."""
+    await _show_legal_document(
+        callback,
+        kind="offer",
+        title="📜 Публичная оферта",
+        configured_url=config.PARTNER_OFFER_URL,
+    )
 
-        # Telegram имеет ограничение на длину сообщения (~4096 символов). Разделим на части.
-        max_len = 4000
-        parts = [
-            ofert_text[i : i + max_len] for i in range(0, len(ofert_text), max_len)
-        ]
 
-        # Отправляем части: для первой части пробуем отредактировать сообщение,
-        # для промежуточных частей отправляем просто текст (без клавиатуры),
-        # а клавиатуру с возможностью "Назад" и акцепта показываем только в последней части.
-        for idx, part in enumerate(parts):
-            try:
-                is_last = idx == len(parts) - 1
-                if idx == 0:
-                    try:
-                        # Пытаемся отредактировать существующее сообщение и сразу добавить клавиатуру
-                        await callback.message.edit_text(
-                            part,
-                            reply_markup=(
-                                get_partner_consent_keyboard() if is_last else None
-                            ),
-                            parse_mode="HTML",
-                        )
-                        # Если отредактировали и это не последняя часть, продолжим к следующей
-                        if not is_last:
-                            continue
-                        else:
-                            # Если это была единственная/последняя часть — всё готово
-                            break
-                    except Exception:
-                        # Не удалось отредактировать — отправим новое сообщение ниже
-                        pass
-
-                # Для всех отправляемых сообщений: добавляем клавиатуру ТОЛЬКО для последней части
-                if is_last:
-                    await callback.message.answer(
-                        part,
-                        reply_markup=get_partner_consent_keyboard(),
-                        parse_mode="HTML",
-                    )
-                else:
-                    await callback.message.answer(part, parse_mode="HTML")
-            except Exception as e_part:
-                logger.exception("Failed to send part of offer: %s", e_part)
-
-        await callback.answer()
-
-    except Exception as e:
-        logger.exception("Failed to load partner offer: %s", e)
-        await callback.answer("Не удалось загрузить оферту.", show_alert=True)
+@router.callback_query(F.data == "privacy_policy")
+async def show_privacy_policy(callback: types.CallbackQuery):
+    """Expose an approved privacy policy as HTTPS link or Telegram plain text."""
+    await _show_legal_document(
+        callback,
+        kind="privacy",
+        title="🔒 Политика конфиденциальности",
+        configured_url=config.PRIVACY_POLICY_URL,
+    )
 
 
 async def render_partner_program(target, user_id: int):
