@@ -26,7 +26,7 @@ export const ASTRO_SERVICES: readonly AstroService[] = [
   { id: 'lunar', title: 'Лунный календарь', description: 'Фазы Луны и ключевые лунные события месяца' },
 ]
 
-const zodiac = ['♈', '♉', '♊', '♋', '♌', '♍', '♎', '♏', '♐', '♑', '♒', '♓']
+const zodiac = ['♈︎', '♉︎', '♊︎', '♋︎', '♌︎', '♍︎', '♎︎', '♏︎', '♐︎', '♑︎', '♒︎', '♓︎']
 
 /** Decorative zodiac wheel: real planetary coordinates must come from an ephemeris API. */
 function ZodiacWheel({ small = false }: { small?: boolean }) {
@@ -56,7 +56,7 @@ function ZodiacWheel({ small = false }: { small?: boolean }) {
         const theta = ((index + .5) * Math.PI) / 6 - Math.PI / 2
         return (
           <text key={sign} x={200 + 153 * Math.cos(theta)} y={206 + 153 * Math.sin(theta)}
-            textAnchor="middle" fontSize="22" fill="#daa150" fontFamily="Georgia,serif">{sign}</text>
+            textAnchor="middle" fontSize="22" fill="#daa150" fontFamily="DejaVu Sans, Noto Sans Symbols 2, Arial, sans-serif">{sign}</text>
         )
       })}
       <circle cx="200" cy="200" r="73" fill="url(#astro-sun-glow)" opacity=".85" />
