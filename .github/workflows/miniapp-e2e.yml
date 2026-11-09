@@ -65,7 +65,10 @@ jobs:
         run: node e2e/shared-account-preview.mjs
 
       - name: Run critical browser and iOS share flows
+        env:
+          ASTRO_QA_SCREENSHOTS: .qa/astro
         run: |
+          mkdir -p .qa/astro
           node e2e/payment-browser.mjs
           node e2e/critical-flows.mjs
           node e2e/repeat-personalization.mjs
@@ -74,6 +77,14 @@ jobs:
           BOT_WRITE_NATIVE_E2E=1 node e2e/bot-start-media-targets.mjs
           BOT_WRITE_NATIVE_E2E=1 BOT_WRITE_E2E_BROWSER=webkit node e2e/bot-start-media-targets.mjs
           BOT_START_E2E_BROWSER=webkit BOT_START_CONSENT_ONLY=1 node e2e/bot-start-gate.mjs
+
+      - name: Upload Astro UI screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: astro-ui-preview
+          path: frontend/miniapp-v0/.qa/astro/*.png
+          if-no-files-found: ignore
 
       - name: Capture locked dependency audit report
         if: always()
