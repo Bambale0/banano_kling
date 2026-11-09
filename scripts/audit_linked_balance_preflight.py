@@ -17,6 +17,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+
 def emit_telegram() -> None:
     import os
 
