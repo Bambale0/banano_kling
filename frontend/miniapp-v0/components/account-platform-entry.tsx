@@ -39,7 +39,7 @@ function VkAccountGate({ children }: { children: ReactNode }) {
 
   return <main className="mx-auto min-h-dvh w-full max-w-lg space-y-4 p-4" aria-label="Связывание аккаунта ВК">
     <h1 className="text-xl font-semibold">Свяжите аккаунты ТГ и ВК</h1>
-    <p className="text-sm text-muted-foreground">Это нужно один раз, чтобы в обеих апках были общий баланс, история и генерации.</p>
+    <p className="text-sm text-muted-foreground">После привязки откроется студия с балансом, историей и генерациями Telegram. Средства из прежнего VK-бота автоматически не переносятся.</p>
     <SharedAccountLinkPreview
       vkAppId={access.vk_app_id}
       telegramBotUsername={access.telegram_bot_username}
