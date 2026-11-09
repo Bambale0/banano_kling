@@ -216,6 +216,7 @@ export async function updateAccountLink(link: AccountLink, action: 'get' | 'conf
 export interface AccountPreviewAccess {
   revision: number
   vk_app_id: number | null
+  vk_community_id?: number | null
   telegram_bot_username: string
   telegram_linked: boolean
   linked_platforms?: ('telegram' | 'vk')[]

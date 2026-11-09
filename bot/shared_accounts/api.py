@@ -104,6 +104,9 @@ async def profile(request: web.Request) -> web.Response:
     return response({'ok': True, 'account': account.payload(), 'preview': {
         'revision': policy.revision, 'vk_app_id': policy.vk_app_id,
         'telegram_bot_username': os.getenv('TELEGRAM_BOT_USERNAME', '').strip().lstrip('@'),
+        # A verified VK identity may return to the existing native community
+        # bot without claiming access to a second or migrated money source.
+        'vk_community_id': policy.vk_community_id if account.identity.platform == 'vk' else None,
         'telegram_linked': await linked_telegram_id(account.id) is not None,
         'linked_platforms': await linked_platforms(account.id),
         'link_ttl_seconds': policy.link_ttl_seconds,
