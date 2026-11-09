@@ -128,6 +128,7 @@ test('incoming deep link previews source but does not link a visitor without con
   jest.mocked(previewAccountLink).mockResolvedValue(offered)
   render(<SharedAccountLinkPreview vkAppId={null} />)
   expect(await screen.findByText(/ВКонтакте №381643597/)).toBeInTheDocument()
+  expect(screen.getByText(/Средства старого VK-бота пока остаются отдельно/)).toBeInTheDocument()
   expect(previewAccountLink).toHaveBeenCalledWith(inviteToken, expect.any(AbortSignal))
   expect(acceptAccountLink).not.toHaveBeenCalled()
   expect(updateAccountLink).not.toHaveBeenCalled()

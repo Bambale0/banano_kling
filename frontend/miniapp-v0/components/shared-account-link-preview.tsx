@@ -201,7 +201,7 @@ export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '', po
       {incomingPreview ? <>
         <p className="text-sm text-muted-foreground">
           Связать {platformLabel(incomingPreview.source_identity!.platform)} №{incomingPreview.source_identity!.external_id} с этим аккаунтом {platformLabel(currentAccountPlatform())}?
-          Общими станут баланс, история и генерации.
+          В мини-приложении будут доступны баланс, история и генерации Telegram-аккаунта. Средства старого VK-бота пока остаются отдельно и автоматически не переносятся.
         </p>
         <Button disabled={busy} onClick={() => void run(async signal => {
           const result = await acceptAccountLink(incomingToken, signal, true)
