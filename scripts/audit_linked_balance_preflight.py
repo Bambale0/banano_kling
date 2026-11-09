@@ -11,14 +11,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sqlite3
 import sys
 from collections import Counter
-import re
 from pathlib import Path
 
 def emit_telegram() -> None:
     import os
+
     import psycopg
 
     dsn = os.environ.get('DATABASE_URL', '')
@@ -71,7 +72,7 @@ def aggregate(rows, vk_path: Path) -> dict:
     for line in rows:
         row = json.loads(line)
         if not isinstance(row, dict):
-            raise ValueError('Invalid Telegram source record')
+            raise TypeError('Invalid Telegram source record')
         if 'end' in row:
             if set(row) != {'end'}:
                 raise ValueError('Invalid Telegram terminator')
@@ -91,7 +92,7 @@ def aggregate(rows, vk_path: Path) -> dict:
         if not isinstance(vk_id, str) or not re.fullmatch(r'[1-9][0-9]*', vk_id) or not int(vk_id) < 2**63:
             raise ValueError('Invalid VK identity')
         if not isinstance(tg, str):
-            raise ValueError('Invalid Telegram amount')
+            raise TypeError('Invalid Telegram amount')
         numeric_vk_id = int(vk_id)
         if numeric_vk_id in paired:
             raise ValueError('Ambiguous VK identity / multiple TG owners')
@@ -155,7 +156,7 @@ def main() -> int:
         else:
             print(json.dumps(aggregate(sys.stdin, args.vk_sqlite), ensure_ascii=False, sort_keys=True))
         return 0
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - driver exceptions may contain DSN credentials.
         # psycopg/database exceptions can include the DSN and user identifiers.
         print(f'Linked-account read-only preflight failed: {type(error).__name__}', file=sys.stderr)
         return 1

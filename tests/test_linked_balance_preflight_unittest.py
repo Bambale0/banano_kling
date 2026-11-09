@@ -65,7 +65,7 @@ class LinkedBalancePreflightTests(unittest.TestCase):
     def test_malformed_source_blocks(self):
         for record in ({'vk': 'x', 'tg': '1'}, {'vk': '-1', 'tg': '1'},
                        {'vk': '10', 'tg': 2}, {'vk': '10', 'tg': '2', 'extra': 'bad'}):
-            with self.subTest(record=record), self.assertRaises(ValueError):
+            with self.subTest(record=record), self.assertRaises((ValueError, TypeError)):
                 aggregate(self.feed(record), self.path)
 
     def test_no_unsafe_financial_cutover_even_without_exceptions(self):
