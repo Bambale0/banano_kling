@@ -64,6 +64,8 @@ test('ordinary unlinked VK user is admitted to the mandatory link gate', async (
   render(<AccountPlatformEntry><p>Общая студия</p></AccountPlatformEntry>)
   expect(await screen.findByText('Связать аккаунты Neuromixx_bot')).toBeInTheDocument()
   expect(screen.getByRole('heading', { name: 'Свяжите аккаунты ТГ и ВК' })).toBeInTheDocument()
+  expect(screen.getByText(/Средства из прежнего VK-бота автоматически не переносятся/)).toBeInTheDocument()
+  expect(screen.queryByText(/в обеих апках были общий баланс/)).not.toBeInTheDocument()
   expect(screen.queryByText('Общая студия')).not.toBeInTheDocument()
 })
 
