@@ -34,6 +34,7 @@ export function TabNav() {
           <div className="flex items-stretch justify-around px-2 py-1 lg:px-3 lg:py-1.5">
             {visibleTabs.map((tab) => {
               const isActive = activeTab === tab.id
+              const astroSelected = isActive && tab.id === ASTRO_TAB_ID
               const Icon = tab.icon
 
               return (
@@ -45,6 +46,7 @@ export function TabNav() {
                     "flex-1 py-2 px-0.5 rounded-xl lg:py-1.5",
                     "transition-all duration-300 ease-out",
                     "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    astroSelected && "rounded-[28px] bg-[#2b2319]/80 shadow-[inset_0_0_18px_rgba(234,168,62,0.12)]",
                     isActive 
                       ? "text-gold" 
                       : "text-muted-foreground hover:text-foreground"
@@ -63,11 +65,12 @@ export function TabNav() {
                     "transition-transform duration-300",
                     isActive ? "scale-110" : "scale-100"
                   )}>
-                    <Icon className="w-5 h-5" strokeWidth={isActive ? 2.5 : 2} />
+                    <Icon className={cn("w-5 h-5", astroSelected && "h-8 w-8 drop-shadow-[0_0_8px_rgba(249,183,70,0.65)]")} strokeWidth={isActive ? 2.5 : 2} />
                   </span>
                   
                   <span className={cn(
                     "text-[9px] mt-1 font-medium",
+                    astroSelected && "text-[11px] font-semibold",
                     "transition-all duration-300",
                     isActive ? "opacity-100" : "opacity-70"
                   )}>
@@ -75,7 +78,7 @@ export function TabNav() {
                   </span>
 
                   {isActive && (
-                    <span className="absolute inset-0 rounded-xl bg-gold/5 pointer-events-none" />
+                    <span className={cn("absolute inset-0 rounded-xl bg-gold/5 pointer-events-none", astroSelected && "rounded-[28px] bg-gold/0")} />
                   )}
                 </button>
               )
