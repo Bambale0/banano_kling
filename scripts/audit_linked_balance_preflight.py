@@ -17,6 +17,55 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+# Classify unexpected upstream values as unresolved. Unknown metadata is never
+# printed verbatim: a provider string could contain incident/debug information.
+TASK_STATUSES = frozenset({
+    'pending', 'processing', 'queued', 'running', 'completed', 'failed',
+    'canceled', 'cancelled', 'other',
+})
+PAYMENT_STATUSES = frozenset({
+    'pending', 'processing', 'completed', 'confirmed', 'failed',
+    'canceled', 'cancelled', 'refunded', 'other',
+})
+PAYMENT_PROVIDERS = frozenset({
+    'robokassa', 'freekassa', 'lava', 'yookassa', 'prodamus',
+    'telegram_stars', 'cryptobot', 'other',
+})
+TERMINAL_TASK_STATUSES = frozenset({'completed', 'failed', 'canceled', 'cancelled'})
+TERMINAL_PAYMENT_STATUSES = frozenset({
+    'completed', 'confirmed', 'failed', 'canceled', 'cancelled', 'refunded',
+})
+SOURCE_COUNTS = frozenset({
+    'committed_links', 'live_link_transfer_entries', 'live_wallets_with_funds',
+})
+SOURCE_MAPS = {
+    'telegram_task_statuses': TASK_STATUSES,
+    'telegram_payment_statuses': PAYMENT_STATUSES,
+    'telegram_unsettled_payment_providers': PAYMENT_PROVIDERS,
+}
+LINKED_LEGACY_USERS = """WITH linked_legacy_users AS (
+    SELECT DISTINCT legacy.legacy_user_id
+    FROM shared_account_identities identity
+    JOIN shared_account_legacy_links legacy
+      ON legacy.account_id = identity.account_id AND legacy.source = 'telegram'
+    WHERE identity.platform = 'vk'
+)"""
+
+
+def _safe_bucket(raw: object, permitted: frozenset[str]) -> str:
+    return raw if isinstance(raw, str) and raw in permitted else 'other'
+
+
+def _counts(raw: object, permitted: frozenset[str]) -> dict[str, int]:
+    if (not isinstance(raw, dict) or not set(raw).issubset(permitted)
+            or any(type(value) is not int or value < 0 for value in raw.values())):
+        raise ValueError('Invalid Telegram source summary: unexpected count metadata')
+    return raw
+
+
+def _nonterminal(statuses: dict[str, int], terminal: frozenset[str]) -> int:
+    return sum(count for status, count in statuses.items() if status not in terminal)
+
 
 def emit_telegram() -> None:
     import os
@@ -47,6 +96,31 @@ def emit_telegram() -> None:
             'live_wallets_with_funds': "SELECT COUNT(*) FROM shared_wallets WHERE scope='live' AND (available_units<>0 OR reserved_units<>0)",
         }.items():
             stats[key] = conn.execute(sql).fetchone()[0]
+        # These counts run under the SAME read-only PostgreSQL snapshot as
+        # the balances. Neither payment status nor task status is a ledger.
+        task_rows = conn.execute(LINKED_LEGACY_USERS + """SELECT task.status, COUNT(*)
+            FROM generation_tasks task
+            JOIN linked_legacy_users linked ON linked.legacy_user_id = task.user_id
+            GROUP BY task.status""").fetchall()
+        payment_rows = conn.execute(LINKED_LEGACY_USERS + """SELECT payment.status, payment.provider, COUNT(*)
+            FROM transactions payment
+            JOIN linked_legacy_users linked ON linked.legacy_user_id = payment.user_id
+            GROUP BY payment.status, payment.provider""").fetchall()
+        task_statuses = Counter()
+        payment_statuses = Counter()
+        unsettled_providers = Counter()
+        for status, count in task_rows:
+            task_statuses[_safe_bucket(status, TASK_STATUSES)] += int(count)
+        for status, provider, count in payment_rows:
+            category = _safe_bucket(status, PAYMENT_STATUSES)
+            payment_statuses[category] += int(count)
+            if category not in TERMINAL_PAYMENT_STATUSES:
+                unsettled_providers[_safe_bucket(provider, PAYMENT_PROVIDERS)] += int(count)
+        stats.update({
+            'telegram_task_statuses': dict(sorted(task_statuses.items())),
+            'telegram_payment_statuses': dict(sorted(payment_statuses.items())),
+            'telegram_unsettled_payment_providers': dict(sorted(unsettled_providers.items())),
+        })
         conn.rollback()
     print(json.dumps({'end': stats}, separators=(',', ':')))
 
@@ -80,10 +154,16 @@ def aggregate(rows, vk_path: Path) -> dict:
             if producer_stats is not None:
                 raise ValueError('Duplicate Telegram source terminator')
             producer_stats = row['end']
-            if not isinstance(producer_stats, dict) or set(producer_stats) != {
-                'committed_links', 'live_link_transfer_entries', 'live_wallets_with_funds'
-            } or any(type(v) is not int or v < 0 for v in producer_stats.values()):
+            if not isinstance(producer_stats, dict) or set(producer_stats) != SOURCE_COUNTS | SOURCE_MAPS.keys():
                 raise ValueError('Invalid Telegram source summary')
+            if any(type(producer_stats[key]) is not int or producer_stats[key] < 0 for key in SOURCE_COUNTS):
+                raise ValueError('Invalid Telegram source summary')
+            for key, allowed in SOURCE_MAPS.items():
+                _counts(producer_stats[key], allowed)
+            payments = producer_stats['telegram_payment_statuses']
+            unsettled_providers = producer_stats['telegram_unsettled_payment_providers']
+            if _nonterminal(payments, TERMINAL_PAYMENT_STATUSES) != sum(unsettled_providers.values()):
+                raise ValueError('Telegram unsettled payment status/provider totals disagree')
             continue
         if producer_stats is not None:
             raise ValueError('Data after Telegram source terminator')
@@ -122,16 +202,28 @@ def aggregate(rows, vk_path: Path) -> dict:
             _classified(row[0], 'vk', totals)
             if has_tasks:
                 for status, count in vk.execute('SELECT status,COUNT(*) FROM generation_tasks WHERE user_id=? GROUP BY status', (vk_id,)):
-                    statuses[f'task:{status}'] += count
+                    statuses[f'task:{_safe_bucket(status, TASK_STATUSES)}'] += count
             if has_payments:
                 for status, count in vk.execute('SELECT status,COUNT(*) FROM payments WHERE user_id=? GROUP BY status', (vk_id,)):
-                    statuses[f'payment:{status}'] += count
+                    statuses[f'payment:{_safe_bucket(status, PAYMENT_STATUSES)}'] += count
         vk.rollback()
     exceptions = totals['missing_vk_legacy_user'] + sum(
         totals[f'{source}_{category}']
         for source in ('vk', 'telegram')
         for category in ('precision_review', 'invalid')
     )
+    telegram_task_statuses = producer_stats['telegram_task_statuses']
+    telegram_payment_statuses = producer_stats['telegram_payment_statuses']
+    telegram_statuses = {
+        **{f'task:{key}': count for key, count in telegram_task_statuses.items()},
+        **{f'payment:{key}': count for key, count in telegram_payment_statuses.items()},
+    }
+    vk_task_statuses = {
+        key.removeprefix('task:'): count for key, count in statuses.items() if key.startswith('task:')
+    }
+    vk_payment_statuses = {
+        key.removeprefix('payment:'): count for key, count in statuses.items() if key.startswith('payment:')
+    }
     return {
         'read_only': True,
         'migration_performed': False,
@@ -139,9 +231,18 @@ def aggregate(rows, vk_path: Path) -> dict:
         'writers_fenced': False,
         'financial_cutover_allowed': False,  # No live writer/settlement proof from this check.
         'snapshot_exception_count': exceptions,
-        'source': producer_stats,
+        'source': {key: producer_stats[key] for key in sorted(SOURCE_COUNTS)},
         'linked': dict(sorted(totals.items())),
+        'telegram_legacy_statuses': dict(sorted(telegram_statuses.items())),
+        'telegram_unsettled_payment_providers': producer_stats['telegram_unsettled_payment_providers'],
         'vk_legacy_statuses': dict(sorted(statuses.items())),
+        'settlement_review': {
+            'telegram_nonterminal_tasks': _nonterminal(telegram_task_statuses, TERMINAL_TASK_STATUSES),
+            'telegram_unsettled_payments': _nonterminal(telegram_payment_statuses, TERMINAL_PAYMENT_STATUSES),
+            'vk_nonterminal_tasks': _nonterminal(vk_task_statuses, TERMINAL_TASK_STATUSES),
+            'vk_unsettled_payments': _nonterminal(vk_payment_statuses, TERMINAL_PAYMENT_STATUSES),
+            'vk_status_tables_missing': int(not has_tasks) + int(not has_payments),
+        },
     }
 
 
