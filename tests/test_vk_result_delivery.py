@@ -32,7 +32,7 @@ async def actor(monkeypatch):
     monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
     user = await database.get_or_create_user(999999999)
     async with preview_client() as client:
-        await enable(client, vk_app_id=123, vk_admin_ids=[2001, 2002], vk_community_id=456, vk_result_delivery_enabled=True)
+        await enable(client, vk_app_id=123, vk_admin_ids=[2002], vk_community_id=456, vk_result_delivery_enabled=True)
         tg = await (await login(client)).json()
         vk = await (await client.post(ROOT + '/session', json={'platform': 'vk', 'launch_data': vk_launch(2001)})).json()
         await commit_link(client, {'Authorization': 'Bearer ' + tg['session_token']}, {'Authorization': 'Bearer ' + vk['session_token']})

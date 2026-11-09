@@ -1,9 +1,9 @@
 # VK result chat delivery
 
-This is an administrator-preview capability, disabled by default. It supplements
-the existing Mini App result and preserves the Telegram-origin delivery path.
-It does not enable VK-only paid generation, migrate wallets or create native VK
-users/tasks. The full shared-account release hold still applies.
+This capability is available to the verified owner of a VK-origin task when the
+audited delivery switch is enabled. It supplements the existing Mini App result
+and preserves the Telegram-origin delivery path. It does not create a VK-only
+wallet, synthetic Telegram user or native VK task.
 
 ## Configuration and activation
 
@@ -50,8 +50,9 @@ Completion makes the result available in the Mini App and idempotently enqueues
 one chat delivery. A reconciler repairs a crash before enqueue, scans past invalid
 old rows and wraps for later ownership/policy corrections.
 
-Before sending, the server rechecks ownership, administrator policy and actual
-`messages.isMessagesFromGroupAllowed` permission. The result is downloaded with
+Before sending, the server rechecks the public kill switch, verified VK identity,
+canonical task ownership and actual `messages.isMessagesFromGroupAllowed`
+permission. The result is downloaded with
 public-at-connect DNS/redirect checks, byte/time/pixel bounds and a unique temporary
 file. A photo is prepared through VK's upload/save protocol. Generated videos
 are delivered as the durable public result link; they are never downloaded and
@@ -108,8 +109,7 @@ Under `/mini-app/api/account-preview`:
 - `GET /vk-deliveries/{task_id}`: authenticated owner-only status/capability;
 - `POST /vk-deliveries/{task_id}` with `{}`: explicit acceptance or safe retry.
 
-Both require an active verified VK administrator session in an Authorization
-header. Tokens in query strings are not accepted. Missing/foreign results share
+Both require an active verified VK owner session in an Authorization header. Tokens in query strings are not accepted. Missing/foreign results share
 neutral unavailable recovery text. Responses expose status, community ID and
 representation, never the VK credential, attachment access key or recipient ID.
 

@@ -2960,3 +2960,92 @@ Live ledger: [PREVIEW_RECOVERY_EXECUTION.md](PREVIEW_RECOVERY_EXECUTION.md).
 - Safety: no provider generation, balance mutation, historical task rewrite, token change, payment change or text-bot behavior change. Invalid VK recipients/accounts fail before persistence. Existing outbox leases, permission checks, retry/uncertain rules and account ownership validation remain authoritative.
 - TDD: verified-origin helper, generic video/repeat and video-trend writers, Seedance 2.5 launch/completion, Motion durable receipt, WAN writer, VK video outbox and link-only transport regressions. Focused production-runtime-image result: 276 passed, 25 skipped (PostgreSQL variants remain required in CI). Python compile and diff whitespace checks pass.
 - Release gate: protected PR to tanyapi, required CI, squash auto-merge, automatic deploy and exact-SHA health/revision verification. No paid live generation is part of acceptance.
+
+
+## 2026-11-08 — Public TG/VK account linking and linked VK access
+
+- Baseline: `tanyapi@e3841e88ecdd1ad1c7dce55639878dec2035d060`; isolated branch
+  `feat/public-vk-linking-20261108`. Production checkout runtime data and operator
+  replay files remain untouched.
+- User-visible result: every user with a valid Telegram or VK launch signature can
+  see the linked-account card and complete the existing two-sided, expiring
+  magic-link flow. A VK user must link an existing Telegram account once before
+  entering the shared studio; the linked Telegram user remains the canonical
+  balance, history, referral and generation owner.
+- Confirmed current state: session, profile, linking, VK Mini App authentication
+  and VK result delivery all reuse one administrator allowlist. The link service
+  itself already has explicit acceptance, confirmation by both identities,
+  conflict checks and atomic merge. The main app still resolves all financial and
+  generation ownership through the linked legacy Telegram user.
+- Scope: separate public signed-user admission from administrator authorization;
+  expose only account status/linking to ordinary own profiles; allow linked
+  ordinary VK identities through the existing app and owner-checked VK delivery
+  path. Settings, sandbox wallet and commercial administration remain
+  server-authorized administrators only. Offer, prices, providers, payment
+  methods, text bot and live wallet representation are unchanged.
+- Security and integrity: no client admin flag is trusted; Telegram and VK launch
+  signatures, session revision, expiry, opaque hashed tokens, account status,
+  linked legacy ownership and result ownership checks remain mandatory. No fake
+  Telegram user, VK-only shadow balance or automatic numeric-ID matching is
+  introduced. Removing an administrator role removes only administrative
+  privilege; disabling the global feature remains the kill switch.
+- Scale hardening: public session creation must prune only already expired session
+  rows through the existing expiry index before inserting a new session. Active
+  and merely revoked-but-unexpired sessions retain their established behavior.
+- Acceptance seams: authenticated session/profile/link HTTP routes; denial of
+  settings/wallet/commerce for ordinary users; two-sided ordinary TG/VK linking;
+  linked ordinary VK bootstrap against the canonical Telegram identity; ordinary
+  owner VK result delivery; profile card at mobile/desktop widths; disabled,
+  tampered, expired, conflicting and concurrent cases remain covered.
+- Execution: (1) add RED backend/frontend/browser regressions; (2) introduce
+  explicit public/admin policy predicates and session expiry cleanup; (3) expose
+  the link card on every own profile while retaining admin controls; (4) update
+  ADRs; (5) run focused, full, browser and PostgreSQL checks; (6) independent
+  standards/spec reviews; (7) protected PR, native squash auto-merge, exact-SHA
+  CI/autodeploy and production health/revision/log verification.
+- Rollback: disable the existing audited `enabled` setting for immediate public
+  admission shutdown, then use a normal reviewed revert through protected
+  `tanyapi`. Existing links, identities and generation ownership are retained;
+  no destructive migration or balance rollback is required.
+
+
+Verification progress:
+- RED evidence before the fix: six focused backend failures reproduced the ordinary
+  TG/VK admission, linked VK bootstrap, ordinary VK result delivery and expired
+  session cleanup gaps; frontend ordinary-profile regression also failed because
+  the link card was absent.
+- GREEN backend: 75 focused SQLite tests passed; the CI-equivalent isolated
+  PostgreSQL + SQLite matrix passed Ruff and 281 tests, including link conflicts,
+  concurrency, wallet invariants, browser auth and result delivery ownership.
+- GREEN frontend: focused Jest 13/13; full Jest 97 suites / 722 tests; production
+  Telegram export and TypeScript build; public/admin browser matrix at
+  320/430/1280; VK root export at 430/1280 for both the unlinked mandatory gate
+  and a linked ordinary user. ESLint has zero errors and one pre-existing
+  `kling4-form.tsx` hook warning. `git diff --check` passes.
+- Final current-code CI-equivalent matrix: Ruff passed; 286 SQLite/PostgreSQL
+  tests passed and one was skipped. The PostgreSQL regression covers the
+  create-versus-final-confirm lock order. Public link creation retains committed
+  receipts while replacing only the same source account's uncommitted link, so
+  rollout does not introduce permanent ephemeral-link growth.
+- A broad production-runtime-image run reached 4,771 passed and 259 skipped.
+  Its one failure was the image-baked `WEBHOOK_BIND_HOST=0.0.0.0` rather than
+  the clean-test default; 93 setup errors were deployment-pricing tests because
+  that runtime image does not contain `git`. These are environment limitations,
+  not failures of this change; the repository CI remains authoritative for them.
+- Independent specification and standards/security reviews are clear on the
+  implementation. The remaining external release blocker is the VK protected
+  HMAC key previously exposed in chat. Public rollout requires key rotation,
+  session-revision invalidation and rejection of signatures made with the old
+  key. The operator chose to retain the old key, so the branch may be reviewed
+  but must not be merged or deployed publicly. Production remains unchanged and
+  administrator-only.
+
+## 2026-11-09 — VK → Telegram native account-link launch
+- Baseline: `tanyapi@14a719c3db05e7c419a63e73c74ab4d63f7af4c8`; branch `fix/vk-telegram-native-link-20261109`.
+- Symptom: in some VK mobile WebViews, “Привязать Telegram” opens the mobile Telegram website instead of the installed app.
+- Code finding: `SharedAccountLinkPreview.beginLink()` preopened `about:blank`, then after async invitation creation redirected the popup to an `https://t.me/...startapp=link_...` URL. VK's embedded browser may handle HTTPS internally rather than using the Telegram OS handler. Real-device reproduction is still required.
+- Change: strict conversion from trusted Telegram Mini App invitation URL to `tg://resolve?domain=...&startapp=...`; on source click, attempt native launch through the reserved popup, never automatic web navigation; retain a visible direct native-app link and explicit HTTPS browser fallback while read-only status polling continues. VK-target links and backend consent/merge protocol are unchanged.
+- Safety: no server route, database, balance, pricing, credential, referrer or enrollment change. Invocation token validated before native conversion; no token logging or storage. A blocked native scheme leaves the pending invitation on screen. Existing source confirmation remains mandatory.
+- Verification seam: Jest component interaction and strict deep-link validation. Browser/device acceptance: Android VK, iOS VK, desktop VK; installed/missing Telegram; popup blocked; commit confirmation; recovery from expiry. CI and real-device behavior are not yet verified at authoring time.
+- Rollout: focused test/build gates then protected PR to `tanyapi`, exact-SHA deploy check; rollback is PR revert. No configuration or schema migration.
+- Guidance: `Bambale0/skills` diagnosing-bugs + tdd; `Bambale0/claw` telegram-miniapp + frontend-qa; `anthropics/skills` webapp-testing (Playwright reference). Official Telegram deep-link syntax checked.

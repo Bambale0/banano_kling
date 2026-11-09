@@ -105,7 +105,18 @@ try {
       let accountLink = null
       let wallet = { scope: 'sandbox', balance: { available: '0.0000', reserved: '0.0000', revision: 0 }, entries: [], receipt: null }
       await page.addInitScript(() => {
-        window.Telegram = { WebApp: { initData: 'query_id=browser-test&start_param=link_' + 'b'.repeat(43), initDataUnsafe: {}, ready() {}, expand() {}, onEvent() {}, offEvent() {} } }
+        // Ordinary profile navigation is not a deep-link acceptance scenario.
+        window.Telegram = { WebApp: { initData: 'query_id=browser-test', initDataUnsafe: {}, ready() {}, expand() {}, onEvent() {}, offEvent() {} } }
+        // Observe the cross-platform launch without navigating outside our
+        // deterministic browser-test origin.
+        window.__LINK_NAVIGATIONS__ = []
+        window.open = () => ({
+          opener: window,
+          document: { title: '' },
+          closed: false,
+          location: { replace(url) { window.__LINK_NAVIGATIONS__.push(url) } },
+          close() { this.closed = true },
+        })
       })
       await page.route('**/telegram-web-app.js', route => route.fulfill({ contentType: 'application/javascript', body: '// deterministic bridge' }))
       await page.route('**/mini-app/api/**', async route => {
@@ -124,7 +135,9 @@ try {
         }
         if (path.includes('/account-preview/')) {
           previewRequests.push({ path, method: request.method() })
-          if (!admin) {
+          if (!admin && (
+            path.endsWith('/settings') || path.endsWith('/wallet') || path.includes('/commerce')
+          )) {
             await route.fulfill({ status: 403, json: { ok: false } })
             return
           }
@@ -143,7 +156,9 @@ try {
             payload = { ok: true, account: { id: 'browser-account' }, preview: { revision: policy.revision, vk_app_id: policy.vk_app_id, telegram_bot_username: 'test_bot', telegram_linked: true, linked_platforms: ['telegram'] } }
           } else if (path.endsWith('/links')) {
             assert.equal(request.postDataJSON().target_platform, 'vk')
-            accountLink = { id: 'browser-invite', state: 'pending', revision: 0, token: 'c'.repeat(43), source_confirmed: false, target_confirmed: false, expires_at_epoch: 9999999999 }
+            assert.equal(request.postDataJSON().confirm_source, true, 'Source click grants consent once')
+            accountLink = { id: 'browser-invite', state: 'pending', revision: 0, token: 'c'.repeat(43),
+              source_confirmed: true, target_confirmed: false, target_platform: 'vk', expires_at_epoch: 9999999999 }
             payload = { ok: true, link: accountLink }
           } else if (path.endsWith('/links/browser-invite/cancel')) {
             assert.equal(request.postDataJSON().expected_revision, accountLink.revision)
@@ -168,7 +183,7 @@ try {
       if (admin) {
         await page.getByText('Настройки общих аккаунтов', { exact: true }).click()
         try {
-          await page.getByLabel('Доступ администраторам').check()
+          await page.getByLabel('Публичный вход и привязка аккаунтов').check()
         } catch (error) {
           console.error('Preview diagnostic', { apiRequests, previewRequests, body: (await page.locator('body').innerText()).slice(0, 4000) })
           throw error
@@ -194,15 +209,30 @@ try {
         await accounts.screenshot({ path: resolve(process.env.TEMP || '/tmp', `neuromix-linked-accounts-${width}.png`) })
         assert.equal(previewRequests.filter(request => request.path.includes('/links')).length, 0, 'Opening an invitation must not mutate its state')
         await connect.click()
-        await page.getByRole('button', { name: 'Создать ссылку', exact: true }).click()
-        assert.equal(await page.getByLabel('Ссылка для другого аккаунта', { exact: true }).inputValue(), 'https://vk.com/app123#link_' + 'c'.repeat(43))
-        assert.equal(await page.getByRole('button', { name: 'Подтверждаю связь аккаунтов', exact: true }).isDisabled(), true)
-        await page.getByRole('button', { name: 'Отменить ссылку', exact: true }).click()
-        await page.getByText('Ссылка отменена.', { exact: true }).waitFor()
+        await page.getByRole('region', { name: 'Ожидание привязки' }).waitFor()
+        const opened = await page.evaluate(() => window.__LINK_NAVIGATIONS__)
+        assert.deepEqual(opened, ['https://vk.com/app123#link_' + 'c'.repeat(43)])
+        assert.equal(await page.getByLabel('Код из ссылки').count(), 0, 'Quick-link must not expose a code field')
+        assert.equal(await page.getByRole('button', { name: 'Создать ссылку' }).count(), 0)
+        await page.getByRole('button', { name: 'Отменить', exact: true }).click()
+        await page.getByRole('region', { name: 'Ожидание привязки' }).waitFor({ state: 'detached' })
       } else {
-        assert.equal(await page.getByRole('region', { name: 'Связанные аккаунты', exact: true }).count(), 0)
-        assert.equal(await page.getByLabel('Доступ администраторам').count(), 0)
-        assert.equal(previewRequests.length, 0)
+        const accounts = page.getByRole('region', { name: 'Связанные аккаунты', exact: true })
+        await accounts.getByLabel('Telegram привязан', { exact: true }).waitFor()
+        const connect = accounts.getByRole('button', { name: 'Привязать ВКонтакте', exact: true })
+        await connect.waitFor()
+        assert.equal(await page.getByText('Настройки общих аккаунтов', { exact: true }).count(), 0)
+        assert.equal(await page.getByLabel('Публичный вход и привязка аккаунтов').count(), 0)
+        assert(previewRequests.some(request => request.path.endsWith('/session')))
+        assert(previewRequests.some(request => request.path.endsWith('/me')))
+        assert.equal(previewRequests.some(request => request.path.endsWith('/settings')), false)
+        assert.equal(previewRequests.some(request => request.path.endsWith('/wallet')), false)
+        assert.equal(previewRequests.some(request => request.path.includes('/commerce')), false)
+        await connect.click()
+        await page.getByRole('region', { name: 'Ожидание привязки' }).waitFor()
+        assert.deepEqual(await page.evaluate(() => window.__LINK_NAVIGATIONS__), ['https://vk.com/app123#link_' + 'c'.repeat(43)])
+        await page.getByRole('button', { name: 'Отменить', exact: true }).click()
+        await page.getByRole('region', { name: 'Ожидание привязки' }).waitFor({ state: 'detached' })
       }
       assert.equal(await page.evaluate(() => Object.values(sessionStorage).some(value => /link_[A-Za-z0-9_-]{43}/.test(value))), false, 'Invitation credentials must stay out of browser storage')
       assert.deepEqual(clientErrors, [])
@@ -273,8 +303,9 @@ try {
       const request = route.request()
       const path = new URL(request.url()).pathname
       requests.push(path)
-      if (!admin) {
-        assert(!path.endsWith('/bootstrap'), 'Denied VK entry must not initialize the shared app')
+      if (!admin && (
+        path.endsWith('/settings') || path.endsWith('/wallet') || path.includes('/commerce')
+      )) {
         return route.fulfill({ status: 403, json: { ok: false } })
       }
       const commercePayload = commercial.reply(path, request)
@@ -290,11 +321,22 @@ try {
           preview: {
             revision: 1,
             vk_app_id: 123,
+            vk_community_id: 239915802,
             telegram_bot_username: 'test_bot',
-            telegram_linked: true,
-            linked_platforms: ['telegram', 'vk'],
+            telegram_linked: admin,
+            linked_platforms: admin ? ['telegram', 'vk'] : ['vk'],
           },
         }
+      } else if (path.endsWith('/links/preview')) {
+        // Source identity is authenticated by the backend; reading the link
+        // never accepts it or changes money/account ownership.
+        assert.equal(request.postDataJSON().token, token)
+        payload = { ok: true, link: {
+          id: 'browser-vk-invite', state: 'pending', revision: 0,
+          source_identity: { platform: 'telegram', external_id: '1001' },
+          source_confirmed: true, target_confirmed: false, target_identity: null,
+          target_platform: 'vk', expires_at_epoch: 9999999999,
+        } }
       } else if (path.endsWith('/bootstrap')) {
         const body = request.postDataJSON()
         appCredentials.push(body.init_data)
@@ -311,7 +353,7 @@ try {
           last_name: 'Admin',
           telegram_username: 'linked_admin',
           credits: 301,
-          is_admin: true,
+          is_admin: admin,
           bot_username: 'test_bot',
           referral_code: 'VKADMIN',
           telegram_chat_available: false,
@@ -370,9 +412,19 @@ try {
         throw error
       }
     } else {
-      await page.getByText('Требуется доступ администратора.', { exact: true }).waitFor()
-      assert.equal(await page.getByLabel('Код из ссылки').count(), 0)
-      assert.equal(requests.filter(path => path.includes('/links') || path.endsWith('/bootstrap')).length, 0)
+      await page.getByRole('heading', { name: 'Создавайте в ВКонтакте', exact: true }).waitFor()
+      assert.equal(await page.getByRole('link', { name: 'Генерировать в боте ВКонтакте' }).getAttribute('href'),
+        'https://vk.com/im?sel=-239915802')
+      assert.equal(await page.getByText('Связать Telegram (необязательно)', { exact: true }).locator('..').evaluate(el => el.open), true,
+        'Incoming signed VK invitation must reveal confirmation without extra taps')
+      await page.getByLabel('ВКонтакте привязан', { exact: true }).waitFor()
+      await page.getByRole('button', { name: 'Подтвердить привязку', exact: true }).waitFor()
+      assert.equal(await page.getByLabel('Код из ссылки').count(), 0, 'Invitation token must not require manual input')
+      assert.equal(await page.getByText('Настройки общих аккаунтов', { exact: true }).count(), 0)
+      assert.ok(requests.some(path => path.endsWith('/session')))
+      assert.ok(requests.some(path => path.endsWith('/me')))
+      assert.deepEqual(requests.filter(path => path.includes('/links')), ['/mini-app/api/account-preview/links/preview'])
+      assert.equal(requests.filter(path => path.endsWith('/bootstrap')).length, 0, 'Unlinked VK users must not mount legacy studio')
     }
     assert.equal(await page.evaluate(() => Object.values(sessionStorage).some(value => /link_[A-Za-z0-9_-]{43}/.test(value))), false, 'VK invitation must stay out of browser storage')
     console.log(`PASS VK entry admin=${admin} width=430`)

@@ -1,4 +1,4 @@
-"""Exact administrator-preview routes, registered before the Mini App catch-all."""
+"""Public shared-account routes plus administrator-only control routes."""
 from __future__ import annotations
 
 import json
@@ -80,8 +80,8 @@ async def session(request: web.Request) -> web.Response:
         identity = verify_vk(body.get('launch_data', ''), policy.vk_app_id, os.getenv('VK_MINI_APP_SECRET', ''), max_age=policy.launch_max_age_seconds)
     else:
         raise ValueError('Unknown platform')
-    if not policy.allows(identity):
-        raise PermissionError('Administrator preview only')
+    if not policy.allows_public(identity):
+        raise PermissionError('Account access unavailable')
     account, token, expires = await create_session(identity, policy.session_ttl_seconds, policy.revision)
     logger.info('shared_account_session_created account_id=%s platform=%s', account.id, identity.platform)
     return response({'ok': True, 'account': account.payload(), 'session_token': token, 'expires_at': expires})
@@ -99,11 +99,14 @@ async def profile(request: web.Request) -> web.Response:
     if not policy.enabled:
         return response({'ok': False, 'error': 'Preview unavailable'}, 404)
     account = await get_session(_bearer(request), policy.revision)
-    if not policy.allows(account.identity):
-        raise PermissionError('Administrator preview only')
+    if not policy.allows_public(account.identity):
+        raise PermissionError('Account access unavailable')
     return response({'ok': True, 'account': account.payload(), 'preview': {
         'revision': policy.revision, 'vk_app_id': policy.vk_app_id,
         'telegram_bot_username': os.getenv('TELEGRAM_BOT_USERNAME', '').strip().lstrip('@'),
+        # A verified VK identity may return to the existing native community
+        # bot without claiming access to a second or migrated money source.
+        'vk_community_id': policy.vk_community_id if account.identity.platform == 'vk' else None,
         'telegram_linked': await linked_telegram_id(account.id) is not None,
         'linked_platforms': await linked_platforms(account.id),
         'link_ttl_seconds': policy.link_ttl_seconds,
@@ -122,8 +125,8 @@ async def wallet(request: web.Request) -> web.Response:
     if not policy.enabled:
         return response({'ok': False, 'error': 'Preview unavailable'}, 404)
     account = await get_session(_bearer(request), policy.revision)
-    if not policy.allows(account.identity):
-        raise PermissionError('Administrator preview only')
+    if not policy.allows_admin(account.identity):
+        raise PermissionError('Administrator access required')
     # No client field can select the live wallet or another account.
     service = WalletService('sandbox')
     if request.path.endswith('/wallet/reconcile'):
@@ -144,15 +147,23 @@ async def links(request: web.Request) -> web.Response:
     if not policy.enabled:
         return response({'ok': False, 'error': 'Preview unavailable'}, 404)
     account = await get_session(_bearer(request), policy.revision)
-    if not policy.allows(account.identity):
-        raise PermissionError('Administrator preview only')
+    if not policy.allows_public(account.identity):
+        raise PermissionError('Account access unavailable')
     service = LinkService(policy)
     body = await _body(request) if request.method == 'POST' else {}
     link_id = request.match_info.get('link_id')
-    if request.path.endswith('/links/accept'):
-        result = await service.accept_token(account, body.get('token'))
+    if request.path.endswith('/links/preview'):
+        result = await service.preview_token(account, body.get('token'))
+    elif request.path.endswith('/links/accept'):
+        confirm = body.get('confirm', False)
+        if type(confirm) is not bool:
+            raise ValueError('Invalid recipient confirmation')
+        result = await service.accept_token(account, body.get('token'), confirm=confirm)
     elif link_id is None:
-        result = await service.create(account, body.get('target_platform'))
+        confirm_source = body.get('confirm_source', False)
+        if type(confirm_source) is not bool:
+            raise ValueError('Invalid source confirmation')
+        result = await service.create(account, body.get('target_platform'), confirm_source=confirm_source)
     else:
         result = await service.operate(account, link_id, request.match_info.get('action', 'get'), body)
     return response({'ok': True, 'link': result})
@@ -163,8 +174,8 @@ async def commerce(request: web.Request) -> web.Response:
     if not policy.enabled:
         return response({'ok': False, 'error': 'Preview unavailable'}, 404)
     account = await get_session(_bearer(request), policy.revision)
-    if not policy.allows(account.identity):
-        raise PermissionError('Administrator preview only')
+    if not policy.allows_admin(account.identity):
+        raise PermissionError('Administrator access required')
     service = CommercialStore()
     if request.path.endswith('/commerce/quote'):
         body = await _body(request)
@@ -251,6 +262,7 @@ def setup_shared_account_routes(app: web.Application, miniapp_root: str) -> None
     app.router.add_get(root + '/wallet/reconcile', _guard(wallet))
     app.router.add_post(root + '/links', _guard(links))
     app.router.add_post(root + '/links/accept', _guard(links))
+    app.router.add_post(root + '/links/preview', _guard(links))
     app.router.add_get(root + '/links/{link_id}', _guard(links))
     app.router.add_post(root + '/links/{link_id}/{action:accept|confirm|cancel}', _guard(links))
     app.router.add_get(root + '/commerce', _guard(commerce))

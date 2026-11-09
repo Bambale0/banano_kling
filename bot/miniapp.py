@@ -12,6 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from urllib.parse import parse_qsl, urlparse
+from uuid import uuid4
 
 import aiohttp
 from aiogram.types import BufferedInputFile, LabeledPrice
@@ -1404,7 +1405,7 @@ async def _get_vk_session_user_context(init_data: str) -> tuple[int, dict]:
         if not policy.enabled:
             raise AuthenticationError("VK Mini App is unavailable")
         account = await get_session(token, policy.revision)
-        if account.identity.platform != "vk" or not policy.allows(account.identity):
+        if account.identity.platform != "vk" or not policy.allows_public(account.identity):
             raise AuthenticationError("VK Mini App access denied")
         telegram_id = await linked_telegram_id(account.id)
     except (AuthenticationError, PermissionError) as exc:
@@ -3860,6 +3861,11 @@ async def miniapp_upload(request: web.Request) -> web.Response:
         )
 
 
+def _new_miniapp_order_id(telegram_id: int, package_id: str) -> str:
+    """Unique order ID preserving the {user}_{nonce}_{package} parser contract."""
+    return f"{telegram_id}_{int(time.time() * 1000)}{uuid4().hex}_{package_id}"
+
+
 async def miniapp_create_payment(request: web.Request) -> web.Response:
     """Create a payment for a selected package from the mini-app."""
     try:
@@ -3898,7 +3904,7 @@ async def miniapp_create_payment(request: web.Request) -> web.Response:
                 {"ok": False, "error": "Package not found"}, status=404
             )
 
-        order_id = f"{telegram_id}_{int(time.time() * 1000)}_{package_id}"
+        order_id = _new_miniapp_order_id(telegram_id, str(package_id))
         promo = (
             await get_promo_code_by_code(promo_code, active_only=True)
             if promo_code
@@ -4013,7 +4019,7 @@ async def miniapp_create_payment(request: web.Request) -> web.Response:
                     status=500,
                 )
 
-            await create_transaction(
+            created = await create_transaction(
                 order_id=order_id,
                 user_id=user.id,
                 payment_id=payment_id,
@@ -4025,6 +4031,12 @@ async def miniapp_create_payment(request: web.Request) -> web.Response:
                 promo_code=promo.code if promo and promo_bonus > 0 else None,
                 promo_bonus_credits=promo_bonus,
             )
+            if not created:
+                logger.error("Mini App Lava invoice has no persisted order order_id=%s", order_id)
+                return web.json_response(
+                    {"ok": False, "error": "Не удалось сохранить платёж. Попробуйте ещё раз."},
+                    status=503,
+                )
 
             return web.json_response(
                 {

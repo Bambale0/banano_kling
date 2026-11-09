@@ -1,14 +1,17 @@
 jest.mock('../shared-commercial-preview', () => ({ SharedCommercialPreview: () => null }))
 import '@testing-library/jest-dom'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { AccountPlatformEntry } from '../account-platform-entry'
 import { startAccountAppSession, stopAccountAppSession } from '@/lib/shared-account-api'
+import { incomingAccountLink } from '@/lib/account-platform'
 
 jest.mock('@/lib/shared-account-api', () => ({
   startAccountAppSession: jest.fn(),
   stopAccountAppSession: jest.fn(),
 }))
-jest.mock('../shared-account-link-preview', () => ({ SharedAccountLinkPreview: ({ telegramBotUsername }: { telegramBotUsername: string }) => <p>Связать аккаунты {telegramBotUsername}</p> }))
+jest.mock('@/lib/account-platform', () => ({ incomingAccountLink: jest.fn(() => '') }))
+jest.mock('../shared-account-link-preview', () => ({ SharedAccountLinkPreview: ({ telegramBotUsername, onCommitted }: { telegramBotUsername: string; onCommitted?: () => void }) =>
+  <><p>Связать аккаунты {telegramBotUsername}</p>{onCommitted ? <button onClick={onCommitted}>Привязка подтверждена</button> : null}</> }))
 
 afterEach(() => {
   window.history.replaceState({}, '', '/')
@@ -37,7 +40,7 @@ test('linked VK account mounts the same application', async () => {
   expect(screen.queryByText(/Связать аккаунты/)).not.toBeInTheDocument()
 })
 
-test('unlinked VK account sees only the mandatory link gate', async () => {
+test('unlinked VK account offers optional Telegram linking', async () => {
   window.history.replaceState({}, '', '/?vk_app_id=123&vk_user_id=2001&sign=example')
   jest.mocked(startAccountAppSession).mockResolvedValue({
     revision: 1,
@@ -50,12 +53,66 @@ test('unlinked VK account sees only the mandatory link gate', async () => {
   expect(screen.queryByText('Общая студия')).not.toBeInTheDocument()
 })
 
-test('ordinary VK user is denied and sees no application controls', async () => {
-  window.history.replaceState({}, '', '/?vk_app_id=123&vk_user_id=3001&sign=example')
-  jest.mocked(startAccountAppSession).mockRejectedValue(new Error('Требуется доступ администратора.'))
+test('verified VK-only account can return to its native bot without Telegram', async () => {
+  window.history.replaceState({}, '', '/?vk_app_id=123&vk_user_id=2001&sign=example')
+  jest.mocked(startAccountAppSession).mockResolvedValue({
+    revision: 1,
+    vk_app_id: 123,
+    vk_community_id: 239915802,
+    telegram_bot_username: 'Neuromixx_bot',
+    telegram_linked: false,
+  })
   render(<AccountPlatformEntry><p>Общая студия</p></AccountPlatformEntry>)
-  expect(await screen.findByText('Требуется доступ администратора.')).toBeInTheDocument()
-  expect(screen.queryByText(/Связать аккаунты/)).not.toBeInTheDocument()
+  const chat = await screen.findByRole('link', { name: 'Генерировать в боте ВКонтакте' })
+  expect(chat).toHaveAttribute('href', 'https://vk.com/im?sel=-239915802')
+  expect(screen.getByText(/Telegram не обязателен/)).toBeInTheDocument()
+  expect(screen.getByText(/Средства из прежнего VK-бота автоматически не переносятся/)).toBeInTheDocument()
+  expect(screen.queryByText('Общая студия')).not.toBeInTheDocument()
+})
+
+test('VK-only entry refuses to invent a chat link when community is not configured', async () => {
+  window.history.replaceState({}, '', '/?vk_app_id=123&vk_user_id=3001&sign=example')
+  jest.mocked(startAccountAppSession).mockResolvedValue({
+    revision: 1,
+    vk_app_id: 123,
+    vk_community_id: null,
+    telegram_bot_username: 'Neuromixx_bot',
+    telegram_linked: false,
+  })
+  render(<AccountPlatformEntry><p>Общая студия</p></AccountPlatformEntry>)
+  expect(await screen.findByText(/Диалог с ботом сейчас недоступен по прямой ссылке/)).toBeInTheDocument()
+  expect(screen.queryByRole('link', { name: 'Генерировать в боте ВКонтакте' })).not.toBeInTheDocument()
+  expect(screen.getByText(/Telegram не обязателен/)).toBeInTheDocument()
+})
+
+test('signed VK invite keeps the two-sided confirmation visible immediately', async () => {
+  window.history.replaceState({}, '', '/?vk_app_id=123&vk_user_id=2001&sign=example#link_' + 'a'.repeat(43))
+  jest.mocked(incomingAccountLink).mockReturnValue('a'.repeat(43))
+  jest.mocked(startAccountAppSession).mockResolvedValue({
+    revision: 1,
+    vk_app_id: 123,
+    vk_community_id: 239915802,
+    telegram_bot_username: 'Neuromixx_bot',
+    telegram_linked: false,
+  })
+  render(<AccountPlatformEntry><p>Общая студия</p></AccountPlatformEntry>)
+  const summary = await screen.findByText('Связать Telegram (необязательно)')
+  expect(summary.closest('details')).toHaveAttribute('open')
+})
+
+test('ordinary unlinked VK user can choose the Telegram link flow', async () => {
+  window.history.replaceState({}, '', '/?vk_app_id=123&vk_user_id=3001&sign=example')
+  jest.mocked(startAccountAppSession).mockResolvedValue({
+    revision: 1,
+    vk_app_id: 123,
+    telegram_bot_username: 'Neuromixx_bot',
+    telegram_linked: false,
+  })
+  render(<AccountPlatformEntry><p>Общая студия</p></AccountPlatformEntry>)
+  expect(await screen.findByText('Связать аккаунты Neuromixx_bot')).toBeInTheDocument()
+  expect(screen.getByRole('heading', { name: 'Создавайте в ВКонтакте' })).toBeInTheDocument()
+  expect(screen.getByText(/Средства из прежнего VK-бота автоматически не переносятся/)).toBeInTheDocument()
+  expect(screen.queryByText(/в обеих апках были общий баланс/)).not.toBeInTheDocument()
   expect(screen.queryByText('Общая студия')).not.toBeInTheDocument()
 })
 
@@ -64,4 +121,14 @@ test('Telegram entry retains the existing application', () => {
   expect(screen.getByText('Общая студия')).toBeInTheDocument()
   expect(startAccountAppSession).not.toHaveBeenCalled()
   expect(stopAccountAppSession).not.toHaveBeenCalled()
+})
+
+test('Telegram direct Mini App startapp invitation enters confirmation instead of the studio', async () => {
+  jest.mocked(incomingAccountLink).mockReturnValue('a'.repeat(43))
+  render(<AccountPlatformEntry><p>Общая студия</p></AccountPlatformEntry>)
+  expect(await screen.findByRole('heading', { name: 'Привязка Telegram и ВКонтакте' })).toBeInTheDocument()
+  expect(screen.queryByText('Общая студия')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Привязка подтверждена' }))
+  expect(screen.getByText('Общая студия')).toBeInTheDocument()
+  expect(startAccountAppSession).not.toHaveBeenCalled()
 })

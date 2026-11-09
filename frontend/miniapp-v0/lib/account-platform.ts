@@ -1,4 +1,4 @@
-import { getInitData, getRuntimeBotUsername } from './api'
+import { getInitData, getRuntimeBotUsername, getStartParamFallback } from './api'
 
 export type AccountPlatform = 'telegram' | 'vk'
 
@@ -51,12 +51,35 @@ export function accountLinkUrl(platform: AccountPlatform, token: string, vkAppId
   return `https://t.me/${username}?startapp=link_${token}`
 }
 
+/** Build an OS-handled deep link only from a validated account-link invitation. */
+export function nativeTelegramMiniAppUrl(httpsLink: string): string {
+  let url: URL
+  try {
+    url = new URL(httpsLink)
+  } catch {
+    throw new Error('Некорректная ссылка.')
+  }
+
+  const username = url.pathname.slice(1)
+  const startParam = url.searchParams.get('startapp')
+  if (
+    url.protocol !== 'https:' || url.hostname !== 't.me' || url.port ||
+    url.username || url.password || url.hash ||
+    !/^[A-Za-z0-9_]+$/.test(username) ||
+    !startParam || !/^link_[A-Za-z0-9_-]{43}$/.test(startParam) ||
+    [...url.searchParams.keys()].length !== 1
+  ) {
+    throw new Error('Некорректная ссылка.')
+  }
+  return `tg://resolve?domain=${encodeURIComponent(username)}&startapp=${encodeURIComponent(startParam)}`
+}
+
 export function incomingAccountLink(): string {
   if (typeof window === 'undefined') return ''
   const hash = window.location.hash.slice(1)
   const params = new URLSearchParams(window.location.search)
   const vk = process.env.NEXT_PUBLIC_MINIAPP_PLATFORM === 'vk' || params.has('vk_app_id') || params.has('vk_user_id')
-  const start = vk ? '' : new URLSearchParams(getInitData()).get('start_param') || ''
+  const start = vk ? '' : (new URLSearchParams(getInitData()).get('start_param') || getStartParamFallback())
   const initialHash = (window.__BANANO_INITIAL_LAUNCH__?.hash || '').replace(/^#/, '')
   const candidate = [hash, initialHash, start].find(value => /^link_[A-Za-z0-9_-]{43}$/.test(value)) || ''
   return candidate.slice(5)

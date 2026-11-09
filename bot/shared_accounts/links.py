@@ -1,6 +1,7 @@
 """Authenticated two-sided account linking with atomic wallet preservation."""
 from __future__ import annotations
 
+import hashlib
 import hmac
 import secrets
 import time
@@ -35,6 +36,8 @@ LINK_SCHEMA = '''CREATE TABLE IF NOT EXISTS shared_account_links (
     state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending', 'awaiting_confirmation', 'committed', 'cancelled')),
     result_account_id TEXT REFERENCES shared_accounts(id),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)'''
+LINK_EXPIRY_INDEX = '''CREATE INDEX IF NOT EXISTS idx_shared_account_links_source_state_expiry
+    ON shared_account_links(source_account_id, state, expires_at_epoch)'''
 COLUMNS = ('id', 'token_hash', 'source_account_id', 'source_platform', 'source_external_id', 'target_platform',
            'target_account_id', 'target_external_id', 'policy_revision', 'expires_at_epoch',
            'source_confirmed', 'target_confirmed', 'revision', 'state', 'result_account_id')
@@ -42,6 +45,16 @@ COLUMNS = ('id', 'token_hash', 'source_account_id', 'source_platform', 'source_e
 
 class LinkExpired(ValueError):
     """The pending consent invitation is no longer valid."""
+
+
+def _source_lock_key(account_id: str) -> int:
+    digest = hashlib.sha256(('shared-account-link:' + account_id).encode()).digest()
+    return int.from_bytes(digest[:8], 'big', signed=True)
+
+
+async def _lock_source(db, account_id: str) -> None:
+    if db_backend.is_postgres():
+        await db.execute('SELECT pg_advisory_xact_lock(?)', (_source_lock_key(account_id),))
 
 
 def _party(link: dict, actor: Account) -> str | None:
@@ -73,7 +86,9 @@ async def ensure_link_schema(db) -> None:
     else:
         await db.execute('BEGIN IMMEDIATE')
     try:
-        await getattr(db, 'execute_native_ddl', db.execute)(LINK_SCHEMA)
+        execute_ddl = getattr(db, 'execute_native_ddl', db.execute)
+        await execute_ddl(LINK_SCHEMA)
+        await execute_ddl(LINK_EXPIRY_INDEX)
         await db.commit()
     except Exception:
         await db.rollback()
@@ -93,9 +108,22 @@ class LinkService:
             try:
                 link = None
                 if link_id is not None:
+                    source = await (await db.execute(
+                        'SELECT source_account_id FROM shared_account_links WHERE id = ?',
+                        (link_id,),
+                    )).fetchone()
+                    if not source:
+                        raise AuthenticationError('Invitation unavailable')
+                    # All mutations for one source use advisory -> link -> account
+                    # order, including the final merge, so create/confirm cannot
+                    # deadlock through inverse row locks on PostgreSQL.
+                    await _lock_source(db, source[0])
                     suffix = ' FOR UPDATE' if db_backend.is_postgres() else ''
-                    row = await (await db.execute('SELECT ' + ', '.join(COLUMNS) + ' FROM shared_account_links WHERE id = ?' + suffix,
-                                                 (link_id,))).fetchone()
+                    row = await (await db.execute(
+                        'SELECT ' + ', '.join(COLUMNS)
+                        + ' FROM shared_account_links WHERE id = ?' + suffix,
+                        (link_id,),
+                    )).fetchone()
                     if not row:
                         raise AuthenticationError('Invitation unavailable')
                     link = {column: row[index] for index, column in enumerate(COLUMNS)}
@@ -109,27 +137,67 @@ class LinkService:
         if link['state'] == 'cancelled' or link['expires_at_epoch'] <= int(time.time()) or link['policy_revision'] != self.policy.revision:
             raise LinkExpired('Invitation expired or cancelled')
 
-    async def accept_token(self, actor: Account, token: str) -> dict:
+    async def preview_token(self, actor: Account, token: str) -> dict:
+        """Read-only invitation identity check; visiting a link is never consent."""
+        digest = _token_hash(token)
+        async with db_backend.connect() as db:
+            row = await (await db.execute(
+                'SELECT ' + ', '.join(COLUMNS)
+                + ' FROM shared_account_links WHERE token_hash = ?',
+                (digest,),
+            )).fetchone()
+        if not row:
+            raise AuthenticationError('Invitation unavailable')
+        link = {column: row[index] for index, column in enumerate(COLUMNS)}
+        if actor.identity.platform != link['target_platform']:
+            raise PermissionError('Invitation requires the other platform')
+        if (link['target_external_id'] is not None
+                and actor.identity.external_id != link['target_external_id']):
+            raise PreviewConflict('Invitation already has a recipient')
+        if (link['state'] in {'cancelled', 'committed'}
+                or link['expires_at_epoch'] <= int(time.time())
+                or link['policy_revision'] != self.policy.revision):
+            raise LinkExpired('Invitation expired or cancelled')
+        return _payload(link)
+
+    async def accept_token(self, actor: Account, token: str, *, confirm: bool = False) -> dict:
         digest = _token_hash(token)
         async with db_backend.connect() as db:
             await ensure_link_schema(db)
             row = await (await db.execute('SELECT id FROM shared_account_links WHERE token_hash = ?', (digest,))).fetchone()
         if not row:
             raise AuthenticationError('Invitation unavailable')
-        return await self.operate(actor, row[0], 'accept', {'token': token})
+        return await self.operate(actor, row[0], 'accept', {'token': token, 'confirm': confirm})
 
-    async def create(self, actor: Account, target_platform: str) -> dict:
+    async def create(self, actor: Account, target_platform: str, *, confirm_source: bool = False) -> dict:
         if target_platform not in {'telegram', 'vk'} or target_platform == actor.identity.platform:
             raise ValueError('Choose the other platform')
         token = secrets.token_urlsafe(32)
         link_id, expires = uuid4().hex, int(time.time()) + self.policy.link_ttl_seconds
         async with self._transaction() as (db, _):
+            # Serialize by the authenticated source account. Replacing an
+            # invitation removes only that account's ephemeral, uncommitted
+            # consent state; committed merge receipts remain immutable.
+            await _lock_source(db, actor.id)
+            suffix = ' FOR UPDATE' if db_backend.is_postgres() else ''
+            owner = await (await db.execute(
+                'SELECT status FROM shared_accounts WHERE id = ?' + suffix,
+                (actor.id,),
+            )).fetchone()
+            if not owner or owner[0] != 'active':
+                raise PreviewConflict('Account changed; reopen the application')
+            await db.execute(
+                "DELETE FROM shared_account_links WHERE source_account_id = ? AND state != 'committed'",
+                (actor.id,),
+            )
             await db.execute('''INSERT INTO shared_account_links
-                (id, token_hash, source_account_id, source_platform, source_external_id, target_platform, policy_revision, expires_at_epoch)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                (id, token_hash, source_account_id, source_platform, source_external_id, target_platform, policy_revision, expires_at_epoch, source_confirmed)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                              (link_id, _token_hash(token), actor.id, actor.identity.platform, actor.identity.external_id,
-                              target_platform, self.policy.revision, expires))
-        return {'id': link_id, 'token': token, 'expires_at_epoch': expires, 'state': 'pending', 'revision': 0}
+                              target_platform, self.policy.revision, expires, int(confirm_source)))
+        return {'id': link_id, 'token': token, 'expires_at_epoch': expires,
+                'state': 'pending', 'revision': 0, 'source_platform': actor.identity.platform,
+                'target_platform': target_platform, 'source_confirmed': confirm_source, 'target_confirmed': False}
 
     async def operate(self, actor: Account, link_id: str, action: str, body: dict) -> dict:
         async with self._transaction(link_id) as (db, link):
@@ -150,6 +218,12 @@ class LinkService:
                 if link['target_external_id'] is None:
                     link.update(target_account_id=actor.id, target_external_id=actor.identity.external_id,
                                 revision=link['revision'] + 1, state='awaiting_confirmation')
+                # Only an authenticated recipient's explicit click can set consent.
+                # A copied/deep link alone never submits this flag.
+                if body.get('confirm') is True and not link['target_confirmed']:
+                    link['target_confirmed'] = 1
+                    if party == 'target':
+                        link['revision'] += 1
             elif action in {'confirm', 'cancel'}:
                 already = action == 'confirm' and bool(link[party + '_confirmed'])
                 if not already:

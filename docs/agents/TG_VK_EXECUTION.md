@@ -1,5 +1,19 @@
 # TG–VK shared accounts execution ledger
 
+## Native TG wallet-fence refresh — 09.11.2026
+
+- Existing dormant Draft #424 rebased by **merge, not force-push/rewrite**, onto
+  current production `tanyapi@cbf1a619` with public VK-only fallback and safe
+  Telegram linking preserved. Wallet fence preparation / freeze remain **unwired**
+  (never called from startup, HTTP, database constructor or CLI), so production
+  money is not frozen, imported or redirected.
+- Historical text below saying VK-only *must* link Telegram describes the former
+  rollout; production #440 replaced it with an optional link and an entry back
+  to the working native VK bot. No claims of common live balance.
+- The full financial product remains gated on complete writer coverage,
+  settled provider callbacks, exact opening precision, VK counterpart,
+  cross-database coordinator and crash/rollback rehearsal. See #408/#410/#414.
+
 ## Legacy fence integration refresh — 08.11.2026 (local validation)
 
 - Continued Draft #424 at 37a589247e2ea735dc5f1b1aa0a52ed87a8dcd39 and
@@ -88,6 +102,29 @@
   diagnostic has evidence for relational fit, isolation and source/derived
   separation (3/7, about 4.2/10); replication/failover, hot-key load, measured
   retry budgets and production recovery remain unverified full-release gates.
+
+---
+
+## One-click cross-platform linking — 08.11.2026
+
+- Base `tanyapi@7945dca70dbf4edca26874189cb6108a770a42ac`. User report: VK Mini App “Привязать” revealed a technical form (create URL, paste code, accept, confirm twice), while Telegram `startapp` invitations did not open the linking screen. Root cause is the explicit multi-step form, missing incoming-link routing for Telegram, and the two-confirmation backend contract.
+- Goal: one source “Привязать” click creates a signed, source-consented one-time invitation and immediately opens the other platform; there the authenticated account sees the original platform/user identity and completes with **one explicit confirmation**. No code input. The source polls a read-only status for completion. Both directions supported. Opening an URL **never automatically merges accounts**. Preserves previous manual API defaults.
+- Backend changes: typed `confirm_source` on authenticated creation, typed `confirm` on authenticated acceptance, authenticated read-only target-specific `POST /links/preview`; reuse `LinkService._merge` transactional identity/wallet flow, expiry, optimistic link revision, existing idempotency. No account changes without both signed platform identities and opt-ins. No schema migration, payment, model, tariff, provider or secret changes.
+- Frontend: dynamically configured VK app ID/Telegram bot username from signed profile; pre-open tab synchronously for popup restrictions, fallback navigation and retry link, correctly restore Telegram `startapp` invite, validate link before target confirms, source read-only polling, expired-invite restart and rapid-click guard. No personally identifying IDs, passwords, signing secrets or tokens logged.
+- TDD/repro: new backend `tests/test_shared_account_quick_link.py`; new frontend link-UX/auth/deep-link tests. Earlier sandbox run: 47 passed / 46 skipped (SQLite + 46 PostgreSQL scenarios requiring isolated DSN); full frontend 97 suites / 721 tests passed, TypeScript and VK build passed. Subsequent additional API/edge-case tests need rerun before PR release.
+- Rollout: task branch `feat/tanyapi-one-tap-cross-platform-link-20261108` → protected PR `tanyapi` with native auto-merge only when four gates green → existing exact-SHA production pipeline deploys backend + TG and VK static using `scripts/deploy_miniapp_local.sh`; inspect `.revision`/health and compare deployed SHA; real signed VK/TG client must confirm before describing complete live E2E. Preserve production runtime `data/price.json` and user files unchanged; rollback via existing release/backup script.
+
+## Current public rollout contract — 08.11.2026
+
+The owner authorized public signed Telegram/VK session, own-profile and two-sided
+link routes. Unlinked VK identities stop at the mandatory link gate; linked VK
+uses the existing Telegram legacy owner for balance, history, referrals,
+generation tasks and result delivery. Settings, sandbox wallet and commercial
+administration remain admin-only. The prior admin-only/no-public statements below
+are historical checkpoints and are superseded by this section. Release remains
+blocked until the exposed VK Mini App HMAC secret is rotated, the policy revision
+invalidates old sessions, protected CI passes and a real signed VK launch is
+accepted.
 
 ## VK result absent from community chat — 07.11.2026
 
