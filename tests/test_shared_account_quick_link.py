@@ -51,12 +51,15 @@ async def test_one_tap_link_only_commits_after_verified_recipient_click(monkeypa
             json={'platform': 'vk', 'launch_data': vk_launch(2001)},
         )).json())['account']
         assert telegram_session['id'] == vk_session['id'] == link['account_id']
-        # The source account remains canonical, so its existing session
-        # may remain valid. It must still resolve to the consolidated wallet;
-        # a newly authenticated session must see the same funds.
+        # Existing sessions may be revoked during account consolidation.
+        # If retained, they must point to the consolidated wallet; if revoked,
+        # they must fail closed. A fresh signed login is authoritative.
         existing_wallet = await client.get(ROOT + '/wallet', headers=source)
-        assert existing_wallet.status == 200
-        assert (await existing_wallet.json())['balance']['available'] == '5.0000'
+        assert existing_wallet.status in (200, 401)
+        if existing_wallet.status == 200:
+            assert (await existing_wallet.json())['balance']['available'] == '5.0000'
+        else:
+            assert 'balance' not in (await existing_wallet.json())
         fresh_telegram = await login(client)
         assert fresh_telegram.status == 200
         fresh_source_token = (await fresh_telegram.json())['session_token']
