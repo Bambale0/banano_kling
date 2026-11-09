@@ -67,13 +67,14 @@ from bot.keyboards import (
     get_balance_keyboard,
     get_create_hub_keyboard,
     get_edit_hub_keyboard,
+    get_legal_document_view_keyboard,
+    get_legal_documents_keyboard,
     get_main_menu_keyboard,
     get_more_menu_keyboard,
-    get_legal_documents_keyboard,
-    get_legal_document_view_keyboard,
     get_partner_program_keyboard,
     get_required_subscription_keyboard,
 )
+from bot.legal_documents import document_text, https_document_url, telegram_text_parts
 from bot.miniapp_links import (
     feed_bot_link as build_feed_bot_link,
 )
@@ -95,7 +96,6 @@ from bot.miniapp_links import (
 from bot.miniapp_links import (
     remix_start_param as build_remix_start_param,
 )
-from bot.legal_documents import document_text, https_document_url, telegram_text_parts
 from bot.services.preset_manager import preset_manager
 from bot.services.subscription_service import (
     REQUIRED_CHANNEL_USERNAME,
