@@ -91,3 +91,68 @@ def test_document_text_reads_utf8_and_rejects_empty(tmp_path: Path, monkeypatch)
     assert legal_documents.document_text("offer") == "Публичная оферта"
     with pytest.raises(ValueError, match="Empty legal document"):
         legal_documents.document_text("privacy")
+
+
+@pytest.mark.asyncio
+async def test_offer_callback_sends_plain_text_never_document(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from bot.handlers import common
+
+    monkeypatch.setattr(common.config, "PARTNER_OFFER_URL", "")
+    monkeypatch.setattr(common, "document_text", lambda kind: "Оферта: <не HTML>")
+    message = SimpleNamespace(answer=AsyncMock(), answer_document=AsyncMock())
+    callback = SimpleNamespace(message=message, answer=AsyncMock())
+
+    await common.show_partner_offer(callback)
+
+    message.answer_document.assert_not_awaited()
+    message.answer.assert_awaited_once()
+    args, kwargs = message.answer.await_args
+    assert args[0] == "Оферта: <не HTML>"
+    assert kwargs["parse_mode"] is None
+
+
+@pytest.mark.asyncio
+async def test_privacy_policy_prefers_configured_https_link(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from bot.handlers import common
+
+    monkeypatch.setattr(
+        common.config, "PRIVACY_POLICY_URL", "https://example.org/legal/privacy"
+    )
+    message = SimpleNamespace(answer=AsyncMock())
+    callback = SimpleNamespace(message=message, answer=AsyncMock())
+
+    await common.show_privacy_policy(callback)
+
+    message.answer.assert_awaited_once()
+    markup = message.answer.await_args.kwargs["reply_markup"]
+    links = [button.url for row in markup.inline_keyboard for button in row if button.url]
+    assert links == ["https://example.org/legal/privacy"]
+
+
+@pytest.mark.asyncio
+async def test_unpublished_policy_fails_closed_without_fake_document(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from bot.handlers import common
+
+    monkeypatch.setattr(common.config, "PRIVACY_POLICY_URL", "")
+
+    def missing_policy(_kind):
+        raise FileNotFoundError("privacy_policy.md")
+
+    monkeypatch.setattr(common, "document_text", missing_policy)
+    message = SimpleNamespace(answer=AsyncMock(), answer_document=AsyncMock())
+    callback = SimpleNamespace(message=message, answer=AsyncMock())
+
+    await common.show_privacy_policy(callback)
+
+    message.answer.assert_not_awaited()
+    message.answer_document.assert_not_awaited()
+    assert callback.answer.await_args.kwargs["show_alert"] is True
