@@ -37,18 +37,43 @@ function VkAccountGate({ children }: { children: ReactNode }) {
   }
   if (access.telegram_linked) return children
 
-  return <main className="mx-auto min-h-dvh w-full max-w-lg space-y-4 p-4" aria-label="Связывание аккаунта ВК">
-    <h1 className="text-xl font-semibold">Свяжите аккаунты ТГ и ВК</h1>
-    <p className="text-sm text-muted-foreground">После привязки откроется студия с балансом, историей и генерациями Telegram. Средства из прежнего VK-бота автоматически не переносятся.</p>
-    <SharedAccountLinkPreview
-      vkAppId={access.vk_app_id}
-      telegramBotUsername={access.telegram_bot_username}
-      onCommitted={() => {
-        setAccess(null)
-        setMessage('Открываем общую студию…')
-        setRetry(value => value + 1)
-      }}
-    />
+  // A VK-only visitor already has a working native VK bot. Telegram linking
+  // is optional; never spoof Telegram identity or imply shared wallet funds.
+  const communityId = access.vk_community_id
+  const nativeBotUrl = Number.isSafeInteger(communityId) && Number(communityId) > 0
+    ? `https://vk.com/im?sel=-${communityId}`
+    : null
+
+  return <main className="mx-auto min-h-dvh w-full max-w-lg space-y-5 p-4" aria-label="Студия ВКонтакте">
+    <h1 className="text-xl font-semibold">Создавайте в ВКонтакте</h1>
+    <p className="text-sm text-muted-foreground">
+      Telegram не обязателен. Фото, видео, пополнение и ваши работы доступны в боте ВКонтакте.
+      Общая Mini App с Telegram пока работает после привязки аккаунтов.
+    </p>
+    {nativeBotUrl
+      ? <a className="block rounded-xl bg-primary px-4 py-3 text-center font-semibold text-primary-foreground"
+          href={nativeBotUrl} target="_blank" rel="noopener noreferrer">
+          Генерировать в боте ВКонтакте
+        </a>
+      : <p role="status" className="text-sm text-muted-foreground">
+          Диалог с ботом сейчас недоступен по прямой ссылке. Вернитесь в сообщения сообщества ВКонтакте.
+        </p>}
+    <details className="rounded-xl border border-border p-4" open={Boolean(incomingAccountLink())}>
+      <summary className="cursor-pointer font-medium">Связать Telegram (необязательно)</summary>
+      <p className="my-3 text-sm text-muted-foreground">
+        После привязки откроется общая студия с балансом, историей и генерациями Telegram.
+        Средства из прежнего VK-бота автоматически не переносятся.
+      </p>
+      <SharedAccountLinkPreview
+        vkAppId={access.vk_app_id}
+        telegramBotUsername={access.telegram_bot_username}
+        onCommitted={() => {
+          setAccess(null)
+          setMessage('Открываем общую студию…')
+          setRetry(value => value + 1)
+        }}
+      />
+    </details>
   </main>
 }
 

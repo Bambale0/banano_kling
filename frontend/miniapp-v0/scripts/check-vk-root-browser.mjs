@@ -7,7 +7,7 @@ import { chromium } from 'playwright'
 
 // Run after npm run build:vk. Signed-auth responses are mocked here; backend
 // signature and public/admin authorization remain covered by the HTTP matrix.
-test('VK root export gates unlinked users and opens for linked ordinary users', async () => {
+test('VK root offers native chat for signed VK-only visitors and opens linked studio', async () => {
   const root = resolve('out')
   assert.ok(existsSync(join(root, 'index.html')), 'Build the VK root export first')
   const types = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.svg': 'image/svg+xml', '.png': 'image/png' }
@@ -56,7 +56,7 @@ test('VK root export gates unlinked users and opens for linked ordinary users', 
         } else if (path.endsWith('/me')) {
           const linked = sessionUserId === '2001'
           payload = { ok: true, account: { id: 'test-account' }, preview: {
-            revision: 1, vk_app_id: 123, telegram_bot_username: 'Neuromixx_bot',
+            revision: 1, vk_app_id: 123, vk_community_id: 239915802, telegram_bot_username: 'Neuromixx_bot',
             telegram_linked: linked, linked_platforms: linked ? ['telegram', 'vk'] : ['vk'],
           } }
         } else if (path.endsWith('/logout')) {
@@ -76,9 +76,11 @@ test('VK root export gates unlinked users and opens for linked ordinary users', 
         await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(payload) })
       })
       await page.goto(origin + '/?vk_app_id=123&vk_user_id=3001&sign=browser-test', { waitUntil: 'networkidle' })
-      await page.getByRole('heading', { name: 'Свяжите аккаунты ТГ и ВК', exact: true }).waitFor()
+      await page.getByRole('heading', { name: 'Создавайте в ВКонтакте', exact: true }).waitFor()
+      const nativeChat = page.getByRole('link', { name: 'Генерировать в боте ВКонтакте', exact: true })
+      assert.equal(await nativeChat.getAttribute('href'), 'https://vk.com/im?sel=-239915802')
       assert.equal(await page.getByRole('button', { name: 'Профиль', exact: true }).count(), 0)
-      assert.equal(appCredentials.length, 0, 'Unlinked VK entry must not initialize the studio')
+      assert.equal(appCredentials.length, 0, 'Unlinked VK entry must not initialize the Telegram studio')
       await page.goto(origin + '/?vk_app_id=123&vk_user_id=2001&sign=browser-test', { waitUntil: 'networkidle' })
       try {
         await page.getByRole('button', { name: 'Профиль', exact: true }).waitFor()
@@ -98,7 +100,7 @@ test('VK root export gates unlinked users and opens for linked ordinary users', 
       assert.deepEqual(failedAssets, [])
       assert.equal(await page.evaluate(() => sessionStorage.getItem('__banano_initial_search')), null)
       await context.close()
-      console.log(`VK root ${width}px: public linking gate and linked ordinary user passed`)
+      console.log(`VK root ${width}px: VK-only native bot and linked ordinary user passed`)
     }
   } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)) }
 })

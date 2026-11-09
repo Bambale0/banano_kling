@@ -130,6 +130,7 @@ async def test_admin_can_login_and_reuse_a_platform_neutral_account(monkeypatch)
         profile_data = await profile.json()
         assert profile_data['account']['id'] == session['account']['id']
         assert profile_data['preview']['telegram_bot_username'] == 'Neuromixx_bot'
+        assert profile_data['preview']['vk_community_id'] is None
         assert profile_data['preview']['telegram_linked'] is False
         assert profile_data['preview']['linked_platforms'] == ['telegram']
         again = await (await login(client)).json()
@@ -137,6 +138,21 @@ async def test_admin_can_login_and_reuse_a_platform_neutral_account(monkeypatch)
         assert 'credits' not in session['account']  # No invented/migrated wallet.
         assert (await client.post(ROOT + '/logout', headers=headers)).status == 200
         assert (await client.get(ROOT + '/me', headers=headers)).status == 401
+
+
+async def test_vk_only_session_reveals_configured_native_chat_without_telegram(monkeypatch):
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123, vk_community_id=239915802)
+        signed = await client.post(ROOT + '/session', json={
+            'platform': 'vk', 'launch_data': vk_launch(2001),
+        })
+        assert signed.status == 200
+        headers = {'Authorization': 'Bearer ' + (await signed.json())['session_token']}
+        profile = await (await client.get(ROOT + '/me', headers=headers)).json()
+        assert profile['preview']['vk_community_id'] == 239915802
+        assert profile['preview']['telegram_linked'] is False
+        assert (await client.get(ROOT + '/wallet', headers=headers)).status == 403
 
 
 async def test_enabled_preview_allows_ordinary_telegram_linking_but_not_admin_surfaces():
