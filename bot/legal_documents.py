@@ -3,7 +3,6 @@
 import pathlib
 import urllib.parse
 
-
 _DOCUMENT_NAMES = {
     "offer": "ofert.md",
     "privacy": "privacy_policy.md",
