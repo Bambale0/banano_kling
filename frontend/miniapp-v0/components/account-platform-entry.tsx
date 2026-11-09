@@ -58,7 +58,7 @@ function VkAccountGate({ children }: { children: ReactNode }) {
       : <p role="status" className="text-sm text-muted-foreground">
           Диалог с ботом сейчас недоступен по прямой ссылке. Вернитесь в сообщения сообщества ВКонтакте.
         </p>}
-    <details className="rounded-xl border border-border p-4">
+    <details className="rounded-xl border border-border p-4" open={Boolean(incomingAccountLink())}>
       <summary className="cursor-pointer font-medium">Связать Telegram (необязательно)</summary>
       <p className="my-3 text-sm text-muted-foreground">
         После привязки откроется общая студия с балансом, историей и генерациями Telegram.

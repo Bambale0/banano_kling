@@ -85,6 +85,21 @@ test('VK-only entry refuses to invent a chat link when community is not configur
   expect(screen.getByText(/Telegram не обязателен/)).toBeInTheDocument()
 })
 
+test('signed VK invite keeps the two-sided confirmation visible immediately', async () => {
+  window.history.replaceState({}, '', '/?vk_app_id=123&vk_user_id=2001&sign=example#link_' + 'a'.repeat(43))
+  jest.mocked(incomingAccountLink).mockReturnValue('a'.repeat(43))
+  jest.mocked(startAccountAppSession).mockResolvedValue({
+    revision: 1,
+    vk_app_id: 123,
+    vk_community_id: 239915802,
+    telegram_bot_username: 'Neuromixx_bot',
+    telegram_linked: false,
+  })
+  render(<AccountPlatformEntry><p>Общая студия</p></AccountPlatformEntry>)
+  const summary = await screen.findByText('Связать Telegram (необязательно)')
+  expect(summary.closest('details')).toHaveAttribute('open')
+})
+
 test('ordinary unlinked VK user can choose the Telegram link flow', async () => {
   window.history.replaceState({}, '', '/?vk_app_id=123&vk_user_id=3001&sign=example')
   jest.mocked(startAccountAppSession).mockResolvedValue({
