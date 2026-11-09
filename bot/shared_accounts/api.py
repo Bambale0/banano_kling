@@ -113,6 +113,91 @@ async def profile(request: web.Request) -> web.Response:
     }})
 
 
+
+def _vk_public_trend_card(card: dict) -> dict:
+    settings = card.get('generation_settings') or {}
+    return {
+        'id': int(card['id']),
+        'title': str(card.get('title') or ''),
+        'description': str(card.get('description') or ''),
+        'preview_url': card.get('preview_url'),
+        'preview_poster_url': card.get('preview_poster_url'),
+        'generation_type': 'video' if settings.get('kind') == 'video' else 'image',
+    }
+
+
+async def vk_public_discovery(request: web.Request) -> web.Response:
+    # Browsing is separate from paid repeats: never invent a Telegram actor.
+    policy = await load_policy()
+    if not policy.enabled:
+        return response({'ok': False, 'error': 'Preview unavailable'}, 404)
+    account = await get_session(_bearer(request), policy.revision)
+    if not policy.allows_public(account.identity) or account.identity.platform != 'vk':
+        raise PermissionError('VK session required')
+    view = request.query.get('view', 'trends')
+    if view == 'trends':
+        from bot import trend_catalog
+        categories = await trend_catalog.list_catalog(
+            is_admin=False, per_category=6, tariff='standard',
+        )
+        result = [
+            {
+                'id': item['id'],
+                'title': item['title'],
+                'emoji': item['emoji'],
+                'total': item['total'],
+                'items': [_vk_public_trend_card(card) for card in item['items']],
+            }
+            for item in categories
+        ]
+        return response({'ok': True, 'categories': result, 'can_generate_in_app': False})
+    if view == 'category':
+        from bot import trend_catalog
+        category_id = request.query.get('category_id', '')
+        if category_id != 'unassigned':
+            if not category_id.isascii() or not category_id.isdecimal():
+                raise ValueError('Invalid category')
+            category_id = int(category_id)
+        page_raw = request.query.get('page', '1')
+        if not page_raw.isascii() or not page_raw.isdecimal():
+            raise ValueError('Invalid page')
+        page = int(page_raw)
+        if page < 1 or page > 1000:
+            raise ValueError('Invalid page')
+        category = await trend_catalog.category_page(
+            category_id, is_admin=False, page=page, limit=24, tariff='standard',
+        )
+        meta = category['category']
+        return response({
+            'ok': True,
+            'category': {'id': meta['id'], 'title': meta['title'], 'emoji': meta['emoji']},
+            'items': [_vk_public_trend_card(card) for card in category['items']],
+            'has_more': bool(category['has_more']),
+            'page': page,
+            'can_generate_in_app': False,
+        })
+    if view == 'feed':
+        from bot import database
+        source = request.query.get('source', 'recent')
+        if source not in {'recent', 'top', 'top_day'}:
+            raise ValueError('Invalid feed source')
+        cards = await database.get_feed_generations(
+            limit=18, source=source, viewer_user_id=None, include_unavailable=False,
+        )
+        items = [
+            {
+                'id': int(card['id']),
+                'generation_type': str(card['gen_type']),
+                'preview_url': card.get('preview_url'),
+                'result_url': card.get('result_url'),
+                'likes_count': int(card.get('likes_count') or 0),
+            }
+            for card in cards if card.get('gen_type') in {'image', 'video'}
+        ]
+        return response({'ok': True, 'items': items, 'can_generate_in_app': False})
+    raise ValueError('Unknown discovery view')
+
+
 async def logout(request: web.Request) -> web.Response:
     # Revoking one's own opaque token remains safe after account merging or
     # preview shutdown. It grants no access and is intentionally idempotent.
@@ -256,6 +341,7 @@ def setup_shared_account_routes(app: web.Application, miniapp_root: str) -> None
     app.router.add_put(root + '/settings', _guard(settings))
     app.router.add_post(root + '/session', _guard(session))
     app.router.add_get(root + '/me', _guard(profile))
+    app.router.add_get(root + '/trends', _guard(vk_public_discovery))
     app.router.add_post(root + '/logout', _guard(logout))
     app.router.add_get(root + '/wallet', _guard(wallet))
     app.router.add_post(root + '/wallet', _guard(wallet))

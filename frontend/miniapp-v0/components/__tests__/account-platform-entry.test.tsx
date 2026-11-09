@@ -2,16 +2,22 @@ jest.mock('../shared-commercial-preview', () => ({ SharedCommercialPreview: () =
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { AccountPlatformEntry } from '../account-platform-entry'
-import { startAccountAppSession, stopAccountAppSession } from '@/lib/shared-account-api'
+import { fetchVkPublicDiscovery, startAccountAppSession, stopAccountAppSession } from '@/lib/shared-account-api'
 import { incomingAccountLink } from '@/lib/account-platform'
 
 jest.mock('@/lib/shared-account-api', () => ({
   startAccountAppSession: jest.fn(),
   stopAccountAppSession: jest.fn(),
+  fetchVkPublicDiscovery: jest.fn(),
+  fetchVkPublicCategory: jest.fn(),
 }))
 jest.mock('@/lib/account-platform', () => ({ incomingAccountLink: jest.fn(() => '') }))
 jest.mock('../shared-account-link-preview', () => ({ SharedAccountLinkPreview: ({ telegramBotUsername, onCommitted }: { telegramBotUsername: string; onCommitted?: () => void }) =>
   <><p>Связать аккаунты {telegramBotUsername}</p>{onCommitted ? <button onClick={onCommitted}>Привязка подтверждена</button> : null}</> }))
+
+beforeEach(() => {
+  jest.mocked(fetchVkPublicDiscovery).mockResolvedValue({ ok: true, categories: [], can_generate_in_app: false })
+})
 
 afterEach(() => {
   window.history.replaceState({}, '', '/')

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react'
 import { SharedAccountLinkPreview } from '@/components/shared-account-link-preview'
+import { VkStandaloneDiscovery } from '@/components/vk-standalone-discovery'
 import { incomingAccountLink } from '@/lib/account-platform'
 import {
   startAccountAppSession,
@@ -50,6 +51,7 @@ function VkAccountGate({ children }: { children: ReactNode }) {
       Telegram не обязателен. Фото, видео, пополнение и ваши работы доступны в боте ВКонтакте.
       Общая Mini App с Telegram пока работает после привязки аккаунтов.
     </p>
+    <VkStandaloneDiscovery />
     {nativeBotUrl
       ? <a className="block rounded-xl bg-primary px-4 py-3 text-center font-semibold text-primary-foreground"
           href={nativeBotUrl} target="_blank" rel="noopener noreferrer">
